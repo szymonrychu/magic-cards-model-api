@@ -25,7 +25,6 @@ from magic_cards_model.machines.decisions import Answer, DecisionKind
 from magic_cards_model.machines.decisions import PendingDecision as PendingDecisionEngine
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
-from magic_cards_model.models.action import ActionKind
 from starlette.convertors import Convertor, register_url_convertor
 from starlette.responses import Response
 
@@ -2062,34 +2061,23 @@ def get_affordances(
 
 
 def _attach_target_candidates(
-    game: Game, player: str, actions: Sequence[Any], views: list[dict[str, Any]]
+    game: Game, actions: Sequence[Any], views: list[dict[str, Any]]
 ) -> None:
     """Fold each targeting action's legal candidates into its own entry.
 
-    `Action.target_slots` is the *shape* of a targeting requirement and never
-    its candidates - the engine's own `TargetSlot` docstring says so and
-    points at `Game.legal_targets` for the objects. That left a seat holding a
-    legal, affordable, targeting action with no idea what it could name, one
-    round trip - and so one whole inference cycle, which is what a seat's turn
-    latency is actually made of - short of being able to act. The candidates
-    are computed here, in the request that already enumerated the actions,
-    rather than in a second call per action.
-
-    **One board walk for the whole request.** `affordances.all_targetables` is
-    hoisted before the loop and handed to every `target_candidates` call, so
-    the cost of adding this is one traversal of the public zones plus the
-    `rejects` predicate per (object, requirement) pair - never one traversal
-    per action, which on a busy board with a hand full of removal would be the
-    N-calls shape T11 removed one layer up, reintroduced one layer down.
-    `tests/test_legal_actions_endpoint.py` pins both the single walk and the
-    time budget.
+    The candidates are the engine's own: `legal_actions` puts them on every
+    `Action.target_slots` entry (`TargetSlot.candidates` and
+    `player_candidates`) from the predicate CR 601.2c's announcement checks
+    with, so a list here cannot disagree with the announcement that follows.
+    `affordances.slot_candidates` only writes them as the strings a seat
+    hands back, capped - in the request that already enumerated the actions,
+    never a second call per action.
 
     Two kinds of row are skipped, and each for its own reason:
 
     - **nothing to enumerate.** An empty `target_slots` means this action does
       not target (or its phrase was unreadable, which `Action` cannot tell
-      apart - `affordances`' own module docstring), so there is no slot to
-      fill and no key worth the bytes.
+      apart), so there is no slot to fill and no key worth the bytes.
     - **`affordable == "no"`.** CR 118.6 keeps the row - an unpayable cast is
       still a legal one and is still listed - but a candidate list for a spell
       that cannot be cast is a list the seat can do nothing with. Said once,
@@ -2097,53 +2085,12 @@ def _attach_target_candidates(
       such row.
 
     `unknown` is emphatically not `no` and is enriched: an X spell before its
-    X is announced (CR 107.3a) may well be castable, and a seat weighing it
-    needs to know what it could point at.
+    X is announced (CR 107.3a) may well be castable.
     """
-    targetables: list[Any] | None = None
     for action, view in zip(actions, views, strict=True):
         if not action.target_slots or view.get("affordable") == "no":
             continue
-        if action.card_id is None:
-            continue
-        try:
-            source = affordances.find_source(game, action.card_id)
-        except ValueError:
-            # An action naming an object this game no longer holds is the
-            # enumeration's problem to answer for, not this decoration's to
-            # raise on: the row stays, without candidates.
-            continue
-        if targetables is None:
-            targetables = affordances.all_targetables(game)
-        if view.get("kind") == "equip":
-            # CR 702.6a's "target creature you control", read off the equip
-            # ability itself - the Equipment has no printed ability index.
-            view["targets"] = affordances.equip_target_candidates(
-                game, source, player, targetables=targetables
-            )
-            continue
-        view["targets"] = affordances.target_candidates(
-            game,
-            source,
-            player,
-            ability_index=action.ability_index,
-            # CR 709.3b: a split card on the stack "has only the
-            # characteristics of the half being cast", and CR 715.3b says the
-            # same of an Adventure - so the face this row announces is the
-            # only text its candidates may come from. Passed rather than
-            # dropped, which is what left the Tear row of Wear // Tear
-            # offering Wear's own artifact targets: both rows were derived
-            # from `targeting_profile(card)` and that reads
-            # `Card.front_oracle_text`. A seat is told to hand a candidate
-            # straight back (`seatkit.TARGETS_NOTE`), so the wrong list does
-            # not merely mislead - it costs the seat the action, refused at
-            # announcement for a target it was handed. `affordances.
-            # _face_profile` answers `understood: false` for a face the
-            # printing does not carry rather than guessing.
-            face=action.spell_face,
-            targetables=targetables,
-            off_zone=action.kind is ActionKind.ACTIVATE_OFF_ZONE,
-        )
+        view["targets"] = affordances.slot_candidates(game, action.target_slots)
 
 
 @app.get(
@@ -2245,7 +2192,7 @@ def get_legal_actions(
     pending = paused[2] if paused is not None else None
     actions, views = legal_action_rows(game, player, pending)
     if candidates:
-        _attach_target_candidates(game, player, actions, views)
+        _attach_target_candidates(game, actions, views)
     # The ledger position this enumeration describes, handed back with it
     # (`LegalActionsResponse.last_seq`): a seat names it as `expected_seq` on
     # whatever it decides to do, and that is what makes its refusals
@@ -3599,11 +3546,23 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["order"] = req.order
+    elif kind is DecisionKind.PAY_MANA:
+        # CR 608.2g / CR 605.3a: a bare yes/no, or - naming which offered
+        # sources to activate (engine PR #17, B6-08) - `accept: true` plus
+        # `mana_sources`. Its own branch, split out of the plain-bool group
+        # below, because this is the one kind whose answer can be either
+        # shape; `pay_mana_answer` decides which.
+        try:
+            answer_value = decisions.pay_mana_answer(req.accept, req.mana_sources)
+        except ValueError as exc:
+            return refuse(str(exc), **detail)
+        detail["accept"] = req.accept
+        if req.mana_sources is not None:
+            detail["mana_sources"] = req.mana_sources
     elif kind in (
         DecisionKind.MAY,
         DecisionKind.PAY_LIFE,
         DecisionKind.PAY_ENERGY,
-        DecisionKind.PAY_MANA,
         # CR 103.6's "may take any such actions": the same yes/no shape.
         DecisionKind.OPENING_HAND_ACTION,
         # CR 103.5's declaration, "will you take a mulligan" - only
@@ -3695,8 +3654,19 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         decisions.validate_answer(engine_decision, answer_value)
     except ValueError as exc:
         return refuse(str(exc), **detail)
-    field_name = decisions.ANSWER_FIELD_FOR_KIND[kind]
-    answer = Answer(seq=pending.seq, kind=kind, player=req.player, **{field_name: answer_value})
+    if kind is DecisionKind.PAY_MANA and isinstance(answer_value, tuple):
+        # The engine's own `Answer` shape for this one: `card_ids` names the
+        # mana sources to activate, and rides alongside `accept=True` rather
+        # than replacing it (`Answer._check_one_value_field` refuses
+        # `card_ids` without `accept=True` - see `pay_mana_answer`'s own
+        # docstring for why declining and naming sources are mutually
+        # exclusive already).
+        answer = Answer(
+            seq=pending.seq, kind=kind, player=req.player, accept=True, card_ids=answer_value
+        )
+    else:
+        field_name = decisions.ANSWER_FIELD_FOR_KIND[kind]
+        answer = Answer(seq=pending.seq, kind=kind, player=req.player, **{field_name: answer_value})
     try:
         result, _, seq_hint = _resume(game_id, command, tape, pending, answer, player=req.player)
     except ValueError as exc:

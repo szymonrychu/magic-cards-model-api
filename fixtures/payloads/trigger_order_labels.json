@@ -137,6 +137,7 @@
     "kept_label": "",
     "kind": "order_triggers",
     "lethal_damage": [],
+    "mana_sources": [],
     "moved_label": "",
     "options": [],
     "player": "alice",

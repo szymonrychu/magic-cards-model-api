@@ -29,6 +29,8 @@ from typing import Any
 from uuid import UUID
 
 from conftest import add_card, find, resolve_whole_stack, state
+from magic_cards_model.machines.legal_actions import legal_actions as engine_legal_actions
+from magic_cards_model.models.action import ActionKind
 from test_action_answer_size import busy_board
 from test_autopass import stage_an_attack_on_bob, stock_libraries
 from test_cast_cost_choices import answer
@@ -200,12 +202,20 @@ def test_the_note_appears_even_when_every_targeting_action_is_unaffordable(
 # -- understood: false is not "nothing is legal" ----------------------------
 
 
+def _engine_cast_rows(live, card_id: UUID) -> list:
+    """The engine's own cast rows for one hand card, `target_slots` and all."""
+    return [
+        action
+        for action in engine_legal_actions(live, "alice")
+        if action.card_id == card_id and action.kind is ActionKind.CAST
+    ]
+
+
 def test_an_unreadable_targeting_phrase_says_so_rather_than_listing_nothing(client, game):
-    """`affordances.candidates`' existing contract, kept for the string form:
-    a profile the parser could not read returns NO candidate list at all. An
-    empty one would read as "nothing on this board is legal", which is a
-    different and false statement - `ui/app.js`'s `isPickingTargets` already
-    branches on exactly this difference."""
+    """A modal card's targeting is unanswerable before its modes are chosen.
+    The engine's row carries no slot, so no `targets` block is written for it,
+    and the browser's `/affordances` answer says `understood: false` - never a
+    list a reader would take for "nothing on this board is legal"."""
     add_card(client, game, "Grizzly Bears", "bob", "battlefield")
     add_card(client, game, "Kozilek's Command", "alice", "hand")
     live = store.get(game)
@@ -213,27 +223,20 @@ def test_an_unreadable_targeting_phrase_says_so_rather_than_listing_nothing(clie
         live, UUID(find(state(client, game)["hands"]["alice"], "Kozilek's Command")["id"])
     )
 
-    block = affordances.target_candidates(live, koz, "alice")
-
-    # CR 700.2c: a modal card's targeting is unanswerable before its modes
-    # are chosen, so `targeting_profile` refuses and this must refuse with it.
-    assert block["understood"] is False
-    assert "slots" not in block, block
-    assert "candidates" not in block, block
-    assert "NOT" in block["note"], block["note"]
+    rows = _engine_cast_rows(live, koz.id)
+    assert rows and all(row.target_slots == () for row in rows), rows
+    assert affordances.candidates(live, koz, "alice")["understood"] is False
 
 
 def test_no_legal_candidates_is_a_different_answer_from_an_unreadable_phrase(client, game):
-    """The other side of the same coin, and the reason the distinction is
-    worth the key: "Destroy target creature" with no creature anywhere is
-    understood perfectly and has an empty list, which is the truth."""
+    """ "Destroy target creature" with no creature anywhere is understood
+    perfectly and has an empty list, which is the truth."""
     add_card(client, game, "Murder", "alice", "hand")
     live = store.get(game)
-    murder = affordances.find_source(
-        live, UUID(find(state(client, game)["hands"]["alice"], "Murder")["id"])
-    )
+    murder = UUID(find(state(client, game)["hands"]["alice"], "Murder")["id"])
+    (row,) = _engine_cast_rows(live, murder)
 
-    block = affordances.target_candidates(live, murder, "alice")
+    block = affordances.slot_candidates(live, row.target_slots)
 
     assert block["understood"] is True
     (slot,) = block["slots"]
@@ -242,19 +245,18 @@ def test_no_legal_candidates_is_a_different_answer_from_an_unreadable_phrase(cli
 
 
 def test_a_truncated_slot_keeps_the_true_count_and_says_what_to_call(client, game, monkeypatch):
-    """`count` is the total, always - a slot that lists thirty of forty-one
-    still says forty-one, because a seat deciding whether to sweep needs the
-    number, not the sample."""
+    """`count` is the total, always - a slot that lists three of six still
+    says six, because a seat deciding whether to sweep needs the number, not
+    the sample."""
     monkeypatch.setattr(affordances, "CANDIDATE_SLOT_CAP", 3)
     for _ in range(6):
         add_card(client, game, "Grizzly Bears", "bob", "battlefield")
     add_card(client, game, "Murder", "alice", "hand")
     live = store.get(game)
-    murder = affordances.find_source(
-        live, UUID(find(state(client, game)["hands"]["alice"], "Murder")["id"])
-    )
+    murder = UUID(find(state(client, game)["hands"]["alice"], "Murder")["id"])
+    (row,) = _engine_cast_rows(live, murder)
 
-    block = affordances.target_candidates(live, murder, "alice")
+    block = affordances.slot_candidates(live, row.target_slots)
 
     (slot,) = block["slots"]
     assert slot["count"] == 6
@@ -264,17 +266,14 @@ def test_a_truncated_slot_keeps_the_true_count_and_says_what_to_call(client, gam
 
 
 def test_an_untruncated_slot_carries_neither_truncated_nor_more_with(client, game):
-    """The absent keys are the signal that nothing was cut - `_without_empty`
-    would drop a `0` anyway only because it is not `None`, so these are simply
-    never written."""
+    """The absent keys are the signal that nothing was cut."""
     add_card(client, game, "Grizzly Bears", "bob", "battlefield")
     add_card(client, game, "Murder", "alice", "hand")
     live = store.get(game)
-    murder = affordances.find_source(
-        live, UUID(find(state(client, game)["hands"]["alice"], "Murder")["id"])
-    )
+    murder = UUID(find(state(client, game)["hands"]["alice"], "Murder")["id"])
+    (row,) = _engine_cast_rows(live, murder)
 
-    block = affordances.target_candidates(live, murder, "alice")
+    block = affordances.slot_candidates(live, row.target_slots)
 
     (slot,) = block["slots"]
     assert "truncated" not in slot, slot
