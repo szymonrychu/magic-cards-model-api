@@ -72,6 +72,7 @@ here means answering a resumed command's question with the wrong id.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from collections.abc import Iterator
@@ -501,6 +502,7 @@ class PostgresRepository:
                     owner_user_id=owner_user_id,
                     seats={},
                     advisors={},
+                    scripts={},
                     decklists={},
                     agent_settings={},
                     ai_players=[],
@@ -831,6 +833,31 @@ class PostgresRepository:
         if row is None or not row[0]:
             return {}
         return {uid: Advisor.from_wire(value) for uid, value in row[0].items()}
+
+    # -- play-script corpora --------------------------------------------
+
+    def register_scripts(self, game_id: str, uid: str, corpus: dict[str, Any]) -> None:
+        # `jsonb_set` on this uid's key alone, in one statement: a seat and
+        # its advisor registering at once each replace only their own entry,
+        # where reading, editing and writing back the whole map would let the
+        # later write erase the earlier one.
+        if not _looks_like_id(game_id):
+            return
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE games SET scripts = jsonb_set(scripts, ARRAY[CAST(:uid AS text)], "
+                    "CAST(:corpus AS jsonb)) WHERE id = :id AND archived_at IS NULL"
+                ),
+                {"uid": uid, "corpus": json.dumps(corpus), "id": game_id},
+            )
+
+    def scripts(self, game_id: str, uid: str) -> dict[str, Any] | None:
+        row = self._select_one(game_id, games.c.scripts)
+        if row is None or not row[0]:
+            return None
+        corpus = row[0].get(uid)
+        return dict(corpus) if corpus is not None else None
 
     # -- admin key --------------------------------------------------------
 

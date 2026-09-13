@@ -46,7 +46,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .audit import ADVICE_ACTION, PLAN_ACTION
+from .audit import ADVICE_ACTION, PLAN_ACTION, SCRIPT_RUN_ACTIONS
 from .store import player_for_advisor_uid, store
 
 
@@ -523,8 +523,21 @@ def redact_notices(notices: list[dict[str, Any]], viewer: Viewer) -> list[dict[s
     return redacted
 
 
-def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
-    """One log entry, as `viewer` may read it.
+def hides_script_run(entry: dict[str, Any], viewer: Viewer) -> bool:
+    """Whether `entry` is a play-script run row (`audit.SCRIPT_RUN_ACTIONS`)
+    that `viewer` may not know exists: anyone but the admin and the seat the
+    run played for (an advisor resolves to that seat). Shared by
+    `redact_log_entry` and `app.py`'s `game_review`, which drops these rows
+    for the opponent even post-game."""
+    if entry.get("action") not in SCRIPT_RUN_ACTIONS or viewer is ADMIN:
+        return False
+    player = (entry.get("detail") or {}).get("player")
+    return not (isinstance(viewer, str) and player == viewer)
+
+
+def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any] | None:
+    """One log entry, as `viewer` may read it - or `None` when `viewer` may
+    not read that the row exists at all.
 
     Two guards, and they do not have the same audience:
 
@@ -581,6 +594,12 @@ def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
       the human and the buddy advising it both read the row whole and nobody
       else reads any of it. "alice was given advice at this point" stays
       public, the way a plan declaration's own existence does.
+    - a script-run row (`audit.SCRIPT_RUN_ACTIONS`) is dropped outright, the
+      one row this function answers `None` for. A run names the script, its
+      guides revision and the archetype the seat believes it faces, and even
+      the bare fact that a script started at this step tells the opponent
+      the seat is on autopilot; unlike a plan's existence, nothing about it
+      is public at a real table.
 
     Both are keyed on `detail["player"]`, which is what the acting route
     recorded. That is safe *in this direction* and only in this direction:
@@ -602,6 +621,8 @@ def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     # `None`, and a row nobody made carries no player - "None is None" must
     # not read as "this is your row".
     own = viewer is ADMIN or (isinstance(viewer, str) and detail_player == viewer)
+    if hides_script_run(entry, viewer):
+        return None
     if not own:
         entry["reasoning"] = None
         if entry.get("action") in (PLAN_ACTION, ADVICE_ACTION):

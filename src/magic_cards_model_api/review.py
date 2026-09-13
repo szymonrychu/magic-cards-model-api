@@ -52,7 +52,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from .audit import ADVICE_ACTION, ADVICE_APPROVED_ACTION, GAME_OVER_ACTION, PLAN_ACTION
+from .audit import (
+    ADVICE_ACTION,
+    ADVICE_APPROVED_ACTION,
+    GAME_OVER_ACTION,
+    PLAN_ACTION,
+    SCRIPT_RUN_ACTIONS,
+)
 from .repository import ArchivedGame
 
 #: The keys a paired entry carries inside a declaration. Deliberately not
@@ -199,15 +205,23 @@ def _declarations(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "my_role": detail.get("my_role"),
                 "plan": detail.get("plan"),
                 "prediction": detail.get("prediction"),
-                "did": [_paired(row) for row in window if _actor(row) == player],
+                "did": [_paired(row) for row in window if _is_move(row) and _actor(row) == player],
                 "opponent_did": [
                     _paired(row)
                     for row in window
-                    if _actor(row) is not None and _actor(row) != player
+                    if _is_move(row) and _actor(row) is not None and _actor(row) != player
                 ],
             }
         )
     return declared
+
+
+def _is_move(entry: dict[str, Any]) -> bool:
+    """Whether `entry` can be something a seat did: every row but a
+    play-script run report (`audit.SCRIPT_RUN_ACTIONS`). A run report names
+    its seat as `player`, but it records that a runner ran, not a move - the
+    moves it made are rows of their own."""
+    return entry["action"] not in SCRIPT_RUN_ACTIONS
 
 
 def _actor(entry: dict[str, Any]) -> str | None:
@@ -327,12 +341,15 @@ def _first_real_action(
     entries: list[dict[str, Any]], start: int, end: int, player: str | None
 ) -> dict[str, Any] | None:
     """The first row in `entries[start:end]` that is a real move by `player`:
-    not an `advice`/`advice_approved` marker (neither mutates the game), and
+    not an `advice`/`advice_approved` marker or a script-run report (none of
+    them mutates the game), and
     never a row the engine refused - a refusal is a failed attempt, not a
     thing that happened, and is deliberately never handed back as `did` (see
     `_advice`, and `_refused_in_window` for where a refusal *is* reported)."""
     for candidate in entries[start:end]:
         if candidate["action"] in (ADVICE_ACTION, ADVICE_APPROVED_ACTION):
+            continue
+        if not _is_move(candidate):
             continue
         if _actor(candidate) != player:
             continue
@@ -356,6 +373,7 @@ def _refused_in_window(
         candidate
         for candidate in entries[start:end]
         if candidate["action"] not in (ADVICE_ACTION, ADVICE_APPROVED_ACTION)
+        and _is_move(candidate)
         and _actor(candidate) == player
         and (candidate.get("detail") or {}).get("allowed") is False
     ]

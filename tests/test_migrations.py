@@ -53,6 +53,9 @@ PAUSE_GENERATION_PREDECESSOR = "8f1c47a0b6d2"
 #: The revision that was head before `games.advisors` was added.
 ADVISORS_PREDECESSOR = "a2f6d9c31b57"
 
+#: The revision that was head before `games.scripts` was added.
+SCRIPTS_PREDECESSOR = "b8d24f6c1a07"
+
 
 @contextmanager
 def _scratch_database() -> Iterator[str]:
@@ -378,6 +381,38 @@ def test_upgrade_head_adds_advisors_to_an_already_migrated_database() -> None:
                     text("SELECT advisors FROM games WHERE id = 'old'")
                 ).scalar_one()
             assert value == {}, "a row that predates the column must start with no advisors"
+        finally:
+            engine.dispose()
+
+
+def test_upgrade_head_adds_scripts_to_an_already_migrated_database() -> None:
+    """`games.scripts` (uid -> registered play-script corpus) arrives on a
+    database that predates it with `{}` for every existing row, the same
+    shape and the same reason as `advisors`."""
+    with _scratch_database() as url:
+        _alembic_to(url, SCRIPTS_PREDECESSOR)
+        engine = create_engine(url, future=True)
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO games (id, state, version, created_at, admin_key) "
+                        "VALUES ('old', '{}'::jsonb, 0, now(), 'k')"
+                    )
+                )
+            before = {column["name"] for column in inspect(engine).get_columns("games")}
+            assert "scripts" not in before
+        finally:
+            engine.dispose()
+
+        _alembic_to(url, "head")
+        engine = create_engine(url, future=True)
+        try:
+            with engine.connect() as conn:
+                value = conn.execute(
+                    text("SELECT scripts FROM games WHERE id = 'old'")
+                ).scalar_one()
+            assert value == {}, "a row that predates the column must start with no scripts"
         finally:
             engine.dispose()
 

@@ -42,6 +42,9 @@ mutates.
 
 from __future__ import annotations
 
+import os
+import threading
+from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
@@ -52,7 +55,7 @@ from magic_cards_model.machines.decisions import PendingDecision
 from magic_cards_model.machines.legal_actions import legal_actions as _legal_actions
 from magic_cards_model.models import CardState, Game
 
-from .audit import PLAN_ACTION
+from .audit import PLAN_ACTION, SCRIPT_RUN_ACTION, SCRIPT_RUN_ACTIONS, SCRIPT_RUN_STARTED_ACTION
 from .repository import RECENT_RECORDS_WINDOW
 
 #: CR 103's pregame steps, which the engine models as two steps a game
@@ -522,6 +525,165 @@ def require_current_board(
             reasoning=reasoning,
         )
     raise moved
+
+
+# -- play scripts ------------------------------------------------------------
+#
+# A seat Job registers the scripts it runs (`PUT .../seats/{uid}/scripts`) and
+# reports each run (`POST .../script-runs`). Neither is a game action, so none
+# of the gates above apply; what applies is below - the operator's kill
+# switch, the schema every script must satisfy, and "a script runs once per
+# turn and step", read back out of the ledger.
+
+#: The operator's kill switch for agent-authored scripts,
+#: published on the API Deployment with a default of `"true"`
+#: (`deploy/k8s/50-deployment.yaml`, `deploy/k8s/README.md`).
+SCRIPTS_ENABLED_ENV = "SCRIPTS_ENABLED"
+
+#: The spellings that switch scripts off. Unset, or anything else, leaves
+#: them on - the default the Deployment publishes.
+_SWITCHED_OFF = frozenset({"false", "0", "no", "off"})
+
+
+def scripts_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Whether agent-authored scripts are switched on. Read per call rather
+    than at import: flipping the switch restarts the pod anyway, and a test
+    can then set it for one request."""
+    env = os.environ if env is None else env
+    return env.get(SCRIPTS_ENABLED_ENV, "true").strip().lower() not in _SWITCHED_OFF
+
+
+class ScriptsDisabled(Exception):
+    """Raised by `require_scripts_enabled` while the kill switch is off.
+    `app.py` answers 409 with `code: scripts_disabled` - a typed refusal, so
+    the runner branches on the code and never on this sentence."""
+
+    code = "scripts_disabled"
+
+    def __init__(self, what: str) -> None:
+        super().__init__(
+            f"{what} was refused: agent-authored scripts are switched off on this "
+            f"deployment ({SCRIPTS_ENABLED_ENV}=false). Play the seat without scripts."
+        )
+
+
+def require_scripts_enabled(what: str) -> None:
+    """Refuse `what` - registering a corpus, starting a run - while the kill
+    switch is off. A `finish` is deliberately not refused: a run already under
+    way when the switch flipped still gets the row saying what it did."""
+    if not scripts_enabled():
+        raise ScriptsDisabled(what)
+
+
+class InvalidScripts(Exception):
+    """Raised when a registered corpus holds a script `playscripts.schema`
+    refuses. `app.py` answers 422 with `code: invalid_scripts` and `errors`,
+    one `PlaysError` dict per refused shape, each naming its script as
+    `scripts[<index>]`. Nothing is stored: a corpus is registered whole or not
+    at all."""
+
+    code = "invalid_scripts"
+
+    def __init__(self, errors: list[dict[str, str]]) -> None:
+        listed = "; ".join(
+            f"{error['path']} {error['code']}: {error['message']}" for error in errors
+        )
+        super().__init__(f"the scripts were not registered - {listed}")
+        self.errors = errors
+
+
+def script_errors(scripts: list[Any]) -> list[dict[str, str]]:
+    """Every refusal of a corpus, as `PlaysError` dicts: each script's own
+    `play_errors`, plus a second script reusing an earlier one's `id` - a run
+    is reported by `script_id`, so two scripts under one id would make every
+    run of either unattributable."""
+    from .playscripts.schema import PlaysError, play_errors
+
+    errors: list[PlaysError] = []
+    first_seen: dict[str, int] = {}
+    for index, script in enumerate(scripts):
+        path = f"scripts[{index}]"
+        errors.extend(play_errors(script, path))
+        script_id = script.get("id") if isinstance(script, dict) else None
+        if not isinstance(script_id, str):
+            continue
+        if script_id in first_seen:
+            errors.append(
+                PlaysError(
+                    "malformed-play",
+                    path,
+                    f"id: {script_id!r} is already the id of scripts[{first_seen[script_id]}]",
+                )
+            )
+        else:
+            first_seen[script_id] = index
+    return [error.to_dict() for error in errors]
+
+
+class ScriptAlreadyRan(Exception):
+    """Raised by `record_script_run_start` when this seat already started or
+    finished this script at this turn and step. `app.py` answers 409 with
+    `exit: already_ran`, and nothing is recorded."""
+
+    exit = "already_ran"
+
+    def __init__(self, detail: dict[str, Any], prior_run_id: str) -> None:
+        super().__init__(
+            f"{detail['seat']} already ran {detail['script_id']} at turn {detail['turn']}, "
+            f"{detail['step']} (run {prior_run_id}) - a script runs once per turn and step, "
+            "so this start did nothing"
+        )
+        self.prior_run_id = prior_run_id
+
+
+#: What makes two runs "the same run" for `already_ran`.
+_SCRIPT_RUN_KEY = ("seat", "script_id", "turn", "step")
+
+#: Serialises the read-then-append of a start within this process. Two
+#: replicas can still race one start past each other; the ledger then holds
+#: both rows and the second is visible to every later start.
+_SCRIPT_RUN_LOCK = threading.Lock()
+
+
+def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
+    """The `run_id` of an earlier start or finish sharing `detail`'s key, or
+    `None`. Bounded to `RECENT_RECORDS_WINDOW`, like `require_plan`: a run at
+    the current turn and step is by construction among the newest rows."""
+    from .store import store
+
+    key = tuple(detail.get(name) for name in _SCRIPT_RUN_KEY)
+    for row in reversed(store.recent_records(game_id, RECENT_RECORDS_WINDOW)):
+        payload = row["payload"]
+        if payload.get("action") not in SCRIPT_RUN_ACTIONS:
+            continue
+        prior = payload.get("detail") or {}
+        if tuple(prior.get(name) for name in _SCRIPT_RUN_KEY) == key:
+            return str(prior.get("run_id"))
+    return None
+
+
+def record_script_run_start(game_id: str, detail: dict[str, Any]) -> int:
+    """Write a `script_run_started` row for `detail` and return its `seq`, or
+    raise `ScriptAlreadyRan`. The row names `seat` as its `player`, which is
+    what keeps it out of every other viewer's log (`visibility.
+    redact_log_entry`)."""
+    from . import audit
+
+    with _SCRIPT_RUN_LOCK:
+        prior = _prior_script_run(game_id, detail)
+        if prior is not None:
+            raise ScriptAlreadyRan(detail, prior)
+        return audit.record(game_id, SCRIPT_RUN_STARTED_ACTION, player=detail["seat"], **detail)
+
+
+def record_script_run_finish(game_id: str, detail: dict[str, Any]) -> int:
+    """Write the one `script_run` row for a finished run and return its
+    `seq`. Under the same lock as a start, so a start never reads the ledger
+    between a finish's check-free append and its own."""
+    from . import audit
+
+    with _SCRIPT_RUN_LOCK:
+        return audit.record(game_id, SCRIPT_RUN_ACTION, player=detail["seat"], **detail)
 
 
 @dataclass(frozen=True)

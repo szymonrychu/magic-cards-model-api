@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from magic_cards_model.models import Action, Card
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 
 class RequestModel(BaseModel):
@@ -402,6 +402,121 @@ class AdviceApprovedResponse(BaseModel):
     advice_seq: int
     """The `advice` row it approves."""
     player: str
+
+
+class ScriptsRegisterIn(RequestModel):
+    """`PUT /api/games/{game_id}/seats/{uid}/scripts` - the play-script corpus
+    a seat Job runs, registered under the uid it runs with.
+
+    `scripts` is deliberately a list of plain objects here rather than
+    `playscripts.schema.Play`: every script is judged by
+    `playscripts.schema.play_errors`, which answers with the coded errors
+    (`unknown-field`, `forbidden-kind`, ...) mtg-decks' own checker shares,
+    and a refusal the runner can act on is worth more than pydantic's
+    generic 422. The shape each must satisfy is
+    `contract/playscript.schema.json`.
+    """
+
+    deck_slug: Stated
+    """The mtg-decks deck directory these scripts came from."""
+    guides_revision: Stated
+    """The guides checkout revision they were read at."""
+    scripts: list[dict[str, Any]]
+
+
+class ScriptsRegisteredResponse(BaseModel):
+    """`PUT .../seats/{uid}/scripts`'s answer. The corpus itself is not echoed
+    back; `GET` of the same path reads it."""
+
+    registered: bool
+    uid: str
+    deck_slug: str
+    guides_revision: str
+    count: int
+    """How many scripts the corpus holds."""
+    registered_at: str
+
+
+class ScriptsCorpusResponse(BaseModel):
+    """`GET .../seats/{uid}/scripts` - the registered corpus, readable by that
+    uid, the seat's advisor and the admin key only."""
+
+    uid: str
+    deck_slug: str
+    guides_revision: str
+    scripts: list[dict[str, Any]]
+    registered_at: str
+
+
+class ScriptRunIn(RequestModel):
+    """`POST /api/games/{game_id}/script-runs` - one script run, reported by
+    the runner at its `start` and again at its `finish`.
+
+    Not a game action: it mutates no `Game`, and the moves a script makes go
+    through the action routes, which gate them. So none of
+    `records.require_current_board`, `require_reasoning` or `require_plan`
+    applies, and there is no `expected_seq` or `reasoning` here to read.
+
+    `start` is refused with exit `already_ran` when this `seat` already
+    started (or finished) `script_id` at this `turn` and `step`. `finish`
+    writes one `script_run` row carrying every field below.
+    """
+
+    phase: Literal["start", "finish"]
+    run_id: Stated
+    """The runner's own id for this run."""
+    parent_run_id: str | None = None
+    """The run that chained into this one through `next`, when one did."""
+    seat: Stated
+    """The player this run plays for - the advised human, for an advisor."""
+    role: Literal["seat", "advisor"]
+    """Which kind of uid the runner holds: a seat uid or an advisor uid."""
+    advise: bool = False
+    """Whether the moves were proposed as advice rather than taken."""
+    script_id: Stated
+    script_sha: str | None = None
+    """A digest of the script as registered, so a row names the exact text."""
+    guides_revision: str | None = None
+    priority: int | None = Field(default=None, ge=0)
+    opposing_archetype_asserted: str | None = None
+    """The `opposing_archetype` input the runner believed when it matched."""
+    turn: int = Field(ge=0)
+    """The game's `turn` number the script matched at."""
+    step: Stated
+    """The step the script matched at."""
+    seq_start: int | None = Field(default=None, ge=0)
+    """The ledger position the run started from."""
+    seq_end: int | None = Field(default=None, ge=0)
+    """The ledger position the run ended at."""
+    moves_done: int | None = Field(default=None, ge=0)
+    moves_total: int | None = Field(default=None, ge=0)
+    exit: str | None = None
+    """How the run ended, in the runner's own vocabulary. Required on
+    `finish`."""
+    stop_reason: str | None = None
+    refusal_text: str | None = None
+    """The engine's refusal, verbatim, when a move was refused."""
+    resumes: int | None = Field(default=None, ge=0)
+    """How many times the run resumed across a paused decision."""
+    wall_ms: int | None = Field(default=None, ge=0)
+    reapplicable_after: str | None = None
+    """When the runner may try this script again."""
+
+    @model_validator(mode="after")
+    def _a_finish_names_its_exit(self) -> ScriptRunIn:
+        if self.phase == "finish" and not (self.exit and self.exit.strip()):
+            raise ValueError("a finish must name its exit")
+        return self
+
+
+class ScriptRunResponse(BaseModel):
+    """`POST .../script-runs`'s answer."""
+
+    recorded: bool
+    phase: str
+    run_id: str
+    log_seq: int
+    """The ledger row this report became."""
 
 
 class ReportProblemRequest(RequestModel):

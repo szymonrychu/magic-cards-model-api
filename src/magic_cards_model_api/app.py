@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -112,6 +113,11 @@ from .schemas import (
     ReportProblemRequest,
     ReportProblemResponse,
     ResolveTopResponse,
+    ScriptRunIn,
+    ScriptRunResponse,
+    ScriptsCorpusResponse,
+    ScriptsRegisteredResponse,
+    ScriptsRegisterIn,
     SeatLookupResponse,
     SeatResponse,
     SetStepResponse,
@@ -208,6 +214,52 @@ def _missing_plan(_: Request, exc: records.MissingPlan) -> JSONResponse:
     return JSONResponse(
         status_code=422,
         content={"detail": [{"loc": ["body", "plan"], "msg": str(exc), "type": "missing"}]},
+    )
+
+
+@app.exception_handler(records.ScriptsDisabled)
+def _scripts_disabled(_: Request, exc: records.ScriptsDisabled) -> JSONResponse:
+    """409 with `code: scripts_disabled`: the operator's `SCRIPTS_ENABLED`
+    kill switch is off. Nothing about the request is wrong and resending it
+    will not help until the switch flips back - the code says so without the
+    runner reading prose. `allowed`/`reason` are the refusal shape
+    `seatkit._normalise_non_2xx` hands on unchanged."""
+    return JSONResponse(
+        status_code=409,
+        content={"detail": str(exc), "allowed": False, "reason": str(exc), "code": exc.code},
+    )
+
+
+@app.exception_handler(records.InvalidScripts)
+def _invalid_scripts(_: Request, exc: records.InvalidScripts) -> JSONResponse:
+    """422 with `code: invalid_scripts` and `errors`, the `PlaysError` codes
+    `playscripts.schema` and mtg-decks' checker share - a runner fixes a
+    script from the code, not from a pydantic trace."""
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": str(exc),
+            "allowed": False,
+            "reason": str(exc),
+            "code": exc.code,
+            "errors": exc.errors,
+        },
+    )
+
+
+@app.exception_handler(records.ScriptAlreadyRan)
+def _script_already_ran(_: Request, exc: records.ScriptAlreadyRan) -> JSONResponse:
+    """409 with `exit: already_ran`: this seat already ran this script at
+    this turn and step, and nothing was recorded."""
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": str(exc),
+            "allowed": False,
+            "reason": str(exc),
+            "exit": exc.exit,
+            "prior_run_id": exc.prior_run_id,
+        },
     )
 
 
@@ -1174,7 +1226,14 @@ def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, 
         # was enumerated for. That field is hidden information of exactly the
         # kind `GET .../legal-actions` refuses to hand out, and a caller who
         # presents nothing must never see more than one who presents garbage.
-        log = [visibility.redact_log_entry(entry, viewer) for entry in log]
+        # `None` is a row this viewer may not know exists (a script run), so
+        # it is left out; `last_seq` above already counts it, so omitting it
+        # never moves the caller's watermark back.
+        log = [
+            redacted
+            for entry in log
+            if (redacted := visibility.redact_log_entry(entry, viewer)) is not None
+        ]
     return {"log": log, "last_seq": last_seq}
 
 
@@ -1275,6 +1334,13 @@ def game_review(game_id: str, uid: str | None = None, key: str | None = None) ->
     no redaction of it here, same as `declarations`. The opponent reads it
     once the game is over, exactly as the advised seat does (see `test_review
     .py`'s `test_the_opponent_reads_the_same_advice_the_human_seat_does`).
+
+    **The one exception is a play-script run row** (`audit.SCRIPT_RUN_ACTIONS`),
+    dropped from `entries` for every caller but the admin key and the seat the
+    run played for (`visibility.hides_script_run`). A run names the seat's
+    guides revision, the archetype it believed it faced and its refusals; it
+    is a fact about the runner, not about the game, and never reaches the
+    opponent, during the game or after it.
     """
     archived = store.archived(game_id)
     if archived is None:
@@ -1296,7 +1362,14 @@ def game_review(game_id: str, uid: str | None = None, key: str | None = None) ->
                 "over or has been ended"
             ),
         )
-    return review.build_review(archived, entries if entries is not None else audit.entries(game_id))
+    viewer: visibility.Viewer = (
+        visibility.ADMIN
+        if archived.admin_key is not None and archived.admin_key in presented
+        else next(archived.seat_uids[value] for value in presented if value in archived.seat_uids)
+    )
+    ledger = entries if entries is not None else audit.entries(game_id)
+    ledger = [entry for entry in ledger if not visibility.hides_script_run(entry, viewer)]
+    return review.build_review(archived, ledger)
 
 
 @app.delete(
@@ -3003,6 +3076,171 @@ def declare_reflection(game_id: str, req: ReflectionIn) -> dict[str, Any]:
         text=req.text,
     )
     return {"recorded": True, "log_seq": seq, "player": req.player}
+
+
+# -- play scripts -----------------------------------------------------------
+
+
+def _query_credentials(request: Request) -> tuple[str | None, str | None]:
+    """`(uid, key)` off the query string, where the seat driver sends its
+    credential on every call (`api_client.HttpApiClient`). The scripts path
+    carries a `{uid}` of its own, so the caller's credential cannot also be a
+    declared `uid` parameter of these routes."""
+    return request.query_params.get("uid"), request.query_params.get("key")
+
+
+def _presents_admin_key(game_id: str, uid: str | None, key: str | None) -> bool:
+    return any(store.is_admin(game_id, candidate) for candidate in (key, uid) if candidate)
+
+
+@app.put(
+    "/api/games/{game_id}/seats/{uid}/scripts",
+    response_model=ScriptsRegisteredResponse,
+    response_model_exclude_unset=True,
+)
+def register_scripts(
+    game_id: str, uid: str, req: ScriptsRegisterIn, request: Request
+) -> dict[str, Any]:
+    """Register the play scripts a seat Job runs, under the uid it runs with
+    (a seat uid, or an advisor uid for a buddy), replacing that uid's
+    previous corpus.
+
+    **The credential is the driver's own**: `?uid=` equal to the path's
+    `{uid}`, or this game's admin key. Anything else is a 404, the same
+    answer `declare_plan` gives for writing into another seat's name. An
+    advisor uid gets past `game_access.py` for this one PUT only, and only
+    for its own corpus (`ADVISOR_OWN_PUT_ROUTES`).
+
+    **Every script is judged before anything is stored**
+    (`records.script_errors`): one refusal and the whole corpus is refused
+    with `code: invalid_scripts` and each `PlaysError`, so a runner never
+    runs half of what it meant to register.
+
+    **Behind the kill switch**: with `SCRIPTS_ENABLED` off this refuses with
+    `code: scripts_disabled` (`records.require_scripts_enabled`).
+
+    Mutates no `Game` and writes no ledger row. The corpus lives in the
+    repository (`games.scripts` on postgres), so it survives a restart and
+    reads the same on every replica.
+    """
+    game_or_404(game_id)
+    caller, key = _query_credentials(request)
+    if caller != uid and not _presents_admin_key(game_id, caller, key):
+        raise KeyError("that credential does not register scripts under that uid")
+    if store.player_for_uid(game_id, uid) is None and player_for_advisor_uid(game_id, uid) is None:
+        raise KeyError(f"no seat or advisor {uid} in this game")
+    records.require_scripts_enabled("registering scripts")
+    errors = records.script_errors(req.scripts)
+    if errors:
+        raise records.InvalidScripts(errors)
+    registered_at = datetime.now(UTC).isoformat()
+    store.register_scripts(
+        game_id,
+        uid,
+        {
+            "deck_slug": req.deck_slug,
+            "guides_revision": req.guides_revision,
+            "scripts": req.scripts,
+            "registered_at": registered_at,
+        },
+    )
+    return {
+        "registered": True,
+        "uid": uid,
+        "deck_slug": req.deck_slug,
+        "guides_revision": req.guides_revision,
+        "count": len(req.scripts),
+        "registered_at": registered_at,
+    }
+
+
+@app.get(
+    "/api/games/{game_id}/seats/{uid}/scripts",
+    response_model=ScriptsCorpusResponse,
+    response_model_exclude_unset=True,
+)
+def read_scripts(game_id: str, uid: str, request: Request) -> dict[str, Any]:
+    """The corpus registered under `uid`, to three readers only: that uid
+    itself, an advisor of the seat that uid opens, and the admin key.
+
+    A corpus is hidden information - the lines a seat means to take and the
+    archetypes it plans around - so anyone else is refused the way
+    `get_legal_actions` refuses a caller who does not open the seat it names
+    (`ValueError`, 400), before the corpus is even looked up, so the answer
+    does not say whether one exists. 404 only once the caller is entitled
+    and nothing is registered.
+    """
+    game_or_404(game_id)
+    caller, key = _query_credentials(request)
+    seat = store.player_for_uid(game_id, uid)
+    entitled = (
+        (caller is not None and caller == uid)
+        or _presents_admin_key(game_id, caller, key)
+        or (
+            seat is not None
+            and caller is not None
+            and store.player_for_uid(game_id, caller) is None
+            and player_for_advisor_uid(game_id, caller) == seat
+        )
+    )
+    if not entitled:
+        raise ValueError(
+            "that uid does not open these scripts - a corpus is read by the uid it is "
+            "registered under, that seat's advisor, and the admin key"
+        )
+    corpus = store.scripts(game_id, uid)
+    if corpus is None:
+        raise KeyError("no scripts are registered under that uid in this game")
+    return {"uid": uid, **corpus}
+
+
+@app.post(
+    "/api/games/{game_id}/script-runs",
+    response_model=ScriptRunResponse,
+    response_model_exclude_unset=True,
+)
+def record_script_run(game_id: str, req: ScriptRunIn, request: Request) -> dict[str, Any]:
+    """Report one play-script run: `phase: start` as it begins, `phase:
+    finish` when it ends (`schemas.ScriptRunIn`).
+
+    **This mutates no `Game`, exactly like `declare_plan`.** The moves a
+    script makes go through the action routes, which run every gate on them;
+    this only records that a run happened. So it calls none of
+    `records.require_current_board`, `require_reasoning` or `require_plan`,
+    and an advisor may reach it (`game_access.ADVISOR_POST_SUFFIXES`).
+
+    Authorised on `?uid=`: a seat uid reports runs for its own seat as role
+    `seat`, an advisor uid for the human it watches as role `advisor`, and
+    the admin key for anyone. Another seat's name is a 404; the wrong role
+    for the credential is a 400, so the ledger cannot claim an advisor's
+    advice was a seat's own play.
+
+    `start` is behind the kill switch (`code: scripts_disabled`) and refuses
+    a second start of the same script by the same seat at the same turn and
+    step with exit `already_ran` (`records.record_script_run_start`).
+    `finish` writes one `script_run` row with every field of the request and
+    the `game_id`, and is recorded even with the switch off. Both rows are
+    omitted from every log read but that seat's, its advisor's and the admin
+    key's (`visibility.redact_log_entry`).
+    """
+    game = game_or_404(game_id)
+    caller, key = _query_credentials(request)
+    if not _presents_admin_key(game_id, caller, key):
+        seat = store.player_for_uid(game_id, caller) if caller else None
+        advised = player_for_advisor_uid(game_id, caller) if caller and seat is None else None
+        if (seat or advised) != req.seat:
+            raise KeyError("that uid does not run that seat in this game")
+        role = "seat" if seat is not None else "advisor"
+        if req.role != role:
+            raise ValueError(f"a {role} uid reports its runs as role {role!r}, not {req.role!r}")
+    game.player(req.seat)  # 400 for a player who is not in this game at all
+    detail = {**req.model_dump(exclude={"phase"}), "game_id": game_id}
+    if req.phase == "start":
+        records.require_scripts_enabled("starting a script run")
+        seq = records.record_script_run_start(game_id, detail)
+    else:
+        seq = records.record_script_run_finish(game_id, detail)
+    return {"recorded": True, "phase": req.phase, "run_id": req.run_id, "log_seq": seq}
 
 
 @app.post(

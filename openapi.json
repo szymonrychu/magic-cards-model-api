@@ -9801,6 +9801,378 @@
         "title": "ReviewEntry",
         "type": "object"
       },
+      "ScriptRunIn": {
+        "additionalProperties": false,
+        "description": "`POST /api/games/{game_id}/script-runs` - one script run, reported by\nthe runner at its `start` and again at its `finish`.\n\nNot a game action: it mutates no `Game`, and the moves a script makes go\nthrough the action routes, which gate them. So none of\n`records.require_current_board`, `require_reasoning` or `require_plan`\napplies, and there is no `expected_seq` or `reasoning` here to read.\n\n`start` is refused with exit `already_ran` when this `seat` already\nstarted (or finished) `script_id` at this `turn` and `step`. `finish`\nwrites one `script_run` row carrying every field below.",
+        "properties": {
+          "advise": {
+            "default": false,
+            "title": "Advise",
+            "type": "boolean"
+          },
+          "exit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit"
+          },
+          "guides_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guides Revision"
+          },
+          "moves_done": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moves Done"
+          },
+          "moves_total": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moves Total"
+          },
+          "opposing_archetype_asserted": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opposing Archetype Asserted"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
+          "phase": {
+            "enum": [
+              "start",
+              "finish"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "reapplicable_after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reapplicable After"
+          },
+          "refusal_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refusal Text"
+          },
+          "resumes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resumes"
+          },
+          "role": {
+            "enum": [
+              "seat",
+              "advisor"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "run_id": {
+            "minLength": 1,
+            "title": "Run Id",
+            "type": "string"
+          },
+          "script_id": {
+            "minLength": 1,
+            "title": "Script Id",
+            "type": "string"
+          },
+          "script_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Script Sha"
+          },
+          "seat": {
+            "minLength": 1,
+            "title": "Seat",
+            "type": "string"
+          },
+          "seq_end": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seq End"
+          },
+          "seq_start": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seq Start"
+          },
+          "step": {
+            "minLength": 1,
+            "title": "Step",
+            "type": "string"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Reason"
+          },
+          "turn": {
+            "minimum": 0.0,
+            "title": "Turn",
+            "type": "integer"
+          },
+          "wall_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wall Ms"
+          }
+        },
+        "required": [
+          "phase",
+          "run_id",
+          "seat",
+          "role",
+          "script_id",
+          "turn",
+          "step"
+        ],
+        "title": "ScriptRunIn",
+        "type": "object"
+      },
+      "ScriptRunResponse": {
+        "description": "`POST .../script-runs`'s answer.",
+        "properties": {
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recorded",
+          "phase",
+          "run_id",
+          "log_seq"
+        ],
+        "title": "ScriptRunResponse",
+        "type": "object"
+      },
+      "ScriptsCorpusResponse": {
+        "description": "`GET .../seats/{uid}/scripts` - the registered corpus, readable by that\nuid, the seat's advisor and the admin key only.",
+        "properties": {
+          "deck_slug": {
+            "title": "Deck Slug",
+            "type": "string"
+          },
+          "guides_revision": {
+            "title": "Guides Revision",
+            "type": "string"
+          },
+          "registered_at": {
+            "title": "Registered At",
+            "type": "string"
+          },
+          "scripts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Scripts",
+            "type": "array"
+          },
+          "uid": {
+            "title": "Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uid",
+          "deck_slug",
+          "guides_revision",
+          "scripts",
+          "registered_at"
+        ],
+        "title": "ScriptsCorpusResponse",
+        "type": "object"
+      },
+      "ScriptsRegisterIn": {
+        "additionalProperties": false,
+        "description": "`PUT /api/games/{game_id}/seats/{uid}/scripts` - the play-script corpus\na seat Job runs, registered under the uid it runs with.\n\n`scripts` is deliberately a list of plain objects here rather than\n`playscripts.schema.Play`: every script is judged by\n`playscripts.schema.play_errors`, which answers with the coded errors\n(`unknown-field`, `forbidden-kind`, ...) mtg-decks' own checker shares,\nand a refusal the runner can act on is worth more than pydantic's\ngeneric 422. The shape each must satisfy is\n`contract/playscript.schema.json`.",
+        "properties": {
+          "deck_slug": {
+            "minLength": 1,
+            "title": "Deck Slug",
+            "type": "string"
+          },
+          "guides_revision": {
+            "minLength": 1,
+            "title": "Guides Revision",
+            "type": "string"
+          },
+          "scripts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Scripts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "deck_slug",
+          "guides_revision",
+          "scripts"
+        ],
+        "title": "ScriptsRegisterIn",
+        "type": "object"
+      },
+      "ScriptsRegisteredResponse": {
+        "description": "`PUT .../seats/{uid}/scripts`'s answer. The corpus itself is not echoed\nback; `GET` of the same path reads it.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "deck_slug": {
+            "title": "Deck Slug",
+            "type": "string"
+          },
+          "guides_revision": {
+            "title": "Guides Revision",
+            "type": "string"
+          },
+          "registered": {
+            "title": "Registered",
+            "type": "boolean"
+          },
+          "registered_at": {
+            "title": "Registered At",
+            "type": "string"
+          },
+          "uid": {
+            "title": "Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "registered",
+          "uid",
+          "deck_slug",
+          "guides_revision",
+          "count",
+          "registered_at"
+        ],
+        "title": "ScriptsRegisteredResponse",
+        "type": "object"
+      },
       "SeatDetail": {
         "properties": {
           "agent": {
@@ -14314,7 +14686,7 @@
     },
     "/api/games/{game_id}/review": {
       "get": {
-        "description": "The post-game review: every declaration this game's seats made,\npaired with what actually happened next, over the whole ledger.\n\n**Deliberately not `game_or_404`.** That call is exactly what stranded\nthe live deployment's only substantively played game: `records` carries\nno foreign key and its rows outlive the game they describe, but\n`GET .../log` checks the game exists before it ever reads them, so 144\nrows became unreachable the moment the game was ended. This route reads\n`store.archived`, which sees past the soft delete, and 404s only when no\nsuch game was ever created.\n\n**Never open, and never mid-game.** Two gates, in this order:\n\n- the caller must hold this game's admin key or one of its seat uids\n  (either may be passed as `uid` or as `key`; both are checked against\n  the credentials the *archived* row kept, so they still work after the\n  game has ended). Anything else is a 404 - the same answer `DELETE\n  /api/games/{id}` gives, and one that does not confirm which uids\n  exist. This is not `visibility.resolve_viewer`: that path treats \"no\n  uid\" as a viewer in its own right, which is right for a debugger's\n  view of a live board and wrong for a credential check.\n- the game must be over (`Game.is_over` - CR 104.1, \"A game ends\n  immediately when a player wins, when the game is a draw, or when the\n  game is restarted\") or ended (`archived.deleted_at`). Otherwise 409.\n  A review shows both seats' plans and reasoning side by side, which is\n  the entire point after a game and would be handing one seat the\n  other's plan during one. Refusing outright is the only version of this\n  that cannot leak: a redacted mid-game review would be a second,\n  subtler copy of the same rule to keep correct. See `_post_game` for\n  what stands in for `Game.is_over` when the board cannot be decoded -\n  and note that neither gate is loosened by that case: an undecodable\n  game with nothing recording an ending is refused exactly as a live one\n  is.\n\n**Never 409 for a snapshot this build cannot decode.** That is what\nstranded a 191-action game the day the engine's schema moved: the whole\nreview is built from the ledger's own frames, none of which needs the\nengine to decode anything, so it is rebuilt from them and marked\n`reconstructed` rather than refused. The engine's refusal is untouched -\nit rides along in `unloadable`, and no `Game` is decoded from that\nsnapshot anywhere.\n\nA seat and the admin key see the same thing here. Post-game, so does\neveryone else who could be shown it - there is no hidden information\nleft to protect and pretending otherwise would make the review useless\nto the person it is for. This is a deliberate decision, stated explicitly\nbecause it is easy to make by accident otherwise: `review.build_review`'s\n`advice` stream (`review.ReviewAdvice`) carries the mtg-buddy advisor's\n`summary`/`reasoning`/`body` for a human seat, which can name cards that\nwere in that seat's own hand at the time it was proposed - and there is\nno redaction of it here, same as `declarations`. The opponent reads it\nonce the game is over, exactly as the advised seat does (see `test_review\n.py`'s `test_the_opponent_reads_the_same_advice_the_human_seat_does`).",
+        "description": "The post-game review: every declaration this game's seats made,\npaired with what actually happened next, over the whole ledger.\n\n**Deliberately not `game_or_404`.** That call is exactly what stranded\nthe live deployment's only substantively played game: `records` carries\nno foreign key and its rows outlive the game they describe, but\n`GET .../log` checks the game exists before it ever reads them, so 144\nrows became unreachable the moment the game was ended. This route reads\n`store.archived`, which sees past the soft delete, and 404s only when no\nsuch game was ever created.\n\n**Never open, and never mid-game.** Two gates, in this order:\n\n- the caller must hold this game's admin key or one of its seat uids\n  (either may be passed as `uid` or as `key`; both are checked against\n  the credentials the *archived* row kept, so they still work after the\n  game has ended). Anything else is a 404 - the same answer `DELETE\n  /api/games/{id}` gives, and one that does not confirm which uids\n  exist. This is not `visibility.resolve_viewer`: that path treats \"no\n  uid\" as a viewer in its own right, which is right for a debugger's\n  view of a live board and wrong for a credential check.\n- the game must be over (`Game.is_over` - CR 104.1, \"A game ends\n  immediately when a player wins, when the game is a draw, or when the\n  game is restarted\") or ended (`archived.deleted_at`). Otherwise 409.\n  A review shows both seats' plans and reasoning side by side, which is\n  the entire point after a game and would be handing one seat the\n  other's plan during one. Refusing outright is the only version of this\n  that cannot leak: a redacted mid-game review would be a second,\n  subtler copy of the same rule to keep correct. See `_post_game` for\n  what stands in for `Game.is_over` when the board cannot be decoded -\n  and note that neither gate is loosened by that case: an undecodable\n  game with nothing recording an ending is refused exactly as a live one\n  is.\n\n**Never 409 for a snapshot this build cannot decode.** That is what\nstranded a 191-action game the day the engine's schema moved: the whole\nreview is built from the ledger's own frames, none of which needs the\nengine to decode anything, so it is rebuilt from them and marked\n`reconstructed` rather than refused. The engine's refusal is untouched -\nit rides along in `unloadable`, and no `Game` is decoded from that\nsnapshot anywhere.\n\nA seat and the admin key see the same thing here. Post-game, so does\neveryone else who could be shown it - there is no hidden information\nleft to protect and pretending otherwise would make the review useless\nto the person it is for. This is a deliberate decision, stated explicitly\nbecause it is easy to make by accident otherwise: `review.build_review`'s\n`advice` stream (`review.ReviewAdvice`) carries the mtg-buddy advisor's\n`summary`/`reasoning`/`body` for a human seat, which can name cards that\nwere in that seat's own hand at the time it was proposed - and there is\nno redaction of it here, same as `declarations`. The opponent reads it\nonce the game is over, exactly as the advised seat does (see `test_review\n.py`'s `test_the_opponent_reads_the_same_advice_the_human_seat_does`).\n\n**The one exception is a play-script run row** (`audit.SCRIPT_RUN_ACTIONS`),\ndropped from `entries` for every caller but the admin key and the seat the\nrun played for (`visibility.hides_script_run`). A run names the seat's\nguides revision, the archetype it believed it faced and its refusals; it\nis a fact about the runner, not about the game, and never reaches the\nopponent, during the game or after it.",
         "operationId": "game_review_api_games__game_id__review_get",
         "parameters": [
           {
@@ -14382,6 +14754,56 @@
           }
         },
         "summary": "Game Review"
+      }
+    },
+    "/api/games/{game_id}/script-runs": {
+      "post": {
+        "description": "Report one play-script run: `phase: start` as it begins, `phase:\nfinish` when it ends (`schemas.ScriptRunIn`).\n\n**This mutates no `Game`, exactly like `declare_plan`.** The moves a\nscript makes go through the action routes, which run every gate on them;\nthis only records that a run happened. So it calls none of\n`records.require_current_board`, `require_reasoning` or `require_plan`,\nand an advisor may reach it (`game_access.ADVISOR_POST_SUFFIXES`).\n\nAuthorised on `?uid=`: a seat uid reports runs for its own seat as role\n`seat`, an advisor uid for the human it watches as role `advisor`, and\nthe admin key for anyone. Another seat's name is a 404; the wrong role\nfor the credential is a 400, so the ledger cannot claim an advisor's\nadvice was a seat's own play.\n\n`start` is behind the kill switch (`code: scripts_disabled`) and refuses\na second start of the same script by the same seat at the same turn and\nstep with exit `already_ran` (`records.record_script_run_start`).\n`finish` writes one `script_run` row with every field of the request and\nthe `game_id`, and is recorded even with the switch off. Both rows are\nomitted from every log read but that seat's, its advisor's and the admin\nkey's (`visibility.redact_log_entry`).",
+        "operationId": "record_script_run_api_games__game_id__script_runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptRunIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Script Run"
       }
     },
     "/api/games/{game_id}/seat": {
@@ -14481,6 +14903,112 @@
           }
         },
         "summary": "Mint Seat"
+      }
+    },
+    "/api/games/{game_id}/seats/{uid}/scripts": {
+      "get": {
+        "description": "The corpus registered under `uid`, to three readers only: that uid\nitself, an advisor of the seat that uid opens, and the admin key.\n\nA corpus is hidden information - the lines a seat means to take and the\narchetypes it plans around - so anyone else is refused the way\n`get_legal_actions` refuses a caller who does not open the seat it names\n(`ValueError`, 400), before the corpus is even looked up, so the answer\ndoes not say whether one exists. 404 only once the caller is entitled\nand nothing is registered.",
+        "operationId": "read_scripts_api_games__game_id__seats__uid__scripts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "uid",
+            "required": true,
+            "schema": {
+              "title": "Uid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptsCorpusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Scripts"
+      },
+      "put": {
+        "description": "Register the play scripts a seat Job runs, under the uid it runs with\n(a seat uid, or an advisor uid for a buddy), replacing that uid's\nprevious corpus.\n\n**The credential is the driver's own**: `?uid=` equal to the path's\n`{uid}`, or this game's admin key. Anything else is a 404, the same\nanswer `declare_plan` gives for writing into another seat's name. An\nadvisor uid gets past `game_access.py` for this one PUT only, and only\nfor its own corpus (`ADVISOR_OWN_PUT_ROUTES`).\n\n**Every script is judged before anything is stored**\n(`records.script_errors`): one refusal and the whole corpus is refused\nwith `code: invalid_scripts` and each `PlaysError`, so a runner never\nruns half of what it meant to register.\n\n**Behind the kill switch**: with `SCRIPTS_ENABLED` off this refuses with\n`code: scripts_disabled` (`records.require_scripts_enabled`).\n\nMutates no `Game` and writes no ledger row. The corpus lives in the\nrepository (`games.scripts` on postgres), so it survives a restart and\nreads the same on every replica.",
+        "operationId": "register_scripts_api_games__game_id__seats__uid__scripts_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "uid",
+            "required": true,
+            "schema": {
+              "title": "Uid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptsRegisterIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptsRegisteredResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register Scripts"
       }
     },
     "/api/games/{game_id}/state-based-actions": {

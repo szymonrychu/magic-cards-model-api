@@ -57,6 +57,7 @@ now an alias for it so every existing import keeps working.
 
 from __future__ import annotations
 
+import copy
 import threading
 import time
 from bisect import bisect_right
@@ -570,6 +571,24 @@ class GameRepository(Protocol):
         """
         ...
 
+    def register_scripts(self, game_id: str, uid: str, corpus: dict[str, Any]) -> None:
+        """Record `corpus` - `{deck_slug, guides_revision, scripts,
+        registered_at}` - as the play scripts registered under `uid`,
+        replacing that uid's previous corpus and no other. A no-op for an
+        unknown or ended game.
+
+        Per uid rather than per player: a seat and its advisor each run their
+        own seat Job under their own uid, and each registers its own corpus.
+        Durable for the reason `advisor_uids` is - a corpus registered on one
+        replica is read back on another, and after a restart."""
+        ...
+
+    def scripts(self, game_id: str, uid: str) -> dict[str, Any] | None:
+        """The corpus registered under `uid`, or `None` when nothing is -
+        including for an unknown or ended game. A copy: mutating it changes
+        nothing stored."""
+        ...
+
     def admin_key(self, game_id: str) -> str | None:
         """This game's admin key, to hand to whoever just created it."""
         ...
@@ -736,6 +755,8 @@ class InMemoryRepository:
         # presents one of these, and it can only do that if an advisor uid
         # is never mistakable for a seat uid. See `Advisor`.
         self._advisors: dict[str, dict[str, Advisor]] = {}
+        # game_id -> uid -> the play-script corpus registered under that uid.
+        self._scripts: dict[str, dict[str, dict[str, Any]]] = {}
         self._admin_keys: dict[str, str] = {}  # game_id -> admin key
         # game_id -> the OIDC subject that created it, only when the creating
         # request carried a valid bearer token - absent (never `None`, just
@@ -1043,6 +1064,17 @@ class InMemoryRepository:
         with self._lock:
             return dict(self._advisors.get(game_id, {}))
 
+    def register_scripts(self, game_id: str, uid: str, corpus: dict[str, Any]) -> None:
+        with self._lock:
+            if game_id not in self._games:
+                return
+            self._scripts.setdefault(game_id, {})[uid] = copy.deepcopy(corpus)
+
+    def scripts(self, game_id: str, uid: str) -> dict[str, Any] | None:
+        with self._lock:
+            corpus = self._scripts.get(game_id, {}).get(uid)
+            return copy.deepcopy(corpus) if corpus is not None else None
+
     def get(self, game_id: str) -> Game | None:
         with self._lock:
             return self._games.get(game_id)
@@ -1081,6 +1113,7 @@ class InMemoryRepository:
                 )
             self._seats.pop(game_id, None)
             self._advisors.pop(game_id, None)
+            self._scripts.pop(game_id, None)
             self._admin_keys.pop(game_id, None)
             self._owner_user_id.pop(game_id, None)
             self._created_at.pop(game_id, None)

@@ -188,6 +188,20 @@ PROTOCOL_VERSION = "seatkit-17"
 #: still holds only the viewer's own cards, and `libraries`/`sideboards` are
 #: still stripped for every viewer but the admin.
 #:
+#: **Extended in place with the play-script routes, deliberately not a bump.**
+#: `PUT /api/games/{id}/seats/{uid}/scripts` registers the corpus a seat Job
+#: runs under its own uid (`{deck_slug, guides_revision, scripts}`, every
+#: script judged by `playscripts.schema` and refused as `invalid_scripts`
+#: with its codes), and `GET` of the same path reads it back to that uid, the
+#: seat's advisor and the admin key only. `POST /api/games/{id}/script-runs`
+#: reports a run: `phase: start` refuses a second start of one script at one
+#: turn and step with exit `already_ran`, and `phase: finish` writes one
+#: `script_run` ledger row that no other seat's log read ever returns. With
+#: `SCRIPTS_ENABLED` off, registering and starting refuse with code
+#: `scripts_disabled`. No MCP tool calls any of them and no existing request
+#: or response moved, so a `seatkit-17` process meets nothing it cannot
+#: express - the same reasoning the `spell_face` widening below gives.
+#:
 #: `seatkit-16` is a **response** shape change: `wait_for_priority` answers an
 #: advisor uid with `available_actions` on a real wake.
 #:
