@@ -58,7 +58,11 @@ other needs a `stack_top` in `true`), `input` (same input, value sets that
 cannot both hold), `true_false` (one normalized condition in one play's
 `true` and the other's `false`), `numeric_range` (count, zone_size, life,
 untapped_mana or int-input ranges on one key that cannot overlap). A `false`
-condition is negated before the input and numeric checks. `play-conflict` is
+condition is negated before the input and numeric checks. A selector's `missing_from` is
+never a dimension of its own: it is part of the normalized condition, its
+`zones` a set like every scalar list, so selectors that differ only in it are
+different keys and prove nothing, while one identical selector still proves a
+range (`>= 1` against `== 0`) or true_false. `play-conflict` is
 raised for two enabled plays that are not exclusive, `next-conflict` for two
 entries of one play's `next`.
 """

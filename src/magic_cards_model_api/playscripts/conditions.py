@@ -25,18 +25,26 @@ information by construction:
 
 Side `opponent` is every player but the viewer; `any` is every player. A
 count or size sums over them; `life` holds when any of them satisfies it.
+
+A selector's `missing_from` reads its zones exactly as a `count` does
+(`presence`), so it too sees only known information: over the opponent's
+hand, library or sideboard only the cards the viewer knows are compared, and
+a card the viewer does not know about is treated as absent - "missing" there
+means "not known to be there". Over the viewer's own library or sideboard it
+reads the contents multiset, which needs `include=contents`.
 """
 
 from __future__ import annotations
 
 import itertools
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic import BaseModel
 
 from ..seatkit import untapped_mana_sources
 from .inputs import input_catalog, supplied_input_problem
-from .selectors import compare, matches
+from .selectors import Present, compare, matches
 
 HIDDEN_CONTENTS = {"library": "library_contents", "sideboard": "sideboard_contents"}
 
@@ -58,14 +66,33 @@ def _conditions(doc: dict[str, Any]):
             yield polarity, index, condition
 
 
+def _missing_froms(node: Any):
+    """Every `missing_from` object anywhere in a play, a move or a selector."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "missing_from" and isinstance(value, dict):
+                yield value
+            else:
+                yield from _missing_froms(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _missing_froms(value)
+
+
 def needs_contents(script: BaseModel | dict[str, Any]) -> bool:
-    """Must the caller fetch the view with `include=contents` to evaluate this?"""
+    """Must the caller fetch the view with `include=contents` to evaluate
+    this play (or build this move)? A count over the viewer's own library or
+    sideboard, or a `missing_from` reading either on side `me`, needs it."""
+    doc = _as_dict(script)
     return any(
         condition.get("kind") == "count"
         and condition.get("zone") in HIDDEN_CONTENTS
         and condition.get("side") in ("me", "any")
         and not condition.get("known_only")
-        for _, _, condition in _conditions(_as_dict(script))
+        for _, _, condition in _conditions(doc)
+    ) or any(
+        missing.get("side") == "me" and set(missing.get("zones") or []) & set(HIDDEN_CONTENTS)
+        for missing in _missing_froms(doc)
     )
 
 
@@ -86,9 +113,11 @@ def _owner(card: dict[str, Any]) -> str | None:
     return card.get("owner") or card.get("controller")
 
 
-def _count(condition: dict[str, Any], view: dict[str, Any], viewer: str) -> int:
-    zone, select = condition["zone"], condition.get("select") or {}
-    names = _names(view, viewer, condition["side"])
+def _entries(
+    view: dict[str, Any], viewer: str, zone: str, side: str, *, known_only: bool = False
+) -> list[tuple[dict[str, Any], int]]:
+    """(card, how many) for every card `viewer` can see on `side` in `zone`."""
+    names = _names(view, viewer, side)
     others = [name for name in names if name != viewer]
     if zone in ("battlefield", "stack"):
         cards = [card for card in view.get(zone) or [] if card.get("controller") in names]
@@ -101,8 +130,34 @@ def _count(condition: dict[str, Any], view: dict[str, Any], viewer: str) -> int:
         cards = list((view.get("hands") or {}).get(viewer) or []) if viewer in names else []
         cards += [card for card in _known(view, viewer).get("hand") or [] if _owner(card) in others]
     else:
-        return _count_hidden_zone(condition, view, viewer, names, others)
-    return sum(1 for card in cards if matches(select, card))
+        return _hidden_zone_entries(view, viewer, zone, names, others, known_only)
+    return [(card, 1) for card in cards]
+
+
+def presence(view: dict[str, Any], viewer: str) -> Present:
+    """The board a selector's `missing_from` compares against: the cards on
+    a side in some zones, read as `count` reads them."""
+    seen: dict[tuple[tuple[str, ...], str], list[dict[str, Any]]] = {}
+
+    def present(zones: Sequence[str], side: str) -> list[dict[str, Any]]:
+        key = (tuple(zones), side)
+        if key not in seen:
+            seen[key] = [card for zone in zones for card, _ in _entries(view, viewer, zone, side)]
+        return seen[key]
+
+    return present
+
+
+def _count(condition: dict[str, Any], view: dict[str, Any], viewer: str) -> int:
+    select, present = condition.get("select") or {}, presence(view, viewer)
+    entries = _entries(
+        view,
+        viewer,
+        condition["zone"],
+        condition["side"],
+        known_only=bool(condition.get("known_only")),
+    )
+    return sum(count for card, count in entries if matches(select, card, present))
 
 
 def _known_zone_cards(view: dict[str, Any], viewer: str, zone: str) -> list[dict[str, Any]]:
@@ -114,27 +169,27 @@ def _known_zone_cards(view: dict[str, Any], viewer: str, zone: str) -> list[dict
     return list(records)
 
 
-def _count_hidden_zone(
-    condition: dict[str, Any],
+def _hidden_zone_entries(
     view: dict[str, Any],
     viewer: str,
+    zone: str,
     names: list[str],
     others: list[str],
-) -> int:
-    zone, select = condition["zone"], condition.get("select") or {}
+    known_only: bool,
+) -> list[tuple[dict[str, Any], int]]:
     known = _known_zone_cards(view, viewer, zone)
-    total = sum(1 for card in known if _owner(card) in others and matches(select, card))
+    entries = [(card, 1) for card in known if _owner(card) in others]
     if viewer not in names:
-        return total
-    if condition.get("known_only"):
-        return total + sum(1 for card in known if _owner(card) == viewer and matches(select, card))
+        return entries
+    if known_only:
+        return entries + [(card, 1) for card in known if _owner(card) == viewer]
     contents = (view.get(HIDDEN_CONTENTS[zone]) or {}).get(viewer)
     if contents is None:
         raise ContentsRequired(
             f"a count over your own {zone} reads {HIDDEN_CONTENTS[zone]}; "
             "fetch the state with include=contents"
         )
-    return total + sum(entry["count"] for entry in contents if matches(select, entry["card"]))
+    return entries + [(entry["card"], entry["count"]) for entry in contents]
 
 
 def _zone_size(condition: dict[str, Any], view: dict[str, Any], viewer: str) -> int:
@@ -264,7 +319,8 @@ def _check(
         mine = controller == viewer
         whose = mine if condition["controller"] == "me" else (controller is not None and not mine)
         seen = {"name": top.get("name"), "controller": controller, "kind": top.get("kind")}
-        return whose and matches(condition.get("select") or {}, top), seen, None
+        select = condition.get("select") or {}
+        return whose and matches(select, top, presence(view, viewer)), seen, None
     if kind == "land_drop_available":
         me = _player(view, viewer)
         available = (

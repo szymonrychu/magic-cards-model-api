@@ -36,7 +36,7 @@ from magic_cards_model_api.playscripts.lint import (
 )
 
 CORPUS_PATH = Path(__file__).resolve().parent / "fixtures" / "conflict_corpus.json"
-CORPUS_SHA256 = "95ba65dc55a62f13169ddcb5c16221bb3313e97fcf48e53b4894d0725a91f049"
+CORPUS_SHA256 = "f196d44c8c0f09d25f9b552160ef5af3a11c92220baa788ece2ad77eab8f3e66"
 CORPUS = json.loads(CORPUS_PATH.read_text(encoding="utf-8"))
 CATALOG = input_catalog(CORPUS["inputs"], CORPUS["matchup_keys"])
 CASES = CORPUS["cases"]
@@ -141,3 +141,23 @@ def test_plays_check_reports_every_case_as_tagged(case, swapped, tmp_path, capsy
         assert warning["code"] == "play-conflict"
         assert warning["plays"] == ["a", "b"]
         assert warning["dimensions"] == case["dimensions"]
+
+
+#: The missing_from cases (B4-10): a selector's `missing_from` is part of the
+#: condition's normalized key, never a dimension of its own.
+MISSING_FROM_CASES = {
+    "missing-from-count-at-least-one-vs-none-same-selector": "exclusive",
+    "missing-from-count-at-least-one-vs-below-one-zones-reordered": "exclusive",
+    "missing-from-same-condition-true-and-false": "exclusive",
+    "missing-from-selectors-differ-only-in-missing-from": "conflicting",
+    "missing-from-different-zones": "conflicting",
+}
+
+
+def test_the_corpus_pins_missing_from_as_part_of_the_key_only():
+    by_name = {case["name"]: case for case in CASES}
+    for name, verdict in MISSING_FROM_CASES.items():
+        case = by_name[name]
+        assert case["verdict"] == verdict
+        assert "proven_by" in case and "dimensions" in case
+        assert "missing_from" in json.dumps(case)

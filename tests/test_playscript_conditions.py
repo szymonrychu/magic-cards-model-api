@@ -675,3 +675,66 @@ def test_a_missing_optional_input_still_does_not_hold_and_is_not_invalid():
         "true",
         None,
     )
+
+
+# -- missing_from in a condition's selector --------------------------------------
+
+TRON = ["Tower", "Mine", "Power-Plant"]
+PIECE = {
+    "types_all": ["Land"],
+    "subtypes_any": TRON,
+    "missing_from": {"zones": ["battlefield", "hand"], "side": "me", "by": "subtype"},
+}
+
+
+def tron(piece: str, **kw: Any) -> dict[str, Any]:
+    return card(f"Urza's {piece.replace('-', ' ')}", type_line=f"Land — Urza's {piece}", **kw)
+
+
+def test_a_count_with_missing_from_counts_only_the_pieces_not_already_held():
+    stocked = contents(*((tron(piece, zone="library"), 2) for piece in TRON))
+    view = state_view(
+        battlefield=[tron("Tower")],
+        hands={"alice": [tron("Mine", zone="hand")]},
+        library_contents=stocked,
+    )
+    assert seen(count("library", "me", ">=", 1, PIECE), view) == 2
+    assert holds(count("library", "me", ">=", 1, PIECE), view)
+    assembled = state_view(
+        battlefield=[tron("Tower")],
+        hands={"alice": [tron("Mine", zone="hand"), tron("Power-Plant", zone="hand")]},
+        library_contents=stocked,
+    )
+    assert seen(count("library", "me", ">=", 1, PIECE), assembled) == 0
+    assert not holds(count("library", "me", ">=", 1, PIECE), assembled)
+
+
+def test_a_stack_top_selector_takes_missing_from():
+    top = card("Shock", type_line="Instant", zone="stack", controller="bob")
+    view = state_view(stack=[top], graveyards={"alice": [card("Shock", type_line="Instant")]})
+    fresh = {"missing_from": {"zones": ["graveyard"], "side": "me", "by": "name"}}
+    assert not holds({"kind": "stack_top", "controller": "opponent", "select": fresh}, view)
+    assert holds(
+        {
+            "kind": "stack_top",
+            "controller": "opponent",
+            "select": {**fresh, "missing_from": {**fresh["missing_from"], "side": "opponent"}},
+        },
+        view,
+    )
+
+
+def test_needs_contents_when_any_missing_from_reads_my_own_library_or_sideboard():
+    def reading(zones: list[str], side: str = "me") -> dict[str, Any]:
+        return {"missing_from": {"zones": zones, "side": side, "by": "name"}}
+
+    assert needs_contents(play(true=[count("hand", "me", ">=", 1, reading(["library"]))]))
+    assert needs_contents(play(true=[count("hand", "me", ">=", 1, reading(["hand", "sideboard"]))]))
+    assert not needs_contents(
+        play(true=[count("hand", "me", ">=", 1, reading(["library"], "opponent"))])
+    )
+    assert not needs_contents(play(true=[count("hand", "me", ">=", 1, reading(["hand"]))]))
+    move = copy.deepcopy(FETCH_SHOCK["moves"][0])
+    move["answers"][0]["pick"]["prefer"] = [reading(["library"])]
+    assert needs_contents(move)
+    assert needs_contents(play(moves=[move]))

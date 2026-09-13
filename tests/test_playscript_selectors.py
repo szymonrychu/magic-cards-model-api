@@ -8,9 +8,12 @@ case-insensitive substrings.
 
 from __future__ import annotations
 
-import pytest
-from playscript_testkit import FETCH_TEXT, bolt, card, fetchland, mountain
+from typing import Any
 
+import pytest
+from playscript_testkit import FETCH_TEXT, bolt, card, contents, fetchland, mountain, state_view
+
+from magic_cards_model_api.playscripts.conditions import ContentsRequired, presence
 from magic_cards_model_api.playscripts.schema import Selector
 from magic_cards_model_api.playscripts.selectors import matches, parse_type_line
 
@@ -269,3 +272,115 @@ def test_a_double_faced_permanent_reads_its_computed_type_line_and_up_face_text(
     assert matches({"types_any": ["Land"]}, meadow)
     assert not matches({"types_any": ["Creature"]}, meadow)
     assert matches({"oracle_has": "pay 3 life"}, meadow)
+
+
+# -- missing_from ----------------------------------------------------------------
+
+TRON = ["Tower", "Mine", "Power-Plant"]
+
+
+def tron(piece: str, **kw: Any) -> dict[str, Any]:
+    """An Urza's land view, typed as the printing is: `Land — Urza's <piece>`."""
+    return card(f"Urza's {piece.replace('-', ' ')}", type_line=f"Land — Urza's {piece}", **kw)
+
+
+def missing(
+    by: str = "subtype", zones: tuple[str, ...] = ("battlefield", "hand"), side: str = "me", **sel
+) -> dict[str, Any]:
+    return {**sel, "missing_from": {"zones": list(zones), "side": side, "by": by}}
+
+
+def library() -> list[dict[str, Any]]:
+    return [tron(piece, zone="library") for piece in TRON]
+
+
+def picked(selector: dict[str, Any], candidates: list[dict[str, Any]], view: dict[str, Any]):
+    present = presence(view, "alice")
+    return [c["name"] for c in candidates if matches(selector, c, present)]
+
+
+def test_missing_from_by_subtype_compares_only_the_selectors_own_subtypes():
+    view = state_view(battlefield=[tron("Tower")], hands={"alice": [tron("Mine", zone="hand")]})
+    assert picked(missing(subtypes_any=TRON), library(), view) == ["Urza's Power Plant"]
+    # Without subtypes_any every subtype is compared, and all three share Urza's.
+    assert picked(missing(), library(), view) == []
+
+
+def test_missing_from_by_subtype_on_a_multi_subtype_candidate():
+    foundry = card("Foundry", type_line="Land — Mountain Plains", zone="library")
+    plains = state_view(battlefield=[card("Plains", type_line="Basic Land — Plains")])
+    assert not matches(
+        missing(subtypes_any=["Mountain", "Plains"]), foundry, presence(plains, "alice")
+    )
+    assert matches(missing(subtypes_any=["Mountain"]), foundry, presence(plains, "alice"))
+    assert not matches(missing(), foundry, presence(plains, "alice"))
+    assert matches(missing(), foundry, presence(state_view(), "alice"))
+
+
+def test_a_candidate_with_no_compared_subtype_never_matches_missing_from():
+    assert not matches(missing(), bolt(zone="library"), presence(state_view(), "alice"))
+    wastes = card("Wastes", type_line="Basic Land", zone="library")
+    assert not matches(missing(types_any=["Land"]), wastes, presence(state_view(), "alice"))
+
+
+def test_a_characteristic_present_only_in_an_excluded_zone_is_still_missing():
+    view = state_view(
+        graveyards={"alice": [tron("Tower", zone="graveyard")]},
+        hands={"alice": [tron("Mine", zone="hand"), tron("Power-Plant", zone="hand")]},
+    )
+    assert picked(missing(subtypes_any=TRON), library(), view) == ["Urza's Tower"]
+    with_graveyard = missing(subtypes_any=TRON, zones=("battlefield", "hand", "graveyard"))
+    assert picked(with_graveyard, library(), view) == []
+
+
+def test_missing_from_by_name_compares_names_between_objects():
+    view = state_view(battlefield=[mountain()], hands={"alice": [bolt()]})
+    shock = card("Shock", type_line="Instant", zone="library")
+    assert not matches(missing(by="name"), bolt(zone="library"), presence(view, "alice"))
+    assert matches(missing(by="name"), shock, presence(view, "alice"))
+    assert not matches(
+        missing(by="name", zones=("battlefield",)), mountain(), presence(view, "alice")
+    )
+    assert matches(missing(by="name", zones=("hand",)), mountain(), presence(view, "alice"))
+    foundry = card("Foundry", type_line="Land — Mountain Plains", zone="library")
+    assert matches(missing(by="name"), foundry, presence(view, "alice")), "names, not subtypes"
+
+
+def test_missing_from_reads_the_side_it_names():
+    view = state_view(battlefield=[tron("Tower", controller="bob")])
+    theirs = missing(subtypes_any=TRON, zones=("battlefield",), side="opponent")
+    assert matches(
+        missing(subtypes_any=TRON), tron("Tower", zone="library"), presence(view, "alice")
+    )
+    assert not matches(theirs, tron("Tower", zone="library"), presence(view, "alice"))
+
+
+def test_missing_from_over_the_opponents_hand_reads_only_known_cards():
+    theirs = missing(subtypes_any=TRON, zones=("hand",), side="opponent")
+    unknown = state_view(hand_count={"bob": 7})
+    known = state_view(known={"hand": [tron("Tower", zone="hand", controller="bob")]})
+    assert matches(theirs, tron("Tower"), presence(unknown, "alice"))
+    assert not matches(theirs, tron("Tower"), presence(known, "alice"))
+
+
+def test_missing_from_over_the_opponents_library_reads_only_known_records():
+    theirs = missing(subtypes_any=TRON, zones=("library",), side="opponent")
+    record = {"index_from_top": 0, "card": tron("Mine", zone="library", controller="bob")}
+    view = state_view(known={"library": [record]})
+    assert picked(theirs, library(), view) == ["Urza's Tower", "Urza's Power Plant"]
+
+
+def test_missing_from_over_my_own_library_reads_the_contents_and_needs_them():
+    mine = missing(subtypes_any=TRON, zones=("library",))
+    view = state_view(library_contents=contents((tron("Tower", zone="library"), 2)))
+    assert picked(mine, [tron(piece, zone="hand") for piece in TRON], view) == [
+        "Urza's Mine",
+        "Urza's Power Plant",
+    ]
+    with pytest.raises(ContentsRequired):
+        matches(mine, tron("Tower"), presence(state_view(), "alice"))
+
+
+def test_a_selector_with_missing_from_cannot_be_matched_without_the_board():
+    with pytest.raises(ValueError, match="missing_from"):
+        matches(missing(), mountain())

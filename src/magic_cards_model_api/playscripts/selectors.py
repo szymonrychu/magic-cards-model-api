@@ -18,7 +18,15 @@ card name (design D3):
   never a colored one; an unknown word matches nothing;
 - `ability_text_has` reads each `AbilityView.text` (and a stack ability's own
   `text`), `oracle_has` reads `oracle_text` (a double-faced card's face
-  text, as above), both as case-insensitive substrings.
+  text, as above), both as case-insensitive substrings;
+- `missing_from {zones, side, by}` compares the candidate with the cards
+  already on that side in those zones, read through `present` (the board
+  `conditions.presence` builds from the same redacted view). `by: subtype`
+  compares the candidate's subtypes that the selector's own `subtypes_any`
+  lists (all its subtypes when there is no `subtypes_any`), `by: name` its
+  view's `name`; the candidate matches only when no card there shares any of
+  them. A candidate with nothing to compare (no such subtype, no name) never
+  matches. The candidate itself counts when it sits in one of the zones.
 
 An empty list constrains nothing. A number the card does not have (a
 non-creature's power, a view with no `mana_value`) never matches.
@@ -27,7 +35,7 @@ non-creature's power, a view with no `mana_value`) never matches.
 from __future__ import annotations
 
 import operator
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from pydantic import BaseModel
@@ -42,6 +50,8 @@ COLOR_LETTERS = {
     "colorless": "c",
 }
 COLORLESS = COLOR_LETTERS["colorless"]
+#: The cards on `side` in `zones` a `missing_from` compares against.
+Present = Callable[[Sequence[str], str], Iterable[dict[str, Any]]]
 
 _COMPARE: dict[str, Callable[[Any, Any], bool]] = {
     ">=": operator.ge,
@@ -102,9 +112,32 @@ def _face(card: dict[str, Any]) -> dict[str, Any] | None:
     return faces[0]
 
 
-def matches(selector: BaseModel | dict[str, Any], card: dict[str, Any]) -> bool:
-    """Does `card` have every characteristic `selector` names?"""
+def _compared(card: dict[str, Any], by: str, subtypes_any: list[str] | None) -> set[str]:
+    """What `missing_from` compares on `card`: its name, or its subtypes
+    (narrowed to `subtypes_any` when given)."""
+    if by == "name":
+        return {str(card["name"])} if card.get("name") else set()
+    subtypes = parse_type_line((_face(card) or card).get("type_line"))[2]
+    return subtypes & _folded(subtypes_any) if subtypes_any else subtypes
+
+
+def _missing(wanted: dict[str, Any], card: dict[str, Any], present: Present) -> bool:
+    missing = wanted["missing_from"]
+    compared = _compared(card, missing["by"], wanted.get("subtypes_any"))
+    return bool(compared) and not any(
+        compared & _compared(other, missing["by"], None)
+        for other in present(missing["zones"], missing["side"])
+    )
+
+
+def matches(
+    selector: BaseModel | dict[str, Any], card: dict[str, Any], present: Present | None = None
+) -> bool:
+    """Does `card` have every characteristic `selector` names? A selector
+    with `missing_from` also needs `present`, the board it compares against."""
     wanted = selector.model_dump(exclude_none=True) if isinstance(selector, BaseModel) else selector
+    if "missing_from" in wanted and present is None:
+        raise ValueError("a selector with missing_from reads the board: pass present")
     face = _face(card)
     printed = face if face is not None else card
     supertypes, types, subtypes = parse_type_line(printed.get("type_line"))
@@ -146,4 +179,6 @@ def matches(selector: BaseModel | dict[str, Any], card: dict[str, Any]) -> bool:
         if not any(phrase in text.casefold() for text in _texts(card)):
             return False
     oracle = str(printed.get("oracle_text") or "").casefold()
-    return "oracle_has" not in wanted or wanted["oracle_has"].casefold() in oracle
+    if "oracle_has" in wanted and wanted["oracle_has"].casefold() not in oracle:
+        return False
+    return "missing_from" not in wanted or _missing(wanted, card, present)

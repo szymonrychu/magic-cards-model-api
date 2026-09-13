@@ -28,6 +28,9 @@ from magic_cards_model_api.playscripts.schema import (
     MAX_PREFER,
     MAX_SELECTOR_WORDS,
     MAX_TARGETS,
+    MISSING_FROM_BY,
+    MISSING_FROM_SIDES,
+    MISSING_FROM_ZONES,
     MOVE_KINDS,
     STEPS,
     Play,
@@ -326,6 +329,7 @@ def test_no_selector_field_takes_a_card_name():
         "counters",
         "ability_text_has",
         "oracle_has",
+        "missing_from",
     }
 
 
@@ -609,3 +613,73 @@ def test_the_wildcard_beside_any_other_key_is_wildcard_with_keys(keys):
 def test_the_wildcard_alone_and_named_keys_alone_are_fine():
     assert play_errors(mutate("opposing_archetypes", ["*"])) == []
     assert play_errors(mutate("opposing_archetypes", ["esper-blink", "dimir-frog"])) == []
+
+
+# -- missing_from ----------------------------------------------------------------
+
+MISSING = {"zones": ["battlefield", "hand"], "side": "me", "by": "subtype"}
+
+
+def with_missing(missing: Any) -> dict[str, Any]:
+    """The fetch-shock example whose first count selector carries `missing`."""
+    return mutate("true.0.select", {"subtypes_any": ["Tower"], "missing_from": missing})
+
+
+def test_the_missing_from_vocabularies_are_closed():
+    assert MISSING_FROM_ZONES == (
+        "battlefield",
+        "graveyard",
+        "exile",
+        "hand",
+        "stack",
+        "library",
+        "sideboard",
+    )
+    assert MISSING_FROM_SIDES == ("me", "opponent")
+    assert MISSING_FROM_BY == ("subtype", "name")
+
+
+@pytest.mark.parametrize("zone", MISSING_FROM_ZONES)
+@pytest.mark.parametrize("side", MISSING_FROM_SIDES)
+@pytest.mark.parametrize("by", MISSING_FROM_BY)
+def test_every_missing_from_zone_side_and_by_validates(zone, side, by):
+    doc = with_missing({"zones": [zone], "side": side, "by": by})
+    assert play_errors(doc) == []
+    Play.model_validate(doc)
+
+
+def test_missing_from_is_a_selector_field_in_picks_prefer_and_conditions():
+    doc = with_missing(MISSING)
+    pick = doc["moves"][0]["answers"][0]["pick"]
+    pick["select"]["missing_from"] = {**MISSING, "by": "name"}
+    pick["prefer"] = [{"missing_from": {"zones": ["graveyard"], "side": "opponent", "by": "name"}}]
+    assert play_errors(doc) == []
+
+
+MALFORMED_MISSING = [
+    ("no-zones", {**MISSING, "zones": []}, "bounds-exceeded"),
+    ("eight-zones", {**MISSING, "zones": ["hand"] * 8}, "bounds-exceeded"),
+    ("unknown-zone", {**MISSING, "zones": ["deck"]}, "malformed-play"),
+    ("zones-not-a-list", {**MISSING, "zones": "hand"}, "malformed-play"),
+    ("side-any", {**MISSING, "side": "any"}, "malformed-play"),
+    ("by-type", {**MISSING, "by": "type"}, "malformed-play"),
+    ("by-a-card-name", {**MISSING, "by": "Urza's Tower"}, "malformed-play"),
+    ("no-by", {"zones": ["hand"], "side": "me"}, "malformed-play"),
+    ("no-side", {"zones": ["hand"], "by": "name"}, "malformed-play"),
+    ("extra-key", {**MISSING, "name": "Urza's Tower"}, "unknown-field"),
+    ("not-an-object", "battlefield", "malformed-play"),
+]
+
+
+@pytest.mark.parametrize(
+    "missing, code",
+    [(missing, code) for _, missing, code in MALFORMED_MISSING],
+    ids=[name for name, _, _ in MALFORMED_MISSING],
+)
+def test_a_malformed_missing_from_is_refused_with_its_code(missing, code):
+    assert codes(with_missing(missing)) == [code]
+
+
+def test_a_zone_past_a_too_long_missing_from_zones_list_is_still_judged():
+    doc = with_missing({**MISSING, "zones": ["hand"] * 7 + ["deck"]})
+    assert codes(doc) == ["bounds-exceeded", "malformed-play"]
