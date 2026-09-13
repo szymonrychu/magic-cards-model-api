@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -1035,6 +1036,46 @@ def test_resume_is_refused_when_the_step_moved(
     assert result.script_exit.exit is Exit.REFUSED
     assert result.script_exit.refusal_source == "runner"
     assert hook.posts("/actions/pass-priority") == []
+
+
+def test_resume_after_the_start_record_is_refused_when_the_turn_moved(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cap trips after the start record posted but before move 1 is
+    sent (`move_index` 0). The start route's once-per-turn-and-step check
+    has already run for that turn, so a resume in a later turn must be
+    refused, never run its moves under the old start record."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+
+    def slow_start(method: str, path: str, body: Any) -> None:
+        if method == "POST" and path.endswith("/script-runs") and body.get("phase") == "start":
+            time.sleep(0.4)
+
+    seat, _ = hooked_seat(seats, alice, after=slow_start)
+    capped = run_script(
+        seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora, max_seconds=0.3
+    )
+    assert capped.finished is False, capped.to_dict()
+    token = capped.resume
+    assert token["move_index"] == 0 and token["chain"]["started"] is True
+    [start] = started(board)
+    assert (token["turn"], token["step"]) == (start["turn"], start["step"])
+
+    store.get(board).turn.turn_number += 1
+    seat, hook = hooked_seat(seats, alice)
+    result = run_script(
+        seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora, resume=token
+    )
+
+    assert result.script_exit.exit is Exit.REFUSED, result.to_dict()
+    assert result.script_exit.refusal_source == "runner"
+    assert hook.posts("/actions/play-land") == []
+    assert len(started(board)) == 1
+    [finish] = finished(board)
+    assert (finish["turn"], finish["step"]) == (start["turn"], start["step"])
 
 
 def test_resume_re_checks_that_nothing_foreign_happened(

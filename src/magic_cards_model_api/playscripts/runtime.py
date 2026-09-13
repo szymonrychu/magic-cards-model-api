@@ -36,10 +36,12 @@ typed fields - nothing a caller needs is only in prose.
 
 Run state lives in the resume token alone (`RESUME_FIELDS`, plus a `chain`
 block carrying the run's bookkeeping across calls). A token's `move_index`
-counts the moves whose action has been sent; a token with `move_index` 0 was
-cut off while waiting and commits nothing, so resuming it simply carries on
-the lifecycle, while any later token is refused once the turn or step has
-moved.
+counts the moves whose action has been sent. A token cut off before its start
+record posted (while waiting) commits nothing, so resuming it simply carries
+on the lifecycle. Once the start record exists - even with `move_index` 0 -
+the token keeps the start's turn and step and is refused once either has
+moved, since the start route's once-per-turn-and-step check ran for that
+position only.
 """
 
 from __future__ import annotations
@@ -363,7 +365,7 @@ def _resume(ctx: _Context, script_id: str, token: dict[str, Any]) -> RunResult:
     play = _normalised(raw)
     if isinstance(play, ScriptExit):
         return RunResult(True, play)
-    if run.move_index > 0:
+    if run.started or run.move_index > 0:
         state = ctx.seat.fetch_state()
         if (state.get("turn_number"), state.get("step")) != (run.turn, run.step):
             moved = _runner_refusal(
@@ -380,7 +382,7 @@ def _guarded(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> R
         return _drive(ctx, run, play, wait=wait)
     except _Unfinished:
         state = ctx.seat.fetch_state()
-        if run.move_index == 0:
+        if not run.started:
             run.turn, run.step = state.get("turn_number"), state.get("step")
         return RunResult(False, None, resume=run.token(ctx.elapsed_ms()), state=state)
 
