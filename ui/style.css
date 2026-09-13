@@ -443,10 +443,18 @@ h3 { font-size: 14px; }
    its land row (`render/board.js`'s `patchBadge`). The land row is a flex
    line of two columns - the badge, then `.fit-cards` holding the lands - so
    the fit sizes the lands to the room the badge leaves and the badge never
-   covers one. The badge takes the row's height and scrolls inside itself
-   rather than growing it, so the row keeps its fixed share and its one-card
-   floor. */
+   covers one. The badge takes the row's height and never grows it, so the
+   row keeps its fixed share and its one-card floor.
+
+   The row is a size container, and the badge packs itself from the height
+   the row really has (the `@container badge-row` block below), not from the
+   window's: at 1280x720 the desktop land row is 74px, two short of the three
+   lines the badge needs, while the old `max-height: 560px` switch still
+   chose three - so the zone counts were clipped. Every overlay a card opens
+   (`#card-zoom`, the menus, `#zone-viewer`) is fixed at the top of the page,
+   so the containment traps none of them. */
 #mtg-board > .fit-row.badge-row {
+  container: badge-row / size;
   align-items: stretch;
   overflow: hidden;
 }
@@ -528,6 +536,16 @@ h3 { font-size: 14px; }
   border-radius: 999px;
   padding: 1px 7px;
   cursor: help;
+}
+
+/* A land row with less room than the badge's three lines (a 76px content
+   box, plus a margin for font metrics) - every phone in landscape, a short
+   desktop window - gets a wider badge packed into two shorter lines. */
+@container badge-row (max-height: 80px) {
+  .player-badge { --badge-w: 236px; gap: 1px 5px; padding: 1px 4px; font-size: 10px; line-height: 12px; }
+  .player-badge .badge-head, .player-badge .badge-zones { flex: 0 1 auto; }
+  .player-badge .life { font-size: 12px; }
+  .player-badge .zone-count { padding: 0 3px; font-size: 9px; line-height: 11px; }
 }
 .info-row .pool { display: flex; align-items: center; gap: 4px; font-size: 12px; }
 .info-row .pool.empty { color: var(--ink-faint); }
@@ -2009,16 +2027,12 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 }
 
 /* A short window - every phone in landscape - tightens the board's own
-   spacing, so the seven rows keep as much of the height as there is, and
-   packs the badges into shorter lines. */
+   spacing, so the seven rows keep as much of the height as there is. The
+   badges pack by their row's height instead (`@container badge-row`). */
 @media (max-height: 560px) {
   #game { gap: 4px; padding-inline: 4px; padding-bottom: 4px; }
   #phase-track { flex-wrap: nowrap; overflow-x: auto; }
-  #mtg-board { gap: 2px; padding: 3px; --row-pad: 2px; --badge-w: 236px; }
-  .player-badge { gap: 1px 5px; padding: 1px 4px; font-size: 10px; line-height: 12px; }
-  .player-badge .badge-head, .player-badge .badge-zones { flex: 0 1 auto; }
-  .player-badge .life { font-size: 12px; }
-  .player-badge .zone-count { padding: 0 3px; font-size: 9px; line-height: 11px; }
+  #mtg-board { gap: 2px; padding: 3px; --row-pad: 2px; }
   #topbar { padding: 4px 8px; }
   #side-panel > div { padding: 6px 8px; }
 }
