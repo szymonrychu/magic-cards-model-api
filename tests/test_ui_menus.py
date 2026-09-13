@@ -288,6 +288,71 @@ def test_an_ability_does_not_repeat_a_cost_its_own_text_already_opens_with():
     ]
 
 
+def test_an_equipment_menu_offers_equip_after_its_own_abilities():
+    """Blade of the Bloodchief has no printed activated ability at all
+    (equip is not one - CR 702.6a builds it separately, `Game.
+    activated_abilities` never lists it), so its menu is Equip alone; a card
+    with a real activated ability besides equip gets both, Equip last so an
+    ordinary ability is never pushed down by it."""
+    plan = {"kind": "menu", "abilities": [], "vehicle": False, "equipment": True}
+    card = {"id": "eq1", "name": "Blade of the Bloodchief", "abilities": []}
+    assert call("m.abilityMenuItems(plan, card)", plan=plan, card=card) == [
+        {
+            "key": "equip",
+            "label": "Equip",
+            "sublabel": "",
+            "match": {"card_id": "eq1", "kind": "equip", "ability_index": None},
+        }
+    ]
+
+    plan_with_ability = {
+        "kind": "menu",
+        "abilities": [{"index": 0, "text": "{T}: Add {C}.", "cost": "{T}"}],
+        "vehicle": False,
+        "equipment": True,
+    }
+    card_with_ability = {
+        "id": "eq2",
+        "name": "Bonesplitter",
+        "abilities": plan_with_ability["abilities"],
+    }
+    items = call("m.abilityMenuItems(plan, card)", plan=plan_with_ability, card=card_with_ability)
+    assert [i["key"] for i in items] == ["activate:0", "equip"]
+
+
+def test_a_plain_permanent_without_the_equipment_flag_never_offers_equip():
+    plan = {"kind": "menu", "abilities": [], "vehicle": False}
+    card = {"id": "pw1", "name": "Test Planeswalker", "abilities": []}
+    assert call("m.abilityMenuItems(plan, card)", plan=plan, card=card) == []
+
+
+def test_parse_candidate_line_splits_the_id_from_the_display_name():
+    """`affordances.candidate_line`'s own format:
+    `"<uuid> <name> (<zone>, <controller>)"` - the id is the first
+    whitespace-delimited token, never a prefix of it."""
+    line = "bears1 Grizzly Bears (battlefield, alice)"
+    assert call("m.parseCandidateLine(line)", line=line) == {
+        "id": "bears1",
+        "name": "Grizzly Bears",
+    }
+
+
+def test_equip_target_menu_items_are_one_per_candidate_line():
+    lines = [
+        "bears1 Grizzly Bears (battlefield, alice)",
+        "ballista1 Walking Ballista (battlefield, alice)",
+    ]
+    assert call("m.equipTargetMenuItems(lines)", lines=lines) == [
+        {"key": "target:bears1", "label": "Equip Grizzly Bears", "sublabel": "", "match": None},
+        {
+            "key": "target:ballista1",
+            "label": "Equip Walking Ballista",
+            "sublabel": "",
+            "match": None,
+        },
+    ]
+
+
 def test_mana_and_defender_items():
     """Neither of these is an action menu: pinning a mana source and aiming
     an attacker are selections inside a flow that has already begun, so

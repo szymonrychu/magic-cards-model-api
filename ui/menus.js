@@ -223,7 +223,8 @@ export function permissionMenuItems(permission) {
 /** The items a permanent's menu offers: one per activated ability, keyed by
  * the ability's own index (not its position in this list - a permanent can
  * offer ability 0 and ability 2 with nothing offerable between them), then
- * Crew last for a Vehicle.
+ * Equip (CR 702.6a) for an Equipment the engine's own legal-actions answer
+ * currently offers it on, then Crew last for a Vehicle.
  *
  * A one-ability permanent's plan is `{kind: "activate", abilityIndex}` and
  * names no list at all, because the click it comes from used to activate
@@ -231,15 +232,65 @@ export function permissionMenuItems(permission) {
  * same menu with one item in it - and the item says which ability it is
  * about, which an "are you sure?" box could not. It is keyed by the plan's
  * own `abilityIndex`, which is exactly the number `beginActivate` has always
- * been handed. */
+ * been handed.
+ *
+ * `plan.equipment` is deliberately NOT "this card's type line says
+ * Equipment" - equip has no entry in `Game.activated_abilities` (there is no
+ * ability index to activate it by), so the only way to know it is legal
+ * *right now* is the engine's own `GET .../legal-actions` answer, unlike
+ * Crew, which is always offered and lets a dry run refuse it. Equip's own
+ * timing restriction (CR 702.6a "activate only as a sorcery") makes the
+ * engine drop the row entirely rather than mark it unaffordable
+ * (`action_rows.legal_action_rows`), so the item must not be offered at all
+ * outside a main phase - `app.js`'s `openPermanentMenu` sets this flag from
+ * that answer, never from the card alone. The match names `ability_index:
+ * null`, the same shape `action_rows.is_equip_row` requires of the row. */
 export function abilityMenuItems(plan, card) {
   const cardId = card && card.id;
   const abilities = plan.kind === "activate" ? soleAbility(plan, card) : plan.abilities || [];
   const items = abilities.map((ability) =>
     abilityItem("activate", ability, abilityMatch(cardId, ability))
   );
+  if (plan.equipment) {
+    items.push(
+      item("equip", "Equip", "", cardId ? { card_id: cardId, kind: "equip", ability_index: null } : null)
+    );
+  }
   if (plan.vehicle) items.push(item("crew", "Crew"));
   return items;
+}
+
+/** One legal-actions candidate line
+ * (`"<uuid> <name> (<zone>, <controller>)"`, `affordances.candidate_line`'s
+ * own format), split into the id `POST .../actions/equip` takes as `target`
+ * and the name a menu shows. The id is the first whitespace-delimited token
+ * - "the whole uuid, never a prefix" per that function's own docstring - so
+ * this only ever needs to split on the first space, never parse a uuid
+ * shape itself. */
+export function parseCandidateLine(line) {
+  const text = line || "";
+  const spaceIndex = text.indexOf(" ");
+  if (spaceIndex < 0) return { id: text, name: text };
+  const id = text.slice(0, spaceIndex);
+  const rest = text.slice(spaceIndex + 1);
+  const parenIndex = rest.lastIndexOf(" (");
+  const name = parenIndex >= 0 ? rest.slice(0, parenIndex) : rest;
+  return { id, name };
+}
+
+/** One item per candidate an equip row's own `targets.slots[0].candidates`
+ * names (CR 702.6a's "target creature you control") - equip has no
+ * `/affordances/{card_id}` entry point of its own (there is no ability
+ * index to ask it about), so the legal-actions row's own candidate lines
+ * are the only source `app.js`'s `beginEquip` has for what it may legally
+ * attach to. Picking one is the whole of the announcement - equip carries no
+ * modes, no X, and exactly one target (CR 301.5c) - so the item's own key
+ * is what `fireEquip` posts as `target`. */
+export function equipTargetMenuItems(lines) {
+  return (lines || []).map((line) => {
+    const { id, name } = parseCandidateLine(line);
+    return item(`target:${id}`, `Equip ${name}`);
+  });
 }
 
 /** The one ability an `{kind: "activate", abilityIndex}` plan is about, as a
