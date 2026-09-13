@@ -406,6 +406,7 @@
     "generation": 1,
     "kept_label": "exiled",
     "kind": "scry",
+    "lethal_damage": [],
     "moved_label": "top of your library",
     "options": [],
     "player": "alice",
@@ -414,7 +415,8 @@
     "source_card_id": "00000000-0000-0000-0000-000000000002",
     "target_maximum": null,
     "target_minimum": 0,
-    "targets": []
+    "targets": [],
+    "trample": false
   },
   "phase": "beginning",
   "play_permissions": {

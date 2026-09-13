@@ -40,6 +40,7 @@ from conftest import add_card
 from fastapi.testclient import TestClient
 from magic_cards_model.machines.decisions import (
     CardSplit,
+    DamageAssignment,
     Decision,
     DecisionKind,
     DeclaredPair,
@@ -429,6 +430,68 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
             (),
             "not a sequence",
             (DeclaredPair(creature=library_ids[0], defender_card=bears_id), "not a pair"),
+        ],
+    )
+
+    # CR 703.4k, 510.1c, 702.19b: two blockers plus trample, so a real choice
+    # exists (the reason `combat.py` asks at all). `bears_id` stands in for
+    # the attacker and `library_ids[0]`/`library_ids[1]` for its two
+    # blockers - `damage_assignment_answer` only reads the `Decision` object
+    # (`cards`, `targets`, `lethal_damage`, `amount`), never the live board,
+    # so an id that happens to sit in a library elsewhere is exactly as good a
+    # stand-in as a real blocker would be, the same way `CHOOSE_TARGETS`'s own
+    # case above reuses `library_ids` as target candidates.
+    first_blocker, second_blocker = library_ids[0], library_ids[1]
+    damage_targets = (
+        TargetRef.to_card(first_blocker),
+        TargetRef.to_card(second_blocker),
+        TargetRef.to_player("bob"),
+    )
+    cases[DecisionKind.ASSIGN_COMBAT_DAMAGE] = (
+        Decision(
+            kind=DecisionKind.ASSIGN_COMBAT_DAMAGE,
+            player="alice",
+            prompt="assign 6 combat damage from Grizzly Bears",
+            amount=6,
+            cards=(bears_id, first_blocker, second_blocker),
+            targets=damage_targets,
+            # 2 lethal to the first blocker, 3 to the second (deathtouch-free
+            # toughness), 0 for the defending player - `Decision.lethal_damage`
+            # is aligned with `targets` positionally.
+            lethal_damage=(2, 3, 0),
+            trample=True,
+        ),
+        [
+            # Legal: both blockers get exactly their lethal damage, the
+            # 1 excess (6 - 2 - 3) tramples through to the player (CR 702.19b).
+            (
+                DamageAssignment(target_card=first_blocker, amount=2),
+                DamageAssignment(target_card=second_blocker, amount=3),
+                DamageAssignment(target_player="bob", amount=1),
+            ),
+            # Illegal: the amounts do not sum to the attacker's power (CR
+            # 510.1a) - the excess was simply never assigned.
+            (
+                DamageAssignment(target_card=first_blocker, amount=2),
+                DamageAssignment(target_card=second_blocker, amount=3),
+            ),
+            # Illegal: trampling past a blocker short of its own lethal
+            # damage (CR 702.19b) - the first blocker gets only 1 of its 2.
+            (
+                DamageAssignment(target_card=first_blocker, amount=1),
+                DamageAssignment(target_card=second_blocker, amount=3),
+                DamageAssignment(target_player="bob", amount=2),
+            ),
+            # Illegal: a target never offered (CR 510.1c).
+            (DamageAssignment(target_card=stray_id, amount=6),),
+            # Illegal: the same recipient named twice.
+            (
+                DamageAssignment(target_card=first_blocker, amount=2),
+                DamageAssignment(target_card=first_blocker, amount=1),
+                DamageAssignment(target_card=second_blocker, amount=3),
+            ),
+            # Malformed shape.
+            "not a sequence",
         ],
     )
 

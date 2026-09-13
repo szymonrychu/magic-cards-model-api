@@ -53,6 +53,26 @@ SCRY = {
 }
 MULLIGAN = {**MAY, "kind": "mulligan", "prompt": "take a mulligan?", "source": None}
 QUALITY = {**MAY, "kind": "choose_a_quality", "prompt": "Choose a card name"}
+# CR 510.1c, 702.19b: a 6-power trampler blocked by two creatures, so 2 and 3
+# damage are each blocker's own lethal (`lethal_damage`, aligned with
+# `targets`) and the 1 excess may reach "bob" only once both blockers have
+# theirs (`trample` true, 0 lethal for the player entry).
+DAMAGE = {
+    **MAY,
+    "kind": "assign_combat_damage",
+    "prompt": "assign 6 combat damage from Grizzly Bears",
+    "source": "Grizzly Bears",
+    "amount": 6,
+    "cards": ["attacker", "blocker1", "blocker2"],
+    "card_labels": ["Grizzly Bears", "Savannah Lions", "Elvish Mystic"],
+    "targets": [
+        {"kind": "card", "id": "blocker1"},
+        {"kind": "card", "id": "blocker2"},
+        {"kind": "player", "id": "bob"},
+    ],
+    "lethal_damage": [2, 3, 0],
+    "trample": True,
+}
 
 
 def test_every_answerable_kind_has_a_view_model() -> None:
@@ -75,6 +95,7 @@ def test_every_answerable_kind_has_a_view_model() -> None:
             "choose_a_mode",
             "put_on_top_or_bottom",
             "order_triggers",
+            "assign_combat_damage",
         ]
     )
 
@@ -191,7 +212,14 @@ def test_the_complex_kinds_are_the_ones_answered_in_the_decision_window() -> Non
         "decisions.js",
         "Object.keys(m.DECISION_KINDS).filter((k) => m.usesDecisionWindow({ kind: k })).sort()",
     )
-    assert kinds == ["choose_cards", "mulligan", "order_triggers", "scry", "surveil"]
+    assert kinds == [
+        "assign_combat_damage",
+        "choose_cards",
+        "mulligan",
+        "order_triggers",
+        "scry",
+        "surveil",
+    ]
     assert run_module("decisions.js", "m.usesDecisionWindow(null)") is False
     assert (
         run_module("decisions.js", "m.usesDecisionWindow({ kind: 'declare_attackers' })") is False
@@ -270,3 +298,79 @@ def test_choose_cards_names_its_zero_answer_by_where_the_cards_are() -> None:
     assert exact_zero["secondary"] is None
     assert exact_zero["submit"]["label"] == "Choose none"
     assert exact_zero["submit"]["answer"] == {"card_ids": []}
+
+
+def test_assign_combat_damage_rows_carry_lethal_and_drafted_amounts() -> None:
+    rows = run_module(
+        "decisions.js",
+        "m.assignDamageRows(p, { damage: { 'card:blocker1': 2 } })",
+        p=DAMAGE,
+    )
+    assert rows == [
+        {
+            "key": "card:blocker1",
+            "id": "blocker1",
+            "kind": "card",
+            "name": "Savannah Lions",
+            "lethal": 2,
+            "amount": 2,
+        },
+        {
+            "key": "card:blocker2",
+            "id": "blocker2",
+            "kind": "card",
+            "name": "Elvish Mystic",
+            "lethal": 3,
+            "amount": 0,
+        },
+        {
+            "key": "player:bob",
+            "id": "bob",
+            "kind": "player",
+            "name": "bob",
+            "lethal": 0,
+            "amount": 0,
+        },
+    ]
+
+
+def test_assign_combat_damage_view_model_gates_submit_on_the_total() -> None:
+    short = run_module(
+        "decisions.js",
+        "m.viewModel(p, d)",
+        p=DAMAGE,
+        d={"damage": {"card:blocker1": 2, "card:blocker2": 3}},
+    )
+    assert short["submit"]["enabled"] is False
+    assert short["controls"][0]["total"] == 5
+    assert short["controls"][0]["power"] == 6
+
+    exact = run_module(
+        "decisions.js",
+        "m.viewModel(p, d)",
+        p=DAMAGE,
+        d={"damage": {"card:blocker1": 2, "card:blocker2": 3, "player:bob": 1}},
+    )
+    assert exact["submit"]["enabled"] is True
+    assert exact["submit"]["answer"] == {
+        "damage": [
+            {"target": "blocker1", "amount": 2},
+            {"target": "blocker2", "amount": 3},
+            {"target": "bob", "amount": 1},
+        ]
+    }
+
+
+def test_assign_combat_damage_answer_drops_zero_amount_recipients() -> None:
+    vm = run_module(
+        "decisions.js",
+        "m.viewModel(p, d)",
+        p=DAMAGE,
+        d={"damage": {"card:blocker1": 6, "card:blocker2": 0}},
+    )
+    assert vm["submit"]["answer"] == {"damage": [{"target": "blocker1", "amount": 6}]}
+
+
+def test_assign_combat_damage_uses_the_decision_window() -> None:
+    assert run_module("decisions.js", "m.usesDecisionWindow(p)", p=DAMAGE) is True
+    assert run_module("decisions.js", "m.usesDecisionPopover(p)", p=DAMAGE) is False

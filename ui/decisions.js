@@ -316,6 +316,79 @@ function topOrBottom(pending) {
   };
 }
 
+/**
+ * The draft key one `assign_combat_damage` recipient answers under - a
+ * blocker (`target.kind === "card"`) by its id, the defending player or
+ * planeswalker (with trample) by its username/id - so a card id and a
+ * player of the same literal value can never collide in `draft.damage`.
+ */
+export function damageTargetKey(target) {
+  return target.kind === "player" ? `player:${target.id}` : `card:${target.id}`;
+}
+
+/**
+ * The recipients an `assign_combat_damage` question offers (CR 510.1c, CR
+ * 702.19b), as `{key, id, kind, name, lethal, amount}` in
+ * `pending.targets`'s own order: `pending.lethal_damage` is aligned with
+ * `targets` positionally (0 for the defending player or planeswalker
+ * itself), and `amount` is whatever `draft.damage` currently holds for that
+ * recipient's `key`, defaulting to 0. Pure and exported so
+ * `tests/test_ui_combat.py` can hold the real shipped labelling and
+ * arithmetic to the rule rather than re-describing it.
+ */
+export function assignDamageRows(pending, draft) {
+  const targets = (pending && pending.targets) || [];
+  const lethal = (pending && pending.lethal_damage) || [];
+  const amounts = (draft && draft.damage) || {};
+  return targets.map((target, index) => {
+    const key = damageTargetKey(target);
+    return {
+      key,
+      id: target.id,
+      kind: target.kind,
+      // A player has no card to label - its own id/username already is the
+      // name; only a card recipient (a blocker) reads `labelOf`.
+      name: target.kind === "player" ? target.id : labelOf(pending, target.id),
+      lethal: lethal[index] || 0,
+      amount: Number(amounts[key]) || 0,
+    };
+  });
+}
+
+/** `assign_combat_damage` (CR 703.4k, 510.1c, 702.19b): one row per
+ * recipient - each blocker, plus the defending player or planeswalker once
+ * trample lets damage reach past them - showing the lethal damage it still
+ * needs, with a number input for how much of the attacker's power to
+ * assign it. The total must equal `pending.amount` (the attacker's power,
+ * CR 510.1a) exactly before the answer is legal to submit; every other
+ * constraint (CR 702.19b's "not past a short blocker") is the server's own
+ * `validate_answer`/`damage_assignment_answer` to refuse, the same way this
+ * window leaves every deeper legality check to the route for every other
+ * kind it renders.
+ */
+function assignDamage(pending, draft) {
+  const rows = assignDamageRows(pending, draft || {});
+  const total = rows.reduce((sum, row) => sum + row.amount, 0);
+  const power = pending.amount;
+  return {
+    kind: pending.kind,
+    title: pending.source ? `${pending.source}: assign damage` : "Assign combat damage",
+    prompt: pending.prompt,
+    controls: [{ type: "damage", rows, total, power }],
+    submit: {
+      label: "Assign",
+      enabled: total === power,
+      answer: {
+        damage: rows
+          .filter((row) => row.amount > 0)
+          .map((row) => ({ target: row.id, amount: row.amount })),
+      },
+    },
+    secondary: null,
+    remaining: null,
+  };
+}
+
 function isPermutationOf(order, ids) {
   return order.length === ids.length && new Set(order).size === ids.length && ids.every((id) => order.includes(id));
 }
@@ -375,6 +448,7 @@ export const DECISION_KINDS = {
   choose_a_mode: choice,
   put_on_top_or_bottom: topOrBottom,
   order_triggers: orderTriggers,
+  assign_combat_damage: assignDamage,
 };
 
 export function viewModel(pending, draft) {
@@ -415,7 +489,14 @@ export function answerFor(pending, draft) {
 // without a DOM, and always one of the drafts the view models above already
 // read.
 
-const WINDOW_KINDS = new Set(["scry", "surveil", "choose_cards", "order_triggers", "mulligan"]);
+const WINDOW_KINDS = new Set([
+  "scry",
+  "surveil",
+  "choose_cards",
+  "order_triggers",
+  "mulligan",
+  "assign_combat_damage",
+]);
 
 /** Whether `pending` is answered in the decision window rather than the
  * prompt box. */

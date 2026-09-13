@@ -42,20 +42,22 @@ from uuid import UUID
 
 from magic_cards_model.machines.decisions import (
     CardSplit,
+    DamageAssignment,
     Decision,
     DecisionKind,
     DeclaredPair,
+    damage_assignment_answer,
     legal_options,
 )
 from magic_cards_model.models.card_state import TargetRef
 
-from .schemas import DeclaredPairRequest
+from .schemas import DamageAssignmentRequest, DeclaredPairRequest
 
 logger = logging.getLogger("mcm.decisions")
 
 #: Every `DecisionKind` that `POST /api/games/{id}/decide` actually knows how
 #: to answer - see `app.py`'s `decide` endpoint, which this set must be kept
-#: in lockstep with. Covers all 18 of the engine's `DecisionKind` members -
+#: in lockstep with. Covers all 19 of the engine's `DecisionKind` members -
 #: there is no longer a second set for "answered somewhere else": pausing put
 #: every decision, `DECLARE_ATTACKERS`/`DECLARE_BLOCKERS` included, on the one
 #: tape a paused command replays from, so the one thing that used to be true
@@ -221,6 +223,7 @@ ANSWERABLE_KINDS = frozenset(
         DecisionKind.ORDER_TRIGGERS,
         DecisionKind.DECLARE_ATTACKERS,
         DecisionKind.DECLARE_BLOCKERS,
+        DecisionKind.ASSIGN_COMBAT_DAMAGE,
     }
 )
 assert frozenset(DecisionKind) == ANSWERABLE_KINDS, (
@@ -259,6 +262,7 @@ ANSWER_FIELD_FOR_KIND: dict[DecisionKind, str] = {
     DecisionKind.CHOOSE_A_MODE: "text",
     DecisionKind.DECLARE_ATTACKERS: "pairs",
     DecisionKind.DECLARE_BLOCKERS: "pairs",
+    DecisionKind.ASSIGN_COMBAT_DAMAGE: "damage",
 }
 assert set(ANSWER_FIELD_FOR_KIND) == set(DecisionKind)
 
@@ -272,7 +276,7 @@ assert set(ANSWER_FIELD_FOR_KIND) == set(DecisionKind)
 #: cannot be collapsed into one: that table names the engine-facing
 #: `machines.decisions.Answer` field the coerced value is handed back on,
 #: this one names the argument the caller writes, and they disagree on ten
-#: of the eighteen kinds.
+#: of the nineteen kinds.
 #:
 #: | kind | `ANSWER_FIELD_FOR_KIND` | `TOOL_FIELD_FOR_KIND` |
 #: |---|---|---|
@@ -293,7 +297,7 @@ assert set(ANSWER_FIELD_FOR_KIND) == set(DecisionKind)
 #:
 #: That divergence is exactly why this ships as *data on the decision* rather
 #: than as prose a seat reasons over: a seat guessing the parameter from the
-#: kind gets ten of eighteen wrong, and it gets them wrong in the worst
+#: kind gets ten of nineteen wrong, and it gets them wrong in the worst
 #: possible way - `accept` and `card_ids` are real parameters of `decide`, so
 #: the guess is accepted by the tool and refused by the route, which is the
 #: measured "this decision needs a yes/no answer ('accept')" refusal.
@@ -316,6 +320,7 @@ TOOL_FIELD_FOR_KIND: dict[DecisionKind, str] = {
     DecisionKind.CHOOSE_A_MODE: "choice",
     DecisionKind.DECLARE_ATTACKERS: "attackers",
     DecisionKind.DECLARE_BLOCKERS: "blocks",
+    DecisionKind.ASSIGN_COMBAT_DAMAGE: "damage",
 }
 assert set(TOOL_FIELD_FOR_KIND) == set(DecisionKind), (
     "TOOL_FIELD_FOR_KIND must cover every DecisionKind: a kind with no entry "
@@ -479,6 +484,18 @@ class PendingDecision:
     #: board. `visibility.redact_pending_decision` withholds it where the
     #: object sits in a zone the viewer cannot see.
     source_card_id: str | None = None
+    #: `assign_combat_damage` only (CR 510.1c, CR 702.19b): the damage each of
+    #: `targets` still needs, aligned with it - 0 for the defending player or
+    #: planeswalker. From the engine's `Decision.lethal_damage`, which already
+    #: counts marked damage, deathtouch (1 is lethal), and damage other
+    #: attackers assign this same step. A client shows this next to each
+    #: recipient so a seat can see how much is "enough" before trampling past
+    #: it (CR 702.19b forbids it otherwise). Empty for every other kind.
+    lethal_damage: tuple[int, ...] = ()
+    #: `assign_combat_damage` only: whether the attacker has trample (CR
+    #: 702.19c), so damage may go past its blockers once each has lethal
+    #: damage. `False` for every other kind.
+    trample: bool = False
 
     #: Which standing question this is, from `repository.GameRepository
     #: .pause_generation` - monotonic per game, bumped only when the pause
@@ -527,6 +544,8 @@ class PendingDecision:
                 if getattr(decision, "default_cards", None) is None
                 else tuple(str(card_id) for card_id in decision.default_cards or ())
             ),
+            lethal_damage=tuple(getattr(decision, "lethal_damage", ()) or ()),
+            trample=bool(getattr(decision, "trample", False)),
         )
 
     def _answer_argument(self, kind: DecisionKind) -> str:
@@ -618,6 +637,15 @@ class PendingDecision:
                 '\'[{"card": "<your creature id>", '
                 '"defender": "<a defending player or planeswalker id>"}]\''
             )
+        if kind is DecisionKind.ASSIGN_COMBAT_DAMAGE:
+            # CR 510.1c/702.19b: one (target, amount) pair per recipient in
+            # `pending_decision.targets` (blockers, plus the defending player
+            # or planeswalker once trample lets damage reach past them), and
+            # the amounts must sum to exactly `pending_decision.amount`.
+            return (
+                '\'[{"target": "<a pending_decision.targets id or player name>", '
+                '"amount": <int>}]\''
+            )
         # CR 509.1, the only kind left.
         return '\'[{"blocker": "<your creature id>", "blocked": "<an attacker id>"}]\''
 
@@ -628,7 +656,7 @@ class PendingDecision:
         The whole point of the field: `kind` -> parameter was documented only
         in the MCP `decide` tool's own ~200-line docstring, so answering cost
         a seat a read and a derivation before it could say anything at all,
-        and ten of the eighteen kinds do not answer on the parameter their
+        and ten of the nineteen kinds do not answer on the parameter their
         engine-side field name suggests (`TOOL_FIELD_FOR_KIND`).
 
         `generation` rides along on every `decide` template because echoing
@@ -666,6 +694,8 @@ class PendingDecision:
             "card_labels": list(self.card_labels),
             "exact": self.exact,
             "default_cards": None if self.default_cards is None else list(self.default_cards),
+            "lethal_damage": list(self.lethal_damage),
+            "trample": self.trample,
             # The two fields that make this block answerable in one call
             # rather than in one call plus a docstring read - see
             # `answer_with` and `TOOL_FIELD_FOR_KIND`. Last in the dict on
@@ -921,6 +951,34 @@ def declared_pairs_answer(
     return tuple(declared)
 
 
+def damage_answer(
+    entries: list[DamageAssignmentRequest], players: Collection[str]
+) -> tuple[DamageAssignment, ...]:
+    """A `decide` request body's `damage`, in the shape `Game.ask` expects for
+    `ASSIGN_COMBAT_DAMAGE` - a `tuple[DamageAssignment, ...]` (CR 510.1c,
+    CR 702.19b).
+
+    Each entry's `target` is a card id (a blocker) or a player's username (the
+    defending player or planeswalker, offered only with trample), told apart
+    the same way `declared_pairs_answer` tells a `defender` token apart -
+    resolved here into `DamageAssignment.target_card`/`target_player`. A
+    malformed target token never reaches the engine at all, matching
+    `declared_pairs_answer`/`targets_answer`. Whether each named target was
+    actually offered, whether the amounts sum to the attacker's power, and
+    whether trample damage reaches past a blocker with less than its own
+    lethal damage assigned is `validate_answer`'s job (via the engine's own
+    `damage_assignment_answer`), not this parser's.
+    """
+    assigned = []
+    for entry in entries:
+        target = player_or_card(entry.target, players)
+        if isinstance(target, UUID):
+            assigned.append(DamageAssignment(target_card=target, amount=entry.amount))
+        else:
+            assigned.append(DamageAssignment(target_player=target, amount=entry.amount))
+    return tuple(assigned)
+
+
 def validate_answer(decision: Decision, value: object) -> None:
     """Refuse `value` with a `ValueError` if the engine's own asker for
     `decision.kind` would refuse it too - run from `decide` *before* the
@@ -1171,6 +1229,16 @@ def validate_answer(decision: Decision, value: object) -> None:
                 continue
             if not isinstance(pair, tuple) or len(pair) != 2:
                 raise ValueError(f"{decision.prompt}: each answer is a (creature, target) pair")
+        return
+
+    if decision.kind is DecisionKind.ASSIGN_COMBAT_DAMAGE:
+        # `damage_assignment_answer` is the engine-side authority for this
+        # kind (`Game.ask` simply calls it, see `models/game.py`) - CR 510.1a's
+        # amounts summing to exactly the attacker's power, CR 510.1c's "one of
+        # its blockers, or the defender with trample", and CR 702.19b's
+        # trample-past-lethal-damage floor are all enforced there, word for
+        # word; this runs the identical check rather than a second copy of it.
+        damage_assignment_answer(decision, value)
         return
 
     raise ValueError(f"{decision.prompt}: decide does not know how to validate a {decision.kind!r}")
