@@ -142,6 +142,15 @@ read off the redacted state view:
   is the decision's own `amount`.
 - Every selection follows one pick rule: nothing matching is `unforeseen`, and
   different cards still tied after `prefer` are `ambiguous`.
+- A `surveil`/`scry` answer with no `to_graveyard`/`to_bottom` at all is a bare
+  answer and means "keep everything on top": the request sends `moved: []`,
+  never leaves the decision unanswered. One naming a selector still sends only
+  the cards it matches, exactly as before.
+- `activate` and `cast` never name `mana_sources`: a play cannot name its own
+  sources today, so the request always leaves the field out and the engine
+  auto-pays (CR 601.2g) over the payer's untapped permanents, matching the
+  CLI's and MCP's own `--sources`/`mana_sources` semantics (an audit row then
+  names only the permanents that actually paid, never every untapped one).
 
 ## Exits
 
@@ -157,6 +166,48 @@ int range. It carries `{name, value, reason}` and names both in its
 `stop_reason`, and it is never reported as `not_applicable`, because nothing
 about the board was judged. The asserted `opposing_archetype` is always one of
 its own enum's values; the play's `opposing_archetypes` judges it.
+
+`already_ran` is scoped per uid role, not merely per seat: the once-per-turn-
+and-step slot a `start` checks is keyed on `(seat, role, script_id, turn,
+step)`, `role` being `seat` or `advisor`. An advisor's advise run of a script
+proposes a move and takes nothing, so it never consumes the seat's own slot
+for the same script, turn and step - the seat's real run afterward proceeds.
+Two advise runs of the same script by the same advisor, in the same turn and
+step, still share a key and the second is `already_ran`.
+
+`already_ran` also never blocks on a finished run that made zero moves
+(`moves_done: 0`) - refused before its first move, `not_applicable`, or the
+like: it touched nothing, so it never consumed the slot, consistent with that
+finish's own `reapplicable_after: true`. Only a finished run naming at least
+one done move, or a bare `start` with no finish yet (still in flight, or a
+crash - it cannot be told apart from one that did move something), blocks a
+retry.
+
+`when` names a board position (step, whose turn, stack), never a priority
+window: the board can already sit at it while the *other* seat holds
+priority there first. The runner never sends its first move into that -
+which the engine can only refuse - and instead waits for this seat's own
+priority within that same occurrence (`wait=true`, the default) or reports
+`not_applicable` (`wait=false`), exactly as it does for a position not yet
+reached.
+
+`POST .../script-runs` (`start` and `finish` alike) and `run_script` are
+refused once the game is over (CR 104.1), the same way every action route
+is: no ledger row for either phase once a game has ended.
+
+A refusal is classified from the outcome's own typed fields, never from its
+prose: `refused` carries the engine's own text, and `stale` is reserved for a
+stale-seq or generation mismatch (`is_stale`'s own `stale: true`). A pass by
+the other seat that itself paused on this run's own pending decision
+(`paused: true`, `paused_on.player` naming this run's seat) is not a board
+change - the run reads that off the entry's typed fields and carries on rather
+than reporting `interrupted`.
+
+`moves_done` counts a move as done the moment the engine accepts it - paid,
+resolved or paused counts, refused does not - so a run that sent and paid a
+move and then stopped mid-resolution (`ambiguous`, `interrupted`,
+`unforeseen`) still reports `moves_done >= 1`. The finish record and the
+resume token's own `moves_done` always agree.
 
 ## Not in the vocabulary
 

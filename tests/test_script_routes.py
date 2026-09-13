@@ -555,6 +555,57 @@ def test_a_finish_that_ran_without_a_start_still_counts_as_already_ran(
     assert again.json()["exit"] == "already_ran"
 
 
+def test_a_zero_move_finish_does_not_burn_the_already_ran_slot(
+    client: TestClient, game: str
+) -> None:
+    """B8-04: a finish that made zero moves (refused before its first move,
+    say) touched nothing, so a retry of the same script at the same turn and
+    step is not `already_ran` - consistent with that finish's own
+    `reapplicable_after: true`."""
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    zero_moves = finish(moves_done=0, moves_total=1, exit="refused", reapplicable_after="true")
+    assert post_run(client, game, zero_moves, uid=alice).status_code == 200
+
+    again = post_run(client, game, run(run_id="run-2"), uid=alice)
+
+    assert again.status_code == 200, again.text
+
+
+def test_a_finish_that_did_move_still_burns_the_slot(client: TestClient, game: str) -> None:
+    """The other half of B8-04's fix: a finish naming at least one move done
+    still blocks a retry, exactly as before."""
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    assert post_run(client, game, finish(moves_done=1), uid=alice).status_code == 200
+
+    again = post_run(client, game, run(run_id="run-2"), uid=alice)
+
+    assert again.status_code == 409, again.text
+    assert again.json()["exit"] == "already_ran"
+
+
+def test_a_start_or_finish_after_game_over_is_refused_with_no_record(
+    client: TestClient, game: str
+) -> None:
+    """B8-06: a finished game (CR 104.1) refuses `script-runs` the same way
+    every action route is refused - both phases, no ledger row for either."""
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    conceded = client.post(f"/api/games/{game}/actions/concede", json={"player": "bob"})
+    assert conceded.status_code == 200 and conceded.json()["winner"] == "alice", conceded.text
+
+    started = post_run(client, game, run(), uid=alice)
+    assert started.status_code == 409, started.text
+    assert started.json().get("type") == "game_over", started.json()
+
+    finished = post_run(client, game, finish(), uid=alice)
+    assert finished.status_code == 409, finished.text
+    assert finished.json().get("type") == "game_over", finished.json()
+
+    assert script_rows(audit.entries(game)) == []
+
+
 def test_a_finish_writes_one_script_run_row_with_every_field(client: TestClient, game: str) -> None:
     alice = seat_uid(game, "alice")
     body = finish()
