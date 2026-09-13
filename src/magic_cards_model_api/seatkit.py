@@ -245,6 +245,17 @@ PROTOCOL_VERSION = "seatkit-18"
 #: paragraph gives: not "no build shipped in between", but "no build is left
 #: unable to express what the api still accepts".
 #:
+#: Engine M1e (task S1) also rides `seatkit-18`, additive response only.
+#: Every `actions[]` entry's `target_slots[]` carries the engine's own
+#: `candidates` (object ids) and `player_candidates` (usernames) beside
+#: `phrase`/`minimum`/`maximum`, on a cast row and on every activation row -
+#: battlefield, loyalty, off-zone and equip alike - and the `targets` block
+#: is written from those same lists rather than a second walk of the board,
+#: so a candidate listed is one the announcement accepts. The equip row is
+#: the engine's own (`keyword: Equip`, no `ability_index`), still served as
+#: `kind: equip`, listed once and priced. An older process ignores the two
+#: new keys, so nothing it sends is refused.
+#:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row
 #: gained `optional_costs`, `printed_produces` and `activate_first`.
