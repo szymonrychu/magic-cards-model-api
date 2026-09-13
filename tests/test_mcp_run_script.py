@@ -223,7 +223,10 @@ def test_a_capped_run_hands_back_a_resume_token_the_next_call_completes(
 
     assert cut["exit"] is None, cut
     assert cut["script"] == script["id"]
-    assert cut["moves_done"] == 0 and cut["moves_total"] == 1
+    # B7-14: the fetch's own activation was already accepted (land sacrificed,
+    # life paid) before the cap cut the run off mid-resolution, so this
+    # counts as a done move even though the run itself is not finished.
+    assert cut["moves_done"] == 1 and cut["moves_total"] == 1
     assert cut["stop_reason"]
     token = cut["resume"]
     assert set(runtime.RESUME_FIELDS) <= set(token)

@@ -69,7 +69,6 @@ from ..seatkit import (
     is_stale,
     pass_until,
     run_action,
-    untapped_mana_sources,
 )
 from . import conditions
 from .inputs import BUILTIN_INPUT, input_catalog
@@ -436,7 +435,10 @@ def _drive(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> Run
                     },
                 ),
             )
-        if not _in_when(state, play["when"], ctx.me):
+        # B8-04: `_in_when` alone is a board position, not a priority window;
+        # a move sent while the other seat holds priority is refused in the
+        # engine's own words. Route through `_wait` whenever either is off.
+        if not _in_when(state, play["when"], ctx.me) or state.get("priority_holder") != ctx.me:
             waited = _wait(ctx, run, play, state, wait=wait)
             if isinstance(waited, ScriptExit):
                 return _end(ctx, run, play, waited)
@@ -463,14 +465,27 @@ def _drive(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> Run
 def _wait(
     ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any], *, wait: bool
 ) -> dict[str, Any] | ScriptExit:
-    """The board at the script's `when`, or why it never got there."""
+    """The board at the script's `when`, or why it never got there.
+
+    B8-04: `when` names a step/turn/stack position, not a priority window,
+    so the board can already satisfy it while the *other* seat still holds
+    priority there - the runner's own first move would then be refused in
+    the engine's own words ("bob does not have priority, alice does"). When
+    the position is already right (`_in_when`), this waits for this seat's
+    own priority within that same occurrence instead of sending a move that
+    can only be refused; it never travels toward a *later* occurrence for
+    that, which `_wait_for_own_priority` (not `pass_until`'s own stepping)
+    keeps distinct."""
     when = play["when"]
+    in_position = _in_when(state, when, ctx.me)
     at_step = state.get("step") in when["steps"] and _whose_matches(state, when, ctx.me)
-    if ctx.seat.advise or not wait or at_step:
+    if ctx.seat.advise or not wait or (at_step and not in_position):
         return ScriptExit(
             Exit.NOT_APPLICABLE,
             failing_condition={"list": "when", "index": None, "seen": _position(state)},
         )
+    if in_position:
+        return _wait_for_own_priority(ctx, when, state)
     until = _next_step(state, when, ctx.me)
     autopass: dict[str, Any] | None = None
     while True:
@@ -496,6 +511,31 @@ def _wait(
             raise _Unfinished
 
 
+def _wait_for_own_priority(
+    ctx: _Context, when: dict[str, Any], state: dict[str, Any]
+) -> dict[str, Any] | ScriptExit:
+    """Poll until this seat holds priority in the occurrence of `when`'s
+    position it is already sitting in (B8-04). Nothing this seat can do
+    moves that along - only the other seat passing or acting does - so this
+    polls exactly like `_settle`'s own idle wait rather than reaching for
+    `pass_until`, which would treat this occurrence as already behind it."""
+    while True:
+        if state.get("priority_holder") == ctx.me:
+            return state
+        if not _in_when(state, when, ctx.me):
+            return ScriptExit(
+                Exit.UNFORESEEN,
+                stop_reason=(
+                    "the board moved on while waiting for this seat's own priority: "
+                    f"now at {_position(state)}"
+                ),
+            )
+        if ctx.time_up():
+            raise _Unfinished
+        time.sleep(ctx.poll_seconds)
+        state = ctx.seat.fetch_state()
+
+
 def _moves(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None:
     total = len(play["moves"])
     if run.move_index > 0:
@@ -506,7 +546,16 @@ def _moves(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None:
     while run.move_index < total:
         if ctx.time_up():
             raise _Unfinished
-        stopped = _send_move(ctx, run, play) or _settle(ctx, run, play)
+        stopped = _send_move(ctx, run, play)
+        # B7-14: the engine accepting the move (paid, resolved or paused) is
+        # what "done" means, so `moves_done` counts it the moment `move_index`
+        # advances - before `_settle` runs, so a stop mid-settle (ambiguous,
+        # interrupted, unforeseen) still reports the move as sent and done.
+        if stopped is None:
+            run.moves_done = run.move_index
+        else:
+            return stopped
+        stopped = _settle(ctx, run, play)
         if stopped is not None:
             return stopped
         run.moves_done = run.move_index
@@ -695,12 +744,26 @@ def _answer(
 
 def _foreign(ctx: _Context, run: _Run, state: dict[str, Any]) -> ScriptExit | None:
     """`interrupted` when another player did something other than pass since
-    the run's watermark, posted a pass that did not go through while this run
-    was mid-resolution, or the stack holds an object this run did not make. A
-    pass that did go through (`allowed`) means that player held priority, so
-    the resolution this run was answering is over (CR 117.3b gives the active
-    player priority after it) and nothing interrupted it. A new object this
-    seat controls is the run's own (its trigger) and is tracked instead."""
+    the run's watermark, posted a pass that neither went through nor merely
+    paused on this run's own decision while this run was mid-resolution, or
+    the stack holds an object this run did not make. A new object this seat
+    controls is the run's own (its trigger) and is tracked instead.
+
+    B7-09, two harmless shapes of "another seat's pass landed while this run
+    was mid-resolution", both read off typed fields rather than the log
+    entry's prose:
+
+    - `allowed: true` - the pass actually went through, which only happens
+      when that player held priority. CR 117.3b gives the active player
+      priority the moment a resolution ends, so this run's own resolution
+      had already finished by then (this run's `mid_resolution` flag simply
+      had not caught up yet); it is cleared and the pass is not foreign.
+    - `paused: true` with `paused_on.player == ctx.me` - the pass itself
+      paused on *this run's own* pending decision (the pause-slot race), so
+      nothing on the board moved.
+
+    A pass that is instead refused, or paused on someone else's decision,
+    still interrupts."""
     seat = ctx.seat
     read = seat.call_json("GET", f"/api/games/{seat.game_id()}/log?since={run.last_seq}")
     if not isinstance(read, dict) or not isinstance(read.get("log"), list):
@@ -725,7 +788,13 @@ def _foreign(ctx: _Context, run: _Run, state: dict[str, Any]) -> ScriptExit | No
         if run.mid_resolution and detail.get("allowed") is True:
             run.mid_resolution = False
             continue
-        if run.mid_resolution:
+        paused_on = detail.get("paused_on")
+        paused_on_me = (
+            detail.get("paused") is True
+            and isinstance(paused_on, dict)
+            and paused_on.get("player") == ctx.me
+        )
+        if run.mid_resolution and not paused_on_me:
             run.last_seq = int(entry["seq"])
             return ScriptExit(
                 Exit.INTERRUPTED,
@@ -837,9 +906,10 @@ def _activate_request(
         if isinstance(sacrificed, ScriptExit):
             return sacrificed
         body["sacrificing"] = [card["id"] for card in sacrificed]
-    sources = [card_id for card_id in untapped_mana_sources(state, me) if card_id != source["id"]]
-    if sources:
-        body["mana_sources"] = sources
+    # B7-10 (B5-05 variant): a play never names its own mana sources, so the
+    # request names none and lets the engine auto-pay (CR 601.2g) - matching
+    # the CLI/MCP semantics of #32. Naming every untapped source here made an
+    # audit row look like it paid with sources that never tapped.
     return "actions/activate", body
 
 
@@ -904,9 +974,7 @@ def cast_body(
         body["alternative_cost"] = chosen[0]["name"] if cost == "printed" else cost
     if targets:
         body["targets"] = targets
-    sources = untapped_mana_sources(state, me)
-    if sources:
-        body["mana_sources"] = sources
+    # B7-10 (B5-05 variant): no sources named, so the engine auto-pays.
     return body
 
 
@@ -954,9 +1022,13 @@ def decide_body(
         body["accept"] = item["accept"]
         return body
     if kind in ("surveil", "scry"):
-        # Naming no split moves nothing: every card looked at stays on top.
         moving = item.get("to_graveyard") if kind == "surveil" else item.get("to_bottom")
-        body["moved"] = [] if moving is None else [c["id"] for c in cards if matches(moving, c)]
+        # A bare answer (no `to_graveyard`/`to_bottom` selector) is schema-valid
+        # and means "keep everything on top": `moved` is empty, not absent -
+        # B7-07, the shape `fetch-surveil-land-keep` uses.
+        body["moved"] = (
+            [card["id"] for card in cards if matches(moving, card)] if moving is not None else []
+        )
         body["top_order"] = None
         return body
     if kind == "put_on_top_or_bottom" and item.get("to_bottom") is not None and cards:
