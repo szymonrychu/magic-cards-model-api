@@ -136,6 +136,4 @@ def test_the_advisor_panel_toggles_through_hidden_and_not_style_display() -> Non
             f"ui/{module} toggles visibility with style.display instead of `el.hidden`"
         )
     panels = (UI / "render" / "panels.js").read_text()
-    assert re.search(r"modal\.hidden\s*=", panels), (
-        "#modal is no longer toggled through `.hidden`"
-    )
+    assert re.search(r"modal\.hidden\s*=", panels), "#modal is no longer toggled through `.hidden`"
