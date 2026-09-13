@@ -267,6 +267,19 @@ move and then stopped mid-resolution (`ambiguous`, `interrupted`,
 `unforeseen`) still reports `moves_done >= 1`. The finish record and the
 resume token's own `moves_done` always agree.
 
+## Guide edits: proposed by PR, merged by the owner (2026-09-13)
+
+`mcp-seat guides propose` renders and commits a matchup `play_plan`/`notes`
+edit plus `NOTES.md`, pushes `seat/<game-id>-guides` and opens a pull request
+against mtg-decks main, returning at once with `awaiting_owner_review` and the
+PR's URL. mtg-decks is a private repo with no GitHub Actions budget, so its
+`ci` and `automerge` workflows never run there: the command never polls for
+checks, automerge, or merge state, and the guide edit is not live until the
+owner reviews and merges the PR by hand. Play scripts are unchanged:
+`mcp-seat plays admit` still pushes straight to mtg-decks main after the
+in-pod gate (commit, rebase, gate, push, retries, a PR only as a rare
+fallback after repeated non-fast-forward races).
+
 ## Not in the vocabulary
 
 Attack, block, mulligan, concede, pass, and any iteration field.

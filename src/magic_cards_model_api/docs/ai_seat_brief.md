@@ -718,6 +718,8 @@ over. Each prints one JSON object, and its `result` says what happened:
 - `mcp-seat guides propose --deck SLUG --game-id GAME` covers the matchup
   advice. Edit only `matchups[].play_plan` and `matchups[].notes` in the
   deck's newest `boarding-plan.json`, plus `decks/SLUG/NOTES.md`. The command
-  regenerates the guides, pushes a `seat/GAME-guides` branch and returns the
-  pull request's `pr_url`. The pull request is merged on CI, not by you. Any
-  other change is `refused`.
+  regenerates the guides, pushes a `seat/GAME-guides` branch, opens a pull
+  request and returns at once with `awaiting_owner_review` and its `pr_url` -
+  it never waits for checks or a merge. mtg-decks has no CI budget, so the
+  owner reviews and merges the pull request by hand; the edit is not live
+  until then, so do not wait for it. Any other change is `refused`.
