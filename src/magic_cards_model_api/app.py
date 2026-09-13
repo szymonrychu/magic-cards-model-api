@@ -390,19 +390,64 @@ def _value_error(_: Request, exc: ValueError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+#: pydantic's error types for a value that is not a UUID. Every `UUID` field a
+#: request carries (body or path) is a card or ability id.
+_UUID_ERROR_TYPES = frozenset({"uuid_parsing", "uuid_type", "uuid_version"})
+
+
 @app.exception_handler(RequestValidationError)
 def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     # No `include_url`/`include_input` kwargs: pydantic 2.13 removed them from
     # `errors()`, and calling them turned every malformed request body into a
     # raw 500 instead of this 422.
-    return JSONResponse(
-        status_code=422,
-        content={
-            "detail": [
-                {key: error.get(key) for key in ("loc", "msg", "type")} for error in exc.errors()
-            ]
-        },
-    )
+    errors = exc.errors()
+    if not any(error.get("type") in _UUID_ERROR_TYPES for error in errors):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": [
+                    {key: error.get(key) for key in ("loc", "msg", "type")} for error in errors
+                ]
+            },
+        )
+    return JSONResponse(status_code=422, content=_malformed_id_refusal(errors))
+
+
+def _malformed_id_refusal(errors: Sequence[Any]) -> dict[str, Any]:
+    """D15: a bad id is refused as one, naming the value and the full form
+    (`decisions.malformed_id_reason`), instead of pydantic's length complaint.
+
+    The same `detail` list as every other 422, each id error rewritten to
+    `type: malformed_card_id`, plus `allowed: False` and `reason` so a seat
+    reads it as the typed refusal every action answer already is. A
+    `UUID | ManaSource` union reports one bad string once per branch
+    (`(..., 0, 'uuid')` and `(..., 0, 'ManaSource')`); only the id branch is
+    what a string meant, so the siblings at that position are dropped and
+    the id error is reported at the position itself."""
+    union_positions = {
+        tuple(error["loc"][:-1])
+        for error in errors
+        if error.get("type") in _UUID_ERROR_TYPES and error["loc"] and error["loc"][-1] == "uuid"
+    }
+    detail: list[dict[str, Any]] = []
+    for error in errors:
+        loc = tuple(error.get("loc") or ())
+        if error.get("type") in _UUID_ERROR_TYPES:
+            position = loc[:-1] if tuple(loc[:-1]) in union_positions else loc
+            detail.append(
+                {
+                    "loc": list(position),
+                    "msg": decisions.malformed_id_reason(error.get("input")),
+                    "type": "malformed_card_id",
+                }
+            )
+        elif not any(loc[: len(position)] == position for position in union_positions):
+            detail.append({key: error.get(key) for key in ("loc", "msg", "type")})
+    return {
+        "detail": detail,
+        "allowed": False,
+        "reason": "; ".join(str(entry["msg"]) for entry in detail),
+    }
 
 
 def game_or_404(game_id: str) -> Game:
@@ -3094,7 +3139,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         try:
             answer_value: Any = decisions.card_ids_answer(req.card_ids)
         except ValueError as exc:
-            return refuse(f"bad card id: {exc}", **detail)
+            return refuse(str(exc), **detail)
         detail["card_ids"] = req.card_ids
     elif kind is DecisionKind.CHOOSE_TARGETS:
         try:
@@ -3114,7 +3159,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         try:
             answer_value = decisions.order_answer(req.order)
         except ValueError as exc:
-            return refuse(f"bad ability id: {exc}", **detail)
+            return refuse(str(exc), **detail)
         detail["order"] = req.order
     elif kind in (
         DecisionKind.MAY,
@@ -3171,7 +3216,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         try:
             answer_value = decisions.card_split_answer(req.moved, req.top_order)
         except ValueError as exc:
-            return refuse(f"bad card id: {exc}", **detail)
+            return refuse(str(exc), **detail)
         detail["moved"] = req.moved
         detail["top_order"] = req.top_order
     elif kind in (DecisionKind.DECLARE_ATTACKERS, DecisionKind.DECLARE_BLOCKERS):

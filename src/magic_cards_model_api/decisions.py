@@ -790,9 +790,33 @@ def card_split_answer(moved: list[str], top_order: list[str] | None) -> CardSpli
     here with a 400 rather than reaching the engine, matching
     `card_ids_answer`.
     """
-    moved_ids = tuple(UUID(card_id) for card_id in moved)
-    order_ids = None if top_order is None else tuple(UUID(card_id) for card_id in top_order)
+    moved_ids = tuple(parse_id(card_id) for card_id in moved)
+    order_ids = None if top_order is None else tuple(parse_id(card_id) for card_id in top_order)
     return CardSplit(moved=moved_ids, top_order=order_ids)
+
+
+#: The one shape every card and ability id takes on the wire.
+ID_FORMAT = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+
+def malformed_id_reason(value: object, noun: str = "card id") -> str:
+    """The refusal for an id that is not one (D15): it names the bad value and
+    the full form, rather than a parser's own complaint about its length.
+    Shared with `app._validation_error`, which says the same for a `UUID`
+    request field."""
+    return (
+        f"{noun} {value!r} is not a full {noun}: expected the 36-character UUID "
+        f"form {ID_FORMAT} (hex digits), exactly as the state view prints it - "
+        "a shortened or truncated id cannot be resolved"
+    )
+
+
+def parse_id(token: str, noun: str = "card id") -> UUID:
+    """`token` as a `UUID`, or `ValueError(malformed_id_reason(...))`."""
+    try:
+        return UUID(token)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError(malformed_id_reason(token, noun)) from exc
 
 
 def card_ids_answer(card_ids: list[str]) -> tuple[UUID, ...]:
@@ -805,7 +829,7 @@ def card_ids_answer(card_ids: list[str]) -> tuple[UUID, ...]:
     docstring for why that check happens here now rather than being left
     to surface, late and misattributed, out of a resumed command's replay.
     """
-    return tuple(UUID(card_id) for card_id in card_ids)
+    return tuple(parse_id(card_id) for card_id in card_ids)
 
 
 def order_answer(order: list[str]) -> tuple[UUID, ...]:
@@ -823,7 +847,7 @@ def order_answer(order: list[str]) -> tuple[UUID, ...]:
     `card_ids_answer` refuses a malformed card id. Whether the ids given are a
     *permutation* of the ones offered is `validate_answer`'s job.
     """
-    return tuple(UUID(ability_id) for ability_id in order)
+    return tuple(parse_id(ability_id, "ability id") for ability_id in order)
 
 
 def targets_answer(targets: list[str]) -> tuple[TargetRef, ...]:
