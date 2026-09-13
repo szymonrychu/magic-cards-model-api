@@ -59,7 +59,14 @@ SECTIONS: dict[str, tuple[str, ...]] = {
     "pending_decision": ("pending_decision",),
     "recent_log": ("recent_log",),
     "known_cards": ("known_cards",),
+    "library_contents": ("library_contents",),
+    "sideboard_contents": ("sideboard_contents",),
 }
+
+#: Sections served only when named: a seat's own library and sideboard as
+#: unordered contents, fetched with `?include=contents` and never part of the
+#: default whole board.
+ON_REQUEST = ("library_contents", "sideboard_contents")
 
 #: Keys no `sections` value ever removes - the turn, the step, who has
 #: priority, whether the game is over, and which seat is asking. Dropping any
@@ -128,14 +135,75 @@ def test_no_options_answers_the_whole_board(board, game, monkeypatch) -> None:
 
     whole = answer(server, {"player_uid": board["alice"]})
 
-    for keys in SECTIONS.values():
+    for section, keys in SECTIONS.items():
         for key in keys:
-            assert key in whole, f"the unfocused board is missing `{key}`"
+            if section in ON_REQUEST:
+                assert key not in whole, f"`{key}` is served only when asked for"
+            else:
+                assert key in whole, f"the unfocused board is missing `{key}`"
     for key in SPINE:
         assert key in whole
-    assert whole["focus"]["sections"] == sorted(SECTIONS)
-    assert whole["focus"]["omitted_sections"] == []
+    assert whole["focus"]["sections"] == sorted(set(SECTIONS) - set(ON_REQUEST))
+    assert whole["focus"]["omitted_sections"] == sorted(ON_REQUEST)
     assert whole["focus"]["side"] == "both"
+
+
+def test_contents_are_fetched_only_when_named(board, game, monkeypatch) -> None:
+    """The contents blocks cost a request flag, not a filter over a board
+    that already carried them: the default answer never asks the api for
+    them, and naming one does."""
+    server = build_server(wired(monkeypatch, game))
+    asked: list[bool] = []
+    original = Seat.fetch_state
+
+    def recording(self: Seat, *, include_contents: bool = False) -> dict[str, Any]:
+        asked.append(include_contents)
+        return original(self, include_contents=include_contents)
+
+    monkeypatch.setattr(Seat, "fetch_state", recording)
+
+    answer(server, {"player_uid": board["alice"]})
+    answer(server, {"player_uid": board["alice"], "sections": "battlefield,known_cards"})
+    focused = answer(server, {"player_uid": board["alice"], "sections": "library_contents"})
+    both = answer(
+        server, {"player_uid": board["alice"], "sections": "sideboard_contents,library_contents"}
+    )
+
+    assert asked == [False, False, True, True]
+    assert list(focused["library_contents"]) == ["alice"]
+    assert "sideboard_contents" not in focused
+    assert list(both["sideboard_contents"]) == ["alice"]
+
+
+def test_side_narrows_known_cards_by_whose_card_it_is(board, client, game, monkeypatch) -> None:
+    """`known_cards` is keyed by the seat that knows, so `side` narrows the
+    records inside that entry by the card's own owner, and the contents
+    blocks by their owner's username."""
+    from magic_cards_model.models import Zone
+
+    add_card(client, game, "Shock", "bob", "hand")
+    add_card(client, game, "Forest", "alice", "library")
+    with store.locked(game) as live:
+        live.reveal(next(card for card in live.player("bob").hand if card.name == "Shock"))
+        live.look(live.player("alice").library[0], "alice")
+        assert live.player("alice").library[0].zone is Zone.LIBRARY
+    server = build_server(wired(monkeypatch, game))
+    sections = "known_cards,library_contents"
+
+    theirs = answer(
+        server, {"player_uid": board["alice"], "sections": sections, "side": "opponent"}
+    )
+    mine = answer(server, {"player_uid": board["alice"], "sections": sections, "side": "mine"})
+    both = answer(server, {"player_uid": board["alice"], "sections": sections})
+
+    assert [card["name"] for card in both["known_cards"]["alice"]["hand"]] == ["Shock"]
+    assert [r["card"]["name"] for r in both["known_cards"]["alice"]["library"]] == ["Forest"]
+    assert [card["name"] for card in theirs["known_cards"]["alice"]["hand"]] == ["Shock"]
+    assert theirs["known_cards"]["alice"]["library"] == []
+    assert theirs["library_contents"] == {}
+    assert mine["known_cards"]["alice"]["hand"] == []
+    assert [r["card"]["name"] for r in mine["known_cards"]["alice"]["library"]] == ["Forest"]
+    assert list(mine["library_contents"]) == ["alice"]
 
 
 def test_each_section_can_be_asked_for_on_its_own(board, game, monkeypatch) -> None:
@@ -277,7 +345,10 @@ def test_a_focused_answer_can_never_show_more_than_the_unfocused_one(
     where the unfocused answer says `both`.
     """
     server = build_server(wired(monkeypatch, game))
-    whole = answer(server, {"player_uid": board["alice"]})
+    # The whole board with every section named, so the on-request contents
+    # blocks are in the superset too; the default answer is itself checked
+    # against that superset below like any other narrowing.
+    whole = answer(server, {"player_uid": board["alice"], "sections": ",".join(SECTIONS)})
     whole.pop("focus")
     allowed = strings_in(whole)
     hidden = {"Elvish Mystic"}  # bob's hand, which alice may never see

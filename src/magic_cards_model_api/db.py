@@ -103,6 +103,12 @@ games = Table(
     # `agent_settings`, which is keyed by username and so cannot tell two
     # credentials on one seat apart. Added by revision `b8d24f6c1a07`.
     Column("advisors", JSONB, nullable=False, server_default="{}"),
+    # uid -> `{"deck_slug", "guides_revision", "scripts", "registered_at"}`:
+    # the play-script corpus each seat Job registered under its own uid
+    # (`PUT /api/games/{id}/seats/{uid}/scripts`). One JSONB map rather than a
+    # table, the same shape as `seats`/`advisors`: it is per-game, read by
+    # uid, and gone with the game. Added by revision `d5b2e8f4a913`.
+    Column("scripts", JSONB, nullable=False, server_default="{}"),
     Column("decklists", JSONB, nullable=False, server_default="{}"),
     Column("agent_settings", JSONB, nullable=False, server_default="{}"),
     Column("ai_players", JSONB, nullable=False, server_default="[]"),

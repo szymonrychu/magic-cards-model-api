@@ -326,6 +326,68 @@ def test_advisors_are_gone_once_the_game_is_deleted(repo: GameRepository) -> Non
 
 
 # ---------------------------------------------------------------------------
+# play-script corpora
+# ---------------------------------------------------------------------------
+
+
+def _corpus(revision: str = "rev-1") -> dict:
+    return {
+        "deck_slug": "boros-aggro",
+        "guides_revision": revision,
+        "scripts": [{"id": "fetch-untapped-shock", "moves": [{"kind": "activate"}]}],
+        "registered_at": "2026-09-13T00:00:00+00:00",
+    }
+
+
+def test_scripts_is_none_until_registered(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+
+    assert repo.scripts(game_id, "uid-1") is None
+
+
+def test_register_scripts_round_trips_per_uid(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.register_scripts(game_id, "uid-1", _corpus("one"))
+    repo.register_scripts(game_id, "uid-2", _corpus("two"))
+
+    assert repo.scripts(game_id, "uid-1") == _corpus("one")
+    assert repo.scripts(game_id, "uid-2") == _corpus("two")
+
+
+def test_register_scripts_replaces_only_that_uids_corpus(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.register_scripts(game_id, "uid-1", _corpus("one"))
+    repo.register_scripts(game_id, "uid-2", _corpus("two"))
+    repo.register_scripts(game_id, "uid-1", _corpus("three"))
+
+    assert repo.scripts(game_id, "uid-1") == _corpus("three")
+    assert repo.scripts(game_id, "uid-2") == _corpus("two")
+
+
+def test_scripts_returned_is_a_copy(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.register_scripts(game_id, "uid-1", _corpus())
+
+    repo.scripts(game_id, "uid-1")["scripts"].append({"id": "tampered"})
+
+    assert repo.scripts(game_id, "uid-1") == _corpus()
+
+
+def test_scripts_is_none_for_an_unknown_game(repo: GameRepository) -> None:
+    repo.register_scripts("no-such-game", "uid-1", _corpus())
+
+    assert repo.scripts("no-such-game", "uid-1") is None
+
+
+def test_scripts_are_gone_once_the_game_is_deleted(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.register_scripts(game_id, "uid-1", _corpus())
+    repo.delete(game_id)
+
+    assert repo.scripts(game_id, "uid-1") is None
+
+
+# ---------------------------------------------------------------------------
 # admin key
 # ---------------------------------------------------------------------------
 

@@ -12,7 +12,15 @@ from uuid import UUID
 
 from magic_cards_model.models import Action, Card
 from magic_cards_model.models.action import ActionKind
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    WithJsonSchema,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
 
@@ -438,6 +446,136 @@ class AdviceApprovedResponse(BaseModel):
     advice_seq: int
     """The `advice` row it approves."""
     player: str
+
+
+class ScriptsRegisterIn(RequestModel):
+    """`PUT /api/games/{game_id}/seats/{uid}/scripts` - the play-script corpus
+    a seat Job runs, registered under the uid it runs with.
+
+    `scripts` is deliberately a list of plain objects here rather than
+    `playscripts.schema.Play`: every script is judged by
+    `playscripts.schema.play_errors`, which answers with the coded errors
+    (`unknown-field`, `forbidden-kind`, ...) mtg-decks' own checker shares,
+    and a refusal the runner can act on is worth more than pydantic's
+    generic 422. The shape each must satisfy is
+    `contract/playscript.schema.json`.
+    """
+
+    deck_slug: Stated
+    """The mtg-decks deck directory these scripts came from."""
+    guides_revision: Stated
+    """The guides checkout revision they were read at."""
+    scripts: list[dict[str, Any]]
+    inputs: Annotated[
+        Any,
+        WithJsonSchema(
+            {"type": "array", "items": {"type": "object", "additionalProperties": True}}
+        ),
+    ] = Field(default_factory=list)
+    """The deck's declared inputs, `decks/<slug>/plays/inputs.json`'s
+    `inputs` list, judged by `playscripts.inputs` and refused as
+    `malformed-inputs`. Empty when the deck declares none. Typed `Any` for the
+    same reason as `scripts`: a value that is not a list of objects reaches
+    `records.inputs_errors` and is refused in its words, not pydantic's."""
+
+
+class ScriptsRegisteredResponse(BaseModel):
+    """`PUT .../seats/{uid}/scripts`'s answer. The corpus itself is not echoed
+    back; `GET` of the same path reads it."""
+
+    registered: bool
+    uid: str
+    deck_slug: str
+    guides_revision: str
+    count: int
+    """How many scripts the corpus holds."""
+    registered_at: str
+
+
+class ScriptsCorpusResponse(BaseModel):
+    """`GET .../seats/{uid}/scripts` - the registered corpus, readable by that
+    uid, the seat's advisor and the admin key only."""
+
+    uid: str
+    deck_slug: str
+    guides_revision: str
+    scripts: list[dict[str, Any]]
+    inputs: list[dict[str, Any]]
+    """The declared inputs registered beside `scripts`; empty for none."""
+    registered_at: str
+
+
+class ScriptRunIn(RequestModel):
+    """`POST /api/games/{game_id}/script-runs` - one script run, reported by
+    the runner at its `start` and again at its `finish`.
+
+    Not a game action: it mutates no `Game`, and the moves a script makes go
+    through the action routes, which gate them. So none of
+    `records.require_current_board`, `require_reasoning` or `require_plan`
+    applies, and there is no `expected_seq` or `reasoning` here to read.
+
+    `start` is refused with `code: unknown_script` when `script_id` is not
+    in the corpus registered under the uid that runs it, and with exit
+    `already_ran` when this `seat` already started (or finished) `script_id`
+    at this `turn` and `step`. `finish`
+    writes one `script_run` row carrying every field below.
+    """
+
+    phase: Literal["start", "finish"]
+    run_id: Stated
+    """The runner's own id for this run."""
+    parent_run_id: str | None = None
+    """The run that chained into this one through `next`, when one did."""
+    seat: Stated
+    """The player this run plays for - the advised human, for an advisor."""
+    role: Literal["seat", "advisor"]
+    """Which kind of uid the runner holds: a seat uid or an advisor uid."""
+    advise: bool = False
+    """Whether the moves were proposed as advice rather than taken."""
+    script_id: Stated
+    script_sha: str | None = None
+    """A digest of the script as registered, so a row names the exact text."""
+    guides_revision: str | None = None
+    priority: int | None = Field(default=None, ge=0)
+    opposing_archetype_asserted: str | None = None
+    """The `opposing_archetype` input the runner believed when it matched."""
+    turn: int = Field(ge=0)
+    """The game's `turn` number the script matched at."""
+    step: Stated
+    """The step the script matched at."""
+    seq_start: int | None = Field(default=None, ge=0)
+    """The ledger position the run started from."""
+    seq_end: int | None = Field(default=None, ge=0)
+    """The ledger position the run ended at."""
+    moves_done: int | None = Field(default=None, ge=0)
+    moves_total: int | None = Field(default=None, ge=0)
+    exit: str | None = None
+    """How the run ended, in the runner's own vocabulary. Required on
+    `finish`."""
+    stop_reason: str | None = None
+    refusal_text: str | None = None
+    """The engine's refusal, verbatim, when a move was refused."""
+    resumes: int | None = Field(default=None, ge=0)
+    """How many times the run resumed across a paused decision."""
+    wall_ms: int | None = Field(default=None, ge=0)
+    reapplicable_after: str | None = None
+    """When the runner may try this script again."""
+
+    @model_validator(mode="after")
+    def _a_finish_names_its_exit(self) -> ScriptRunIn:
+        if self.phase == "finish" and not (self.exit and self.exit.strip()):
+            raise ValueError("a finish must name its exit")
+        return self
+
+
+class ScriptRunResponse(BaseModel):
+    """`POST .../script-runs`'s answer."""
+
+    recorded: bool
+    phase: str
+    run_id: str
+    log_seq: int
+    """The ledger row this report became."""
 
 
 class ReportProblemRequest(RequestModel):
@@ -1339,6 +1477,20 @@ class AbilityView(BaseModel):
     The read-only half of `ManaPoolView.restricted`, one step earlier: a seat
     deciding *which* ability to tap a two-ability source for needs to know what
     the mana would be tied to before it taps, not after."""
+    mana_amount: int | None = None
+    """How much mana this mana ability adds if activated now, or `None` for an
+    ability that is not a mana ability.
+
+    Board-resolved (CR 605.1a's "add X instead" clauses: Urza's Tower beside
+    a Mine and a Power-Plant adds 3), and 0 when it cannot be activated now
+    (CR 602.5, CR 302.6's summoning sickness) or its mana type is undefined
+    (CR 106.5). A restricted ability (`restriction`) carries its full amount:
+    CR 106.6 restricts how the mana is spent, not whether it is made."""
+    mana_cost_value: int | None = None
+    """The mana value of the mana part of this mana ability's own activation
+    cost - 1 for a `{1}, {T}` or `{W/U}, {T}` filter, 0 for a bare `{T}` - or
+    `None` for an ability that is not a mana ability. Read with `mana_amount`,
+    it is what a filter adds net of the mana it consumes."""
 
 
 class OpeningHandOptionView(BaseModel):
@@ -1436,19 +1588,20 @@ class CastOptionView(BaseModel):
     granted_by: str | None = None
 
 
-class CardView(BaseModel):
-    """One card or permanent, wherever it sits (`serialize._card_view`).
+class CardFaceView(BaseModel):
+    """One face of a double-faced card (`serialize._faces_view`), as printed."""
 
-    Almost everything past the first eight fields is `| None`, and that is
-    not laxness: `visibility._redact_facedown_card` replaces a face-down
-    exile/battlefield card's view with a stub carrying only `id`, `zone`,
-    `controller`, `owner`, `tapped`, `face_up`, `name` (`"a face-down card"`),
-    `card_name` (`None`) and `exile_pile` - every other key is simply absent
-    from that dict. A required field here would make FastAPI's own response
-    validation fail on exactly the redaction this api exists to perform.
-    """
+    name: str
+    mana_cost: str | None = None
+    type_line: str | None = None
+    oracle_text: str | None = None
 
-    id: str
+
+class _CardViewFields(BaseModel):
+    """Every field a card view can carry. `CardView` requires the `id`;
+    `ContentsCardView` is the same view that never names one."""
+
+    id: str | None = None
     name: str
     card_name: str | None = None
     zone: str
@@ -1470,11 +1623,20 @@ class CardView(BaseModel):
     not only a zero one - `mana_cost` already says whether one was ever
     announced."""
     oracle_text: str | None = None
+    """The printed rules text. For a double-faced card, the face that is up:
+    the front face anywhere but the battlefield or stack (CR 712.8a)."""
+    faces: list[CardFaceView] | None = None
+    """Double-faced cards only (CR 712): every face, front first."""
     counters: dict[str, int] | None = None
     damage: int | None = None
     summoning_sick: bool | None = None
     power: int | None = None
     toughness: int | None = None
+    colors: list[str] | None = None
+    """Color letters as the engine computes them right now
+    (`serialize._current_colors`)."""
+    mana_value: float | None = None
+    """The engine's `CardState.mana_value`."""
     keywords: list[str] | None = None
     targets: list[str] | None = None
     target_refs: list[TargetRefView] | None = None
@@ -1491,6 +1653,21 @@ class CardView(BaseModel):
     printed_type_line: str | None = None
     printed_power: int | None = None
     printed_toughness: int | None = None
+
+
+class CardView(_CardViewFields):
+    """One card or permanent, wherever it sits (`serialize._card_view`).
+
+    Almost everything past the first eight fields is `| None`, and that is
+    not laxness: `visibility._redact_facedown_card` replaces a face-down
+    exile/battlefield card's view with a stub carrying only `id`, `zone`,
+    `controller`, `owner`, `tapped`, `face_up`, `name` (`"a face-down card"`),
+    `card_name` (`None`) and `exile_pile` - every other key is simply absent
+    from that dict. A required field here would make FastAPI's own response
+    validation fail on exactly the redaction this api exists to perform.
+    """
+
+    id: str
 
 
 class StackSpellView(CardView):
@@ -1601,6 +1778,11 @@ class PlayerView(BaseModel):
     graveyard_count: int
     sideboard_count: int
     maximum_hand_size: int
+    lands_played: int | None = None
+    """Lands this player has played this turn (`Game.lands_played`). Optional
+    only so a snapshot recorded before the field existed still reads."""
+    land_allowance: int | None = None
+    """How many lands this player may play this turn (`Game.land_allowance`)."""
 
 
 class PlayPermissionView(BaseModel):
@@ -1703,22 +1885,36 @@ class CombatView(BaseModel):
 
 class KnownLibraryCardView(BaseModel):
     """One library card a player knows, with where it sits right now
-    (`serialize._known_cards_view`; CR 701.20d ends the record on a
-    reordering)."""
+    (`serialize._known_cards_view`; CR 701.20d ends it on a reordering)."""
 
     index_from_top: int
+    source: str | None = None
+    """The name of what showed the card (`KnownCard.source`), when recorded."""
     card: CardView
 
 
 class KnownCardsView(BaseModel):
     """What one player knows about hidden cards (`Game.known_to`): cards in
-    another player's hand seen by some effect, library cards with their live
-    position, and sideboard cards. The player's own hand and sideboard are
-    never listed - it already sees those whole."""
+    another player's hand, library cards with their live position, and
+    sideboard cards. The player's own hand and sideboard are never listed."""
 
     hand: list[CardView]
     library: list[KnownLibraryCardView]
     sideboard: list[CardView]
+
+
+class ContentsCardView(_CardViewFields):
+    """A card view with no `id` (`serialize._contents_view` never sets one) -
+    a contents entry names no single object, because naming one would pin it
+    to a place in an unordered zone."""
+
+
+class ContentsEntryView(BaseModel):
+    """One entry of `library_contents`/`sideboard_contents`: identical cards
+    counted together, with no id and no position (CR 401.2)."""
+
+    card: ContentsCardView
+    count: int
 
 
 class GameStateView(BaseModel):
@@ -1748,11 +1944,16 @@ class GameStateView(BaseModel):
     graveyards: dict[str, list[CardView]]
     libraries: dict[str, list[CardView]] | None = None
     sideboards: dict[str, list[CardView]] | None = None
-    known_cards: dict[str, KnownCardsView] = Field(default_factory=dict)
-    """Keyed by the player who knows - `serialize._known_cards_view`. Unlike
-    `libraries`/`sideboards`, `visibility.redact_view` never removes this key
-    outright: it keeps only the viewer's own entry (admin sees every
-    player's, a viewer who is nobody gets `{}`)."""
+    known_cards: dict[str, KnownCardsView] | None = None
+    """Keyed by the player who knows. `visibility.redact_view` keeps only the
+    viewer's own entry (the admin sees all, a viewer who is nobody gets
+    `{}`)."""
+    library_contents: dict[str, list[ContentsEntryView]] | None = None
+    """Only with `?include=contents`: each player's own library as an
+    unordered multiset, cut to the viewer's own entry by redaction."""
+    sideboard_contents: dict[str, list[ContentsEntryView]] | None = None
+    """Only with `?include=contents`: the sideboard, shaped like
+    `library_contents`."""
     winner: str | None = None
     drawn: bool
     losers: list[str]

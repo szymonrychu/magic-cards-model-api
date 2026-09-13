@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "id": "fetch-surveil-land",
+  "name": "Fetch a surveil land at their end step",
+  "intent": "At the opponent's end step, crack a fetch for Shadowy Backstreet, which enters tapped anyway, and surveil away an extra land, but only once I am flooding with seven lands or more out. Emeria, the Sky Ruin returns a creature only with seven Plains out and fifteen of the twenty-two lands carry the type, so seven lands is the fewest that can hold them and every land is wanted until then. Below seven lands fetch-surveil-land-keep runs instead. Only at 6 life or more and while fewer than two surveil lands are out.",
+  "priority": 50,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "theirs",
+    "steps": [
+      "end_step"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "ability_text_has": "Search your library for"
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": ">=",
+      "n": 6
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 7,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 2,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "keywords_any": [
+          "Surveil"
+        ]
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "tapped": false,
+          "ability_text_has": "Search your library for"
+        }
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "keywords_any": [
+                "Surveil"
+              ]
+            },
+            "count": 1
+          }
+        },
+        {
+          "decision": "surveil",
+          "to_graveyard": {
+            "types_any": [
+              "Land"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "next": []
+}

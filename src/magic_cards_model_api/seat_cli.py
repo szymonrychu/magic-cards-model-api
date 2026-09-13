@@ -42,6 +42,27 @@ look-then-split (`scry`/`surveil`), `split_destinations` says where each half
 of that answer actually goes, in the asking card's own words. Two short
 strings inside a whole state dump are easy to miss, and these two decide
 which zone the cards end up in - the decision's kind does not.
+
+`script run SCRIPT` and `script list` are `mcp.run_script` and
+`mcp.list_scripts`, argument for argument (`--opposing-archetype`, `--resume`,
+`--wait/--no-wait`, `--max-seconds`, and `--input NAME=VALUE` for `inputs`,
+repeatable), both through `playscripts.script_tools`; like every seat command
+they take `--uid`.
+
+Two commands are not seat actions at all, and need no `--uid`:
+
+- `plays check [--root PATH] [--deck SLUG] [--json]` lints a guides
+  checkout's play scripts offline, and exits 0 when clean (conflict warnings
+  allowed) or 1 with coded errors - the same codes as mtg-decks'
+  `scripts/check_plays.py`.
+- `plays priority`, `plays admit` and `guides propose` work the pod's guides
+  clone (default `/guides`): edit a play's priority, take play-script changes
+  to mtg-decks main, and propose a matchup-plan edit as a pull request the
+  owner reviews and merges by hand (mtg-decks is private with no CI budget,
+  so its `ci`/`automerge` workflows never run; `guides propose` never waits
+  on either). Each prints one JSON result and exits 0 on admitted / pr_opened
+  / awaiting_owner_review / nothing_to_admit (or a priority set), 1
+  otherwise; see `playscripts.admit` and `playscripts.guides_propose`.
 """
 
 from __future__ import annotations
@@ -49,8 +70,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
+from .playscripts import admit as playscripts_admit
+from .playscripts import guides_propose as playscripts_guides
+from .playscripts import lint as playscripts_lint
+from .playscripts import script_tools
+from .playscripts.gitwork import GUIDES_ROOT, SUCCESS
 from .seatkit import (
     AUTOPASS_STEPS,
     AUTOPASS_WHOSE_TURN,
@@ -106,6 +133,29 @@ def split_destinations(state: dict[str, Any] | None) -> str:
     )
 
 
+def parse_inputs(values: list[str] | None) -> dict[str, Any] | None:
+    """`--input NAME=VALUE` flags as the `inputs` mapping `mcp.run_script`
+    takes, or None for none. VALUE is read as JSON where it is JSON (`true`,
+    `3`, `"3"`) and kept as text otherwise (`dimir-frog`), so a bool or int
+    input arrives typed. Raises `ValueError` for a flag with no name or no
+    `=`, and for a name given twice."""
+    if not values:
+        return None
+    parsed: dict[str, Any] = {}
+    for raw in values:
+        name, equals, value = raw.partition("=")
+        name = name.strip()
+        if not equals or not name:
+            raise ValueError(f"--input {raw!r} is not NAME=VALUE")
+        if name in parsed:
+            raise ValueError(f"--input names {name!r} twice: give each input once")
+        try:
+            parsed[name] = json.loads(value)
+        except ValueError:
+            parsed[name] = value
+    return parsed
+
+
 #: `cast`'s and `activate`'s `--sources`. Only the sources named are sent, so a
 #: log row never names a land offered to a cost with no mana in it (B5-05).
 NAMED_SOURCES_HELP = (
@@ -118,7 +168,11 @@ NAMED_SOURCES_HELP = (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--uid", required=True, help="your seat uid, given at dispatch")
+    parser.add_argument(
+        "--uid",
+        default=None,
+        help="your seat uid, given at dispatch; required by every command but `plays` and `guides`",
+    )
     parser.add_argument("--game", default=None, help="game id; default: the live game")
     parser.add_argument("--api", default=DEFAULT_API, help=f"API base url; default {DEFAULT_API}")
     parser.add_argument(
@@ -820,11 +874,193 @@ def build_parser() -> argparse.ArgumentParser:
         help="the report; omit it to read the report from stdin instead",
     )
 
+    script = sub.add_parser(
+        "script",
+        help="run one of your registered play scripts, or list them (mcp run_script/list_scripts)",
+    )
+    script_sub = script.add_subparsers(dest="script_command", required=True)
+
+    def script_flags(command: Any) -> None:
+        """The two arguments `script run` and `script list` share, named and
+        defaulted as `run_script`'s and `list_scripts`' own."""
+        command.add_argument(
+            "--opposing-archetype",
+            dest="opposing_archetype",
+            default="*",
+            metavar="KEY",
+            help=(
+                "the opponent's archetype as you read it, a matchup key; * (the default) "
+                "when you do not know. Same as --input opposing_archetype=KEY; naming two "
+                "different archetypes is refused"
+            ),
+        )
+        command.add_argument(
+            "--input",
+            dest="inputs",
+            action="append",
+            default=None,
+            metavar="NAME=VALUE",
+            help=(
+                "one input your deck's scripts read, repeat it for each: VALUE is read as "
+                "JSON where it is JSON (true, 3) and as text otherwise (dimir-frog)"
+            ),
+        )
+
+    script_run = script_sub.add_parser(
+        "run",
+        help=(
+            "run a script's moves and the one next script that applies, printing "
+            "script_exit and the state; --reasoning is required"
+        ),
+    )
+    script_run.add_argument("script", help="the script's id")
+    script_flags(script_run)
+    script_run.add_argument(
+        "--resume",
+        default="",
+        metavar="JSON",
+        help=(
+            "the script_exit.resume object a run cut off by its time cap printed, "
+            "handed back verbatim, so this call carries on with that run"
+        ),
+    )
+    script_run.add_argument(
+        "--wait",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "wait (passing priority, every stop on) for the script's when; --no-wait "
+            "leaves a script off its step not_applicable"
+        ),
+    )
+    script_run.add_argument(
+        "--max-seconds",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help="cap this call; 0 (the default) runs up to seatkit.MAX_WAIT_SECONDS",
+    )
+    script_list = script_sub.add_parser(
+        "list",
+        help=(
+            "every registered script by priority: whether it applies now and why not, "
+            "its conflicts, and whether more than one applies"
+        ),
+    )
+    script_flags(script_list)
+
+    plays = sub.add_parser(
+        "plays",
+        help=(
+            "CLI-only: check, reprioritise and admit a guides checkout's play scripts "
+            "(no seat, no game, no API)"
+        ),
+    )
+    plays_sub = plays.add_subparsers(dest="plays_command", required=True)
+    check = plays_sub.add_parser(
+        "check",
+        help=(
+            "lint decks/<slug>/plays/*.json: exit 0 when clean (conflict warnings "
+            "allowed), 1 with coded errors"
+        ),
+    )
+    check.add_argument(
+        "--root",
+        type=Path,
+        default=Path("."),
+        help="guides root holding decks/ and meta/card-data.json (default: .)",
+    )
+    check.add_argument(
+        "--deck",
+        action="append",
+        default=[],
+        metavar="SLUG",
+        help="check only this deck; repeatable (default: every deck)",
+    )
+    check.add_argument("--json", action="store_true", help="print the report as JSON")
+
+    reprioritise = plays_sub.add_parser(
+        "priority",
+        help=(
+            "change one play's priority, clamped to 0..100, touching nothing else in the "
+            "file; the delta is recorded in .git/mtg-plays-deltas.json for admit"
+        ),
+    )
+    reprioritise.add_argument("play_id", help="the play's id, its file stem")
+    amount = reprioritise.add_mutually_exclusive_group(required=True)
+    amount.add_argument("--delta", type=int, help="add this (negative lowers it)")
+    amount.add_argument("--set", dest="set_to", type=int, help="set it to this")
+    _guides_target(reprioritise, game=False)
+
+    admit = plays_sub.add_parser(
+        "admit",
+        help=(
+            "commit, rebase, gate and push decks/*/plays/** changes to mtg-decks main "
+            "(a pull request after 3 non-fast-forward pushes); prints admitted | pr_opened | "
+            "refused | conflict | gate_failed | conflict_regression | nothing_to_admit"
+        ),
+    )
+    _guides_target(admit, game=True)
+
+    guides = sub.add_parser(
+        "guides",
+        help=(
+            "CLI-only: propose a deck-guide edit as a pull request the owner merges by hand "
+            "(no seat, no game, no API)"
+        ),
+    )
+    guides_sub = guides.add_subparsers(dest="guides_command", required=True)
+    propose = guides_sub.add_parser(
+        "propose",
+        help=(
+            "render and commit a matchups[].play_plan / notes edit of the newest boarding plan "
+            "and NOTES.md, push seat/<game-id>-guides and open a pull request the owner merges "
+            "by hand - returns at once, never waits on CI or automerge"
+        ),
+    )
+    _guides_target(propose, game=True)
+
     return parser
 
 
+def _guides_target(parser: argparse.ArgumentParser, *, game: bool) -> None:
+    parser.add_argument("--deck", required=True, metavar="SLUG", help="the deck's slug")
+    if game:
+        parser.add_argument(
+            "--game-id", required=True, help="the game this change came out of (Game-Id trailer)"
+        )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=GUIDES_ROOT,
+        help=f"the guides git checkout (default: {GUIDES_ROOT})",
+    )
+
+
+def _emit(result: dict[str, Any], success: frozenset[str] = SUCCESS) -> int:
+    print(json.dumps(result, indent=2))
+    return 0 if result.get("result") in success else 1
+
+
 def run(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "plays" and args.plays_command == "check":
+        # Offline by design: a lint over files, so no uid, no API, no seat.
+        return playscripts_lint.run_cli(args.root, args.deck or None, as_json=args.json)
+    if args.command == "plays" and args.plays_command == "priority":
+        return _emit(
+            playscripts_admit.set_priority(
+                args.root, args.deck, args.play_id, delta=args.delta, value=args.set_to
+            ),
+            frozenset({"priority_set"}),
+        )
+    if args.command == "plays":
+        return _emit(playscripts_admit.admit(args.root, args.deck, args.game_id))
+    if args.command == "guides":
+        return _emit(playscripts_guides.propose(args.root, args.deck, args.game_id))
+    if not args.uid:
+        parser.error("the following arguments are required: --uid")
     seats = Seats(args.api, args.game)
     # The same check every MCP tool makes through `_guarded`, which this
     # transport simply did not have: an API speaking a different
@@ -1195,6 +1431,38 @@ def run(argv: list[str] | None = None) -> int:
             print(answer.text)
             return 1
         print(json.dumps(entries, indent=1, sort_keys=True))
+    elif args.command == "script":
+        # `playscripts.script_tools` is `mcp.run_script`/`list_scripts` too, so
+        # the two front ends differ only in what they print.
+        try:
+            inputs = parse_inputs(args.inputs)
+        except ValueError as exc:
+            print(exc)
+            return 1
+        if args.script_command == "run":
+            answer = script_tools.run(
+                seat,
+                seats.script_corpora,
+                script=args.script,
+                reasoning=args.reasoning or "",
+                opposing_archetype=args.opposing_archetype,
+                resume=args.resume,
+                wait=args.wait,
+                max_seconds=args.max_seconds,
+                inputs=inputs,
+            )
+        else:
+            answer = script_tools.listing(
+                seat,
+                seats.script_corpora,
+                opposing_archetype=args.opposing_archetype,
+                inputs=inputs,
+            )
+        if isinstance(answer, str):
+            print(answer)
+            return 1
+        print(json.dumps(answer, indent=1, sort_keys=args.script_command == "run"))
+        note(answer.get("state"))
     elif args.command == "report":
         # A report is long prose full of quotes, braces and backticks. Passing
         # it as an argument means the shell sees it first, and command

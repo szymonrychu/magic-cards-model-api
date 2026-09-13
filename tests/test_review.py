@@ -22,11 +22,13 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi.testclient import TestClient
+from playscript_testkit import FETCH_SHOCK, SLUG
 from test_unloadable_games import engine_refusal
 from test_unloadable_games import unloadable as unloadable  # noqa: PLC0414 - a fixture, re-exported
 
 from magic_cards_model_api import audit, review
-from magic_cards_model_api.repository import ArchivedGame
+from magic_cards_model_api.repository import Advisor, ArchivedGame
+from magic_cards_model_api.store import store
 
 PLAN: dict[str, Any] = {
     "board_read": "she is at 4 with no blockers and one card in hand",
@@ -987,5 +989,115 @@ def test_the_opponent_reads_the_same_advice_the_human_seat_does(client: TestClie
             assert row["summary"] == "play the Forest"
             assert row["reasoning"] == "this keeps the curve on track"
             assert row["body"] == {"card_id": card_id}
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+# ---------------------------------------------------------------------------
+# play-script run rows: not moves, and never the opponent's to read
+# ---------------------------------------------------------------------------
+
+
+def _script_run(client: TestClient, game_id: str, uid: str, phase: str, **over: Any):
+    body: dict[str, Any] = {
+        "phase": phase,
+        "run_id": "run-1",
+        "seat": "bob",
+        "role": "advisor",
+        "advise": True,
+        "script_id": FETCH_SHOCK["id"],
+        "guides_revision": "0123abcd",
+        "opposing_archetype_asserted": "dimir-frog",
+        "turn": 1,
+        "step": "precombat_main",
+        **({"exit": "completed", "refusal_text": "a secret refusal"} if phase == "finish" else {}),
+        **over,
+    }
+    return client.post(f"/api/games/{game_id}/script-runs", params={"uid": uid}, json=body)
+
+
+def _advised_run_then_the_real_move(client: TestClient) -> tuple[dict[str, Any], int]:
+    """bob is advised to play a Forest, the buddy advising bob reports a
+    script run for bob, then bob plays the Forest and alice concedes."""
+    info = _agent_game(client, active="bob")
+    game_id = info["game_id"]
+    store.register_advisors(game_id, {"bobs-advisor": Advisor(player="bob")})
+    registered = client.put(
+        f"/api/games/{game_id}/seats/bobs-advisor/scripts",
+        params={"uid": "bobs-advisor"},
+        json={"deck_slug": SLUG, "guides_revision": "0123abcd", "scripts": [FETCH_SHOCK]},
+    )
+    assert registered.status_code == 200, registered.text
+    assert _declare(client, info).status_code == 200
+    card_id = _card_id(client, game_id, "Forest", "bob")
+    advice_seq = _advise(client, game_id, body={"card_id": card_id}, summary="play the Forest")
+    for phase in ("start", "finish"):
+        reported = _script_run(client, game_id, "bobs-advisor", phase)
+        assert reported.status_code == 200, reported.text
+    played = client.post(
+        f"/api/games/{game_id}/actions/play-land",
+        json={"player": "bob", "card_id": card_id, "reasoning": "taking the advice"},
+    )
+    assert played.status_code == 200, played.text
+    assert played.json()["allowed"] is True, played.text
+    conceded = client.post(
+        f"/api/games/{game_id}/actions/concede",
+        json={"player": "alice", "reasoning": "no way back"},
+    )
+    assert conceded.status_code == 200, conceded.text
+    return info, advice_seq
+
+
+def test_a_script_run_row_is_never_the_move_advice_was_followed_by(client: TestClient) -> None:
+    info, advice_seq = _advised_run_then_the_real_move(client)
+    game_id = info["game_id"]
+    try:
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        row = _advice_row(body, advice_seq)
+        assert row["did"] is not None
+        assert row["did"]["action"] == "play_land", row["did"]
+        assert row["followed"] is True
+        assert row["refused"] == []
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_script_run_row_is_not_a_declared_seats_move(client: TestClient) -> None:
+    info, _ = _advised_run_then_the_real_move(client)
+    game_id = info["game_id"]
+    try:
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        declaration = body["declarations"][0]
+        for side in ("did", "opponent_did"):
+            actions = [entry["action"] for entry in declaration[side]]
+            assert not set(actions) & set(audit.SCRIPT_RUN_ACTIONS), (side, actions)
+        assert "play_land" in [entry["action"] for entry in declaration["did"]]
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_the_opponents_review_omits_the_script_run_rows(client: TestClient) -> None:
+    """Post-game the review shows both seats' plans and advice, but a script
+    run is not part of that: it never reaches the opponent, live or after."""
+    info, _ = _advised_run_then_the_real_move(client)
+    game_id = info["game_id"]
+    try:
+        opponent = _review(client, game_id, uid=info["seat_uids"]["alice"])
+        assert opponent.status_code == 200, opponent.text
+        actions = [entry["action"] for entry in opponent.json()["entries"]]
+        assert not set(actions) & set(audit.SCRIPT_RUN_ACTIONS), actions
+        assert "dimir-frog" not in opponent.text
+        assert "a secret refusal" not in opponent.text
+        assert "play_land" in actions, "only the script rows are dropped"
+
+        for params in ({"uid": info["seat_uids"]["bob"]}, {"key": info["admin_key"]}):
+            own = _review(client, game_id, **params)
+            assert own.status_code == 200, own.text
+            kept = [
+                e["action"]
+                for e in own.json()["entries"]
+                if e["action"] in audit.SCRIPT_RUN_ACTIONS
+            ]
+            assert kept == [audit.SCRIPT_RUN_STARTED_ACTION, audit.SCRIPT_RUN_ACTION], params
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})

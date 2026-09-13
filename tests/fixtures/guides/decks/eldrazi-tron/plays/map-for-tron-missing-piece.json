@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "id": "map-for-tron-missing-piece",
+  "name": "Crack the land-search artifact for an Urza's piece that is on neither my battlefield nor in my hand",
+  "intent": "Applies when at least one Urza's piece - Tower, Mine or Power-Plant - has a copy in my library and no copy on my battlefield or in my hand, and fetches one such piece. Expedition Map shape. A piece is missing when none is on my battlefield or in my hand; a copy in my graveyard or exile does not assemble Tron, so that piece is still missing and still fetched. The count and the search answer both read missing_from over battlefield and hand by subtype, narrowed to the three Urza's subtypes (every Tron land shares the Urza's subtype itself), so one play applies exactly when a missing piece is available and none applies otherwise: no walk order, no gap for a copy in the graveyard or exile. With two or three pieces missing the answer prefers Tower, then Mine, then Power-Plant: assembled Tron makes seven mana from Tower's three and two each from Mine and Power-Plant, so Tower is the piece whose absence costs the most, and the order keeps the one the three earlier land-search plays walked. One play keeps five of the six active slots free.",
+  "priority": 60,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Artifact"
+        ],
+        "tapped": false,
+        "ability_text_has": "library for a land card"
+      }
+    },
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 2
+    },
+    {
+      "kind": "count",
+      "zone": "library",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "subtypes_any": [
+          "Tower",
+          "Mine",
+          "Power-Plant"
+        ],
+        "missing_from": {
+          "zones": [
+            "battlefield",
+            "hand"
+          ],
+          "side": "me",
+          "by": "subtype"
+        }
+      }
+    }
+  ],
+  "false": [],
+  "moves": [
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Artifact"
+          ],
+          "tapped": false,
+          "ability_text_has": "library for a land card"
+        }
+      },
+      "ability_text_has": "library for a land card",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "subtypes_any": [
+                "Tower",
+                "Mine",
+                "Power-Plant"
+              ],
+              "missing_from": {
+                "zones": [
+                  "battlefield",
+                  "hand"
+                ],
+                "side": "me",
+                "by": "subtype"
+              }
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "subtypes_any": [
+                  "Tower"
+                ]
+              },
+              {
+                "subtypes_any": [
+                  "Mine"
+                ]
+              },
+              {
+                "subtypes_any": [
+                  "Power-Plant"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "next": []
+}

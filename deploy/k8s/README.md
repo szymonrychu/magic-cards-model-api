@@ -318,16 +318,70 @@ shadow each other.
 
 ### The GitHub PAT for the deck guides
 
+Every seat Job's `guides` initContainer makes a **writable** clone of the
+private deck-guides repo, `szymonrychu/mtg-decks` (`deploy/guides-clone.sh`:
+`main` fetched with `--filter=blob:none`, a local `main` tracking
+`origin/main`), and the agent commits guide changes in it, pushes a branch and
+opens a pull request. So the token needs write access, to that one repo only.
+
+Create a **fine-grained PAT** (GitHub - Settings - Developer settings -
+Fine-grained tokens) with:
+
+| setting | value |
+|---|---|
+| Repository access | Only select repositories: `szymonrychu/mtg-decks` |
+| Contents | Read and write |
+| Pull requests | Read and write |
+| Metadata | Read-only (GitHub adds it automatically) |
+| Workflows | **No access** - never grant it: it would let a pushed branch rewrite the repo's CI |
+| everything else | No access |
+
+A classic PAT is not acceptable any more: its `repo` scope is every repo the
+account can reach.
+
 ```sh
 kubectl -n mtg-engine create secret generic mtg-decks-git \
   --from-literal=GH_PAT="$GH_PAT"
 ```
 
-Scope: read access to **one private repo**, `szymonrychu/mtg-decks`, and nothing
-else. A classic PAT with the `repo` scope works; a fine-grained PAT scoped to
-that single repository with `Contents: Read-only` is tighter and preferred.
-Every seat Job's `guides` initContainer uses it to clone the repo fresh into
-that Job's own emptyDir.
+**How it reaches the pod: a file, never an env var.** `deploy/seat-job.yaml`
+mounts the Secret's `GH_PAT` key at `/var/run/mtg-decks-git/GH_PAT` (mode
+`0440`, readable by uid 1000 through `fsGroup: 1000`) into the `guides`
+initContainer and the `agent` container only; the `driver` gets no mount. The
+initContainer puts the token in the remote URL just long enough to fetch, then
+strips it and refuses to finish if `x-access-token` is still in `.git/config`.
+The agent authenticates through a credential helper in `/agent-home/.gitconfig`
+(written by `src/mtg_agent/wrapper/bootstrap.py`, scoped to
+`https://github.com`) that reads the file each time git asks - the token is
+never written into the gitconfig. Commits carry `GIT_COMMITTER_NAME=mtg-agent`
+and `GIT_COMMITTER_EMAIL=mtg-agent@mtg-trainer.invalid`.
+
+**Rotating the token.** Generate the new PAT, then replace the Secret in place:
+
+```sh
+kubectl -n mtg-engine create secret generic mtg-decks-git \
+  --from-literal=GH_PAT="$GH_PAT" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+New seat Jobs use it immediately. Running pods see the new file once the
+kubelet syncs the Secret volume (about a minute), and because the credential
+helper re-reads the file on every push, nothing needs a restart. Revoke the
+old PAT on GitHub afterwards.
+
+**The kill switch.** `deploy/k8s/50-deployment.yaml` publishes
+`SCRIPTS_ENABLED` (default `"true"`) to the API. To turn agent-authored
+scripts and guide changes off without a rebuild:
+
+```sh
+kubectl -n mtg-engine set env deployment/mtg-stack SCRIPTS_ENABLED=false
+```
+
+That restarts the API with the switch off (`Recreate` strategy). Set it back
+to `"true"` - or re-apply `50-deployment.yaml` - to turn it on again. The hard
+stop, if an agent's pushes themselves are the problem, is revoking the PAT on
+GitHub: every pod's next push fails at once, and the read-only play path keeps
+working off the checkout it already has.
 
 `10-secret.template.yaml` exists for people who want either declarative; copy it
 to `10-secret.yaml` (gitignored) and fill in the placeholders.

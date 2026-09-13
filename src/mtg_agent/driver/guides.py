@@ -40,6 +40,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from magic_cards_model_api.playscripts.inputs import INPUTS_FILE, load_inputs
+from magic_cards_model_api.playscripts.schema import PlaysError, play_errors
 from magic_cards_model_api.scryfall import name_faces
 
 #: Exactly one archetype satisfies every one of its signature clauses, after
@@ -373,6 +375,41 @@ def load_signature(path: Path) -> ArchetypeSignature | None:
     )
 
 
+@dataclass(frozen=True)
+class PlaysCorpus:
+    """What `DeckGuide.plays` read off `decks/<slug>/plays/`: the scripts and
+    declared inputs worth registering, and a notice for every file skipped.
+
+    `notices` are `PlaysError`s - the coded refusals `playscripts.schema` and
+    mtg-decks' own checker share - so a skipped file is named by its code and
+    its corpus-relative path rather than by prose."""
+
+    scripts: tuple[dict, ...] = ()
+    inputs: tuple[dict, ...] = ()
+    notices: tuple[PlaysError, ...] = ()
+
+
+@dataclass(frozen=True)
+class ScriptsRegistration:
+    """What `assign` got back from registering the deck's play scripts.
+
+    `status` is `registered`, `disabled` (the API's `scripts_disabled` kill
+    switch), `failed` (any other refusal or no answer - `detail` says which),
+    or `no_deck` (no single guide, so no corpus to register). `corpus` is
+    what was read off the guide either way, notices included."""
+
+    status: str
+    corpus: PlaysCorpus = field(default_factory=PlaysCorpus)
+    detail: str = ""
+
+
+def _corpus_path(path: Path, guides_root: Path) -> str:
+    try:
+        return path.relative_to(guides_root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 @dataclass
 class DeckGuide:
     slug: str
@@ -389,6 +426,52 @@ class DeckGuide:
     """`boarding-plan.json`, beside the matchups directory. Located here so
     the guide is a complete description of what the corpus holds for this
     deck; reading it is the matchup card's job, not the classifier's."""
+
+    plays_dir: Path | None = None
+    """`plays/` - the deck's play scripts (`*.json`) and its optional
+    `inputs.json`. Read by `plays`."""
+
+    def plays(self) -> PlaysCorpus:
+        """This deck's play scripts and declared inputs, fail closed per file.
+
+        Never raises, for the reason `load_signature` never does: the corpus
+        is another repo's checkout. Each play file is judged on its own by
+        `playscripts.schema.play_errors`, the judge the game server's scripts
+        PUT applies, so a file that would refuse the whole registration is
+        dropped here with its notice and the rest still register. A later file
+        reusing an earlier file's `id` is dropped the same way - the server
+        refuses a corpus holding two scripts under one id. A malformed
+        `inputs.json` costs the deck its declared inputs only; a script
+        naming one of them then fails its input check at run time rather than
+        running on a guess. No `plays/` directory is an empty corpus.
+        """
+        if self.plays_dir is None:
+            return PlaysCorpus()
+        guides_root = self.root.parent.parent
+        declared, notices = load_inputs(self.plays_dir.parent, guides_root)
+        scripts: list[dict] = []
+        seen: set[str] = set()
+        for path in sorted(self.plays_dir.glob("*.json")):
+            if path.name == INPUTS_FILE or not path.is_file():
+                continue
+            where = _corpus_path(path, guides_root)
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, ValueError) as exc:
+                notices.append(PlaysError("malformed-play", where, f"not readable JSON: {exc}"))
+                continue
+            errors = play_errors(doc, where)
+            if errors:
+                notices.extend(errors)
+                continue
+            if doc["id"] in seen:
+                notices.append(
+                    PlaysError("malformed-play", where, f"id: {doc['id']!r} is already registered")
+                )
+                continue
+            seen.add(doc["id"])
+            scripts.append(doc)
+        return PlaysCorpus(tuple(scripts), tuple(declared or ()), tuple(notices))
 
     @property
     def archetypes(self) -> list[str]:
@@ -592,6 +675,7 @@ class GuideLibrary:
         domain = runs[-1] / "domain3-matchup-threat" if runs else None
         matchups = domain / "matchups" if domain is not None else None
         boarding = domain / "boarding-plan.json" if domain is not None else None
+        plays = entry / "plays"
         return DeckGuide(
             slug=entry.name,
             root=entry,
@@ -602,6 +686,7 @@ class GuideLibrary:
             matchups_dir=matchups if matchups is not None and matchups.is_dir() else None,
             archetype=optional("archetype.json"),
             boarding_plan=boarding if boarding is not None and boarding.is_file() else None,
+            plays_dir=plays if plays.is_dir() else None,
         )
 
     def get(self, slug: str) -> DeckGuide | None:

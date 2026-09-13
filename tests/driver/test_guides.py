@@ -42,7 +42,7 @@ from mtg_agent.driver.guides import (
 #: github.com/szymonrychu/mtg-decks, the commit the fixtures under
 #: `fixtures/mtg-decks/` were copied from. Grep for it there to see exactly
 #: which signatures this suite is pinned to.
-MTG_DECKS_SHA = "936b324bedcad1c4de6e328c0f32c33a03bfa703"
+MTG_DECKS_SHA = "3772971c530309dbd79efbbd856e45b19e1e3da3"
 
 #: The vendored corpus: `<slug>/archetype.json` + `<slug>/decklist.txt`.
 CORPUS = Path(__file__).resolve().parent / "fixtures" / "mtg-decks"
@@ -873,3 +873,174 @@ def test_holding_is_read_off_a_parsed_decklist():
     held = held_faces(parse_decklist("2 Wear // Tear\n4 Fatal Push (MH3) 89\n"))
     assert holds(held, "Wear")
     assert holds(held, "Fatal Push")
+
+
+# ---- a deck's play scripts: decks/<slug>/plays/*.json and inputs.json ------
+#
+# The refreshed fixture corpus carries plays for all thirteen decks. The
+# driver loads them through `playscripts.schema` - the same judge the game
+# server's PUT applies - so one broken file costs that file alone, said out
+# loud as a typed notice, and never the rest of the deck's corpus.
+
+#: A well-formed `inputs.json`, the shape mtg-decks M1b declares.
+DECLARED_INPUTS = {
+    "schema_version": 1,
+    "inputs": [
+        {
+            "name": "opponent_on_combo",
+            "type": "bool",
+            "description": "The opponent has shown a combo piece.",
+            "required": False,
+        },
+        {
+            "name": "plan",
+            "type": "enum",
+            "values": ["race", "control"],
+            "description": "Which half of the deck's plan this game is on.",
+            "required": True,
+        },
+    ],
+}
+
+
+def _deck_with_plays(tmp_path: Path, slug: str) -> tuple[GuideLibrary, Path]:
+    """One vendored deck, its `plays/` directory copied verbatim."""
+    import shutil
+
+    root = tmp_path / "guides"
+    deck = root / "decks" / slug
+    deck.mkdir(parents=True)
+    (deck / "decklist.txt").write_text((CORPUS / slug / "decklist.txt").read_text())
+    (deck / "archetype.json").write_text((CORPUS / slug / "archetype.json").read_text())
+    shutil.copytree(CORPUS / slug / "plays", deck / "plays")
+    return GuideLibrary(root), deck
+
+
+def _fixture_play_ids(slug: str) -> list[str]:
+    return sorted(json.loads(p.read_text())["id"] for p in (CORPUS / slug / "plays").glob("*.json"))
+
+
+def test_a_deck_guide_locates_and_loads_its_plays(tmp_path):
+    library, deck = _deck_with_plays(tmp_path, "eldrazi-tron")
+    guide = library.get("eldrazi-tron")
+
+    assert guide.plays_dir == deck / "plays"
+    corpus = guide.plays()
+    assert sorted(script["id"] for script in corpus.scripts) == _fixture_play_ids("eldrazi-tron")
+    assert len(corpus.scripts) == 1
+    assert corpus.notices == ()
+
+
+@pytest.mark.parametrize("slug", CORPUS_SLUGS)
+def test_every_vendored_play_loads_clean(tmp_path, slug):
+    """The refreshed corpus is the specification: every play it carries is
+    one the schema admits, so a notice here is drift between the two repos."""
+    library, _ = _deck_with_plays(tmp_path, slug)
+    corpus = library.get(slug).plays()
+    assert corpus.notices == ()
+    assert sorted(script["id"] for script in corpus.scripts) == _fixture_play_ids(slug)
+
+
+def test_a_missing_plays_directory_is_an_empty_corpus(tmp_path):
+    root = tmp_path / "guides"
+    deck = root / "decks" / "bare"
+    deck.mkdir(parents=True)
+    (deck / "decklist.txt").write_text("4 Island\n")
+    guide = GuideLibrary(root).get("bare")
+
+    assert guide.plays_dir is None
+    corpus = guide.plays()
+    assert corpus.scripts == ()
+    assert corpus.inputs == ()
+    assert corpus.notices == ()
+
+
+def test_an_invalid_play_file_is_skipped_with_a_typed_notice(tmp_path):
+    from magic_cards_model_api.playscripts.schema import PlaysError
+
+    library, deck = _deck_with_plays(tmp_path, "dimir-frog")
+    first = sorted((deck / "plays").glob("*.json"))[0]
+    broken = json.loads(first.read_text())
+    broken["id"] = "iterates-forever"
+    broken["iterate"] = True
+    (deck / "plays" / "iterates-forever.json").write_text(json.dumps(broken))
+    (deck / "plays" / "half-written.json").write_text("{ half written")
+
+    corpus = library.get("dimir-frog").plays()
+
+    assert sorted(script["id"] for script in corpus.scripts) == _fixture_play_ids("dimir-frog")
+    assert all(isinstance(notice, PlaysError) for notice in corpus.notices)
+    by_path = {notice.path: notice.code for notice in corpus.notices}
+    assert by_path == {
+        "decks/dimir-frog/plays/half-written.json": "malformed-play",
+        "decks/dimir-frog/plays/iterates-forever.json": "unknown-field",
+    }
+
+
+def test_a_second_play_reusing_an_id_is_skipped_rather_than_sinking_the_corpus(tmp_path):
+    """The server refuses a whole corpus holding two scripts under one id, so
+    the driver drops the later file and keeps the rest registrable."""
+    library, deck = _deck_with_plays(tmp_path, "dimir-frog")
+    first = sorted((deck / "plays").glob("*.json"))[0]
+    (deck / "plays" / "zz-copy.json").write_text(first.read_text())
+
+    corpus = library.get("dimir-frog").plays()
+
+    assert sorted(script["id"] for script in corpus.scripts) == _fixture_play_ids("dimir-frog")
+    assert [(n.code, n.path) for n in corpus.notices] == [
+        ("malformed-play", "decks/dimir-frog/plays/zz-copy.json")
+    ]
+
+
+def test_inputs_json_is_loaded_as_the_declared_inputs_and_is_not_a_play(tmp_path):
+    library, deck = _deck_with_plays(tmp_path, "dimir-frog")
+    (deck / "plays" / "inputs.json").write_text(json.dumps(DECLARED_INPUTS))
+
+    corpus = library.get("dimir-frog").plays()
+
+    assert list(corpus.inputs) == DECLARED_INPUTS["inputs"]
+    assert sorted(script["id"] for script in corpus.scripts) == _fixture_play_ids("dimir-frog")
+    assert corpus.notices == ()
+
+
+def test_a_missing_inputs_json_declares_no_inputs(tmp_path):
+    library, _ = _deck_with_plays(tmp_path, "dimir-frog")
+    corpus = library.get("dimir-frog").plays()
+    assert corpus.inputs == ()
+    assert corpus.notices == ()
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{ half written",
+        json.dumps({"schema_version": 1, "inputs": [{"name": "x", "type": "enum"}]}),
+        json.dumps(
+            {
+                "schema_version": 1,
+                "inputs": [
+                    {
+                        "name": "opposing_archetype",
+                        "type": "bool",
+                        "description": "redeclares the built-in",
+                        "required": False,
+                    }
+                ],
+            }
+        ),
+    ],
+)
+def test_an_invalid_inputs_json_is_skipped_with_a_notice_and_the_plays_still_load(
+    tmp_path, content
+):
+    library, deck = _deck_with_plays(tmp_path, "dimir-frog")
+    (deck / "plays" / "inputs.json").write_text(content)
+
+    corpus = library.get("dimir-frog").plays()
+
+    assert corpus.inputs == ()
+    assert corpus.notices
+    assert {(n.code, n.path) for n in corpus.notices} == {
+        ("malformed-inputs", "decks/dimir-frog/plays/inputs.json")
+    }
+    assert sorted(script["id"] for script in corpus.scripts) == _fixture_play_ids("dimir-frog")

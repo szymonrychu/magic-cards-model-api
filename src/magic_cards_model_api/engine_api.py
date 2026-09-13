@@ -1964,6 +1964,107 @@ def set_step(game: Game, step: Step) -> None:
         game.turn.step = step  # raw setup: rewinding the turn marker on purpose
 
 
+#: CR 106.1a's five colours, which an "any color" ability chooses among.
+_FIVE_COLORS = (Color.WHITE, Color.BLUE, Color.BLACK, Color.RED, Color.GREEN)
+
+
+def _mana_counts(
+    game: Game, state: CardState, ability: Any, index: int | None, scanned: dict[int, Any]
+) -> dict[str, int | None]:
+    """`AbilityView.mana_amount` and `mana_cost_value` for one ability: both
+    `None` for an ability that is not a mana ability."""
+    if getattr(ability, "mana", None) is None:
+        return {"mana_amount": None, "mana_cost_value": None}
+    return {
+        "mana_amount": _mana_amount(game, state, ability, index, scanned),
+        "mana_cost_value": _mana_cost_value(ability),
+    }
+
+
+def _mana_cost_value(ability: Any) -> int:
+    """The mana value of the mana pieces of this ability's own cost (CR 202.3
+    read per symbol): `{1}, {T}` is 1, `{W/U}, {T}` is 1, a bare `{T}` - or the
+    intrinsic land ability, which carries no cost pieces - is 0."""
+    from magic_cards_model.machines.abilities import CostKind
+    from magic_cards_model.models.mana import ManaCost
+
+    return sum(
+        symbol.mana_value
+        for piece in getattr(ability, "costs", None) or ()
+        if piece.kind is CostKind.MANA
+        for symbol in ManaCost.parse(piece.text).symbols
+    )
+
+
+def _mana_amount(
+    game: Game, state: CardState, ability: Any, index: int | None, scanned: dict[int, Any]
+) -> int:
+    """How much mana this mana ability adds if activated now.
+
+    A bare `{T}` ability is read off `machines.cost.mana_candidate_scan`, the
+    engine's own auto-tap survey of what a source makes right now: CR 605.1a's
+    conditional clauses resolved against the board (Urza's Tower's `{C}{C}{C}`
+    beside a Mine and a Power-Plant), CR 106.7's "could produce" survey,
+    CR 614.12a's chosen colour, CR 106.5's undefined type, CR 302.6's summoning
+    sickness and CR 602.5's prohibitions. A row the scan leaves out is an
+    ability that adds nothing now, so it is 0 - a tapped source included.
+
+    Any other mana ability (a filter's `{1}, {T}`, a life or sacrifice cost) is
+    outside that scan, which only surveys what may be tapped on a player's
+    behalf. It is asked the same questions the engine's public calls answer:
+    tapped or summoning sick for a `{T}` cost (`can_tap_for_mana`), CR 602.5
+    (`Game.why_cannot_activate`), CR 106.5's "among" narrowing
+    (`among_colors`), and `ManaAbility.effective` with the permanent's own
+    narrowings. An ability the engine refuses to activate for an unread rider
+    (`unparsed_rider`) adds nothing.
+    """
+    from magic_cards_model.machines.abilities import CostKind
+    from magic_cards_model.machines.cost import among_colors, can_tap_for_mana
+    from magic_cards_model.machines.effects import devotion_to
+
+    mana = ability.mana
+    controller = state.controller
+    if state.zone is not Zone.BATTLEFIELD or controller is None or mana.unparsed_rider:
+        return 0
+    kinds = [piece.kind for piece in getattr(ability, "costs", None) or ()]
+    if index is not None and kinds in ([], [CostKind.TAP]):
+        row = scanned.get(index)
+        if row is None:
+            return 0
+        _source, options, _restriction, any_color, _index = row
+    else:
+        if CostKind.TAP in kinds and (state.tapped or not can_tap_for_mana(state, game)):
+            return 0
+        if index is not None and game.why_cannot_activate(state, index, controller) is not None:
+            return 0
+        land_types, counters, imprinted = _narrowings(state, game)
+        options, any_color = mana.effective(
+            land_types, counters, imprinted, chosen_color=_chosen_color(state)
+        )
+        allowed = among_colors(getattr(ability, "effect", "") or "", game, controller)
+        if allowed is not None:
+            options = [option for option in options if set(option) <= allowed]
+            any_color = any_color and bool(allowed)
+    if not options and not any_color:
+        return 0
+    if mana.amount_from_devotion:
+        colors = set(_FIVE_COLORS) if any_color else {c for option in options for c in option}
+        return max((devotion_to(game, controller, color) for color in colors), default=0)
+    if any_color:
+        return mana.any_color_count
+    return max(len(option) for option in options)
+
+
+def _mana_scan(game: Game, state: CardState) -> dict[int, Any]:
+    """`mana_candidate_scan` over this one permanent, by ability index."""
+    from magic_cards_model.machines.cost import mana_candidate_scan
+
+    if state.zone is not Zone.BATTLEFIELD or state.controller is None:
+        return {}
+    rows = mana_candidate_scan([state], game=game, payer=state.controller)
+    return {row[4]: row for row in rows}
+
+
 def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
     """The activated abilities the engine would let a caller index into.
 
@@ -2005,6 +2106,8 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
                 "index": entry.index,
                 "text": entry.ability.text,
                 "mana": False,
+                "mana_amount": None,
+                "mana_cost_value": None,
                 **ability_hints(entry.ability, (), state),
             }
             for entry in off_zone_abilities(state.card)
@@ -2015,6 +2118,11 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
     except Exception:
         return []
 
+    scanned = (
+        _mana_scan(game, state)
+        if any(getattr(ability, "mana", None) is not None for ability in abilities)
+        else {}
+    )
     listed = []
     for index, ability in enumerate(abilities):
         # The colours `Game.activate_ability` would actually accept for this
@@ -2034,6 +2142,7 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
                 "index": index,
                 "text": ability.text,
                 "mana": is_mana_ability(ability),
+                **_mana_counts(game, state, ability, index, scanned),
                 # What activating it actually asks the player for: its cost, a
                 # loyalty symbol (CR 606.2), an X to announce, and whether it
                 # targets at all. A UI without this cannot tell Karn's `+1`
@@ -2072,6 +2181,7 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
                 "index": len(abilities) + offset,
                 "text": activation.text,
                 "mana": True,
+                **_mana_counts(game, state, activation, None, {}),
                 **ability_hints(activation, printed, state),
             }
         )

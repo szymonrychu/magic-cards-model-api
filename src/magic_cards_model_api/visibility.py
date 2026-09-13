@@ -46,7 +46,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .audit import ADVICE_ACTION, PLAN_ACTION
+from .audit import ADVICE_ACTION, PLAN_ACTION, SCRIPT_RUN_ACTIONS
 from .store import player_for_advisor_uid, store
 
 
@@ -139,6 +139,9 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     view.pop("sideboards", None)
     if "known_cards" in view:
         view["known_cards"] = _redact_known_cards(view["known_cards"], viewer)
+    for contents_key in _CONTENTS_KEYS:
+        if contents_key in view:
+            view[contents_key] = _own_entry_only(view[contents_key], viewer)
     if view.get("pending_decision") is not None:
         view["pending_decision"] = redact_pending_decision(
             view["pending_decision"], viewer, card_lookup, hidden_ids
@@ -146,6 +149,83 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     if viewer is not None:
         view["you"] = viewer
     return view
+
+
+#: The own-only, unordered zone summaries `serialize.state_view` adds on
+#: request (`include_contents`), each shaped `{username: [{card, count}]}`.
+_CONTENTS_KEYS = ("library_contents", "sideboard_contents")
+
+
+def _own_entry_only(block: Any, viewer: Viewer) -> dict[str, Any]:
+    """A `{username: ...}` block cut to the viewer's own entry.
+
+    CR 401.2 keeps every library from every player, and the contents blocks
+    are only ever the owner's own deck read back without its order. A viewer
+    who is nobody gets `{}`, as does anything that is not the expected shape.
+    """
+    if not isinstance(block, dict) or not isinstance(viewer, str) or viewer not in block:
+        return {}
+    return {viewer: block[viewer]}
+
+
+def _redact_known_cards(known: Any, viewer: Viewer) -> dict[str, Any]:
+    """`serialize._known_cards_view`, as `viewer` may see it: its own entry.
+
+    What one player knows is that player's alone. A look (CR 701.20e) is
+    "shown only to the specified player", and even a public reveal's memory
+    is a seat's own reasoning about the board, so an opponent never reads
+    another seat's entry and a viewer who is nobody reads none.
+
+    Fails closed. The entry is rebuilt from the parts this module
+    recognises - card views that are dicts, library records with an integer
+    `index_from_top` and a card view - and anything else is dropped rather
+    than passed along: a record whose shape says nothing trustworthy about
+    who was shown it is not shown to anyone. A hand or sideboard card is
+    trimmed the way a graveyard card is (`_redact_cast_options`), since its
+    affordances are its owner's.
+    """
+    if not isinstance(known, dict) or not isinstance(viewer, str):
+        return {}
+    block = known.get(viewer)
+    if not isinstance(block, dict):
+        return {}
+
+    def cards(key: str) -> list[dict[str, Any]]:
+        entries = block.get(key)
+        if not isinstance(entries, list):
+            return []
+        return [
+            _redact_known_card(card, viewer)
+            for card in entries
+            if isinstance(card, dict) and card.get("id")
+        ]
+
+    library: list[dict[str, Any]] = []
+    for record in block.get("library") or ():
+        if not isinstance(record, dict):
+            continue
+        index = record.get("index_from_top")
+        card = record.get("card")
+        if type(index) is not int or not isinstance(card, dict) or not card.get("id"):
+            continue
+        source = record.get("source")
+        library.append(
+            {
+                "index_from_top": index,
+                "source": source if isinstance(source, str) else None,
+                "card": _redact_known_card(card, viewer),
+            }
+        )
+    return {viewer: {"hand": cards("hand"), "library": library, "sideboard": cards("sideboard")}}
+
+
+def _redact_known_card(card: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+    """A known hidden card's view with its owner-only affordances removed."""
+    trimmed = _redact_cast_options(card, viewer)
+    owner = card.get("controller") or card.get("owner")
+    if "special_actions" in trimmed and owner != viewer:
+        trimmed = {key: value for key, value in trimmed.items() if key != "special_actions"}
+    return trimmed
 
 
 def _redact_player(player: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
@@ -273,42 +353,6 @@ def _redact_permission(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     if not isinstance(card, dict):
         return entry
     return {**entry, "card": _redact_facedown_card(card, viewer)}
-
-
-def _redact_known_cards(known: Any, viewer: Viewer) -> dict[str, Any]:
-    """`serialize._known_cards_view`, as `viewer` may see it: its own entry
-    only, the same "own block only" cut `hands` already gets.
-
-    What one player knows about a hidden card is that player's alone to read
-    back - an opponent's `known_cards` entry could name a card nobody has
-    shown the viewer (a hand card seen only by an effect of the knower's own),
-    so a viewer never reads another seat's entry, and a viewer who is nobody
-    reads none. Fails closed: rebuilt only from the shape `serialize.
-    _known_cards_view` actually produces - `hand`/`sideboard` lists of card
-    views, `library` records carrying an integer `index_from_top` alongside a
-    card view - and anything else is dropped rather than passed through."""
-    if not isinstance(known, dict) or not isinstance(viewer, str):
-        return {}
-    block = known.get(viewer)
-    if not isinstance(block, dict):
-        return {}
-
-    def cards(key: str) -> list[dict[str, Any]]:
-        entries = block.get(key)
-        if not isinstance(entries, list):
-            return []
-        return [card for card in entries if isinstance(card, dict) and card.get("id")]
-
-    library: list[dict[str, Any]] = []
-    for record in block.get("library") or ():
-        if not isinstance(record, dict):
-            continue
-        index = record.get("index_from_top")
-        card = record.get("card")
-        if type(index) is not int or not isinstance(card, dict) or not card.get("id"):
-            continue
-        library.append({"index_from_top": index, "card": card})
-    return {viewer: {"hand": cards("hand"), "library": library, "sideboard": cards("sideboard")}}
 
 
 def _card_lookup(view: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -522,8 +566,21 @@ def redact_notices(notices: list[dict[str, Any]], viewer: Viewer) -> list[dict[s
     return redacted
 
 
-def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
-    """One log entry, as `viewer` may read it.
+def hides_script_run(entry: dict[str, Any], viewer: Viewer) -> bool:
+    """Whether `entry` is a play-script run row (`audit.SCRIPT_RUN_ACTIONS`)
+    that `viewer` may not know exists: anyone but the admin and the seat the
+    run played for (an advisor resolves to that seat). Shared by
+    `redact_log_entry` and `app.py`'s `game_review`, which drops these rows
+    for the opponent even post-game."""
+    if entry.get("action") not in SCRIPT_RUN_ACTIONS or viewer is ADMIN:
+        return False
+    player = (entry.get("detail") or {}).get("player")
+    return not (isinstance(viewer, str) and player == viewer)
+
+
+def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any] | None:
+    """One log entry, as `viewer` may read it - or `None` when `viewer` may
+    not read that the row exists at all.
 
     Two guards, and they do not have the same audience:
 
@@ -580,6 +637,12 @@ def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
       the human and the buddy advising it both read the row whole and nobody
       else reads any of it. "alice was given advice at this point" stays
       public, the way a plan declaration's own existence does.
+    - a script-run row (`audit.SCRIPT_RUN_ACTIONS`) is dropped outright, the
+      one row this function answers `None` for. A run names the script, its
+      guides revision and the archetype the seat believes it faces, and even
+      the bare fact that a script started at this step tells the opponent
+      the seat is on autopilot; unlike a plan's existence, nothing about it
+      is public at a real table.
 
     Both are keyed on `detail["player"]`, which is what the acting route
     recorded. That is safe *in this direction* and only in this direction:
@@ -601,6 +664,8 @@ def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     # `None`, and a row nobody made carries no player - "None is None" must
     # not read as "this is your row".
     own = viewer is ADMIN or (isinstance(viewer, str) and detail_player == viewer)
+    if hides_script_run(entry, viewer):
+        return None
     if not own:
         entry["reasoning"] = None
         if entry.get("action") in (PLAN_ACTION, ADVICE_ACTION):

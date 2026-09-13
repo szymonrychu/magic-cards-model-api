@@ -155,7 +155,18 @@ __all__ = ["GameAccessRoute", "authorize_game_access", "can_access_game", "seat_
 #: owns them - never on the caller's own spelling of the path, which is the
 #: trap the first mutating route ending in a `{param}` would otherwise have
 #: walked into.
-ADVISOR_POST_SUFFIXES = ("/advice", "/report")
+#:
+#: `/script-runs` is the third: a buddy running play scripts in advise mode
+#: reports each run there, and a run report records what the runner did -
+#: its moves were already refused or proposed through the other routes.
+ADVISOR_POST_SUFFIXES = ("/advice", "/report", "/script-runs")
+
+#: The PUT routes an advisor credential may reach, and only for the corpus
+#: registered under its own uid (`{uid}` in the path must be the credential
+#: itself). The buddy's seat Job runs under its advisor uid, so that is the
+#: uid it registers scripts with; registering a corpus says what the runner
+#: will try, it does not move the game.
+ADVISOR_OWN_PUT_ROUTES = frozenset({"/api/games/{game_id}/seats/{uid}/scripts"})
 
 #: Every POST route whose own request model declares `dry_run` - i.e. every
 #: route that can actually *honour* a probe (`engine_api.dry_run_copy`).
@@ -288,7 +299,7 @@ def _route_template(request: Request) -> str | None:
     return path if isinstance(path, str) else None
 
 
-async def _advisor_may(request: Request) -> bool:
+async def _advisor_may(request: Request, uid: str) -> bool:
     """Whether an advisor credential may make *this* request
     (`repository.Advisor`).
 
@@ -314,15 +325,20 @@ async def _advisor_may(request: Request) -> bool:
     simply discarded by pydantic while this gate believed it - see
     `DRY_RUN_ROUTES`.
 
+    - **A PUT to its own play-script corpus** (`ADVISOR_OWN_PUT_ROUTES`,
+      with the path's `{uid}` equal to this credential).
+
     Everything else is refused, which is every mutating route at once
     because this is asked before any of them runs.
     """
     if request.method in ("GET", "HEAD"):
         return True
-    if request.method != "POST":
-        return False
     template = _route_template(request)
     if template is None:
+        return False
+    if request.method == "PUT":
+        return template in ADVISOR_OWN_PUT_ROUTES and request.path_params.get("uid") == uid
+    if request.method != "POST":
         return False
     if template.rstrip("/").endswith(ADVISOR_POST_SUFFIXES):
         return True
@@ -382,7 +398,7 @@ async def can_access_game(request: Request, game_id: str) -> bool:
     # game is never treated as an advisor, so a seat is unaffected even if
     # the same string were somehow registered as both.
     if uid and seat is None and player_for_advisor_uid(game_id, uid) is not None:
-        return await _advisor_may(request)
+        return await _advisor_may(request, uid)
     if seat is not None or _is_admin(game_id, uid, key):
         return True
     owner = store.owner_user_id(game_id)

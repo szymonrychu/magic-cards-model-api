@@ -25,6 +25,7 @@ from .guides import (
     DeckGuide,
     Decklist,
     Identification,
+    ScriptsRegistration,
 )
 from .matchup_card import (
     guide_paths,
@@ -34,6 +35,19 @@ from .matchup_card import (
 from .revision import UNKNOWN_REVISION
 
 UNKNOWN_DECK = "unknown-deck"
+
+
+#: The byte cap on the briefing's play-script section: every script row and
+#: every skipped-file notice together. A deck can carry any number of plays,
+#: each long-named with thirty-two archetype keys, and the briefing's own
+#: caps (the per-card budget, `VS_NOTE_BUDGET_BYTES`) were set before plays
+#: existed - so this section spends its own small, fixed share and names
+#: what it did not list rather than growing with the corpus.
+PLAYS_SECTION_CAP_BYTES = 3 * 1024
+#: Longest a script's `name` or a notice's message is quoted in the listing.
+PLAYS_NAME_CHARS = 90
+#: Archetype keys quoted per script before the rest are counted.
+PLAYS_ARCHETYPE_KEYS = 4
 
 
 @dataclass
@@ -62,6 +76,10 @@ class Assignment:
     camelCase - see `contract/agent-settings.schema.json`), carried through
     from the dispatch that created this assignment - `None` for a caller
     that dispatched before agent settings existed."""
+
+    scripts: ScriptsRegistration | None = None
+    """What registering the deck's play scripts at dispatch came to - `None`
+    for a caller that rendered a briefing without attempting it."""
 
     role: str = "seat"
     """`seat` (this container plays `player`) or `advisor` (B5's buddy: this
@@ -245,6 +263,91 @@ def _inlined_notes(standing: list[Path], budget: int) -> list[str]:
     return lines
 
 
+def _clip(text: str, limit: int = PLAYS_NAME_CHARS) -> str:
+    flat = " ".join(f"{text}".split())
+    return flat if len(flat) <= limit else flat[: limit - 3].rstrip() + "..."
+
+
+def _script_row(script: dict) -> str:
+    keys = [f"{key}" for key in script.get("opposing_archetypes") or []]
+    shown = ", ".join(keys[:PLAYS_ARCHETYPE_KEYS])
+    if len(keys) > PLAYS_ARCHETYPE_KEYS:
+        shown += f" +{len(keys) - PLAYS_ARCHETYPE_KEYS} more"
+    return (
+        f"- `{_clip(script.get('id', '?'), 60)}` (priority {script.get('priority', '?')}, "
+        f"vs {shown or '?'}) - {_clip(script.get('name', ''))}"
+    )
+
+
+def _bounded(rows: list[str], budget: int, noun: str) -> tuple[list[str], int]:
+    """As many of `rows` as fit `budget` bytes, then one line naming the rest."""
+    kept: list[str] = []
+    spent = 0
+    for index, row in enumerate(rows):
+        cost = len(row.encode()) + 1
+        if spent + cost > budget:
+            kept.append(f"- ... {len(rows) - index} more {noun} not listed")
+            return kept, spent
+        kept.append(row)
+        spent += cost
+    return kept, spent
+
+
+def _plays_section(registration: ScriptsRegistration) -> list[str]:
+    """The briefing's play-script section: what the game server holds for
+    this seat, and every file that was skipped fail closed, within
+    `PLAYS_SECTION_CAP_BYTES`."""
+    corpus = registration.corpus
+    lines = ["## Your registered play scripts", ""]
+    if registration.status == "registered":
+        lines.append(
+            f"The game server holds {len(corpus.scripts)} play script(s) for this seat, "
+            "registered once at dispatch and not changed for the rest of the game:"
+        )
+    elif registration.status == "disabled":
+        lines.append(
+            "Play scripts are disabled on this deployment (the game server refused "
+            "them with `scripts_disabled`). None is registered for this game: play "
+            "every decision yourself."
+        )
+    elif registration.status == "no_deck":
+        lines.append(
+            "No play scripts are registered: your list was not identified as one "
+            "guided deck, so there was no deck's plays to register."
+        )
+    else:
+        lines.append(
+            f"The play scripts for this deck could not be registered "
+            f"({_clip(registration.detail, 160)}). None will run: play every decision yourself."
+        )
+    lines.append("")
+    header = len("\n".join(lines).encode())
+    notice_rows = [f"- `{_clip(n.path, 80)}` {n.code}: {_clip(n.message)}" for n in corpus.notices]
+    # Notices get a third of the room at most: a skipped file is worth
+    # knowing about, and never worth crowding out the scripts that did load.
+    notice_budget = (PLAYS_SECTION_CAP_BYTES - header) // 3 if notice_rows else 0
+    notices, notice_spent = _bounded(notice_rows, notice_budget, "skipped files")
+    notice_header = (
+        ["", "Skipped, fail closed (these files did not load; the rest did):", ""]
+        if notices
+        else []
+    )
+    room = (
+        PLAYS_SECTION_CAP_BYTES
+        - header
+        - notice_spent
+        - len("\n".join(notice_header).encode())
+        - 80
+    )
+    if registration.status == "registered":
+        if corpus.scripts:
+            rows, _ = _bounded([_script_row(s) for s in corpus.scripts], room, "scripts")
+            lines += rows
+        else:
+            lines.append("(the deck carries no play scripts)")
+    return lines + notice_header + notices
+
+
 def render_current_game(
     assignment: Assignment,
     memory_root: Path,
@@ -333,6 +436,9 @@ def render_current_game(
     if not offered:
         lines += [render_matchup_card(None, assignment.decklist).text, ""]
 
+    if assignment.scripts is not None:
+        lines += [*_plays_section(assignment.scripts), ""]
+
     notes = memory_index(memory_root, assignment.deck_slug)
     standing, rest = _standing_notes(notes, opponent_archetype)
     lines += ["## What you have already learned on this deck", ""]
@@ -416,6 +522,12 @@ your next action, not merely to choose one, so a third call in the middle
 buys you nothing and costs you a whole turn of thinking. A seat was measured
 spending 65 tool calls on a single activation this way.
 
+A play script is the one call that is both halves at once: `run_script`
+counts as both your wait and your one committing call; read `script_exit` and
+do exactly one thing. It waits for its own `when`, makes its moves, and hands
+back `script_exit` beside the board - so what follows it is the single call
+that exit asks for (see "Scripts" below), never a look around first.
+
 What that means concretely, for the five calls you will be tempted to make:
 
 - **Do NOT call `battlefield_state`.** The answer you were just handed
@@ -458,6 +570,60 @@ What that means concretely, for the five calls you will be tempted to make:
   the eighteen decision kinds do not answer on the parameter their name
   suggests, and a guess there is a real parameter of `decide` that the server
   refuses.
+
+## Scripts
+
+Delegate repetitive actions to scripts. Develop new and improve existing
+scripts through subagents, along with guides. Aim for deterministic scripts.
+When plays conflict, resolve it by extending conditions, never by priority
+alone. Pass inputs, such as the opposing archetype or your preferences,
+explicitly.
+
+Your deck's play scripts are listed in the briefing under "Your registered
+play scripts". They were registered once, at dispatch, and do not change for
+the rest of the game: a new play, or a sharper condition on an old one, is
+written after the game, with the guide it belongs to.
+
+**Pick one with `list_scripts`.** It judges every registered script against
+the board right now, highest priority first, and runs nothing:
+
+  list_scripts(player_uid=..., opposing_archetype="<your read>")
+
+Each script says whether it `applies`, and when it does not, its
+`failing_condition` - the list that stopped it and what it saw.
+`runtime_conflict` true means more than one applies right now, named in
+`applicable`: do not pick between them by priority. Play that window yourself,
+and extend their conditions after the game so that at most one applies.
+
+**Assert `opposing_archetype`.** Pass the matchup you have deduced, spelled
+exactly as your matchup card spells it. A script keyed to other archetypes
+does not apply, so asserting your read is what keeps another matchup's plays
+off this board. Leave it at `*`, the default, only while you genuinely do not
+know. Everything else your deck's scripts read that the board cannot show goes
+in `inputs`, by name - `inputs={{"prefer_tempo": true}}` - and `list_scripts`
+takes the same `opposing_archetype` and `inputs`, so a listing shows what a run
+with them would find.
+
+**Run it with `run_script`**, by the script's id, with your reason:
+
+  run_script(player_uid=..., script="<id>", opposing_archetype="<your read>",
+             reasoning="...", inputs=...)
+
+It waits for the script's `when`, makes each move through the same routes you
+would - so every refusal is the engine's own - and hands back `script_exit`
+beside the board. Read `script_exit.exit` and do exactly one thing:
+
+- `chain_complete`: the moves are done and no next script applies. Wait again.
+- `not_applicable`: `failing_condition` says why. Play the window yourself.
+- `needs_input` or `invalid_input`: run it again with that input given, as a
+  value your deck declares.
+- `needs_plan`: call `declare_plan`, then run it again.
+- `already_ran`: it already ran this turn and step. Do not run it again.
+- `refused`, `unforeseen`, `interrupted`, `ambiguous`, `stale` or
+  `unknown_outcome`: read `refusal` or `stop_reason`, and make the next call
+  yourself off the board it handed back.
+- `exit` null: the time cap came first. Call it again with
+  `script_exit.resume` passed back verbatim as `resume`.
 
 ## How you act
 
@@ -1029,6 +1195,39 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
   unvalidated, and say in your `reasoning` which part you could not check.
 - `report_problem` files an engine bug.
 
+## Scripts
+
+Delegate repetitive actions to scripts. Develop new and improve existing
+scripts through subagents, along with guides. Aim for deterministic scripts.
+When plays conflict, resolve it by extending conditions, never by priority
+alone. Pass inputs, such as the opposing archetype or your preferences,
+explicitly.
+
+{assignment.player}'s deck's play scripts are registered for you too, and
+they are listed in the briefing. When `wait_for_priority` wakes you, check
+`list_scripts` on wake, before working a line out by hand - it judges every
+script against the board right now, highest priority first, and runs nothing:
+
+  list_scripts(player_uid=..., opposing_archetype="<your read>")
+
+Each script says whether it `applies`, and when it does not, its
+`failing_condition`. Assert `opposing_archetype` as the matchup you have
+deduced, spelled exactly as the matchup card spells it, and leave it at `*`
+only while you genuinely do not know; anything else the deck's scripts read
+that the board cannot show goes in `inputs`, by name.
+
+When one applies, propose with `run_script`:
+
+  run_script(player_uid=..., script="<id>", opposing_archetype="<your read>",
+             reasoning="...", inputs=...)
+
+From your advisor uid it makes no move. Its `script_exit.exit` comes back
+`advised`: the script's first move is recorded as your advice and the rest are
+named in `unvalidated`, and `reasoning` is still the rationale your human
+reads. When `runtime_conflict` is true, more than one script applies right
+now: do not pick between them by priority - say it is close and propose the
+line you would take.
+
 ## When you think, and when you stay quiet
 
 Two wake reasons are yours, and they are the whole of your schedule:
@@ -1115,3 +1314,76 @@ changes.
   archetype allow, and say plainly that that is what you are doing.
 
 Begin."""
+
+
+#: The first words of every handover turn.
+HANDOVER_OPENING = "Hand over now: this game is finished for you."
+
+
+def handover_turn(
+    assignment: Assignment, outcome: str, run_table: str, conflict_warnings: str
+) -> str:
+    """The one handover turn, for a seat and a buddy alike: the same deck,
+    the same commands and the same limits, so one prose serves both roles.
+
+    `run_table` is `playscripts.report.script_run_table` for this game and
+    seat; `conflict_warnings` is `handover.conflict_warnings` over the corpus
+    the seat registered."""
+    slug = assignment.deck_slug
+    game = assignment.game_id
+    return f"""{HANDOVER_OPENING}
+
+Outcome: {outcome}. Stop playing: whether you played this seat or advised on
+it, this turn is the handover, and it has a few minutes, not an hour. Land a
+first version early, then improve it.
+
+## What to do
+
+Delegate repetitive actions to scripts. Develop new and improve existing
+scripts through subagents, along with guides.
+
+1. Update each script's priority with `mcp-seat plays priority` from this
+   game's evidence. The run table below counts each script's runs and exits:
+   `mcp-seat plays priority <play-id> --delta N --deck {slug}` (or `--set N`)
+   raises what worked and lowers what stopped or was refused. Nothing else in
+   the file changes.
+2. Hand the development to subagents: one per new script for a line you
+   played by hand more than once, and one per script to improve. Every
+   conflict warning below needs its conditions extended so that at most one
+   play applies; priority alone never resolves a conflict. Each subagent checks
+   its files with `mcp-seat plays check --root /guides --deck {slug}`.
+3. Land scripts with `mcp-seat plays admit --deck {slug} --game-id {game}`, and
+   propose guides with `mcp-seat guides propose --deck {slug} --game-id {game}`.
+   A script lands on mtg-decks main the moment admit pushes it. A guide edit
+   only opens a pull request: mtg-decks has no CI budget, so its ci and
+   automerge workflows never run there, and the owner reviews and merges it
+   by hand. Do not wait for that pull request - it is not live until the
+   owner merges it. Read each command's `result`, fix what it names, and run
+   it again.
+4. Stay within the allowed guide fields. Edit only `matchups[].play_plan` and
+   `matchups[].notes` in the deck's newest `boarding-plan.json`, plus
+   `decks/{slug}/NOTES.md`. Any other guide change is refused.
+
+End the turn once scripts have landed and guides have been proposed, or each
+said why it could not - never wait on the guides pull request to merge.
+
+## Script runs this game
+
+{run_table}
+
+## Conflict warnings
+
+{conflict_warnings}
+"""
+
+
+def handover_nudge(assignment: Assignment) -> str:
+    """The one message a handover still running at seven minutes gets."""
+    slug = assignment.deck_slug
+    game = assignment.game_id
+    return (
+        "Seven minutes into the handover: push now. Stop developing, run "
+        f"`mcp-seat plays admit --deck {slug} --game-id {game}` and "
+        f"`mcp-seat guides propose --deck {slug} --game-id {game}` with what you "
+        "have, then end the turn."
+    )

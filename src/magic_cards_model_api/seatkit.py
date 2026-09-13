@@ -161,14 +161,121 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #:
 #: Bump this alongside any change to a tool's request/response shape.
 PROTOCOL_VERSION = "seatkit-19"
-#: `seatkit-19` **narrows one request**: an advisor's rationale is capped at
-#: `ADVICE_REASONING_MAX_CHARS` (240) characters (bd1). `AdviceIn.reasoning`
+#: `seatkit-19` is the play-script DSL's version, with battle 8's cast-during-
+#: resolution funnel (z1) and the buddy rationale cap (bd1) folded in: a
+#: **response** shape change plus **additive requests** and two new tools,
+#: one response field removed, and one request narrowed. The state view carries
+#: `known_cards`, a seat can ask for its own `library_contents` and
+#: `sideboard_contents`, the play-script routes exist, and `run_script` and
+#: `list_scripts` run and judge a seat's registered scripts.
+#:
+#: `known_cards` is a sibling of `hands`, keyed by the player who knows: the
+#: hidden cards the engine's `Game.known_to` says that seat was shown and that
+#: are still the same objects - another player's hand cards from a reveal or
+#: a look (CR 701.20a, CR 701.20e), library cards with their live
+#: `index_from_top` until a reordering ends them (CR 701.20d), and revealed
+#: sideboard cards, plus (battle 8, B8-03) a single card put into a library
+#: from a public zone, known to every player at its live position.
+#: `visibility.redact_view` keeps only the viewer's own entry.
+#: `library_contents`/`sideboard_contents` are the viewer's own zones as
+#: unordered `{card, count}` lists with no ids and no positions (CR 401.2),
+#: returned only on `GET /api/games/{id}?include=contents` and through
+#: `battlefield_state(sections="library_contents")` or
+#: `sections="sideboard_contents"` - never in an action answer or a wake.
+#:
+#: Why a bump: `battlefield_state` gained three section names, and a stale
+#: seatkit-18 MCP process refuses `sections="known_cards"` as an unknown
+#: section while this build's prose tells a seat to ask for it. The same
+#: stale process also never sends `include=contents`, so a seat told its own
+#: library is one call away would get a refusal instead, and it has no
+#: `run_script`/`list_scripts` to run the scripts the prose points at. That is
+#: the stale-process case the PROTOCOL MISMATCH sentence exists to make loud.
+#:
+#: Numbered 19, not folded into 18: `main` shipped seatkit-17 for
+#: `optional_costs` and then seatkit-18 for `equip` and the re-priced rows
+#: while these additions were still on `script-dsl`. Two
+#: builds answering one number with different shapes is the silent mismatch
+#: this check exists to prevent.
+#:
+#: Folded into the same version, not a second bump: a double-faced card view
+#: (CR 712) carries `faces`, each face's name, mana cost, type line and oracle
+#: text, and its `oracle_text` is no longer null but the face that is up - the
+#: front face anywhere but the battlefield or stack (CR 712.8a). And
+#: `known_cards` now holds what a paused command already showed a seat while
+#: that command's choice is still pending (Thoughtseize's revealed hand before
+#: the discard is chosen), not only once it has been answered. A seatkit-18
+#: process reads both as it read the fields before: `faces` is an extra key,
+#: and a known record is the same shape whenever it arrives.
+#:
+#: Also folded in, not a bump: every `AbilityView` carries `mana_amount` and
+#: `mana_cost_value`, `null` for an ability that is not a mana ability. A mana
+#: ability's `mana_amount` is what it adds if activated now, board-resolved
+#: (Urza's Tower beside a Mine and a Power Plant adds 3, CR 605.1a) and 0 when
+#: it cannot be activated now (CR 602.5, CR 302.6) or its type is undefined
+#: (CR 106.5); `mana_cost_value` is the mana value of its own cost's mana
+#: pieces (1 for a `{1}, {T}` filter). The play-script `untapped_mana`
+#: condition counts mana from them. A seatkit-18 process reads both as extra
+#: keys; no request moved.
+#:
+#: What did NOT change: no existing field moved, `hands`
+#: still holds only the viewer's own cards, and `libraries`/`sideboards` are
+#: still stripped for every viewer but the admin.
+#:
+#: **The play-script routes.**
+#: `PUT /api/games/{id}/seats/{uid}/scripts` registers the corpus a seat Job
+#: runs under its own uid (`{deck_slug, guides_revision, scripts, inputs}`, every
+#: script judged by `playscripts.schema` and refused as `invalid_scripts`
+#: with its codes), and `GET` of the same path reads it back to that uid, the
+#: seat's advisor and the admin key only. `POST /api/games/{id}/script-runs`
+#: reports a run: `phase: start` refuses a script not registered under the uid
+#: that runs it with code `unknown_script` (404) and a second start of one
+#: script at one turn and step with exit `already_ran`, and `phase: finish` writes one
+#: `script_run` ledger row that no other seat's log read ever returns. With
+#: `SCRIPTS_ENABLED` off, registering and starting refuse with code
+#: `scripts_disabled`.
+#:
+#: Two MCP tools call them, `run_script` and `list_scripts` (and the CLI's
+#: `script run`/`script list`), both through `playscripts.script_tools`.
+#: `run_script` runs one registered script with `playscripts.runtime` and
+#: answers like an action: the narrowed board plus `script_exit` - `exit`,
+#: `script`, `moves_done`, `moves_total`, and only the typed fields the exit
+#: set (`failing_condition`, `stop_reason`, `refusal`, `invalid_input` for an
+#: `invalid_input` exit, `resume` for a run the time cap cut off, ...).
+#: `list_scripts` judges every registered script against the board without
+#: running it, by priority, with its conflicts.
+#: No existing tool's request or response moved; a seatkit-18 process simply
+#: does not advertise either tool, and the PROTOCOL MISMATCH sentence says so
+#: before a seat ever calls one.
+#:
+#: Also `seatkit-19`, a **response** field removed (z1, battle 8): a
+#: legal-action or `play_permissions` entry's `bottom_if_unused` is gone.
+#: Battle 8's funnel commit took the
+#: standing `PlayPermission` away from cascade, suspend, rebound, Mosswort
+#: Bridge and the rest of the "cast/play it without paying its mana cost"
+#: effects - each now casts inline while the permitting spell or ability is
+#: still resolving (`Game.cast_during_resolution`/`may_cast_during_
+#: resolution`, CR 608.2g) - and took with it the one cleanup sweep
+#: (`Game._bottom_unused_cascade_permissions`) that ever set the field to
+#: anything but its own default. Permanently `False` on every permission this
+#: engine still grants, it carried nothing left to say, so it is dropped
+#: rather than kept as a key that can only ever read one value. An older
+#: process reading `bottom_if_unused` off a row gets a plain missing key
+#: (Python's `dict.get` default, not a KeyError) - safe for any reader that
+#: was already treating it as informational rather than branching on it, and
+#: `mcp.py`'s own tool description never told a seat to.
+#: A cascade, suspend or rebound hit is now cast by the same `decide` that
+#: accepted its "you may cast it": the hit's face, mode, target, kicker and
+#: mana questions arrive as `pending_decision`s chained off that answer,
+#: with no separate `cast` call and no standing permission left to use.
+#:
+#: Also `seatkit-19`, **one request narrowed** (bd1): an advisor's rationale is
+#: capped at `ADVICE_REASONING_MAX_CHARS` (240) characters. `AdviceIn.reasoning`
 #: gained `maxLength: 240` and the route refuses a longer one with a 422 of
 #: type `reasoning_too_long`; an advise `Seat` refuses it first, client-side,
 #: before any `dry_run` probe or `/advice` POST goes out, answering `allowed:
 #: false`, `type: reasoning_too_long`, `max_chars` and a `reason` that says to
 #: shorten it and propose again. A seat's own per-action `reasoning` is not
-#: capped. A bump because the prose this build serves promises the cap and
+#: capped. A bump on its own: the prose this build serves promises the cap and
 #: the typed refusal: a seatkit-18 process would still send the long
 #: rationale, probe the engine for it, and read the server's 422 back only as
 #: an untyped refusal.
@@ -289,32 +396,6 @@ PROTOCOL_VERSION = "seatkit-19"
 #: the engine's own (`keyword: Equip`, no `ability_index`), still served as
 #: `kind: equip`, listed once and priced. An older process ignores the two
 #: new keys, so nothing it sends is refused.
-#:
-#: `seatkit-19` is a **response** shape change - a field removed, not added,
-#: so it is a bump rather than a ride: a legal-action or `play_permissions`
-#: entry's `bottom_if_unused` is gone. Battle 8's funnel commit took the
-#: standing `PlayPermission` away from cascade, suspend, rebound, Mosswort
-#: Bridge and the rest of the "cast/play it without paying its mana cost"
-#: effects - each now casts inline while the permitting spell or ability is
-#: still resolving (`Game.cast_during_resolution`/`may_cast_during_
-#: resolution`, CR 608.2g) - and took with it the one cleanup sweep
-#: (`Game._bottom_unused_cascade_permissions`) that ever set the field to
-#: anything but its own default. Permanently `False` on every permission this
-#: engine still grants, it carried nothing left to say, so it is dropped
-#: rather than kept as a key that can only ever read one value. An older
-#: process reading `bottom_if_unused` off a row gets a plain missing key
-#: (Python's `dict.get` default, not a KeyError) - safe for any reader that
-#: was already treating it as informational rather than branching on it, and
-#: `mcp.py`'s own tool description never told a seat to.
-#:
-#: Riding the same `seatkit-19`, additive response only: the state view (and
-#: `battlefield_state`'s own `known_cards` section) now carries `known_cards`,
-#: keyed by the player who knows - `Game.known_to`'s read of a hidden card's
-#: live position (CR 401.2, CR 400.7), the same knowledge policy battle 5's
-#: public-zone-to-hand tracking already used, extended by battle 8 (B8-03) to
-#: a card put into a library from a public zone. An older process has no
-#: `known_cards` parameter to ask for and ignores the new key on a row it
-#: already reads whole.
 #:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row
@@ -975,9 +1056,11 @@ DRY_RUN_SHAPES = frozenset(
 #: ways of *saying* something about a game rather than doing something to it,
 #: and the server already decides which of them an advisor may use: `/advice`
 #: is advise mode's own channel (proposing through it must not recurse),
-#: `/report` files a problem, and `/plan`/`/reflection` are seat-only - their
-#: own refusal is the honest answer to give, not a proposal dressed up as one.
-ADVISE_PASSTHROUGH_SUFFIXES = ("/advice", "/report", "/plan", "/reflection")
+#: `/report` files a problem, `/plan`/`/reflection` are seat-only - their
+#: own refusal is the honest answer to give, not a proposal dressed up as one -
+#: and `/script-runs` is the play-script runner reporting a buddy's advise run
+#: (`game_access.ADVISOR_POST_SUFFIXES` lets an advisor post it).
+ADVISE_PASSTHROUGH_SUFFIXES = ("/advice", "/report", "/plan", "/reflection", "/script-runs")
 
 #: Why an advise `Seat` cannot run an auto-pass. A `pass_until` run gives up
 #: priority over and over until a named point in the turn - which is not
@@ -1452,11 +1535,16 @@ class Seat:
             "state": self.fetch_state(),
         }
 
-    def fetch_state(self) -> dict[str, Any]:
+    def fetch_state(self, *, include_contents: bool = False) -> dict[str, Any]:
         """This seat's filtered view of the game, right now (`battlefield_state`'s
         answer, minus image trimming duplication - callers that print it do
-        that themselves)."""
-        state = self.http.get(f"/api/games/{self.game_id()}", params={"uid": self.uid}).json()
+        that themselves). `include_contents` asks the api for this seat's own
+        unordered `library_contents`/`sideboard_contents` too, which the
+        default read leaves off."""
+        params = {"uid": self.uid}
+        if include_contents:
+            params["include"] = "contents"
+        state = self.http.get(f"/api/games/{self.game_id()}", params=params).json()
         _trim_images(state)
         return state
 
@@ -1634,6 +1722,13 @@ class Seats:
         #: long as `_by_uid` does - the cross-call watermark `block_until_wake`
         #: needs, since a `Seat` itself is remade fresh on every call.
         self._wake_signatures: dict[str, Any] = {}
+        #: `(game_id, uid)` -> the play-script corpus that uid registered
+        #: (`GET /api/games/{id}/seats/{uid}/scripts`), read once by
+        #: `playscripts.runtime` and handed to it by reference. It lives here
+        #: and never on a `Seat` for the same reason `_wake_signatures` does:
+        #: `seat_for` mints a fresh `Seat` on every tool call. Keyed by game
+        #: too, because a uid is only ever valid inside the game it opens.
+        self.script_corpora: dict[tuple[str, str], dict[str, Any]] = {}
         #: 2b T11: the http transport is one long-running process that may
         #: serve several concurrently-live games at once - "the one live
         #: game" (`game_id()` below) stops being a coherent idea for it, and
@@ -1775,6 +1870,23 @@ def _trim_images(state: dict[str, Any]) -> None:
             for cards in entries.values():
                 for entry in cards or []:
                     _strip_card_weight(entry)
+    for key in ("library_contents", "sideboard_contents"):
+        entries = state.get(key)
+        if isinstance(entries, dict):
+            for counted in entries.values():
+                for entry in counted or []:
+                    if isinstance(entry, dict):
+                        _strip_card_weight(entry.get("card"))
+    known = state.get("known_cards")
+    if isinstance(known, dict):
+        for block in known.values():
+            if not isinstance(block, dict):
+                continue
+            for entry in [*(block.get("hand") or []), *(block.get("sideboard") or [])]:
+                _strip_card_weight(entry)
+            for record in block.get("library") or []:
+                if isinstance(record, dict):
+                    _strip_card_weight(record.get("card"))
 
 
 def _strip_card_weight(entry: dict[str, Any]) -> None:
@@ -2372,6 +2484,7 @@ def run_action(
     hold_priority: bool = False,
     release: bool = True,
     reasoning: str | None = None,
+    include_actions: bool = True,
 ) -> dict[str, Any]:
     """Do one action, then behave the way both transports promise: unless
     told to hold, release priority, then check once for this seat's next
@@ -2422,6 +2535,10 @@ def run_action(
     the same string through here that the tool call itself gave, so an agent
     seat's auto-release never gets refused with a 422 for a reasoning field
     nothing here would know how to fill in honestly.
+
+    `include_actions=False` leaves `available_actions` out of every answer:
+    the play-script runner builds its request bodies from the state view and
+    never pays for the enumeration (design D1).
     """
     before = seat.fetch_state()
     # Read by `answered` below, and set here rather than beside the retry
@@ -2437,12 +2554,10 @@ def run_action(
         the state the action left behind, this seat's legal actions in it,
         and the tail of what has actually happened (`recent_log` - see
         `Seat.recent_log`)."""
-        answer = {
-            **fields,
-            "state": state,
-            "available_actions": available_actions(seat, state),
-            "recent_log": seat.recent_log(),
-        }
+        answer = {**fields, "state": state}
+        if include_actions:
+            answer["available_actions"] = available_actions(seat, state)
+        answer["recent_log"] = seat.recent_log()
         if stale_retry:
             # P4, and only when it happened: this action was refused as
             # stale once and re-sent against a freshly read board. A reader
@@ -3032,6 +3147,7 @@ def pass_until(
     resume: dict[str, Any] | None = None,
     reasoning: str | None = None,
     max_seconds: float = 0.0,
+    include_actions: bool = True,
 ) -> dict[str, Any]:
     """`_pass_until_once` (below), optionally ridden out across a bounded wait
     rather than handed straight back the first time it would otherwise have
@@ -3051,6 +3167,9 @@ def pass_until(
     the board*, and retrying it automatically would spend the whole bound
     re-hitting the same cap instead.
 
+    `include_actions=False` leaves `available_actions` out of the answer, as
+    `run_action`'s own switch does, for the play-script runner.
+
     The owner's problem this exists for: `wait_for_priority`'s own bounded
     wait (`block_until_wake`) covers the space between a seat's own actions,
     but a `pass_until` run handed back specifically because it is waiting on
@@ -3064,15 +3183,17 @@ def pass_until(
         # `ADVISE_NO_PASS_UNTIL`. The answer keeps `_pass_until_once`'s own
         # shape so a caller reads this refusal the one way it already knows.
         state = seat.fetch_state()
-        return {
+        refused = {
             "stopped_because": ADVISE_NO_PASS_UNTIL,
             "passes": 0,
             "finished": True,
             "until": {"step": until_step, "whose_turn": whose_turn},
             "state": state,
-            "available_actions": available_actions(seat, state),
-            "recent_log": seat.recent_log(),
         }
+        if include_actions:
+            refused["available_actions"] = available_actions(seat, state)
+        refused["recent_log"] = seat.recent_log()
+        return refused
     max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
     deadline = time.monotonic() + max_seconds
     kwargs: dict[str, Any] = {
@@ -3082,6 +3203,7 @@ def pass_until(
         "stop_when_attacked": stop_when_attacked,
         "stop_when_you_can_attack": stop_when_you_can_attack,
         "reasoning": reasoning,
+        "include_actions": include_actions,
     }
     result = _pass_until_once(seat, resume=resume, **kwargs)
     while not result["finished"] and result.get("retryable", False) and time.monotonic() < deadline:
@@ -3101,6 +3223,7 @@ def _pass_until_once(
     stop_when_you_can_attack: bool = True,
     resume: dict[str, Any] | None = None,
     reasoning: str | None = None,
+    include_actions: bool = True,
 ) -> dict[str, Any]:
     """Pass every priority this seat is *currently* able to pass, up to a named
     point in the turn - then return. Never sleeps, never waits for the
@@ -3184,7 +3307,10 @@ def _pass_until_once(
             "finished": finished,
             "until": {"step": until_step, "whose_turn": whose_turn},
             "state": state,
-            "available_actions": available_actions(seat, state),
+        }
+        if include_actions:
+            result["available_actions"] = available_actions(seat, state)
+        result |= {
             # A run crosses windows this seat never looks at, so it is the
             # tool with the most to say about what happened while it was not
             # watching - and until this it said none of it, leaving the seat

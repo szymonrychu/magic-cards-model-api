@@ -57,6 +57,8 @@ _DUMMY_PATH_PARAMS = {
     "username": "nobody",
     # `POST .../advice/{seq}/approve`: a ledger `seq`, so an integer.
     "seq": "1",
+    # `.../seats/{uid}/scripts`: the corpus's uid, never read as a credential.
+    "uid": "nobody",
 }
 
 

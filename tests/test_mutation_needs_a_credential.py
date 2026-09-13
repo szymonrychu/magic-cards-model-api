@@ -49,6 +49,9 @@ _DUMMY_PATH_PARAMS = {
     # a real ledger row: the gate this file tests runs before the route body,
     # so every case here is refused on the missing credential first.
     "seq": "1",
+    # `PUT .../seats/{uid}/scripts` (A4): the uid a corpus is registered
+    # under. Never a credential - the gate reads `?uid=` off the query.
+    "uid": "not-a-real-uid",
 }
 
 

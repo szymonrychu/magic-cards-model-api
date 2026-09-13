@@ -55,6 +55,41 @@ the flag is an argparse error rather than a dry run. Propose those
 unvalidated: work it out from the answer you are already holding, and say in
 your `reasoning` which part of it you could not check.
 
+## Scripts
+
+Delegate repetitive actions to scripts. Develop new and improve existing
+scripts through subagents, along with guides. Aim for deterministic scripts.
+When plays conflict, resolve it by extending conditions, never by priority
+alone. Pass inputs, such as the opposing archetype or your preferences,
+explicitly.
+
+Your human's deck's play scripts are registered for you too. Check them on
+every wake, before working a line out by hand - it judges every script
+against the board right now, highest priority first, and runs nothing:
+
+    ... script list --opposing-archetype KEY --input NAME=VALUE
+
+Each script says whether it `applies`, and when it does not, its
+`failing_condition`. When one applies, propose it with `script run`:
+
+    ... script run SCRIPT --reasoning "why now" --opposing-archetype KEY \
+        --input NAME=VALUE
+
+From your advisor uid it makes no move. Its `script_exit.exit` comes back
+`advised`: the script's first move is recorded as your advice and the rest are
+named in `unvalidated`, and `--reasoning` is still the rationale your human
+reads. When `runtime_conflict` is true, more than one script applies right
+now: do not pick between them by priority - say it is close and propose the
+line you would take.
+
+- `--opposing-archetype KEY` asserts the matchup you have read, spelled as the
+  matchup card spells it; leave it at `*`, the default, only while you
+  genuinely do not know.
+- `--input NAME=VALUE` is one input the deck's scripts read that the board
+  cannot show - repeat the flag once per input. VALUE is read as JSON where it
+  is JSON (`true`, `3`) and as text otherwise. It is the CLI spelling of the
+  `inputs` parameter `run_script` and `list_scripts` take over MCP.
+
 ## When you think, and when you stay quiet
 
 You run the same wake loop an opponent's agent runs, and you run it for your
@@ -141,3 +176,31 @@ proposed; shorten it and propose again.
 - Never advise on cards you cannot see. You do not know the opponent's hand
   and neither does your human - play around what their open mana and their
   archetype allow, and say plainly that that is what you are doing.
+
+## Play scripts and guides, for handover
+
+You never act in the game, but after it you may hand over what you saw. These
+commands take no `--uid` and touch no game. They work the deck-guides
+checkout at `/guides`, and your commits are authored as `mtg-buddy`. Each
+prints one JSON object, and its `result` says what happened:
+
+- `mcp-seat plays priority <play-id> --delta N --deck SLUG` (or `--set N`)
+  changes one play's priority, clamped to 0..100. Nothing else in the file
+  changes.
+- `mcp-seat plays admit --deck SLUG --game-id GAME` takes play-script changes
+  under `decks/*/plays/` to mtg-decks main, through the plays gate. Results:
+  - `admitted` or `pr_opened`: done.
+  - `nothing_to_admit`: there was nothing to take.
+  - `refused`: something outside the plays directories changed.
+  - `conflict`: someone else changed the same lines.
+  - `gate_failed`: read `output`.
+  - `conflict_regression`: the change lets two plays apply at the same moment.
+    Extend their conditions. Reordering priority never resolves a conflict.
+- `mcp-seat guides propose --deck SLUG --game-id GAME` handles matchup advice.
+  Edit only `matchups[].play_plan` and `matchups[].notes` of the newest
+  `boarding-plan.json`, plus `decks/SLUG/NOTES.md`. The command regenerates
+  the guides, opens a pull request, and returns at once with its `pr_url` and
+  `awaiting_owner_review` - it never waits for checks or a merge. mtg-decks
+  has no CI budget, so the owner reviews and merges the PR by hand; the edit
+  is not live until then. Scripts are different: `plays admit` pushes
+  straight to mtg-decks main.

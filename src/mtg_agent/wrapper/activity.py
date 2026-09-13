@@ -96,10 +96,13 @@ def level_rank(level: str) -> int:
 # ---- redaction -------------------------------------------------------------
 
 #: Anything shaped like a credential. The stack handles an ANTHROPIC_API_KEY
-#: and a wrapper shared secret, the agent's own Bash commands can echo an
-#: environment, and the container also carries a GH_PAT (deploy/seat-job.yaml,
-#: used to clone the deck-guides repo) that could end up embedded in a
-#: command the agent runs; none of that goes to stdout. Seat uids are NOT
+#: and a wrapper shared secret, and the agent's own Bash commands can echo an
+#: environment. The container also has a GitHub PAT: no longer an env var,
+#: but mounted as a file at /var/run/mtg-decks-git/GH_PAT (deploy/seat-job.yaml)
+#: that git's credential helper reads to push to the deck-guides repo - and
+#: the agent can still `cat` that file, or paste the token into a remote URL
+#: or a curl header. So the redaction stays; none of that goes to stdout.
+#: Seat uids are NOT
 #: redacted - they are already in every URL in this log and identify which
 #: seat is talking.
 #:
@@ -292,6 +295,8 @@ _MTG_STATES = {
     "mulligan": DECIDING,
     "opening_hand_action": DECIDING,
     "declare_plan": DECIDING,
+    "list_scripts": READING_BOARD,
+    "run_script": ACTING,
 }
 
 

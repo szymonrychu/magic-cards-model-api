@@ -16,14 +16,25 @@ collision.
 from __future__ import annotations
 
 import json
+import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from mtg_agent.driver.app import build_app
 from mtg_agent.driver.config import DriverSettings
+
+#: The refreshed fixture corpus's own plays for the one guide this world
+#: carries, copied verbatim into its `decks/dimir-frog/plays/`.
+FIXTURE_PLAYS = Path(__file__).resolve().parent / "fixtures" / "mtg-decks" / "dimir-frog" / "plays"
+
+#: The uid a buddy dispatch runs under; the fake lobby hands it its human's
+#: decklist the way the real `decks_api.game_seats` does.
+ADVISOR_UID = "advisor-uid"
 
 DECKLIST = "4 Psychic Frog\n4 Fatal Push\n2 Consign to Memory\n"
 
@@ -42,15 +53,22 @@ ARCHETYPE = {
 }
 
 
-def build_world(tmp_path) -> SimpleNamespace:
+def build_world(tmp_path, clock=None) -> SimpleNamespace:
     guides = tmp_path / "guides" / "decks" / "dimir-frog"
     guides.mkdir(parents=True)
     (guides / "decklist.txt").write_text(DECKLIST)
     (guides / "archetype.json").write_text(json.dumps(ARCHETYPE))
     (guides / "GAMEPLAN_GUIDE.md").write_text("# gameplan\n")
+    shutil.copytree(FIXTURE_PLAYS, guides / "plays")
 
+    workspace = tmp_path / "workspace"
     state = {
         "winner": None,
+        "drawn": False,
+        #: The rows `GET /api/games/{id}/log` answers with.
+        "log": [],
+        #: Whether the handover marker existed when the session was deleted.
+        "marker_at_delete": None,
         "decklist": DECKLIST,
         "agent": "up",
         "game": "up",
@@ -65,6 +83,12 @@ def build_world(tmp_path) -> SimpleNamespace:
         #: watcher (`mtg_agent/wrapper/activity.py`). `None` is a wrapper
         #: that has observed nothing yet.
         "activity": None,
+        #: The API's `SCRIPTS_ENABLED` kill switch: False answers the scripts
+        #: PUT with the real route's 409 `code: scripts_disabled` refusal.
+        "scripts_enabled": True,
+        #: "down" makes the scripts PUT alone unreachable, the rest of the
+        #: game server still answering.
+        "scripts_route": "up",
     }
     #: The fake wrapper's own idea of its current model/effort/max_thinking_
     #: tokens - what `GET /v1/session` answers and `POST /v1/session` updates.
@@ -73,6 +97,15 @@ def build_world(tmp_path) -> SimpleNamespace:
     session_posts: list[dict] = []
     submitted: list[dict] = []
     reflection_posts: list[dict] = []
+    #: Every `PUT /api/games/{id}/seats/{uid}/scripts` the driver sent.
+    script_puts: list[dict] = []
+    #: What the fake wrapper and game server were asked, in order: `message`,
+    #: `interrupt`, `probe`, `delete` and `reflection`.
+    events: list[str] = []
+    interrupts: list[dict] = []
+    probes: list[dict] = []
+    #: The `uid` of every `GET .../log` read.
+    log_reads: list[str | None] = []
 
     game = FastAPI()
 
@@ -87,7 +120,15 @@ def build_world(tmp_path) -> SimpleNamespace:
                 {"username": "alice"},
             ],
             "winner": state["winner"],
+            "drawn": state["drawn"],
         }
+
+    @game.get("/api/games/{game_id}/log")
+    def get_log(game_id: str, uid: str | None = None, since: int = 0):
+        if state["game"] == "down":
+            raise httpx.ConnectError("connection refused")
+        log_reads.append(uid)
+        return {"log": state["log"], "last_seq": len(state["log"])}
 
     @game.post("/api/games/{game_id}/reflection")
     def post_reflection(game_id: str, body: dict):
@@ -98,6 +139,7 @@ def build_world(tmp_path) -> SimpleNamespace:
         if state["game"] == "down":
             raise httpx.ConnectError("connection refused")
         reflection_posts.append({"game_id": game_id, **body})
+        events.append("reflection")
         return {"recorded": True, "log_seq": len(reflection_posts), "player": body.get("player")}
 
     @game.get("/api/lobby/games/{game_id}/seats")
@@ -113,10 +155,50 @@ def build_world(tmp_path) -> SimpleNamespace:
                 {
                     "player": "bob",
                     "uid": "secret-uid",
-                    "decklist": state["decklist"] if uid == "secret-uid" else None,
+                    "decklist": state["decklist"] if uid in ("secret-uid", ADVISOR_UID) else None,
                 },
                 {"player": "alice", "uid": "other-uid", "decklist": None},
             ]
+        }
+
+    @game.put("/api/games/{game_id}/seats/{uid}/scripts")
+    def put_scripts(game_id: str, uid: str, body: dict, request: Request):
+        # The real route's credential rule, its kill switch and its answer
+        # shape; judging each script is `test_script_routes.py`'s job, and
+        # `test_app.py`'s real-app join test proves the driver's body passes it.
+        if state["game"] == "down" or state["scripts_route"] == "down":
+            raise httpx.ConnectError("connection refused")
+        script_puts.append(
+            {
+                "game_id": game_id,
+                "uid": uid,
+                "caller": request.query_params.get("uid"),
+                "body": body,
+            }
+        )
+        if request.query_params.get("uid") != uid:
+            raise HTTPException(status_code=404, detail="not found")
+        if not state["scripts_enabled"]:
+            reason = (
+                "registering scripts was refused: agent-authored scripts are switched off "
+                "on this deployment (SCRIPTS_ENABLED=false). Play the seat without scripts."
+            )
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": reason,
+                    "allowed": False,
+                    "reason": reason,
+                    "code": "scripts_disabled",
+                },
+            )
+        return {
+            "registered": True,
+            "uid": uid,
+            "deck_slug": body["deck_slug"],
+            "guides_revision": body["guides_revision"],
+            "count": len(body["scripts"]),
+            "registered_at": "2026-09-13T00:00:00+00:00",
         }
 
     wrapper = FastAPI()
@@ -127,7 +209,10 @@ def build_world(tmp_path) -> SimpleNamespace:
             raise HTTPException(status_code=503, detail="session not ready")
         if state["agent"] == "down":
             raise httpx.ConnectError("connection refused")
+        if state["agent"] == "refusing":
+            raise HTTPException(status_code=400, detail="text is required")
         submitted.append(body)
+        events.append("message")
         return {"turnId": f"turn-{len(submitted)}"}
 
     @wrapper.delete("/v1/session", status_code=202)
@@ -135,10 +220,28 @@ def build_world(tmp_path) -> SimpleNamespace:
         if state["agent"] == "down":
             raise httpx.ConnectError("connection refused")
         state["deleted"] += 1
+        state["marker_at_delete"] = (workspace / "handover.done").exists()
+        events.append("delete")
         # A real wrapper exits here; the replacement container boots for a
         # while before it can take a turn.
         state["agent"] = "booting"
         return {"stopping": True, "exiting": True}
+
+    @wrapper.post("/v1/interrupt", status_code=202)
+    def post_interrupt():
+        if state["agent"] == "down":
+            raise httpx.ConnectError("connection refused")
+        interrupts.append({})
+        events.append("interrupt")
+        return {"turnId": f"turn-{len(submitted)}"}
+
+    @wrapper.post("/v1/probe", status_code=202)
+    def post_probe(body: dict):
+        if state["agent"] == "down":
+            raise httpx.ConnectError("connection refused")
+        probes.append(body)
+        events.append("probe")
+        return {"probeId": f"probe-{len(probes)}", "state": "pending"}
 
     @wrapper.get("/v1/session")
     def get_session():
@@ -170,23 +273,28 @@ def build_world(tmp_path) -> SimpleNamespace:
         wrapper_secret="",
         guides_root=tmp_path / "guides",
         memory_root=tmp_path / "memory",
-        workspace=tmp_path / "workspace",
+        workspace=workspace,
         self_url="http://driver:8090",
         http_addr=":8090",
         agent_boot_wait=1.0,
         agent_retry_interval=0.01,
     )
-    client = TestClient(build_app(settings, client_factory=client_factory))
+    client = TestClient(build_app(settings, client_factory=client_factory, clock=clock))
     return SimpleNamespace(
         client=client,
         settings=settings,
         submitted=submitted,
         wrapper_posts=submitted,
         reflection_posts=reflection_posts,
+        script_puts=script_puts,
         session_settings=session_settings,
         session_posts=session_posts,
         state=state,
         uid="secret-uid",
         game_id="g-1",
         client_factory=client_factory,
+        events=events,
+        interrupts=interrupts,
+        probes=probes,
+        log_reads=log_reads,
     )

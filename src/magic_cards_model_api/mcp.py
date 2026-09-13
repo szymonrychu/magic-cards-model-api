@@ -112,6 +112,7 @@ from mcp_types import InputRequiredResult
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from . import seatkit
+from .playscripts import script_tools
 from .seatkit import (
     DEFAULT_API,
     NO_SUCH_SEAT,
@@ -177,7 +178,16 @@ SECTION_KEYS: dict[str, tuple[str, ...]] = {
     "pending_decision": ("pending_decision",),
     "recent_log": ("recent_log",),
     "known_cards": ("known_cards",),
+    "library_contents": ("library_contents",),
+    "sideboard_contents": ("sideboard_contents",),
 }
+
+#: Sections left out of the default whole board and served only when named.
+#: Each is the asking seat's own library or sideboard as an unordered
+#: `{card, count}` list (CR 401.2 keeps the order from everyone), fetched with
+#: the api's `?include=contents` - nothing a seat needs on every read, so no
+#: answer pays for them unless it asked.
+ON_REQUEST_SECTIONS: tuple[str, ...] = ("library_contents", "sideboard_contents")
 
 #: Sections whose entries are card views carrying whose they are - the two
 #: shared zones, the command zone, and the stack. `side` filters these on
@@ -186,13 +196,13 @@ SECTION_KEYS: dict[str, tuple[str, ...]] = {
 _CARD_LIST_KEYS = ("battlefield", "exile", "exile_pile", "command", "stack")
 
 #: Sections shaped `{username: [...]}` - `side` filters these by key.
-#: `known_cards` is keyed by the player who *knows*, not by whose cards they
-#: are, but the filter is the same one line either way: after `visibility.
-#: redact_view` a non-admin viewer's own entry is the only one ever present,
-#: so `side="opponent"` (which never names the viewer) drops it and
-#: `side="mine"`/`"both"` keep it - exactly "is this the viewer's own
-#: knowledge", asked the same way `hands`' own key already is.
-_BY_USERNAME_KEYS = ("hands", "graveyards", "play_permissions", "known_cards")
+_BY_USERNAME_KEYS = (
+    "hands",
+    "graveyards",
+    "play_permissions",
+    "library_contents",
+    "sideboard_contents",
+)
 
 #: What `side` accepts. Deliberately not usernames: the caller already
 #: identified itself with `player_uid`, and a mirror match - both seats on
@@ -230,7 +240,29 @@ def _narrow_to_side(view: dict[str, Any], allowed: set[str] | None) -> dict[str,
     players = narrowed.get("players")
     if isinstance(players, list):
         narrowed["players"] = [player for player in players if player.get("username") in allowed]
+    known = narrowed.get("known_cards")
+    if isinstance(known, dict):
+        narrowed["known_cards"] = {
+            knower: _known_block_for(block, allowed) for knower, block in known.items()
+        }
     return narrowed
+
+
+def _known_block_for(block: Any, allowed: set[str]) -> Any:
+    """One `known_cards` entry, keeping only records of cards owned by a
+    seat in `allowed`. The entry is keyed by the seat that *knows*, so the
+    side a record belongs to is the card's own owner, not that key."""
+    if not isinstance(block, dict):
+        return block
+    return {
+        "hand": [card for card in block.get("hand") or () if _owner_of(card) in allowed],
+        "library": [
+            record
+            for record in block.get("library") or ()
+            if _owner_of(record.get("card") or {}) in allowed
+        ],
+        "sideboard": [card for card in block.get("sideboard") or () if _owner_of(card) in allowed],
+    }
 
 
 def _select_sections(view: dict[str, Any], wanted: list[str]) -> dict[str, Any]:
@@ -607,8 +639,13 @@ def _action_answer(payload: dict[str, Any]) -> dict[str, Any]:
     carried = ("outcome", "wake_reason", "state", "available_actions", "recent_log")
     answer.update({key: value for key, value in payload.items() if key not in carried})
     answer["board"] = board
-    answer["available_actions"] = _compact_actions(payload.get("available_actions"))
-    answer["recent_log"] = payload.get("recent_log")
+    # Every action tool's answer always carries both keys, null when the
+    # payload had none. A script run's answer alone leaves them out: it is its
+    # `script_exit` and the board, and a null list there would read as
+    # "nothing is legal" rather than "this answer does not say".
+    if "script_exit" not in payload:
+        answer["available_actions"] = _compact_actions(payload.get("available_actions"))
+        answer["recent_log"] = payload.get("recent_log")
     return answer
 
 
@@ -803,17 +840,23 @@ def build_server(seats: Seats) -> MCPServer:
         what you read: `battlefield`, `hands`, `graveyards`, `exile` (which
         brings `exile_pile` with it), `command`, `stack`, `combat`,
         `players`, `play_permissions`, `pregame`, `pending_decision`,
-        `recent_log`, `known_cards`. An empty `sections` - the default - is
-        all of them. A name that is not on that list is refused, with the
-        list, rather than quietly ignored.
+        `recent_log`, `known_cards`, `library_contents`, `sideboard_contents`.
+        An empty `sections` - the default - is all of them except the last
+        two, which come only when you name them. A name that is not on that
+        list is refused, with the list, rather than quietly ignored.
 
         `known_cards` is what you know about hidden cards because an effect
         showed them to you or tracked where they went: `hand` lists cards in
-        another player's hand, `library` lists a card whose live position
-        (`index_from_top`) you still know (CR 401.2; a reorder or a further
-        put on top ends the record), `sideboard` lists sideboard cards -
-        keyed by the player who knows, which after redaction is only ever
-        your own entry.
+        another player's hand that were revealed to you or that you looked at
+        (and still sit there), `library` lists library cards you know with
+        `index_from_top` (their position right now - a shuffle ends it; a card
+        put into a library from a public zone is known to every player), and
+        `sideboard` lists sideboard cards revealed to you. Your own hand and
+        sideboard are not repeated there; a look at your own library is.
+
+        `library_contents` and `sideboard_contents` are your own library and
+        sideboard as `{card, count}` lists sorted by name - what is in them,
+        never in what order, and never the opponent's.
 
         `side` is `both` (the default), `mine`, or `opponent`, and it is
         resolved from the uid you passed, not from a username you have to get
@@ -823,7 +866,8 @@ def build_server(seats: Seats) -> MCPServer:
         resolved to (`you`, `opponents`), so you never have to infer it. It
         narrows every section whose entries say whose they are - the
         battlefield, hands, graveyards, exile, the command zone, the stack,
-        `players` and `play_permissions`. It does NOT narrow `combat` (an
+        `players`, `play_permissions`, the contents lists, and the records
+        inside `known_cards` (by whose card each one is). It does NOT narrow `combat` (an
         attack belongs to both sides at once), `pregame`, `pending_decision`
         or `recent_log`.
 
@@ -882,8 +926,10 @@ def build_server(seats: Seats) -> MCPServer:
                 f"{', '.join(_SIDES)} - resolved from your own uid, never a "
                 "username. Nothing was returned; ask again with one of those."
             )
-        wanted = sorted(asked) if asked else sorted(SECTION_KEYS)
-        state = seat.fetch_state()
+        wanted = sorted(asked) if asked else sorted(set(SECTION_KEYS) - set(ON_REQUEST_SECTIONS))
+        state = seat.fetch_state(
+            include_contents=any(section in ON_REQUEST_SECTIONS for section in wanted)
+        )
         # Only fetched when it was asked for: `recent_log` is its own HTTP
         # call to the API (`Seat.recent_log`), so a seat that narrowed it away
         # saves the round trip rather than merely hiding its answer.
@@ -2326,6 +2372,111 @@ def build_server(seats: Seats) -> MCPServer:
             ),
             ctx.protocol_version if ctx is not None else None,
         )
+
+    @server.tool()
+    @_guarded(seats)
+    def run_script(
+        player_uid: str,
+        script: str,
+        opposing_archetype: str = "*",
+        *,
+        reasoning: str,
+        resume: str = "",
+        wait: bool = True,
+        max_seconds: float = 0.0,
+        inputs: dict[str, Any] | None = None,
+        ctx: Context | None = None,
+    ) -> str | InputRequiredResult:
+        """Run one of your registered play scripts: its moves, in order, and
+        the one `next` script that applies after them.
+
+        `script` is the script's `id`. The runner waits for the script's
+        `when` (passing priority with every stop on, the way `pass_until`
+        does), checks `opposing_archetypes` and its `true`/`false`
+        conditions against the board, makes each move through the same
+        routes a hand-played move uses - so every refusal is the engine's own
+        - answers each decision a move raises from the move's `answers`, and
+        passes priority only over its own objects until they resolve. It
+        never passes beyond the resolution of its last move.
+
+        `reasoning`: why you are running this script now, in your own words.
+        Every move it makes is sent with it; without it the run is refused.
+
+        `opposing_archetype`: the opponent's archetype as you read it, `*`
+        (the default) when you do not know. A script listing only other
+        archetypes does not apply. `inputs`: the facts your deck's scripts
+        read that the board cannot show, by name - `{"prefer_tempo": true}`.
+        `opposing_archetype` is one of them and may be given here instead;
+        naming two different archetypes is refused.
+
+        `wait=false` does not wait for the script's `when`: a script off its
+        step is simply not applicable. `max_seconds` caps this call
+        (at most `seatkit.MAX_WAIT_SECONDS`, which a 0.0 leaves it at).
+
+        The answer is `script_exit` beside the narrowed `board`:
+        `script_exit.exit` is one of `chain_complete` (the moves are done,
+        and no next script applies), `not_applicable` (with
+        `failing_condition`: the `list` and `index` that stopped it and what
+        it `seen`), `needs_input` (a required input is missing, named in
+        `needs_input`), `invalid_input` (a supplied input is not a value the
+        deck declares, with `invalid_input`: its `name`, `value` and
+        `reason`), `unforeseen` (with `stop_reason`), `interrupted`
+        (someone else acted), `ambiguous` (two cards or two next scripts
+        tie), `refused` (with `refusal`, the server's or the runner's words),
+        `stale`, `unknown_outcome`, `needs_plan` (call `declare_plan`
+        first), `already_ran` (this script already ran this turn and step)
+        or `advised` (an advisor's run: move 1 is proposed as advice and the
+        rest are named in `unvalidated`). `moves_done`/`moves_total` count
+        its moves. `exit` is null when the time cap came first: pass
+        `script_exit.resume` back, verbatim, as `resume` to carry on with the
+        same run. A decision left pending for you arrives shaped
+        `input_required`, like every action tool's."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        answer = script_tools.run(
+            seat,
+            seats.script_corpora,
+            script=script,
+            reasoning=reasoning,
+            opposing_archetype=opposing_archetype,
+            resume=resume,
+            wait=wait,
+            max_seconds=max_seconds,
+            inputs=inputs,
+        )
+        if isinstance(answer, str):
+            return answer
+        return _tool_result(seat, answer, ctx.protocol_version if ctx is not None else None)
+
+    @server.tool()
+    @_guarded(seats)
+    def list_scripts(
+        player_uid: str, opposing_archetype: str = "*", inputs: dict[str, Any] | None = None
+    ) -> str:
+        """Your registered play scripts, highest priority first, each judged
+        against the board right now - nothing is run and nothing recorded.
+
+        Each script says whether it `applies`, and when it does not, its
+        `failing_condition`: the `list` that stopped it (`priority` for a
+        disabled script, `opposing_archetypes`, `when`, `true` or `false`),
+        the `index` within it, and what it `seen`. `needs_input` names a
+        required input you did not supply. `conflicts` are the
+        `play-conflict`/`next-conflict` warnings `plays check` raises that
+        involve it - scripts that could both apply at one decision point.
+        `runtime_conflict` is true when more than one listed script applies
+        right now; `applicable` names them.
+
+        `opposing_archetype` and `inputs` mean what they mean for
+        `run_script`, so a listing shows what a run with the same ones would
+        find."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        answer = script_tools.listing(
+            seat, seats.script_corpora, opposing_archetype=opposing_archetype, inputs=inputs
+        )
+        return answer if isinstance(answer, str) else json.dumps(answer, indent=1)
 
     @server.tool()
     @_guarded(seats)

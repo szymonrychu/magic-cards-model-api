@@ -301,20 +301,27 @@ def test_max_seconds_lives_only_on_the_two_tools_that_can_genuinely_wait(client,
     can genuinely have nothing to do but wait for the opponent -
     `wait_for_priority` and `pass_until` - documented in their own
     docstrings this time. Every other action tool stays poll-and-return with
-    no wait of its own: one check, one answer, always, the moment it acts."""
+    no wait of its own: one check, one answer, always, the moment it acts.
+
+    `run_script` is the third, and for the same reason: a script waits for
+    its own `when` by passing priority (`playscripts.runtime`, through
+    `seatkit.pass_until`), and a move waits for its objects to resolve while
+    the opponent holds priority - `max_seconds` bounds that call, capped at
+    `seatkit.MAX_WAIT_SECONDS`, and a run cut off hands back a `resume`
+    token."""
     import inspect
 
     seats, _ = wired(client, monkeypatch, game)
     server = build_server(seats)
-    can_wait = {"wait_for_priority", "pass_until"}
+    can_wait = {"wait_for_priority", "pass_until", "run_script"}
     for name, tool in server._tool_manager._tools.items():
         parameters = inspect.signature(tool.fn).parameters
         if name in can_wait:
             assert "max_seconds" in parameters, f"{name} should take max_seconds, and does not"
         else:
             assert "max_seconds" not in parameters, (
-                f"{name} takes max_seconds, but only wait_for_priority and "
-                "pass_until can genuinely wait on anything"
+                f"{name} takes max_seconds, but only wait_for_priority, "
+                "pass_until and run_script can genuinely wait on anything"
             )
 
 

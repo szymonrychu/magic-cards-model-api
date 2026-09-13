@@ -33,6 +33,7 @@
             "understood": true
           }
         },
+        "colors": [],
         "controller": "alice",
         "counters": {},
         "damage": 0,
@@ -41,6 +42,7 @@
         "image": "/api/card-art?name=Swamp&size=normal",
         "keywords": [],
         "mana_cost": "",
+        "mana_value": 0.0,
         "name": "Swamp",
         "oracle_text": "({T}: Add {B}.)",
         "owner": "alice",
@@ -70,6 +72,7 @@
             "understood": true
           }
         },
+        "colors": [],
         "controller": "alice",
         "counters": {},
         "damage": 0,
@@ -78,6 +81,7 @@
         "image": "/api/card-art?name=Swamp&size=normal",
         "keywords": [],
         "mana_cost": "",
+        "mana_value": 0.0,
         "name": "Swamp",
         "oracle_text": "({T}: Add {B}.)",
         "owner": "alice",
@@ -107,6 +111,7 @@
             "understood": true
           }
         },
+        "colors": [],
         "controller": "alice",
         "counters": {},
         "damage": 0,
@@ -115,6 +120,7 @@
         "image": "/api/card-art?name=Swamp&size=normal",
         "keywords": [],
         "mana_cost": "",
+        "mana_value": 0.0,
         "name": "Swamp",
         "oracle_text": "({T}: Add {B}.)",
         "owner": "alice",
@@ -144,6 +150,7 @@
             "understood": true
           }
         },
+        "colors": [],
         "controller": "alice",
         "counters": {},
         "damage": 0,
@@ -152,6 +159,7 @@
         "image": "/api/card-art?name=Swamp&size=normal",
         "keywords": [],
         "mana_cost": "",
+        "mana_value": 0.0,
         "name": "Swamp",
         "oracle_text": "({T}: Add {B}.)",
         "owner": "alice",
@@ -181,6 +189,7 @@
             "understood": true
           }
         },
+        "colors": [],
         "controller": "alice",
         "counters": {},
         "damage": 0,
@@ -189,6 +198,7 @@
         "image": "/api/card-art?name=Swamp&size=normal",
         "keywords": [],
         "mana_cost": "",
+        "mana_value": 0.0,
         "name": "Swamp",
         "oracle_text": "({T}: Add {B}.)",
         "owner": "alice",
@@ -218,6 +228,7 @@
             "understood": true
           }
         },
+        "colors": [],
         "controller": "alice",
         "counters": {},
         "damage": 0,
@@ -226,6 +237,7 @@
         "image": "/api/card-art?name=Devourer%20of%20Destiny&size=normal",
         "keywords": [],
         "mana_cost": "{5}{C}{C}",
+        "mana_value": 7.0,
         "name": "Devourer of Destiny",
         "oracle_text": "You may reveal this card from your opening hand. If you do, at the beginning of your first upkeep, look at the top four cards of your library. You may put one of those cards back on top of your library. Exile the rest.\nWhen you cast this spell, exile target permanent that's one or more colors.",
         "owner": "alice",
@@ -255,6 +267,7 @@
             "understood": true
           }
         },
+        "colors": [],
         "controller": "alice",
         "counters": {},
         "damage": 0,
@@ -263,6 +276,7 @@
         "image": "/api/card-art?name=Swamp&size=normal",
         "keywords": [],
         "mana_cost": "",
+        "mana_value": 0.0,
         "name": "Swamp",
         "oracle_text": "({T}: Add {B}.)",
         "owner": "alice",
@@ -288,6 +302,7 @@
             "abilities": [],
             "art_crop": "/api/card-art?name=Swamp&size=art_crop",
             "card_name": "Swamp",
+            "colors": [],
             "controller": "alice",
             "counters": {},
             "damage": 0,
@@ -296,6 +311,7 @@
             "image": "/api/card-art?name=Swamp&size=normal",
             "keywords": [],
             "mana_cost": "",
+            "mana_value": 0.0,
             "name": "Swamp",
             "oracle_text": "({T}: Add {B}.)",
             "owner": "alice",
@@ -309,13 +325,15 @@
             "type_line": "Basic Land \u2014 Swamp",
             "zone": "library"
           },
-          "index_from_top": 0
+          "index_from_top": 0,
+          "source": "Devourer of Destiny"
         },
         {
           "card": {
             "abilities": [],
             "art_crop": "/api/card-art?name=Swamp&size=art_crop",
             "card_name": "Swamp",
+            "colors": [],
             "controller": "alice",
             "counters": {},
             "damage": 0,
@@ -324,6 +342,7 @@
             "image": "/api/card-art?name=Swamp&size=normal",
             "keywords": [],
             "mana_cost": "",
+            "mana_value": 0.0,
             "name": "Swamp",
             "oracle_text": "({T}: Add {B}.)",
             "owner": "alice",
@@ -337,13 +356,15 @@
             "type_line": "Basic Land \u2014 Swamp",
             "zone": "library"
           },
-          "index_from_top": 1
+          "index_from_top": 1,
+          "source": "Devourer of Destiny"
         },
         {
           "card": {
             "abilities": [],
             "art_crop": "/api/card-art?name=Swamp&size=art_crop",
             "card_name": "Swamp",
+            "colors": [],
             "controller": "alice",
             "counters": {},
             "damage": 0,
@@ -352,6 +373,7 @@
             "image": "/api/card-art?name=Swamp&size=normal",
             "keywords": [],
             "mana_cost": "",
+            "mana_value": 0.0,
             "name": "Swamp",
             "oracle_text": "({T}: Add {B}.)",
             "owner": "alice",
@@ -365,13 +387,15 @@
             "type_line": "Basic Land \u2014 Swamp",
             "zone": "library"
           },
-          "index_from_top": 2
+          "index_from_top": 2,
+          "source": "Devourer of Destiny"
         },
         {
           "card": {
             "abilities": [],
             "art_crop": "/api/card-art?name=Swamp&size=art_crop",
             "card_name": "Swamp",
+            "colors": [],
             "controller": "alice",
             "counters": {},
             "damage": 0,
@@ -380,6 +404,7 @@
             "image": "/api/card-art?name=Swamp&size=normal",
             "keywords": [],
             "mana_cost": "",
+            "mana_value": 0.0,
             "name": "Swamp",
             "oracle_text": "({T}: Add {B}.)",
             "owner": "alice",
@@ -393,7 +418,8 @@
             "type_line": "Basic Land \u2014 Swamp",
             "zone": "library"
           },
-          "index_from_top": 3
+          "index_from_top": 3,
+          "source": "Devourer of Destiny"
         }
       ],
       "sideboard": []
@@ -412,6 +438,7 @@
         "abilities": [],
         "art_crop": "/api/card-art?name=Swamp&size=art_crop",
         "card_name": "Swamp",
+        "colors": [],
         "controller": "alice",
         "counters": {},
         "damage": 0,
@@ -420,6 +447,7 @@
         "image": "/api/card-art?name=Swamp&size=normal",
         "keywords": [],
         "mana_cost": "",
+        "mana_value": 0.0,
         "name": "Swamp",
         "oracle_text": "({T}: Add {B}.)",
         "owner": "alice",
@@ -437,6 +465,7 @@
         "abilities": [],
         "art_crop": "/api/card-art?name=Swamp&size=art_crop",
         "card_name": "Swamp",
+        "colors": [],
         "controller": "alice",
         "counters": {},
         "damage": 0,
@@ -445,6 +474,7 @@
         "image": "/api/card-art?name=Swamp&size=normal",
         "keywords": [],
         "mana_cost": "",
+        "mana_value": 0.0,
         "name": "Swamp",
         "oracle_text": "({T}: Add {B}.)",
         "owner": "alice",
@@ -462,6 +492,7 @@
         "abilities": [],
         "art_crop": "/api/card-art?name=Swamp&size=art_crop",
         "card_name": "Swamp",
+        "colors": [],
         "controller": "alice",
         "counters": {},
         "damage": 0,
@@ -470,6 +501,7 @@
         "image": "/api/card-art?name=Swamp&size=normal",
         "keywords": [],
         "mana_cost": "",
+        "mana_value": 0.0,
         "name": "Swamp",
         "oracle_text": "({T}: Add {B}.)",
         "owner": "alice",
@@ -487,6 +519,7 @@
         "abilities": [],
         "art_crop": "/api/card-art?name=Swamp&size=art_crop",
         "card_name": "Swamp",
+        "colors": [],
         "controller": "alice",
         "counters": {},
         "damage": 0,
@@ -495,6 +528,7 @@
         "image": "/api/card-art?name=Swamp&size=normal",
         "keywords": [],
         "mana_cost": "",
+        "mana_value": 0.0,
         "name": "Swamp",
         "oracle_text": "({T}: Add {B}.)",
         "owner": "alice",
@@ -549,6 +583,8 @@
       "counters": {},
       "graveyard_count": 0,
       "hand_count": 7,
+      "land_allowance": 1,
+      "lands_played": 0,
       "library_count": 53,
       "life": 20,
       "mana_pool": {
@@ -565,6 +601,8 @@
       "counters": {},
       "graveyard_count": 0,
       "hand_count": 7,
+      "land_allowance": 1,
+      "lands_played": 0,
       "library_count": 53,
       "life": 20,
       "mana_pool": {

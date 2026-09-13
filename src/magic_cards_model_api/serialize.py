@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from magic_cards_model.machines import AbilityOnStack, Step
@@ -19,10 +20,13 @@ from magic_cards_model.machines.keywords import cycling_abilities, cycling_activ
 from magic_cards_model.machines.layers import Characteristics
 from magic_cards_model.machines.turn import PHASE_OF
 from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Zone
+from magic_cards_model.models.card import Layout
+from magic_cards_model.models.game import KnownCard
 from magic_cards_model.models.mana import ManaPool
 
 from . import assets, commands, scryfall
 from .affordances import cast_hints
+from .commands import paused_game
 from .decisions import PendingDecision
 from .engine_api import list_abilities
 from .opening import pregame_view
@@ -87,6 +91,19 @@ def _current_characteristics(game: Game, state: CardState) -> tuple[str, int | N
         characteristics.supertypes, characteristics.types, characteristics.subtypes
     )
     return type_line, characteristics.power, characteristics.toughness
+
+
+def _current_colors(game: Game, state: CardState) -> list[str]:
+    """This object's colors right now, as color letters - the computed board's
+    on the battlefield (a color-setting effect shows), `CardState.colors`
+    anywhere else, the same split `_current_characteristics` makes. Read from
+    the engine so a play script's `colors_any` never re-derives color from a
+    mana cost."""
+    if state.zone is Zone.BATTLEFIELD:
+        colors = game.characteristics_of(state).colors
+    else:
+        colors = state.colors
+    return [color.value for color in colors]
 
 
 #: name -> image links, remembered across requests. POSITIVE RESULTS ONLY, so
@@ -468,6 +485,57 @@ def _play_permissions_view(
     return by_player
 
 
+#: The layouts whose faces are CR 712 double faces - one physical card with a
+#: front and a back, as opposed to a split card's or an adventurer's halves,
+#: which share one face (CR 709, CR 715).
+_DOUBLE_FACED_LAYOUTS = frozenset(
+    {
+        Layout.TRANSFORM,
+        Layout.MODAL_DFC,
+        Layout.MELD,
+        Layout.DOUBLE_FACED_TOKEN,
+        Layout.REVERSIBLE_CARD,
+    }
+)
+
+
+def _oracle_text(state: CardState) -> str | None:
+    """The printed rules text a card view shows.
+
+    The printing's own top-level text when Scryfall fills it in (every
+    single-faced card, split and adventure cards). A double-faced printing
+    leaves it null and puts each face's text on `card_faces`, so the view
+    reads the face the engine says is up (`CardState.up_face`): the front
+    face anywhere but the battlefield or stack (CR 712.8a), the face that is
+    up there (CR 712.8d-f). `up_face` is read directly rather than through
+    `CardState.oracle_text`, which blanks a face-down card - its owner's view
+    keeps the printed text, and `visibility` stubs it for everyone else.
+    """
+    if state.card.oracle_text is not None:
+        return state.card.oracle_text
+    up_face = state.up_face
+    return up_face.oracle_text if up_face is not None else None
+
+
+def _faces_view(state: CardState) -> list[dict[str, Any]] | None:
+    """Each face of a double-faced card, front first, or None for any other
+    card. A play-script selector picks the face a card has in its zone from
+    this list (CR 712.8a, 712.8f) - `type_line` off the battlefield is the
+    printing's combined `Front // Back` line, which is neither face."""
+    faces = state.card.card_faces or []
+    if state.card.layout not in _DOUBLE_FACED_LAYOUTS or len(faces) < 2:
+        return None
+    return [
+        {
+            "name": face.name,
+            "mana_cost": face.mana_cost,
+            "type_line": face.type_line,
+            "oracle_text": face.oracle_text,
+        }
+        for face in faces
+    ]
+
+
 def _mana_value(game: Game, state: CardState) -> float:
     """This object's mana value (CR 202.3), the way `state.mana_value` itself
     never can: CR 202.3e makes an `{X}` in the cost read as the chosen number
@@ -513,9 +581,7 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         # mana_cost`/`oracle_text`, its up face - the front one in hand,
         # CR 712.8a) fills them in. A printing that has them keeps them.
         "mana_cost": state.card.mana_cost or state.mana_cost,
-        "oracle_text": (
-            state.card.oracle_text if state.card.oracle_text is not None else state.oracle_text
-        ),
+        "oracle_text": _oracle_text(state),
         "zone": state.zone.value,
         "controller": state.controller,
         "owner": state.owner,
@@ -526,6 +592,8 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         "summoning_sick": state.is_summoning_sick(game),
         "power": power,
         "toughness": toughness,
+        "colors": _current_colors(game, state),
+        "mana_value": state.mana_value,
         "keywords": _keywords_of(game, state),
         "targets": _target_names(game, state.targets),
         "target_refs": _target_refs(game, state.targets),
@@ -541,6 +609,9 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
     # never says which name that was.
     if state.choice is not None:
         view["choice"] = {"kind": state.choice.kind.value, "value": state.choice.value}
+    faces = _faces_view(state)
+    if faces is not None:
+        view["faces"] = faces
     if state.zone in (Zone.HAND, Zone.EXILE):
         # What announcing this card would ask for: X, modes, targets. Read off
         # the printed card, so it is answerable before any `Casting` exists -
@@ -617,7 +688,9 @@ def _stack_view(game: Game, images: dict[str, dict[str, str]]) -> list[dict[str,
     return views
 
 
-def _player_view(player: Player, counters: dict[str, int] | None = None) -> dict[str, Any]:
+def _player_view(
+    game: Game, player: Player, counters: dict[str, int] | None = None
+) -> dict[str, Any]:
     """One seat's own block. `counters`, when given, replaces the committed
     player's own - `state_view` hands in the ones a paused command is
     standing on (`_paused_overlay`).
@@ -647,6 +720,10 @@ def _player_view(player: Player, counters: dict[str, int] | None = None) -> dict
         "graveyard_count": len(player.graveyard),
         "sideboard_count": len(player.sideboard),
         "maximum_hand_size": player.maximum_hand_size,
+        # The engine's own land-play count and allowance, so "is a land drop
+        # left" is read, never re-derived (`Game.why_cannot_play_land`).
+        "lands_played": game.lands_played.get(player.username, 0),
+        "land_allowance": game.land_allowance(player.username),
     }
 
 
@@ -892,6 +969,125 @@ def unloadable_game_summary(game_id: str, reason: str, *, seat_count: int) -> di
     }
 
 
+def _known_entries(game: Game, paused: Game | None, player: str) -> list[KnownCard]:
+    """What `player` knows right now: the committed game's `known_to`, plus
+    the records a paused command's half-applied game already holds.
+
+    A command paused on a question keeps no half-applied game (`commands.py`),
+    so an effect that showed a player cards before asking them something -
+    Thoughtseize revealing a hand before its choice, CR 701.20a keeping it
+    revealed "for as long as necessary to complete the parts of the effect
+    that card is relevant to" - left nothing in the committed game until the
+    answer arrived. `paused` is that half-applied game (`commands.paused_game`),
+    read and never committed. A record from it counts only for a card that is
+    still that object in the committed game - the same id in the same zone,
+    and in a library the same position - so nothing it says can describe a
+    card the board no longer holds. The engine decides every record's viewers
+    either way; `visibility.redact_view` still hands each seat its own entry.
+    """
+    entries = {entry.card_id: entry for entry in game.known_to(player)}
+    if paused is None:
+        return list(entries.values())
+    for entry in paused.known_to(player):
+        if entry.card_id in entries:
+            continue
+        card = game.find_by_id(entry.card_id)
+        if card is None or card.zone is not entry.zone:
+            continue
+        if entry.zone is Zone.LIBRARY:
+            owner = next((seat for seat in game.players if seat.username == entry.owner), None)
+            library = owner.library if owner is not None else []
+            position = next((i for i, state in enumerate(library) if state is card), None)
+            if position != entry.index_from_top:
+                continue
+        entries[entry.card_id] = entry
+    return list(entries.values())
+
+
+def _known_cards_view(
+    game: Game, images: dict[str, dict[str, str]], paused: Game | None = None
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """What each player knows about hidden cards, keyed by the player who knows.
+
+    Read live from `Game.known_to` - the engine decides what is known and for
+    how long (a look is the looker's alone, CR 701.20e; a library reordering
+    ends a library record, CR 701.20d; a zone change ends any record,
+    CR 400.7) - and this only shapes the answer. Only the hidden zones get a
+    list: a hand (CR 402.3), a library with the card's live position
+    (CR 401.2), and a sideboard (CR 400.11a). A record of a card sitting in a
+    public zone adds nothing to what the board already shows.
+
+    A player's own hand and own sideboard are dropped from that player's
+    entry, because they already see them. Their known records about their own
+    library are kept: `library_contents` gives no order, so "the top card is
+    a Lightning Bolt" is information nothing else carries.
+
+    Every player's entry is built here; `visibility.redact_view` hands each
+    viewer only its own. While a command is paused, `paused` is its
+    half-applied game and what it already showed counts too (`_known_entries`).
+    """
+    known: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for player in game.players:
+        block: dict[str, list[dict[str, Any]]] = {"hand": [], "library": [], "sideboard": []}
+        for entry in _known_entries(game, paused, player.username):
+            if entry.zone not in (Zone.HAND, Zone.LIBRARY, Zone.SIDEBOARD):
+                continue
+            if entry.zone is not Zone.LIBRARY and entry.owner == player.username:
+                continue
+            card = game.find_by_id(entry.card_id)
+            if card is None:
+                continue
+            card_view = _card_view(game, card, images)
+            if entry.zone is Zone.LIBRARY:
+                if entry.index_from_top is None:
+                    continue
+                block["library"].append(
+                    {
+                        "index_from_top": entry.index_from_top,
+                        "source": entry.source,
+                        "card": card_view,
+                    }
+                )
+            else:
+                block[entry.zone.value].append(card_view)
+        block["library"].sort(key=lambda record: record["index_from_top"])
+        known[player.username] = block
+    return known
+
+
+def _contents_view(
+    game: Game, cards: list[CardState], images: dict[str, dict[str, str]]
+) -> list[dict[str, Any]]:
+    """One hidden zone as an unordered multiset: `[{card, count}]`.
+
+    CR 401.2 - "Players can't look at or change the order of cards in a
+    library" - is why nothing here carries an id or a position: a player
+    knows what went into their own deck, never where any of it sits, and an
+    id would let a later view pin a card to a slot. Identical card views
+    (id aside) collapse into one entry with a count, sorted by card name and
+    then printing identity, so the answer is the same bytes however the
+    library is ordered.
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    for card in cards:
+        card_view = _card_view(game, card, images)
+        del card_view["id"]
+        signature = json.dumps(card_view, sort_keys=True, default=str)
+        group = groups.get(signature)
+        if group is None:
+            groups[signature] = {
+                "sort": (card.card.name, str(card.card.id), signature),
+                "card": card_view,
+                "count": 1,
+            }
+        else:
+            group["count"] += 1
+    return [
+        {"card": group["card"], "count": group["count"]}
+        for group in sorted(groups.values(), key=lambda group: group["sort"])
+    ]
+
+
 #: `_paused_overlay`'s answers, keyed by what makes one stale: the game, the
 #: standing question's generation (bumped by every new pause), and the
 #: committed board the replay started from (`_committed_signature`). A poll
@@ -968,59 +1164,7 @@ def _paused_overlay(game_id: str, game: Game, paused: Any) -> dict[str, Any]:
     return cached
 
 
-def _known_cards_view(
-    game: Game, images: dict[str, dict[str, str]]
-) -> dict[str, dict[str, list[dict[str, Any]]]]:
-    """What each player knows about hidden cards, keyed by the player who
-    knows (`Game.known_to`).
-
-    Battle 8's B8-03 is the reason this exists at all: a card a public-zone
-    effect puts into a library (Subtlety onto a graveyard creature, a
-    countered spell going to the bottom instead of the graveyard, ...) is
-    known to every player at its live position (CR 400.2, CR 401.4) the same
-    way a public-zone-to-hand move already was (battle 5), and nothing in
-    this api ever surfaced either one - `libraries`/`sideboards` are admin-
-    only, so a seat had no way to read back knowledge the engine already
-    tracked for it.
-
-    Only the hidden zones carry anything: a hand (CR 402.3, an opponent's
-    card seen by some other effect), a library with its live position
-    (`entry.index_from_top`, `None` everywhere else per `KnownCard`'s own
-    docstring - CR 701.20d ends a record on a reordering), and a sideboard
-    (CR 400.11a). A player's own hand and sideboard are dropped from that
-    player's own entry - they already see those whole - but a known record
-    about their own library is kept, since `libraries` never reaches a seat
-    at all (nobody reads their own library, matching the real game) and
-    `library`'s live position is exactly the piece of information nothing
-    else here carries.
-
-    Built for every player; `visibility.redact_view` keeps each viewer only
-    its own entry, the same "own block only" shape `hands` already uses.
-    """
-    known: dict[str, dict[str, list[dict[str, Any]]]] = {}
-    for player in game.players:
-        block: dict[str, list[dict[str, Any]]] = {"hand": [], "library": [], "sideboard": []}
-        for entry in game.known_to(player.username):
-            if entry.zone not in (Zone.HAND, Zone.LIBRARY, Zone.SIDEBOARD):
-                continue
-            if entry.zone is not Zone.LIBRARY and entry.owner == player.username:
-                continue
-            card = game.find_by_id(entry.card_id)
-            if card is None:
-                continue
-            card_view = _card_view(game, card, images)
-            if entry.zone is Zone.LIBRARY:
-                if entry.index_from_top is None:
-                    continue
-                block["library"].append({"index_from_top": entry.index_from_top, "card": card_view})
-            else:
-                block[entry.zone.value].append(card_view)
-        block["library"].sort(key=lambda record: record["index_from_top"])
-        known[player.username] = block
-    return known
-
-
-def state_view(game: Game, game_id: str) -> dict[str, Any]:
+def state_view(game: Game, game_id: str, *, include_contents: bool = False) -> dict[str, Any]:
     """T1: this dict's shape is formalised as `schemas.GameStateView` - see
     that class and the "Response views" section it opens for the field-by-
     field mapping, and `app.py`'s `response_model=` declarations for where it
@@ -1107,7 +1251,7 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     # `PHASE_OF`. `phase` is therefore nullable, and a client that assumes a
     # string here must handle `null` (see `ui/app.js`'s phase track).
     phase = PHASE_OF.get(step)
-    return {
+    view = {
         "game_id": game_id,
         "pending_decision": pending.to_view() if pending is not None else None,
         "turn_number": turn_number,
@@ -1119,7 +1263,8 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         "active_player": active_player,
         "priority_holder": priority_holder,
         "players": [
-            _player_view(player, paused_counters.get(player.username)) for player in board.players
+            _player_view(board, player, paused_counters.get(player.username))
+            for player in board.players
         ],
         "battlefield": battlefield_views,
         "stack": _stack_view(game, images),
@@ -1146,7 +1291,11 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         "libraries": {player.username: views(player.library) for player in board.players},
         "sideboards": {player.username: views(player.sideboard) for player in board.players},
         # A sibling of `hands`, never inside it - see `_known_cards_view`.
-        "known_cards": _known_cards_view(board, images),
+        "known_cards": _known_cards_view(
+            board,
+            images,
+            paused_game(committed, paused[0], paused[1]) if paused is not None else None,
+        ),
         "winner": game.winner,
         "drawn": game.drawn,
         "losers": list(game.losers),
@@ -1162,3 +1311,16 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
             ]
         },
     }
+    if include_contents:
+        # Only on request (`GET /api/games/{id}?include=contents`): a seat's
+        # own deck read back without its order, which nothing polling the
+        # board needs on every read - see `_contents_view`.
+        view["library_contents"] = {
+            player.username: _contents_view(board, player.library, images)
+            for player in board.players
+        }
+        view["sideboard_contents"] = {
+            player.username: _contents_view(board, player.sideboard, images)
+            for player in board.players
+        }
+    return view

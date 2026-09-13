@@ -14,7 +14,7 @@ Every command is a fresh process. Always pass BOTH your uid and your game id
 
 Subcommands: state, wait, mulligan, opening-hand-action, opening-hand-done,
 cast, play-land, suspend, plot, foretell, cycle, activate, attackers,
-blockers, decide, pass, pass-until, log, report. Run
+blockers, decide, pass, pass-until, log, report, script. Run
 `<subcommand> --help` when unsure of arguments.
 
 Priority has exactly two verbs, `pass` and `pass-until`, because the rules give
@@ -381,6 +381,66 @@ The very next command, read off that answer and nothing else:
 own candidate line; no `--sources`. Two commands, `pass-until` then `cast` -
 no `state` between them, no `log`, no second look at anything.
 
+## Scripts
+
+Delegate repetitive actions to scripts. Develop new and improve existing
+scripts through subagents, along with guides. Aim for deterministic scripts.
+When plays conflict, resolve it by extending conditions, never by priority
+alone. Pass inputs, such as the opposing archetype or your preferences,
+explicitly.
+
+Your deck's play scripts were registered with the game server when your seat
+was dispatched, and they do not change for the rest of the game: a new play,
+or a sharper condition on an old one, is written after the game, with the
+guide it belongs to. Two subcommands reach them, and like every seat command
+both take `--uid`:
+
+    ... script list --opposing-archetype KEY --input NAME=VALUE
+    ... script run SCRIPT --reasoning "why now" --opposing-archetype KEY \
+        --input NAME=VALUE
+
+`script list` judges every registered script against the board right now,
+highest priority first, and runs nothing. Each script says whether it
+`applies`, and when it does not, its `failing_condition`: the list that
+stopped it and what it saw. `runtime_conflict` true means more than one
+applies right now, named in `applicable` - do not pick between them by
+priority; play that window by hand, and extend their conditions after the
+game so that at most one applies.
+
+`script run SCRIPT` runs the one you picked, by its id. It waits for the
+script's `when` (passing priority with every stop on, as `pass-until` does),
+makes each move through the same routes you would, so every refusal is the
+engine's own, and prints `script_exit` beside the state. `--reasoning` is
+required. `--no-wait` leaves a script that is off its step `not_applicable`,
+and `--max-seconds` caps the command.
+
+- `--opposing-archetype KEY` asserts the matchup you have read, spelled as
+  your matchup card spells it. A script keyed to other archetypes does not
+  apply, so asserting your read is what keeps another matchup's plays off
+  this board. Leave it at `*`, the default, only while you genuinely do not
+  know.
+- `--input NAME=VALUE` is one input your deck's scripts read that the board
+  cannot show - repeat the flag once per input. VALUE is read as JSON where it
+  is JSON (`true`, `3`) and as text otherwise (`dimir-frog`). It is the CLI
+  spelling of the `inputs` parameter `run_script` and `list_scripts` take in
+  the tool form of this seat, and `--input opposing_archetype=KEY` is the same
+  as `--opposing-archetype KEY` (naming two different archetypes is refused).
+
+A `script run` counts as both the wait and the one committing command of the
+loop: read `script_exit.exit` and do exactly one thing.
+
+- `chain_complete`: the moves are done and no next script applies. Wait again.
+- `not_applicable`: `failing_condition` says why. Play the window by hand.
+- `needs_input` or `invalid_input`: run it again with that input given, as a
+  value the deck declares.
+- `needs_plan`: declare your plan, then run it again.
+- `already_ran`: it already ran this turn and step. Do not run it again.
+- `refused`, `unforeseen`, `interrupted`, `ambiguous`, `stale` or
+  `unknown_outcome`: read `refusal` or `stop_reason`, and take the next
+  action by hand off the state it printed.
+- `exit` null: the time cap came first. Run it again with
+  `--resume '<the script_exit.resume object>'`, handed back verbatim.
+
 ## Win the game, do not merely make legal moves
 
 Decide three things before your first action, and revisit them whenever the
@@ -642,3 +702,38 @@ what happened and why you believe it is wrong. This is not a rules judge
 call for you to guess at - only report something you can actually point to
 in the state or the log as wrong. Filing a report ends your game session,
 which is a legitimate stop.
+
+## Play scripts and guides, for handover
+
+These commands take no `--uid` and touch no game. They work the deck-guides
+checkout at `/guides`, and they are how what you learned this game reaches
+the next one. Run them once the game is over, or when you are told to hand
+over. Each prints one JSON object, and its `result` says what happened:
+
+- `mcp-seat plays priority <play-id> --delta N --deck SLUG` (or `--set N`)
+  changes that one play's `priority`, clamped to 0..100. Nothing else in the
+  file changes. Use it instead of hand-editing a priority, because the change
+  is recorded so that `admit` can replay it if someone else moved the same
+  priority first.
+- `mcp-seat plays admit --deck SLUG --game-id GAME` takes your changes under
+  `decks/*/plays/` to mtg-decks main. It commits them, rebases onto origin,
+  runs the plays gate, and pushes without forcing. After three races it opens
+  a pull request instead. Results:
+  - `admitted` (with `sha`) or `pr_opened` (with `pr_url`): done.
+  - `nothing_to_admit`: there was nothing to take.
+  - `refused`: you changed something outside the plays directories. Revert
+    those `files`.
+  - `conflict`: someone else changed the same lines. The listed `files` need
+    your change rebuilt on origin/main.
+  - `gate_failed`: read `output`, fix the plays, and admit again.
+  - `conflict_regression`: your change makes two plays able to apply at the
+    same moment. Extend their conditions so that at most one applies.
+    Reordering priority never resolves a conflict.
+- `mcp-seat guides propose --deck SLUG --game-id GAME` covers the matchup
+  advice. Edit only `matchups[].play_plan` and `matchups[].notes` in the
+  deck's newest `boarding-plan.json`, plus `decks/SLUG/NOTES.md`. The command
+  regenerates the guides, pushes a `seat/GAME-guides` branch, opens a pull
+  request and returns at once with `awaiting_owner_review` and its `pr_url` -
+  it never waits for checks or a merge. mtg-decks has no CI budget, so the
+  owner reviews and merges the pull request by hand; the edit is not live
+  until then, so do not wait for it. Any other change is `refused`.

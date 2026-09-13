@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "id": "fetch-surveil-land-keep",
+  "name": "Fetch a surveil land at their end step, lands stay on top",
+  "intent": "At the opponent's end step with fewer than three lands out, crack a fetch for Thundering Falls, which enters tapped anyway, and keep the surveilled card on top: Cori-Steel Cutter and Expressive Iteration beside a one-drop still need the third land, a fetchland included. From three lands fetch-surveil-land bins lands instead. Only at 6 life or more and while fewer than two surveil lands are out.",
+  "priority": 50,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "theirs",
+    "steps": [
+      "end_step"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "ability_text_has": "Search your library for"
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": ">=",
+      "n": 6
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 2,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "keywords_any": [
+          "Surveil"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 3,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "tapped": false,
+          "ability_text_has": "Search your library for"
+        }
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "keywords_any": [
+                "Surveil"
+              ]
+            },
+            "count": 1
+          }
+        },
+        {
+          "decision": "surveil"
+        }
+      ]
+    }
+  ],
+  "next": []
+}

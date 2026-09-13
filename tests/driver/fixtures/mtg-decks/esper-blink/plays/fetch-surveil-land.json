@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "id": "fetch-surveil-land",
+  "name": "Fetch a surveil land at their end step",
+  "intent": "At the opponent's end step, crack a fetch for a surveil land, Shadowy Backstreet first, then Meticulous Archive, then Undercity Sewers, and bin a land with the surveil once I am flooding with five lands or more out. Twelve of the spells cost five to cast in full (Overlord of the Balemurk, Quantum Riddler, a hard-cast Solitude), so the fifth land is still a live draw and a land past it is not. Below five lands fetch-surveil-land-keep runs instead. Only at 6 life or more and while fewer than two surveil lands are out.",
+  "priority": 50,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "theirs",
+    "steps": [
+      "end_step"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "ability_text_has": "Search your library for"
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": ">=",
+      "n": 6
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 5,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 2,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "keywords_any": [
+          "Surveil"
+        ]
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "tapped": false,
+          "ability_text_has": "Search your library for"
+        }
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "keywords_any": [
+                "Surveil"
+              ]
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "oracle_has": "{W} or {B}"
+              },
+              {
+                "subtypes_any": [
+                  "Island"
+                ],
+                "oracle_has": "{W}"
+              },
+              {
+                "oracle_has": "{U} or {B}"
+              }
+            ]
+          }
+        },
+        {
+          "decision": "surveil",
+          "to_graveyard": {
+            "types_any": [
+              "Land"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "next": []
+}

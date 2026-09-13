@@ -45,6 +45,13 @@ treats it.
   mis-announcing something real, and the ledger cannot say which, so it gets
   its own `offered` bucket and is counted as neither. `offer_split` reports
   `measured`/`partial`/`unknown` the same way `stale_split` does.
+- **Per-script tally.** One row per `script_run` row's `(script_id,
+  opposing_archetype_asserted)`: runs, completion rate (exit
+  `chain_complete` over runs), every exit seen, the win rate of the finished
+  games in which that seat completed the chain at least once, resumes, and
+  mean wall time. Advise runs - moves proposed to a human, not taken - are
+  tallied apart under `advise`, so a proposal nobody accepted never reads as
+  the seat's own play.
 
 ## What it deliberately does not grade
 
@@ -154,6 +161,8 @@ NOT_PLAY = frozenset(
         "pregame_settle",
         "pregame_settled",
         "report_problem",
+        "script_run",
+        "script_run_started",
         "shuffled",
         "state_based_actions",
         "step",
@@ -167,6 +176,11 @@ NOT_PLAY = frozenset(
 PASS_SHAPED = "pass_priority"
 
 GAME_OVER_ACTION = "game_over"
+
+#: One finished play-script run (`audit.SCRIPT_RUN_ACTION`), and the exit
+#: that says the whole chain ran.
+SCRIPT_RUN_ACTION = "script_run"
+CHAIN_COMPLETE_EXIT = "chain_complete"
 
 
 # -- the ledger --------------------------------------------------------------
@@ -530,6 +544,89 @@ def build_report(
         "unclassified_actions": unclassified,
         "stale_split": stale_split,
         "offer_split": offer_split,
+        "scripts": script_tally(games),
+    }
+
+
+@dataclass
+class _ScriptTally:
+    runs: int = 0
+    completed: int = 0
+    exits: dict[str, int] = field(default_factory=dict)
+    resumes: int = 0
+    wall_ms: list[int] = field(default_factory=list)
+    completed_finished_games: int = 0
+    completed_won_games: int = 0
+
+
+def script_tally(games: Sequence[GameRows]) -> list[dict[str, Any]]:
+    """One entry per `(script_id, opposing_archetype_asserted)` over every
+    `script_run` row in `games`, ordered by script then archetype (none
+    first). The seat's own runs are the entry's top-level figures; advise
+    runs are the same figures under `advise`.
+
+    `win_rate_when_completed` is over (game, seat) pairs, not runs: a finished
+    game in which that seat's run of this script exited `chain_complete` at
+    least once is one trial, and a win for that seat is one success. A draw
+    is a trial and not a success; an unfinished game is neither.
+    """
+    tallies: dict[tuple[str, str | None, bool], _ScriptTally] = {}
+    for game in games:
+        payloads = list(game.payloads())
+        ending = ending_of(payloads)
+        completed_by: set[tuple[tuple[str, str | None, bool], str]] = set()
+        for payload in payloads:
+            if payload.get("action") != SCRIPT_RUN_ACTION:
+                continue
+            detail = payload.get("detail") or {}
+            archetype = detail.get("opposing_archetype_asserted")
+            key = (
+                str(detail.get("script_id")),
+                None if archetype is None else str(archetype),
+                bool(detail.get("advise")),
+            )
+            tally = tallies.setdefault(key, _ScriptTally())
+            tally.runs += 1
+            exit_name = str(detail.get("exit") or "unknown")
+            tally.exits[exit_name] = tally.exits.get(exit_name, 0) + 1
+            tally.resumes += int(detail.get("resumes") or 0)
+            if detail.get("wall_ms") is not None:
+                tally.wall_ms.append(int(detail["wall_ms"]))
+            if exit_name == CHAIN_COMPLETE_EXIT:
+                tally.completed += 1
+                completed_by.add((key, str(detail.get("seat"))))
+        if ending is None:
+            continue
+        ending_detail = ending.get("detail") or {}
+        winner = None if ending_detail.get("drawn") else ending_detail.get("winner")
+        for key, seat in completed_by:
+            tallies[key].completed_finished_games += 1
+            tallies[key].completed_won_games += int(winner is not None and winner == seat)
+
+    pairs = sorted(
+        {key[:2] for key in tallies}, key=lambda pair: (pair[0], pair[1] is not None, pair[1] or "")
+    )
+    return [
+        {
+            "script_id": script_id,
+            "opposing_archetype_asserted": archetype,
+            **_script_block(tallies.get((script_id, archetype, False), _ScriptTally())),
+            "advise": _script_block(tallies.get((script_id, archetype, True), _ScriptTally())),
+        }
+        for script_id, archetype in pairs
+    ]
+
+
+def _script_block(tally: _ScriptTally) -> dict[str, Any]:
+    return {
+        "runs": tally.runs,
+        "completion": beta_interval(tally.completed, tally.runs),
+        "exits": dict(sorted(tally.exits.items())),
+        "win_rate_when_completed": beta_interval(
+            tally.completed_won_games, tally.completed_finished_games
+        ),
+        "resumes": tally.resumes,
+        "wall_ms_mean": round(statistics.fmean(tally.wall_ms), 1) if tally.wall_ms else None,
     }
 
 
@@ -711,12 +808,41 @@ def render(report: Mapping[str, Any]) -> str:
             )
         lines.append("")
 
+    lines.extend(_script_lines(report.get("scripts") or []))
+    lines.append("")
     lines.extend(_stale_note(report))
     lines.append("")
     lines.extend(_offer_note(report))
     lines.append("")
     lines.extend(_sizing_note(report))
     return "\n".join(lines)
+
+
+def _script_lines(scripts: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The per-script tally, one block per script and asserted archetype,
+    with an advise block only where advise runs exist."""
+    lines = ["SCRIPTS (per script and asserted opposing archetype; advise runs apart)"]
+    if not scripts:
+        lines.append("  no script runs recorded")
+        return lines
+    for entry in scripts:
+        archetype = entry["opposing_archetype_asserted"] or "(no archetype asserted)"
+        lines.append(f"  {entry['script_id']} vs {archetype}")
+        lines.extend(_script_block_lines(entry, "seat"))
+        if entry["advise"]["runs"]:
+            lines.extend(_script_block_lines(entry["advise"], "advise"))
+    return lines
+
+
+def _script_block_lines(block: Mapping[str, Any], label: str) -> list[str]:
+    exits = ", ".join(f"{name} x{count}" for name, count in block["exits"].items()) or "none"
+    wall = "no data" if block["wall_ms_mean"] is None else f"{block['wall_ms_mean']} ms"
+    return [
+        f"    {label:<7}runs    {block['runs']}  exits {exits}",
+        f"      completion    {_rate(block['completion'], unit=' runs')}",
+        f"      win if done   {_rate(block['win_rate_when_completed'], unit=' games')}",
+        f"      resumes       {block['resumes']}  mean wall {wall}",
+    ]
 
 
 def _stale_note(report: Mapping[str, Any]) -> list[str]:
@@ -808,7 +934,8 @@ def _sizing_note(report: Mapping[str, Any]) -> list[str]:
 
 def load(args: argparse.Namespace) -> list[GameRows]:
     if args.ledger:
-        return load_ledger_file(args.ledger)
+        ledger = load_ledger_file(args.ledger)
+        return [game for game in ledger if game.game_id in args.game] if args.game else ledger
     if args.database_url:
         return ledger_from_database(args.database_url, game_ids=args.game or None)
 

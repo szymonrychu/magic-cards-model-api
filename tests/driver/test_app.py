@@ -7,7 +7,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mtg_agent.driver.config import DriverSettings
-from tests.driver.world import build_world
+from mtg_agent.driver.prompt import HANDOVER_OPENING
+from tests.driver.world import DECKLIST, build_world
 
 
 @pytest.fixture
@@ -42,12 +43,28 @@ def wait_for(predicate, timeout: float = 5.0):
     raise AssertionError("condition never became true")
 
 
-def play_out_the_match(client, state) -> None:
-    """Dispatch, win, and let the reflection turn complete."""
+def complete_handover(client, submitted: list[dict]) -> str:
+    """Wait for the handover turn to be pushed and finish it; its turn id."""
+    ids = wait_for(
+        lambda: [
+            f"turn-{index + 1}"
+            for index, turn in enumerate(submitted)
+            if turn["text"].startswith(HANDOVER_OPENING)
+        ]
+    )
+    client.post("/turn-done", json={"turnId": ids[0], "state": "complete", "finalText": "pushed"})
+    return ids[0]
+
+
+def play_out_the_match(client, state, submitted: list[dict]) -> None:
+    """Dispatch, win, let the reflection and the handover turns complete, and
+    wait for the retirement the handover ends with."""
     dispatch(client)
     state["winner"] = "bob"
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
     client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"})
+    complete_handover(client, submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
 
 
 def test_dispatch_identifies_the_deck_and_reports_it(world):
@@ -165,7 +182,9 @@ def test_turn_done_after_a_win_pushes_exactly_one_reflection_turn(world):
     assert "bob" in submitted[1]["text"]
 
     client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"})
-    assert len(submitted) == 2, "the reflection turn must not trigger another reflection"
+    assert complete_handover(client, submitted) == "turn-3"
+    reflections = [turn for turn in submitted if "The game is over" in turn["text"]]
+    assert len(reflections) == 1, "the reflection turn must not trigger another reflection"
 
 
 def test_status_reports_the_current_assignment(world):
@@ -242,7 +261,7 @@ def test_a_second_game_arriving_mid_match_is_refused_by_name(world):
 def test_the_completed_reflection_turn_stops_the_agent(world):
     client = world.client
     state = world.state
-    play_out_the_match(client, state)
+    play_out_the_match(client, state, world.submitted)
     assert state["deleted"] == 1
 
 
@@ -254,7 +273,7 @@ def test_the_completed_reflection_turn_posts_it_to_the_game_server(world):
     `POST /api/games/{id}/reflection` before the agent is retired."""
     client = world.client
     state = world.state
-    play_out_the_match(client, state)
+    play_out_the_match(client, state, world.submitted)
     assert world.reflection_posts == [
         {
             "game_id": "g-1",
@@ -289,33 +308,35 @@ def test_an_unreachable_game_server_does_not_block_retirement(world):
     body = client.post(
         "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
     ).json()
-    assert body["retired"] is True
+    assert body["handover"]["outcome"] == "bob won"
+    complete_handover(client, world.submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
     assert world.reflection_posts == []
 
 
 def test_retiring_clears_the_assignment_so_the_next_dispatch_starts_clean(world):
     client = world.client
     state = world.state
-    play_out_the_match(client, state)
+    play_out_the_match(client, state, world.submitted)
     assert client.get("/status").json()["gameId"] is None
 
 
 def test_the_next_match_is_accepted_once_the_replacement_agent_is_up(world):
     client = world.client
     state = world.state
-    play_out_the_match(client, state)
+    play_out_the_match(client, state, world.submitted)
     state["agent"] = "up"  # the replacement container finished booting
     state["winner"] = None
     response = dispatch(client, uid="uid-2", game_id="g-2")
     assert response.status_code == 202
-    assert response.json()["turnId"] == "turn-3"
+    assert response.json()["turnId"] == "turn-4"
     assert client.get("/status").json()["gameId"] == "g-2"
 
 
 def test_the_agent_is_stopped_only_once_per_match(world):
     client = world.client
     state = world.state
-    play_out_the_match(client, state)
+    play_out_the_match(client, state, world.submitted)
     client.post("/turn-done", json={"turnId": "turn-2", "state": "complete"})
     assert state["deleted"] == 1
 
@@ -328,9 +349,9 @@ def test_a_match_is_retired_even_when_the_agent_is_already_gone(world):
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete"})
     state["agent"] = "down"
     body = client.post("/turn-done", json={"turnId": "turn-2", "state": "complete"}).json()
-    assert body["retired"] is True
-    assert body["agentStopped"] is False
-    assert client.get("/status").json()["gameId"] is None
+    assert body["handover"]["gameId"] == "g-1"
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    assert state["deleted"] == 0, "an agent that is gone could not be stopped"
 
 
 def test_a_game_that_ends_with_the_agent_already_dead_is_still_retired(world):
@@ -584,3 +605,275 @@ def test_dispatch_treats_an_older_wrapper_that_404s_session_as_unsupported(world
     assert response.status_code == 202
     assert world.session_posts == []
     assert world.submitted
+
+
+# ---- the deck's play scripts are registered once, at dispatch ---------------
+#
+# `assign` loads `decks/<slug>/plays/` (and `inputs.json`) off the identified
+# guide and registers them with `PUT /api/games/{id}/seats/{uid}/scripts`
+# under the uid the dispatch runs with - a seat's or a buddy's - before turn 0
+# is written, so the briefing can say what the game server holds.
+
+FIXTURE_PLAYS = Path(__file__).resolve().parent / "fixtures" / "mtg-decks" / "dimir-frog" / "plays"
+
+DECLARED_INPUTS = {
+    "schema_version": 1,
+    "inputs": [
+        {
+            "name": "plan",
+            "type": "enum",
+            "values": ["race", "control"],
+            "description": "Which half of the plan this game is on.",
+            "required": True,
+        }
+    ],
+}
+
+
+def fixture_plays() -> list[dict]:
+    return [json.loads(p.read_text()) for p in sorted(FIXTURE_PLAYS.glob("*.json"))]
+
+
+def dispatch_as(client, role: str, uid: str) -> httpx.Response:
+    return client.post(
+        "/dispatch",
+        json={
+            "uid": uid,
+            "game_id": "g-1",
+            "player": "bob",
+            "api_base": "http://game:8000",
+            "role": role,
+        },
+    )
+
+
+def world_plays_dir(world) -> Path:
+    return world.settings.guides_root / "decks" / "dimir-frog" / "plays"
+
+
+@pytest.mark.parametrize(("role", "uid"), [("seat", "secret-uid"), ("advisor", "advisor-uid")])
+def test_dispatch_registers_the_decks_plays_under_its_own_uid(world, role, uid):
+    from mtg_agent.driver.revision import guides_revision
+
+    response = dispatch_as(world.client, role, uid)
+
+    assert response.status_code == 202, response.text
+    assert len(world.script_puts) == 1
+    put = world.script_puts[0]
+    assert (put["game_id"], put["uid"], put["caller"]) == ("g-1", uid, uid)
+    assert put["body"]["deck_slug"] == "dimir-frog"
+    assert put["body"]["guides_revision"] == guides_revision(world.settings.guides_root)
+    assert sorted(s["id"] for s in put["body"]["scripts"]) == sorted(
+        s["id"] for s in fixture_plays()
+    )
+    assert put["body"]["inputs"] == [], "no inputs.json is an empty declared-inputs list"
+
+
+@pytest.mark.parametrize(("role", "uid"), [("seat", "secret-uid"), ("advisor", "advisor-uid")])
+def test_inputs_json_is_registered_beside_the_plays(world, role, uid):
+    (world_plays_dir(world) / "inputs.json").write_text(json.dumps(DECLARED_INPUTS))
+
+    dispatch_as(world.client, role, uid)
+
+    body = world.script_puts[0]["body"]
+    assert body["inputs"] == DECLARED_INPUTS["inputs"]
+    assert len(body["scripts"]) == len(fixture_plays())
+
+
+def test_the_corpus_is_registered_once_and_never_mid_game(world):
+    client = world.client
+    dispatch(client)
+    dispatch(client)
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "ok"})
+    world.state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+    client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"})
+
+    assert len(world.script_puts) == 1
+
+
+def test_an_unguided_deck_registers_nothing(world):
+    world.state["decklist"] = "4 Lightning Bolt\n20 Mountain\n"
+    dispatch(world.client)
+    assert world.script_puts == []
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "No play scripts are registered" in text
+
+
+def test_a_scripts_disabled_refusal_does_not_fail_the_dispatch(world):
+    world.state["scripts_enabled"] = False
+
+    response = dispatch(world.client)
+
+    assert response.status_code == 202, response.text
+    assert response.json()["turnId"] == "turn-1"
+    assert len(world.script_puts) == 1
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "Play scripts are disabled" in text
+    for script in fixture_plays():
+        assert f"`{script['id']}`" not in text
+    assert "Play scripts are disabled" in world.submitted[0]["text"]
+
+
+def test_an_unreachable_scripts_route_does_not_fail_the_dispatch(world):
+    """Best effort like the settings push: a refusal the driver cannot act on
+    costs the seat its scripts, said in the briefing, never the game."""
+    world.state["scripts_route"] = "down"
+
+    response = dispatch(world.client)
+
+    assert response.status_code == 202, response.text
+    assert response.json()["turnId"] == "turn-1"
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "could not be registered" in text
+
+
+def test_the_briefing_lists_the_registered_scripts(world):
+    dispatch(world.client)
+
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "## Your registered play scripts" in text
+    for script in fixture_plays():
+        assert f"`{script['id']}`" in text
+        assert script["name"] in text
+        assert f"priority {script['priority']}" in text
+        assert ", ".join(script["opposing_archetypes"]) in text
+    assert "## Your registered play scripts" in world.submitted[0]["text"]
+
+
+def test_an_invalid_play_file_is_skipped_logged_and_named_in_the_briefing(world, caplog):
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="driver")
+    (world_plays_dir(world) / "broken.json").write_text('{"schema_version": 1, "iterate": true}')
+
+    dispatch(world.client)
+
+    body = world.script_puts[0]["body"]
+    assert sorted(s["id"] for s in body["scripts"]) == sorted(s["id"] for s in fixture_plays())
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "decks/dimir-frog/plays/broken.json" in text
+    assert "unknown-field" in text
+    assert any("decks/dimir-frog/plays/broken.json" in r.getMessage() for r in caplog.records)
+
+
+def test_an_invalid_inputs_json_is_named_and_does_not_block_the_plays(world, caplog):
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="driver")
+    (world_plays_dir(world) / "inputs.json").write_text('{"schema_version": 1, "inputs": 5}')
+
+    response = dispatch(world.client)
+
+    assert response.status_code == 202
+    body = world.script_puts[0]["body"]
+    assert body["inputs"] == []
+    assert len(body["scripts"]) == len(fixture_plays())
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "decks/dimir-frog/plays/inputs.json" in text
+    assert "malformed-inputs" in text
+    assert any("malformed-inputs" in r.getMessage() for r in caplog.records)
+
+
+def test_the_scripts_listing_is_bounded(tmp_path):
+    """A deck can carry any number of plays and each can be long-named. The
+    briefing's listing has its own byte cap, so the briefing stays within
+    the caps it already had however large the corpus grows."""
+    from magic_cards_model_api.playscripts.schema import PlaysError
+    from mtg_agent.driver.guides import (
+        CONFIDENT,
+        GuideLibrary,
+        PlaysCorpus,
+        ScriptsRegistration,
+        parse_decklist,
+    )
+    from mtg_agent.driver.prompt import PLAYS_SECTION_CAP_BYTES, Assignment, render_current_game
+
+    world = build_world(tmp_path)
+    decklist = parse_decklist(DECKLIST)
+    identified = GuideLibrary(world.settings.guides_root).identify(decklist)
+    assert identified.confidence == CONFIDENT
+    base = fixture_plays()[0]
+    scripts = tuple(
+        {
+            **base,
+            "id": f"play-{index:03d}",
+            "name": "a very long play name " * 20,
+            "opposing_archetypes": [f"archetype-{n}" for n in range(32)],
+        }
+        for index in range(200)
+    )
+    notices = tuple(
+        PlaysError("unknown-field", f"decks/dimir-frog/plays/bad-{i}.json", "x" * 500)
+        for i in range(50)
+    )
+
+    def briefing(registration):
+        return render_current_game(
+            Assignment(
+                game_id="g",
+                uid="u",
+                player="bob",
+                opponent="alice",
+                api_base="http://game",
+                decklist=decklist,
+                identification=identified,
+                scripts=registration,
+            ),
+            tmp_path / "memory",
+        )
+
+    listed = briefing(ScriptsRegistration("registered", PlaysCorpus(scripts, (), notices)))
+    unlisted = briefing(ScriptsRegistration("registered", PlaysCorpus((), (), ())))
+    grown = len(listed.encode()) - len(unlisted.encode())
+    assert 0 < grown <= PLAYS_SECTION_CAP_BYTES
+    assert PLAYS_SECTION_CAP_BYTES <= 4 * 1024
+    assert "`play-000`" in listed
+    assert "not listed" in listed
+
+
+def test_the_real_game_server_accepts_the_corpus_the_driver_registers(tmp_path):
+    """The join for the fake PUT in `world.py`: the body `assign` builds from
+    the refreshed fixture corpus, inputs.json included, is one the real route
+    admits and reads back whole."""
+    from magic_cards_model_api.main import app as game_app
+    from mtg_agent.driver.guides import GuideLibrary
+
+    world = build_world(tmp_path)
+    (world_plays_dir(world) / "inputs.json").write_text(json.dumps(DECLARED_INPUTS))
+    corpus = GuideLibrary(world.settings.guides_root).get("dimir-frog").plays()
+    assert corpus.notices == ()
+
+    with TestClient(game_app) as game_client:
+        booted = game_client.post(
+            "/api/lobby/games",
+            json={
+                "players": [
+                    {"username": "alice", "decklist_text": "56 Mountain\n4 Lightning Bolt"},
+                    {"username": "bob", "decklist_text": "56 Forest\n4 Grizzly Bears"},
+                ],
+                "seed": 3,
+            },
+        ).json()
+        uid = booted["seat_uids"]["bob"]
+        path = f"/api/games/{booted['game_id']}/seats/{uid}/scripts"
+        try:
+            put = game_client.put(
+                path,
+                params={"uid": uid},
+                json={
+                    "deck_slug": "dimir-frog",
+                    "guides_revision": "unknown",
+                    "scripts": list(corpus.scripts),
+                    "inputs": list(corpus.inputs),
+                },
+            )
+            read = game_client.get(path, params={"uid": uid}).json()
+        finally:
+            game_client.delete(
+                f"/api/games/{booted['game_id']}", params={"key": booted["admin_key"]}
+            )
+
+    assert put.status_code == 200, put.text
+    assert put.json()["count"] == len(fixture_plays())
+    assert read["inputs"] == DECLARED_INPUTS["inputs"]

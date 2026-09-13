@@ -99,6 +99,23 @@ ADVICE_ACTION = "advice"
 #: its own ordinary action row with its own `allowed`.
 ADVICE_APPROVED_ACTION = "advice_approved"
 
+#: A seat's play-script runner starting one script (`POST .../script-runs`
+#: with `phase: start`). Written so a second start of the same script at the
+#: same turn and step can be refused from the ledger alone - durable across
+#: replicas, like every other fact `records.require_plan` reads back.
+SCRIPT_RUN_STARTED_ACTION = "script_run_started"
+
+#: One finished script run (`phase: finish`): which script, against which
+#: guides revision, over which ledger span, how far it got and why it
+#: stopped. Mutates no `Game` - the moves themselves went through the action
+#: routes and are rows of their own.
+SCRIPT_RUN_ACTION = "script_run"
+
+#: Both script-run rows. A run names the seat's own cards, plans and guides,
+#: so `visibility.redact_log_entry` drops these rows outright for every
+#: viewer but that seat, its advisor and the admin key.
+SCRIPT_RUN_ACTIONS = (SCRIPT_RUN_STARTED_ACTION, SCRIPT_RUN_ACTION)
+
 #: The actions that get a banner at WARNING rather than one compact line.
 LOUD_ACTIONS = (PROBLEM_ACTION, OVERRULE_ACTION, PLAN_ACTION, ADVICE_ACTION)
 
@@ -187,6 +204,7 @@ def _with_offered(detail: dict[str, Any], offered: bool | None) -> dict[str, Any
 def record(
     game_id: str,
     action: str,
+    /,
     *,
     reasoning: str | None = None,
     legal_actions_before: LegalActionsBefore | None = None,

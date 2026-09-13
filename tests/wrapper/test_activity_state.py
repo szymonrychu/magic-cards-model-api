@@ -67,6 +67,8 @@ def thinking(signature: str = "sig") -> dict:
         ("mcp__mtg__mulligan", activity.DECIDING),
         ("mcp__mtg__opening_hand_action", activity.DECIDING),
         ("mcp__mtg__declare_plan", activity.DECIDING),
+        ("mcp__mtg__list_scripts", activity.READING_BOARD),
+        ("mcp__mtg__run_script", activity.ACTING),
         ("mcp__mtg__cast", activity.ACTING),
         ("mcp__mtg__play_land", activity.ACTING),
         ("mcp__mtg__activate", activity.ACTING),
@@ -117,6 +119,14 @@ def test_every_mtg_tool_in_the_contract_maps_to_something():
             activity.DECIDING,
             activity.ACTING,
         ), name
+
+
+def test_the_script_tools_are_mapped_by_name_not_by_the_default():
+    """`run_script` plays moves, so it is ACTING - but named, like every other
+    tool the mapping has decided on, rather than left to the catch-all.
+    `list_scripts` only reads, the same state as the other reads."""
+    assert activity._MTG_STATES["run_script"] == activity.ACTING
+    assert activity._MTG_STATES["list_scripts"] == activity._MTG_STATES["battlefield_state"]
 
 
 def test_a_thinking_block_is_reported_as_thinking():

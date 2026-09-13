@@ -113,6 +113,17 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
         "is. It also mutates no `Game`: a proposal is a statement about one, "
         "the same exemption `POST .../plan` gets."
     ),
+    ("PUT", "/api/games/{game_id}/seats/{uid}/scripts"): (
+        "registers the play scripts a seat Job will run. A corpus is a "
+        "statement about what the runner may try, validated script by script; "
+        "it mutates no `Game` and writes no ledger row. Every move a script "
+        "makes goes through the action routes, which hold it to a reason."
+    ),
+    ("POST", "/api/games/{game_id}/script-runs"): (
+        "reports that a play script started or finished. It mutates no "
+        "`Game`, the same exemption `POST .../plan` gets: the moves the run "
+        "made are their own action rows, each already gated on `reasoning`."
+    ),
     ("POST", "/api/games/{game_id}/advice/{seq}/approve"): (
         "the human saying yes to advice it has already read. One ledger row, "
         "no `Game` touched, and made by the human seat rather than by an "
@@ -125,6 +136,10 @@ EXEMPT_TOOLS: dict[str, str] = {
     "wait_for_priority": "one poll for whether it is this seat's moment; reads only.",
     "battlefield_state": "the board as this seat may see it; reads only.",
     "game_log": "this game's log, seat-filtered; reads only.",
+    "list_scripts": (
+        "this seat's registered play scripts judged against the board; runs and records "
+        "nothing, reads only."
+    ),
     "report_problem": ("`text` is the reasoning - see the matching note on `POST .../report`."),
     "declare_plan": (
         "the declaration IS the reasoning, and mutates no `Game` at all - see the "

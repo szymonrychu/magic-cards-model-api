@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -19,8 +20,11 @@ from mtg_agent.driver.guides import (
 )
 from mtg_agent.driver.matchup_card import CARD_HARD_CAP_BYTES
 from mtg_agent.driver.prompt import (
+    HANDOVER_OPENING,
     Assignment,
     advisor_turn_zero,
+    handover_nudge,
+    handover_turn,
     memory_index,
     plan_path,
     reflection_turn,
@@ -758,3 +762,132 @@ def test_the_briefing_keeps_the_boards_apart_for_the_classifier_claim(tmp_path, 
     assert "Maindeck:" in text
     assert text.index("4 Psychic Frog") < text.index("2 Dress Down")
     assert "maindeck" in text.lower()
+
+
+# ---- play scripts: the doctrine every agent is told ----------------------
+#
+# A6 gave a seat `run_script`/`list_scripts` and `mcp-seat script run|list`.
+# A tool nobody is told how to reach for is a tool nobody uses, so the doctrine
+# is pinned word for word in both turn-zero prompts and both CLI briefs.
+
+SCRIPT_DOCTRINE = (
+    "Delegate repetitive actions to scripts.",
+    "Develop new and improve existing scripts through subagents, along with guides.",
+    "Aim for deterministic scripts.",
+    "When plays conflict, resolve it by extending conditions, never by priority alone.",
+    "Pass inputs, such as the opposing archetype or your preferences, explicitly.",
+)
+
+LOOP_SCRIPT_DOCTRINE = (
+    "`run_script` counts as both your wait and your one committing call; "
+    "read `script_exit` and do exactly one thing."
+)
+
+BRIEFS = Path(__file__).resolve().parents[2] / "src" / "magic_cards_model_api" / "docs"
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _section(text: str, heading: str) -> str:
+    """`heading` through the line before the next `## ` heading."""
+    start = text.index(f"\n{heading}\n")
+    end = text.find("\n## ", start + len(heading) + 1)
+    return text[start : end if end != -1 else len(text)]
+
+
+@pytest.mark.parametrize("sentence", SCRIPT_DOCTRINE)
+def test_seat_prompt_scripts_section_carries_the_doctrine(tmp_path, guide, sentence):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert sentence in _flat(_section(text, "## Scripts"))
+
+
+@pytest.mark.parametrize("sentence", SCRIPT_DOCTRINE)
+def test_buddy_prompt_carries_the_script_doctrine(tmp_path, guide, sentence):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert sentence in _flat(_section(text, "## Scripts"))
+
+
+def test_seat_prompt_loop_counts_run_script_as_wait_and_commit(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert LOOP_SCRIPT_DOCTRINE in _flat(_section(text, "## The loop"))
+
+
+def test_seat_prompt_scripts_section_says_how_to_pick_a_script(tmp_path, guide):
+    """Pick with `list_scripts`, and say which archetype you read rather than
+    leaving the `*` default to stand in for a read you have made."""
+    section = _flat(_section(turn_zero(assignment(guide), tmp_path / "x.md"), "## Scripts"))
+    assert "list_scripts(" in section
+    assert "run_script(" in section
+    assert "opposing_archetype" in section
+    assert "inputs" in section
+
+
+def test_buddy_prompt_checks_list_scripts_on_wake_and_proposes_with_run_script(tmp_path, guide):
+    section = _flat(_section(advisor_turn_zero(assignment(guide), tmp_path / "x.md"), "## Scripts"))
+    assert "check `list_scripts` on wake" in section
+    assert "propose with `run_script`" in section
+
+
+HANDOVER_PINS = (
+    "Delegate repetitive actions to scripts.",
+    "Develop new and improve existing scripts through subagents, along with guides.",
+    "Update each script's priority with `mcp-seat plays priority` from this game's evidence.",
+    "Land scripts with `mcp-seat plays admit --deck dimir-frog --game-id g-1`",
+    "propose guides with `mcp-seat guides propose --deck dimir-frog --game-id g-1`",
+    "mtg-decks has no CI budget, so its ci and automerge workflows never run",
+    "the owner reviews and merges it by hand",
+    "Do not wait for that pull request",
+    "it is not live until the owner merges it",
+    "Edit only `matchups[].play_plan` and `matchups[].notes`",
+    "`decks/dimir-frog/NOTES.md`",
+)
+
+RUN_TABLE = "script | priority | runs | exits | reapplicable_after\nfetch-x | 50 | 2 | done=2 | 1"
+
+
+def _handover(guide, role: str) -> str:
+    return handover_turn(
+        replace(assignment(guide), role=role),
+        "released",
+        RUN_TABLE,
+        "play-conflict: fetch-x, fetch-y (whose_turn, steps)",
+    )
+
+
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+@pytest.mark.parametrize("pin", HANDOVER_PINS)
+def test_handover_prose_pins_for_seat_and_buddy(guide, role, pin):
+    assert pin in _flat(_handover(guide, role))
+
+
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+def test_handover_embeds_the_outcome_the_run_table_and_the_conflicts(guide, role):
+    text = _handover(guide, role)
+    assert text.startswith(HANDOVER_OPENING)
+    assert "released" in text
+    assert RUN_TABLE in _section(text, "## Script runs this game")
+    assert "play-conflict: fetch-x, fetch-y (whose_turn, steps)" in _section(
+        text, "## Conflict warnings"
+    )
+
+
+def test_the_seat_and_the_buddy_get_the_identical_handover(guide):
+    assert _handover(guide, "seat") == _handover(guide, "advisor")
+
+
+def test_the_nudge_says_push_now(guide):
+    text = handover_nudge(assignment(guide))
+    assert "push now" in text.lower()
+    assert "mcp-seat plays admit --deck dimir-frog --game-id g-1" in text
+
+
+@pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
+def test_briefs_describe_the_script_cli_and_carry_the_doctrine(brief):
+    text = (BRIEFS / brief).read_text()
+    section = _flat(_section(text, "## Scripts"))
+    for sentence in SCRIPT_DOCTRINE:
+        assert sentence in section, f"{brief} is missing {sentence!r}"
+    for needle in ("script run", "script list", "--input NAME=VALUE", "`inputs`"):
+        assert needle in section, f"{brief}'s Scripts section never names {needle!r}"

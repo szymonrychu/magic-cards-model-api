@@ -201,6 +201,40 @@ Set `AI_SEAT_MODE=subprocess` (the default outside compose) to go back to the
 one-shot seat, or `AI_SEAT_MODE=kubernetes` to schedule each AI seat as its own
 Job - see "Several games at once" below.
 
+### The guides clone and the handover
+
+`docker compose up` also runs a one-shot **guides-init** service before the
+agent starts: it clones github.com/szymonrychu/mtg-decks writably into the
+named `agent-guides` volume, using the token in `MTG_DECKS_GH_PAT` (see
+`.env.example`) and `deploy/guides-clone.sh` - the same script and image the
+kubernetes `guides` initContainer runs (`deploy/seat-job.yaml`). `agent`
+mounts that volume read-write and waits for `guides-init` to finish; `driver`
+mounts the same volume read-only. The `MTG_DECKS_GH_PAT` secret is mounted
+only into `guides-init` and `agent` - never `driver` or `game` - at
+`/var/run/mtg-decks-git/GH_PAT`, the same path the agent's git credential
+helper reads (`wrapper/bootstrap.py`). Your own `$MTG_DECKS` checkout stays
+mounted read-only into `game` for deck browsing, and is never mounted
+writable into the agent - the agent's writes go to `agent-guides` and get
+pushed upstream, not to your local clone.
+
+**Handover.** The agent can edit a deck's guide mid-play (`boarding-plan.json`
+matchup notes, `NOTES.md`) and hand it over with `mcp-seat guides propose`:
+render, commit, push a `seat/<game-id>-guides` branch and open a pull request,
+returning at once with `awaiting_owner_review` and the PR's URL. mtg-decks is
+a private repo with no GitHub Actions budget, so its `ci` and `automerge`
+workflows never run there - the command never waits on either, and the guide
+edit is not live until the owner reviews and merges the PR by hand. Play
+scripts are unaffected: `mcp-seat plays admit` still pushes straight to
+mtg-decks main after the in-pod gate. That handover runs at the natural
+points where the agent stops playing: when a game ends, and when the driver's
+`POST /release` is called (a human taking the seat back, or a buddy standing
+down). A plain `docker compose stop` or `docker compose down` does **not**
+run a handover - it just stops the containers, mid-match state and all;
+`agent`/`driver` are given a 10-minute `stop_grace_period` (mirroring the k8s
+Job's `terminationGracePeriodSeconds`) purely so an *in-flight* handover from
+one of those two triggers has room to finish before compose sends SIGKILL,
+not to start one on its own.
+
 ### What `docker compose logs` shows
 
 Three containers, three different things worth watching:

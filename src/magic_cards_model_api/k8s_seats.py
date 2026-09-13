@@ -114,12 +114,10 @@ class K8sSettings:
     agent_image: str = "harbor.szymonrichert.pl/containers/magic-cards-model-agent:latest"
     api_image: str = "harbor.szymonrichert.pl/containers/magic-cards-model-api:latest"
     #: Which revision of the deck-guides corpus
-    #: (`github.com/szymonrychu/mtg-decks`) every seat Job checks out - any
-    #: branch, tag or commit sha its `guides` initContainer can fetch. A
-    #: stamp and a knob, deliberately not a pin: `main` (the latest guides)
-    #: stays the default because play wants current guides, and only an
-    #: evaluation harness - which needs two runs to have read the same
-    #: corpus - sets it to something fixed. Whatever it resolves to is
+    #: (`github.com/szymonrychu/mtg-decks`) every seat Job checks out. The
+    #: `guides` initContainer (`deploy/guides-clone.sh`) makes a writable
+    #: clone the agent commits on, so it accepts only `main` and refuses
+    #: anything else with a message saying so. Whatever it resolves to is
     #: recorded in the guides volume and ends up in the agent's briefing and
     #: in the game's plan file (`mtg_agent/driver/revision.py`).
     guides_ref: str = "main"
@@ -178,6 +176,12 @@ SEAT_JOB_PLACEHOLDERS = (
     #: Which deck-guides revision the `guides` initContainer checks out
     #: (`K8sSettings.guides_ref`, default `main`).
     "__GUIDES_REF__",
+    #: The agent container's own `MTG_ROLE` (`seat` or `advisor`) and
+    #: `MTG_GAME_ID`. The driver already learns both from
+    #: `__ASSIGNMENT_JSON__`; the agent reads no assignment, and needs them to
+    #: name the branches and commits it makes in its writable guides checkout.
+    "__MTG_ROLE__",
+    "__MTG_GAME_ID__",
 )
 
 
@@ -222,6 +226,8 @@ def _seat_job_values(
         "__AGENT_IMAGE__": agent_image,
         "__API_IMAGE__": api_image,
         "__GUIDES_REF__": guides_ref,
+        "__MTG_ROLE__": role,
+        "__MTG_GAME_ID__": game_id,
     }
 
 
@@ -271,10 +277,9 @@ def build_job(
     not a soft one), the identity labels, and the annotations.
 
     `role` is `ROLE_SEAT` or `ROLE_ADVISOR` (B5's buddy): it picks the name
-    prefix, adds `LABEL_ROLE` for an advisor, and rides into the driver's
-    own self-dispatch payload through `__ASSIGNMENT_JSON__` - which is why
-    the committed template needs no change and `SEAT_JOB_PLACEHOLDERS` gains
-    no entry.
+    prefix, adds `LABEL_ROLE` for an advisor, rides into the driver's own
+    self-dispatch payload through `__ASSIGNMENT_JSON__`, and reaches the
+    agent container as `MTG_ROLE` through `__MTG_ROLE__`.
     """
     name = job_name(game_id, uid, role)
     labels = {LABEL_APP: APP_LABEL_VALUE, LABEL_GAME: game_id, LABEL_SEAT: uid}

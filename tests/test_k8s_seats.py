@@ -921,15 +921,24 @@ def test_the_seat_job_images_come_from_settings_not_the_template() -> None:
     assert set(images) == {"reg.example/agent:v9", "reg.example/api:v9"}, images
 
 
-# ---- the guides corpus revision (P3) ---------------------------------------
+# ---- the guides corpus: a writable checkout of main (A13) ------------------
 #
-# The k8s guides initContainer used to `git clone --depth 1` whatever `main`
-# happened to be, with no pin and no record of what it got - two seats
-# scheduled minutes apart could read different guides and nothing said so.
-# It now takes an optional `GUIDES_REF` (default `main`) and stamps the
+# The k8s guides initContainer used to fetch `GUIDES_REF` shallow and detached,
+# read-only - fine for reading, useless for an agent that has to commit a guide
+# change and open a pull request. It now runs `deploy/guides-clone.sh`, baked
+# into the agent image, which fetches `main` partially (`--filter=blob:none`,
+# full history, no blobs up front), checks out a local `main` tracking
+# `origin/main`, strips the token back out of the remote URL, and stamps the
 # revision it checked out into the guides volume, where the driver reads it.
-# The default stays `main` on purpose: play wants current guides, only an
-# evaluation harness wants a fixed ref.
+# Writable mode needs a branch to commit on, so the ref must be `main`.
+
+CLONE_SCRIPT_PATH = REPO_ROOT / "deploy" / "guides-clone.sh"
+DOCKERFILE_AGENT_PATH = REPO_ROOT / "Dockerfile.agent"
+#: Where Dockerfile.agent puts the script in the image, and where the
+#: initContainer runs it from.
+CLONE_SCRIPT_IN_IMAGE = "/usr/local/bin/guides-clone.sh"
+TOKEN_DIR = "/var/run/mtg-decks-git"
+TOKEN_FILE = f"{TOKEN_DIR}/GH_PAT"
 
 
 def _guides_init_container(job: dict) -> dict:
@@ -964,32 +973,59 @@ def test_the_guides_init_container_carries_the_ref_it_was_configured_with() -> N
     assert pinned_env["GUIDES_REF"] == "0f0f0f0f"
 
 
-def _origin_repo(tmp_path: Path) -> tuple[Path, dict[str, str]]:
-    """A real two-commit git repo standing in for github.com/szymonrychu/
-    mtg-decks, reachable at the production clone URL.
+def test_the_guides_init_container_runs_the_clone_script_baked_into_the_agent_image() -> None:
+    """The script lives in one file, `deploy/guides-clone.sh`, rather than
+    inline in the template - so the test below can run exactly what the
+    image runs, and Dockerfile.agent is what puts it there."""
+    container = _guides_init_container(_build())
+    assert container["command"] == ["/bin/sh", CLONE_SCRIPT_IN_IMAGE]
+    assert container["image"] == K8sSettings.from_env(ENV).agent_image
+    dockerfile = DOCKERFILE_AGENT_PATH.read_text()
+    assert re.search(
+        r"^COPY\b.*\bmagic-cards-model-api/deploy/guides-clone\.sh\s+"
+        + re.escape(CLONE_SCRIPT_IN_IMAGE)
+        + r"\s*$",
+        dockerfile,
+        re.MULTILINE,
+    ), dockerfile
+    assert CLONE_SCRIPT_PATH.is_file()
 
-    The initContainer's script is run verbatim - token URL, `remote set-url`
+
+def _origin_repo(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    """A real bare repo with two commits on `main`, standing in for
+    github.com/szymonrychu/mtg-decks, reachable at the production clone URL.
+
+    `deploy/guides-clone.sh` is run verbatim - token URL, `remote set-url`
     scrub and all - and the only thing bent to fit a test is where that URL
     points: a `url.<local>.insteadOf` in a throwaway `$HOME/.gitconfig`
     rewrites the real https URL to this local repo. Overriding the URL with
     an env var of its own would have left the token handling, which is the
-    part with a security consequence, untested.
+    part with a security consequence, untested. `uploadpack.allowFilter` is
+    what GitHub has on, and without it a `--filter` fetch is silently a full
+    one, so a partial clone would go unproven.
     """
+    work = tmp_path / "work"
     origin = tmp_path / "origin.git"
-    origin.mkdir()
     run = lambda *args: subprocess.run(  # noqa: E731
-        ["git", "-C", str(origin), *args], check=True, capture_output=True
+        ["git", "-C", str(work), *args], check=True, capture_output=True
     )
-    subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(work)], check=True)
     run("config", "user.email", "t@example.invalid")
     run("config", "user.name", "test")
-    (origin / "README.md").write_text("first\n")
+    (work / "README.md").write_text("first\n")
     run("add", "-A")
     run("commit", "-qm", "first")
-    (origin / "README.md").write_text("second\n")
+    (work / "README.md").write_text("second\n")
     run("add", "-A")
     run("commit", "-qm", "second")
     run("branch", "pinned", "HEAD~1")
+    subprocess.run(
+        ["git", "clone", "-q", "--bare", str(work), str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    for key in ("uploadpack.allowFilter", "uploadpack.allowAnySHA1InWant"):
+        subprocess.run(["git", "-C", str(origin), "config", key, "true"], check=True)
 
     home = tmp_path / "home"
     home.mkdir()
@@ -998,10 +1034,12 @@ def _origin_repo(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         + str(origin)
         + '"]\n\tinsteadOf = https://x-access-token:test-token@github.com/szymonrychu/mtg-decks.git\n'
     )
+    token_file = tmp_path / "GH_PAT"
+    token_file.write_text("test-token\n")
     env = {
         "HOME": str(home),
-        "PATH": "/usr/bin:/bin:/usr/local/bin",
-        "GH_PAT": "test-token",
+        "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+        "GH_PAT_FILE": str(token_file),
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_CONFIG_NOSYSTEM": "1",
     }
@@ -1009,8 +1047,12 @@ def _origin_repo(tmp_path: Path) -> tuple[Path, dict[str, str]]:
 
 
 def _rev(repo: Path, ref: str) -> str:
+    return _git(repo, "rev-parse", ref)
+
+
+def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", ref],
+        ["git", "-C", str(repo), *args],
         check=True,
         capture_output=True,
         text=True,
@@ -1018,52 +1060,66 @@ def _rev(repo: Path, ref: str) -> str:
 
 
 def _run_guides_script(job: dict, tmp_path: Path, origin_env: dict[str, str]) -> Path:
+    """Run `deploy/guides-clone.sh` - the file the image bakes in - with the
+    rendered initContainer's own env, the way the real initContainer does."""
     container = _guides_init_container(job)
-    command = container["command"]
-    assert command[:2] == ["/bin/sh", "-euc"]
-    env = {e["name"]: e.get("value") or "" for e in container["env"]}
+    assert container["command"] == ["/bin/sh", CLONE_SCRIPT_IN_IMAGE]
+    env = {e["name"]: e.get("value") or "" for e in container.get("env", [])}
     env.update(origin_env)
     guides = tmp_path / "guides"
     guides.mkdir(exist_ok=True)
     env["GUIDES_DIR"] = str(guides)
-    subprocess.run(["/bin/sh", "-euc", command[2]], env=env, check=True, capture_output=True)
+    subprocess.run(["/bin/sh", str(CLONE_SCRIPT_PATH)], env=env, check=True, capture_output=True)
     return guides
 
 
-def test_the_guides_script_checks_out_main_by_default_and_stamps_its_revision(
+def test_the_guides_script_checks_out_a_writable_main_tracking_origin(
     tmp_path: Path,
 ) -> None:
     origin, env = _origin_repo(tmp_path)
     guides = _run_guides_script(_build(), tmp_path, env)
+
     assert (guides / "README.md").read_text() == "second\n"
+    # A real local branch, not a detached HEAD: the agent commits on it.
+    assert _git(guides, "symbolic-ref", "--short", "HEAD") == "main"
+    assert _git(guides, "rev-parse", "--abbrev-ref", "main@{upstream}") == "origin/main"
+    # Full history, so a rebase or a merge-base against origin/main works.
+    assert _git(guides, "rev-parse", "--is-shallow-repository") == "false"
+    assert _git(guides, "rev-list", "--count", "HEAD") == "2"
+    # Partial: history now, blobs on demand.
+    assert _git(guides, "config", "remote.origin.partialclonefilter") == "blob:none"
+    # The token is gone from the remote and from the whole config.
+    assert _git(guides, "remote", "get-url", "origin") == (
+        "https://github.com/szymonrychu/mtg-decks.git"
+    )
+    assert "x-access-token" not in (guides / ".git" / "config").read_text()
+    assert "test-token" not in (guides / ".git" / "config").read_text()
+    # The stamp is written, and kept out of `git status` so no commit sweeps it up.
     assert (guides / ".guides-revision").read_text().strip() == _rev(origin, "main")
+    assert _git(guides, "status", "--porcelain") == ""
 
 
-def test_the_guides_script_honours_an_explicit_guides_ref(tmp_path: Path) -> None:
-    origin, env = _origin_repo(tmp_path)
-    guides = _run_guides_script(_build({**ENV, "GUIDES_REF": "pinned"}), tmp_path, env)
-    assert (guides / "README.md").read_text() == "first\n"
-    assert (guides / ".guides-revision").read_text().strip() == _rev(origin, "pinned")
-
-
-def test_the_guides_script_honours_a_bare_commit_sha_as_the_ref(tmp_path: Path) -> None:
-    """A harness pins a sha, not only a branch or a tag - `fetch <ref>` takes
-    all three, which `clone --branch` (what this replaced) did not."""
-    origin, env = _origin_repo(tmp_path)
-    sha = _rev(origin, "main~1")
-    guides = _run_guides_script(_build({**ENV, "GUIDES_REF": sha}), tmp_path, env)
-    assert (guides / ".guides-revision").read_text().strip() == sha
-
-
-def test_the_guides_script_leaves_no_token_behind_in_the_checkout(tmp_path: Path) -> None:
+def test_the_guides_script_leaves_no_token_behind_in_the_checkout(
+    tmp_path: Path,
+) -> None:
     _, env = _origin_repo(tmp_path)
     guides = _run_guides_script(_build(), tmp_path, env)
     leaked = [
         path
         for path in guides.rglob("*")
-        if path.is_file() and "x-access-token" in path.read_bytes().decode("utf-8", "replace")
+        if path.is_file()
+        and any(secret in path.read_bytes() for secret in (b"x-access-token", b"test-token"))
     ]
     assert leaked == []
+
+
+def test_the_guides_script_refuses_an_unreadable_token_file(tmp_path: Path) -> None:
+    _, env = _origin_repo(tmp_path)
+    env["GH_PAT_FILE"] = str(tmp_path / "absent")
+    with pytest.raises(subprocess.CalledProcessError) as refused:
+        _run_guides_script(_build(), tmp_path, env)
+    assert b"GH_PAT" in refused.value.stderr, refused.value.stderr
+    assert not (tmp_path / "guides" / ".guides-revision").exists()
 
 
 def test_the_driver_reads_the_revision_stamp_from_the_guides_volume() -> None:
@@ -1075,38 +1131,21 @@ def test_the_driver_reads_the_revision_stamp_from_the_guides_volume() -> None:
     driver_env = {e["name"]: e.get("value") for e in driver["env"]}
     mounts = {m["name"]: m for m in driver["volumeMounts"]}
     assert driver_env["GUIDES_ROOT"] == mounts["guides"]["mountPath"] == "/guides"
-    assert GUIDES_REVISION_FILE in _guides_init_container(job)["command"][2]
+    assert GUIDES_REVISION_FILE in CLONE_SCRIPT_PATH.read_text()
 
 
-# `GUIDES_REF` reaches `git fetch` as a positional argument, and git reads a
-# leading `--` as an option wherever it appears. The value is quoted, so
-# there was never a *shell* injection here, and it is operator-set
-# deployment config rather than anything a player can reach - but
-# `--upload-pack=<command>` is a git option that runs a command, and one
-# typo'd or copy-pasted ref was all it took. Verified before the fix:
+# `GUIDES_REF` used to reach `git fetch` as a positional argument, and git reads
+# a leading `--` as an option wherever it appears - `--upload-pack=<command>` is
+# a git option that runs a command. Verified back then:
 # GUIDES_REF='--upload-pack=touch /tmp/pwned;git-upload-pack' fetched
-# successfully AND created the file.
-#
-# Two guards, because either alone is thin: the ref is validated against
-# `[A-Za-z0-9._/-]+` before anything runs, and `--` fences it off from git's
-# own option parsing regardless.
-
-
-def _guides_script(job: dict) -> str:
-    container = _guides_init_container(job)
-    assert container["command"][:2] == ["/bin/sh", "-euc"]
-    return container["command"][2]
-
-
-def test_the_guides_fetch_fences_the_ref_off_from_gits_option_parsing() -> None:
-    assert 'fetch --depth 1 origin -- "$ref"' in _guides_script(_build())
+# successfully AND created the file. The ref is still validated against
+# `[A-Za-z0-9._/-]+` before anything runs, and writable mode then requires it
+# to be exactly `main` - a pinned tag or sha has no branch to commit on.
 
 
 @pytest.mark.parametrize(
     "ref",
     [
-        # The real one: `--upload-pack=<command>` is a git option that runs a
-        # command, and before the fix this fetched successfully and ran it.
         "--upload-pack=true",
         "--exec=true",
         "main;true",
@@ -1121,23 +1160,176 @@ def test_the_guides_script_refuses_a_ref_that_is_not_a_ref(tmp_path: Path, ref: 
     with pytest.raises(subprocess.CalledProcessError) as refused:
         _run_guides_script(_build({**ENV, "GUIDES_REF": ref}), tmp_path, env)
 
-    assert b"GUIDES_REF" in refused.value.stderr, refused.value.stderr
+    assert b"GUIDES_REF is not a ref" in refused.value.stderr, refused.value.stderr
     assert not (tmp_path / "guides" / ".guides-revision").exists()
 
 
-@pytest.mark.parametrize("ref", ["main", "pinned", "v1.2.3", "release/2024-05"])
-def test_the_guides_script_still_accepts_every_shape_of_real_ref(tmp_path: Path, ref: str) -> None:
-    """A branch, a tag, a slashed branch and a bare sha are all legal git
-    refs, and the validation must not have narrowed the corpus to `main`."""
-    origin, env = _origin_repo(tmp_path)
-    if ref not in ("main", "pinned"):
-        subprocess.run(
-            ["git", "-C", str(origin), "branch", ref, "HEAD"], check=True, capture_output=True
-        )
+@pytest.mark.parametrize("ref", ["pinned", "v1.2.3", "release/2024-05", "0f0f0f0f"])
+def test_writable_mode_refuses_any_ref_but_main_and_says_so(tmp_path: Path, ref: str) -> None:
+    _, env = _origin_repo(tmp_path)
 
-    guides = _run_guides_script(_build({**ENV, "GUIDES_REF": ref}), tmp_path, env)
+    with pytest.raises(subprocess.CalledProcessError) as refused:
+        _run_guides_script(_build({**ENV, "GUIDES_REF": ref}), tmp_path, env)
 
-    assert (guides / ".guides-revision").read_text().strip() == _rev(origin, ref)
+    stderr = refused.value.stderr.decode()
+    assert "writable" in stderr and "main" in stderr and ref in stderr, stderr
+    assert not (tmp_path / "guides" / ".guides-revision").exists()
+
+
+def test_the_guides_script_does_not_ask_for_a_shallow_fetch() -> None:
+    code = "\n".join(
+        line
+        for line in CLONE_SCRIPT_PATH.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    assert "--filter=blob:none" in code
+    assert "--depth" not in code and "--shallow" not in code
+
+
+# ---- the pod: writable guides, the token as a file, identity, handover -----
+#
+# Both roles render from the one template, so every property below is pinned
+# for a seat AND for an advisor (a buddy).
+
+ROLES = ("seat", "advisor")
+
+
+def _build_role(role: str) -> dict:
+    return build_job(
+        K8sSettings.from_env(ENV),
+        game_id="g1",
+        uid="u1" if role == "seat" else "a1",
+        player="bot" if role == "seat" else "you",
+        agent=AgentSettings(model="sonnet"),
+        role=role,
+    )
+
+
+def _pod(job: dict) -> dict:
+    return job["spec"]["template"]["spec"]
+
+
+def _container(job: dict, name: str) -> dict:
+    return next(c for c in _pod(job)["containers"] if c["name"] == name)
+
+
+def _mounts(container: dict) -> dict[str, dict]:
+    return {m["name"]: m for m in container.get("volumeMounts", [])}
+
+
+def _token_volume(job: dict) -> dict:
+    return next(v for v in _pod(job)["volumes"] if "secret" in v)
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_the_agent_mounts_guides_writable_and_the_driver_read_only(role: str) -> None:
+    job = _build_role(role)
+    agent_guides = _mounts(_container(job, "agent"))["guides"]
+    assert agent_guides["mountPath"] == "/guides"
+    assert agent_guides.get("readOnly", False) is False
+    driver_guides = _mounts(_container(job, "driver"))["guides"]
+    assert driver_guides["mountPath"] == "/guides"
+    assert driver_guides["readOnly"] is True
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_the_token_is_a_file_mounted_into_the_agent_and_the_init_container_only(
+    role: str,
+) -> None:
+    job = _build_role(role)
+    pod = _pod(job)
+    volume = _token_volume(job)
+    assert volume["secret"]["secretName"] == "mtg-decks-git"
+    assert volume["secret"]["items"] == [{"key": "GH_PAT", "path": "GH_PAT"}]
+    assert volume["secret"]["defaultMode"] == 0o440
+    # 0440 is group-readable only; fsGroup is what makes uid 1000 that group.
+    assert pod["securityContext"]["fsGroup"] == 1000 == pod["securityContext"]["runAsUser"]
+
+    def token_mounts(container: dict) -> list[dict]:
+        return [m for m in container.get("volumeMounts", []) if m["name"] == volume["name"]]
+
+    by_name = {c["name"]: c for c in pod["initContainers"] + pod["containers"]}
+    mounted_into = {name for name, c in by_name.items() if token_mounts(c)}
+    assert mounted_into == {"guides", "agent"}
+    for name in ("guides", "agent"):
+        (mount,) = token_mounts(by_name[name])
+        assert mount["mountPath"] == TOKEN_DIR
+        assert mount["readOnly"] is True
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_the_token_is_never_an_env_var_on_any_container(role: str) -> None:
+    job = _build_role(role)
+    pod = _pod(job)
+    for container in pod["initContainers"] + pod["containers"]:
+        for entry in container.get("env", []):
+            assert entry["name"] != "GH_PAT", container["name"]
+            ref = entry.get("valueFrom", {}).get("secretKeyRef")
+            assert not ref or ref["name"] != "mtg-decks-git", container["name"]
+        for source in container.get("envFrom", []):
+            assert source.get("secretRef", {}).get("name") != "mtg-decks-git", container["name"]
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_the_agent_carries_its_role_game_and_git_identity(role: str) -> None:
+    job = _build_role(role)
+    env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
+    assert env["MTG_ROLE"] == role
+    assert env["MTG_GAME_ID"] == "g1"
+    assert env["GIT_COMMITTER_NAME"] == "mtg-agent"
+    assert env["GIT_COMMITTER_EMAIL"] == "mtg-agent@mtg-trainer.invalid"
+
+
+def test_role_and_game_id_reach_the_agent_through_their_own_placeholders() -> None:
+    assert "__MTG_ROLE__" in SEAT_JOB_PLACEHOLDERS
+    assert "__MTG_GAME_ID__" in SEAT_JOB_PLACEHOLDERS
+    template = yaml.safe_load(TEMPLATE_PATH.read_text())
+    agent = next(
+        c for c in template["spec"]["template"]["spec"]["containers"] if c["name"] == "agent"
+    )
+    env = {e["name"]: e.get("value") for e in agent["env"]}
+    assert env["MTG_ROLE"] == "__MTG_ROLE__"
+    assert env["MTG_GAME_ID"] == "__MTG_GAME_ID__"
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_the_pod_gives_both_containers_time_to_hand_over(role: str) -> None:
+    """600s of grace; the driver's handover gets 540 of it and the agent
+    waits up to 560 for that handover, so both finish inside the grace."""
+    job = _build_role(role)
+    assert _pod(job)["terminationGracePeriodSeconds"] == 600
+    driver_stop = _container(job, "driver")["lifecycle"]["preStop"]["exec"]["command"]
+    assert driver_stop == ["python", "-m", "mtg_agent.driver.handover", "--wait", "540"]
+    agent_stop = _container(job, "agent")["lifecycle"]["preStop"]["exec"]["command"]
+    assert agent_stop == [
+        "python",
+        "-m",
+        "mtg_agent.wrapper.handover_wait",
+        "--wait",
+        "560",
+    ]
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_the_agent_sees_the_driver_workspace_read_only(role: str) -> None:
+    job = _build_role(role)
+    agent_mount = _mounts(_container(job, "agent"))["driver-workspace"]
+    assert agent_mount["mountPath"] == "/driver-workspace"
+    assert agent_mount["readOnly"] is True
+    driver_mount = _mounts(_container(job, "driver"))["driver-workspace"]
+    assert driver_mount["mountPath"] == "/driver-workspace"
+    assert driver_mount.get("readOnly", False) is False
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_the_role_job_still_validates_as_a_batch_v1_job(role: str) -> None:
+    job = _build_role(role)
+    assert _leftover_placeholders(job) == []
+    parsed = k8s_client.ApiClient()._ApiClient__deserialize(job, k8s_client.V1Job)
+    spec = parsed.spec.template.spec
+    assert spec.termination_grace_period_seconds == 600
+    agent = next(c for c in spec.containers if c.name == "agent")
+    assert agent.lifecycle.pre_stop._exec.command[2] == "mtg_agent.wrapper.handover_wait"
 
 
 # ---- the buddy: an advisor Job, its own name, its own role label ----------
@@ -1183,10 +1375,10 @@ def test_job_name_for_an_advisor_is_the_buddy_name() -> None:
 
 
 def test_no_placeholder_survives_rendering_an_advisor_job() -> None:
-    """The role rides in `__ASSIGNMENT_JSON__`'s payload, so the closed
-    placeholder set - and the committed template - need no change at all."""
+    """The driver reads the role from `__ASSIGNMENT_JSON__`'s payload; the
+    agent container gets its own copy through `__MTG_ROLE__`, which the
+    advisor render fills like every other placeholder."""
     assert _leftover_placeholders(_build_advisor()) == []
-    assert "__ROLE__" not in SEAT_JOB_PLACEHOLDERS
 
 
 def test_the_advisor_job_is_named_and_labelled_as_a_buddy() -> None:

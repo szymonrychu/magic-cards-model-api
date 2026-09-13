@@ -1,4 +1,4 @@
-"""Advise mode: the buddy gets the same 19 tools, and "advise" is a property
+"""Advise mode: the buddy gets the same 21 tools, and "advise" is a property
 of the uid's role rather than a separate tool surface.
 
 Wave 1 (`test_game_access_advisor.py`) gave the advisor credential its own
@@ -1214,7 +1214,7 @@ def test_a_seat_playing_a_land_still_really_plays_it(
 
 
 # ---------------------------------------------------------------------------
-# the same 19 tools, through the real MCP layer
+# the same 21 tools, through the real MCP layer
 # ---------------------------------------------------------------------------
 #
 # Advise mode is a property of the uid, not a toolset: a buddy pod is the seat
@@ -1233,7 +1233,7 @@ def mcp_server(game_id: str) -> Any:
     return build_server(seats_for(game_id))
 
 
-def test_the_buddy_gets_the_same_twenty_tools(client: TestClient, game: str) -> None:
+def test_the_buddy_gets_the_same_twenty_two_tools(client: TestClient, game: str) -> None:
     """One server, one toolset: there is no advisor-only tool and no tool an
     advisor is denied - `contract/tools.json` is the committed list, and this
     pins that advise mode did not fork it."""
@@ -1244,7 +1244,7 @@ def test_the_buddy_gets_the_same_twenty_tools(client: TestClient, game: str) -> 
     }
 
     assert names == committed
-    assert len(names) == 20
+    assert len(names) == 22, "19 plus run_script, list_scripts and equip"
 
 
 def test_the_cast_tool_proposes_for_an_advisor_and_casts_for_a_seat(

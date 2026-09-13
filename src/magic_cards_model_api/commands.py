@@ -736,6 +736,26 @@ def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> Ru
     return RunResult(status=RunStatus.COMPLETED, game=working, outcome=outcome, tape=tuple(tape))
 
 
+def paused_game(game: Game, command: Command, tape: Sequence[Answer]) -> Game | None:
+    """The half-applied game a stored pause stands in, to READ from only, or
+    None when replaying `command` with `tape` from `game` no longer pauses.
+
+    Nothing is ever committed from this - a game mid-resolution is not a legal
+    state (this module's own docstring). It exists for what only that
+    half-applied game holds while a question is pending: what an effect has
+    already shown a player before asking them (CR 701.20a keeps a revealed
+    card revealed "for as long as necessary to complete the parts of the
+    effect that card is relevant to") - Thoughtseize's revealed hand while its
+    choice is open. `serialize._known_cards_view` reads its records against
+    the committed `game`.
+    """
+    try:
+        working, _, pending = _attempt(game, command, tape)
+    except Exception:  # noqa: BLE001 - a replay the engine refuses has no pause to read
+        return None
+    return working if pending is not None else None
+
+
 def _attempt(
     game: Game, command: Command, tape: Sequence[Answer]
 ) -> tuple[Game, Any, PendingDecision | None]:
