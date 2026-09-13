@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "fetch-surveil-land",
   "name": "Fetch a surveil land at their end step",
-  "intent": "At the opponent's end step, crack a fetch for Elegant Parlor: it enters tapped, so their turn is the free window, and its surveil 1 bins a land when I am flooding. Only at 6 life or more, and not once two surveil lands already sit on my battlefield, since more tapped lands slow the curve.",
+  "intent": "At the opponent's end step, crack a fetch for Elegant Parlor: it enters tapped, so their turn is the free window, and its surveil 1 bins a land because I am flooding, with four lands or more already out. The curve tops out at three with Seasoned Pyromancer and Ranger-Captain of Eos and the keeps are two-landers, so a fourth land casts any three-drop beside a one-drop and a land past it is a dead draw. Below four lands fetch-surveil-land-keep runs instead. Only at 6 life or more, and not once two surveil lands already sit on my battlefield, since more tapped lands slow the curve.",
   "priority": 50,
   "opposing_archetypes": [
     "*"
@@ -34,6 +34,18 @@
       "side": "me",
       "op": ">=",
       "n": 6
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 4,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
     }
   ],
   "false": [

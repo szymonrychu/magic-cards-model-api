@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "fetch-surveil-land",
   "name": "Fetch a surveil land at their end step",
-  "intent": "At the opponent's end step, crack a fetch for Shadowy Backstreet, which enters tapped anyway, and surveil away an extra land. Only at 6 life or more and while fewer than two surveil lands are out.",
+  "intent": "At the opponent's end step, crack a fetch for Shadowy Backstreet, which enters tapped anyway, and surveil away an extra land, but only once I am flooding with seven lands or more out. Emeria, the Sky Ruin returns a creature only with seven Plains out and fifteen of the twenty-two lands carry the type, so seven lands is the fewest that can hold them and every land is wanted until then. Below seven lands fetch-surveil-land-keep runs instead. Only at 6 life or more and while fewer than two surveil lands are out.",
   "priority": 50,
   "opposing_archetypes": [
     "*"
@@ -34,6 +34,18 @@
       "side": "me",
       "op": ">=",
       "n": 6
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 7,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
     }
   ],
   "false": [

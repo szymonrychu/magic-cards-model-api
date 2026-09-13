@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "id": "fetch-untapped-shock-third-color",
+  "name": "Crack a fetch for an untapped shockland when no Mountain is up",
+  "intent": "Crack Misty Rainforest or Scalding Tarn on my precombat main for an untapped shockland carrying Mountain (red for Violent Outburst) when no untapped land of mine carries that type, while Forest and Island are already up, paying 2 life because that colour is actually missing. It prefers a shock with Mountain, then a basic Mountain, then any basic, so with no such shock in reach it takes a free basic rather than paying for a colour that is up. Only at 8 life or more, because Street Wraith cycling already costs life, and only while a shock with Mountain is still in my library. With Forest, Island and Mountain all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Otawara, Soaring City and Boseiju, Who Endures and mana creatures are not seen, and this can pay for a colour they already make; one play cannot say that any one of several colours is missing, hence one play per colour; and a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics.",
+  "priority": 60,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "ability_text_has": "Search your library for"
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": ">=",
+      "n": 8
+    },
+    {
+      "kind": "count",
+      "zone": "library",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "oracle_has": "you may pay 2 life",
+        "subtypes_any": [
+          "Mountain"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "subtypes_any": [
+          "Forest"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "subtypes_any": [
+          "Island"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "zone_size",
+      "zone": "library",
+      "side": "me",
+      "op": "<=",
+      "n": 5
+    },
+    {
+      "kind": "stack_top",
+      "controller": "opponent",
+      "select": {}
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "subtypes_any": [
+          "Mountain"
+        ]
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "tapped": false,
+          "ability_text_has": "Search your library for"
+        }
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ]
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "oracle_has": "you may pay 2 life",
+                "subtypes_any": [
+                  "Mountain"
+                ]
+              },
+              {
+                "supertypes_any": [
+                  "Basic"
+                ],
+                "subtypes_any": [
+                  "Mountain"
+                ]
+              },
+              {
+                "supertypes_any": [
+                  "Basic"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "decision": "pay_life",
+          "accept": true
+        }
+      ]
+    }
+  ],
+  "next": []
+}
