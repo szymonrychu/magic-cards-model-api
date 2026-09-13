@@ -210,7 +210,7 @@ PROTOCOL_VERSION = "seatkit-17"
 #:
 #: **Extended in place with the play-script routes, deliberately not a bump.**
 #: `PUT /api/games/{id}/seats/{uid}/scripts` registers the corpus a seat Job
-#: runs under its own uid (`{deck_slug, guides_revision, scripts}`, every
+#: runs under its own uid (`{deck_slug, guides_revision, scripts, inputs}`, every
 #: script judged by `playscripts.schema` and refused as `invalid_scripts`
 #: with its codes), and `GET` of the same path reads it back to that uid, the
 #: seat's advisor and the admin key only. `POST /api/games/{id}/script-runs`

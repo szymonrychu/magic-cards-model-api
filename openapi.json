@@ -10732,6 +10732,14 @@
             "title": "Guides Revision",
             "type": "string"
           },
+          "inputs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
           "registered_at": {
             "title": "Registered At",
             "type": "string"
@@ -10754,6 +10762,7 @@
           "deck_slug",
           "guides_revision",
           "scripts",
+          "inputs",
           "registered_at"
         ],
         "title": "ScriptsCorpusResponse",
@@ -10772,6 +10781,14 @@
             "minLength": 1,
             "title": "Guides Revision",
             "type": "string"
+          },
+          "inputs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Inputs",
+            "type": "array"
           },
           "scripts": {
             "items": {
@@ -15624,7 +15641,7 @@
         "summary": "Read Scripts"
       },
       "put": {
-        "description": "Register the play scripts a seat Job runs, under the uid it runs with\n(a seat uid, or an advisor uid for a buddy), replacing that uid's\nprevious corpus.\n\n**The credential is the driver's own**: `?uid=` equal to the path's\n`{uid}`, or this game's admin key. Anything else is a 404, the same\nanswer `declare_plan` gives for writing into another seat's name. An\nadvisor uid gets past `game_access.py` for this one PUT only, and only\nfor its own corpus (`ADVISOR_OWN_PUT_ROUTES`).\n\n**Every script is judged before anything is stored**\n(`records.script_errors`): one refusal and the whole corpus is refused\nwith `code: invalid_scripts` and each `PlaysError`, so a runner never\nruns half of what it meant to register.\n\n**Behind the kill switch**: with `SCRIPTS_ENABLED` off this refuses with\n`code: scripts_disabled` (`records.require_scripts_enabled`).\n\nMutates no `Game` and writes no ledger row. The corpus lives in the\nrepository (`games.scripts` on postgres), so it survives a restart and\nreads the same on every replica.",
+        "description": "Register the play scripts a seat Job runs, under the uid it runs with\n(a seat uid, or an advisor uid for a buddy), replacing that uid's\nprevious corpus.\n\n**The credential is the driver's own**: `?uid=` equal to the path's\n`{uid}`, or this game's admin key. Anything else is a 404, the same\nanswer `declare_plan` gives for writing into another seat's name. An\nadvisor uid gets past `game_access.py` for this one PUT only, and only\nfor its own corpus (`ADVISOR_OWN_PUT_ROUTES`).\n\n**Every script is judged before anything is stored**\n(`records.script_errors`): one refusal and the whole corpus is refused\nwith `code: invalid_scripts` and each `PlaysError`, so a runner never\nruns half of what it meant to register. `inputs`, the deck's declared\ninputs, is judged the same way and refused as `malformed-inputs`.\n\n**Behind the kill switch**: with `SCRIPTS_ENABLED` off this refuses with\n`code: scripts_disabled` (`records.require_scripts_enabled`).\n\nMutates no `Game` and writes no ledger row. The corpus lives in the\nrepository (`games.scripts` on postgres), so it survives a restart and\nreads the same on every replica.",
         "operationId": "register_scripts_api_games__game_id__seats__uid__scripts_put",
         "parameters": [
           {

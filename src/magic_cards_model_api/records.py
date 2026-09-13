@@ -620,6 +620,18 @@ def script_errors(scripts: list[Any]) -> list[dict[str, str]]:
     return [error.to_dict() for error in errors]
 
 
+def inputs_errors(inputs: list[Any]) -> list[dict[str, str]]:
+    """Every refusal of a corpus's declared inputs, as `malformed-inputs`
+    `PlaysError` dicts at path `inputs` - the `inputs.json` shape
+    `playscripts.inputs` shares with mtg-decks M1b, judged on the list the
+    file carries."""
+    from .playscripts.inputs import SCHEMA_VERSION, inputs_problems
+    from .playscripts.schema import PlaysError
+
+    problems = inputs_problems({"schema_version": SCHEMA_VERSION, "inputs": inputs})
+    return [PlaysError("malformed-inputs", "inputs", problem).to_dict() for problem in problems]
+
+
 class ScriptAlreadyRan(Exception):
     """Raised by `record_script_run_start` when this seat already started or
     finished this script at this turn and step. `app.py` answers 409 with

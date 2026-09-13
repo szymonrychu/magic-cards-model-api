@@ -25,6 +25,7 @@ from .guides import (
     DeckGuide,
     Decklist,
     Identification,
+    ScriptsRegistration,
 )
 from .matchup_card import (
     guide_paths,
@@ -34,6 +35,19 @@ from .matchup_card import (
 from .revision import UNKNOWN_REVISION
 
 UNKNOWN_DECK = "unknown-deck"
+
+
+#: The byte cap on the briefing's play-script section: every script row and
+#: every skipped-file notice together. A deck can carry any number of plays,
+#: each long-named with thirty-two archetype keys, and the briefing's own
+#: caps (the per-card budget, `VS_NOTE_BUDGET_BYTES`) were set before plays
+#: existed - so this section spends its own small, fixed share and names
+#: what it did not list rather than growing with the corpus.
+PLAYS_SECTION_CAP_BYTES = 3 * 1024
+#: Longest a script's `name` or a notice's message is quoted in the listing.
+PLAYS_NAME_CHARS = 90
+#: Archetype keys quoted per script before the rest are counted.
+PLAYS_ARCHETYPE_KEYS = 4
 
 
 @dataclass
@@ -62,6 +76,10 @@ class Assignment:
     camelCase - see `contract/agent-settings.schema.json`), carried through
     from the dispatch that created this assignment - `None` for a caller
     that dispatched before agent settings existed."""
+
+    scripts: ScriptsRegistration | None = None
+    """What registering the deck's play scripts at dispatch came to - `None`
+    for a caller that rendered a briefing without attempting it."""
 
     role: str = "seat"
     """`seat` (this container plays `player`) or `advisor` (B5's buddy: this
@@ -245,6 +263,91 @@ def _inlined_notes(standing: list[Path], budget: int) -> list[str]:
     return lines
 
 
+def _clip(text: str, limit: int = PLAYS_NAME_CHARS) -> str:
+    flat = " ".join(f"{text}".split())
+    return flat if len(flat) <= limit else flat[: limit - 3].rstrip() + "..."
+
+
+def _script_row(script: dict) -> str:
+    keys = [f"{key}" for key in script.get("opposing_archetypes") or []]
+    shown = ", ".join(keys[:PLAYS_ARCHETYPE_KEYS])
+    if len(keys) > PLAYS_ARCHETYPE_KEYS:
+        shown += f" +{len(keys) - PLAYS_ARCHETYPE_KEYS} more"
+    return (
+        f"- `{_clip(script.get('id', '?'), 60)}` (priority {script.get('priority', '?')}, "
+        f"vs {shown or '?'}) - {_clip(script.get('name', ''))}"
+    )
+
+
+def _bounded(rows: list[str], budget: int, noun: str) -> tuple[list[str], int]:
+    """As many of `rows` as fit `budget` bytes, then one line naming the rest."""
+    kept: list[str] = []
+    spent = 0
+    for index, row in enumerate(rows):
+        cost = len(row.encode()) + 1
+        if spent + cost > budget:
+            kept.append(f"- ... {len(rows) - index} more {noun} not listed")
+            return kept, spent
+        kept.append(row)
+        spent += cost
+    return kept, spent
+
+
+def _plays_section(registration: ScriptsRegistration) -> list[str]:
+    """The briefing's play-script section: what the game server holds for
+    this seat, and every file that was skipped fail closed, within
+    `PLAYS_SECTION_CAP_BYTES`."""
+    corpus = registration.corpus
+    lines = ["## Your registered play scripts", ""]
+    if registration.status == "registered":
+        lines.append(
+            f"The game server holds {len(corpus.scripts)} play script(s) for this seat, "
+            "registered once at dispatch and not changed for the rest of the game:"
+        )
+    elif registration.status == "disabled":
+        lines.append(
+            "Play scripts are disabled on this deployment (the game server refused "
+            "them with `scripts_disabled`). None is registered for this game: play "
+            "every decision yourself."
+        )
+    elif registration.status == "no_deck":
+        lines.append(
+            "No play scripts are registered: your list was not identified as one "
+            "guided deck, so there was no deck's plays to register."
+        )
+    else:
+        lines.append(
+            f"The play scripts for this deck could not be registered "
+            f"({_clip(registration.detail, 160)}). None will run: play every decision yourself."
+        )
+    lines.append("")
+    header = len("\n".join(lines).encode())
+    notice_rows = [f"- `{_clip(n.path, 80)}` {n.code}: {_clip(n.message)}" for n in corpus.notices]
+    # Notices get a third of the room at most: a skipped file is worth
+    # knowing about, and never worth crowding out the scripts that did load.
+    notice_budget = (PLAYS_SECTION_CAP_BYTES - header) // 3 if notice_rows else 0
+    notices, notice_spent = _bounded(notice_rows, notice_budget, "skipped files")
+    notice_header = (
+        ["", "Skipped, fail closed (these files did not load; the rest did):", ""]
+        if notices
+        else []
+    )
+    room = (
+        PLAYS_SECTION_CAP_BYTES
+        - header
+        - notice_spent
+        - len("\n".join(notice_header).encode())
+        - 80
+    )
+    if registration.status == "registered":
+        if corpus.scripts:
+            rows, _ = _bounded([_script_row(s) for s in corpus.scripts], room, "scripts")
+            lines += rows
+        else:
+            lines.append("(the deck carries no play scripts)")
+    return lines + notice_header + notices
+
+
 def render_current_game(
     assignment: Assignment,
     memory_root: Path,
@@ -332,6 +435,9 @@ def render_current_game(
         lines.append("")
     if not offered:
         lines += [render_matchup_card(None, assignment.decklist).text, ""]
+
+    if assignment.scripts is not None:
+        lines += [*_plays_section(assignment.scripts), ""]
 
     notes = memory_index(memory_root, assignment.deck_slug)
     standing, rest = _standing_notes(notes, opponent_archetype)

@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mtg_agent.driver.config import DriverSettings
-from tests.driver.world import build_world
+from tests.driver.world import DECKLIST, build_world
 
 
 @pytest.fixture
@@ -584,3 +584,275 @@ def test_dispatch_treats_an_older_wrapper_that_404s_session_as_unsupported(world
     assert response.status_code == 202
     assert world.session_posts == []
     assert world.submitted
+
+
+# ---- the deck's play scripts are registered once, at dispatch ---------------
+#
+# `assign` loads `decks/<slug>/plays/` (and `inputs.json`) off the identified
+# guide and registers them with `PUT /api/games/{id}/seats/{uid}/scripts`
+# under the uid the dispatch runs with - a seat's or a buddy's - before turn 0
+# is written, so the briefing can say what the game server holds.
+
+FIXTURE_PLAYS = Path(__file__).resolve().parent / "fixtures" / "mtg-decks" / "dimir-frog" / "plays"
+
+DECLARED_INPUTS = {
+    "schema_version": 1,
+    "inputs": [
+        {
+            "name": "plan",
+            "type": "enum",
+            "values": ["race", "control"],
+            "description": "Which half of the plan this game is on.",
+            "required": True,
+        }
+    ],
+}
+
+
+def fixture_plays() -> list[dict]:
+    return [json.loads(p.read_text()) for p in sorted(FIXTURE_PLAYS.glob("*.json"))]
+
+
+def dispatch_as(client, role: str, uid: str) -> httpx.Response:
+    return client.post(
+        "/dispatch",
+        json={
+            "uid": uid,
+            "game_id": "g-1",
+            "player": "bob",
+            "api_base": "http://game:8000",
+            "role": role,
+        },
+    )
+
+
+def world_plays_dir(world) -> Path:
+    return world.settings.guides_root / "decks" / "dimir-frog" / "plays"
+
+
+@pytest.mark.parametrize(("role", "uid"), [("seat", "secret-uid"), ("advisor", "advisor-uid")])
+def test_dispatch_registers_the_decks_plays_under_its_own_uid(world, role, uid):
+    from mtg_agent.driver.revision import guides_revision
+
+    response = dispatch_as(world.client, role, uid)
+
+    assert response.status_code == 202, response.text
+    assert len(world.script_puts) == 1
+    put = world.script_puts[0]
+    assert (put["game_id"], put["uid"], put["caller"]) == ("g-1", uid, uid)
+    assert put["body"]["deck_slug"] == "dimir-frog"
+    assert put["body"]["guides_revision"] == guides_revision(world.settings.guides_root)
+    assert sorted(s["id"] for s in put["body"]["scripts"]) == sorted(
+        s["id"] for s in fixture_plays()
+    )
+    assert put["body"]["inputs"] == [], "no inputs.json is an empty declared-inputs list"
+
+
+@pytest.mark.parametrize(("role", "uid"), [("seat", "secret-uid"), ("advisor", "advisor-uid")])
+def test_inputs_json_is_registered_beside_the_plays(world, role, uid):
+    (world_plays_dir(world) / "inputs.json").write_text(json.dumps(DECLARED_INPUTS))
+
+    dispatch_as(world.client, role, uid)
+
+    body = world.script_puts[0]["body"]
+    assert body["inputs"] == DECLARED_INPUTS["inputs"]
+    assert len(body["scripts"]) == len(fixture_plays())
+
+
+def test_the_corpus_is_registered_once_and_never_mid_game(world):
+    client = world.client
+    dispatch(client)
+    dispatch(client)
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "ok"})
+    world.state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+    client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"})
+
+    assert len(world.script_puts) == 1
+
+
+def test_an_unguided_deck_registers_nothing(world):
+    world.state["decklist"] = "4 Lightning Bolt\n20 Mountain\n"
+    dispatch(world.client)
+    assert world.script_puts == []
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "No play scripts are registered" in text
+
+
+def test_a_scripts_disabled_refusal_does_not_fail_the_dispatch(world):
+    world.state["scripts_enabled"] = False
+
+    response = dispatch(world.client)
+
+    assert response.status_code == 202, response.text
+    assert response.json()["turnId"] == "turn-1"
+    assert len(world.script_puts) == 1
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "Play scripts are disabled" in text
+    for script in fixture_plays():
+        assert f"`{script['id']}`" not in text
+    assert "Play scripts are disabled" in world.submitted[0]["text"]
+
+
+def test_an_unreachable_scripts_route_does_not_fail_the_dispatch(world):
+    """Best effort like the settings push: a refusal the driver cannot act on
+    costs the seat its scripts, said in the briefing, never the game."""
+    world.state["scripts_route"] = "down"
+
+    response = dispatch(world.client)
+
+    assert response.status_code == 202, response.text
+    assert response.json()["turnId"] == "turn-1"
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "could not be registered" in text
+
+
+def test_the_briefing_lists_the_registered_scripts(world):
+    dispatch(world.client)
+
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "## Your registered play scripts" in text
+    for script in fixture_plays():
+        assert f"`{script['id']}`" in text
+        assert script["name"] in text
+        assert f"priority {script['priority']}" in text
+        assert ", ".join(script["opposing_archetypes"]) in text
+    assert "## Your registered play scripts" in world.submitted[0]["text"]
+
+
+def test_an_invalid_play_file_is_skipped_logged_and_named_in_the_briefing(world, caplog):
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="driver")
+    (world_plays_dir(world) / "broken.json").write_text('{"schema_version": 1, "iterate": true}')
+
+    dispatch(world.client)
+
+    body = world.script_puts[0]["body"]
+    assert sorted(s["id"] for s in body["scripts"]) == sorted(s["id"] for s in fixture_plays())
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "decks/dimir-frog/plays/broken.json" in text
+    assert "unknown-field" in text
+    assert any("decks/dimir-frog/plays/broken.json" in r.getMessage() for r in caplog.records)
+
+
+def test_an_invalid_inputs_json_is_named_and_does_not_block_the_plays(world, caplog):
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="driver")
+    (world_plays_dir(world) / "inputs.json").write_text('{"schema_version": 1, "inputs": 5}')
+
+    response = dispatch(world.client)
+
+    assert response.status_code == 202
+    body = world.script_puts[0]["body"]
+    assert body["inputs"] == []
+    assert len(body["scripts"]) == len(fixture_plays())
+    text = (world.settings.workspace / "current-game.md").read_text()
+    assert "decks/dimir-frog/plays/inputs.json" in text
+    assert "malformed-inputs" in text
+    assert any("malformed-inputs" in r.getMessage() for r in caplog.records)
+
+
+def test_the_scripts_listing_is_bounded(tmp_path):
+    """A deck can carry any number of plays and each can be long-named. The
+    briefing's listing has its own byte cap, so the briefing stays within
+    the caps it already had however large the corpus grows."""
+    from magic_cards_model_api.playscripts.schema import PlaysError
+    from mtg_agent.driver.guides import (
+        CONFIDENT,
+        GuideLibrary,
+        PlaysCorpus,
+        ScriptsRegistration,
+        parse_decklist,
+    )
+    from mtg_agent.driver.prompt import PLAYS_SECTION_CAP_BYTES, Assignment, render_current_game
+
+    world = build_world(tmp_path)
+    decklist = parse_decklist(DECKLIST)
+    identified = GuideLibrary(world.settings.guides_root).identify(decklist)
+    assert identified.confidence == CONFIDENT
+    base = fixture_plays()[0]
+    scripts = tuple(
+        {
+            **base,
+            "id": f"play-{index:03d}",
+            "name": "a very long play name " * 20,
+            "opposing_archetypes": [f"archetype-{n}" for n in range(32)],
+        }
+        for index in range(200)
+    )
+    notices = tuple(
+        PlaysError("unknown-field", f"decks/dimir-frog/plays/bad-{i}.json", "x" * 500)
+        for i in range(50)
+    )
+
+    def briefing(registration):
+        return render_current_game(
+            Assignment(
+                game_id="g",
+                uid="u",
+                player="bob",
+                opponent="alice",
+                api_base="http://game",
+                decklist=decklist,
+                identification=identified,
+                scripts=registration,
+            ),
+            tmp_path / "memory",
+        )
+
+    listed = briefing(ScriptsRegistration("registered", PlaysCorpus(scripts, (), notices)))
+    unlisted = briefing(ScriptsRegistration("registered", PlaysCorpus((), (), ())))
+    grown = len(listed.encode()) - len(unlisted.encode())
+    assert 0 < grown <= PLAYS_SECTION_CAP_BYTES
+    assert PLAYS_SECTION_CAP_BYTES <= 4 * 1024
+    assert "`play-000`" in listed
+    assert "not listed" in listed
+
+
+def test_the_real_game_server_accepts_the_corpus_the_driver_registers(tmp_path):
+    """The join for the fake PUT in `world.py`: the body `assign` builds from
+    the refreshed fixture corpus, inputs.json included, is one the real route
+    admits and reads back whole."""
+    from magic_cards_model_api.main import app as game_app
+    from mtg_agent.driver.guides import GuideLibrary
+
+    world = build_world(tmp_path)
+    (world_plays_dir(world) / "inputs.json").write_text(json.dumps(DECLARED_INPUTS))
+    corpus = GuideLibrary(world.settings.guides_root).get("dimir-frog").plays()
+    assert corpus.notices == ()
+
+    with TestClient(game_app) as game_client:
+        booted = game_client.post(
+            "/api/lobby/games",
+            json={
+                "players": [
+                    {"username": "alice", "decklist_text": "56 Mountain\n4 Lightning Bolt"},
+                    {"username": "bob", "decklist_text": "56 Forest\n4 Grizzly Bears"},
+                ],
+                "seed": 3,
+            },
+        ).json()
+        uid = booted["seat_uids"]["bob"]
+        path = f"/api/games/{booted['game_id']}/seats/{uid}/scripts"
+        try:
+            put = game_client.put(
+                path,
+                params={"uid": uid},
+                json={
+                    "deck_slug": "dimir-frog",
+                    "guides_revision": "unknown",
+                    "scripts": list(corpus.scripts),
+                    "inputs": list(corpus.inputs),
+                },
+            )
+            read = game_client.get(path, params={"uid": uid}).json()
+        finally:
+            game_client.delete(
+                f"/api/games/{booted['game_id']}", params={"key": booted["admin_key"]}
+            )
+
+    assert put.status_code == 200, put.text
+    assert put.json()["count"] == len(fixture_plays())
+    assert read["inputs"] == DECLARED_INPUTS["inputs"]

@@ -370,6 +370,70 @@ def test_two_scripts_with_one_id_are_rejected(client: TestClient, game: str) -> 
 
 
 # ---------------------------------------------------------------------------
+# declared inputs: decks/<slug>/plays/inputs.json, registered beside the plays
+# ---------------------------------------------------------------------------
+
+DECLARED = [
+    {
+        "name": "plan",
+        "type": "enum",
+        "values": ["race", "control"],
+        "description": "Which half of the plan this game is on.",
+        "required": True,
+    },
+    {
+        "name": "turns_left",
+        "type": "int",
+        "min": 0,
+        "max": 20,
+        "description": "d",
+        "required": False,
+    },
+]
+
+
+def test_declared_inputs_are_registered_and_read_back(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+
+    put = client.put(
+        f"/api/games/{game}/seats/{alice}/scripts",
+        params={"uid": alice},
+        json={**corpus(), "inputs": DECLARED},
+    )
+
+    assert put.status_code == 200, put.text
+    assert read(client, game, alice, uid=alice).json()["inputs"] == DECLARED
+
+
+def test_a_corpus_registered_without_inputs_declares_none(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+
+    assert read(client, game, alice, uid=alice).json()["inputs"] == []
+
+
+def test_malformed_declared_inputs_refuse_the_corpus(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+    redeclared = [
+        {"name": "opposing_archetype", "type": "bool", "description": "d", "required": False}
+    ]
+
+    put = client.put(
+        f"/api/games/{game}/seats/{alice}/scripts",
+        params={"uid": alice},
+        json={**corpus(), "inputs": redeclared},
+    )
+
+    assert put.status_code == 422, put.text
+    body = put.json()
+    assert body["code"] == "invalid_scripts"
+    assert {(error["code"], error["path"]) for error in body["errors"]} == {
+        ("malformed-inputs", "inputs")
+    }
+    assert store.scripts(game, alice) is None
+
+
+# ---------------------------------------------------------------------------
 # the kill switch
 # ---------------------------------------------------------------------------
 

@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from .config import DriverSettings
-from .guides import GuideLibrary, parse_decklist
+from .guides import DeckGuide, GuideLibrary, ScriptsRegistration, parse_decklist
 from .prompt import (
     Assignment,
     advisor_turn_zero,
@@ -465,6 +465,66 @@ def build_app(
                 return seat.get("decklist") or ""
         return ""
 
+    def register_plays(
+        game_id: str, uid: str, guide: DeckGuide | None, revision: str
+    ) -> ScriptsRegistration:
+        """Register the deck's play scripts under `uid` - the seat's own, or
+        the buddy's advisor uid - with `PUT /api/games/{id}/seats/{uid}/
+        scripts`, once, at dispatch. Nothing registers mid-game: the corpus
+        a seat plays is the one its guides revision carried when it sat down.
+
+        Never raises. A `scripts_disabled` refusal is the operator's kill
+        switch and the seat plays without scripts; any other refusal, or a
+        game server that does not answer, costs the seat its scripts the same
+        way. Either is said in the briefing, and neither fails the dispatch -
+        scripts are a help to the seat, the game is the point.
+        """
+        if guide is None:
+            return ScriptsRegistration("no_deck")
+        corpus = guide.plays()
+        for notice in corpus.notices:
+            log.warning(
+                "game %s: skipped play file %s (%s): %s",
+                game_id,
+                notice.path,
+                notice.code,
+                notice.message,
+            )
+        body = {
+            "deck_slug": guide.slug,
+            "guides_revision": revision,
+            "scripts": list(corpus.scripts),
+            "inputs": list(corpus.inputs),
+        }
+        try:
+            with make_client(settings.game_api) as client:
+                response = client.put(
+                    f"/api/games/{game_id}/seats/{uid}/scripts", params={"uid": uid}, json=body
+                )
+        except Exception as exc:  # noqa: BLE001 - scripts never fail a dispatch
+            log.warning("could not register play scripts for game %s: %s", game_id, exc)
+            return ScriptsRegistration("failed", corpus, f"the game server did not answer: {exc}")
+        if response.status_code < 400:
+            log.info(
+                "registered %d play script(s) and %d declared input(s) for game %s uid %s",
+                len(corpus.scripts),
+                len(corpus.inputs),
+                game_id,
+                uid,
+            )
+            return ScriptsRegistration("registered", corpus)
+        try:
+            answer = response.json()
+        except ValueError:
+            answer = {}
+        code = answer.get("code") if isinstance(answer, dict) else None
+        if code == "scripts_disabled":
+            log.info("play scripts are disabled on the game server; game %s plays without", game_id)
+            return ScriptsRegistration("disabled", corpus)
+        detail = f"the game server answered {response.status_code}" + (f" {code}" if code else "")
+        log.warning("play scripts were not registered for game %s: %s", game_id, detail)
+        return ScriptsRegistration("failed", corpus, detail)
+
     def opponent_of(state: dict, player: str) -> str:
         names = [s.get("username", "") for s in state.get("players") or []]
         others = [n for n in names if n and n != player]
@@ -510,6 +570,7 @@ def build_app(
         # pull under it between two games, and the revision that matters is
         # the one this game was played against.
         revision = guides_revision(settings.guides_root)
+        scripts = register_plays(body.game_id, body.uid, identified.guide, revision)
         assignment = Assignment(
             game_id=body.game_id,
             uid=body.uid,
@@ -520,6 +581,7 @@ def build_app(
             identification=identified,
             guides_revision=revision,
             agent=body.agent,
+            scripts=scripts,
             role=body.role,
         )
 

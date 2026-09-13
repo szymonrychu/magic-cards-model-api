@@ -422,6 +422,10 @@ class ScriptsRegisterIn(RequestModel):
     guides_revision: Stated
     """The guides checkout revision they were read at."""
     scripts: list[dict[str, Any]]
+    inputs: list[dict[str, Any]] = Field(default_factory=list)
+    """The deck's declared inputs, `decks/<slug>/plays/inputs.json`'s
+    `inputs` list, judged by `playscripts.inputs` and refused as
+    `malformed-inputs`. Empty when the deck declares none."""
 
 
 class ScriptsRegisteredResponse(BaseModel):
@@ -445,6 +449,8 @@ class ScriptsCorpusResponse(BaseModel):
     deck_slug: str
     guides_revision: str
     scripts: list[dict[str, Any]]
+    inputs: list[dict[str, Any]]
+    """The declared inputs registered beside `scripts`; empty for none."""
     registered_at: str
 
 

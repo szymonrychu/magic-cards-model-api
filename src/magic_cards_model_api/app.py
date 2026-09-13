@@ -3172,7 +3172,8 @@ def register_scripts(
     **Every script is judged before anything is stored**
     (`records.script_errors`): one refusal and the whole corpus is refused
     with `code: invalid_scripts` and each `PlaysError`, so a runner never
-    runs half of what it meant to register.
+    runs half of what it meant to register. `inputs`, the deck's declared
+    inputs, is judged the same way and refused as `malformed-inputs`.
 
     **Behind the kill switch**: with `SCRIPTS_ENABLED` off this refuses with
     `code: scripts_disabled` (`records.require_scripts_enabled`).
@@ -3188,7 +3189,7 @@ def register_scripts(
     if store.player_for_uid(game_id, uid) is None and player_for_advisor_uid(game_id, uid) is None:
         raise KeyError(f"no seat or advisor {uid} in this game")
     records.require_scripts_enabled("registering scripts")
-    errors = records.script_errors(req.scripts)
+    errors = records.script_errors(req.scripts) + records.inputs_errors(req.inputs)
     if errors:
         raise records.InvalidScripts(errors)
     registered_at = datetime.now(UTC).isoformat()
@@ -3199,6 +3200,7 @@ def register_scripts(
             "deck_slug": req.deck_slug,
             "guides_revision": req.guides_revision,
             "scripts": req.scripts,
+            "inputs": req.inputs,
             "registered_at": registered_at,
         },
     )
@@ -3249,7 +3251,8 @@ def read_scripts(game_id: str, uid: str, request: Request) -> dict[str, Any]:
     corpus = store.scripts(game_id, uid)
     if corpus is None:
         raise KeyError("no scripts are registered under that uid in this game")
-    return {"uid": uid, **corpus}
+    # A corpus registered before declared inputs existed carries no key.
+    return {"uid": uid, "inputs": [], **corpus}
 
 
 @app.post(
