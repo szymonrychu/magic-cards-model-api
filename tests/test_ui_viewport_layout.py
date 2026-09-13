@@ -3,9 +3,16 @@
 `#game` must fill the viewport with no page-level scroll at every width, not
 only on a desktop: a phone in landscape (844x390) and in portrait, a small
 tablet, a laptop. The seven board rows must fit the board's height without it
-scrolling, every card must fit inside its row, and the zone ribbon, the side
-panel and the turn block must stay on screen and out from under the fixed
-toolbar.
+scrolling, every card must fit inside its row, and each seat's player badge
+must sit in its land row without covering a card.
+
+On a desktop the zone ribbon, the side panel and the turn block stay on
+screen and out from under the fixed toolbar. In mobile mode (1100px wide or
+less here - headless Chrome has a fine pointer) the zone ribbon is hidden,
+the board takes the width, and the turn block and side panel live in a
+drawer that is off screen until opened; one extra 844x390 frame is measured
+with the drawer open. No frame ever shows the rotate overlay, which is only
+for a coarse pointer held upright.
 
 CSS layout cannot be checked from a regex, so this serves `ui/` over HTTP,
 mounts the real `render/board.js` on the real `#game` markup and `style.css`
@@ -50,6 +57,11 @@ VIEWPORTS = [
     (1440, 900),
     (1920, 1080),
 ]
+
+#: The one extra frame measured with the drawer open.
+DRAWER_OPEN = (844, 390)
+
+MOBILE_QUERY = "(max-width: 1100px), (pointer: coarse) and (orientation: landscape)"
 
 SEVEN_ROWS = [
     "opp-hand",
@@ -180,6 +192,13 @@ $("#stops-box").textContent = "Stops: upkeep, draw, attackers, blockers, end";
 $("#advice-box").textContent = "Buddy proposes attacking with every untapped bear. ".repeat(30);
 const lines = Array.from({{ length: 80 }}, (_, i) => `<div>log line ${{i}}</div>`);
 $("#log-box").innerHTML = lines.join("");
+if (location.search.includes("drawer=open")) {{
+  // Measured at rest, not part way through the slide-in.
+  const still = document.createElement("style");
+  still.textContent = "#drawer {{ transition: none !important; }}";
+  document.head.appendChild(still);
+  $("#game").classList.add("drawer-open");
+}}
 store.set({{}});
 </script>
 </body></html>"""
@@ -192,6 +211,9 @@ def _harness_page() -> str:
 <div id="frames"></div>
 <script>
 const SIZES = {json.dumps(VIEWPORTS)};
+const FRAMES = [...SIZES.map((size) => ({{ size, open: false }})),
+  {{ size: {json.dumps(list(DRAWER_OPEN))}, open: true }}];
+const MOBILE = {json.dumps(MOBILE_QUERY)};
 const ROWS = {json.dumps(SEVEN_ROWS)};
 const REGIONS = ["#topbar", "#banners", "#zone-ribbon", "#side-panel", "#mtg-board"];
 const report = (value) => {{
@@ -204,7 +226,7 @@ const box = (el) => {{
   const {{ left, top, right, bottom, width, height }} = el.getBoundingClientRect();
   return {{ left, top, right, bottom, width, height }};
 }};
-function measure(frame, size) {{
+function measure(frame, {{ size, open }}) {{
   const w = frame.contentWindow;
   const d = frame.contentDocument;
   const $ = (sel) => d.querySelector(sel);
@@ -225,8 +247,14 @@ function measure(frame, size) {{
       cards: [...row.querySelectorAll(".card, .card-back, .stack-caption")].map(box),
     }};
   }});
+  w.scrollTo(100000, 100000);
+  const scrolled = [w.scrollX, w.scrollY];
+  const display = (sel) => ($(sel) ? w.getComputedStyle($(sel)).display : null);
   return {{
     size,
+    open,
+    mobile: w.matchMedia(MOBILE).matches,
+    scrolled,
     viewport: [w.innerWidth, w.innerHeight],
     page: [d.scrollingElement.scrollWidth, d.scrollingElement.scrollHeight],
     board: {{
@@ -235,20 +263,34 @@ function measure(frame, size) {{
     rows,
     regions: Object.fromEntries(REGIONS.map((s) => [s, box($(s))])),
     toolbar: box($("#game-toolbar")),
+    toolbarButtons: [...$("#game-toolbar").querySelectorAll("button")].map(box),
+    zoneRibbonDisplay: display("#zone-ribbon"),
+    rotateDisplay: display("#rotate-overlay"),
+    drawer: box($("#drawer")),
+    drawerVisibility: w.getComputedStyle($("#drawer")).visibility,
+    toggle: box($("#drawer-toggle")),
+    toggleDisplay: display("#drawer-toggle"),
+    badges: {{ opp: box($("#opp-badge")), my: box($("#my-badge")) }},
+    badgeFit: Object.fromEntries(["opp", "my"].map((side) => {{
+      const el = $("#" + side + "-badge");
+      return [side, [el.scrollHeight, el.clientHeight]];
+    }})),
+    badgeRows: {{ opp: box($("#opp-lands")), my: box($("#my-lands")) }},
+    boardCards: [...board.querySelectorAll(".card, .card-back")].map(box),
     stackCards: $("#stack-row").querySelectorAll(".card").length,
   }};
 }}
-const frames = SIZES.map(([width, height]) => {{
+const frames = FRAMES.map(({{ size: [width, height], open }}) => {{
   const f = document.createElement("iframe");
   f.style.cssText = `width:${{width}}px;height:${{height}}px;border:0;display:block`;
-  f.src = "/__viewport_game.html";
+  f.src = "/__viewport_game.html" + (open ? "?drawer=open" : "");
   document.getElementById("frames").appendChild(f);
   return new Promise((resolve) => f.addEventListener("load", () => resolve(f)));
 }});
 Promise.all(frames).then((loaded) => {{
   requestAnimationFrame(() => requestAnimationFrame(() => {{
     try {{
-      report(loaded.map((f, i) => measure(f, SIZES[i])));
+      report(loaded.map((f, i) => measure(f, FRAMES[i])));
     }} catch (err) {{
       report({{ error: String((err && err.stack) || err) }});
     }}
@@ -263,7 +305,7 @@ class _Handler(SimpleHTTPRequestHandler):
     result: bytes = b""
 
     def do_GET(self) -> None:  # noqa: N802 - the http.server hook name
-        page = self.pages.get(self.path)
+        page = self.pages.get(self.path.split("?", 1)[0])
         if page is None:
             super().do_GET()
             return
@@ -334,6 +376,7 @@ def measurements(tmp_path_factory: pytest.TempPathFactory) -> list[dict]:
         tmp_path_factory.mktemp("chrome-profile"),
     )
     assert not isinstance(data, dict), data
+    assert len(data) == len(VIEWPORTS) + 1, len(data)
     return data
 
 
@@ -377,30 +420,107 @@ def test_the_page_never_scrolls(measurements: list[dict], index: int) -> None:
     assert m["page"][1] <= height, f"page scrolls vertically at {width}x{height}: {m['page']}"
 
 
+def _inside(rect: dict, width: float, height: float) -> bool:
+    return (
+        rect["left"] >= -0.5
+        and rect["top"] >= -0.5
+        and rect["right"] <= width + 0.5
+        and rect["bottom"] <= height + 0.5
+    )
+
+
+def _overlap(a: dict, b: dict) -> bool:
+    overlap_x = min(a["right"], b["right"]) - max(a["left"], b["left"])
+    overlap_y = min(a["bottom"], b["bottom"]) - max(a["top"], b["top"])
+    return overlap_x > 0.5 and overlap_y > 0.5
+
+
+@EACH
+def test_mobile_mode_is_exactly_the_narrow_windows(measurements: list[dict], index: int) -> None:
+    m = measurements[index]
+    width, _ = m["size"]
+    assert m["mobile"] is (width <= 1100), m["size"]
+
+
 @EACH
 def test_every_region_stays_inside_the_viewport(measurements: list[dict], index: int) -> None:
     m = measurements[index]
     width, height = m["size"]
+    if m["mobile"]:
+        # The drawer is closed: the board is the whole screen and everything
+        # else waits off it, behind the toggle.
+        assert _inside(m["regions"]["#mtg-board"], width, height), m["regions"]["#mtg-board"]
+        assert m["drawer"]["left"] >= width - 0.5, (m["size"], m["drawer"])
+        assert m["drawerVisibility"] == "hidden"
+        assert m["toggleDisplay"] != "none" and _inside(m["toggle"], width, height), m["toggle"]
+        assert not _overlap(m["toggle"], m["regions"]["#mtg-board"]), (m["toggle"], m["size"])
+        return
     for name, rect in m["regions"].items():
-        assert rect["left"] >= -0.5 and rect["top"] >= -0.5, (name, rect)
-        assert rect["right"] <= width + 0.5 and rect["bottom"] <= height + 0.5, (
-            name,
-            rect,
-            m["size"],
-        )
+        assert _inside(rect, width, height), (name, rect, m["size"])
     assert m["regions"]["#side-panel"]["height"] >= 60, m["regions"]["#side-panel"]
     assert m["regions"]["#zone-ribbon"]["height"] >= 24, m["regions"]["#zone-ribbon"]
+    assert m["toggleDisplay"] == "none"
+
+
+@EACH
+def test_the_zone_ribbon_shows_on_a_desktop_and_hides_in_mobile_mode(
+    measurements: list[dict], index: int
+) -> None:
+    m = measurements[index]
+    if m["mobile"]:
+        assert m["zoneRibbonDisplay"] == "none", m["size"]
+    else:
+        assert m["zoneRibbonDisplay"] != "none", m["size"]
+
+
+@EACH
+def test_no_fine_pointer_window_shows_the_rotate_overlay(
+    measurements: list[dict], index: int
+) -> None:
+    assert measurements[index]["rotateDisplay"] == "none", measurements[index]["size"]
+
+
+@EACH
+def test_the_page_cannot_be_scrolled_at_all(measurements: list[dict], index: int) -> None:
+    assert measurements[index]["scrolled"] == [0, 0], measurements[index]["size"]
 
 
 @EACH
 def test_nothing_in_the_grid_sits_under_the_toolbar(measurements: list[dict], index: int) -> None:
     m = measurements[index]
     bar = m["toolbar"]
+    width, height = m["size"]
+    assert _inside(bar, width, height), (bar, m["size"])
     for name in ("#topbar", "#zone-ribbon", "#side-panel", "#mtg-board"):
         rect = m["regions"][name]
-        overlap_x = min(bar["right"], rect["right"]) - max(bar["left"], rect["left"])
-        overlap_y = min(bar["bottom"], rect["bottom"]) - max(bar["top"], rect["top"])
-        assert overlap_x <= 0.5 or overlap_y <= 0.5, (name, rect, bar, m["size"])
+        if m["mobile"] and name != "#mtg-board":
+            continue
+        assert not _overlap(bar, rect), (name, rect, bar, m["size"])
+    if m["mobile"]:
+        assert not _overlap(bar, m["toggle"]), (bar, m["toggle"], m["size"])
+
+
+@EACH
+def test_the_player_badges_sit_in_their_land_rows_and_cover_no_card(
+    measurements: list[dict], index: int
+) -> None:
+    m = measurements[index]
+    for side in ("opp", "my"):
+        badge, row = m["badges"][side], m["badgeRows"][side]
+        assert badge["width"] >= 40 and badge["height"] >= 16, (side, badge, m["size"])
+        assert badge["top"] >= row["top"] - 0.5 and badge["bottom"] <= row["bottom"] + 0.5, (
+            side,
+            badge,
+            row,
+            m["size"],
+        )
+        assert badge["left"] >= row["left"] - 0.5, (side, badge, row)
+        for card in m["boardCards"]:
+            assert not _overlap(badge, card), (side, badge, card, m["size"])
+        # Everything on the badge, zone counts included, is on show without
+        # scrolling it.
+        scroll_height, client_height = m["badgeFit"][side]
+        assert scroll_height <= client_height + 1, (side, m["badgeFit"][side], m["size"])
 
 
 @EACH
@@ -441,3 +561,54 @@ def test_every_card_fits_inside_its_row(measurements: list[dict], index: int) ->
                 rect,
                 row["inner"],
             )
+
+
+def _open_frame(measurements: list[dict]) -> dict:
+    m = measurements[len(VIEWPORTS)]
+    assert m["open"] is True and m["size"] == list(DRAWER_OPEN)
+    return m
+
+
+def test_at_844x390_the_closed_drawer_leaves_the_whole_board_in_mobile_mode(
+    measurements: list[dict],
+) -> None:
+    m = measurements[VIEWPORTS.index((844, 390))]
+    assert m["mobile"] is True
+    assert m["scrolled"] == [0, 0] and m["page"] == [844, 390]
+    assert m["zoneRibbonDisplay"] == "none"
+    assert m["drawerVisibility"] == "hidden"
+    # The board spans the screen but for the gutter and the toggle rail.
+    assert m["regions"]["#mtg-board"]["width"] >= 844 * 0.85, m["regions"]["#mtg-board"]
+
+
+def test_at_1920x1080_the_desktop_keeps_the_zone_ribbon_and_no_overlay(
+    measurements: list[dict],
+) -> None:
+    m = measurements[VIEWPORTS.index((1920, 1080))]
+    assert m["mobile"] is False
+    assert m["zoneRibbonDisplay"] != "none" and m["regions"]["#zone-ribbon"]["height"] >= 24
+    assert m["rotateDisplay"] == "none"
+    assert m["toggleDisplay"] == "none"
+
+
+def test_an_open_drawer_is_on_screen_and_keeps_the_toggle_and_toolbar_reachable(
+    measurements: list[dict],
+) -> None:
+    m = _open_frame(measurements)
+    width, height = m["size"]
+    assert m["scrolled"] == [0, 0]
+    assert m["drawerVisibility"] == "visible"
+    assert _inside(m["drawer"], width, height), m["drawer"]
+    assert m["drawer"]["width"] >= 200, m["drawer"]
+    for name in ("#topbar", "#side-panel"):
+        rect = m["regions"][name]
+        assert (
+            rect["left"] >= m["drawer"]["left"] - 0.5
+            and rect["right"] <= m["drawer"]["right"] + 0.5
+        )
+        assert _inside(rect, width, height), (name, rect)
+    assert m["regions"]["#side-panel"]["height"] >= 60, m["regions"]["#side-panel"]
+    assert _inside(m["toggle"], width, height) and not _overlap(m["toggle"], m["drawer"])
+    for button in m["toolbarButtons"]:
+        assert _inside(button, width, height), button
+        assert not _overlap(button, m["drawer"]), (button, m["drawer"])

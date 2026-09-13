@@ -48,8 +48,8 @@ export const MIN_FLOOR_WIDTH = 20;
 
 /**
  * The floor width every one of a board's `rows` card rows shares, given the
- * `height` the board has left for cards once its info rows, gaps, row padding
- * and captions are taken off: `floor` on any window with room for one card
+ * `height` the board has left for cards once its other children, gaps, row
+ * padding and captions are taken off: `floor` on any window with room for one card
  * that wide per row, and on a short one (a phone in landscape) the widest
  * card for which one per row still fits `height` - never below `minimum`.
  */

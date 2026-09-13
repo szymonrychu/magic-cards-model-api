@@ -253,9 +253,9 @@ h3 { font-size: 14px; }
      `.game-toolbar` below - nothing in the grid (the board, the zone ribbon,
      `#topbar`'s own turn/phase/AI content) is ever laid out under it, at any
      width, so the fixed toolbar can never cover something a player is trying
-     to read or click. On a landscape window below 1100px the strip is the
-     control column's first grid row instead (the media blocks at the end of
-     this file), so the board there keeps the full height. */
+     to read or click. In mobile mode (the media block at the end of this
+     file) the toolbar sits in a rail reserved on the right instead, so the
+     board there keeps the full height. */
   padding-top: 52px;
 }
 
@@ -263,8 +263,8 @@ h3 { font-size: 14px; }
    at every width - `position: fixed` is what makes "every width" true for
    free: it is placed against the viewport, not against `#game`'s own grid,
    so it holds the same corner whether that grid is the three-column desktop
-   layout, the two-column landscape one or the single-column portrait stack.
-   `#game`'s own `padding-top` above reserves the strip this sits in.
+   layout or mobile mode's single board column. `#game`'s own `padding-top`
+   above, or mobile mode's right rail, reserves the room this sits in.
 
    `flex-wrap: wrap` with `justify-content: flex-end` rather than a fixed
    `nowrap` row: an armed Concede's "click again to confirm" label is the one
@@ -280,11 +280,40 @@ h3 { font-size: 14px; }
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
-  /* `--toolbar-max` is set by the layouts that reserve the strip above the
-     control column only (a phone in landscape, below) - there the toolbar
-     wraps inside that column rather than reaching over the board. */
+  /* `--toolbar-max` is set by mobile mode, which reserves a narrow rail on
+     the right - there the toolbar wraps into a column inside that rail
+     rather than reaching over the board. */
   max-width: var(--toolbar-max, calc(100vw - 16px));
 }
+
+/* Mobile mode's drawer (`ui/drawer.js`). On a desktop it is only a wrapper:
+   `display: contents` takes it out of the box tree, so `#topbar`, `#banners`
+   and `#side-panel` inside it are grid items of `#game` as if it were not
+   there. The mobile media block at the end of this file turns it into the
+   sliding panel and shows its toggle. */
+#drawer { display: contents; }
+#drawer-toggle { display: none; }
+
+/* A coarse pointer held upright gets this instead of a board (the portrait
+   media block at the end of this file shows it). Above every other layer and
+   opaque, so nothing behind it can be read or pressed. */
+#rotate-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  background: var(--bg);
+  color: var(--ink);
+  touch-action: none;
+}
+#rotate-overlay .rotate-title { margin: 0; font-size: 20px; font-weight: 700; }
+#rotate-overlay .hint { margin: 0; }
 
 /* The ribbon's top block. A column rather than a bar now that it is 340px
    wide instead of the full window: turn line, phase track, then the seat's
@@ -358,8 +387,8 @@ h3 { font-size: 14px; }
    never changes the board's geometry.
 
    The seven card rows (`.fit-row`) are fixed shares of the board's height -
-   see `#mtg-board > .fit-row` below - and the info rows and `#permitted-row`
-   are content-sized around them, so the board is exactly as tall as its grid
+   see `#mtg-board > .fit-row` below - and `#permitted-row` is content-sized
+   around them, so the board is exactly as tall as its grid
    area and the page never scrolls. Every row keeps a one-card floor and clips
    inside itself, because a row that collapsed once painted over the row
    beneath and swallowed its clicks. In the browser pass that put a Forest on
@@ -386,6 +415,7 @@ h3 { font-size: 14px; }
      on this element) when the board is too short for seven such cards. */
   --card-floor: 44px;
   --row-pad: 4px;
+  --badge-w: 184px;
 }
 
 .info-row {
@@ -407,8 +437,91 @@ h3 { font-size: 14px; }
 .info-row .life { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .info-row .life.low { color: var(--bad); }
 .info-row .counts { color: var(--ink-dim); font-size: 12px; margin-left: auto; }
+/* ------------------------------------------------------ player badges ---- */
+
+/* Each seat's name, life, counts, pool and zone counts, at the left edge of
+   its land row (`render/board.js`'s `patchBadge`). The land row is a flex
+   line of two columns - the badge, then `.fit-cards` holding the lands - so
+   the fit sizes the lands to the room the badge leaves and the badge never
+   covers one. The badge takes the row's height and scrolls inside itself
+   rather than growing it, so the row keeps its fixed share and its one-card
+   floor. */
+#mtg-board > .fit-row.badge-row {
+  align-items: stretch;
+  overflow: hidden;
+}
+.fit-cards {
+  --card-h: calc(var(--card-w, 76px) * 88 / 63);
+  display: flex;
+  flex: 1 1 0;
+  gap: 5px;
+  align-items: flex-start;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+/* A wrapping row rather than a column: the name and life take the first
+   line, the counts and the pool share the next, the zone counts the last -
+   and on a short window (below) everything packs into two lines. */
+.player-badge {
+  flex: 0 0 var(--badge-w);
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: center;
+  gap: 2px 6px;
+  min-width: 0;
+  min-height: 0;
+  padding: 3px 6px;
+  border-radius: 7px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 14px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  cursor: pointer;
+}
+.player-badge.you { border-left: 3px solid var(--you); }
+.player-badge.opp { border-left: 3px solid var(--opp); }
+/* Inside the badge's own box, so a lit badge draws nothing over the lands. */
+.player-badge.targetable { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.player-badge.chosen { outline: 2px solid var(--accent); outline-offset: -2px; }
+.player-badge.priority { border-color: var(--accent); }
+.player-badge.dimmed { opacity: 0.55; }
+.player-badge .badge-head { flex: 1 0 100%; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.player-badge .name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-badge.active .name { color: var(--accent); }
+.player-badge .life {
+  margin-left: auto;
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.player-badge .life.low { color: var(--bad); }
+.player-badge .badge-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; color: var(--ink-dim); }
+.player-badge .pool { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; }
+.player-badge .pool.empty { color: var(--ink-faint); }
+.player-badge .badge-zones { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 2px; }
+.player-badge .zone-count {
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 14px;
+  border-radius: 999px;
+}
+.player-badge .zone-exile { border-style: dashed; border-color: var(--warn); color: var(--warn); }
+.player-badge .zone-command { border-style: dotted; border-color: var(--accent); color: var(--accent); }
+.player-badge .held-count { position: static; }
+
 /* The known top card of this player's library, beside its library count. */
-.info-row .known-top {
+.player-badge .known-top {
   font-size: 11px;
   border: 1px solid var(--known);
   color: var(--known);
@@ -534,7 +647,7 @@ h3 { font-size: 14px; }
   transform: translateY(-50%) rotate(180deg);
 }
 /* Content sized, never squeezed to nothing by the fixed-share rows. */
-#mtg-board > .info-row, #mtg-board > #permitted-row { flex: 0 0 auto; }
+#mtg-board > #permitted-row { flex: 0 0 auto; }
 
 /* One stack object on the live board: the card itself, then a one-line
    caption for what the card cannot say - the announced X and its targets.
@@ -1239,7 +1352,7 @@ h3 { font-size: 14px; }
    `pointer-events: none` because it is text and only ever text - every
    caller passes a string - while it sits fixed over the bottom centre of the
    viewport for 4000ms on every refusal, which is exactly where `#my-hand`
-   and `#you-info` are. Without this it swallows the clicks a player aims at
+   and your player badge are. Without this it swallows the clicks a player aims at
    their own hand in the seconds right after a refusal: the worst possible
    moment, since the refusal is what makes them click again. `.card-zoom`
    (the card preview) carries the same line for the same reason. */
@@ -1399,6 +1512,52 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 }
 .chip.on { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .chip.player { border-style: dashed; }
+
+/* ------------------------------------ zone viewer (render/zone_viewer.js) */
+
+/* A seat's graveyard, exile or command zone as cards, over the board. The
+   element is the backdrop. Its layer (45) is above the drawer (34) and the
+   decision window (35), below the card menus (50) so a card's menu still
+   opens over it, and below `.card-zoom` (65) so its cards preview. */
+.zone-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(4, 6, 10, 0.6);
+}
+.zone-viewer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(900px, 100%);
+  max-height: 100%;
+  min-height: 0;
+  padding: 10px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line-bright);
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+}
+.zone-viewer-head { display: flex; align-items: center; gap: 8px; }
+.zone-viewer-title { flex: 1 1 auto; margin: 0; font-size: 14px; }
+/* Cards sized to the viewer, wrapping, and scrolling inside it when many. */
+.zone-viewer-cards {
+  --card-w: clamp(56px, min(24vh, 14vw), 150px);
+  --card-h: calc(var(--card-w) * 88 / 63);
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 8px;
+  min-height: 0;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.zone-viewer-empty { margin: 0; color: var(--ink-faint); }
 
 /* ----------------------------------------------------------- popovers ---- */
 
@@ -1838,76 +1997,115 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
   #game { grid-template-columns: minmax(0, 1fr) 112px 340px; }
 }
 
-/* Below 1100px there is no room for three columns, and the page still never
-   scrolls: every layout here is exactly one viewport tall, and whatever does
-   not fit scrolls inside its own region.
-
-   Landscape (a phone on its side, a small tablet): two columns. The board
-   keeps the whole left side, full height, and everything else stacks in the
-   control column on the right - the turn block, the banners, the zones lying
-   down as a horizontal strip, then the side panel taking the rest. The strip
-   the fixed toolbar sits in is reserved in that column only (its first grid
-   row), and `--toolbar-max` wraps the toolbar inside the column, so on a
-   390px-tall phone the board does not give up 52px to three buttons. */
 @media (max-width: 1100px) {
-  #game {
-    --side-w: clamp(240px, 32vw, 320px);
-    --toolbar-max: var(--side-w);
-    --strip: 76px;
-    --zones-cap: 30%;
-    grid-template-columns: minmax(0, 1fr) var(--side-w);
-    /* `fit-content()`, not `auto`: the turn block and the zones take what
-       they need up to a cap and scroll inside themselves past it, so the
-       side panel - the pass and priority controls - always keeps the rest. */
-    grid-template-rows: var(--strip) fit-content(35%) auto fit-content(var(--zones-cap)) minmax(0, 1fr);
-    grid-template-areas: "board ." "board top" "board banner" "board zones" "board side";
-    padding-top: 8px;
-  }
-  #zone-ribbon { flex-direction: row; overflow-x: auto; }
-  .zone-pile { flex: 1 1 0; min-width: 96px; }
-  .zone-pile.empty { flex: 0 1 auto; }
-  #topbar { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-height: 0; overflow-y: auto; }
-  .topbar-right { margin-left: auto; }
   .deck-pickers { grid-template-columns: 1fr; }
 }
 
-/* Portrait (a phone upright): one column - the toolbar strip across the top
-   as on a desktop, the turn block, the board taking what is left, then the
-   zones and the side panel side by side in a bounded bottom band that scrolls
-   inside itself. */
-@media (max-width: 1100px) and (max-aspect-ratio: 1/1) {
-  #game {
-    --toolbar-max: calc(100vw - 16px);
-    grid-template-columns: minmax(0, 112px) minmax(0, 1fr);
-    grid-template-rows: fit-content(25%) auto minmax(0, 1fr) minmax(0, 26%);
-    grid-template-areas: "top top" "banner banner" "board board" "zones side";
-    padding-top: 52px;
-  }
-  #zone-ribbon { flex-direction: column; overflow-x: hidden; overflow-y: auto; }
-  .zone-pile { flex: 1 1 auto; min-width: 0; }
-  /* One line each, scrolling sideways: at phone width a wrapped phase track
-     and a wrapped info row cost the board two card rows' worth of height. */
-  #phase-track { flex-wrap: nowrap; overflow-x: auto; }
-  #mtg-board > .info-row { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
-}
-
 /* Phone-sized buttons in the fixed toolbar, so an armed Concede's longer
-   label still leaves the three on one line at phone width (and two inside
-   the landscape control column) rather than growing down over the grid. */
+   label stays short enough to wrap tidily inside mobile mode's rail rather
+   than growing down toward the drawer toggle. */
 @media (max-height: 560px), (max-width: 600px) {
   .game-toolbar button { padding: 2px 8px; font-size: 12px; }
 }
 
 /* A short window - every phone in landscape - tightens the board's own
-   spacing, so the seven rows keep as much of the height as there is. */
+   spacing, so the seven rows keep as much of the height as there is, and
+   packs the badges into shorter lines. */
 @media (max-height: 560px) {
-  #game { gap: 4px; padding-inline: 4px; padding-bottom: 4px; --strip: 56px; --zones-cap: 20%; }
+  #game { gap: 4px; padding-inline: 4px; padding-bottom: 4px; }
   #phase-track { flex-wrap: nowrap; overflow-x: auto; }
-  #mtg-board { gap: 2px; padding: 3px; --row-pad: 2px; }
-  #mtg-board > .info-row { padding: 1px 8px; gap: 8px; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; font-size: 12px; }
-  .info-row .life { font-size: 14px; }
+  #mtg-board { gap: 2px; padding: 3px; --row-pad: 2px; --badge-w: 236px; }
+  .player-badge { gap: 1px 5px; padding: 1px 4px; font-size: 10px; line-height: 12px; }
+  .player-badge .badge-head, .player-badge .badge-zones { flex: 0 1 auto; }
+  .player-badge .life { font-size: 12px; }
+  .player-badge .zone-count { padding: 0 3px; font-size: 9px; line-height: 11px; }
   #topbar { padding: 4px 8px; }
   #side-panel > div { padding: 6px 8px; }
+}
+
+/* Mobile mode: a coarse pointer in landscape (a phone or tablet on its side)
+   or any window 1100px wide or less. There is no room beside the board for
+   the zone ribbon or the control column, and the page still never scrolls.
+
+   The board takes the whole viewport but for a rail on the right. The rail
+   holds the fixed toolbar, which wraps into a column inside it
+   (`--toolbar-max`), and `#drawer-toggle` at its foot, so neither ever sits
+   over a card. The zone ribbon is hidden - the badges' zone counts open
+   `#zone-viewer` instead - and `#drawer` (the turn block, the banners and the
+   side panel) is a fixed panel beside the rail that slides in over the board
+   when `ui/drawer.js` puts `drawer-open` on `#game`. Closed, it is off screen
+   and `visibility: hidden`, so nothing in it can be tabbed to or pressed.
+
+   After the short-window block above, so its `#game` padding wins there. */
+@media (max-width: 1100px), (pointer: coarse) and (orientation: landscape) {
+  #game {
+    --rail-w: 64px;
+    --toolbar-max: var(--rail-w);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: "board";
+    padding: 8px calc(var(--rail-w) + 16px) 8px 8px;
+  }
+  #zone-ribbon { display: none; }
+  #drawer {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    right: calc(var(--rail-w) + 16px);
+    z-index: 34;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(360px, calc(100vw - var(--rail-w) - 40px));
+    padding: 8px;
+    overflow: hidden;
+    background: var(--bg);
+    border-left: 1px solid var(--line-bright);
+    border-right: 1px solid var(--line-bright);
+    box-shadow: var(--shadow);
+    transform: translateX(calc(100% + var(--rail-w) + 16px));
+    visibility: hidden;
+    transition: transform 0.18s ease, visibility 0.18s;
+  }
+  #game.drawer-open #drawer { transform: none; visibility: visible; }
+  /* The turn block takes what it needs up to a cap; the side panel keeps the
+     rest and scrolls inside itself, as it does in the desktop column. */
+  #drawer > #topbar {
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    max-height: 35%;
+    overflow-y: auto;
+  }
+  #drawer > #banners { flex: 0 0 auto; }
+  #drawer > #side-panel { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .topbar-right { margin-left: auto; }
+  #drawer-toggle {
+    position: fixed;
+    right: 8px;
+    bottom: 8px;
+    z-index: 56;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--rail-w);
+    height: 88px;
+    padding: 0;
+    writing-mode: vertical-rl;
+    font-weight: 600;
+    border-radius: 9px;
+  }
+  #game.drawer-open #drawer-toggle { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  #game-toolbar > #concede-slot, #game-toolbar > button { flex: 1 0 100%; }
+  #concede-slot button { width: 100%; white-space: normal; }
+}
+
+/* A coarse pointer held upright: ask for landscape instead of drawing a board
+   too narrow to play on. A desktop never matches, at any window shape. */
+@media (pointer: coarse) and (orientation: portrait) {
+  #rotate-overlay { display: flex; }
 }
 
 /* ------------------------------------------ card preview (ui/preview.js) ---- */

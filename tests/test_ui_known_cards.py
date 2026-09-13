@@ -22,7 +22,7 @@ STYLE = Path(__file__).resolve().parents[1] / "ui" / "style.css"
 
 # Mounts the board with `known` as alice's `known_cards` entry and bob holding
 # `handCount` cards, captures every `console.warn`, and hands back what the
-# opponent's hand, both hands and both info rows ended up drawn as.
+# opponent's hand, both hands and both player badges ended up drawn as.
 MOUNT = """
 function mountWith(known, handCount, myHand) {
   const warnings = [];
@@ -52,8 +52,8 @@ function mountWith(known, handCount, myHand) {
   return {
     oppHand: document.querySelector("#opp-hand").children.map(describe),
     myHand: document.querySelector("#my-hand").children.map(describe),
-    oppChip: chip("#opp-info"),
-    youChip: chip("#you-info"),
+    oppChip: chip("#opp-badge"),
+    youChip: chip("#my-badge"),
     warnings,
   };
 }
@@ -285,7 +285,7 @@ def _rule(css: str, selector: str) -> str:
 def test_the_known_style_stands_out_on_the_board_in_both_colour_schemes(scheme: str) -> None:
     """WCAG contrast of what each OS colour preference actually renders.
 
-    The chip's 11px name text needs 4.5:1 against the info row it sits on and
+    The chip's name text needs 4.5:1 against the player badge it sits on and
     the "known" label ink the same against its known-hue badge; the 2px ring
     is a non-text outline, so 3:1 against the board and against the card-back
     border it sits beside. The board itself is whatever that scheme's tokens
@@ -297,7 +297,7 @@ def test_the_known_style_stands_out_on_the_board_in_both_colour_schemes(scheme: 
     known, ink = tokens["--known"], tokens["--known-ink"]
 
     assert "var(--known)" in _rule(css, ".card--known")
-    chip = _rule(css, ".info-row .known-top")
+    chip = _rule(css, ".player-badge .known-top")
     assert "color: var(--known)" in chip and "border: 1px solid var(--known)" in chip
     badge = _rule(css, ".card--known::after")
     assert "background: var(--known)" in badge and "color: var(--known-ink)" in badge
@@ -305,7 +305,7 @@ def test_the_known_style_stands_out_on_the_board_in_both_colour_schemes(scheme: 
     assert back_border is not None, "no .card-back border colour"
 
     assert _contrast(known, tokens["--bg-raised"]) >= 4.5, (
-        f"known-top chip text on the info row ({scheme})"
+        f"known-top chip text on the player badge ({scheme})"
     )
     assert _contrast(ink, known) >= 4.5, f"known label ink on its badge ({scheme})"
     assert _contrast(known, tokens["--bg"]) >= 3, f"known ring on the board ({scheme})"

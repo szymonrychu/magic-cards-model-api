@@ -39,7 +39,7 @@ export const HOVER_SCALE = 2.2;
 /** The surfaces whose cards preview. A card anywhere else (the lobby, the
  * review) does not. */
 export const PREVIEW_SOURCES =
-  "#mtg-board, #zone-ribbon, #stack-row, #my-hand, #opp-hand, #permitted-row, #decision-window, #modal, #popover";
+  "#mtg-board, #zone-ribbon, #zone-viewer, #stack-row, #my-hand, #opp-hand, #permitted-row, #decision-window, #modal, #popover";
 
 /** Every element that stands for a card: a `cardNode` anywhere, or an object
  * on the stack, which `render/board.js` wraps (card plus caption) in a

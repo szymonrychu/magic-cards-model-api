@@ -494,9 +494,11 @@ def test_a_spell_on_the_stack_as_board_js_draws_it_previews() -> None:
     result = run(
         """
         (async () => {
-          for (const id of ["opp-info", "opp-hand", "opp-lands", "opp-battlefield",
-                            "my-battlefield", "my-lands", "you-info"]) {
-            box(id, BOARD);
+          for (const id of ["opp-hand", "opp-battlefield", "my-battlefield"]) box(id, BOARD);
+          for (const side of ["opp", "my"]) {
+            const row = box(side + "-lands", BOARD);
+            box(side + "-badge", row);
+            box(side + "-lands-cards", row);
           }
           const B = await import(BOARD_JS_URL);
           const spell = (name) => ({

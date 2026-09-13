@@ -2,7 +2,8 @@
 `tests/test_ui_ribbon.py`) - `board.js` had no tests of its own before this
 whole-branch review.
 
-The critical fix this pins: `#opp-info`'s click handler used to read
+The critical fix this pins: the opponent's info row's click handler (now
+`#opp-badge`, the player badge in the opponent's land row) used to read
 `store.get().opponent`, a store field that has never existed (the store
 never carries an `opponent` key at all - see `ui/app.js`'s own
 `createStore(...)` call) - so clicking the opponent's info row always called
@@ -129,17 +130,28 @@ function boxed(id, hidden) {
   document.appendChild(el);
   return el;
 }
+// A land row holds the seat's player badge in its own left column, then the
+// cards, the way `ui/index.html` nests them.
+function badgeRow(side) {
+  const row = boxed(`${side}-lands`);
+  document.removeChild(row);
+  for (const id of [`${side}-badge`, `${side}-lands-cards`]) {
+    const el = document.createElement("div");
+    el.setAttribute("id", id);
+    row.appendChild(el);
+  }
+  document.appendChild(row);
+  return row;
+}
 boxed("mtg-board");
-boxed("opp-info");
 boxed("opp-hand");
-boxed("opp-lands");
+badgeRow("opp");
 boxed("opp-battlefield");
 boxed("stack-row");
 boxed("zone-ribbon");
 boxed("my-battlefield");
-boxed("my-lands");
+badgeRow("my");
 boxed("my-hand");
-boxed("you-info");
 
 function makeStore(initial) {
   let state = initial;
@@ -203,7 +215,7 @@ function baseApp(state, overrides) {
 # A one-target, targets-anything action whose affordance already lists the
 # opponent (bob) as the sole legal candidate - the "pending action whose
 # affordance lists the opponent as a candidate" the task brief calls for,
-# folded into the opp-info click test so it also proves the info row is lit
+# folded into the opp-badge click test so it also proves the badge is lit
 # up as a legal target while the fix is exercised.
 ONE_TARGET_ACTION = {
     "kind": "cast",
@@ -260,10 +272,11 @@ ONE_TARGET_ACTION = {
 }
 
 
-def test_clicking_opp_info_calls_on_player_with_the_opponents_username() -> None:
+def test_clicking_the_opp_badge_calls_on_player_with_the_opponents_username() -> None:
     """The regression itself: `store.get().opponent` never existed, so the
     old handler always called `onPlayer(undefined)`. `alice` is `state.you`;
-    `bob` is the only other seat, and must be exactly what `onPlayer` sees."""
+    `bob` is the only other seat, and must be exactly what `onPlayer` sees -
+    `ui/app.js` hands that straight to `tryTarget`, as the info row did."""
     result = run_module(
         "render/board.js",
         FAKE_DOM
@@ -277,9 +290,9 @@ def test_clicking_opp_info_calls_on_player_with_the_opponents_username() -> None
             onPlayer: (u) => calls.push(u),
           });
           store.set({});
-          document.querySelector("#opp-info").onclick();
+          document.querySelector("#opp-badge").onclick({ target: null });
           const oppTargetable =
-            document.querySelector("#opp-info").classList.contains("targetable");
+            document.querySelector("#opp-badge").classList.contains("targetable");
           return { calls, oppTargetable };
         })()
         """,
@@ -352,16 +365,16 @@ def test_summoning_sick_class_only_applies_on_the_battlefield() -> None:
     assert result == {"battlefield": True, "graveyard": False}
 
 
-# ------------------------- the info row is the only mana-pool render site ----
+# ---------------------- the player badge is the only mana-pool render site ----
 #
-# `infoRow` is where a seat's pool reaches the board, so it is where the
+# `patchBadge` is where a seat's pool reaches the board, so it is where the
 # CR 106.6-restricted slice has to become visible. `manaPoolNodes`'s own
 # structure is pinned in `tests/test_ui_mana_pool.py`; this only proves the
 # board actually passes the whole pool through, restricted entries included,
 # rather than the `floating`/`snow` pair it used to be given.
 
 
-def test_the_info_row_renders_a_seats_restricted_mana_as_its_own_group() -> None:
+def test_the_badge_renders_a_seats_restricted_mana_as_its_own_group() -> None:
     result = run_module(
         "render/board.js",
         FAKE_DOM
@@ -380,7 +393,7 @@ def test_the_info_row_renders_a_seats_restricted_mana_as_its_own_group() -> None
             onPermission: NOOP, onPermanent: NOOP,
           });
           store.set({});
-          const pool = document.querySelector("#you-info").querySelector(".pool");
+          const pool = document.querySelector("#my-badge").querySelector(".pool");
           return pool.children.map((g) => ({
             classes: [...g.classList.set].sort(),
             title: g.attrs.title,
@@ -652,7 +665,7 @@ def test_the_fit_pass_writes_card_w_per_row_after_render_and_on_resize() -> None
         + """
         (() => {
           sized("#opp-hand", 1000, 100);
-          sized("#opp-lands", 300, 10000);
+          sized("#opp-lands-cards", 300, 10000);
           sized("#opp-battlefield", 1000, 1000);
           sized("#stack-row", 1000, 156);
           sized("#my-battlefield", 200, 10000);
@@ -680,13 +693,13 @@ def test_the_fit_pass_writes_card_w_per_row_after_render_and_on_resize() -> None
           store.set({});
           const rendered = {
             myHand: cardW("#my-hand"),
-            oppLands: cardW("#opp-lands"),
+            oppLands: cardW("#opp-lands-cards"),
             stack: cardW("#stack-row"),
             myBattlefield: cardW("#my-battlefield"),
             scrolls: document.querySelector("#my-battlefield").classList.contains("fit-scroll"),
             handScrolls: hand.classList.contains("fit-scroll"),
-            tappedPile: document.querySelector("#opp-lands").children[0].dataset.tapped,
-            untappedPile: document.querySelector("#opp-lands").children[1].dataset.tapped,
+            tappedPile: document.querySelector("#opp-lands-cards").children[0].dataset.tapped,
+            untappedPile: document.querySelector("#opp-lands-cards").children[1].dataset.tapped,
           };
           const observed = observers.flatMap((o) => o.targets.map((t) => t.attrs.id));
           hand.clientWidth = 100;
@@ -744,7 +757,7 @@ def test_the_board_css_sizes_cards_from_card_w_and_reserves_tapped_boxes() -> No
 def test_a_short_board_lowers_the_shared_card_floor_so_every_row_fits() -> None:
     """On a landscape phone the board is too short for seven 44px-wide cards
     stacked, so the fit pass derives one floor for every row from the height
-    the board has left after its info rows, gaps and the stack caption, writes
+    the board has left after its gaps and the stack caption, writes
     it as `#mtg-board`'s `--card-floor` (the rows' `min-height` in
     `style.css`), and fits every row against it rather than the fixed 44px."""
     result = run_module(
@@ -754,11 +767,11 @@ def test_a_short_board_lowers_the_shared_card_floor_so_every_row_fits() -> None:
         + """
         (() => {
           const board = document.querySelector("#mtg-board");
-          const ids = ["#opp-info", "#opp-hand", "#opp-lands", "#opp-battlefield", "#stack-row",
-            "#my-battlefield", "#my-lands", "#my-hand", "#you-info"];
+          const ids = ["#opp-hand", "#opp-lands", "#opp-battlefield", "#stack-row",
+            "#my-battlefield", "#my-lands", "#my-hand"];
           board.children = ids.map((id) => document.querySelector(id));
           board.clientHeight = 7 * 42 + 16;
-          for (const id of ids.slice(1, 8)) sized(id, 1000, 42);
+          for (const id of ids) sized(id, 1000, 42);
           sized("#stack-row", 1000, 58);
           const state = baseState({
             hands: { alice: [{ id: "h1", name: "A", zone: "hand", abilities: [] }] },
@@ -779,3 +792,229 @@ def test_a_short_board_lowers_the_shared_card_floor_so_every_row_fits() -> None:
     )
     assert result["short"] == {"floor": "30px", "hand": "30px"}
     assert result["tall"] == "44px"
+
+
+# ------------------------------------------------------------ player badge --
+#
+# The info rows above and below the board are gone. Each seat's name, life,
+# hand and library counts, known library top, mana pool and zone counts sit in
+# a compact badge in its own left column of that seat's land row, so the board
+# gets the two info rows' height back and the badge never overlaps a card.
+
+BADGE_MOUNT = """
+function mountBadges(state, over, extraHandlers) {
+  const calls = { player: [], zones: [] };
+  const store = makeStore(baseApp(state, over));
+  m.mountBoard(document, store, {
+    onHandCard: NOOP, onPermanent: NOOP, onStackObject: NOOP, onPermission: NOOP,
+    onPlayer: (u) => calls.player.push(u),
+    onOpenZone: (key) => calls.zones.push(key),
+    ...(extraHandlers || {}),
+  });
+  store.set({});
+  return { store, calls };
+}
+const badge = (side) => document.querySelector(`#${side}-badge`);
+const text = (el, cls) => {
+  const found = el.querySelector(cls);
+  return found ? found.textContent : null;
+};
+function readBadge(side) {
+  const el = badge(side);
+  return {
+    name: text(el, ".name"),
+    life: text(el, ".life"),
+    hand: text(el, ".count-hand"),
+    library: text(el, ".count-library"),
+    top: el.querySelector(".known-top") ? {
+      text: el.querySelector(".known-top").textContent,
+      title: el.querySelector(".known-top").attrs.title,
+    } : null,
+    pool: text(el, ".pool"),
+    poolEmpty: Boolean(
+      el.querySelector(".pool") && el.querySelector(".pool").classList.contains("empty")
+    ),
+    graveyard: text(el, ".zone-graveyard"),
+    exile: text(el, ".zone-exile"),
+    command: text(el, ".zone-command"),
+    classes: [...el.classList.set].sort(),
+  };
+}
+"""
+
+
+def test_the_info_rows_are_gone_and_each_land_row_leads_with_its_badge() -> None:
+    page = (UI / "index.html").read_text()
+    assert 'id="opp-info"' not in page and 'id="you-info"' not in page
+    for side in ("opp", "my"):
+        row = re.search(
+            r'<div id="' + side + r'-lands" class="[^"]*\bfit-row\b[^"]*">(.*?)\n    </div>',
+            page,
+            re.S,
+        )
+        assert row, f"no #{side}-lands row"
+        ids = re.findall(r'id="([a-z-]+)"', row.group(1))
+        assert ids == [f"{side}-badge", f"{side}-lands-cards"], ids
+    for name in ("render/board.js", "style.css"):
+        text = (UI / name).read_text()
+        assert "opp-info" not in text and "you-info" not in text, name
+
+
+def test_a_badge_shows_life_hand_library_pool_and_zone_counts() -> None:
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + BADGE_MOUNT
+        + """
+        (() => {
+          const state = baseState({
+            graveyards: { bob: [creature("bg1", "bob", { zone: "graveyard" }),
+                                creature("bg2", "bob", { zone: "graveyard" })], alice: [] },
+            exile: [creature("be1", "bob", { zone: "exile" }),
+                    creature("ae1", "alice", { zone: "exile" }),
+                    creature("ae2", "alice", { zone: "exile" })],
+            command: [creature("ac1", "alice", { zone: "command" })],
+          });
+          state.players[1].life = 7;
+          state.players[1].library_count = 33;
+          state.players[0].mana_pool = { floating: { R: 2 }, snow: {}, restricted: [] };
+          mountBadges(state);
+          return { opp: readBadge("opp"), me: readBadge("my") };
+        })()
+        """,
+    )
+    opp, me = result["opp"], result["me"]
+    assert opp["name"] == "bob" and opp["life"] == "7"
+    assert opp["hand"] == "hand 3" and opp["library"] == "library 33"
+    assert opp["poolEmpty"] is True and opp["pool"] == "empty pool"
+    assert (opp["graveyard"], opp["exile"], opp["command"]) == (
+        "graveyard 2",
+        "exile 1",
+        "command 0",
+    )
+    assert "player-badge" in opp["classes"] and "opp" in opp["classes"]
+    assert me["name"] == "alice" and me["life"] == "20"
+    assert me["hand"] == "hand 0" and me["library"] == "library 40"
+    assert me["poolEmpty"] is False and "2" in me["pool"]
+    assert (me["graveyard"], me["exile"], me["command"]) == ("graveyard 0", "exile 2", "command 1")
+    assert "you" in me["classes"]
+    assert opp["top"] is None and me["top"] is None
+
+
+def test_a_badge_marks_the_active_player_priority_and_low_life() -> None:
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + BADGE_MOUNT
+        + """
+        (() => {
+          const state = baseState({ active_player: "bob", priority_holder: "alice" });
+          state.players[1].life = 3;
+          mountBadges(state);
+          return {
+            opp: readBadge("opp").classes,
+            me: readBadge("my").classes,
+            oppLow: badge("opp").querySelector(".life").classList.contains("low"),
+            meLow: badge("my").querySelector(".life").classList.contains("low"),
+          };
+        })()
+        """,
+    )
+    assert "active" in result["opp"] and "priority" not in result["opp"]
+    assert "priority" in result["me"] and "active" not in result["me"]
+    assert result["oppLow"] is True and result["meLow"] is False
+
+
+def test_clicking_my_badge_targets_me_and_it_lights_up_as_chosen() -> None:
+    chosen = json.loads(json.dumps(ONE_TARGET_ACTION))
+    chosen["affordance"]["candidates"].append(
+        {"id": "alice", "kind": "player", "name": "alice", "requirements": [0]}
+    )
+    chosen["slots"][0]["targets"] = ["alice"]
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + BADGE_MOUNT
+        + """
+        (() => {
+          const { calls } = mountBadges(baseState(), { action });
+          badge("my").onclick({ target: null });
+          badge("opp").onclick({ target: null });
+          return {
+            calls: calls.player, me: readBadge("my").classes, opp: readBadge("opp").classes,
+          };
+        })()
+        """,
+        action=chosen,
+    )
+    assert result["calls"] == ["alice", "bob"]
+    assert "chosen" in result["me"]
+    # The one slot is full, so nothing else is offered: bob is neither lit nor held.
+    assert "targetable" not in result["opp"] and "chosen" not in result["opp"]
+
+
+def test_a_zone_count_opens_that_zone_and_does_not_target_the_player() -> None:
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + BADGE_MOUNT
+        + """
+        (() => {
+          const { calls } = mountBadges(baseState());
+          const stopped = [];
+          const click = (side, zone) => {
+            const button = badge(side).querySelector(`.zone-${zone}`);
+            const event = { target: button, stopPropagation: () => stopped.push(zone) };
+            button.onclick(event);
+          };
+          click("opp", "graveyard");
+          click("my", "exile");
+          click("my", "command");
+          return { calls, stopped };
+        })()
+        """,
+    )
+    assert result["calls"] == {"player": [], "zones": ["opp-graveyard", "you-exile", "you-command"]}
+    assert result["stopped"] == ["graveyard", "exile", "command"]
+
+
+def test_the_badge_is_patched_in_place_across_polls() -> None:
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + BADGE_MOUNT
+        + """
+        (() => {
+          const { store } = mountBadges(baseState());
+          const el = badge("opp");
+          const life = el.querySelector(".life");
+          const pool = el.querySelector(".pool");
+          const zone = el.querySelector(".zone-graveyard");
+          const next = baseState({
+            graveyards: { bob: [creature("g9", "bob", { zone: "graveyard" })] },
+          });
+          next.players[1].life = 18;
+          store.set({ state: next });
+          const midZone = zone.textContent;
+          const samePool = el.querySelector(".pool") === pool;
+          const floating = baseState();
+          floating.players[1].life = 18;
+          floating.players[1].mana_pool = { floating: { G: 1 }, snow: {}, restricted: [] };
+          store.set({ state: floating });
+          return {
+            sameLife: el.querySelector(".life") === life,
+            lifeText: life.textContent,
+            sameZone: el.querySelector(".zone-graveyard") === zone,
+            midZone,
+            zoneText: zone.textContent,
+            samePool,
+            newPool: el.querySelector(".pool") !== pool,
+            children: el.children.length,
+          };
+        })()
+        """,
+    )
+    assert result["sameLife"] is True and result["lifeText"] == "18"
+    assert result["sameZone"] is True
+    assert result["samePool"] is True and result["newPool"] is True
+    assert result["midZone"] == "graveyard 1" and result["zoneText"] == "graveyard 0"
