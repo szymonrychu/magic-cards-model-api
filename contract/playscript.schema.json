@@ -89,6 +89,7 @@
         },
         "decision": {
           "enum": [
+            "assign_combat_damage",
             "choose_a_mode",
             "choose_a_quality",
             "choose_cards",
