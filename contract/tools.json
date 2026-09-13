@@ -367,6 +367,13 @@
         {
           "default": "",
           "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
           "name": "moved",
           "type": "str",
           "type_error": null
