@@ -2473,9 +2473,9 @@ def test_nothing_the_player_can_click_is_made_inert_while_a_request_is_out() -> 
 def test_the_toast_never_intercepts_a_click() -> None:
     """`.toast` is text-only - every call site passes a string - and it sits
     `position: fixed` over the bottom centre of the viewport for 4000ms on
-    every refusal, which is exactly where `#my-hand` and `#you-info` are. Its
-    sibling `.card-preview` has carried `pointer-events: none` all along;
-    this brings the two into step.
+    every refusal, which is exactly where `#my-hand` and `#you-info` are. The
+    card preview `.card-zoom` carries `pointer-events: none` for the same
+    reason; this brings the two into step.
 
     A style rule has no behaviour to drive under Node, so this pins the
     declaration in the stylesheet itself rather than claiming a red-green

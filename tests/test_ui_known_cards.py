@@ -233,7 +233,7 @@ def test_more_known_cards_than_the_hand_holds_is_clamped_with_a_warning() -> Non
 
 def test_known_opponent_hand_cards_are_hoverable() -> None:
     result = run_module(
-        "render/panels.js",
+        "preview.js",
         """
         Object.keys(m.hoverableCards({
           you: "alice",

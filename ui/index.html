@@ -286,7 +286,9 @@
     <div id="log-box"></div>
   </aside>
 
-  <div id="card-preview" class="card-preview" hidden></div>
+  <!-- The card preview (`ui/preview.js`): a hovered card enlarged over
+       itself, or a long-pressed card as a centred overlay. -->
+  <div id="card-zoom" class="card-zoom" aria-hidden="true" hidden></div>
   <div id="toast" class="toast" hidden></div>
   <div id="popover" class="popover" hidden></div>
   <!-- A small decision (yes/no, a payment, an amount, a quality or mode, top

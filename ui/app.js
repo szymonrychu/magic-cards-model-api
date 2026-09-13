@@ -42,7 +42,8 @@ import { mountAdvice } from "./render/advice.js";
 import { withoutUid } from "./advice_model.js";
 import { mountLobby } from "./render/lobby.js";
 import { mountReview } from "./render/review.js";
-import { mountTopbar, mountHoverPreview, closeModal } from "./render/panels.js";
+import { mountTopbar, closeModal } from "./render/panels.js";
+import { mountCardPreview } from "./preview.js";
 import { loadSavedGames, saveGames, upsertSavedGame, seatsFromRow } from "./lobby_model.js";
 import { loadConfig, apiBase, lobbyBase } from "./config.js";
 
@@ -1899,7 +1900,7 @@ async function main() {
     onPassForAiSeat: passForAiSeat,
     onReportProblem: reportProblem,
   });
-  mountHoverPreview(document, store);
+  mountCardPreview(document, store);
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     const modal = document.querySelector("#modal");

@@ -1,9 +1,9 @@
 // Everything above the board that is not the ribbon: the topbar (turn info,
-// phase track, AI seat panel, connection pill), the AI-stall banner, the
-// hover card preview, and the "report a problem" form, `#modal`'s other
-// occupant. Split out of `ui/app.js` per Task 17's own size guidance, once
-// porting the old classic script's AI panel and modal pieces onto the new
-// buildless modules would have pushed `app.js` well past ~700 lines.
+// phase track, AI seat panel, connection pill), the AI-stall banner, and
+// the "report a problem" form, `#modal`'s other occupant. Split out of
+// `ui/app.js` per Task 17's own size guidance, once porting the old classic
+// script's AI panel and modal pieces onto the new buildless modules would
+// have pushed `app.js` well past ~700 lines.
 //
 // Ported from the old `ui/app.js` (deleted by this task): `renderAiPanel`,
 // `showAiError`, `showFallbackBox` (app.js:2835-2883), `renderPhaseTrack`/the
@@ -29,8 +29,6 @@
 // `PlayPermission`, `machines/casting.py`).
 
 import { h, clear } from "../dom.js";
-import { withSymbols } from "../symbols.js";
-import { decisionCards } from "../decisions.js";
 import { STEPS, PHASE_OF } from "../priority.js";
 import { aiStallNotice, aiSeatLoadingNotice, aiSeatActivityLabel } from "../store.js";
 
@@ -320,103 +318,4 @@ export function openReportModal(root, handlers) {
       )
     );
   });
-}
-
-// ---------------------------------------------------------- hover preview --
-
-/** Every card a live seat's view can ever put a `.card[data-card-id]` node
- * on screen for - battlefield, stack, exile, your own hand, every
- * graveyard, (CR 601.3) any card a play permission names, and the cards of
- * this seat's own pending decision (a library card a scry or a search shows
- * exists nowhere else on the view) - keyed by id, fresh on each hover rather
- * than kept live, so a card that only exists because of a permission still
- * previews correctly. The decision's cards go in first, so a card that is
- * also on the board previews as its board view. The opponent's hand cards
- * this seat knows (`known_cards[you].hand`) are drawn face up on the board,
- * so they preview like any other visible card. */
-export function hoverableCards(state) {
-  const lookup = {};
-  const add = (card) => {
-    if (card && card.id) lookup[card.id] = card;
-  };
-  const pending = state.pending_decision;
-  if (pending && pending.player === state.you) decisionCards(pending).forEach(add);
-  (state.battlefield || []).forEach(add);
-  (state.stack || []).forEach(add);
-  (state.exile || []).forEach(add);
-  (state.exile_pile || []).forEach(add);
-  (state.command || []).forEach(add);
-  ((state.hands && state.hands[state.you]) || []).forEach(add);
-  ((state.known_cards && state.known_cards[state.you] && state.known_cards[state.you].hand) || []).forEach(add);
-  Object.values(state.graveyards || {}).forEach((cards) => (cards || []).forEach(add));
-  ((state.play_permissions && state.play_permissions[state.you]) || []).forEach((p) => add(p.card));
-  return lookup;
-}
-
-function showPreview(root, symbols, card) {
-  const box = root.querySelector("#card-preview");
-  if (!box) return;
-  clear(box);
-  const img = card.image || card.small_image;
-  if (img) {
-    const image = h("img", {
-      src: img,
-      alt: card.name || "",
-      onerror: (e) => e.target.remove(),
-    });
-    box.appendChild(image);
-  } else {
-    box.appendChild(
-      h(
-        "div",
-        { class: "fallback-text" },
-        h("span", { class: "name" }, card.name || card.card_name || "?"),
-        h("br"),
-        h("span", { class: "type" }, card.type_line || ""),
-        h("div", { class: "oracle" }, withSymbols(symbols, card.oracle_text || card.text || ""))
-      )
-    );
-  }
-  box.hidden = false;
-}
-
-function hidePreview(root) {
-  const box = root.querySelector("#card-preview");
-  if (box) box.hidden = true;
-}
-
-/** Wire a `mouseover`/`mouseout` delegate on `boardEl` that shows whichever
- * `.card[data-card-id]` node is hovered in `#card-preview`, ported from the
- * classic script's `wireCardPreview`/`showPreview`/`hidePreview`. A no-op
- * (rather than double-wiring listeners) on an element already wired -
- * `boardEl.dataset.previewWired` marks it, the same guard the old code used
- * - so this can safely be called again after `#modal` rebuilds its own
- * content on every open. */
-function wireOn(root, boardEl, store) {
-  if (!boardEl || boardEl.dataset.previewWired) return;
-  boardEl.dataset.previewWired = "1";
-  boardEl.addEventListener("mouseover", (e) => {
-    const el = e.target.closest(".card[data-card-id]");
-    if (!el) return;
-    const app = store.get();
-    if (!app.state) return;
-    const card = hoverableCards(app.state)[el.dataset.cardId];
-    if (card) showPreview(root, app.symbols, card);
-  });
-  boardEl.addEventListener("mouseout", (e) => {
-    const el = e.target.closest(".card[data-card-id]");
-    const to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest(".card") : null;
-    if (el && !to) hidePreview(root);
-  });
-}
-
-/** Mount the hover preview onto `#mtg-board`, `#modal` (its content is
- * rebuilt fresh every time it opens, but the modal element itself persists,
- * so wiring it once here is enough), and the persistent `#decision-window`.
- * `store` supplies both the card lookup and the mana-symbol map for oracle
- * text. */
-export function mountHoverPreview(root, store) {
-  wireOn(root, root.querySelector("#mtg-board"), store);
-  wireOn(root, root.querySelector("#modal"), store);
-  wireOn(root, root.querySelector("#decision-window"), store);
 }

@@ -718,7 +718,7 @@ def test_the_popover_layer_does_not_dim_the_board_and_keeps_the_z_ladder() -> No
     body = rule.group(1)
     assert "position: fixed" in body
     assert "inset" not in body
-    assert _css_z(css, ".card-preview") == 40
+    assert _css_z(css, ".card-zoom") == 65
     assert _css_z(css, ".popover") == 50
     assert _css_z(css, ".decision-popover") == 50
     assert _css_z(css, ".modal") == 60
