@@ -1953,8 +1953,10 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 
 /* A long press on a card opens the preview, so the browser's own long-press
    behaviours (the iOS callout, the context menu, selecting the text) stay
-   off cards. `touch-action` still lets a finger scroll a card row either way. */
-.card {
+   off cards, and off the stack's objects, which stand for cards too.
+   `touch-action` still lets a finger scroll a card row either way. */
+.card,
+.stack-object {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;

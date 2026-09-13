@@ -449,7 +449,7 @@ def test_every_card_surface_previews_and_nothing_else_does() -> None:
         """
         (async () => {
           const rect = { left: 500, top: 300, width: 100, height: 140 };
-          const surfaces = { BOARD, HAND, STACK, RIBBON, WIN, MODAL, POPOVER, LOBBY };
+          const surfaces = { BOARD, HAND, RIBBON, WIN, MODAL, POPOVER, LOBBY };
           const cards = {};
           for (const [name, parent] of Object.entries(surfaces)) {
             cards[name] = cardEl("c-" + name, rect, parent);
@@ -472,7 +472,6 @@ def test_every_card_surface_previews_and_nothing_else_does() -> None:
     assert result == {
         "BOARD": True,
         "HAND": True,
-        "STACK": True,
         "RIBBON": True,
         "WIN": True,
         "MODAL": True,
@@ -480,6 +479,84 @@ def test_every_card_surface_previews_and_nothing_else_does() -> None:
         "LOBBY": False,
         "touchHover": False,
     }
+
+
+BOARD_JS_URL = (UI / "render" / "board.js").as_uri()
+
+
+def test_a_spell_on_the_stack_as_board_js_draws_it_previews() -> None:
+    """The stack is not drawn with `cardNode`: `render/board.js` builds each
+    stack object as a bare `div.stack-object` keyed by the object's id through
+    `data-key`, with no `.card` class and no `data-card-id`. This drives the
+    real `mountBoard`, so the element hovered and pressed is exactly the one
+    the live UI puts in `#stack-row`."""
+    result = run(
+        """
+        (async () => {
+          for (const id of ["opp-info", "opp-hand", "opp-lands", "opp-battlefield",
+                            "red-zone", "my-battlefield", "my-lands", "you-info"]) {
+            box(id, BOARD);
+          }
+          const B = await import(BOARD_JS_URL);
+          const spell = (name) => ({
+            id: "s1", name, kind: "spell", image: "/large/" + name, targets: [],
+          });
+          const seat = (username) => ({
+            username, life: 20, hand_count: 0, library_count: 40, graveyard_count: 0,
+            mana_pool: {},
+          });
+          const boardState = (stack) => STATE({
+            active_player: "alice", priority_holder: "alice", step: "precombat_main",
+            players: [seat("alice"), seat("bob")],
+            stack, combat: { attacks: [] },
+          });
+          const { store } = await mounted(boardState([]));
+          let clicked = 0;
+          B.mountBoard(document, store, {
+            onPlayer() {}, onPermanent() {}, onHandCard() {}, onPermission() {},
+            onStackObject() { clicked += 1; },
+          });
+          store.set({
+            state: boardState([spell("Bolt")]), action: null, decisionDraft: {}, combatDraft: {},
+          });
+          const el = STACK.children[0];
+          el.rect = { left: 500, top: 300, width: 120, height: 40 };
+          const out = { drawnAs: el.className, cardId: el.dataset.cardId === undefined };
+
+          mouse(el.children[0], "pointerover");
+          out.hover = { shown: shown(), image: zoomImage() };
+          store.set({ state: boardState([spell("Shock")]) });
+          out.inPlace = { same: STACK.children[0] === el, shown: shown(), image: zoomImage() };
+          mouse(el, "pointerout", { relatedTarget: null });
+          out.left = shown();
+
+          touch(el, "pointerdown");
+          advance(m.LONG_PRESS_MS);
+          out.longPress = { shown: shown(), overlay: zoom().classList.contains("long-press") };
+          touch(el, "pointerup");
+          const ev = dispatch(el, "click", {});
+          out.release = { shown: shown(), clicked, prevented: ev.defaultPrevented };
+          advance(2000);
+
+          touch(el, "pointerdown");
+          advance(100);
+          touch(el, "pointerup");
+          dispatch(el, "click", {});
+          out.tap = clicked;
+          out.menu = dispatch(el, "contextmenu", {}).defaultPrevented;
+          return out;
+        })()
+        """,
+        BOARD_JS_URL=BOARD_JS_URL,
+    )
+    assert result["drawnAs"] == "stack-object" and result["cardId"] is True
+    assert result["hover"] == {"shown": True, "image": "/large/Bolt"}
+    assert result["inPlace"] == {"same": True, "shown": True, "image": "/large/Shock"}
+    assert result["left"] is False
+    assert result["longPress"] == {"shown": True, "overlay": True}
+    assert result["release"] == {"shown": False, "clicked": 0, "prevented": True}
+    assert result["tap"] == 1
+    assert result["menu"] is True
 
 
 def test_a_decision_card_and_an_unlisted_card_still_preview() -> None:
@@ -756,8 +833,10 @@ def test_the_preview_paints_over_everything_but_the_toast_and_never_takes_a_clic
 def test_cards_suppress_the_callout_and_selection_but_still_scroll() -> None:
     css = (UI / "style.css").read_text()
     section = css[css.index("card preview (ui/preview.js)") :]
-    rule = re.search(r"^\.card \{(.*?)^\}", section, re.M | re.S)
-    assert rule, "the preview section has no .card rule"
+    # A stack object stands for a card too (`render/board.js` draws it as a
+    # bare `.stack-object`), and a long press on it opens the preview.
+    rule = re.search(r"^\.card,\s*\.stack-object \{(.*?)^\}", section, re.M | re.S)
+    assert rule, "the preview section has no .card, .stack-object rule"
     body = rule.group(1)
     assert "-webkit-touch-callout: none" in body
     assert "user-select: none" in body

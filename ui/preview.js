@@ -21,7 +21,7 @@
 //
 // Everything is delegated from `document` (capturing, so a handler that
 // stops propagation cannot hide a gesture from this) and keyed on the card
-// element's `data-card-id`, looked up fresh against the store's state on
+// element's id (`cardIdOf`), looked up fresh against the store's state on
 // every paint - so a card element `patchChildren` keeps alive and
 // `updateCardNode` rewrites in place previews whatever it shows now.
 
@@ -41,6 +41,15 @@ export const HOVER_SCALE = 2.2;
 export const PREVIEW_SOURCES =
   "#mtg-board, #zone-ribbon, #stack-row, #my-hand, #opp-hand, #permitted-row, #decision-window, #modal, #popover";
 
+/** Every element that stands for a card: a `cardNode` anywhere, or an object
+ * on the stack, which `render/board.js` draws as a bare `.stack-object` keyed
+ * by the object's id through `data-key` (for a spell, the card's own id) -
+ * the same pair `render/decision_popover.js` anchors to. */
+export const CARD_SELECTOR = ".card[data-card-id], .stack-object[data-key]";
+
+/** The id of the card a `CARD_SELECTOR` element stands for. */
+const cardIdOf = (el) => (el.dataset.cardId !== undefined ? el.dataset.cardId : el.dataset.key);
+
 const HOVER_MARGIN_PX = 8;
 const OVERLAY_MARGIN_PX = 16;
 // Height over width of a printed card (63mm by 88mm).
@@ -49,8 +58,8 @@ const CARD_ASPECT = 88 / 63;
 // follow the release by up to ~300ms (`ui/store.js`'s `TOUCH_CLICK_MS`).
 const CLICK_SUPPRESS_MS = 700;
 
-/** Every card a live seat's view can ever put a `.card[data-card-id]` node
- * on screen for - battlefield, stack, exile, your own hand, every
+/** Every card a live seat's view can ever put a `CARD_SELECTOR` node on
+ * screen for - battlefield, stack, exile, your own hand, every
  * graveyard, (CR 601.3) any card a play permission names, and the cards of
  * this seat's own pending decision (a library card a scry or a search shows
  * exists nowhere else on the view) - keyed by id, fresh on each paint rather
@@ -127,7 +136,7 @@ function cardFromElement(el) {
     return node ? node.textContent : "";
   };
   return {
-    id: el.dataset.cardId,
+    id: cardIdOf(el),
     name: (img && img.getAttribute("alt")) || text(".name"),
     type_line: text(".type"),
     oracle_text: text(".oracle"),
@@ -212,7 +221,7 @@ export function mountCardPreview(root, store, view) {
 
   const cardFor = (el) => {
     const app = store.get() || {};
-    const found = app.state ? hoverableCards(app.state)[el.dataset.cardId] : null;
+    const found = app.state ? hoverableCards(app.state)[cardIdOf(el)] : null;
     return found || cardFromElement(el);
   };
 
@@ -270,7 +279,7 @@ export function mountCardPreview(root, store, view) {
 
   const cardAt = (target) => {
     if (!target || !target.closest) return null;
-    const el = target.closest(".card[data-card-id]");
+    const el = target.closest(CARD_SELECTOR);
     return el && el.closest(PREVIEW_SOURCES) ? el : null;
   };
 
@@ -333,7 +342,7 @@ export function mountCardPreview(root, store, view) {
 
   const onOut = (e) => {
     if (e.pointerType !== "mouse") return;
-    const el = e.target && e.target.closest ? e.target.closest(".card[data-card-id]") : null;
+    const el = e.target && e.target.closest ? e.target.closest(CARD_SELECTOR) : null;
     if (!el) return;
     const to = e.relatedTarget;
     if (to && el.contains(to)) return;
@@ -387,7 +396,7 @@ export function mountCardPreview(root, store, view) {
   };
 
   const onCardDefault = (e) => {
-    if (e.target && e.target.closest && e.target.closest(".card")) e.preventDefault();
+    if (e.target && e.target.closest && e.target.closest(".card, .stack-object")) e.preventDefault();
   };
 
   const onBlur = () => {
@@ -398,7 +407,7 @@ export function mountCardPreview(root, store, view) {
 
   const onStore = () => {
     if (!hoverAnchor) return;
-    if (!hoverAnchor.isConnected || !hoverAnchor.dataset.cardId) {
+    if (!hoverAnchor.isConnected || !cardIdOf(hoverAnchor)) {
       hideHover();
       return;
     }
