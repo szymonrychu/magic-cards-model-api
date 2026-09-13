@@ -743,6 +743,7 @@ CLI_COMMAND_TOOLS = {
     "cycle": "cycle",
     "play-land": "play_land",
     "activate": "activate",
+    "equip": "equip",
     "attackers": "declare_attackers",
     "blockers": "declare_blockers",
     "decide": "decide",
