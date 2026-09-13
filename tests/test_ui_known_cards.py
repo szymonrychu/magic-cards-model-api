@@ -73,7 +73,7 @@ BACK = {"classes": ["card-back"], "cardId": None}
 
 
 def known_card(card_id: str) -> dict:
-    return {"classes": ["card", "card--known", "card-sm"], "cardId": card_id}
+    return {"classes": ["card", "card--known", "card-fit"], "cardId": card_id}
 
 
 def test_no_known_cards_draws_only_card_backs() -> None:
@@ -206,7 +206,7 @@ def test_your_own_hand_is_drawn_the_same_whatever_you_know() -> None:
         """,
     )
     assert (
-        result["plain"] == result["knowing"] == [{"classes": ["card", "card-lg"], "cardId": "h1"}]
+        result["plain"] == result["knowing"] == [{"classes": ["card", "card-fit"], "cardId": "h1"}]
     )
     assert result["youChip"] is None
 

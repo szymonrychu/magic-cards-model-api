@@ -206,19 +206,25 @@
        rule: the battlefield is a shared zone and the Comprehensive Rules
        prescribe no physical layout for it at all. `ui/board_layout.js` does
        the sorting; `#opp-battlefield`/`#my-battlefield` keep their names as
-       the non-land rows. -->
+       the non-land rows.
+
+       The seven `.fit-row`s are fixed shares of the board's height (0.6 / 1 /
+       1.2 / 0.8 / 1.2 / 1 / 1.2, `style.css`), kept whether or not a row has
+       a card in it, so the board never jumps. Every card on them is sized
+       from its row's `--card-w`, which `render/board.js` fits with
+       `ui/fit.js`. Attackers and blockers are marked on the permanents
+       themselves; there is no separate red zone row. -->
   <div id="mtg-board">
     <div id="opp-info" class="info-row opp"></div>
-    <div id="opp-hand" class="hand-row hand-row-opp"></div>
-    <div id="opp-lands" class="battlefield-row lands-row"></div>
-    <div id="opp-battlefield" class="battlefield-row main-row"></div>
+    <div id="opp-hand" class="hand-row hand-row-opp fit-row"></div>
+    <div id="opp-lands" class="battlefield-row lands-row fit-row"></div>
+    <div id="opp-battlefield" class="battlefield-row main-row fit-row"></div>
 
-    <div id="stack-row" class="stack-row"></div>
-    <div id="red-zone" class="red-zone" hidden></div>
+    <div id="stack-row" class="stack-row fit-row"></div>
 
-    <div id="my-battlefield" class="battlefield-row main-row"></div>
-    <div id="my-lands" class="battlefield-row lands-row"></div>
-    <div id="my-hand" class="hand-row"></div>
+    <div id="my-battlefield" class="battlefield-row main-row fit-row"></div>
+    <div id="my-lands" class="battlefield-row lands-row fit-row"></div>
+    <div id="my-hand" class="hand-row fit-row"></div>
     <!-- CR 601.3's dynamic play permissions - a flashback grant, an exiled
          card made playable "this turn" (not cascade or suspend, battle 8 -
          each of those casts inline instead) - cast again from wherever they

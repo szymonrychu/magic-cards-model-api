@@ -259,19 +259,23 @@ def test_a_crowded_board_row_scrolls_instead_of_painting_over_its_neighbour(
     the two land rows and the exile strip joined it, and a hand-maintained
     list of tracks that has to stay in step with the row order is exactly
     what the original bug came out of. The guarantee is unchanged, and is
-    now stated by the rows themselves - the growing row has a one-card floor,
-    and every row scrolls inside itself rather than painting over the next."""
+    now stated by the rows themselves - each of the seven board rows is a
+    fixed share of the board's height with a one-floor-card minimum, and a
+    row sizes its cards to fit (`ui/fit.js`) and scrolls sideways past the
+    floor, clipping rather than painting over the next."""
     css = client.get("/style.css").text
     # The declarations themselves, not a substring: each block's own comment
     # names its numbers too, so a bare `in css` stays green with the fix
     # reverted. Scoped to the rule each one is about.
     board = css.split("#mtg-board {", 1)[1].split("}", 1)[0]
     assert "display: flex;" in board and "flex-direction: column;" in board, board
-    main = css.split(".main-row {", 1)[1].split("}", 1)[0]
-    assert "flex: 1 1 0" in main, "the non-land row is the one that takes the slack"
-    assert "min-height: 162px" in main, "and it must never collapse under one card"
-    rows = css.split(".hand-row, .battlefield-row, .stack-row {", 1)[1].split("}", 1)[0]
-    assert "overflow-y: auto" in rows, "a row with more cards than fit must scroll itself"
+    rows = css.split("#mtg-board > .fit-row {", 1)[1].split("}", 1)[0]
+    assert "min-height: calc(44px * 88 / 63" in rows, "a row never collapses under one card"
+    assert "overflow-x: auto" in rows, "a row whose cards hit the floor scrolls itself"
+    assert "overflow-y: hidden" in rows, "and never paints over the row beneath"
+    for row in ("opp-hand", "opp-lands", "opp-battlefield", "my-battlefield", "my-lands"):
+        rule = css.split(f"\n#{row} {{", 1)[1].split("}", 1)[0]
+        assert "min-height: 0" not in rule, f"#{row} must keep the one-card floor"
 
 
 def test_each_seats_lands_sit_in_the_row_nearest_that_seat(client: TestClient) -> None:

@@ -1,13 +1,18 @@
-// The board itself: opponent info/hand/battlefield, the shared stack, the red
-// zone (attackers, shown only while there are any), your battlefield, your
-// hand, and your own info row - plus the zone ribbon (`#zone-ribbon`), the
-// column of graveyards and exiles standing between the battlefield and the
-// control ribbon. One `mountBoard(root, store, handlers)` subscribes to the
-// store and keeps `#opp-info`/`#opp-hand`/`#opp-lands`/`#opp-battlefield`/
-// `#stack-row`/`#zone-ribbon`/`#red-zone`/`#my-battlefield`/`#my-lands`/
-// `#my-hand`/`#you-info` patched via `dom.js`'s keyed `patchChildren`, so a
-// card kept alive across a poll tick does not lose a hover preview or a
-// mid-flight transition.
+// The board itself: opponent info/hand/battlefield, the shared stack, your
+// battlefield, your hand, and your own info row - plus the zone ribbon
+// (`#zone-ribbon`), the column of graveyards and exiles standing between the
+// battlefield and the control ribbon. One `mountBoard(root, store, handlers)`
+// subscribes to the store and keeps `#opp-info`/`#opp-hand`/`#opp-lands`/
+// `#opp-battlefield`/`#stack-row`/`#zone-ribbon`/`#my-battlefield`/
+// `#my-lands`/`#my-hand`/`#you-info` patched via `dom.js`'s keyed
+// `patchChildren`, so a card kept alive across a poll tick does not lose a
+// hover preview or a mid-flight transition. Attackers and blockers are marked
+// where they stand (`.attacking`/`.blocking`); there is no separate red zone.
+//
+// Every card on the seven board rows is `card-fit`: its size is the row's
+// `--card-w`, which `fitBoardRow` sets from `ui/fit.js` after every render
+// and whenever the board is resized, so a row's cards always fit its width
+// and height and a crowded row scrolls sideways once they reach the floor.
 //
 // Which permanent belongs in which row, and which cards are drawn tucked
 // under another card, is decided by `ui/board_layout.js` - pure functions
@@ -27,6 +32,15 @@ import { activeSlotIndex, candidateIds } from "../targeting.js";
 import { targetSlotIndex } from "../actions.js";
 import { manaPoolNodes } from "../symbols.js";
 import { opponentOf } from "../combat.js";
+import { fitCardWidth } from "../fit.js";
+
+/** The size class of every card on the seven board rows - sized from the
+ * row's `--card-w` in `style.css`, not a fixed pixel width. */
+const FIT = "card-fit";
+
+/** Height of `.stack-caption` under a stack card (`style.css`: 14px line plus
+ * a 2px margin), taken off `#stack-row`'s height before its cards are fitted. */
+const STACK_CAPTION_PX = 16;
 
 // Exported (Task 17's addition to this render module) so `render/panels.js`'s
 // zones popover can highlight a legal graveyard/exile target with the exact
@@ -151,6 +165,77 @@ export function patchStacks(container, entries, size, decorate) {
           decorate(child, item.card);
         }
       );
+      // A pile with a tapped (or about-to-tap) card in it reserves a
+      // landscape-wide box (`style.css`'s `.perm-stack[data-tapped]`), and
+      // `fitBoardRow` counts it as tapped when sizing the row.
+      el.dataset.tapped = String([...el.children].some(isTapped));
+    }
+  );
+}
+
+function isTapped(el) {
+  return Boolean(el.classList && (el.classList.contains("tapped") || el.classList.contains("preview-tap")));
+}
+
+function pixels(style, property) {
+  return (style && parseFloat(style[property])) || 0;
+}
+
+/** What `fit.js` needs to know about one child of a board row: whether it
+ * stands in a landscape box, and how many cards are tucked under it. */
+function footprint(el) {
+  if (el.classList && el.classList.contains("perm-stack")) {
+    return { tapped: el.dataset.tapped === "true", depth: Number(el.dataset.under) || 0 };
+  }
+  return { tapped: isTapped(el), depth: 0 };
+}
+
+/** Measure one board row and set its `--card-w` from `ui/fit.js`, toggling
+ * `.fit-scroll` when even the floor width does not fit. `reserveY` is height
+ * inside the row that is not card (a stack card's caption). A row with no
+ * layout box yet (hidden, or not in a rendering document) is left alone. */
+export function fitBoardRow(row, reserveY) {
+  if (!row || !row.clientWidth || !row.clientHeight) return null;
+  const style = typeof getComputedStyle === "function" ? getComputedStyle(row) : null;
+  const prints = [...row.children].map(footprint);
+  const fit = fitCardWidth({
+    width: row.clientWidth - pixels(style, "paddingLeft") - pixels(style, "paddingRight"),
+    height: row.clientHeight - pixels(style, "paddingTop") - pixels(style, "paddingBottom") - (reserveY || 0),
+    count: prints.length,
+    tapped: prints.filter((p) => p.tapped).length,
+    depths: prints.map((p) => p.depth),
+    gap: pixels(style, "columnGap"),
+  });
+  if (row.style && typeof row.style.setProperty === "function") {
+    row.style.setProperty("--card-w", `${fit.cardWidth}px`);
+  }
+  row.classList.toggle("fit-scroll", fit.scroll);
+  return fit;
+}
+
+/** One object on the stack, drawn as the card it is (a spell's printing, an
+ * ability's text card) with a caption under it for the two things the card
+ * cannot say: the announced X and what it targets. */
+function patchStackObjects(container, stack, app, onClick) {
+  patchChildren(
+    container,
+    stack,
+    (obj) => obj.id,
+    (obj) => h("div", { class: "stack-object" }, cardNode(obj, FIT, {}), h("span", { class: "stack-caption" })),
+    (el, obj) => {
+      updateCardNode(el.querySelector(".card"), obj, targetingOpts(app, obj.id));
+      // `x_value` (CR 202.3e - only set at all when the spell's cost has
+      // an `{X}` to announce, see `serialize._card_view`) is the one thing
+      // about a stack object a player cannot re-derive from its name: a
+      // Nature's Rhythm harmonized for X=8 looks identical to one cast for
+      // X=2 without this (battle-7, B7-13).
+      const bits = [];
+      if (obj.x_value != null) bits.push(`X=${obj.x_value}`);
+      if ((obj.targets || []).length) bits.push(`-> ${obj.targets.join(", ")}`);
+      const caption = bits.join(" ");
+      setText(el.querySelector(".stack-caption"), caption);
+      el.title = `${obj.name}${obj.kind === "ability" ? " (ability)" : ""}${caption ? ` ${caption}` : ""}`;
+      el.onclick = () => onClick(obj);
     }
   );
 }
@@ -317,8 +402,8 @@ function infoRow(el, app, player) {
 
 /**
  * Mount the board region into `root` (the element containing the ids listed
- * below - normally `#game`) and return the `store.subscribe` unsubscribe
- * function. `handlers = {onHandCard(card), onPermanent(card, event),
+ * below - normally `#game`) and return a function that unsubscribes from the
+ * store and stops the rows' resize observer. `handlers = {onHandCard(card), onPermanent(card, event),
  * onPlayer(username), onStackObject(obj), onPermission(permission, event),
  * onLand(card)}`; `onLand` is not called from here (a land click is a
  * `onHandCard`/`onPermanent` click the caller distinguishes by
@@ -339,7 +424,6 @@ export function mountBoard(root, store, handlers) {
     oppBf: $("#opp-battlefield"),
     stack: $("#stack-row"),
     zoneRibbon: $("#zone-ribbon"),
-    redZone: $("#red-zone"),
     myBf: $("#my-battlefield"),
     myLands: $("#my-lands"),
     myHand: $("#my-hand"),
@@ -348,7 +432,29 @@ export function mountBoard(root, store, handlers) {
   };
   els.oppInfo.onclick = () => handlers.onPlayer(opponentOf(store.get().state));
   els.youInfo.onclick = () => handlers.onPlayer(store.get().state.you);
-  return store.subscribe((app) => {
+  const fitted = [
+    [els.oppHand, 0],
+    [els.oppLands, 0],
+    [els.oppBf, 0],
+    [els.stack, STACK_CAPTION_PX],
+    [els.myBf, 0],
+    [els.myLands, 0],
+    [els.myHand, 0],
+  ];
+  const fitAll = () => {
+    for (const [row, reserveY] of fitted) fitBoardRow(row, reserveY);
+  };
+  // A window resize, the side panel growing, `#permitted-row` appearing: any
+  // of them changes a row's box without a render, so the rows are refitted
+  // on the resize itself as well as after every render below.
+  let observer = null;
+  if (typeof ResizeObserver === "function") {
+    observer = new ResizeObserver(fitAll);
+    const board = $("#mtg-board");
+    if (board) observer.observe(board);
+    for (const [row] of fitted) observer.observe(row);
+  }
+  const unsubscribe = store.subscribe((app) => {
     const state = app.state;
     if (!state) return;
     const you = state.you;
@@ -360,7 +466,7 @@ export function mountBoard(root, store, handlers) {
       els.oppHand,
       opponentHandItems(state, opp),
       (item) => item.key,
-      (item) => (item.card ? cardNode(item.card, "card-sm", {}) : cardBackNode()),
+      (item) => (item.card ? cardNode(item.card, FIT, {}) : cardBackNode()),
       (el, item) => {
         if (!item.card) return;
         updateCardNode(el, item.card, {});
@@ -375,46 +481,22 @@ export function mountBoard(root, store, handlers) {
     const mine = seatRows(layout, you);
     const theirs = seatRows(layout, opp.username);
     const live = (el, card) => updatePermanentNode(el, card, app, handlers.onPermanent);
-    patchStacks(els.oppLands, theirs.lands, "card-md", live);
-    patchStacks(els.oppBf, theirs.main, "card-md", live);
-    patchStacks(els.myBf, mine.main, "card-md", live);
-    patchStacks(els.myLands, mine.lands, "card-md", live);
+    patchStacks(els.oppLands, theirs.lands, FIT, live);
+    patchStacks(els.oppBf, theirs.main, FIT, live);
+    patchStacks(els.myBf, mine.main, FIT, live);
+    patchStacks(els.myLands, mine.lands, FIT, live);
     if (els.zoneRibbon) patchZoneRibbon(els.zoneRibbon, zoneRibbon(state, layout), app, handlers);
-    patchCards(els.myHand, state.hands[you] || [], app, "card-lg", handlers.onHandCard);
+    patchCards(els.myHand, state.hands[you] || [], app, FIT, handlers.onHandCard);
     if (els.permittedRow) {
       const permitted = (state.play_permissions && state.play_permissions[you]) || [];
       els.permittedRow.hidden = permitted.length === 0;
       patchPermissions(els.permittedRow, permitted, handlers.onPermission);
     }
-    patchChildren(
-      els.stack,
-      state.stack,
-      (o) => o.id,
-      () => h("div", { class: "stack-object" }, h("span", { class: "name" }), h("span", { class: "targets" })),
-      (el, obj) => {
-        const opts = targetingOpts(app, obj.id);
-        el.classList.toggle("targetable", opts.targetable);
-        el.classList.toggle("chosen", opts.chosen);
-        // `x_value` (CR 202.3e - only set at all when the spell's cost has
-        // an `{X}` to announce, see `serialize._card_view`) is the one thing
-        // about a stack object a player cannot re-derive from its name: a
-        // Nature's Rhythm harmonized for X=8 looks identical to one cast for
-        // X=2 without this (battle-7, B7-13).
-        const xNote = obj.x_value != null ? ` (X=${obj.x_value})` : "";
-        setText(
-          el.querySelector(".name"),
-          `${obj.name}${xNote}${obj.kind === "ability" ? " (ability)" : ""}`
-        );
-        setText(el.querySelector(".targets"), (obj.targets || []).length ? `-> ${obj.targets.join(", ")}` : "");
-        el.onclick = () => handlers.onStackObject(obj);
-      }
-    );
-    const attacking = state.battlefield.filter(
-      (c) =>
-        (app.combatDraft && app.state.step === "declare_attackers" && app.combatDraft[c.id]) ||
-        (state.combat.attacks || []).some((a) => a.attacker === c.id)
-    );
-    els.redZone.hidden = attacking.length === 0;
-    patchCards(els.redZone, attacking, app, "card-sm", handlers.onPermanent);
+    patchStackObjects(els.stack, state.stack, app, handlers.onStackObject);
+    fitAll();
   });
+  return () => {
+    unsubscribe();
+    if (observer) observer.disconnect();
+  };
 }

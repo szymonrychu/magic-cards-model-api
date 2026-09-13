@@ -334,10 +334,10 @@ h3 { font-size: 14px; }
 
 /* --------------------------------------------------------- the board ---- */
 
-/* A flex column, not a grid. Some of these rows (`#red-zone`,
-   `#permitted-row`) are `hidden` most of the time, and a `display: none`
-   element is not a flex item at all: it consumes neither height nor a gap,
-   and nothing below it lands on a differently-sized track when it appears.
+/* A flex column, not a grid. `#permitted-row` is `hidden` most of the time,
+   and a `display: none` element is not a flex item at all: it consumes
+   neither height nor a gap, and nothing below it lands on a differently-sized
+   track when it appears.
    The grid this replaced had to keep an explicit track list in sync with the
    row order by hand, and every row added here - the two land rows and the
    exile strip - was a chance to get that wrong.
@@ -350,13 +350,15 @@ h3 { font-size: 14px; }
    `.popover`, drawn over this column rather than into it - so clicking
    never changes the board's geometry.
 
-   Which rows grow is now stated by the rows themselves. `.main-row` (each
-   seat's non-lands) takes the slack; `.lands-row` and everything else is
-   content-sized. Every battlefield row keeps a one-card floor and scrolls
-   inside itself, because the cards do not clip: a row that collapsed painted
-   over the row beneath and swallowed its clicks. In the browser pass that put
-   a Forest on top of the casting strip's mode chips and a real click landed
-   on the Forest, so Kozilek's Command could not be cast at all. */
+   The seven card rows (`.fit-row`) are fixed shares of the board's height -
+   see `#mtg-board > .fit-row` below - and the info rows and `#permitted-row`
+   are content-sized around them, so the board is exactly as tall as its grid
+   area and the page never scrolls. Every row keeps a one-card floor and clips
+   inside itself, because a row that collapsed once painted over the row
+   beneath and swallowed its clicks. In the browser pass that put a Forest on
+   top of the casting strip's mode chips and a real click landed on the
+   Forest, so Kozilek's Command could not be cast at all. Only on a window too
+   short for seven floor-height rows does the board scroll, inside itself. */
 #mtg-board {
   grid-area: board;
   display: flex;
@@ -367,6 +369,7 @@ h3 { font-size: 14px; }
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 8px;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -407,6 +410,9 @@ h3 { font-size: 14px; }
   padding: 1px 7px;
 }
 
+/* The rows as a review frame draws them (`ui/render/review.js`), and the
+   base the live board's `.fit-row`s below override: wrapping rows of fixed
+   `card-sm` cards. */
 .hand-row, .battlefield-row, .stack-row {
   display: flex;
   gap: 5px;
@@ -421,20 +427,17 @@ h3 { font-size: 14px; }
   overflow-y: auto;
 }
 .battlefield-row { background: rgba(255, 255, 255, 0.017); align-content: flex-start; }
-/* Each seat's non-lands take whatever vertical room is going: that is the row
-   with the creatures in it, and the one a crowded board grows in. `min-height`
-   is one `card-md` plus the row's own padding, so it never collapses under
-   its cards (see `#mtg-board`). */
+/* In a review frame, each seat's non-lands take whatever vertical room is
+   going, with a one-`card-md` floor so the row never collapses under its
+   cards. The live board's rows are sized by `#mtg-board > .fit-row` below. */
 .main-row { flex: 1 1 0; min-height: 162px; }
 /* Lands sit in the row nearest their own controller - directly under the
-   opponent's hand at the top, directly above yours at the bottom. Content
-   sized: a mana base is one row of cards, and it should not be taking room
-   from the creatures. Slightly dimmer than the row above it, so the split
-   reads without a label. It does not shrink either (`0 0 auto`): a land row
-   that shrinks cuts the bottom off whatever is tucked under a land - the
-   browser pass caught a Utopia Sprawl sliced in half under its Forest once
-   the zone ribbon narrowed the board. The room has to come from somewhere,
-   and `#mtg-board` already scrolls. */
+   opponent's hand at the top, directly above yours at the bottom. Slightly
+   dimmer than the row above it, so the split reads without a label. In a
+   review frame it is content sized and never shrinks: a land row that shrinks
+   cuts the bottom off whatever is tucked under a land (a Utopia Sprawl sliced
+   in half under its Forest, once). On the live board the row keeps a fixed
+   height instead and `ui/fit.js` sizes the cards so the pile fits it. */
 .lands-row { flex: 0 0 auto; background: rgba(255, 255, 255, 0.008); }
 .hand-row { background: rgba(107, 164, 255, 0.05); }
 .hand-row-opp { opacity: 0.75; }
@@ -449,7 +452,6 @@ h3 { font-size: 14px; }
   align-items: center;
   padding: 6px;
 }
-.stack-row.empty { min-height: 26px; border-color: var(--line); }
 .stack-row::before {
   content: "stack";
   font-size: 10px;
@@ -458,6 +460,91 @@ h3 { font-size: 14px; }
   color: var(--ink-faint);
   margin-right: 6px;
 }
+
+/* ------------------------------------------------ the live board rows ---- */
+
+/* The seven card rows of the live board, top to bottom: the opponent's hand,
+   lands and other permanents, the stack, then yours mirrored. Each is a fixed
+   share of the board's height (`flex-basis: 0` and a weight per row), kept
+   whether or not the row has a card in it, so nothing on the board moves
+   when a card arrives. The cards are sized to the row instead: every card on
+   these rows is `card-fit`, as wide as the row's `--card-w`, which
+   `render/board.js` sets from `ui/fit.js` after every render and on every
+   resize - the largest width at which every card, tapped ones standing in a
+   landscape box and piles with their tuck offsets, fits the row's width and
+   height. Below the 44px floor the cards stop shrinking and the row scrolls
+   sideways (`overflow-x: auto`).
+
+   The one-card floor (`min-height`) stays: a row that collapsed once painted
+   its cards over the row beneath and swallowed its clicks (see
+   `#mtg-board`), and a row is never shorter than one floor-width card.
+   `overflow-y: hidden` is the second half of that guarantee - nothing a row
+   holds can paint outside it. */
+.fit-row, .perm-stack {
+  --card-h: calc(var(--card-w, 76px) * 88 / 63);
+}
+#mtg-board > .fit-row {
+  --card-w: 76px;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  align-content: flex-start;
+  min-width: 0;
+  min-height: calc(44px * 88 / 63 + 8px);
+  padding: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+#opp-hand { flex: 0.6 1 0; }
+#opp-lands { flex: 1 1 0; }
+#opp-battlefield { flex: 1.2 1 0; }
+#stack-row { flex: 0.8 1 0; }
+#my-battlefield { flex: 1.2 1 0; }
+#my-lands { flex: 1 1 0; }
+#my-hand { flex: 1.2 1 0; }
+/* The stack's cards carry a caption line under them (`STACK_CAPTION_PX` in
+   `render/board.js`), so its floor is one card plus that line, and its label
+   stands sideways in the left padding rather than taking a card's room. */
+#mtg-board > #stack-row {
+  position: relative;
+  min-height: calc(44px * 88 / 63 + 8px + 16px);
+  padding-left: 20px;
+}
+#stack-row::before {
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  margin: 0;
+  writing-mode: vertical-rl;
+  transform: translateY(-50%) rotate(180deg);
+}
+/* Content sized, never squeezed to nothing by the fixed-share rows. */
+#mtg-board > .info-row, #mtg-board > #permitted-row { flex: 0 0 auto; }
+
+/* One stack object on the live board: the card itself, then a one-line
+   caption for what the card cannot say - the announced X and its targets.
+   The targeting outline is on the card, like any other card. */
+#stack-row > .stack-object {
+  flex: 0 0 auto;
+  gap: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+.stack-caption {
+  display: block;
+  width: var(--card-w);
+  height: 14px;
+  margin-top: 2px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A stack object as a review frame writes it: a text chip. */
 .stack-object {
   display: flex;
   flex-direction: column;
@@ -471,8 +558,6 @@ h3 { font-size: 14px; }
 }
 .stack-object .name { font-weight: 600; }
 .stack-object .targets { color: var(--ink-dim); font-size: 11px; }
-.stack-object.targetable { outline: 2px dashed var(--accent); outline-offset: 2px; }
-.stack-object.chosen { outline: 3px solid var(--good); outline-offset: 2px; }
 
 /* Exile as a horizontal strip. The live board no longer has one - its zones
    are the `#zone-ribbon` column below - but a review frame still draws its
@@ -619,21 +704,6 @@ h3 { font-size: 14px; }
   overflow-y: auto;
 }
 
-/* The row of attackers, mirroring MTGO's "red zone" - shown only while
-   there is at least one attacker to show (CR 508's declare attackers step
-   onward). */
-.red-zone {
-  display: flex;
-  gap: 5px;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  min-height: 40px;
-  padding: 4px 6px;
-  border: 1px solid var(--bad);
-  border-radius: 7px;
-  background: rgba(242, 105, 95, 0.06);
-}
-
 /* The control ribbon's panel where a spell being cast or an ability being
    activated stages its choices before it is fired (CR 601.2's announcement
    sequence). It is in `#side-panel`, directly under `#prompt-box` - see
@@ -680,7 +750,15 @@ h3 { font-size: 14px; }
    and every card in the pile keeps a visible, clickable edge. `--pile` is how
    many are underneath (the wrapper reserves exactly that much room, so a pile
    never overhangs the row below); `--depth` is one card's place in it, with
-   `0` for the permanent itself.
+   `0` for the permanent itself. The offsets are fractions of the card width
+   (`--tuck-x`/`--tuck-y`, the same ratios as `ui/fit.js`'s `TUCK_X`/`TUCK_Y`),
+   so a pile scales with its cards; `76px` is `card-sm`'s width, for a review
+   frame's rows, which have no `--card-w`.
+
+   A pile holding a tapped card (`data-tapped`, set by `patchStacks`) is at
+   least one landscape card wide, and a pile with anything under it at least
+   one portrait card plus its offsets tall, so a card turned sideways or
+   tucked under a tapped host still sits inside its own pile's box.
 
    Offsets are `top`/`left`, not `transform`, so `.card.tapped`'s rotation and
    `.card:hover`'s lift still work on a tucked card. A pile deeper than the
@@ -691,9 +769,13 @@ h3 { font-size: 14px; }
   position: relative;
   flex: 0 0 auto;
   --pile: 8;
-  padding-right: calc(var(--pile) * 9px);
-  padding-bottom: calc(var(--pile) * 20px);
+  --tuck-x: calc(var(--card-w, 76px) * 9 / 108);
+  --tuck-y: calc(var(--card-w, 76px) * 20 / 108);
+  padding-right: calc(var(--pile) * var(--tuck-x));
+  padding-bottom: calc(var(--pile) * var(--tuck-y));
 }
+.perm-stack[data-tapped="true"] { min-width: calc(var(--card-h) + var(--pile) * var(--tuck-x)); }
+.perm-stack:not([data-under="0"]) { min-height: calc(var(--card-h) + var(--pile) * var(--tuck-y)); }
 .perm-stack[data-under="0"] { --pile: 0; }
 .perm-stack[data-under="1"] { --pile: 1; }
 .perm-stack[data-under="2"] { --pile: 2; }
@@ -706,8 +788,8 @@ h3 { font-size: 14px; }
 .perm-stack > .card.tucked {
   position: absolute;
   --depth: 8;
-  top: calc(var(--depth) * 20px);
-  left: calc(var(--depth) * 9px);
+  top: calc(var(--depth) * var(--tuck-y));
+  left: calc(var(--depth) * var(--tuck-x));
   z-index: 1;
 }
 .perm-stack > .card[data-tuck="1"] { --depth: 1; }
@@ -797,6 +879,54 @@ h3 { font-size: 14px; }
     radial-gradient(circle at 50% 40%, #3a3050 0%, #201a2c 62%, #14101c 100%);
   border: 2px solid #4a3f63;
   flex: 0 0 auto;
+}
+
+/* A card on one of the live board's seven rows: as wide as the row's
+   `--card-w` (`ui/fit.js`), always 63:88, and everything drawn on it - the
+   badges, the counters, the fallback text - in `em`s of a font size that
+   scales with the card, so a shrunk card is the same card, smaller.
+
+   A tapped card reserves a landscape box: the element itself becomes 88:63
+   and only the art inside it turns, so it takes a tapped card's real room in
+   the row and never overlaps its neighbours - a bare `rotate` on the element
+   would leave a portrait-sized layout box and paint over both sides. The
+   same for `preview-tap`, the tap the in-flight action would take. */
+.card.card-fit {
+  width: var(--card-w);
+  aspect-ratio: 63 / 88;
+  font-size: max(7px, calc(var(--card-w) * 10 / 108));
+}
+.card.card-fit.tapped,
+.card.card-fit.preview-tap {
+  width: var(--card-h);
+  aspect-ratio: 88 / 63;
+  transform: none;
+}
+.card.card-fit.tapped:hover, .card.card-fit.preview-tap:hover { transform: translateY(-3px); }
+.card.card-fit > .card-visual,
+.card.card-fit > .card-fallback {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--card-w);
+  height: var(--card-h);
+  transform: translate(-50%, -50%);
+}
+.card.card-fit > .card-visual { object-fit: cover; }
+.card.card-fit.tapped > .card-visual, .card.card-fit.tapped > .card-fallback,
+.card.card-fit.preview-tap > .card-visual, .card.card-fit.preview-tap > .card-fallback {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+.card.card-fit > .card-fallback { font-size: 0.9em; padding: 0.45em; }
+.card-fit .badge, .card-fit .held-count { font-size: 1em; padding: 0.2em 0.4em; }
+.card-fit .badge-loyalty { font-size: 1.2em; min-width: 1.7em; padding: 0.25em 0.4em; }
+.card-fit .badge-sick { font-size: 1.1em; }
+.card-fit .counter-chip { font-size: 0.9em; padding: 0.2em 0.4em; }
+.card-fit.card--known::after { font-size: 0.9em; padding: 0.2em 0.4em; }
+.fit-row .card-back {
+  width: var(--card-w);
+  height: var(--card-h);
+  border-width: max(1px, calc(var(--card-w) * 2 / 76));
 }
 
 /* An opponent's hand card this seat knows, drawn face up among the card
@@ -1725,6 +1855,9 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
     grid-template-areas: "top" "banner" "board" "zones" "side";
     height: auto;
   }
+  /* The grid no longer gives the board a height of its own, and its rows are
+     fixed shares of one - so it takes a viewport's worth itself. */
+  #mtg-board { height: calc(100vh - 60px); }
   #zone-ribbon { flex-direction: row; overflow-x: auto; }
   .zone-pile { flex: 1 1 0; min-width: 96px; max-height: 168px; }
   .zone-pile.empty { flex: 0 1 auto; }
