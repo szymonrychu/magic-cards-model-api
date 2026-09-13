@@ -103,6 +103,36 @@ services:
       timeout: 3s
       retries: 20
 
+  # A15: one-shot clone of the deck-guides corpus (github.com/szymonrychu/
+  # mtg-decks) into the named `agent-guides` volume, writable - the same
+  # script and image the k8s `guides` initContainer uses (deploy/seat-
+  # job.yaml, deploy/guides-clone.sh), so compose populates `/guides` the
+  # same way kubernetes does rather than bind-mounting the owner's own
+  # $MTG_DECKS checkout into agent/driver. Always clones `main`: the agent
+  # commits and pushes guide changes onto it, the same as a seat Job.
+  guides-init:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile.agent
+      platforms:
+        - ${DOCKER_PLATFORM:-linux/amd64}
+      args:
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        AGENT_UID: ${AGENT_UID:-1000}
+        AGENT_GID: ${AGENT_GID:-1000}
+    command: ["/bin/sh", "/usr/local/bin/guides-clone.sh"]
+    environment:
+      - GH_PAT_FILE=/var/run/mtg-decks-git/GH_PAT
+      - GUIDES_REF=main
+      - GIT_TERMINAL_PROMPT=0
+      - HOME=/agent-home
+    secrets:
+      - source: mtg_decks_gh_pat
+        target: /var/run/mtg-decks-git/GH_PAT
+    volumes:
+      - agent-guides:/guides
+
   agent:
     platform: ${DOCKER_PLATFORM:-linux/amd64}
     build:
@@ -117,6 +147,8 @@ services:
     depends_on:
       game:
         condition: service_healthy
+      guides-init:
+        condition: service_completed_successfully
     ports:
       - "8080:8080"
     environment:
@@ -147,10 +179,29 @@ services:
       # `wrapper/activity.py`.
       - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-tools}
       - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
+      # Who this agent is, for the branches and commits it makes in the
+      # writable guides checkout (`playscripts/gitwork.py:identity`) -
+      # consistent with the k8s seat Job's `__MTG_ROLE__`/`__MTG_GAME_ID__`
+      # (deploy/seat-job.yaml). Compose runs one continuous agent recycled
+      # across matches rather than one Job per game, so MTG_GAME_ID cannot be
+      # stamped once and stay right for every match the way a seat Job's can;
+      # it is `seat` (the only role compose ever plays; the buddy/advisor
+      # role is kubernetes-only today) and an optional override for whoever
+      # drives a script command by hand - see the README and .env.example.
+      - MTG_ROLE=seat
+      - MTG_GAME_ID=${MTG_GAME_ID:-}
+    secrets:
+      - source: mtg_decks_gh_pat
+        target: /var/run/mtg-decks-git/GH_PAT
     volumes:
-      - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro
+      - agent-guides:/guides
       - ./memory:/workspace/memory
     restart: unless-stopped
+    # Mirrors k8s `terminationGracePeriodSeconds: 600` (deploy/seat-job.yaml):
+    # room for the agent's own handover wait (game end or `/release`) before
+    # compose sends SIGKILL. A plain `docker compose stop` still runs no
+    # handover of its own - see the README.
+    stop_grace_period: 10m
 
   driver:
     platform: ${DOCKER_PLATFORM:-linux/amd64}
@@ -169,11 +220,11 @@ services:
       - WRAPPER_API=http://agent:8080
       - DRIVER_SELF_URL=http://driver:8090
       # Also where the driver reads the guides corpus revision from. There
-      # is no `.guides-revision` stamp here - that is written by the
-      # kubernetes `guides` initContainer (`deploy/seat-job.yaml`) - so the
-      # driver falls back to the bind-mounted checkout's own `.git`, which
-      # is why $MTG_DECKS has to be a real clone rather than a copy of the
-      # files. See `mtg_agent/driver/revision.py`.
+      # is no `.guides-revision` stamp here - that is written by
+      # `deploy/guides-clone.sh` itself, both for the kubernetes `guides`
+      # initContainer (`deploy/seat-job.yaml`) and for `guides-init` below -
+      # so the driver reads it out of the `agent-guides` checkout's own
+      # `.git`. See `mtg_agent/driver/revision.py`.
       - GUIDES_ROOT=/guides
       - MEMORY_ROOT=/workspace/memory
       - DRIVER_WORKSPACE=/driver-workspace
@@ -182,9 +233,30 @@ services:
       # dispatched. Same filter, same escape hatch.
       - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
     volumes:
-      - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro
+      - agent-guides:/guides:ro
       - ./memory:/workspace/memory
+    # Mirrors k8s `terminationGracePeriodSeconds: 600` (deploy/seat-job.yaml):
+    # room for the driver's own handover wait (game end or `/release`) before
+    # compose sends SIGKILL. A plain `docker compose stop` still runs no
+    # handover of its own - see the README.
+    stop_grace_period: 10m
+
+secrets:
+  # Sourced from the MTG_DECKS_GH_PAT environment variable (loaded from .env
+  # by mise/compose), never from a file - so the real token never has to be
+  # a file on disk beyond the gitignored .env itself. Mounted only into
+  # guides-init (the clone) and agent (the wrapper's git credential helper,
+  # `bootstrap.write_gitconfig`, reads the same path,
+  # /var/run/mtg-decks-git/GH_PAT) - never into driver or game.
+  mtg_decks_gh_pat:
+    environment: MTG_DECKS_GH_PAT
 
 volumes:
   scryfall-cache:
   postgres-data:
+  # Writable deck-guides checkout, populated once per stack lifetime by
+  # guides-init and then written to by the agent. Unlike $MTG_DECKS (a bind
+  # mount of the owner's own local clone), this volume is compose's own copy
+  # - a fresh `docker compose down -v` drops it, and guides-init reclones on
+  # the next `up`.
+  agent-guides:
