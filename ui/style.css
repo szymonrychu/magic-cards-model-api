@@ -108,7 +108,8 @@ body.busy { cursor: progress; }
    are left alone for the same reason they always were - a page that traps
    the player in it while a request is out is worse than a slow one. */
 body.busy #side-panel button,
-body.busy #decision-window button {
+body.busy #decision-window button,
+body.busy #decision-popover button {
   opacity: 0.55;
 }
 
@@ -1091,6 +1092,34 @@ h3 { font-size: 14px; }
    deliberately: it is drawn outside the box and takes no layout space, so
    marking a card cannot move its neighbours. */
 .menu-open { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* A small decision beside the card asking it (`decision_popover.js`). The
+   card menu's layer (50): over the hover preview, under `.modal`. No scrim
+   and no `inset`, so the board stays live; placed beside the card, never
+   over it. Its border and the card's outline share the decision colour. */
+.decision-popover {
+  position: fixed;
+  z-index: 50;
+  min-width: 200px;
+  max-width: min(320px, calc(100vw - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-raised);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 8px 10px;
+}
+.decision-popover:focus { outline: none; }
+.decision-popover .decision h3 { margin: 0 0 4px; font-size: 13px; }
+.decision-popover input { max-width: 100%; }
+/* The card whose decision is open. `outline`, like `.menu-open`, so marking
+   it moves nothing around it. */
+.decision-source {
+  outline: 2px solid var(--warn);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgba(0, 0, 0, 0.35);
+}
 
 .tray-step { margin: 10px 0; }
 .tray-step > .label {

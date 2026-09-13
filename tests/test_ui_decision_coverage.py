@@ -252,3 +252,50 @@ def test_every_ui_decision_kind_has_exactly_one_surface() -> None:
         "choose_a_mode",
         "put_on_top_or_bottom",
     }
+
+
+#: The small kinds that open `ui/render/decision_popover.js`'s popover beside
+#: their source card when `pending_decision.source_card_id` names a rendered
+#: card, and fall back to `#prompt-box` otherwise. `choose_targets` is small
+#: but answered by clicking the board, so it never anchors.
+_POPOVER_KINDS = {
+    "may",
+    "pay_life",
+    "pay_energy",
+    "pay_mana",
+    "pay_energy_amount",
+    "pay_life_amount",
+    "opening_hand_action",
+    "choose_a_quality",
+    "choose_a_mode",
+    "put_on_top_or_bottom",
+}
+
+
+def test_every_popover_kind_has_a_prompt_box_renderer_and_no_window() -> None:
+    """`ui/decisions.js`'s `usesDecisionPopover` names exactly the small kinds
+    that anchor to their card. Each still has its `DECISION_KINDS` renderer
+    (the popover and its ribbon fallback render through it), none of them
+    uses the decision window, and the combat declarations are on no surface
+    of this table at all."""
+    import shutil
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not on PATH")
+    from ui_node import run_module
+
+    ui_side = _object_literal_keys(UI_DECISIONS_JS, "DECISION_KINDS")
+    assert ui_side is not None
+    kinds = sorted(ui_side | {kind.value for kind in _UI_HANDLED_ELSEWHERE})
+    routed = run_module(
+        "decisions.js",
+        "Object.fromEntries(ks.map((k) => [k, "
+        "[m.usesDecisionPopover({ kind: k }), m.usesDecisionWindow({ kind: k })]]))",
+        ks=kinds,
+    )
+    popover = {kind for kind, (anchors, _) in routed.items() if anchors}
+    assert popover == _POPOVER_KINDS
+    assert popover <= ui_side, "an anchored kind lost its renderer"
+    assert not {kind for kind in popover if routed[kind][1]}, "a kind is on two surfaces"
+    assert not popover & {kind.value for kind in _UI_HANDLED_ELSEWHERE}
+    assert ui_side - popover - _WINDOW_KINDS == {"choose_targets"}
