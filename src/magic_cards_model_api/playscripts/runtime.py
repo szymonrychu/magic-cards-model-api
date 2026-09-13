@@ -320,12 +320,19 @@ def run_script(
     corpus = _corpus(seat, corpora, fresh=bool(resume))
     if isinstance(corpus, ScriptExit):
         return RunResult(True, corpus)
+    supplied = dict(inputs or {})
+    asserted = supplied.get(BUILTIN_INPUT)
     ctx = _Context(
         seat=seat,
         reasoning=reasoning.strip(),
         corpus=corpus,
-        inputs=dict(inputs or {}),
-        catalog=input_catalog(list(declared_inputs or []), ()),
+        inputs=supplied,
+        # The runner has no deck directory to read matchup stems from, so the
+        # asserted archetype is its own enum value; the play's
+        # `opposing_archetypes` check is what judges it.
+        catalog=input_catalog(
+            list(declared_inputs or []), [asserted] if isinstance(asserted, str) else ()
+        ),
         deadline=now + cap,
         poll_seconds=poll_seconds,
         call_started=now,
