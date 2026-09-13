@@ -201,6 +201,30 @@ PROTOCOL_VERSION = "seatkit-18"
 #: the same `seatkit-18` rather than a bump, so an MCP process built on the
 #: first `seatkit-18` (equip only) misses `improvise` the same way.
 #:
+#: Found `pay_mana`'s named-sources answer unreachable: engine PR #17 (B6-08)
+#: taught `pay_mana` (CR 118.12a's "unless its controller pays {N}") to accept
+#: a tuple of mana-source ids alongside its plain yes/no, so CR 608.2g's
+#: "activate mana abilities before taking that action" can be answered by
+#: naming *which* untapped permanents to tap rather than only spending what
+#: was already floating - but `DecideRequest` had no field for the tuple and
+#: `PendingDecision` never carried the engine's own `Decision.mana_sources`,
+#: so a seat could only ever answer the bare `accept` and let the engine tap
+#: everything (or nothing). `decide` gained `mana_sources` (a subset of
+#: `pending_decision.mana_sources`, legal only alongside `accept: true`), and
+#: `pending_decision` itself gained `mana_sources` - the offered untapped
+#: permanents - so `answer_with`'s hint can say the option exists at all.
+#: `seat_cli decide` gained the matching `--sources`, following the same
+#: "name none, let the engine pick" rule `--sources` already carries on
+#: `cast`/`activate`.
+#:
+#: Nothing here is unsendable by an older build, unlike `improvise`: an MCP
+#: process built before this has no `mana_sources` parameter on `decide`, but
+#: the plain `accept` it already sends stays a real, legal answer - the
+#: engine taps every offered source on its own, exactly as before. So this
+#: rides the same `seatkit-18` for a different reason than `improvise`'s own
+#: paragraph gives: not "no build shipped in between", but "no build is left
+#: unable to express what the api still accepts".
+#:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row
 #: gained `optional_costs`, `printed_produces` and `activate_first`.

@@ -1684,6 +1684,7 @@ def build_server(seats: Seats) -> MCPServer:
         card_ids: str = "",
         targets: str = "",
         accept: bool | None = None,
+        mana_sources: str = "",
         moved: str = "",
         top_order: str = "",
         energy_amount: int | None = None,
@@ -1789,12 +1790,20 @@ def build_server(seats: Seats) -> MCPServer:
           target spell unless its controller pays {N}", CR 118.12a): `accept`
           is `True` to say yes, `False` to say no. A `pay_mana` decision is
           asked of the *targeted spell's controller*, not whoever cast the
-          counterspell, and only mana already floating in that player's pool
-          counts toward it - see `pending_decision.player` for who is
-          actually being asked. `pending_decision.affirmative_is_legal` is
-          `False` when yes is not a legal answer at all (too little life,
-          energy, or floating mana to pay) - answering `True` there is
-          refused.
+          counterspell, and CR 608.2g/CR 605.3a let that payment count both
+          mana already floating in that player's pool and the untapped mana
+          abilities they could activate right now - see `pending_decision
+          .player` for who is actually being asked. `pending_decision
+          .affirmative_is_legal` is `False` when yes is not a legal answer at
+          all (too little floating mana or too few untapped sources to pay) -
+          answering `True` there is refused.
+
+          `pay_mana` alone also takes `mana_sources` (engine PR #17, B6-08):
+          comma-separated ids, a subset of `pending_decision.mana_sources` -
+          the payer's own untapped permanents - naming which to activate
+          while paying, instead of leaving the engine to tap them all. Legal
+          only alongside `accept=True`; leave it empty (the default) for the
+          plain yes/no this kind has always taken.
         - `pay_energy_amount` (e.g. "pay any amount of {E}", CR 107.14,
           CR 118.3): `energy_amount` is an integer from 0 up to
           `pending_decision.amount` (the energy you actually have). Not the
@@ -1955,6 +1964,9 @@ def build_server(seats: Seats) -> MCPServer:
         }
         if accept is not None:
             body["accept"] = accept
+        sources = _parse_ids(mana_sources)
+        if sources:
+            body["mana_sources"] = sources
         if top_order:
             body["top_order"] = _parse_ids(top_order)
         if energy_amount is not None:

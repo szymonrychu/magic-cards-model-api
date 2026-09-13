@@ -970,6 +970,16 @@ class DecideRequest(BoardRead):
     `pay_life` decision, a fixed "pay {E}{E}" is `pay_energy`. `None` (the
     default) is refused rather than treated as "no": a client must say which
     one it means."""
+    mana_sources: list[str] | None = None
+    """The `pay_mana` kind's optional companion to `accept` (CR 608.2g, CR
+    605.3a; engine PR #17, B6-08): which of `pending_decision.mana_sources` -
+    the payer's own untapped permanents - to activate while paying, rather
+    than leaving the engine to tap them all. Legal only alongside `accept:
+    true` - naming sources while declining is refused, matching the engine's
+    own `Answer` shape. `None` (the default) is the plain yes/no this kind has
+    always taken; an empty list is a real, different answer from omitting the
+    field - pay from the floating pool alone, activating none of the offered
+    sources."""
     energy_amount: int | None = None
     """The `pay_energy_amount` kind's answer (CR 107.14, CR 118.3) - "pay any
     amount of {E}" (Galvanic Discharge), an integer from 0 up to
@@ -1565,6 +1575,11 @@ class PendingDecisionView(BaseModel):
     card_labels: list[str] | None = None
     exact: bool | None = None
     default_cards: list[str] | None = None
+    mana_sources: list[str] | None = None
+    """`pay_mana` only: the untapped permanents whose mana abilities the
+    payer may activate while paying (CR 608.2g, CR 605.3a; engine PR #17,
+    B6-08) - a subset of these is what `decide`'s own `mana_sources` names
+    back. Empty for every other kind."""
     card_details: list[CardView] | None = None
     """Only for the deciding player - the full view of exactly the ids
     `cards` names, resolved from zones `redact_view` otherwise strips

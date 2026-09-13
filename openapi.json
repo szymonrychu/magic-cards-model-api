@@ -4193,6 +4193,20 @@
             ],
             "title": "Life Amount"
           },
+          "mana_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Sources"
+          },
           "moved": {
             "items": {
               "type": "string"
@@ -7814,6 +7828,20 @@
           "kind": {
             "title": "Kind",
             "type": "string"
+          },
+          "mana_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Sources"
           },
           "moved_label": {
             "anyOf": [

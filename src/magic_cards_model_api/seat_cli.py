@@ -533,6 +533,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     decide.add_argument(
+        "--sources",
+        default="",
+        help=(
+            "comma-separated ids of the mana sources to activate while paying a "
+            "pay_mana decision (CR 608.2g, CR 605.3a; engine PR #17, B6-08), a "
+            "subset of pending_decision.mana_sources - legal only with --accept "
+            "yes. Omit it (or pass '') to name none: the engine then taps every "
+            "offered source it needs on its own, the same 'name none, let the "
+            "engine pick' rule --sources already follows on cast and activate"
+        ),
+    )
+    decide.add_argument(
         "--moved",
         default="",
         help=(
@@ -1057,6 +1069,9 @@ def run(argv: list[str] | None = None) -> int:
             }
             if args.accept is not None:
                 body["accept"] = args.accept == "yes"
+            sources = _parse_ids(args.sources)
+            if sources:
+                body["mana_sources"] = sources
             if args.top_order:
                 body["top_order"] = _parse_ids(args.top_order)
             if args.energy_amount is not None:

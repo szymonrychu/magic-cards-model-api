@@ -406,6 +406,7 @@
     "generation": 1,
     "kept_label": "exiled",
     "kind": "scry",
+    "mana_sources": [],
     "moved_label": "top of your library",
     "options": [],
     "player": "alice",

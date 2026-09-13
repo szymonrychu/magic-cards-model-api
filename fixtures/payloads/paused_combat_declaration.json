@@ -148,6 +148,7 @@
     "generation": 1,
     "kept_label": "",
     "kind": "declare_attackers",
+    "mana_sources": [],
     "moved_label": "",
     "options": [],
     "player": "alice",

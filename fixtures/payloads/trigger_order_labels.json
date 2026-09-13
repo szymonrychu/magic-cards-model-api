@@ -93,6 +93,7 @@
     "generation": 1,
     "kept_label": "",
     "kind": "order_triggers",
+    "mana_sources": [],
     "moved_label": "",
     "options": [],
     "player": "alice",

@@ -3310,11 +3310,23 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["order"] = req.order
+    elif kind is DecisionKind.PAY_MANA:
+        # CR 608.2g / CR 605.3a: a bare yes/no, or - naming which offered
+        # sources to activate (engine PR #17, B6-08) - `accept: true` plus
+        # `mana_sources`. Its own branch, split out of the plain-bool group
+        # below, because this is the one kind whose answer can be either
+        # shape; `pay_mana_answer` decides which.
+        try:
+            answer_value = decisions.pay_mana_answer(req.accept, req.mana_sources)
+        except ValueError as exc:
+            return refuse(str(exc), **detail)
+        detail["accept"] = req.accept
+        if req.mana_sources is not None:
+            detail["mana_sources"] = req.mana_sources
     elif kind in (
         DecisionKind.MAY,
         DecisionKind.PAY_LIFE,
         DecisionKind.PAY_ENERGY,
-        DecisionKind.PAY_MANA,
         # CR 103.6's "may take any such actions": the same yes/no shape.
         DecisionKind.OPENING_HAND_ACTION,
         # CR 103.5's declaration, "will you take a mulligan" - only
@@ -3397,8 +3409,19 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         decisions.validate_answer(engine_decision, answer_value)
     except ValueError as exc:
         return refuse(str(exc), **detail)
-    field_name = decisions.ANSWER_FIELD_FOR_KIND[kind]
-    answer = Answer(seq=pending.seq, kind=kind, player=req.player, **{field_name: answer_value})
+    if kind is DecisionKind.PAY_MANA and isinstance(answer_value, tuple):
+        # The engine's own `Answer` shape for this one: `card_ids` names the
+        # mana sources to activate, and rides alongside `accept=True` rather
+        # than replacing it (`Answer._check_one_value_field` refuses
+        # `card_ids` without `accept=True` - see `pay_mana_answer`'s own
+        # docstring for why declining and naming sources are mutually
+        # exclusive already).
+        answer = Answer(
+            seq=pending.seq, kind=kind, player=req.player, accept=True, card_ids=answer_value
+        )
+    else:
+        field_name = decisions.ANSWER_FIELD_FOR_KIND[kind]
+        answer = Answer(seq=pending.seq, kind=kind, player=req.player, **{field_name: answer_value})
     try:
         result, _, seq_hint = _resume(game_id, command, tape, pending, answer, player=req.player)
     except ValueError as exc:
