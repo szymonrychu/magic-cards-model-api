@@ -978,10 +978,18 @@ def validate_answer(decision: Decision, value: object) -> None:
         if not isinstance(value, bool):
             raise ValueError(f"{decision.prompt}: a yes-or-no question needs a bool answer")
         if value not in legal_options(decision):
-            raise ValueError(
-                f"{decision.prompt}: that option is illegal, so CR 608.2d "
-                f"does not allow choosing it"
+            # `models/game.py`'s `_illegal_option_refusal`, word for word.
+            refusal = (
+                f"{decision.prompt}: that option is illegal, so CR 608.2d does not allow "
+                "choosing it (\"The player can't choose an option that's illegal or impossible\")"
             )
+            if decision.kind is DecisionKind.PAY_MANA:
+                refusal += (
+                    " - the floating mana and the untapped mana sources available cannot pay "
+                    "it (CR 118.3: \"A player can't pay a cost without having the necessary "
+                    'resources to pay it fully")'
+                )
+            raise ValueError(refusal)
         return
 
     if decision.kind is DecisionKind.MULLIGAN:
