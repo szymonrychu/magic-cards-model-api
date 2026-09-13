@@ -160,7 +160,32 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-17"
+PROTOCOL_VERSION = "seatkit-18"
+#: `seatkit-18` is an **additive request** change and an **additive
+#: response** one: a new `equip` tool over a new `actions/equip` route, a
+#: legal-action row of kind `equip`, and rows gaining `printed_cost` and
+#: `unreadable_modes`.
+#:
+#: Battle 3 found equip unreachable (B3-01): CR 702.6a's ability is a keyword
+#: the engine builds (`equip_activation`), not one of the Equipment's
+#: `activated_abilities`, so Blade of the Bloodchief had no row and `activate`
+#: refused every index. `EquipRequest` names the Equipment and its target, the
+#: row carries the cost and target candidates, and `seat_cli equip` takes the
+#: same `card_id`/`--target`/`--sources` the tool does. Battles 3 and 4 also
+#: found rows that contradicted the engine: a cast row now prices the total
+#: cost the cast is charged (CR 601.2f) and keeps the old one as
+#: `printed_cost`; a modal row names each mode the engine cannot read as
+#: `unreadable_modes`, and a cast choosing one is refused rather than spending
+#: the card for nothing; a loyalty ability that adds mana is an `activate` row,
+#: never `activate_mana` (CR 605.1a); and an ability is offered only from the
+#: zone it functions in (CR 113.6). A paused read now carries the paused
+#: board's step, priority holder and counters, and `wake_reason` names the
+#: seat that owns a decision another seat's call raised.
+#:
+#: A bump, the same reasoning as `seatkit-17`: an MCP process built before it
+#: has no `equip` tool, so a seat told to equip has no way to. An older build
+#: meeting a row of kind `equip` passes it through untouched.
+#:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row
 #: gained `optional_costs`, `printed_produces` and `activate_first`.
@@ -779,6 +804,7 @@ ACTION_REQUEST_SHAPES: dict[str, str] = {
     "actions/concede": "ConcedeRequest",
     "actions/crew": "CrewRequest",
     "actions/cycle": "CycleRequest",
+    "actions/equip": "EquipRequest",
     "actions/declare-blockers": "DeclareBlockersRequest",
     "actions/foretell": "SpecialActionRequest",
     "actions/pass-priority": "PassPriorityRequest",
@@ -809,6 +835,7 @@ DRY_RUN_SHAPES = frozenset(
         "CastRequest",
         "CrewRequest",
         "CycleRequest",
+        "EquipRequest",
         "PlayLandRequest",
         "SpecialActionRequest",
     }
@@ -2055,6 +2082,25 @@ def _paused(outcome: Any) -> bool:
     return isinstance(outcome, dict) and outcome.get("paused") is True
 
 
+def _addressed_to(pending: Any, player: str) -> bool:
+    """Whether a paused answer's `pending_decision` is this seat's to answer
+    - the `player` it names, never merely the seat whose call paused."""
+    return isinstance(pending, dict) and pending.get("player") == player
+
+
+def _waiting_on_another_seat(pending: Any) -> str:
+    """`wake_reason` for a call that paused on a decision some other seat
+    owns: whose it is and what it asks, and that this seat does nothing."""
+    who = pending.get("player") if isinstance(pending, dict) else None
+    prompt = pending.get("prompt") if isinstance(pending, dict) else None
+    asked = f": {prompt}" if prompt else ""
+    return (
+        f"your action is paused on a decision {who or 'another player'} must make{asked} - "
+        "it is not yours to answer; it completes once they do. Call wait_for_priority "
+        "(or read state) to see what it came to"
+    )
+
+
 def is_stale(outcome: Any) -> bool:
     """Whether `outcome` is the server's own board-moved refusal
     (`records.BoardMoved`, `app._board_moved`): this seat named a ledger
@@ -2283,7 +2329,20 @@ def run_action(
         # `perform()` itself paused (`commands.py`) rather than a decision
         # surfacing mid-flight through the polling race above - see
         # `_paused`'s own docstring for why this is the common case now.
-        self_decision = outcome.get("pending_decision")
+        paused_on = outcome.get("pending_decision")
+        if _addressed_to(paused_on, seat.player):
+            self_decision = paused_on
+        else:
+            # B3-10: a decision is asked of whoever the resolving object
+            # names - bob's pass resolving alice's Galvanic Discharge asks
+            # alice. It is not this seat's to answer, and there is nothing
+            # for this seat to release or wait on inside this call.
+            return answered(
+                seat.fetch_state(),
+                outcome=outcome,
+                held_priority=None,
+                wake_reason=_waiting_on_another_seat(paused_on),
+            )
 
     if self_decision is not None:
         state = seat.fetch_state()
@@ -2358,7 +2417,16 @@ def run_action(
 
         pass_outcome, pass_self_decision = _call_watching_for_self_decision(seat, perform_pass)
         if pass_self_decision is None and _paused(pass_outcome):
-            pass_self_decision = pass_outcome.get("pending_decision")
+            paused_on = pass_outcome.get("pending_decision")
+            if not _addressed_to(paused_on, seat.player):
+                return answered(
+                    seat.fetch_state(),
+                    outcome=outcome,
+                    pass_outcome=pass_outcome,
+                    held_priority=False,
+                    wake_reason=_waiting_on_another_seat(paused_on),
+                )
+            pass_self_decision = paused_on
         if pass_self_decision is not None:
             # Releasing priority - not the action above, which already came
             # back clean - is what crossed a decision only this seat could
@@ -2493,16 +2561,12 @@ def start_autopass(state: dict[str, Any], until_step: str, whose_turn: str) -> d
     it.
 
     `started_pending_kind` narrows that same exemption for
-    `declare_attackers`/`declare_blockers` specifically: a paused decision
-    freezes `state["step"]` at whatever it was *before* the pause (see
-    `autopass_stop_reason`'s docstring), so a declare-blockers pause can show
-    the exact same `(turn_number, step)` pair a run's own declare-attackers
-    step already stamped as its start - two genuinely different occurrences
-    that would otherwise look identical to the `(turn, step)` pair alone.
-    Comparing the pending decision's own kind alongside it is what tells
-    "the pause the run began already sitting on" apart from "a different
-    pause that merely inherited the same frozen step" - `None` when the run
-    did not begin mid-pause at all.
+    `declare_attackers`/`declare_blockers` specifically: a run that began on
+    the paused declaration and a run that began in the same step after it was
+    answered show the same `(turn_number, step)` pair, and only the pending
+    decision's own kind tells "the pause the run began already sitting on"
+    apart from the rest of that step - `None` when the run did not begin
+    mid-pause at all.
 
     `known_stack_ids` is the same idea for the stack: only objects that arrive
     *after* the run began count as "something new landed", or a run started
@@ -2628,18 +2692,14 @@ def autopass_stop_reason(
     one, since a `pending_decision` addressed to this seat is exactly what a
     paused `declare_attackers`/`declare_blockers` looks like.
 
-    One more wrinkle conditions 4 and 5 both have to work around: a paused
-    `POST .../advance` (or the `pass-priority` that crosses the same
-    turn-based action while releasing priority) leaves `state["step"]` naming
-    the step the call was made *from*, not the one it paused trying to enter
-    (`app.py`'s `advance` docstring - "the committed game is left exactly as
-    it was") - the turn-based action that would have moved the step pointer
-    never finished, so it never moved. A `state["step"] == "declare_attackers"`
-    check can therefore never see the pause itself, only the state that
-    results *after* it is answered - which is too late to be a stop. Both
-    conditions read `pending_decision["kind"]` instead, which is stamped the
-    moment the question is asked, before anything about the step itself has
-    changed.
+    One more point conditions 4 and 5 both rest on: a paused `POST
+    .../advance` (or the `pass-priority` that crosses the same turn-based
+    action while releasing priority) commits nothing, but a read during the
+    pause names the step the question stands in (`serialize._paused_overlay`,
+    battle 3 B3-08). `state["step"] == "declare_attackers"` is also true for
+    the whole step after the declaration is answered, so it cannot tell the
+    two apart; both conditions read `pending_decision["kind"]`, which is
+    stamped the moment the question is asked.
 
     The two costs are different and worth stating separately rather than
     lumping together:
@@ -2695,12 +2755,10 @@ def autopass_stop_reason(
         and state.get("step") == run["started_step"]
         and state.get("turn_number") == run["started_turn"]
     )
-    # Conditions 4 and 5 cannot reuse that value on its own: a paused
-    # decision freezes `state["step"]` at whatever it was *before* the pause
-    # (see this function's own docstring above), so a declare-blockers pause
-    # can show the exact same `(turn, step)` pair a declare-attackers step
-    # already stamped as the run's start - two different occurrences that
-    # would otherwise look identical. `started_pending_kind`
+    # Conditions 4 and 5 cannot reuse that value on its own: the paused
+    # declaration and the rest of its step after it is answered show the
+    # same `(turn, step)` pair (see this function's own docstring above).
+    # `started_pending_kind`
     # (`start_autopass`) is what tells them apart: the exemption for a given
     # combat kind only holds when the run began already sitting on *that*
     # kind's own pause, not merely on a `(turn, step)` pair a later, different

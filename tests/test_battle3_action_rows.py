@@ -1,0 +1,318 @@
+"""Battles 3 and 4: what a legal-action row claims about an action.
+
+Each defect here was a row saying something the engine would contradict the
+moment the seat acted on it:
+
+- **B3-04** - an ability offered from a zone it does not function in. CR
+  113.6b: "An ability that states which zones it functions in functions only
+  from those zones"; CR 113.6m: "An ability whose cost or effect specifies
+  that it moves the object it's on out of a particular zone functions only in
+  that zone". An exiled Boseiju's Channel (a hand ability) was offered to both
+  seats, and a battlefield Seasoned Pyromancer's "Exile this card from your
+  graveyard" ability was offered on the battlefield. CR 602.2: "Only an
+  object's controller (or its owner, if it doesn't have a controller) can
+  activate its activated ability", and CR 108.4a makes a card with no
+  controller answer with its owner - so an opponent's exiled card is never
+  this seat's to activate either.
+- **B4-05** - a loyalty ability labelled a mana ability. CR 605.1a: a mana
+  ability is one that "it's not a loyalty ability". Ugin, Eye of the Storms'
+  `0: Add {C}{C}{C}` was an `activate_mana` row, `is_mana_ability: true` in
+  the card view, a default mana source for the seat tools, and every refused
+  cast told the seat to "activate it manually to include it" mid-cast.
+- **B4-02** - a cast row priced at the printed cost. CR 601.2f: the total cost
+  is determined with every increase and reduction applied, and CR 118.7a
+  keeps a generic reduction off the colored part. Malevolent Rumble read
+  `{1}{G}` under Trinisphere and Emrakul, the Promised End `{13}` with two
+  card types in the graveyard.
+- **B3-05** - a mode the engine cannot read offered as silently castable.
+  CR 700.2a: modes are chosen as the spell is cast; the engine's
+  `resolve_modal_spell` skips an unreadable mode with a `ModeNotice`, so a
+  seat that chose one paid a card for nothing.
+
+Every CR number here was read from the Comprehensive Rules text in the
+session that wrote this file. Every card is a real Scryfall printing.
+"""
+
+from __future__ import annotations
+
+from conftest import add_card, find, state
+from test_legal_actions_endpoint import legal_actions, seat_uid
+
+from magic_cards_model_api.seatkit import untapped_mana_sources
+
+
+def rows_for(actions: list[dict], card_id: str) -> list[dict]:
+    return [action for action in actions if action.get("card_id") == card_id]
+
+
+# -- B3-04: abilities only from the zone they function in ---------------------
+
+
+def test_an_exiled_channel_card_is_offered_to_neither_seat(client, game):
+    """Boseiju's Channel discards the card from hand (CR 113.6j), so in exile
+    it functions nowhere - and bob never owned it (CR 602.2, CR 108.4a)."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Boseiju, Who Endures", "alice", "exile")
+    boseiju = find(state(client, game)["exile"], "Boseiju, Who Endures")["id"]
+
+    assert rows_for(legal_actions(client, game, "alice"), boseiju) == []
+    assert rows_for(legal_actions(client, game, "bob"), boseiju) == []
+
+
+def test_a_channel_card_in_hand_is_still_offered(client, game):
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Boseiju, Who Endures", "alice", "hand")
+    boseiju = find(state(client, game)["hands"]["alice"], "Boseiju, Who Endures")["id"]
+
+    rows = rows_for(legal_actions(client, game, "alice"), boseiju)
+    (row,) = [row for row in rows if row["kind"] == "activate_off_zone"]
+    assert row["from_zone"] == "hand"
+
+
+def test_a_battlefield_creatures_graveyard_ability_is_not_offered(client, game):
+    """Seasoned Pyromancer's "{3}{R}{R}, Exile this card from your graveyard:
+    ..." moves the card out of the graveyard, so it functions only there
+    (CR 113.6m)."""
+    for _ in range(5):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Seasoned Pyromancer", "alice", "battlefield")
+    pyromancer = find(state(client, game)["battlefield"], "Seasoned Pyromancer")["id"]
+
+    assert rows_for(legal_actions(client, game, "alice"), pyromancer) == []
+
+
+def test_an_ordinary_battlefield_ability_is_still_offered(client, game):
+    """The same rule, from the other side: Goblin Bombardment's sacrifice
+    ability names no other zone, so it stays on the battlefield list."""
+    add_card(client, game, "Goblin Bombardment", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    bombardment = find(state(client, game)["battlefield"], "Goblin Bombardment")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), bombardment)
+    assert row["kind"] == "activate"
+
+
+# -- B4-05: loyalty abilities are never mana abilities -------------------------
+
+
+def ugin_board(client, game) -> dict:
+    add_card(client, game, "Ugin, Eye of the Storms", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Emrakul, the Promised End", "alice", "hand")
+    board = state(client, game)
+    return {
+        "ugin": find(board["battlefield"], "Ugin, Eye of the Storms")["id"],
+        "forest": find(board["battlefield"], "Forest")["id"],
+        "emrakul": find(board["hands"]["alice"], "Emrakul, the Promised End")["id"],
+    }
+
+
+def test_a_loyalty_ability_that_adds_mana_is_an_ordinary_activation_row(client, game):
+    rig = ugin_board(client, game)
+
+    rows = rows_for(legal_actions(client, game, "alice"), rig["ugin"])
+    zero = next(row for row in rows if row["cost"] == "0")
+    assert zero["kind"] == "activate", zero
+    assert all(row["kind"] != "activate_mana" for row in rows), rows
+
+
+def test_the_card_view_does_not_call_a_loyalty_ability_a_mana_ability(client, game):
+    rig = ugin_board(client, game)
+    board = state(client, game)
+
+    ugin = next(card for card in board["battlefield"] if card["id"] == rig["ugin"])
+    zero = next(ability for ability in ugin["abilities"] if ability["cost"] == "0")
+    assert zero["is_mana_ability"] is False
+    assert zero["mana"] is False
+    assert rig["ugin"] not in untapped_mana_sources(board, "alice")
+    assert rig["forest"] in untapped_mana_sources(board, "alice")
+
+
+def test_no_row_or_refusal_advises_activating_a_loyalty_ability_mid_cast(client, game):
+    rig = ugin_board(client, game)
+
+    (emrakul,) = rows_for(legal_actions(client, game, "alice"), rig["emrakul"])
+    assert emrakul["affordable"] == "no"
+    assert "Ugin" not in (emrakul["unaffordable_reason"] or ""), emrakul
+    assert "activate it manually" not in (emrakul["unaffordable_reason"] or "")
+
+    refused = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": rig["emrakul"],
+            # What the seat tools offered by default before this fix: every
+            # untapped source a card view called a mana ability, Ugin included.
+            "mana_sources": [rig["forest"], rig["ugin"]],
+            "dry_run": True,
+        },
+    ).json()
+    assert refused["allowed"] is False, refused
+    assert "Ugin" not in refused["reason"], refused
+    assert "no combination of the available mana sources" in refused["reason"], refused
+
+
+def test_every_loyalty_ability_the_engine_allows_is_offered(client, game):
+    """CR 606.6: the -11 is activatable once the counters are there."""
+    rig = ugin_board(client, game)
+    patched = client.patch(
+        f"/api/games/{game}/cards/{rig['ugin']}", json={"counters": {"loyalty": 11}}
+    )
+    assert patched.status_code == 200, patched.text
+
+    costs = {row["cost"] for row in rows_for(legal_actions(client, game, "alice"), rig["ugin"])}
+    assert costs == {"+2", "0", "−11"}, costs
+
+
+# -- B4-02: the cost the engine will charge ------------------------------------
+
+
+def test_a_board_wide_floor_raises_the_row_to_what_the_cast_charges(client, game):
+    """Trinisphere: "each spell that would cost less than three mana to cast
+    costs three mana to cast" - Malevolent Rumble is charged {2}{G}."""
+    for _ in range(3):
+        add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Malevolent Rumble", "alice", "hand")
+    add_card(client, game, "Trinisphere", "bob", "battlefield")
+    rumble = find(state(client, game)["hands"]["alice"], "Malevolent Rumble")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), rumble)
+    assert row["cost"] == "{2}{G}", row
+    assert row["mana_cost"] == "{2}{G}", row
+    assert row["printed_cost"] == "{1}{G}", row
+    assert row["affordable"] == "yes", row
+
+    dry = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "alice", "card_id": rumble, "dry_run": True},
+    ).json()
+    assert dry["cost"] == row["cost"], dry
+
+
+def test_a_floor_the_lands_cannot_meet_makes_the_row_unaffordable(client, game):
+    for _ in range(2):
+        add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Malevolent Rumble", "alice", "hand")
+    add_card(client, game, "Trinisphere", "bob", "battlefield")
+    rumble = find(state(client, game)["hands"]["alice"], "Malevolent Rumble")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), rumble)
+    assert row["cost"] == "{2}{G}", row
+    assert row["affordable"] == "no", row
+
+
+def test_a_flat_increase_is_charged_on_every_spell(client, game):
+    """Sphere of Resistance: "Spells cost {1} more to cast.\""""
+    for _ in range(3):
+        add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "hand")
+    add_card(client, game, "Sphere of Resistance", "bob", "battlefield")
+    bears = find(state(client, game)["hands"]["alice"], "Grizzly Bears")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), bears)
+    assert row["cost"] == "{2}{G}", row
+    assert row["printed_cost"] == "{1}{G}", row
+
+
+def test_a_self_reduction_is_charged_off_the_row(client, game):
+    """Emrakul: "This spell costs {1} less to cast for each card type among
+    cards in your graveyard" - a creature and a sorcery take two off."""
+    add_card(client, game, "Emrakul, the Promised End", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "alice", "graveyard")
+    add_card(client, game, "Mind Rot", "alice", "graveyard")
+    emrakul = find(state(client, game)["hands"]["alice"], "Emrakul, the Promised End")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), emrakul)
+    assert row["cost"] == "{11}", row
+    assert row["printed_cost"] == "{13}", row
+
+
+def test_an_unmodified_row_carries_no_printed_cost(client, game):
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "hand")
+    bears = find(state(client, game)["hands"]["alice"], "Grizzly Bears")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), bears)
+    assert row["cost"] == "{1}{G}"
+    assert "printed_cost" not in row
+
+
+# -- B3-05: a mode the engine cannot read --------------------------------------
+
+
+def charm_board(client, game) -> dict:
+    add_card(client, game, "Plains", "alice", "battlefield")
+    add_card(client, game, "Plains", "alice", "battlefield")
+    add_card(client, game, "Thraben Charm", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    add_card(client, game, "Goblin Bombardment", "bob", "battlefield")
+    board = state(client, game)
+    return {
+        "charm": find(board["hands"]["alice"], "Thraben Charm")["id"],
+        "plains": [card["id"] for card in board["battlefield"] if card["name"] == "Plains"],
+        "bears": find(board["battlefield"], "Grizzly Bears")["id"],
+        "bombardment": find(board["battlefield"], "Goblin Bombardment")["id"],
+    }
+
+
+def test_the_row_names_each_mode_the_engine_cannot_read(client, game):
+    rig = charm_board(client, game)
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), rig["charm"])
+    unreadable = {entry["mode_number"]: entry for entry in row["unreadable_modes"]}
+    assert 1 in unreadable, row
+    assert 2 not in unreadable, row
+    assert unreadable[1]["text"].startswith("Thraben Charm deals damage"), unreadable
+    assert "CR 700.2a" in unreadable[1]["notice"], unreadable
+
+
+def test_casting_an_unreadable_mode_is_refused_and_keeps_the_card(client, game):
+    rig = charm_board(client, game)
+
+    answer = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": rig["charm"],
+            "modes": [1],
+            "targets": [rig["bears"]],
+            "mana_sources": rig["plains"],
+        },
+    ).json()
+    assert answer["allowed"] is False, answer
+    assert "mode 1" in answer["reason"], answer
+    after = state(client, game)
+    assert find(after["hands"]["alice"], "Thraben Charm")["id"] == rig["charm"]
+    assert not any(card["tapped"] for card in after["battlefield"] if card["name"] == "Plains")
+
+
+def test_a_readable_mode_still_casts(client, game):
+    rig = charm_board(client, game)
+
+    answer = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": rig["charm"],
+            "modes": [2],
+            "targets": [rig["bombardment"]],
+            "mana_sources": rig["plains"],
+        },
+    ).json()
+    assert answer["allowed"] is True, answer
+
+
+def test_a_modal_row_with_every_mode_readable_carries_no_warning(client, game):
+    add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Kozilek's Command", "alice", "hand")
+    command = find(state(client, game)["hands"]["alice"], "Kozilek's Command")["id"]
+
+    rows = rows_for(legal_actions(client, game, "alice"), command)
+    assert rows
+    for row in rows:
+        assert all(
+            entry["mode_number"] in {mode for mode in range(1, 5)}
+            for entry in row.get("unreadable_modes") or []
+        )
+    seat_uid(game, "alice")

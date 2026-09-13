@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from magic_cards_model.models import Action, Card
+from magic_cards_model.models.action import ActionKind
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
@@ -692,6 +693,27 @@ class CrewRequest(BoardRead):
     crewing: list[UUID] = Field(min_length=1)
     """The creatures tapped to pay for it (CR 702.122b: "a creature crews a
     Vehicle when it's tapped to pay the cost")."""
+    dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
+
+
+class EquipRequest(BoardRead):
+    """CR 702.6a: "Equip [cost]" means "[Cost]: Attach this permanent to
+    target creature you control. Activate only as a sorcery."
+
+    A keyword ability the engine builds on its own (`machines.keywords.
+    equip_activation`) rather than one of the Equipment's
+    `activated_abilities`, so there is no ability index to name - the same
+    reason crew and cycling have their own request shapes."""
+
+    player: str
+    card_id: UUID
+    """The Equipment."""
+    target: UUID
+    """The creature to attach it to - CR 702.6a's "target creature you control"."""
+    mana_sources: list[UUID | ManaSource] | None = None
     dry_run: bool = False
     reasoning: str | None = None
     """T10: required for an agent seat (`records.require_reasoning`),
@@ -2204,10 +2226,27 @@ class ManualManaStepView(BaseModel):
     color: str | None = None
 
 
+class UnreadableModeView(BaseModel):
+    """One mode of a modal spell the engine cannot read into an effect -
+    `action_rows.legal_action_rows`, from the reading
+    `effects.resolve_modal_spell` records a `ModeNotice` for."""
+
+    mode_number: int
+    """The mode's 1-based position on the card (CR 700.2), the number
+    `CastRequest.modes` takes."""
+    text: str
+    notice: str
+
+
 class ActionRow(Action):
     """The engine's own `Action` as `GET .../legal-actions` serves it, plus
     what the api adds to a row (`action_rows.legal_action_rows`). Every field
     here is left off a row it does not apply to."""
+
+    kind: ActionKind | Literal["equip"]
+    """The engine's `ActionKind`, or `equip`: CR 702.6a's activation, which
+    the engine's enumeration does not list and `POST .../actions/equip`
+    takes (`action_rows._Rows.equip_rows`)."""
 
     optional_costs: list[OptionalCostView] | None = None
     """A cast row's optional costs - kicker and its siblings, entwine and
@@ -2220,6 +2259,14 @@ class ActionRow(Action):
     """A cast row the engine's auto-tap cannot pay, but which is payable once
     these mana abilities are activated by hand (CR 118.3c). Such a row reads
     `affordable: yes`; cast it after activating them, in order."""
+    printed_cost: str | None = None
+    """A cast row whose `cost` was changed by a cost increase, reduction or
+    floor (CR 601.2f, 118.7) keeps the cost it would otherwise print here;
+    `cost` is what the cast is charged."""
+    unreadable_modes: list[UnreadableModeView] | None = None
+    """A modal cast row's modes the engine cannot read (CR 700.2a): chosen,
+    each would resolve doing nothing, so a cast naming one is refused with
+    the same `notice`."""
 
 
 class ActionWithTargets(ActionRow):

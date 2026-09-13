@@ -72,7 +72,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
@@ -96,6 +96,7 @@ from .schemas import (
     ConcedeRequest,
     CrewRequest,
     CycleRequest,
+    EquipRequest,
     PassPriorityRequest,
     PlayLandRequest,
     SpecialActionRequest,
@@ -192,6 +193,10 @@ def _run_cycle(game: Game, payload: dict[str, Any]) -> Any:
 
 def _run_crew(game: Game, payload: dict[str, Any]) -> Any:
     return engine_api.crew_vehicle(game, CrewRequest.model_validate(payload))
+
+
+def _run_equip(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.equip_permanent(game, EquipRequest.model_validate(payload))
 
 
 def _run_concede(game: Game, payload: dict[str, Any]) -> Any:
@@ -444,6 +449,7 @@ COMMAND_HANDLERS: dict[str, Callable[[Game, dict[str, Any]], Any]] = {
     "foretell": _run_foretell,
     "cycle": _run_cycle,
     "crew": _run_crew,
+    "equip": _run_equip,
     "concede": _run_concede,
     "pass_priority": _run_pass_priority,
     "advance": _run_advance,
@@ -486,6 +492,9 @@ class RunResult:
     pending: PendingDecision | None = None
     tape: tuple[Answer, ...] = ()
     board: Game | None = None
+    asked_on: Game | None = None
+    """`resume_command` only: the board the answered question was asked on
+    (its divergence guard's paused copy), for viewing and labelling only."""
 
 
 def _replay_copy(game: Game) -> Game:
@@ -677,11 +686,13 @@ def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> Ru
     before_notices = _notice_snapshot(game)
     working, outcome, pending = _attempt(game, command, tape)
     if pending is not None:
-        return RunResult(
-            status=RunStatus.PAUSED, pending=pending, tape=tuple(tape), board=working
-        )
+        return RunResult(status=RunStatus.PAUSED, pending=pending, tape=tuple(tape), board=working)
 
     working.decisions.finish_replay()
+    if isinstance(outcome, engine_api.Outcome) and outcome.reason:
+        # CR 605.1a: never advise activating a loyalty ability mid-cast - see
+        # `engine_api.without_loyalty_mana_advice`.
+        outcome.reason = engine_api.without_loyalty_mana_advice(working, outcome.reason)
     _attach_notices(outcome, _new_notices(working, before_notices))
     return RunResult(status=RunStatus.COMPLETED, game=working, outcome=outcome, tape=tuple(tape))
 
@@ -774,7 +785,17 @@ RESOLVING_KINDS = frozenset({"pass_priority", "resolve_top"})
 #: a special action). CR 601.2i is the citation: the announcing player gets
 #: priority only "once the steps described in 601.2a-h are completed".
 ANNOUNCING_KINDS = frozenset(
-    {"cast", "activate_ability", "crew", "cycle", "suspend", "plot", "foretell", "play_land"}
+    {
+        "cast",
+        "activate_ability",
+        "crew",
+        "equip",
+        "cycle",
+        "suspend",
+        "plot",
+        "foretell",
+        "play_land",
+    }
 )
 
 #: The command kinds whose pause means a turn-based action has not been
@@ -1030,4 +1051,7 @@ def resume_command(
     if guard.status is not RunStatus.PAUSED or guard.pending != expected_pending:
         raise CommandDivergenceError(expected_pending, guard)
 
-    return run_command(committed_game, command, [*tape, new_answer])
+    # `asked_on`: the board the answered question was asked on - the guard
+    # replay's own paused copy, already built, so a caller labelling the
+    # answer with its step replays nothing more.
+    return replace(run_command(committed_game, command, [*tape, new_answer]), asked_on=guard.board)

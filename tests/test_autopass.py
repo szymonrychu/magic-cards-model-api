@@ -487,12 +487,10 @@ def test_a_run_stops_when_this_seat_is_being_attacked(client, game, monkeypatch)
     with Opponent(game, "alice"):
         result = run_to_stop(bob, until_step="upkeep", whose_turn="mine")
 
-    # The pause freezes the board on the step `advance`/`pass-priority` was
-    # called *from* - CR 509.1's turn-based action never finished, so the
-    # step pointer never moved past `declare_attackers` either (see
-    # `stage_an_attack_on_bob`'s own note, and `autopass_stop_reason`'s
-    # docstring in `seatkit.py`).
-    assert result["state"]["step"] == "declare_attackers", result["stopped_because"]
+    # CR 509.1: declaring blockers is the first thing that happens in the
+    # declare-blockers step, and a read during the pause shows the step the
+    # question stands in (`serialize._paused_overlay`, battle 3 B3-08).
+    assert result["state"]["step"] == "declare_blockers", result["stopped_because"]
     assert "you are being attacked by 1 creature" in result["stopped_because"]
     assert "CR 509.1" in result["stopped_because"], (
         "the stop reason has to say why nothing else woke this seat"
@@ -578,11 +576,9 @@ def test_a_run_stops_in_your_own_declare_attackers_step(client, game, monkeypatc
             whose_turn="mine",
         )
 
-    # Frozen on the step the pausing call was made *from* (`beginning_of_
-    # combat`), not the one it paused trying to enter - CR 508.1's
-    # turn-based action never finished, so the step pointer never moved
-    # (see `seatkit.autopass_stop_reason`'s docstring).
-    assert result["state"]["step"] == "beginning_of_combat", result["stopped_because"]
+    # CR 508.1: declaring attackers is the first thing in the declare-attackers
+    # step, which is the step the paused question is read in (B3-08).
+    assert result["state"]["step"] == "declare_attackers", result["stopped_because"]
     assert result["state"]["active_player"] == "alice"
     assert "it is your declare-attackers step" in result["stopped_because"]
     assert "CR 508.1" in result["stopped_because"], (
@@ -614,9 +610,8 @@ def test_the_attackers_stop_does_not_guess_whether_anything_could_attack(client,
         )
 
     # See `test_a_run_stops_in_your_own_declare_attackers_step`'s note: the
-    # pause freezes the board on `beginning_of_combat`, the step the call
-    # was made from, not `declare_attackers` itself.
-    assert result["state"]["step"] == "beginning_of_combat", result["stopped_because"]
+    # question is read in the declare-attackers step it stands in.
+    assert result["state"]["step"] == "declare_attackers", result["stopped_because"]
 
 
 def test_a_run_told_not_to_stop_when_you_can_attack_runs_through_its_own_combat(
@@ -742,14 +737,12 @@ def test_the_stamp_only_covers_the_occurrence_the_run_started_in(client, game, m
     `started_in` here is the *pause itself* - `run` begins already sitting on
     a live, unanswered `declare_attackers` decision, not one already resolved
     (`test_a_run_started_in_its_own_declare_attackers_step_still_moves`
-    resolves it first for a different reason - see that test). A paused
-    state freezes `state["step"]` at whatever it was *before* the pause
-    (`seatkit.autopass_stop_reason`'s docstring), so the exemption this test
-    checks is really keyed on `run["started_pending_kind"]` matching the live
-    decision, not on the frozen `(turn_number, step)` pair alone - answering
-    the decision is what actually leaves the occurrence, and it does that by
-    changing `state["step"]` for real (frozen no longer), which is enough for
-    `forget_starting_occurrence`'s own `(turn, step)` comparison to notice.
+    resolves it first for a different reason - see that test). The exemption
+    is keyed on `run["started_pending_kind"]` matching the live decision as
+    well as on the `(turn_number, step)` pair. Answering the decision leaves
+    the board in that same declare-attackers step, so the stamp stands; moving
+    on out of the step is what leaves the occurrence, and
+    `forget_starting_occurrence`'s own `(turn, step)` comparison notices that.
     """
     seats, uids = wired(monkeypatch, game)
     alice = seats.seat_for(uids["alice"])
@@ -758,7 +751,7 @@ def test_the_stamp_only_covers_the_occurrence_the_run_started_in(client, game, m
     set_step(client, game, "beginning_of_combat")
     client.post(f"/api/games/{game}/advance", json={"player": "alice"})
     started_in = alice.fetch_state()
-    assert started_in["step"] == "beginning_of_combat"
+    assert started_in["step"] == "declare_attackers"
     pending = started_in["pending_decision"]
     assert pending is not None and pending["kind"] == "declare_attackers", pending
 
@@ -767,14 +760,20 @@ def test_the_stamp_only_covers_the_occurrence_the_run_started_in(client, game, m
         "the pause the run began already sitting on is exempt"
     )
 
-    # Answer the pause for real - CR 508.1a's "if any" makes "nobody" legal -
-    # which is what actually leaves the occurrence: `state["step"]` moves
-    # from the frozen `beginning_of_combat` to the real `declare_attackers`.
+    # Answer the pause for real - CR 508.1a's "if any" makes "nobody" legal.
+    # The board is still in the same declare-attackers step, so the stamp
+    # stands; both seats passing then moves the game out of it.
     client.post(
         f"/api/games/{game}/actions/attack", params={"uid": uids["alice"]}, json={"attackers": []}
     )
+    answered = alice.fetch_state()
+    assert answered["step"] == "declare_attackers"
+    seatkit.forget_starting_occurrence(run, answered)
+    assert run["started_step"] == "declare_attackers", "the same occurrence keeps its stamp"
+    for player in ("alice", "bob"):
+        client.post(f"/api/games/{game}/actions/pass-priority", json={"player": player})
     later = alice.fetch_state()
-    assert later["step"] == "declare_attackers", "answering the pause should have moved the step"
+    assert later["step"] != "declare_attackers", "passing should have moved the step on"
 
     seatkit.forget_starting_occurrence(run, later)
     assert run["started_step"] is None, "the stamp survived the board leaving its occurrence"
@@ -1182,8 +1181,8 @@ def test_both_front_ends_stop_in_the_same_place_for_the_same_run(client, monkeyp
 
     for front_end, answer in answers.items():
         assert "you are being attacked by 1 creature" in answer["stopped_because"], front_end
-        # Frozen on `declare_attackers`, the step the pausing call was made
-        # from - see `test_a_run_stops_when_this_seat_is_being_attacked`.
+        # The declare-blockers step the question stands in - see
+        # `test_a_run_stops_when_this_seat_is_being_attacked`.
         #
         # The two front ends name that block differently on purpose, and this
         # is the one place the difference shows: the CLI prints
@@ -1192,7 +1191,7 @@ def test_both_front_ends_stop_in_the_same_place_for_the_same_run(client, monkeyp
         # (`mcp._action_answer` - a seat's client could not read the full one).
         # The step itself has to agree, which is what this compares.
         board = answer.get("board") or answer["state"]
-        assert board["step"] == "declare_attackers", front_end
+        assert board["step"] == "declare_blockers", front_end
         assert answer["until"] == {"step": "upkeep", "whose_turn": "mine"}, front_end
 
 
@@ -1454,14 +1453,14 @@ def test_a_run_never_passes_at_a_game_frozen_on_another_seats_decision(client, m
     Devourer of Destiny board, alice passes in her upkeep, bob passes, and
     CR 117.4 resolves the trigger on top of the stack - which asks *alice* a
     question. bob's pass pauses on it, and a pause rolls the committed game
-    back to before that attempt (`commands.py`), so what every client now reads
-    is `priority_holder: bob` with a `pending_decision` addressed to alice.
+    back to before that attempt (`commands.py`). What a client reads used to
+    be `priority_holder: bob` - stale; the read now carries the paused board's
+    holder (battle 3, B3-08) - with a `pending_decision` addressed to alice.
 
-    `priority_holder` is simply stale there: nobody holds priority in a frozen
-    game. A run that trusts it posts another `pass-priority`, which pauses
-    again and stores a *second* pause slot over the first - discarding the
-    question alice was about to answer. So the run hands the board back
-    instead. The half addressed to this seat is
+    Whatever the holder reads, nobody may move a frozen game. A run that
+    posted another `pass-priority` would pause again and store a *second*
+    pause slot over the first - discarding the question alice was about to
+    answer. So the run hands the board back instead. The half addressed to this seat is
     `test_a_decision_addressed_to_this_seat_stops_the_run`; this is the other
     seat's, which used to fall through every check and pass anyway.
     """
@@ -1484,9 +1483,7 @@ def test_a_run_never_passes_at_a_game_frozen_on_another_seats_decision(client, m
         assert paused["pending_decision"]["player"] == "alice", paused
 
         board = client.get(f"/api/games/{game_id}", params={"uid": bob_uid}).json()
-        assert board["priority_holder"] == "bob", (
-            "this test is only meaningful while the stale priority holder is bob"
-        )
+        assert board["priority_holder"] != "bob", "the paused read is not the stale board"
         assert board["pending_decision"]["player"] == "alice"
 
         bob = Seats(api="http://testserver", game_id=game_id).seat_for(bob_uid)
