@@ -2,34 +2,50 @@
 dynamic grants (`PlayPermission`, `machines/casting.py`) and CR 406.4's marked
 exile piles (suspend, plot, foretell, cascade).
 
-The reported defect: a player cast Violent Outburst, cascade offered "you may
-cast Living End without paying its mana cost", the player accepted, the
-engine granted the `PlayPermission` - and the seat then had no way to see it.
+The originally reported defect: a player cast a cascade spell, the trigger
+offered "you may cast it without paying its mana cost", the player accepted,
+the engine granted a `PlayPermission` - and the seat had no way to see it.
 `GET /api/games/{id}` carried no `play_permissions` key at all, so the card
-sat in exile until cleanup bottomed it (`Game._bottom_unused_cascade_
-permissions`), and the player reported the engine as broken when the engine
-had done its part correctly.
+sat in exile until cleanup bottomed it, and the player reported the engine as
+broken when the engine had done its part correctly. `serialize._play_
+permissions_view`/`_play_permission_view` and the `exile_pile` top-level key
+are that discoverability, still exercised below by the mechanics that still
+use a standing grant (plot, foretell) or one that lives only for the length
+of a `POST .../decide` answer chain.
 
-`engine_api.cast_card`'s exile-zone branch already drives
-`Casting.use_permission()` automatically - no `keyword` needed - for any
-card sitting in the zone its live permission names (suspend's own free cast
-already proved this in `test_special_actions.
-test_time_counters_come_off_each_upkeep_and_the_free_cast_reanimates`), and
-`Game.play_land` does the same for a `PlayAction.PLAY` grant. So the gap
-closed here is purely discoverability plus a place to find the marked exile
-piles without scanning the whole `exile` list - `serialize._play_permissions_
-view`/`_play_permission_view` and the `exile_pile` top-level key.
+Battle 8 (B8-01, and the funnel commit right after it) removed the standing
+grant from cascade, suspend, rebound, Mosswort Bridge and several other
+"cast/play it without paying its mana cost" effects entirely. Accepting any
+of their `may` questions now casts (or plays) the card immediately while the
+permitting spell or ability is still resolving (`Game.cast_during_resolution`
+/ `may_cast_during_resolution`, CR 608.2g) - the engine asks whichever face,
+modes, targets and additional costs (kicker, entwine, escalate, ...) the cast
+needs as ordinary mid-resolution decisions through the same `POST .../decide`
+a seat already answers everything else with, no player ever receives priority
+in between, and no `PlayPermission` is ever left lying around to discover:
+the card is already a spell on the stack (or a permanent on the battlefield,
+for a land) by the time control returns to a seat. `PlayPermission.bottom_
+if_unused` (the engine's own cleanup marker for an accepted-but-undriven
+cascade grant) has had nothing left to set it since that cleanup sweep was
+removed with the standing grant itself - permanently `False` on every
+permission this engine still hands out - so `_play_permission_view` and
+`PlayPermissionView` drop the field outright rather than carry a key that
+can never read anything but the one value: the "cleanup bottomed an unused
+cascade/suspend permission" case this file used to test no longer exists at
+all, an illegal cast during resolution now being rewound and bottomed
+*inside* `cast_during_resolution` itself, before a seat ever sees anything.
 
-Every card here is a real Scryfall printing: Living End and the basics are
-already cached under tests/fixtures/scryfall/ (copied for `test_special_
-actions.py`); Shardless Agent is a real Modern-legal cascade creature, fetched
-and cached the same way.
+Every card here is a real Scryfall printing, resolved through the engine's own
+bundled Scryfall corpus (`scryfall.py`'s tier 2, `../magic-cards-model`'s
+`data/printings/`) - nothing here needs its own cache file under
+tests/fixtures/scryfall/.
 """
 
 from __future__ import annotations
 
-from conftest import add_card, drain_suspend_upkeeps, find, state
+from conftest import add_card, find, force_turn_position, resolve_whole_stack, state
 from fastapi.testclient import TestClient
+from magic_cards_model.machines import Step
 
 from magic_cards_model_api.store import store
 
@@ -38,14 +54,27 @@ def seats_for(client: TestClient, game_id: str) -> dict[str, str]:
     return {name: uid for uid, name in store.seat_uids(game_id).items()}
 
 
-# -- suspend: the standing "when used" grant --------------------------------
+# -- suspend: cast during resolution too (battle 8's funnel commit) ---------
 
 
-def test_suspends_free_cast_permission_is_discoverable_before_it_is_used(client, game):
-    """`play_permissions["alice"]` shows Living End's free-cast grant the
-    moment the last time counter comes off - the exact fact a seat needs to
-    know it may call `actions/cast` with no mana and no `keyword` - before it
-    ever does so."""
+def _drain_two_upkeeps(client: TestClient, game_id: str, player: str) -> None:
+    """The first two of Living End's three time counters, through the same
+    real-upkeep path `test_special_actions.py` drives - neither one raises
+    CR 702.62a's third ability yet, so nothing here pauses."""
+    for _ in range(2):
+        force_turn_position(game_id, Step.UNTAP, player)
+        advanced = client.post(f"/api/games/{game_id}/advance", json={"player": player})
+        assert advanced.status_code == 200, advanced.text
+        assert advanced.json()["advanced_to"] == "upkeep", advanced.json()
+        resolve_whole_stack(client, game_id)
+
+
+def test_suspends_free_cast_is_a_may_decision_answered_through_decide(client, game):
+    """CR 702.62a's third ability: once the last time counter comes off,
+    `Game.finish_suspend` casts Living End immediately while that ability is
+    still resolving (`Game.may_cast_during_resolution`, CR 608.2g) - the same
+    funnel cascade's hit goes through, not a standing `PlayPermission` a seat
+    discovers and drives later with its own `actions/cast`."""
     add_card(client, game, "Living End", "alice", "hand")
     for _ in range(4):
         add_card(client, game, "Swamp", "alice", "battlefield")
@@ -54,91 +83,62 @@ def test_suspends_free_cast_permission_is_discoverable_before_it_is_used(client,
         f"/api/games/{game}/actions/suspend",
         json={"player": "alice", "card": "Living End", "mana_sources": swamps},
     )
-
-    drain_suspend_upkeeps(client, game, "alice", 3)
-
-    living_end = find(state(client, game)["exile"], "Living End")
-
-    # Discoverable before anybody drives it.
-    permissions = state(client, game)["play_permissions"]["alice"]
-    (permission,) = permissions
-    assert permission["card"]["id"] == living_end["id"]
-    assert permission["card"]["name"] == "Living End"
-    assert permission["from_zone"] == "exile"
-    assert permission["action"] == "cast"
-    assert permission["pays_mana_cost"] is False
-    assert permission["granted_by"] == "Living End's suspend"
-    assert permission["rule"] == "CR 702.62a"
-    # `finish_suspend` grants this `immediate=True` (CR 117.2e/608.2g): CR
-    # 702.62a's third ability prints no "until end of turn", so the "you may
-    # play it" is only good for as long as the triggered ability's own
-    # resolution is instructing it, which `PlayPermission.expired` scopes to
-    # the exact step (`granted_step`) the grant happened in - here, the
-    # upkeep the last time counter came off in. This is why a suspended
-    # sorcery can legally be cast during an upkeep that is nobody's main
-    # phase: it is cast as the resolving ability's own instruction
-    # (CR 117.1's preamble), not through the ordinary priority system.
-    # `until_end_of_turn` stays at `Game.grant_play_permission`'s own default
-    # of `True` even here - `PlayPermission.expired` ignores it entirely once
-    # `immediate` is set (`PlayPermission.expired`'s own branch), which is
-    # exactly why a seat must be shown `immediate`/`granted_step` rather than
-    # read `until_end_of_turn` at face value.
-    assert permission["until_end_of_turn"] is True
-    assert permission["immediate"] is True
-    assert permission["granted_step"] == "upkeep"
-    assert permission["expires"] == (
-        "only for the upkeep step it was granted in (CR 117.2e), not until end of turn"
-    )
-    assert permission["usable_now"] is True
-    assert permission["why_not"] is None
-
-    # Still usable while play stays in the very upkeep it was granted in.
-    cast = client.post(
-        f"/api/games/{game}/actions/cast",
-        json={"player": "alice", "card_id": living_end["id"], "from_zone": "exile"},
-    ).json()
-    assert cast["allowed"] is True, cast
-    assert cast["cost"] == ""
-
-    # Consumed once the spell has actually moved off the object it named
-    # (CR 400.7) - the stack copy is a new object, so nothing still names it.
-    assert state(client, game)["play_permissions"]["alice"] == []
-
-
-def test_bobs_own_view_never_carries_alices_permission_under_the_wrong_key(client, game):
-    """`play_permissions` is keyed by the player who may use it - bob never
-    sees Living End's grant show up under his own name, and the underlying
-    card is already public (CR 400.2's exile), so alice's own key is visible
-    to bob too, matching real MTG's "everyone can see the exile pile"."""
-    add_card(client, game, "Living End", "alice", "hand")
-    for _ in range(4):
-        add_card(client, game, "Swamp", "alice", "battlefield")
-    swamps = [c["id"] for c in state(client, game)["battlefield"]]
-    client.post(
-        f"/api/games/{game}/actions/suspend",
-        json={"player": "alice", "card": "Living End", "mana_sources": swamps},
-    )
-    drain_suspend_upkeeps(client, game, "alice", 3)
-
+    _drain_two_upkeeps(client, game, "alice")
     uids = seats_for(client, game)
-    as_bob = state(client, game, uid=uids["bob"])
-    assert as_bob["play_permissions"]["bob"] == []
-    assert len(as_bob["play_permissions"]["alice"]) == 1
-    assert as_bob["play_permissions"]["alice"][0]["card"]["name"] == "Living End"
+
+    # Third upkeep: the counter-removal trigger resolves first (2 -> 1 -> a
+    # second ability triggers off the last counter coming off), then that
+    # second ability is what pauses on the third ability's own "may".
+    force_turn_position(game, Step.UNTAP, "alice")
+    advanced = client.post(f"/api/games/{game}/advance", json={"player": "alice"}).json()
+    assert advanced["advanced_to"] == "upkeep", advanced
+
+    first = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]}).json()
+    assert first.get("paused") is not True, first
+    assert first["resolved"] == "ability from Living End"
+    living_end = find(state(client, game)["exile"], "Living End")
+    assert living_end["counters"].get("time", 0) == 0
+
+    second = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]}).json()
+    assert second.get("paused") is True, "the third ability pauses on its own may (CR 608.2g)"
+    pending = second["pending_decision"]
+    assert pending["kind"] == "may"
+    assert pending["player"] == "alice"
+    assert pending["source"] == "Living End"
+
+    # Nobody else may answer alice's question.
+    wrong_seat = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["bob"]},
+        json={"player": "alice", "accept": True},
+    )
+    assert wrong_seat.json()["accepted"] is False
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True},
+    )
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert body["accepted"] is True
+    assert body.get("paused") is not True, body
+
+    mid = state(client, game)
+    assert mid["exile"] == [], "Living End left exile the instant it was cast"
+    assert mid["play_permissions"]["alice"] == []
+    assert [entry["name"] for entry in mid["stack"]] == ["Living End"]
+
+    resolved = client.post(f"/api/games/{game}/resolve-top").json()
+    assert resolved["resolved"] == "Living End"
+    final = state(client, game)
+    assert final["exile"] == []
+    assert [c["name"] for c in final["graveyards"]["alice"]] == ["Living End"]
 
 
-def test_suspends_free_cast_is_only_good_for_its_own_upkeep_not_the_rest_of_the_turn(client, game):
-    """CR 117.2e/608.2g, end to end through the ordinary `actions/cast` path
-    with no `keyword`: `finish_suspend` grants an `immediate=True`
-    `PlayPermission` (`machines/casting.finish_suspend`), scoped to the exact
-    step it was granted in (`PlayPermission.granted_step`), not "until end of
-    turn" the way Ugin's -11 or Ragavan's trigger are. Two branches from the
-    same setup prove both halves: the cast succeeds while play is still in
-    the upkeep the last time counter came off in, and the identical cast is
-    refused, with the engine's own CR 117.2e reason, once play has moved on
-    to the next step - never reaching a main phase in this second branch, so
-    a pass/fail here cannot be confused with an ordinary sorcery-speed
-    refusal."""
+def test_declining_suspends_free_cast_leaves_it_in_exile(client, game):
+    """ "If you don't, it remains exiled" - Living End with no time counters
+    left, still sitting there, once the seat says no."""
     add_card(client, game, "Living End", "alice", "hand")
     for _ in range(4):
         add_card(client, game, "Swamp", "alice", "battlefield")
@@ -147,32 +147,26 @@ def test_suspends_free_cast_is_only_good_for_its_own_upkeep_not_the_rest_of_the_
         f"/api/games/{game}/actions/suspend",
         json={"player": "alice", "card": "Living End", "mana_sources": swamps},
     )
-    drain_suspend_upkeeps(client, game, "alice", 3)
+    _drain_two_upkeeps(client, game, "alice")
+    uids = seats_for(client, game)
 
-    living_end = find(state(client, game)["exile"], "Living End")
-    permission = state(client, game)["play_permissions"]["alice"][0]
-    assert permission["immediate"] is True
-    assert permission["granted_step"] == "upkeep"
-    assert permission["usable_now"] is True
+    force_turn_position(game, Step.UNTAP, "alice")
+    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]})
+    client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]})
 
-    # The step moves on before anybody uses it - CR 117.2e's own window (the
-    # resolving trigger's instruction) has already closed, so the grant is
-    # dead even though `Game.cleanup_step` has not run yet to actually drop
-    # it from `game.play_permissions`, and the card is still sitting right
-    # there in exile.
-    client.put(f"/api/games/{game}/step", json={"step": "draw", "player": "alice"})
-    (after_step,) = state(client, game)["play_permissions"]["alice"]
-    assert after_step["expired"] is True
-    assert after_step["usable_now"] is False
-    assert after_step["why_not"] is not None
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": False},
+    )
+    assert answer.json()["accepted"] is True
 
-    refused = client.post(
-        f"/api/games/{game}/actions/cast",
-        json={"player": "alice", "card_id": living_end["id"], "from_zone": "exile"},
-    ).json()
-    assert refused["allowed"] is False
-    assert "cast" in refused["reason"] and "Living End" in refused["reason"]
-    assert living_end["id"] == find(state(client, game)["exile"], "Living End")["id"]
+    final = state(client, game)
+    living_end = find(final["exile"], "Living End")
+    assert living_end["counters"].get("time", 0) == 0
+    assert final["stack"] == []
+    assert final["play_permissions"]["alice"] == []
 
 
 # -- exile_pile: the marked piles pulled out of the whole exile list --------
@@ -228,7 +222,7 @@ def test_exile_pile_surfaces_suspended_foretold_and_plotted_cards(client, game):
     assert hidden["exile_pile"]["marker"] == "foretold"  # the pile fact stays public
 
 
-# -- cascade: the reported case, end to end through the real API ------------
+# -- cascade: cast during resolution (B8-01, CR 608.2g) ----------------------
 
 
 def _lands(client: TestClient, game_id: str) -> dict[str, list[str]]:
@@ -239,36 +233,44 @@ def _lands(client: TestClient, game_id: str) -> dict[str, list[str]]:
     return by_name
 
 
-def test_cascade_into_living_end_is_seen_and_driven_through_the_permission(client, game):
-    """The reported real-game defect, end to end: cast a cascade spell, accept
-    the offered free cast through the ordinary `decide` flow, see the granted
-    permission in the seat's own state (not just infer it from an empty
-    exile-minus-the-spell), drive it with the ordinary `actions/cast` (no
-    `keyword`, exactly the path suspend's free cast already uses), and watch
-    Living End actually leave exile."""
-    add_card(client, game, "Shardless Agent", "alice", "hand")
+def test_cascade_into_living_end_casts_it_during_resolution(client, game):
+    """Violent Outburst into Living End, end to end through the real API:
+    accepting the cascade trigger's "you may cast it" (`may`, through the
+    ordinary `decide` route) now casts Living End immediately while the
+    trigger is still resolving (CR 608.2g) - no separate `actions/cast`
+    afterwards, no lingering `play_permissions` entry to drive, and Living
+    End resolves *before* Violent Outburst itself, since it is pushed onto
+    the stack above it.
+
+    Board: alice has a Grizzly Bears in her graveyard (Living End returns it)
+    and casts Violent Outburst; bob has a Grizzly Bears on the battlefield
+    with none in his own graveyard (Living End's "sacrifice all creatures you
+    control" then returns nothing for him - CR 608.2g's evaluation is
+    per-player, and Living End's own text sacrifices before returning)."""
+    add_card(client, game, "Violent Outburst", "alice", "hand")
     add_card(client, game, "Living End", "alice", "library", position="top")
+    add_card(client, game, "Grizzly Bears", "alice", "graveyard")
+    add_card(client, game, "Mountain", "alice", "battlefield")
     add_card(client, game, "Forest", "alice", "battlefield")
-    add_card(client, game, "Island", "alice", "battlefield")
     add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
     uids = seats_for(client, game)
     lands = _lands(client, game)
-    agent = state(client, game)["hands"]["alice"][0]
+    outburst = state(client, game)["hands"]["alice"][0]
 
     cast = client.post(
         f"/api/games/{game}/actions/cast",
         json={
             "player": "alice",
-            "card_id": agent["id"],
-            "mana_sources": [lands["Forest"][0], lands["Island"][0], lands["Forest"][1]],
+            "card_id": outburst["id"],
+            "mana_sources": [lands["Mountain"][0], lands["Forest"][0], lands["Forest"][1]],
         },
     )
     assert cast.status_code == 200, cast.text
     assert cast.json()["allowed"] is True, cast.json()
 
-    # The cascade trigger sits above Shardless Agent - resolving it is where
-    # CR 608.2d's "you may cast it" question is actually asked, and now
-    # pauses on it rather than blocking a thread for the answer.
+    # The cascade trigger sits above Violent Outburst - resolving it is where
+    # CR 608.2d's "you may cast it" question is asked.
     top = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]})
     assert top.status_code == 200, top.text
     top_body = top.json()
@@ -277,7 +279,7 @@ def test_cascade_into_living_end_is_seen_and_driven_through_the_permission(clien
     )
     pending = top_body["pending_decision"]
     assert pending["kind"] == "may"
-    assert pending["source"] == "Shardless Agent"
+    assert pending["source"] == "Violent Outburst"
 
     answer = client.post(
         f"/api/games/{game}/decide",
@@ -285,52 +287,311 @@ def test_cascade_into_living_end_is_seen_and_driven_through_the_permission(clien
         json={"player": "alice", "accept": True},
     )
     assert answer.status_code == 200, answer.text
-    assert answer.json()["accepted"] is True
+    body = answer.json()
+    assert body["accepted"] is True
+    # Living End needs no face, mode or target - nothing further pauses, and
+    # the answer that accepted the cascade is also the one that cast it.
+    assert body.get("paused") is not True, body
 
-    # The trigger resolved: Living End is in exile, and the seat can now see
-    # exactly the permission a real player needed and did not get before.
-    living_end = find(state(client, game)["exile"], "Living End")
-    as_alice = state(client, game, uid=uids["alice"])
-    (permission,) = as_alice["play_permissions"]["alice"]
-    assert permission["card"]["id"] == living_end["id"]
-    assert permission["granted_by"] == "Shardless Agent's cascade"
-    assert permission["pays_mana_cost"] is False
-    assert permission["from_zone"] == "exile"
-    assert permission["until_end_of_turn"] is True
-    assert permission["expires"] == "until end of turn (CR 514.2)"
-    assert permission["usable_now"] is True
+    mid = state(client, game)
+    assert mid["exile"] == [], "Living End left exile the instant it was cast"
+    assert mid["play_permissions"]["alice"] == [], (
+        "no permission is ever left lying around for a cast made during resolution"
+    )
+    assert [entry["name"] for entry in mid["stack"]] == ["Living End", "Violent Outburst"], (
+        "Living End is pushed onto the stack above the spell that cascaded (CR 608.2g); "
+        "the stack view is top-first"
+    )
 
-    pile = find(state(client, game)["exile_pile"], "Living End")
-    assert pile["exile_pile"]["marker"] == "cascade"
+    resolved_living_end = client.post(f"/api/games/{game}/resolve-top").json()
+    assert resolved_living_end["resolved"] == "Living End"
 
-    # Shardless Agent itself is still on the stack - resolve it out of the
-    # way, exactly as the engine's own end-to-end scenario does, so Living
-    # End (a sorcery, CR 117.1a) is cast into an empty stack.
-    resolved_agent = client.post(f"/api/games/{game}/resolve-top").json()
-    assert resolved_agent["resolved"] == "Shardless Agent"
+    after_living_end = state(client, game)
+    assert find(after_living_end["battlefield"], "Grizzly Bears")["controller"] == "alice", (
+        "alice's Bears were exiled from her graveyard and returned to the battlefield"
+    )
+    assert all(
+        card["name"] != "Grizzly Bears" or card["controller"] != "bob"
+        for card in after_living_end["battlefield"]
+    ), "bob had no Bears in his graveyard to get back, so his were sacrificed and stayed dead"
+    assert find(after_living_end["graveyards"]["bob"], "Grizzly Bears")["zone"] == "graveyard"
 
-    # Drive the permission through the ordinary cast path a seat actually
-    # has: no `keyword`, the same automatic pickup suspend's free cast uses.
-    cast_living_end = client.post(
-        f"/api/games/{game}/actions/cast",
-        json={"player": "alice", "card_id": living_end["id"], "from_zone": "exile"},
-    ).json()
-    assert cast_living_end["allowed"] is True, cast_living_end
-    assert cast_living_end["cost"] == ""
+    resolved_outburst = client.post(f"/api/games/{game}/resolve-top").json()
+    assert resolved_outburst["resolved"] == "Violent Outburst"
 
-    resolved = client.post(f"/api/games/{game}/resolve-top").json()
-    assert resolved["resolved"] == "Living End"
     final = state(client, game)
+    bears = find(final["battlefield"], "Grizzly Bears")
+    assert (bears["power"], bears["toughness"]) == (3, 2), (
+        "Violent Outburst's own +1/+0 applies to the Bears Living End just returned"
+    )
+
+
+def test_cascade_hit_with_modes_and_targets_announced_during_resolution(client, game):
+    """Bloodbraid Elf into Kolaghan's Command: CR 601.2b/c inside CR 608.2g -
+    the modal spell's two modes, then each mode's own target, are asked as
+    ordinary mid-resolution decisions chained off the same `decide` call that
+    accepted the cascade, through the same `choose_a_mode`/`choose_targets`
+    kinds any other modal spell already uses."""
+    add_card(client, game, "Bloodbraid Elf", "alice", "hand")
+    add_card(client, game, "Kolaghan's Command", "alice", "library", position="top")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    island = add_card(client, game, "Island", "bob", "hand")["added"]["card_id"]
+    spellbomb = add_card(client, game, "Aether Spellbomb", "bob", "battlefield")["added"]["card_id"]
+    uids = seats_for(client, game)
+    lands = _lands(client, game)
+    elf = state(client, game)["hands"]["alice"][0]
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": elf["id"],
+            "mana_sources": [
+                lands["Forest"][0],
+                lands["Mountain"][0],
+                lands["Forest"][1],
+                lands["Mountain"][1],
+            ],
+        },
+    )
+    assert cast.status_code == 200, cast.text
+    assert cast.json()["allowed"] is True, cast.json()
+
+    top = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]})
+    assert top.status_code == 200, top.text
+    pending = top.json()["pending_decision"]
+    assert pending["kind"] == "may"
+    assert pending["source"] == "Bloodbraid Elf"
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True},
+    )
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert body["accepted"] is True and body.get("paused") is True
+    pending = body["pending_decision"]
+    assert pending["kind"] == "choose_a_mode"
+    discard_mode = next(mode for mode in pending["options"] if "discards a card" in mode)
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "choice": discard_mode},
+    )
+    assert answer.json()["accepted"] is True
+    pending = answer.json()["pending_decision"]
+    assert pending["kind"] == "choose_a_mode"
+    destroy_mode = next(mode for mode in pending["options"] if "Destroy target artifact" in mode)
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "choice": destroy_mode},
+    )
+    assert answer.json()["accepted"] is True
+    pending = answer.json()["pending_decision"]
+    assert pending["kind"] == "choose_targets"
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "targets": ["bob"]},
+    )
+    assert answer.json()["accepted"] is True
+    pending = answer.json()["pending_decision"]
+    assert pending["kind"] == "choose_targets"
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "targets": [spellbomb]},
+    )
+    body = answer.json()
+    assert body["accepted"] is True
+    assert body.get("paused") is not True, body
+
+    mid = state(client, game)
+    assert [entry["name"] for entry in mid["stack"]] == ["Kolaghan's Command", "Bloodbraid Elf"]
+    assert mid["exile"] == []
+    assert mid["play_permissions"]["alice"] == []
+
+    resolved_command = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["bob"]})
+    resolved_body = resolved_command.json()
+    assert resolved_body.get("paused") is True, (
+        "bob has one card, but Kolaghan's Command still asks which to discard"
+    )
+    discard_pending = resolved_body["pending_decision"]
+    assert discard_pending["kind"] == "choose_cards"
+    discard = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "card_ids": [island]},
+    )
+    assert discard.json()["accepted"] is True
+
+    after = state(client, game)
+    assert after["hands"]["bob"] == [], "bob discarded his one card"
+    assert all(card["name"] != "Aether Spellbomb" for card in after["battlefield"])
+    assert find(after["graveyards"]["bob"], "Aether Spellbomb")["zone"] == "graveyard"
+
+
+def test_cascade_hit_with_no_legal_target_is_not_cast_and_goes_to_the_bottom(client, game):
+    """CR 601.2c makes casting Fatal Push illegal with no creature anywhere to
+    target - `Game.can_cast_during_resolution` catches this up front, so the
+    `may` itself is offered with `affirmative_is_legal: False` (CR 608.2d,
+    "the player can't choose an option that's illegal or impossible") and an
+    `accept: True` answer is refused outright rather than accepted and then
+    discovered to do nothing. Declining is the only legal answer, and Fatal
+    Push is bottomed instead (CR 702.85a's "weren't cast")."""
+    add_card(client, game, "Bloodbraid Elf", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "library", position="top")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    uids = seats_for(client, game)
+    lands = _lands(client, game)
+    elf = state(client, game)["hands"]["alice"][0]
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": elf["id"],
+            "mana_sources": [
+                lands["Forest"][0],
+                lands["Mountain"][0],
+                lands["Forest"][1],
+                lands["Mountain"][1],
+            ],
+        },
+    )
+    assert cast.status_code == 200, cast.text
+    assert cast.json()["allowed"] is True, cast.json()
+
+    top = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]})
+    pending = top.json()["pending_decision"]
+    assert pending["kind"] == "may"
+    assert pending["affirmative_is_legal"] is False
+
+    illegal_accept = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True},
+    )
+    assert illegal_accept.json()["accepted"] is False
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": False},
+    )
+    body = answer.json()
+    assert body["accepted"] is True
+    assert body.get("paused") is not True, body
+
+    final = state(client, game)
+    assert [entry["name"] for entry in final["stack"]] == ["Bloodbraid Elf"]
     assert final["exile"] == []
-    assert final["play_permissions"]["alice"] == []
-    # Living End's own resolution (CR 702.62a's flagship combo, actually
-    # driven through the real engine): exile graveyard creatures, *then*
-    # sacrifice battlefield creatures, *then* return what was exiled - in
-    # that order, Shardless Agent is still on the battlefield at the exile
-    # step, so sacrificing it afterward leaves it in the graveyard rather
-    # than bringing it back (see the engine's own
-    # `test_battlefield_creatures_still_die_with_an_empty_graveyard`).
-    # Alice had nothing else in her graveyard, so only the cast spells land
-    # there: the sacrificed Shardless Agent and Living End itself.
-    assert {c["name"] for c in final["graveyards"]["alice"]} == {"Shardless Agent", "Living End"}
-    assert all(c["name"] != "Shardless Agent" for c in final["battlefield"])
+    push = find(final["libraries"]["alice"], "Fatal Push")
+    assert push["zone"] == "library"
+
+
+def test_a_kicker_spell_off_a_cascade_pays_the_kicker_through_decide(client, game):
+    """Bloodbraid Elf into a kicked Burst Lightning: CR 601.2b's optional
+    additional cost is offered as its own `may` decision (`Game.
+    cast_during_resolution`, the same funnel a mandatory cost or a mode uses),
+    chained off the cascade's own accept - paying it taps four more untapped
+    sources with no separate `pay_mana` step (auto-tap), and the kicked spell
+    deals 4 rather than Burst Lightning's unkicked 2."""
+    add_card(client, game, "Bloodbraid Elf", "alice", "hand")
+    add_card(client, game, "Burst Lightning", "alice", "library", position="top")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    for _ in range(4):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    uids = seats_for(client, game)
+    lands = _lands(client, game)
+    elf = state(client, game)["hands"]["alice"][0]
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": elf["id"],
+            "mana_sources": [
+                lands["Forest"][0],
+                lands["Mountain"][0],
+                lands["Forest"][1],
+                lands["Mountain"][1],
+            ],
+        },
+    )
+    assert cast.status_code == 200, cast.text
+    assert cast.json()["allowed"] is True, cast.json()
+
+    top = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]})
+    pending = top.json()["pending_decision"]
+    assert pending["kind"] == "may"
+    assert pending["source"] == "Bloodbraid Elf"
+
+    accept_cascade = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True},
+    )
+    body = accept_cascade.json()
+    assert body["accepted"] is True and body.get("paused") is True
+    pending = body["pending_decision"]
+    assert pending["kind"] == "may"
+    assert pending["source"] == "Burst Lightning"
+
+    pay_kicker = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True},
+    )
+    body = pay_kicker.json()
+    assert body["accepted"] is True and body.get("paused") is True
+    pending = body["pending_decision"]
+    assert pending["kind"] == "choose_targets"
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "targets": ["bob"]},
+    )
+    body = answer.json()
+    assert body["accepted"] is True and body.get("paused") is True
+    pending = body["pending_decision"]
+    assert pending["kind"] == "pay_mana"
+    assert pending["prompt"] == "pay {4} to cast Burst Lightning"
+
+    pay = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True},
+    )
+    body = pay.json()
+    assert body["accepted"] is True
+    assert body.get("paused") is not True, body
+
+    mid = state(client, game)
+    assert mid["exile"] == []
+    assert mid["play_permissions"]["alice"] == []
+    assert all(land["tapped"] for land in mid["battlefield"] if land["name"] == "Mountain"), (
+        "the kicker's {4} was paid from the untapped Mountains"
+    )
+    assert [entry["name"] for entry in mid["stack"]] == ["Burst Lightning", "Bloodbraid Elf"]
+
+    resolved_bolt = client.post(f"/api/games/{game}/resolve-top").json()
+    assert resolved_bolt["resolved"] == "Burst Lightning"
+    bob = next(p for p in state(client, game)["players"] if p["username"] == "bob")
+    assert bob["life"] == 16, "kicked Burst Lightning deals 4, not the unkicked 2"

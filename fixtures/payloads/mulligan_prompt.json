@@ -278,6 +278,13 @@
     ],
     "bob": []
   },
+  "known_cards": {
+    "alice": {
+      "hand": [],
+      "library": [],
+      "sideboard": []
+    }
+  },
   "losers": [],
   "pending_decision": null,
   "phase": null,

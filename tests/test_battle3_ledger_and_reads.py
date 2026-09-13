@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 
 import httpx
-from conftest import add_card, drain_suspend_upkeeps, find, force_turn_position, state
+from conftest import add_card, find, force_turn_position, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
 from test_autopass import a_bear_that_can_attack, set_step, stock_libraries
@@ -135,19 +135,27 @@ def test_a_flashback_cast_logs_the_graveyard_it_was_cast_from(client, game):
 
 
 def test_a_permission_cast_logs_the_exile_it_was_cast_from(client, game):
-    add_card(client, game, "Living End", "alice", "hand")
-    for _ in range(4):
-        add_card(client, game, "Swamp", "alice", "battlefield")
-    swamps = [card["id"] for card in state(client, game)["battlefield"]]
+    """`cast_origin_zone` reads the card's real zone right before the cast
+    (B3-15: a permission cast used to log `from_zone: hand`, its request's
+    own unhelpful default) rather than branching on how the cast was
+    permitted - a plotted card driven through the ordinary `actions/cast`
+    exercises the identical `locate_castable(...).zone` read a suspended
+    card's now-inline free cast (`Game.finish_suspend`, cast_during_
+    resolution, battle 8) no longer reaches through this route at all."""
+    add_card(client, game, "Slickshot Show-Off", "alice", "hand")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    mountains = [card["id"] for card in state(client, game)["battlefield"]]
     client.post(
-        f"/api/games/{game}/actions/suspend",
-        json={"player": "alice", "card": "Living End", "mana_sources": swamps},
+        f"/api/games/{game}/actions/plot",
+        json={"player": "alice", "card": "Slickshot Show-Off", "mana_sources": mountains},
     )
-    drain_suspend_upkeeps(client, game, "alice", 3)
-    living_end = find(state(client, game)["exile"], "Living End")["id"]
+    store.get(game).turn.turn_number += 1  # CR 702.170d: castable on a later turn
+    exiled = find(state(client, game)["exile"], "Slickshot Show-Off")["id"]
 
     cast = client.post(
-        f"/api/games/{game}/actions/cast", json={"player": "alice", "card_id": living_end}
+        f"/api/games/{game}/actions/cast",
+        json={"player": "alice", "card_id": exiled, "from_zone": "exile", "keyword": "Plot"},
     ).json()
     assert cast["allowed"] is True, cast
     (row,) = log_rows(client, game, "cast")

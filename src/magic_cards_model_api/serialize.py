@@ -399,13 +399,16 @@ def _play_permission_view(
     which card, from which zone, granted by what, whether it pays the mana
     cost, and when it expires.
 
-    A real game already hit the gap this closes: cascade offering "you may
-    cast Living End without paying its mana cost" was accepted, the engine
-    granted the permission, and nothing in the state a seat reads ever named
-    it - the card just sat in exile until cleanup bottomed it, unusable
-    though `POST .../actions/cast` (with no `keyword` needed - see
-    `engine_api.cast_card`'s exile-zone branch) would have driven it straight
-    through.
+    A real game already hit the gap this closes: a graveyard's flashback
+    grant, or a card exiled and made playable "this turn", was accepted, the
+    engine granted the permission, and nothing in the state a seat reads ever
+    named it - the card just sat there, unusable though `POST .../actions/
+    cast` (with no `keyword` needed - see `engine_api.cast_card`'s exile-zone
+    branch) would have driven it straight through. (Cascade's own "you may
+    cast it without paying its mana cost" no longer works this way at all,
+    battle 8: accepting it casts the card immediately while the trigger is
+    still resolving, and no permission is ever granted for a seat to find
+    here.)
 
     `None` when the object the permission was granted against is no longer
     findable (moved zones since - CR 400.7 already makes the permission dead
@@ -439,7 +442,6 @@ def _play_permission_view(
         "granted_step": granted_step,
         "expires": expires,
         "expired": permission.expired(game),
-        "bottom_if_unused": permission.bottom_if_unused,
         "usable_now": reason is None,
         "why_not": reason,
     }
@@ -450,9 +452,10 @@ def _play_permissions_view(
 ) -> dict[str, list[dict[str, Any]]]:
     """Every live `PlayPermission`, grouped by the player who may use it.
 
-    Not secret: every permission this engine actually grants today (cascade,
-    suspend's own third ability) names a card that is already visible in a
-    public zone (CR 400.2's exile), so there is nothing here for
+    Not secret: every permission this engine actually grants today (a
+    flashback grant, a card exiled and made playable "this turn") names a
+    card that is already visible in a public zone (CR 400.2's exile or
+    graveyard), so there is nothing here for
     `visibility.redact_view` to hide beyond the ordinary face-down-card
     redaction it already applies to `exile`/`play_permissions["card"]["face_up"]`
     entries - handled generically since each entry nests a full `_card_view`.
@@ -965,6 +968,58 @@ def _paused_overlay(game_id: str, game: Game, paused: Any) -> dict[str, Any]:
     return cached
 
 
+def _known_cards_view(
+    game: Game, images: dict[str, dict[str, str]]
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """What each player knows about hidden cards, keyed by the player who
+    knows (`Game.known_to`).
+
+    Battle 8's B8-03 is the reason this exists at all: a card a public-zone
+    effect puts into a library (Subtlety onto a graveyard creature, a
+    countered spell going to the bottom instead of the graveyard, ...) is
+    known to every player at its live position (CR 400.2, CR 401.4) the same
+    way a public-zone-to-hand move already was (battle 5), and nothing in
+    this api ever surfaced either one - `libraries`/`sideboards` are admin-
+    only, so a seat had no way to read back knowledge the engine already
+    tracked for it.
+
+    Only the hidden zones carry anything: a hand (CR 402.3, an opponent's
+    card seen by some other effect), a library with its live position
+    (`entry.index_from_top`, `None` everywhere else per `KnownCard`'s own
+    docstring - CR 701.20d ends a record on a reordering), and a sideboard
+    (CR 400.11a). A player's own hand and sideboard are dropped from that
+    player's own entry - they already see those whole - but a known record
+    about their own library is kept, since `libraries` never reaches a seat
+    at all (nobody reads their own library, matching the real game) and
+    `library`'s live position is exactly the piece of information nothing
+    else here carries.
+
+    Built for every player; `visibility.redact_view` keeps each viewer only
+    its own entry, the same "own block only" shape `hands` already uses.
+    """
+    known: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for player in game.players:
+        block: dict[str, list[dict[str, Any]]] = {"hand": [], "library": [], "sideboard": []}
+        for entry in game.known_to(player.username):
+            if entry.zone not in (Zone.HAND, Zone.LIBRARY, Zone.SIDEBOARD):
+                continue
+            if entry.zone is not Zone.LIBRARY and entry.owner == player.username:
+                continue
+            card = game.find_by_id(entry.card_id)
+            if card is None:
+                continue
+            card_view = _card_view(game, card, images)
+            if entry.zone is Zone.LIBRARY:
+                if entry.index_from_top is None:
+                    continue
+                block["library"].append({"index_from_top": entry.index_from_top, "card": card_view})
+            else:
+                block[entry.zone.value].append(card_view)
+        block["library"].sort(key=lambda record: record["index_from_top"])
+        known[player.username] = block
+    return known
+
+
 def state_view(game: Game, game_id: str) -> dict[str, Any]:
     """T1: this dict's shape is formalised as `schemas.GameStateView` - see
     that class and the "Response views" section it opens for the field-by-
@@ -1070,11 +1125,14 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         "stack": _stack_view(game, images),
         "exile": exile_views,
         # CR 406.4's marked piles - suspended cards (with their time counters,
-        # via each card's own `counters`), foretold and plotted cards, and a
-        # cascade hit awaiting its cast - pulled out of `exile` so a seat does
-        # not have to scan the whole pile to find what it may still act on.
-        # Every entry here is already a full `exile` card view; `exile_pile`
-        # is a filtered *view* of `exile`, not a second source of truth.
+        # via each card's own `counters`), foretold and plotted cards - pulled
+        # out of `exile` so a seat does not have to scan the whole pile to
+        # find what it may still act on. Cascade's own hit never sits here
+        # any more (battle 8, B8-01): accepting it casts the card immediately
+        # while the trigger is still resolving, so it never comes to rest in
+        # exile at all. Every entry here is already a full `exile` card view;
+        # `exile_pile` is a filtered *view* of `exile`, not a second source of
+        # truth.
         "exile_pile": [card for card in exile_views if card.get("exile_pile") is not None],
         # CR 601.3's dynamic grants - see `_play_permissions_view`. Keyed by
         # the player who may use it; `POST .../actions/cast` (no `keyword`
@@ -1087,6 +1145,8 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         "graveyards": {player.username: views(player.graveyard) for player in board.players},
         "libraries": {player.username: views(player.library) for player in board.players},
         "sideboards": {player.username: views(player.sideboard) for player in board.players},
+        # A sibling of `hands`, never inside it - see `_known_cards_view`.
+        "known_cards": _known_cards_view(board, images),
         "winner": game.winner,
         "drawn": game.drawn,
         "losers": list(game.losers),

@@ -609,15 +609,29 @@ up in your state view under a cycling-specific entry - if `cycle` refuses
 with "has no cycling ability number N", that is the engine telling you the
 ability is not cycling at all, not that the action does not exist.
 
-## Free casts you have been granted
+## A cast or play offered while something else resolves
 
-Your `state` view has a `play_permissions` list: everything you may
-currently cast or play, usually without paying its mana cost - a cascade hit
-you accepted, a suspended card whose last time counter just came off, a card
-an effect said you may play this turn. To use one, just `cast` (or
-`play-land`) that card normally - the permission is picked up automatically.
-If you accepted a free cast and then never cast it, you lose it - so cast it
-while you have priority.
+Cascade's hit, a suspended card whose last time counter just came off, and a
+handful of other "you may cast/play it without paying its mana cost" effects
+(rebound, a hideaway land, Knowledge Pool and Possibility Storm's free casts,
+Isochron Scepter's copy) are not something you go drive afterward: accepting
+the `may` question they ask casts or plays the card immediately, while the
+permitting spell or ability is still resolving (CR 608.2g) - you never get
+priority in between, and there is no separate `cast`/`play-land` call to
+make. Your `decide` answer that accepts the offer is the same call that
+resolves whichever face, mode, target, or additional cost (kicker,
+multikicker, entwine, escalate, offspring, gift, blight, a mandatory printed
+cost) the cast needs, asked one `pending_decision` at a time, chained off
+that same accept the way any other multi-step resolution already answers
+through `decide`. Decline and the card stays where it was (exiled, or back
+in your library on the bottom, if nothing offered qualified).
+
+Your `state` view's `play_permissions` list still exists for what remains a
+real standing grant good until you use it or it expires - a flashback
+granted to a card that does not print it, a card exiled and made playable
+"this turn" or "until end of your next turn". Those you do drive yourself:
+`cast` (or `play-land`) that card normally, with no `keyword`, and the
+permission is picked up automatically.
 
 ## Filing a problem report
 

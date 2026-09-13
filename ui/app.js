@@ -914,10 +914,12 @@ function beginCrew(card) {
   return refreshAffordance();
 }
 
-/** CR 601.3's dynamic play permissions (cascade, suspend's own third
- * ability): begin casting `card` from `fromZone` (exile, a graveyard) rather
- * than the hand - `actions.js`'s `bodyFor` sends `from_zone` only when this
- * is set, so an ordinary hand cast is unaffected. */
+/** CR 601.3's dynamic play permissions (a flashback grant, an exiled card
+ * made playable "this turn" - cascade's hit and suspend's own third ability
+ * no longer grant one of these, battle 8): begin casting `card` from
+ * `fromZone` (exile, a graveyard) rather than the hand - `actions.js`'s
+ * `bodyFor` sends `from_zone` only when this is set, so an ordinary hand
+ * cast is unaffected. */
 function beginCastFromPermission(card, fromZone) {
   hidePopover();
   store.set({ action: A.begin("cast", card, { fromZone }), preview: null });

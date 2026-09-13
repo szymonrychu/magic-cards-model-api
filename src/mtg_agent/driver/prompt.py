@@ -517,8 +517,9 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
 
   `sections=` takes a comma-separated list of the answer's own top-level
   keys - battlefield, hands, graveyards, exile, command, stack, combat,
-  players, play_permissions, pregame, pending_decision, recent_log - and an
-  unknown name is refused with the real list rather than ignored. `side=`
+  players, play_permissions, pregame, pending_decision, recent_log,
+  known_cards - and an unknown name is refused with the real list rather
+  than ignored. `side=`
   takes both (the default), mine, or opponent, and is resolved from your own
   uid, so it stays right in a mirror match where both boards hold the same
   card names; the answer's focus block names which seats each side resolved

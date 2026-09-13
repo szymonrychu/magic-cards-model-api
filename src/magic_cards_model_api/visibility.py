@@ -137,6 +137,8 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
         }
     view.pop("libraries", None)
     view.pop("sideboards", None)
+    if "known_cards" in view:
+        view["known_cards"] = _redact_known_cards(view["known_cards"], viewer)
     if view.get("pending_decision") is not None:
         view["pending_decision"] = redact_pending_decision(
             view["pending_decision"], viewer, card_lookup, hidden_ids
@@ -260,8 +262,9 @@ def _redact_cast_options(card: dict[str, Any], viewer: Viewer) -> dict[str, Any]
 def _redact_permission(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     """One `play_permissions` entry (`serialize._play_permission_view`), as
     `viewer` may see it. Every permission this engine grants today names a
-    card that is already public (cascade and suspend both exile face up), so
-    there is nothing to hide in practice - but the entry nests a full card
+    card that is already public (a flashback grant's graveyard card, a card
+    exiled face up and made playable "this turn"), so there is nothing to
+    hide in practice - but the entry nests a full card
     view under `"card"`, the same shape `exile` carries, so a hypothetical
     future permission over a face-down card is still covered the same way
     `_redact_facedown_card` already covers `exile`, rather than assuming this
@@ -270,6 +273,42 @@ def _redact_permission(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     if not isinstance(card, dict):
         return entry
     return {**entry, "card": _redact_facedown_card(card, viewer)}
+
+
+def _redact_known_cards(known: Any, viewer: Viewer) -> dict[str, Any]:
+    """`serialize._known_cards_view`, as `viewer` may see it: its own entry
+    only, the same "own block only" cut `hands` already gets.
+
+    What one player knows about a hidden card is that player's alone to read
+    back - an opponent's `known_cards` entry could name a card nobody has
+    shown the viewer (a hand card seen only by an effect of the knower's own),
+    so a viewer never reads another seat's entry, and a viewer who is nobody
+    reads none. Fails closed: rebuilt only from the shape `serialize.
+    _known_cards_view` actually produces - `hand`/`sideboard` lists of card
+    views, `library` records carrying an integer `index_from_top` alongside a
+    card view - and anything else is dropped rather than passed through."""
+    if not isinstance(known, dict) or not isinstance(viewer, str):
+        return {}
+    block = known.get(viewer)
+    if not isinstance(block, dict):
+        return {}
+
+    def cards(key: str) -> list[dict[str, Any]]:
+        entries = block.get(key)
+        if not isinstance(entries, list):
+            return []
+        return [card for card in entries if isinstance(card, dict) and card.get("id")]
+
+    library: list[dict[str, Any]] = []
+    for record in block.get("library") or ():
+        if not isinstance(record, dict):
+            continue
+        index = record.get("index_from_top")
+        card = record.get("card")
+        if type(index) is not int or not isinstance(card, dict) or not card.get("id"):
+            continue
+        library.append({"index_from_top": index, "card": card})
+    return {viewer: {"hand": cards("hand"), "library": library, "sideboard": cards("sideboard")}}
 
 
 def _card_lookup(view: dict[str, Any]) -> dict[str, dict[str, Any]]:

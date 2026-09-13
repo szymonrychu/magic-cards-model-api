@@ -83,8 +83,10 @@ def test_suspend_discoverable_in_hand_state_before_it_is_taken(client, game):
 
 def test_time_counters_come_off_each_upkeep_and_the_free_cast_reanimates(client, game):
     """CR 702.62a's second ability (one time counter per upkeep) and third
-    (once the last comes off, a free cast - picked up automatically by
-    `actions/cast` with no `keyword`, via the granted `PlayPermission`) are
+    (once the last comes off, a free cast - cast immediately while that
+    third ability itself is still resolving, `Game.finish_suspend` via
+    `Game.may_cast_during_resolution`, CR 608.2g; battle 8's funnel commit
+    removed the standing `PlayPermission` this used to leave behind) are
     both live triggered abilities now: the engine puts a real ability on the
     stack for each at the owner's upkeep (`machines/keywords.
     _suspend_abilities`), the same as any other trigger, so nothing in this
@@ -139,32 +141,48 @@ def test_time_counters_come_off_each_upkeep_and_the_free_cast_reanimates(client,
     living_end = find(state(client, game)["exile"], "Living End")
     assert living_end["counters"].get("time", 0) == 1
 
-    # Third and last: the same `advance` path as the first, and this time
-    # the last time counter's own removal raises CR 702.62a's third trigger
-    # (`finish_suspend`), a *second* ability on the stack once the first
-    # resolves - both are drained by `resolve_whole_stack` the same way.
+    # Third and last: the same `advance` path as the first. The last time
+    # counter's own removal raises CR 702.62a's third trigger
+    # (`finish_suspend`) as a *second* ability, resolved separately - and
+    # resolving *that one* is where `finish_suspend` asks its own "you may
+    # cast it" (`Game.may_cast_during_resolution`) and pauses, so
+    # `resolve_whole_stack` (which cannot answer a decision) only drains the
+    # first ability here.
     force_turn_position(game, Step.UNTAP, "alice")
     advanced = client.post(f"/api/games/{game}/advance", json={"player": "alice"}).json()
     assert advanced["advanced_to"] == "upkeep", advanced
-    resolved = resolve_whole_stack(client, game)
-    assert resolved == ["ability from Living End", "ability from Living End"]
+    uids = seats_for(client, game)
+    counted_down = client.post(
+        f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]}
+    ).json()
+    assert counted_down.get("paused") is not True, counted_down
+    assert counted_down["resolved"] == "ability from Living End"
     living_end = find(state(client, game)["exile"], "Living End")
     assert living_end["counters"].get("time", 0) == 0
 
-    # Free cast: CR 702.62a's third ability is a resolving trigger's own
-    # instruction (CR 117.2e/608.2g), not a standing "until end of turn"
-    # grant - `finish_suspend` hands it out `immediate=True`, good only for
-    # the upkeep step it was granted in (`PlayPermission.granted_step`), so
-    # the cast has to happen right here, still in that upkeep, and it works
-    # despite this being nobody's main phase because an immediate permission
-    # bypasses `why_cannot_cast_now`'s ordinary sorcery-speed check entirely.
-    cast = client.post(
-        f"/api/games/{game}/actions/cast",
-        json={"player": "alice", "card_id": living_end["id"], "from_zone": "exile"},
+    finishing = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]}).json()
+    assert finishing.get("paused") is True, "finish_suspend's own may pauses (CR 608.2g)"
+    pending = finishing["pending_decision"]
+    assert pending["kind"] == "may"
+    assert pending["source"] == "Living End"
+
+    # Accepting casts Living End immediately, still within this same upkeep
+    # (CR 117.1's preamble: a resolving ability's own instruction carries no
+    # timing restriction) - no separate `actions/cast` call, and nothing is
+    # left standing to discover or drive afterward.
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True},
     )
-    cast_body = cast.json()
-    assert cast_body["allowed"] is True, cast_body
-    assert cast_body["cost"] == ""
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert body["accepted"] is True
+    assert body.get("paused") is not True, body
+    mid = state(client, game)
+    assert mid["exile"] == []
+    assert mid["play_permissions"]["alice"] == []
+    assert [entry["name"] for entry in mid["stack"]] == ["Living End"]
 
     resolved = client.post(f"/api/games/{game}/resolve-top").json()
     assert resolved["resolved"] == "Living End"

@@ -221,27 +221,26 @@ def resolve_whole_stack(client: TestClient, game_id: str) -> list[str]:
     """Resolve every object on the stack, top down. Returns what resolved,
     in order - the caller's own way to drain triggers (CR 702.62a's suspend
     countdown among them, now a real triggered ability rather than a
-    response field reporting a hand-driven removal)."""
+    response field reporting a hand-driven removal).
+
+    Refuses to loop when a resolution pauses on a decision (`resolved: None`,
+    `paused: True`) - CR 702.62a's third ability now asks its own "you may
+    cast it" (`Game.finish_suspend`, via `cast_during_resolution`) while it
+    resolves, the same way cascade's hit does, so a stack that needs a
+    `POST .../decide` answer partway through no longer drains on its own.
+    Looping past that silently retried the same paused command forever
+    (`body["resolved"]` reads `None` and the stack never shrinks) rather than
+    failing loudly - a caller that expects a decision mid-drain must answer
+    it itself and call this again for what is left."""
     resolved: list[str] = []
     while state(client, game_id)["stack"]:
         body = client.post(f"/api/games/{game_id}/resolve-top").json()
+        assert body.get("paused") is not True, (
+            f"resolve_whole_stack hit a pending decision it cannot answer: "
+            f"{body.get('pending_decision')}"
+        )
         resolved.append(body["resolved"])
     return resolved
-
-
-def drain_suspend_upkeeps(client: TestClient, game_id: str, player: str, count: int) -> None:
-    """Walk `player` through `count` real upkeeps via `advance`, resolving
-    CR 702.62a's countdown trigger (and, on the last one, its own free-cast
-    grant) each time - the real path a suspended card's counters come off
-    now that nothing in this repo drives the removal by hand. `PUT .../step`
-    cannot stand in for this: it is a raw teleport that runs none of
-    `Game.advance`'s own beginning-of-step triggers."""
-    for _ in range(count):
-        force_turn_position(game_id, Step.UNTAP, player)
-        advanced = client.post(f"/api/games/{game_id}/advance", json={"player": player})
-        assert advanced.status_code == 200, advanced.text
-        assert advanced.json()["advanced_to"] == "upkeep", advanced.json()
-        resolve_whole_stack(client, game_id)
 
 
 def card_id(client: TestClient, game_id: str, name: str, player: str, zone: str) -> str:
