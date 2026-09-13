@@ -40,9 +40,10 @@ INDEX_HTML = UI / "index.html"
 #: that ships WITHOUT the attribute is up from the moment the page loads, and
 #: `.modal`'s own `position: fixed; inset: 0` then swallows every click on
 #: the board behind it - the greyed-out, dead-button outage this file exists
-#: for. `#log-modal` (the game log, moved out of the control ribbon when the
-#: mtg-buddy advisor panel took that corner) is the newest of them.
-OVERLAYS = ("card-preview", "toast", "popover", "decision-window", "log-modal", "modal")
+#: for. `#log-modal` used to be one of these (the game log, behind a topbar
+#: button); it is gone now, at the owner's request, and the log lives in
+#: `#log-box`, always visible in `#side-panel` rather than as an overlay.
+OVERLAYS = ("card-preview", "toast", "popover", "decision-window", "modal")
 
 #: Every module that can toggle `.hidden` - the still-classic `app.js` plus
 #: the buildless ES modules under `ui/` and `ui/render/` (`board.js` and
@@ -116,12 +117,11 @@ def test_every_overlay_ships_hidden_in_the_markup() -> None:
         )
 
 
-def test_the_two_newest_toggles_go_through_hidden_and_not_style_display() -> None:
-    """The log overlay (`panels.js`'s `toggleLogModal`/`closeLogModal`) and
-    the advisor panel (`render/advice.js`, which takes itself out of the
-    control ribbon when it has nothing to propose) are the newest things in
-    this UI to appear and disappear, and both do it through `hidden` - so the
-    single global rule above covers them with no per-element CSS.
+def test_the_advisor_panel_toggles_through_hidden_and_not_style_display() -> None:
+    """The advisor panel (`render/advice.js`, which takes itself out of the
+    control ribbon when it has nothing to propose) is the newest thing in
+    this UI to appear and disappear, and it does so through `hidden` - so the
+    single global rule above covers it with no per-element CSS.
 
     `style.display` would be outside that guarantee and would also fight it:
     `!important` beats an inline `display` only while the attribute is set,
@@ -136,7 +136,6 @@ def test_the_two_newest_toggles_go_through_hidden_and_not_style_display() -> Non
             f"ui/{module} toggles visibility with style.display instead of `el.hidden`"
         )
     panels = (UI / "render" / "panels.js").read_text()
-    assert re.search(r"#log-modal", panels), "nothing in panels.js touches #log-modal any more"
     assert re.search(r"modal\.hidden\s*=", panels), (
-        "the log overlay is no longer toggled through `.hidden`"
+        "#modal is no longer toggled through `.hidden`"
     )

@@ -238,6 +238,37 @@ h3 { font-size: 14px; }
   height: 100vh;
   gap: 8px;
   padding: 8px;
+  /* A reserved strip along the very top of the viewport, exclusively for
+     `.game-toolbar` below - nothing in the grid (the board, the zone ribbon,
+     `#topbar`'s own turn/phase/AI content) is ever laid out under it, at any
+     width, so the fixed toolbar can never cover something a player is trying
+     to read or click. */
+  padding-top: 52px;
+}
+
+/* Concede, Report and Lobby, pinned to the top-right corner of the viewport
+   at every width - `position: fixed` is what makes "every width" true for
+   free: it is placed against the viewport, not against `#game`'s own grid,
+   so it holds the same corner whether that grid is the three-column desktop
+   layout or the narrow-width single-column stack, and it survives the page
+   scrolling in the latter. `#game`'s own `padding-top` above reserves the
+   strip this sits in.
+
+   `flex-wrap: wrap` with `justify-content: flex-end` rather than a fixed
+   `nowrap` row: an armed Concede's "click again to confirm" label is the one
+   thing here that can grow past a phone-width viewport's remaining room, and
+   wrapping it onto its own line keeps every button fully on screen rather
+   than clipping one off the edge. */
+.game-toolbar {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 55;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: calc(100vw - 16px);
 }
 
 /* The ribbon's top block. A column rather than a bar now that it is 340px
@@ -505,6 +536,16 @@ h3 { font-size: 14px; }
   background: rgba(232, 180, 76, 0.05);
 }
 .zone-pile[data-zone="exile"] .zone-name { color: var(--warn); }
+/* The command zone (CR 408) - commanders, emblems - is the row the removed
+   Zones button used to be the only way to see at all, so it gets its own
+   distinct treatment for the same reason exile does: a dotted accent border
+   rather than the graveyard's plain grey or exile's dashed amber. */
+.zone-pile[data-zone="command"] {
+  border-style: dotted;
+  border-color: var(--accent);
+  background: rgba(107, 164, 255, 0.05);
+}
+.zone-pile[data-zone="command"] .zone-name { color: var(--accent); }
 /* Whose zone it is, in the seat colours the info rows already use. An inset
    bar rather than a thicker left border, so the exile rows above keep their
    dashed outline intact. */
@@ -911,16 +952,20 @@ h3 { font-size: 14px; }
   border-radius: 9px;
   padding: 10px 12px;
 }
-/* The side panel's four stacked sections: what is being asked
-   (`#prompt-box`), the priority controls (`#priority-box`), the stop
-   conditions autopilot will halt for (`#stops-box`), and the mtg-buddy
-   advisor's current proposal (`#advice-box`) - which alone takes whatever
-   height the other three leave, so the panel is exactly one viewport tall
-   whatever is in it.
+/* The side panel's six stacked sections: what is being asked
+   (`#prompt-box`), the announcement in progress (`#casting-strip`), the
+   priority controls (`#priority-box`), the stop conditions autopilot will
+   halt for (`#stops-box`), the mtg-buddy advisor's current proposal
+   (`#advice-box` - which takes whatever height the rest leave, so the panel
+   is exactly one viewport tall whatever is in it), and the game log
+   (`#log-box`, last).
 
-   `#log-box` used to be that last section. It now lives in `#log-modal`
-   instead (`index.html` has the reasoning), because this corner is the one
-   the owner asked to reuse for the advisor. */
+   `#log-box` used to live here, then moved out behind a topbar Log button
+   (`#log-modal`) once the advisor took this corner. That button is gone at
+   the owner's request, so the log came back rather than being lost entirely
+   - but with a bounded height of its own (below) rather than sharing
+   `#advice-box`'s flexible space, so the advisor keeps the room it was
+   given and the log scrolls inside its own smaller box instead. */
 /* Careful with the next two rules: `#side-panel > div` above is an id *and*
    a type selector, so it outranks a bare `#prompt-box`/`#priority-box`, and
    it does - measured with `getComputedStyle` in a real browser, both of them
@@ -950,6 +995,18 @@ h3 { font-size: 14px; }
    `#prompt-box`'s and `#priority-box`'s did. */
 #side-panel > #advice-box { border-color: var(--accent); }
 
+/* The game log (`render/log.js`'s `mountLog`), always visible now rather
+   than behind the removed topbar Log button. `flex: 0 1 200px` - a fixed
+   basis it can shrink from but never grows past - so it takes a modest,
+   consistent slice of the column and leaves `#advice-box` the rest, with its
+   own scrollbar rather than pushing the ribbon taller than the viewport. */
+#log-box {
+  flex: 0 1 200px;
+  min-height: 60px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
 /* One advisor proposal (`render/advice.js`). The summary is the play, the
    `.advice-why` block is the agent's own words, and `.advice-where` says
    which ledger entry and which step it was proposed at so it can be placed
@@ -976,23 +1033,6 @@ h3 { font-size: 14px; }
    neither may be dimmed by it. */
 .advice-moved, .advice-unchecked { margin-top: 8px; color: var(--warn); }
 #advice-box button { margin-top: 10px; }
-
-/* The game log's own overlay. `.modal` already centres its child and dims
-   the page behind it; the log just needs a readable box to sit in, which is
-   what `.modal-inner` does for every other dialog - `#log-box` is that box
-   itself here, since it is the whole content. */
-#log-modal > #log-box {
-  background: var(--bg-raised);
-  border: 1px solid var(--line-bright);
-  border-radius: 11px;
-  padding: 18px;
-  box-shadow: var(--shadow);
-  width: 860px;
-  max-width: 100%;
-  max-height: 86vh;
-  overflow-y: auto;
-  font-size: 12px;
-}
 
 /* One `render/log.js` audit-log line. A refused action's engine-verbatim
    reason (`.refusal`) reads in the same red as everywhere else refusals show
@@ -1217,15 +1257,6 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
   box-shadow: var(--shadow);
 }
 .modal-inner label { display: block; margin: 7px 0; font-size: 12px; }
-.modal-inner > .label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--ink-dim);
-  margin-top: 14px;
-}
-.zone-grid { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 14px; }
-.zone-empty { color: var(--ink-faint); font-size: 12px; }
 
 .state-error { color: var(--bad); }
 .state-running { color: var(--good); }
