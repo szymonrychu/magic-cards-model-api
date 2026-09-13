@@ -389,6 +389,76 @@ def test_the_runs_own_trigger_is_passed_through_and_answered(
     assert cards_named(state(client, board)["graveyards"]["alice"], "Mountain")
 
 
+def test_a_bare_surveil_answer_keeps_everything_on_top(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B7-07: a bare `{"decision": "surveil"}` answer (no `to_graveyard`) is
+    schema-valid and means "keep everything on top" - the shape
+    `fetch-surveil-land-keep` uses. It must send `moved: []`, not leave the
+    surveil unanswered."""
+    alice = seat_uid(board, "alice")
+    script = land_script(
+        "sewers-keep",
+        moves=[
+            {
+                "kind": "play_land",
+                "card": {"select": {"types_all": ["Land"], "subtypes_any": ["Swamp"]}},
+                "answers": [{"decision": "surveil"}],
+            }
+        ],
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Undercity Sewers", "alice", "hand")
+    add_card(client, board, "Mountain", "alice", "library")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    body = hook.posts("/decide")[-1]
+    assert body["moved"] == [] and body["top_order"] is None
+    assert cards_named(state(client, board)["graveyards"]["alice"], "Mountain") == []
+
+
+def test_a_bare_scry_answer_keeps_everything_on_top(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B7-07's scry twin: a bare `{"decision": "scry"}` answer keeps every
+    scried card on top instead of leaving the decision unanswered."""
+    alice = seat_uid(board, "alice")
+    script = land_script(
+        "peek",
+        true=[],
+        moves=[
+            {
+                "kind": "cast",
+                "card": {"zone": "hand", "select": {"types_all": ["Sorcery"]}},
+                "answers": [{"decision": "scry"}],
+            }
+        ],
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Preordain", "alice", "hand")
+    add_card(client, board, "Island", "alice", "battlefield")
+    add_card(client, board, "Mountain", "alice", "library")
+    add_card(client, board, "Forest", "alice", "library")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    body = hook.posts("/decide")[-1]
+    assert body["moved"] == [] and body["top_order"] is None
+
+
 # -- conditions, archetypes, inputs -------------------------------------------
 
 
@@ -686,6 +756,9 @@ def test_different_candidates_tied_after_prefer_exit_ambiguous(
 
     assert result.script_exit.exit is Exit.AMBIGUOUS, result.to_dict()
     assert sorted(result.script_exit.ambiguous_names) == ["Hallowed Fountain", "Steam Vents"]
+    # B7-14: the fetch itself was already accepted before the search answer
+    # turned up ambiguous.
+    assert result.script_exit.moves_done == 1, result.to_dict()
 
 
 def test_an_empty_pick_exits_unforeseen(
@@ -705,6 +778,9 @@ def test_an_empty_pick_exits_unforeseen(
 
     assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
     assert result.script_exit.stop_reason
+    # B7-14: the fetch itself was already accepted before the search came up
+    # with nothing to answer it with.
+    assert result.script_exit.moves_done == 1, result.to_dict()
 
 
 def test_a_decision_of_another_kind_exits_unforeseen(
@@ -725,6 +801,9 @@ def test_a_decision_of_another_kind_exits_unforeseen(
 
     assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
     assert "choose_cards" in result.script_exit.stop_reason
+    # B7-14: the fetch itself was already accepted before the mismatched
+    # answer kind surfaced.
+    assert result.script_exit.moves_done == 1, result.to_dict()
 
 
 # -- refusals and transport outcomes -------------------------------------------
@@ -850,6 +929,28 @@ def test_a_missing_plan_exits_needs_plan_with_the_board_unchanged(
     assert hook.posts("/plan") == []
 
 
+def test_a_run_after_game_over_is_refused_with_no_ledger_row(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B8-06: a finished game (CR 104.1) refuses `script-runs` the same way
+    every other action route is refused, and the run reports that refusal -
+    no `script_run_started`/`script_run` row for a game that is already
+    over."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    conceded = client.post(f"/api/games/{board}/actions/concede", json={"player": "bob"})
+    assert conceded.status_code == 200 and conceded.json()["winner"] == "alice", conceded.text
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert result.script_exit.exit is Exit.REFUSED, result.to_dict()
+    assert hook.posts("/actions/play-land") == []
+    assert started(board) == [] and finished(board) == []
+
+
 def test_already_ran_from_the_start_route_is_surfaced(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -879,6 +980,55 @@ def test_already_ran_from_the_start_route_is_surfaced(
     assert result.script_exit.exit is Exit.ALREADY_RAN
     assert result.script_exit.prior_run_id == "earlier"
     assert hook.posts("/actions/play-land") == []
+
+
+def test_an_advisors_advise_run_does_not_consume_the_seats_own_slot(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B7-08: `already_ran` is scoped per uid role. An advisor's advise run
+    of a script proposes a move and takes nothing; the seat's own run of the
+    same script, at the same turn and step, must still proceed."""
+    alice = seat_uid(board, "alice")
+    advisor = "b708-advisor-uid"
+    store.register_advisors(board, {advisor: Advisor(player="alice")})
+    script = land_script("drop")
+    register(client, board, alice, script)
+    register(client, board, advisor, script)
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+
+    advisor_seat, _ = hooked_seat(seats, advisor)
+    advised = run_script(
+        advisor_seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora
+    )
+    assert advised.script_exit.exit is Exit.ADVISED, advised.to_dict()
+
+    seat, hook = hooked_seat(seats, alice)
+    result = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert hook.posts("/actions/play-land"), "the seat's own run must actually play the land"
+
+
+def test_two_advise_runs_by_the_same_advisor_still_exit_already_ran(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B7-08's other half: the role scope narrows `already_ran` to the uid
+    kind, not away entirely - two advise runs of the same script by the same
+    advisor, in the same turn and step, still collide."""
+    advisor = "b708-advisor-uid-2"
+    store.register_advisors(board, {advisor: Advisor(player="alice")})
+    script = land_script("drop")
+    register(client, board, advisor, script)
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, _ = hooked_seat(seats, advisor)
+
+    first = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+    assert first.script_exit.exit is Exit.ADVISED, first.to_dict()
+
+    second = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+    assert second.script_exit.exit is Exit.ALREADY_RAN, second.to_dict()
 
 
 def test_a_script_dropped_from_the_corpus_after_the_read_is_refused_at_its_start(
@@ -1057,6 +1207,162 @@ def test_without_wait_a_script_off_its_step_is_not_applicable(
     assert result.script_exit.failing_condition["list"] == "when"
 
 
+def theirs_float_script(script_id: str, **over: Any) -> dict[str, Any]:
+    doc: dict[str, Any] = {
+        "schema_version": 1,
+        "id": script_id,
+        "name": "Float blue on the opponent's end step",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [
+            {
+                "kind": "activate",
+                "source": {"zone": "battlefield", "select": {"subtypes_any": ["Island"]}},
+                "ability_text_has": "Add {U}",
+            }
+        ],
+        "next": [],
+    }
+    doc.update(over)
+    return doc
+
+
+def test_a_theirs_script_waits_for_this_seats_own_priority_before_its_first_move(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B8-04: `when` names a board position (step, turn, stack), not a
+    priority window. bob's `theirs` script is already sitting at alice's
+    end_step on an empty stack, but alice (the active player) holds priority
+    there first - the runner waits for bob's own priority in this same
+    occurrence rather than sending a move the engine can only refuse ("bob
+    does not have priority, alice does")."""
+    force_turn_position(game, Step.END_STEP, "alice")
+    bob = seat_uid(game, "bob")
+    script = theirs_float_script("float-theirs")
+    register(client, game, bob, script)
+    add_card(client, game, "Island", "bob", "battlefield")
+    assert state(client, game)["priority_holder"] == "alice"
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, bob)
+
+    def alice_passes_soon() -> None:
+        time.sleep(0.05)
+        TestClient(app).post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+
+    thread = threading.Thread(target=alice_passes_soon, daemon=True)
+    thread.start()
+    try:
+        result = run_script(
+            seat, script_id="float-theirs", reasoning=REASONING, corpora=seats.script_corpora
+        )
+    finally:
+        thread.join(5)
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert hook.posts("/actions/activate")
+    assert hook.posts("/actions/activate")[0].get("mana_sources") in (None, [])
+
+
+def test_a_theirs_script_without_wait_is_not_applicable_while_the_other_seat_holds_priority(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--no-wait` never blocks on the other seat's priority; the same
+    position is simply not applicable yet."""
+    force_turn_position(game, Step.END_STEP, "alice")
+    bob = seat_uid(game, "bob")
+    script = theirs_float_script("float-theirs")
+    register(client, game, bob, script)
+    add_card(client, game, "Island", "bob", "battlefield")
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, bob)
+
+    result = run_script(
+        seat,
+        script_id="float-theirs",
+        reasoning=REASONING,
+        corpora=seats.script_corpora,
+        wait=False,
+    )
+
+    assert result.script_exit.exit is Exit.NOT_APPLICABLE, result.to_dict()
+    assert hook.posts("/actions/activate") == []
+
+
+def test_a_game_that_ends_while_waiting_for_own_priority_ends_the_run(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A finished game never hands this seat priority again, so the wait
+    ends the run rather than polling to the time cap and handing back a
+    resume token that would only poll again."""
+    force_turn_position(game, Step.END_STEP, "alice")
+    bob = seat_uid(game, "bob")
+    script = theirs_float_script("float-theirs")
+    register(client, game, bob, script)
+    add_card(client, game, "Island", "bob", "battlefield")
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, bob)
+    fetch = seat.fetch_state
+    calls = {"n": 0}
+
+    def ends_after_first_read(**kwargs: Any) -> dict[str, Any]:
+        calls["n"] += 1
+        read = fetch(**kwargs)
+        return read if calls["n"] == 1 else {**read, "winner": "alice"}
+
+    monkeypatch.setattr(seat, "fetch_state", ends_after_first_read)
+
+    result = run_script(
+        seat,
+        script_id="float-theirs",
+        reasoning=REASONING,
+        corpora=seats.script_corpora,
+        max_seconds=1.0,
+    )
+
+    assert result.finished is True, result.to_dict()
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert hook.posts("/actions/activate") == []
+
+
+def test_a_decision_for_this_seat_while_waiting_for_own_priority_ends_the_run(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A question put to this seat is only ever answered by this seat, so
+    waiting for priority behind it could never end before the time cap."""
+    force_turn_position(game, Step.END_STEP, "alice")
+    bob = seat_uid(game, "bob")
+    script = theirs_float_script("float-theirs")
+    register(client, game, bob, script)
+    add_card(client, game, "Island", "bob", "battlefield")
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, bob)
+    fetch = seat.fetch_state
+    calls = {"n": 0}
+    asked = {"player": "bob", "kind": "surveil", "prompt": "Surveil 1"}
+
+    def asks_after_first_read(**kwargs: Any) -> dict[str, Any]:
+        calls["n"] += 1
+        read = fetch(**kwargs)
+        return read if calls["n"] == 1 else {**read, "pending_decision": asked}
+
+    monkeypatch.setattr(seat, "fetch_state", asks_after_first_read)
+
+    result = run_script(
+        seat,
+        script_id="float-theirs",
+        reasoning=REASONING,
+        corpora=seats.script_corpora,
+        max_seconds=1.0,
+    )
+
+    assert result.finished is True, result.to_dict()
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert hook.posts("/actions/activate") == []
+
+
 # -- resume -----------------------------------------------------------------------
 
 
@@ -1094,6 +1400,10 @@ def test_the_cap_returns_a_resume_token_and_resuming_completes(
     assert token["turn"] == state(client, board)["turn_number"]
     assert token["step"] == "precombat_main" and token["parent_run_id"] is None
     assert token["known_stack_ids"], "the fetch's own ability is tracked"
+    # B7-14: the engine already accepted this move (activated, land
+    # sacrificed, life paid) before the cap cut the run off mid-resolution,
+    # so the token's own `moves_done` must already say so.
+    assert token["chain"]["moves_done"] == 1, token
 
     seat, _ = hooked_seat(seats, seat_uid(board, "alice"))
     with opponent_passes(board):
@@ -1228,6 +1538,8 @@ def test_resume_re_checks_that_nothing_foreign_happened(
     )
 
     assert result.script_exit.exit is Exit.INTERRUPTED, result.to_dict()
+    # B7-14: the fetch was already accepted before the cast interrupted it.
+    assert result.script_exit.moves_done == 1, result.to_dict()
 
 
 def test_another_players_non_pass_action_interrupts_with_nothing_on_the_stack(
@@ -1263,6 +1575,8 @@ def test_another_players_non_pass_action_interrupts_with_nothing_on_the_stack(
     assert result.script_exit.exit is Exit.INTERRUPTED, result.to_dict()
     assert "bob acted (activate" in result.script_exit.stop_reason
     assert hook.posts("/decide") == [] and hook.posts("/actions/pass-priority") == []
+    # B7-14: the fetch was already accepted before the interruption.
+    assert result.script_exit.moves_done == 1, result.to_dict()
 
 
 def test_a_foreign_object_on_the_stack_interrupts_when_the_log_shows_nothing_new(
@@ -1308,13 +1622,20 @@ def test_a_foreign_object_on_the_stack_interrupts_when_the_log_shows_nothing_new
 # -- the pause-slot race --------------------------------------------------------
 
 
-def test_the_pause_slot_clobber_race_surfaces_as_stale_or_interrupted(
+def test_the_pause_slot_clobber_race_never_reports_interrupted(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`tests/test_pause_slot_clobber.py`'s live defect, replayed against the
     runner: the opponent's autopass re-posts `pass-priority` in the window
     between the runner's answer to the search and its answer to the
-    shockland. The runner must never carry on as if nothing happened."""
+    shockland.
+
+    B7-09: that re-posted pass itself pauses on *this run's own* pending
+    decision (`paused_on.player == alice`) - the engine's own CR 608.2g fix
+    (`test_pause_slot_clobber.py`) already keeps it from touching the search
+    that was already answered, so it is not a board change: never
+    `interrupted`, read off the entry's typed `paused`/`paused_on` fields
+    rather than guessed at."""
     alice = seat_uid(board, "alice")
     bob = seat_uid(board, "bob")
     register(client, board, alice, fetch_shock())
@@ -1340,7 +1661,8 @@ def test_the_pause_slot_clobber_race_surfaces_as_stale_or_interrupted(
         )
 
     assert fired, "the race window was reached"
-    assert result.script_exit.exit in (Exit.STALE, Exit.INTERRUPTED), result.to_dict()
+    assert result.script_exit.exit is not Exit.INTERRUPTED, result.to_dict()
+    assert result.script_exit.exit in (Exit.STALE, Exit.CHAIN_COMPLETE), result.to_dict()
 
 
 # -- advise mode ------------------------------------------------------------------
@@ -1760,6 +2082,65 @@ def test_the_fetch_sacrifices_its_own_source(
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
     [body] = hook.posts("/actions/activate")
     assert body["sacrificing"] == [strand["id"]]
+
+
+def test_an_activation_names_no_mana_sources_unless_the_play_names_them(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B7-10 (B5-05 variant): the fetch's activation names no cost in mana,
+    so the request omits `mana_sources` and lets the engine auto-pay
+    (CR 601.2g), even with an untapped Mountain sitting right there to name."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, fetch_shock())
+    strand_board(client, board)
+    add_card(client, board, "Mountain", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id=FETCH_SHOCK["id"], reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/activate")
+    assert "mana_sources" not in body, body
+    assert cards_named(state(client, board)["battlefield"], "Mountain")[0]["tapped"] is False
+
+
+def test_a_cast_names_no_mana_sources_and_the_engine_auto_pays(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B7-10's cast twin: the request never names sources, so an audit row
+    shows only the permanent that actually paid, never every untapped one."""
+    alice = seat_uid(board, "alice")
+    script = land_script(
+        "bolt-a-mountain",
+        true=[],
+        moves=[
+            {
+                "kind": "cast",
+                "card": {"zone": "hand", "select": {"types_all": ["Instant"]}},
+                "targets": [{"select": {"types_all": ["Creature"]}, "side": "opponent"}],
+            }
+        ],
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Lightning Bolt", "alice", "hand")
+    add_card(client, board, "Mountain", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "bob", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/cast")
+    assert "mana_sources" not in body, body
+    assert cards_named(state(client, board)["battlefield"], "Mountain")[0]["tapped"] is True
 
 
 @pytest.mark.parametrize(

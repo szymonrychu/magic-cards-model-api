@@ -3378,10 +3378,17 @@ def _uids_running(game_id: str, player: str, role: str) -> list[str]:
     "/api/games/{game_id}/script-runs",
     response_model=ScriptRunResponse,
     response_model_exclude_unset=True,
+    dependencies=REFUSED_AFTER_GAME_OVER,
 )
 def record_script_run(game_id: str, req: ScriptRunIn, request: Request) -> dict[str, Any]:
     """Report one play-script run: `phase: start` as it begins, `phase:
     finish` when it ends (`schemas.ScriptRunIn`).
+
+    B8-06: refused the same way every action route is (CR 104.1,
+    `REFUSED_AFTER_GAME_OVER`/`commands.GameOverError`) once the game has
+    ended - both phases, unlike the scripts-disabled kill switch below, which
+    deliberately lets an in-flight run's own `finish` land. A finished game
+    has nothing left for either phase to record.
 
     **This mutates no `Game`, exactly like `declare_plan`.** The moves a
     script makes go through the action routes, which run every gate on them;

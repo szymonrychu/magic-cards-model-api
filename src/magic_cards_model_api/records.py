@@ -720,8 +720,12 @@ class ScriptAlreadyRan(Exception):
         self.prior_run_id = prior_run_id
 
 
-#: What makes two runs "the same run" for `already_ran`.
-_SCRIPT_RUN_KEY = ("seat", "script_id", "turn", "step")
+#: What makes two runs "the same run" for `already_ran`. `role` scopes the
+#: once-per-turn-and-step slot per uid kind (B7-08): an advisor's advise run
+#: proposes a move without taking it, so it must not consume the seat's own
+#: slot for the same script, turn and step, and vice versa. Two advise runs
+#: by the same advisor still share a key (same seat, same role) and collide.
+_SCRIPT_RUN_KEY = ("seat", "role", "script_id", "turn", "step")
 
 #: Serialises the read-then-append of a start within this process. Two
 #: replicas can still race one start past each other; the ledger then holds
@@ -732,17 +736,42 @@ _SCRIPT_RUN_LOCK = threading.Lock()
 def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
     """The `run_id` of an earlier start or finish sharing `detail`'s key, or
     `None`. Bounded to `RECENT_RECORDS_WINDOW`, like `require_plan`: a run at
-    the current turn and step is by construction among the newest rows."""
+    the current turn and step is by construction among the newest rows.
+
+    B8-04: a finished run that made zero moves (`moves_done: 0`) touched
+    nothing on the board - refused before its first move, `not_applicable`,
+    `ambiguous` before sending, and the like - so it never consumed the
+    once-per-turn-and-step slot and does not block a retry, consistent with
+    that same finish's own `reapplicable_after: true`. A bare `start` with no
+    matching `finish` yet (still in flight, or a crash) still blocks: this
+    check cannot tell whether it moved anything. The release covers that run's
+    own start row too (newest first, so its finish is always read before it),
+    and never an `unknown_outcome` finish, whose move may have landed uncounted,
+    nor an advise finish, which always reports zero moves by design."""
     from .store import store
 
     key = tuple(detail.get(name) for name in _SCRIPT_RUN_KEY)
+    released: set[Any] = set()
     for row in reversed(store.recent_records(game_id, RECENT_RECORDS_WINDOW)):
         payload = row["payload"]
-        if payload.get("action") not in SCRIPT_RUN_ACTIONS:
+        action = payload.get("action")
+        if action not in SCRIPT_RUN_ACTIONS:
             continue
         prior = payload.get("detail") or {}
-        if tuple(prior.get(name) for name in _SCRIPT_RUN_KEY) == key:
-            return str(prior.get("run_id"))
+        if tuple(prior.get(name) for name in _SCRIPT_RUN_KEY) != key:
+            continue
+        run_id = prior.get("run_id")
+        if run_id in released:
+            continue
+        if (
+            action == SCRIPT_RUN_ACTION
+            and prior.get("moves_done") == 0
+            and prior.get("exit") != "unknown_outcome"
+            and prior.get("advise") is not True
+        ):
+            released.add(run_id)
+            continue
+        return str(run_id)
     return None
 
 
