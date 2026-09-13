@@ -26,6 +26,7 @@ from magic_cards_model.models import CardState, Color, Game, Layout, Zone
 from magic_cards_model.models.card_state import Counter, counter_state_based_actions
 from pydantic import ValidationError
 
+from .decisions import player_or_card
 from .schemas import (
     ActivateRequest,
     AttackRequest,
@@ -344,13 +345,10 @@ def mana_colors(
 
 def target_thing(game: Game, token: str) -> Any:
     """A target named as a card id or a player name."""
-    if token in {player.username for player in game.players}:
-        return token  # the engine accepts a username string anywhere a player goes
-    try:
-        card_id = UUID(token)
-    except ValueError as exc:
-        raise ValueError(f"target {token!r} is neither a player name nor a card id") from exc
-    state = game.find_by_id(card_id)
+    thing = player_or_card(token, {player.username for player in game.players})
+    if not isinstance(thing, UUID):
+        return thing  # the engine accepts a username string anywhere a player goes
+    state = game.find_by_id(thing)
     if state is None:
         raise ValueError(f"target {token!r} is neither a player name nor a card id")
     return state

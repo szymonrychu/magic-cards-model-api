@@ -20,8 +20,9 @@ from __future__ import annotations
 import uuid
 
 import httpx
-from conftest import add_card
+from conftest import add_card, find, state
 from fastapi.testclient import TestClient
+from test_baseline_seat import battlefield_creature, into_declare_attackers
 from test_decisions import advance_into_cleanup
 
 from magic_cards_model_api import seat_cli
@@ -154,3 +155,124 @@ def test_the_seat_cli_decide_with_a_short_id_names_it(client, game, monkeypatch,
         capsys=capsys,
     )
     _assert_typed(printed)
+
+
+# -- a short id where a target or a defender goes --------------------------
+#
+# A target or an attack's defender is "a player name or a card id". A token
+# that is neither a seat's name nor a UUID is refused naming both halves, so a
+# truncated id still hears the full form rather than "not a candidate player".
+
+
+def _bolt_in_hand(client, game) -> tuple[str, str]:
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    board = state(client, game)
+    return board["hands"]["alice"][0]["id"], find(board["battlefield"], "Mountain")["id"]
+
+
+def test_a_short_id_as_a_cast_target_is_a_typed_refusal(client, game):
+    bolt, mountain = _bolt_in_hand(client, game)
+
+    body = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "alice", "card_id": bolt, "targets": [SHORT], "mana_sources": [mountain]},
+    ).json()
+
+    assert body["allowed"] is False, body
+    _assert_typed(body["reason"])
+
+
+def test_a_short_id_as_an_activate_target_is_a_typed_refusal(client, game):
+    add_card(client, game, "Karn, the Great Creator", "alice", "battlefield")
+    karn = find(state(client, game)["battlefield"], "Karn, the Great Creator")["id"]
+
+    body = client.post(
+        f"/api/games/{game}/actions/activate",
+        json={"player": "alice", "card_id": karn, "ability_index": 0, "targets": [SHORT]},
+    ).json()
+
+    assert body["allowed"] is False, body
+    _assert_typed(body["reason"])
+
+
+def test_the_seat_cli_cast_with_a_short_target_names_it(client, game, monkeypatch, capsys):
+    bolt, _ = _bolt_in_hand(client, game)
+
+    printed = _cli(
+        _uids(game)["alice"],
+        game,
+        "cast",
+        bolt,
+        "--target",
+        SHORT,
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+    )
+    _assert_typed(printed)
+
+
+def test_a_short_id_in_a_decide_targets_answer_is_a_typed_refusal(client, game):
+    add_card(client, game, "Karn, the Great Creator", "alice", "battlefield")
+    add_card(client, game, "Sol Ring", "alice", "battlefield")
+    karn = find(state(client, game)["battlefield"], "Karn, the Great Creator")["id"]
+    paused = client.post(
+        f"/api/games/{game}/actions/activate",
+        json={"player": "alice", "card_id": karn, "ability_index": 0},
+    ).json()
+    assert paused.get("paused") is True, paused
+    assert paused["pending_decision"]["kind"] == "choose_targets", paused
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": _uids(game)["alice"]},
+        json={"player": "alice", "targets": [SHORT]},
+    ).json()
+
+    assert answer["accepted"] is False, answer
+    _assert_typed(answer["reason"])
+
+
+def test_a_short_defender_id_in_a_decide_pairs_answer_is_a_typed_refusal(client, game):
+    attacker = battlefield_creature(client, game, "Savannah Lions", "alice")
+    into_declare_attackers(client, game, "alice")
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": _uids(game)["alice"]},
+        json={"player": "alice", "pairs": [{"creature": attacker, "defender": SHORT}]},
+    ).json()
+
+    assert answer["accepted"] is False, answer
+    _assert_typed(answer["reason"])
+
+
+def test_a_short_defender_id_in_an_attack_is_a_typed_refusal(client, game):
+    attacker = battlefield_creature(client, game, "Savannah Lions", "alice")
+    into_declare_attackers(client, game, "alice")
+
+    body = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": _uids(game)["alice"]},
+        json={"attackers": [{"card_id": attacker, "defender": SHORT}]},
+    ).json()
+
+    assert body["allowed"] is False, body
+    _assert_typed(body["reason"])
+
+
+def test_a_misspelt_player_defender_still_names_both_forms(client, game):
+    """A token that is neither a seat's name nor an id might have meant
+    either; the refusal says both, so a name typo is not misread as an id."""
+    attacker = battlefield_creature(client, game, "Savannah Lions", "alice")
+    into_declare_attackers(client, game, "alice")
+
+    body = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": _uids(game)["alice"]},
+        json={"attackers": [{"card_id": attacker, "defender": "bbo"}]},
+    ).json()
+
+    assert body["allowed"] is False, body
+    assert "player name" in body["reason"], body
+    _assert_typed(body["reason"], "bbo")

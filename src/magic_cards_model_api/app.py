@@ -2271,7 +2271,7 @@ def _answer_declaration(
     # *pre*-mutation enumeration, since nothing here has touched `game` yet.
     legal_before = records.legal_actions_before(game, engine_decision.player, pending)
     try:
-        value = decisions.declared_pairs_answer(pairs)
+        value = decisions.declared_pairs_answer(pairs, {p.username for p in game.players})
         decisions.validate_answer(engine_decision, value)
     except ValueError as exc:
         return refuse(str(exc), legal_before)
@@ -3143,7 +3143,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         detail["card_ids"] = req.card_ids
     elif kind is DecisionKind.CHOOSE_TARGETS:
         try:
-            answer_value = decisions.targets_answer(req.targets)
+            answer_value = decisions.targets_answer(req.targets, {p.username for p in game.players})
         except ValueError as exc:
             return refuse(f"bad target: {exc}", **detail)
         detail["targets"] = req.targets
@@ -3225,7 +3225,9 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         # build from their own request shape, see those routes) as well as
         # through the two aliases.
         try:
-            answer_value = decisions.declared_pairs_answer(req.pairs)
+            answer_value = decisions.declared_pairs_answer(
+                req.pairs, {p.username for p in game.players}
+            )
         except ValueError as exc:
             return refuse(f"bad pair: {exc}", **detail)
         detail["pairs"] = [{"creature": str(p.creature), "defender": p.defender} for p in req.pairs]

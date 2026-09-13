@@ -35,6 +35,7 @@ command's next attempt.
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -811,6 +812,28 @@ def malformed_id_reason(value: object, noun: str = "card id") -> str:
     )
 
 
+def player_or_id_reason(token: object, role: str = "target") -> str:
+    """The refusal for a "player name or card id" token that is neither (D15):
+    it may be a truncated id or a misspelt name, so it names the token and
+    the full id form both."""
+    return (
+        f"{role} {token!r} is neither a player name nor a card id: a card id is the "
+        f"36-character UUID form {ID_FORMAT} (hex digits), exactly as the state view "
+        "prints it - a shortened or truncated id cannot be resolved"
+    )
+
+
+def player_or_card(token: str, players: Collection[str], role: str = "target") -> str | UUID:
+    """`token` as the player it names, or as the card id it is, or
+    `ValueError(player_or_id_reason(...))`."""
+    if token in players:
+        return token
+    try:
+        return UUID(token)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError(player_or_id_reason(token, role)) from exc
+
+
 def parse_id(token: str, noun: str = "card id") -> UUID:
     """`token` as a `UUID`, or `ValueError(malformed_id_reason(...))`."""
     try:
@@ -850,7 +873,7 @@ def order_answer(order: list[str]) -> tuple[UUID, ...]:
     return tuple(parse_id(ability_id, "ability id") for ability_id in order)
 
 
-def targets_answer(targets: list[str]) -> tuple[TargetRef, ...]:
+def targets_answer(targets: list[str], players: Collection[str]) -> tuple[TargetRef, ...]:
     """A `decide` request body's `targets`, in the shape `Game.ask` expects
     for `CHOOSE_TARGETS` - a `tuple[TargetRef, ...]`.
 
@@ -861,18 +884,21 @@ def targets_answer(targets: list[str]) -> tuple[TargetRef, ...]:
     reference was actually one of the candidates offered, and whether enough
     of them were given, is `validate_answer`'s job; a malformed token is
     refused here with a 400 rather than reaching the engine at all, matching
-    `card_ids_answer`.
+    `card_ids_answer`. `players` is the game's seat names: a token that is
+    neither one of them nor a UUID is refused naming the id form (D15).
     """
     refs = []
     for token in targets:
-        try:
-            refs.append(TargetRef.to_card(UUID(token)))
-        except ValueError:
-            refs.append(TargetRef.to_player(token))
+        thing = player_or_card(token, players)
+        refs.append(
+            TargetRef.to_card(thing) if isinstance(thing, UUID) else TargetRef.to_player(thing)
+        )
     return tuple(refs)
 
 
-def declared_pairs_answer(pairs: list[DeclaredPairRequest]) -> tuple[DeclaredPair, ...]:
+def declared_pairs_answer(
+    pairs: list[DeclaredPairRequest], players: Collection[str]
+) -> tuple[DeclaredPair, ...]:
     """A `decide` request body's `pairs`, in the shape `_ask_declaration`
     (behind `ask_attackers`/`ask_blockers`) expects for `DECLARE_ATTACKERS`/
     `DECLARE_BLOCKERS` - a `tuple[DeclaredPair, ...]` (CR 508.1, CR 509.1).
@@ -887,12 +913,11 @@ def declared_pairs_answer(pairs: list[DeclaredPairRequest]) -> tuple[DeclaredPai
     """
     declared = []
     for pair in pairs:
-        try:
-            card_id = UUID(pair.defender)
-        except ValueError:
-            declared.append(DeclaredPair(creature=pair.creature, defender_player=pair.defender))
+        defender = player_or_card(pair.defender, players, "defender")
+        if isinstance(defender, UUID):
+            declared.append(DeclaredPair(creature=pair.creature, defender_card=defender))
         else:
-            declared.append(DeclaredPair(creature=pair.creature, defender_card=card_id))
+            declared.append(DeclaredPair(creature=pair.creature, defender_player=defender))
     return tuple(declared)
 
 
