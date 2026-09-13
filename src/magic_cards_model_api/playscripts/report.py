@@ -3,8 +3,8 @@ over.
 
 `script_run_table` reads the `script_run` rows `POST .../script-runs` writes
 (`records.record_script_run_finish`) and prints one line per script: how
-often it ran, how each run ended, and how many runs named a
-`reapplicable_after`. A handover prompt carries it whole, so it is bounded at
+often it ran, how each run ended, and how many runs ended with the script
+still applying. A handover prompt carries it whole, so it is bounded at
 `TABLE_LIMIT_BYTES`; past that the lowest-priority rows are cut and a
 `TRUNCATION_MARKER` line says how many.
 """
@@ -22,6 +22,9 @@ TABLE_LIMIT_BYTES = 4096
 
 #: The start of the last line of a table that was cut.
 TRUNCATION_MARKER = "... table cut at 4 KB:"
+
+#: What the runner posts as `reapplicable_after` when the re-check still applies.
+REAPPLICABLE = "true"
 
 HEADER = "script | priority | runs | exits | reapplicable_after"
 
@@ -53,6 +56,11 @@ def script_run_table(records: Iterable[Mapping[str, Any]], game_id: str, seat: s
     Advise runs - moves proposed to a human rather than taken - get a row of
     their own, labelled `(advise)`, so a proposal nobody accepted never reads
     as the seat's own play. `priority` is the latest one a run reported.
+
+    `reapplicable_after` is the runner's one condition re-check at the end of
+    a run that resolved a play: `"true"` when the script would apply again,
+    `"false"` when not, absent when no play was found. The column counts the
+    `"true"` runs, the loss data a future loop decision reads.
     """
     rows: dict[tuple[str, bool], _ScriptRow] = {}
     for record in records:
@@ -71,7 +79,7 @@ def script_run_table(records: Iterable[Mapping[str, Any]], game_id: str, seat: s
         row.exits[exit_name] = row.exits.get(exit_name, 0) + 1
         if detail.get("priority") is not None:
             row.priority = int(detail["priority"])
-        if detail.get("reapplicable_after") is not None:
+        if detail.get("reapplicable_after") == REAPPLICABLE:
             row.reapplicable += 1
 
     if not rows:

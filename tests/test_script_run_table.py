@@ -99,7 +99,7 @@ def test_one_script_is_a_header_and_one_row():
         stored(
             2,
             audit.SCRIPT_RUN_ACTION,
-            run_detail("fetch-shock", priority=60, exit="refused", reapplicable_after="next_turn"),
+            run_detail("fetch-shock", priority=60, exit="refused", reapplicable_after="true"),
         ),
         stored(3, audit.SCRIPT_RUN_ACTION, run_detail("fetch-shock", priority=60)),
     ]
@@ -111,6 +111,23 @@ def test_one_script_is_a_header_and_one_row():
         "fetch-shock | 60 | 3 | chain_complete=2 refused=1 | 1",
     ]
     assert report.TRUNCATION_MARKER not in table
+
+
+def test_reapplicable_after_counts_only_runs_whose_recheck_still_applies():
+    """The runner posts `"true"` or `"false"` for every run that resolved a play
+    (`runtime._end`: one condition re-check at the end) and nothing for a run
+    that found none, so only `"true"` is the count that means anything."""
+    records = [
+        stored(1, audit.SCRIPT_RUN_ACTION, run_detail("s", reapplicable_after="true")),
+        stored(2, audit.SCRIPT_RUN_ACTION, run_detail("s", reapplicable_after="false")),
+        stored(3, audit.SCRIPT_RUN_ACTION, run_detail("s", reapplicable_after="false")),
+        stored(4, audit.SCRIPT_RUN_ACTION, run_detail("s", exit="no_match")),
+        stored(5, audit.SCRIPT_RUN_ACTION, run_detail("s", reapplicable_after="true")),
+    ]
+
+    assert row_for(report.script_run_table(records, "g1", "alice"), "s") == (
+        "s | 50 | 5 | chain_complete=4 no_match=1 | 2"
+    )
 
 
 def test_audit_entries_shaped_rows_are_read_the_same():
@@ -173,7 +190,7 @@ def test_advise_runs_are_a_row_of_their_own():
         stored(
             3,
             audit.SCRIPT_RUN_ACTION,
-            run_detail("s", priority=50, advise=True, exit="declined", reapplicable_after="x"),
+            run_detail("s", priority=50, advise=True, exit="declined", reapplicable_after="true"),
         ),
     ]
 
