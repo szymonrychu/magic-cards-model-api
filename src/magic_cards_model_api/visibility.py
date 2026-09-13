@@ -396,6 +396,23 @@ def redact_pending_decision(
     }
 
 
+def redact_paused_pending(
+    pending: dict[str, Any], view: dict[str, Any], viewer: Viewer
+) -> dict[str, Any]:
+    """A pending decision an acting route hands straight back in its own
+    paused response, as `viewer` - that route's actor - may see it.
+
+    The same rule `redact_view` applies to the state read's copy: the rest
+    of the block only for the deciding seat, and `source_card_id` nulled when
+    the asking object sits in a zone `viewer` cannot see. `view` is the
+    *unredacted* state view of the committed game, the board a state read
+    would redact this same question against. No `card_details` here: these
+    responses never carried it, and the state read is where it lives."""
+    if viewer is ADMIN:
+        return pending
+    return redact_pending_decision(pending, viewer, hidden_ids=_hidden_card_ids(view, viewer))
+
+
 def redact_snapshot(snapshot: dict[str, Any], viewer: str) -> dict[str, Any]:
     """One audit-log snapshot (`serialize.snapshot`), as a real seat may see
     it. Snapshots carry hands as plain name lists, never libraries, so only

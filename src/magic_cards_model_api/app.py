@@ -731,6 +731,20 @@ def _paused_on(result: commands.RunResult) -> dict[str, str]:
     return {"player": result.pending.decision.player, "kind": result.pending.decision.kind.value}
 
 
+def _paused_pending_view(
+    game_id: str, pending: decisions.PendingDecision, viewer: visibility.Viewer
+) -> dict[str, Any]:
+    """`pending` as an acting route's paused response may carry it back to
+    `viewer`, the actor this route already trusts (`req.player`, or the seat
+    the uid resolved to for `decide` and the declaration aliases) - see
+    `visibility.redact_paused_pending`. A resumed or fresh command can pause
+    on a question for the *other* seat, and handing it back whole leaked
+    that seat's candidates and the id of the card asking."""
+    return visibility.redact_paused_pending(
+        pending.to_view(), state_view(game_or_404(game_id), game_id), viewer
+    )
+
+
 def _respond(
     game_id: str,
     action: str,
@@ -769,7 +783,7 @@ def _respond(
             "allowed": None,
             "reason": None,
             "paused": True,
-            "pending_decision": pending.to_view(),
+            "pending_decision": _paused_pending_view(game_id, pending, keys.get("player")),
         }
         if dry_run:
             return {**body, "log_seq": None}
@@ -2033,7 +2047,7 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
         return {
             "allowed": None,
             "paused": True,
-            "pending_decision": pending.to_view(),
+            "pending_decision": _paused_pending_view(game_id, pending, req.player),
             "log_seq": logged,
         }
     assert isinstance(result.outcome, dict)
@@ -2243,7 +2257,7 @@ def _answer_declaration(
         return {
             "allowed": True,
             "paused": True,
-            "pending_decision": next_pending.to_view(),
+            "pending_decision": _paused_pending_view(game_id, next_pending, engine_decision.player),
             "log_seq": seq,
         }
     return {"allowed": True, "log_seq": seq}
@@ -2399,7 +2413,7 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
         return {
             "allowed": None,
             "paused": True,
-            "pending_decision": pending.to_view(),
+            "pending_decision": _paused_pending_view(game_id, pending, req.player),
             "outcome": None,
             "log_seq": seq,
         }
@@ -3217,7 +3231,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         return {
             "accepted": True,
             "paused": True,
-            "pending_decision": next_pending.to_view(),
+            "pending_decision": _paused_pending_view(game_id, next_pending, req.player),
             "log_seq": seq,
         }
     return {"accepted": True, "log_seq": seq}

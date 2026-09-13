@@ -18,7 +18,9 @@ Real boards, real Scryfall printings, played through the HTTP API.
 
 from __future__ import annotations
 
+import importlib
 import json
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -26,14 +28,21 @@ from conftest import add_card, card_id, find, force_turn_position, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import Decision, DecisionKind
+from test_baseline_seat import battlefield_creature, into_declare_blockers
+from test_card_split_labels import boot as boot_the_devourer
+from test_card_split_labels import reach_the_devourer_upkeep
 from test_decisions import advance_into_cleanup, stuff_hand
 
-from magic_cards_model_api import visibility
+from magic_cards_model_api import commands, visibility
 from magic_cards_model_api.decisions import PendingDecision
 from magic_cards_model_api.repository import Advisor
 from magic_cards_model_api.repository_postgres import _decision_from_json, _decision_to_json
 from magic_cards_model_api.serialize import state_view
 from magic_cards_model_api.store import store
+
+#: The module, not the `FastAPI` object the package re-exports under the same
+#: name - the paused-response tests patch its command runners.
+app_module = importlib.import_module("magic_cards_model_api.app")
 
 
 def seats_for(game_id: str) -> dict[str, str]:
@@ -191,3 +200,163 @@ def test_source_card_id_survives_the_postgres_pause_slot_round_trip() -> None:
     stored = json.loads(json.dumps(_decision_to_json(decision)))
 
     assert PendingDecision.from_engine(_decision_from_json(stored)).source_card_id == source
+
+
+# -- the paused responses of the acting routes ---------------------------------
+#
+# `GET /api/games/{id}` is not the only door a pending decision leaves by: every
+# acting route that pauses (`_respond`'s routes, `concede`, `pass-priority`,
+# the two declaration aliases, `decide`) hands the new question straight back
+# in its own response. Those copies obey the same rule the state view does -
+# the rest of the block only for the deciding seat, and `source_card_id` never
+# naming a card in a zone the caller cannot see.
+
+
+def _alices_question_from(source_id: str) -> SimpleNamespace:
+    """A paused result's `pending` as the app reads it (`result.pending
+    .decision`): a real engine `Decision`, alice's, asked by `source_id`."""
+    return SimpleNamespace(
+        decision=Decision(
+            kind=DecisionKind.CHOOSE_CARDS,
+            player="alice",
+            prompt="choose a card",
+            source="Steam Vents",
+            source_id=source_id,
+            cards=[source_id],
+        )
+    )
+
+
+def _pause_every_command_on(monkeypatch, pending: SimpleNamespace) -> None:
+    """Every fresh command and every resumed one pauses on `pending`."""
+    paused = commands.RunResult(status=commands.RunStatus.PAUSED, pending=pending)
+
+    def run(game_id: str, kind: str, request: Any):  # noqa: ANN202
+        return paused, store.get(game_id), None, None
+
+    def resume(*args: Any, **kwargs: Any):  # noqa: ANN202
+        return paused, None, None
+
+    monkeypatch.setattr(app_module, "_run_command", run)
+    monkeypatch.setattr(app_module, "_resume", resume)
+
+
+def _is_the_opponents_shrink(pending: dict[str, Any], player: str) -> None:
+    assert pending["player"] == player, pending
+    assert set(pending) <= {"player", "kind", "prompt"}, (
+        f"a seat that is not deciding gets {{player, kind, prompt}} and nothing else: {pending}"
+    )
+
+
+def test_bobs_pass_priority_never_names_the_card_asking_alice(client) -> None:
+    """A real board: bob's pass resolves alice's Devourer of Destiny trigger,
+    which asks *her* - and bob's own response to that pass carried the whole
+    question, the four cards she is looking at and the id of the Devourer
+    sitting in her hand (CR 402.3) included."""
+    info = boot_the_devourer(client)
+    game_id = info["game_id"]
+    uids = info["seat_uids"]
+    try:
+        reach_the_devourer_upkeep(client, info)
+        passed = client.post(
+            f"/api/games/{game_id}/actions/pass-priority",
+            params={"uid": uids["alice"]},
+            json={"player": "alice"},
+        )
+        assert passed.json()["allowed"] is True, passed.json()
+        paused = client.post(
+            f"/api/games/{game_id}/actions/pass-priority",
+            params={"uid": uids["bob"]},
+            json={"player": "bob"},
+        ).json()
+        assert paused["paused"] is True, paused
+
+        _is_the_opponents_shrink(paused["pending_decision"], "alice")
+        alices = state(client, game_id, uid=uids["alice"])["pending_decision"]
+        assert alices["source_card_id"] is not None, alices
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
+def test_an_acting_route_shrinks_a_question_that_is_not_the_callers(
+    client, game, monkeypatch
+) -> None:
+    """`_respond`'s routes and `concede`: bob acts, the command pauses on a
+    question for alice asked by a card in her hand."""
+    vents = card_id(client, game, "Steam Vents", "alice", "hand")
+    _pause_every_command_on(monkeypatch, _alices_question_from(vents))
+
+    played = client.post(
+        f"/api/games/{game}/actions/play-land", json={"player": "bob", "card_id": vents}
+    )
+    assert played.status_code == 200, played.text
+    _is_the_opponents_shrink(played.json()["pending_decision"], "alice")
+
+    conceded = client.post(f"/api/games/{game}/actions/concede", json={"player": "bob"})
+    assert conceded.status_code == 200, conceded.text
+    _is_the_opponents_shrink(conceded.json()["pending_decision"], "alice")
+
+
+def test_an_answer_that_resumes_into_the_other_seats_question_is_shrunk(
+    client, game, monkeypatch
+) -> None:
+    """`decide` and `actions/declare-blockers`: bob answers his own
+    declare_blockers question, and the resumed command pauses on alice's."""
+    battlefield_creature(client, game, "Grizzly Bears", "alice")
+    attacker = battlefield_creature(client, game, "Savannah Lions", "alice")
+    into_declare_blockers(client, game, "alice", [{"card_id": attacker, "defender": "bob"}])
+    vents = card_id(client, game, "Steam Vents", "alice", "hand")
+    bob = seats_for(game)["bob"]
+    _pause_every_command_on(monkeypatch, _alices_question_from(vents))
+
+    decided = client.post(
+        f"/api/games/{game}/decide", params={"uid": bob}, json={"player": "bob", "pairs": []}
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["accepted"] is True, decided.json()
+    _is_the_opponents_shrink(decided.json()["pending_decision"], "alice")
+
+
+def test_a_declaration_that_resumes_into_the_other_seats_question_is_shrunk(
+    client, game, monkeypatch
+) -> None:
+    attacker = battlefield_creature(client, game, "Savannah Lions", "alice")
+    into_declare_blockers(client, game, "alice", [{"card_id": attacker, "defender": "bob"}])
+    vents = card_id(client, game, "Steam Vents", "alice", "hand")
+    bob = seats_for(game)["bob"]
+    _pause_every_command_on(monkeypatch, _alices_question_from(vents))
+
+    blocked = client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": bob},
+        json={"player": "bob", "blocks": []},
+    )
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json()["allowed"] is True, blocked.json()
+    _is_the_opponents_shrink(blocked.json()["pending_decision"], "alice")
+
+
+def test_an_acting_route_withholds_a_source_in_a_zone_the_actor_cannot_see(
+    client, game, monkeypatch
+) -> None:
+    """Alice's own question, but asked by a card in her library (CR 400.2):
+    she keeps the question and loses only the id. From her hand, she keeps
+    both."""
+    add_card(client, game, "Steam Vents", "alice", "hand")
+    vents = card_id(client, game, "Steam Vents", "alice", "hand")
+    add_card(client, game, "Island", "alice", "library")
+    island = find(state(client, game)["libraries"]["alice"], "Island")["id"]
+
+    _pause_every_command_on(monkeypatch, _alices_question_from(island))
+    from_library = client.post(
+        f"/api/games/{game}/actions/play-land", json={"player": "alice", "card_id": vents}
+    ).json()["pending_decision"]
+    assert from_library["kind"] == "choose_cards", from_library
+    assert from_library["cards"] == [island]
+    assert from_library.get("source_card_id") is None, from_library
+
+    _pause_every_command_on(monkeypatch, _alices_question_from(vents))
+    from_hand = client.post(
+        f"/api/games/{game}/actions/play-land", json={"player": "alice", "card_id": vents}
+    ).json()["pending_decision"]
+    assert from_hand["source_card_id"] == vents, from_hand
