@@ -16,7 +16,11 @@ from fastapi.testclient import TestClient
 
 from mtg_agent.driver.app import build_app
 from mtg_agent.driver.config import DriverSettings
-from tests.driver.test_app import wait_for, world  # noqa: F401 - `world` is the fixture
+from tests.driver.test_app import (  # noqa: F401 - `world` is the fixture
+    complete_handover,
+    wait_for,
+    world,
+)
 
 AGENT_SETTINGS = {"model": "sonnet", "effort": "high", "maxThinkingTokens": None}
 
@@ -78,6 +82,8 @@ def test_retire_requests_exit_when_told_to(world, tmp_path) -> None:  # noqa: F8
             },
         )
         client.post("/release", json={"uid": world.uid, "game_id": world.game_id})
+        complete_handover(client, world.submitted)
+        wait_for(lambda: app.state.should_exit)
     assert app.state.should_exit is True
 
 
@@ -103,6 +109,8 @@ def test_the_completed_match_also_exits_when_told_to(world, tmp_path) -> None:  
         client.post(
             "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
         )
+        complete_handover(client, world.submitted)
+        wait_for(lambda: app.state.should_exit)
     assert app.state.should_exit is True
 
 

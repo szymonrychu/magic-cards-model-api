@@ -53,7 +53,7 @@ ARCHETYPE = {
 }
 
 
-def build_world(tmp_path) -> SimpleNamespace:
+def build_world(tmp_path, clock=None) -> SimpleNamespace:
     guides = tmp_path / "guides" / "decks" / "dimir-frog"
     guides.mkdir(parents=True)
     (guides / "decklist.txt").write_text(DECKLIST)
@@ -61,8 +61,14 @@ def build_world(tmp_path) -> SimpleNamespace:
     (guides / "GAMEPLAN_GUIDE.md").write_text("# gameplan\n")
     shutil.copytree(FIXTURE_PLAYS, guides / "plays")
 
+    workspace = tmp_path / "workspace"
     state = {
         "winner": None,
+        "drawn": False,
+        #: The rows `GET /api/games/{id}/log` answers with.
+        "log": [],
+        #: Whether the handover marker existed when the session was deleted.
+        "marker_at_delete": None,
         "decklist": DECKLIST,
         "agent": "up",
         "game": "up",
@@ -93,6 +99,13 @@ def build_world(tmp_path) -> SimpleNamespace:
     reflection_posts: list[dict] = []
     #: Every `PUT /api/games/{id}/seats/{uid}/scripts` the driver sent.
     script_puts: list[dict] = []
+    #: What the fake wrapper and game server were asked, in order: `message`,
+    #: `interrupt`, `probe`, `delete` and `reflection`.
+    events: list[str] = []
+    interrupts: list[dict] = []
+    probes: list[dict] = []
+    #: The `uid` of every `GET .../log` read.
+    log_reads: list[str | None] = []
 
     game = FastAPI()
 
@@ -107,7 +120,15 @@ def build_world(tmp_path) -> SimpleNamespace:
                 {"username": "alice"},
             ],
             "winner": state["winner"],
+            "drawn": state["drawn"],
         }
+
+    @game.get("/api/games/{game_id}/log")
+    def get_log(game_id: str, uid: str | None = None, since: int = 0):
+        if state["game"] == "down":
+            raise httpx.ConnectError("connection refused")
+        log_reads.append(uid)
+        return {"log": state["log"], "last_seq": len(state["log"])}
 
     @game.post("/api/games/{game_id}/reflection")
     def post_reflection(game_id: str, body: dict):
@@ -118,6 +139,7 @@ def build_world(tmp_path) -> SimpleNamespace:
         if state["game"] == "down":
             raise httpx.ConnectError("connection refused")
         reflection_posts.append({"game_id": game_id, **body})
+        events.append("reflection")
         return {"recorded": True, "log_seq": len(reflection_posts), "player": body.get("player")}
 
     @game.get("/api/lobby/games/{game_id}/seats")
@@ -187,7 +209,10 @@ def build_world(tmp_path) -> SimpleNamespace:
             raise HTTPException(status_code=503, detail="session not ready")
         if state["agent"] == "down":
             raise httpx.ConnectError("connection refused")
+        if state["agent"] == "refusing":
+            raise HTTPException(status_code=400, detail="text is required")
         submitted.append(body)
+        events.append("message")
         return {"turnId": f"turn-{len(submitted)}"}
 
     @wrapper.delete("/v1/session", status_code=202)
@@ -195,10 +220,28 @@ def build_world(tmp_path) -> SimpleNamespace:
         if state["agent"] == "down":
             raise httpx.ConnectError("connection refused")
         state["deleted"] += 1
+        state["marker_at_delete"] = (workspace / "handover.done").exists()
+        events.append("delete")
         # A real wrapper exits here; the replacement container boots for a
         # while before it can take a turn.
         state["agent"] = "booting"
         return {"stopping": True, "exiting": True}
+
+    @wrapper.post("/v1/interrupt", status_code=202)
+    def post_interrupt():
+        if state["agent"] == "down":
+            raise httpx.ConnectError("connection refused")
+        interrupts.append({})
+        events.append("interrupt")
+        return {"turnId": f"turn-{len(submitted)}"}
+
+    @wrapper.post("/v1/probe", status_code=202)
+    def post_probe(body: dict):
+        if state["agent"] == "down":
+            raise httpx.ConnectError("connection refused")
+        probes.append(body)
+        events.append("probe")
+        return {"probeId": f"probe-{len(probes)}", "state": "pending"}
 
     @wrapper.get("/v1/session")
     def get_session():
@@ -230,13 +273,13 @@ def build_world(tmp_path) -> SimpleNamespace:
         wrapper_secret="",
         guides_root=tmp_path / "guides",
         memory_root=tmp_path / "memory",
-        workspace=tmp_path / "workspace",
+        workspace=workspace,
         self_url="http://driver:8090",
         http_addr=":8090",
         agent_boot_wait=1.0,
         agent_retry_interval=0.01,
     )
-    client = TestClient(build_app(settings, client_factory=client_factory))
+    client = TestClient(build_app(settings, client_factory=client_factory, clock=clock))
     return SimpleNamespace(
         client=client,
         settings=settings,
@@ -250,4 +293,8 @@ def build_world(tmp_path) -> SimpleNamespace:
         uid="secret-uid",
         game_id="g-1",
         client_factory=client_factory,
+        events=events,
+        interrupts=interrupts,
+        probes=probes,
+        log_reads=log_reads,
     )

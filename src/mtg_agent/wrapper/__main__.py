@@ -21,7 +21,7 @@ import uvicorn
 
 from magic_cards_model_api import access_log
 
-from . import bootstrap
+from . import bootstrap, handover_wait
 from .activity import ActivityWatcher
 from .api import build_internal_app, build_public_app
 from .config import Settings
@@ -119,12 +119,20 @@ def main() -> None:
     # so nothing here depends on the watcher having seen anything yet.
     manager.activity_source = watcher.activity_snapshot
 
+    signalled = threading.Event()
+
     def stop(_signum, _frame) -> None:
-        request_exit("signal")
+        # Stop serving, but leave the PTY to the handover hold below: in a
+        # seat Job a handover turn may still be running in it.
+        signalled.set()
+        if server is not None:
+            server.should_exit = True
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     server.run()
+    if signalled.is_set():
+        handover_wait.hold_until_handover(lambda: request_exit("signal"))
     watcher.stop()
     manager.shutdown()
 

@@ -13,7 +13,12 @@ import logging
 import pytest
 
 from mtg_agent.driver.app import trim_final_text
-from tests.driver.test_app import dispatch, world  # noqa: F401 - `world` is the fixture
+from tests.driver.test_app import (  # noqa: F401 - `world` is the fixture
+    complete_handover,
+    dispatch,
+    wait_for,
+    world,
+)
 
 
 @pytest.fixture
@@ -105,4 +110,5 @@ def test_the_end_of_the_match_is_logged(world, driver_log):  # noqa: F811
     assert "over (bob won)" in driver_log.text
 
     client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "notes"})
-    assert "retired" in driver_log.text
+    complete_handover(client, world.submitted)
+    wait_for(lambda: "retired" in driver_log.text)
