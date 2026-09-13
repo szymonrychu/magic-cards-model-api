@@ -21,7 +21,7 @@ from magic_cards_model.machines.turn import PHASE_OF
 from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Zone
 from magic_cards_model.models.mana import ManaPool
 
-from . import assets, scryfall
+from . import assets, commands, scryfall
 from .affordances import cast_hints
 from .decisions import PendingDecision
 from .engine_api import list_abilities
@@ -866,6 +866,16 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     every field a redaction step can remove `| None = None` rather than by
     reaching for `dict[str, Any]`.
     """
+    # While an announcement is paused, the board is the one the question was
+    # raised over, not the committed one from before it began: a cast
+    # trigger's target question comes after CR 601.2a put the card on the
+    # stack and CR 601.2h paid its cost (B2-13, `commands.paused_board`).
+    # Nothing is committed by reading it. Resolution and turn-based pauses
+    # keep serving the committed board - `advance`'s own docstring and
+    # `seatkit.pass_until`'s stops read the step `advance` was called from.
+    paused = store.paused_command(game_id)
+    if paused is not None and paused[0].kind in commands.ANNOUNCING_KINDS:
+        game = commands.paused_board(game, *paused) or game
     images = _images_for(game)
 
     def views(cards: list[StackObject]) -> list[dict[str, Any]]:
@@ -879,7 +889,6 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     # mutating request that crosses an unanswered question pauses and returns
     # immediately, and this is what a state read shows for it until
     # `POST .../decide` resumes it.
-    paused = store.paused_command(game_id)
     pending = (
         PendingDecision.from_engine(paused[2].decision, store.pause_generation(game_id))
         if paused is not None
