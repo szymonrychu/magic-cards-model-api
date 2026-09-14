@@ -227,6 +227,95 @@ PROTOCOL_VERSION = "seatkit-20"
 #: than wrongly treated as the same position. A stale process reads the new
 #: key as extra, harmless noise; no existing field moved.
 #:
+#: Also `seatkit-20`, plan-ahead scheduling (S2 A1): `DeclarePlanIn.for_turn`
+#: gains `"next"` beside its existing `"current"` default -
+#: `declare_plan(for_turn="next")`, called during the opponent's turn,
+#: writes the plan row against this seat's own next turn
+#: (`records.next_own_turn`) rather than the turn under way right now; the
+#: same call made while this seat's own turn is already in progress now
+#: answers 409 with `code: own_turn_in_progress` instead of writing a stray
+#: row. Also folded in, not a second bump: `pass_priority` is exempt from
+#: the standing require-a-plan gate outright in the upkeep and draw steps
+#: whenever the stack is empty - a bare pass through either needs no plan on
+#: record, planned ahead or not; a trigger or spell sitting on the stack in
+#: either step still gates the pass, since answering it is a real decision.
+#: A pre-bump process never sends `for_turn`, which reads as today's
+#: `"current"` default, and reads the new 409 as an ordinary typed refusal
+#: like any other.
+#:
+#: Also `seatkit-20`, arming (S2 A2-A5): `wait_for_priority` and
+#: `pass_until` both gain `arm` (a list of registered script ids, or a
+#: comma-separated string of them, in priority order), `arm_reasoning`
+#: (required and non-blank whenever `arm` is non-empty - an empty or
+#: still-placeholder one is refused before anything is judged),
+#: `opposing_archetype` and `inputs`, meaning what they mean for
+#: `run_script`. The wait judges every armed id against the board the
+#: moment it would otherwise wake for a real reason; two or more applying
+#: at once is a conflict and neither fires. The answer carries `armed`
+#: (the ids that actually fired, `[]` when none did), `armed_conflict`
+#: (the ids that would have conflicted, when arming stopped for that
+#: reason), `armed_error` (the judge itself raised, rather than a script's
+#: own refusal), and `armed_skipped` (the batch stopped before a run's own
+#: start, below `MIN_ARMED_RUN_SECONDS` of budget left in the call). Each
+#: fired run's own ledger row carries `invoked_via: "armed"`, a third value
+#: beside `"mcp"` and `"cli"` (`schemas.ScriptRunIn.invoked_via`).
+#:
+#: The S1 hint (`scripts.applicable` above) gains two siblings on the same
+#: `scripts` object: `armable` (the registered ids that would be worth
+#: arming for the wait or run ahead, matching priority and archetype but
+#: not yet applicable to the board sitting in front of this answer) and
+#: `arm_call`, one ready-to-use `pass_until(..., arm=[...])` or
+#: `wait_for_priority(..., arm=[...])` invocation string arming every
+#: surviving `armable` id at once.
+#:
+#: `pass_until` gains one more armed-only behaviour: reaching a
+#: `theirs`/`either` destination with something armed for it, but before
+#: this seat itself holds priority there (or has a decision pending for
+#: it) - a `theirs`/`either` step's first priority is usually the active
+#: opponent's own, CR 117.3a - now answers `finished: false` with a
+#: `resume` token instead of treating "the board reached the step" as the
+#: stop on its own, so a caller that hands the token straight back keeps
+#: waiting inside that same occurrence for its own priority to arm
+#: against, rather than the starting-step exemption silently carrying the
+#: run past the window to the NEXT occurrence of that step, a whole turn
+#: later.
+#:
+#: A pre-bump process sends no `arm`, so nothing here ever judges or fires
+#: anything on its behalf, and it reads `armed`, `armed_conflict`,
+#: `armed_error`, `armed_skipped`, `scripts.armable`, `scripts.arm_call`,
+#: and an `invoked_via: "armed"` row the same way it already reads any
+#: other extra key - untouched noise, never acted on.
+#:
+#: Also `seatkit-20`, buddy pre-drafts (S2 A6): `wait_for_priority` gains
+#: `wake_to_draft` (advisor uid only, refused outright for a seat), which
+#: also wakes when the board changes while it is not yet the human's own
+#: priority, provided nothing is staged right now - the cue to look ahead
+#: and stage a proposal before the window it is actually for opens.
+#: `stage_advice(player_uid, step, whose_turn)` is the new tool that arms
+#: the next committing call as the one to capture into that draft; every
+#: answer that can see a staged draft also carries `draft`:
+#: `{"status": "held"}` while it is not yet time, `{"status": "posted",
+#: "log_seq": ...}` the moment it posts on schedule, `{"status": "stale",
+#: "failed": "window"|"board"|"legality"|"refused"}` the moment the window
+#: has passed, the board moved underneath it, or the draft no longer
+#: validates, and `{"status": "superseded_by_script", "script": ...}` when
+#: an armed script already fired ahead of it. `AdviceIn.drafted_at_seq`
+#: carries the ledger position the draft was captured at, left null on an
+#: ordinary undrafted proposal. A pre-bump process has no `wake_to_draft`
+#: argument and no `stage_advice` tool to call, and reads a `draft` key on
+#: any other answer the same as any other extra one - untouched.
+#:
+#: Also `seatkit-20`, response-only, no request shape moved (S2 A7): every
+#: ledger row now stamps `active_player`, `priority_holder` and
+#: `turns_taken` (this one on the row itself, at write time - distinct
+#: from the state view's own `turns_taken` above) at the moment
+#: `audit.record` writes it, so a reader no longer has to reconstruct
+#: whose window a row belonged to from its action name and outcome. `None`
+#: on every row recorded before this, the same "unknown, not invented"
+#: reading `stale`/`offered` already established for this ledger. A
+#: pre-bump process reads them as three more keys on a log entry it
+#: already treats as free-form.
+#:
 #: `seatkit-19` is the play-script DSL's version, with battle 8's cast-during-
 #: resolution funnel (z1) and the buddy rationale cap (bd1) folded in: a
 #: **response** shape change plus **additive requests** and two new tools,

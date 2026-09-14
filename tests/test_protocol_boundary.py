@@ -131,3 +131,99 @@ def test_seatkit_20_names_the_script_applicability_hint() -> None:
     paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
     for term in ("scripts", "applicable", "call", "conflict", "MAX_HINT_SCRIPTS", "run_script"):
         assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_turns_taken_and_invoked_via() -> None:
+    """S1's own bundle: `turns_taken` on the state view, and `invoked_via`
+    on a script run - now including its S2 `"armed"` value."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in ("turns_taken", "invoked_via", "armed"):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_plan_ahead() -> None:
+    """S2 A1: `declare_plan(for_turn="next")`, the 409 `own_turn_in_progress`
+    it can now answer with, and the upkeep/draw empty-stack pass
+    exemption from the require-a-plan gate."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in (
+        'declare_plan(for_turn="next")',
+        "own_turn_in_progress",
+        "pass_priority",
+        "upkeep",
+        "draw",
+        "stack is empty",
+    ):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_arming() -> None:
+    """S2 A2-A5: `arm`/`arm_reasoning`/`opposing_archetype`/`inputs` on
+    `wait_for_priority` and `pass_until`; the `armed`/`armed_conflict`/
+    `armed_error`/`armed_skipped` answer keys; `scripts.armable` and
+    `arm_call`; and `pass_until`'s `finished: false` plus `resume` while it
+    waits for this seat's own priority at an armed destination."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in (
+        "arm",
+        "arm_reasoning",
+        "opposing_archetype",
+        "inputs",
+        "wait_for_priority",
+        "pass_until",
+        "armed",
+        "armed_conflict",
+        "armed_error",
+        "armed_skipped",
+        "armable",
+        "arm_call",
+        "finished: false",
+        "resume",
+    ):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_buddy_drafts() -> None:
+    """S2 A6: `wait_for_priority(wake_to_draft=...)`, the `stage_advice`
+    tool, `draft.status`'s values, and `AdviceIn.drafted_at_seq`."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in (
+        "wake_to_draft",
+        "stage_advice",
+        "draft",
+        "posted",
+        "held",
+        "stale",
+        "superseded_by_script",
+        "failed",
+        "drafted_at_seq",
+    ):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_the_ledger_metrics_stamps() -> None:
+    """S2 A7: `active_player`, `priority_holder` and `turns_taken` are
+    stamped on every ledger row, not only the state view."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in ("active_player", "priority_holder", "turns_taken"):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_does_not_name_the_opening_dsl_branch_fields() -> None:
+    """`own_turns_taken` and `hypothetical-facts` ship on o-opening-dsl,
+    merged later - the seatkit-20 paragraph must not claim them yet."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in ("own_turns_taken", "hypothetical-facts", "hypothetical_facts"):
+        assert term not in paragraph, f"the seatkit-20 paragraph already names {term}"
