@@ -999,3 +999,82 @@ def test_no_extra_state_fetch_for_a_contents_needing_armable_play(
 
     assert calls["n"] == 1, f"armable cost {calls['n']} state fetches, expected exactly 1"
     assert "scripts" not in answer or "applicable" not in answer.get("scripts", {}), answer
+
+
+# -- S2 arming re-review finding 1: one window per arm_call --------------------
+
+
+def test_arm_call_never_mixes_step_and_whose_turn_from_different_scripts(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 1: the old template took `step` as the
+    earliest step across every kept `armable` entry but `whose_turn` from the
+    top entry alone - bob's own upkeep, a `theirs`/`end_step` top script and a
+    lower `mine`/`precombat_main` one, used to template
+    `pass_until(step="precombat_main", whose_turn="opponent", ...)`, which
+    matches neither script's own `when`. The fix templates from the single
+    nearest window among the kept entries and only arms the ones that share
+    it - the top script here, since its own `theirs`/`end_step` window comes
+    up this very opponent turn, well before the lower script's `mine`/
+    `precombat_main` one (which only comes up next turn)."""
+    force_turn_position(game, Step.UPKEEP, "bob")
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script(
+            "theirs-end",
+            priority=90,
+            when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+        ),
+        land_script(
+            "mine-main",
+            priority=10,
+            when={"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    ids = [entry["id"] for entry in answer["scripts"]["armable"]]
+    assert ids == ["theirs-end", "mine-main"], "both still listed as armable"
+    assert answer["scripts"]["arm_call"] == (
+        f'pass_until(player_uid="{alice}", step="end_step", whose_turn="opponent", '
+        'arm=["theirs-end"], arm_reasoning="<say why>", opposing_archetype="*")'
+    ), answer["scripts"]["arm_call"]
+
+
+def test_arm_call_targets_the_next_occurrence_not_the_earliest_in_turn_order(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 1's second bug: `_earliest_step` picked
+    the earliest step named in `when.steps` by turn order alone, never
+    accounting for where the board already is - a `theirs` script naming
+    `[upkeep, end_step]`, seen from bob's own main phase (his upkeep already
+    behind him this turn), used to template a wait for his NEXT upkeep,
+    skipping this very turn's end step, which was actually next."""
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script(
+            "theirs-both",
+            when={"whose_turn": "theirs", "steps": ["upkeep", "end_step"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    [entry] = answer["scripts"]["armable"]
+    assert entry["id"] == "theirs-both"
+    assert answer["scripts"]["arm_call"] == (
+        f'pass_until(player_uid="{alice}", step="end_step", whose_turn="opponent", '
+        'arm=["theirs-both"], arm_reasoning="<say why>", opposing_archetype="*")'
+    ), answer["scripts"]["arm_call"]

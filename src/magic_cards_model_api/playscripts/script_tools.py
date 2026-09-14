@@ -722,8 +722,7 @@ def applicable_hint(
             applicable_items.append(item)
 
     armable_items: list[dict[str, Any]] = []
-    armable_ids: list[str] = []
-    earliest_steps: list[str] = []
+    occurrences: dict[str, tuple[int, str, str]] = {}
     if armable_window:
         for entry in entries:
             script_id = str(entry["id"])
@@ -742,11 +741,17 @@ def applicable_hint(
                 state, when, seat.player
             ):
                 continue
+            occurrence = _next_occurrence(state, when, seat.player)
+            if occurrence is None:
+                # `_when_recurs_before_next_own_turn_ends` just confirmed this
+                # `when` comes up again before this seat's own next turn
+                # ends - `_next_occurrence` computes the same thing in more
+                # detail, so the two must agree; defensive only.
+                continue
             armable_items.append(
                 {"id": entry["id"], "name": _truncated_name(entry.get("name")), "when": when}
             )
-            armable_ids.append(script_id)
-            earliest_steps.append(_earliest_step(when["steps"]))
+            occurrences[script_id] = occurrence
 
     if not applicable_items and not armable_items:
         return None
@@ -758,15 +763,9 @@ def applicable_hint(
     if kept_applicable:
         result["applicable"] = kept_applicable
     if kept_armable:
-        kept_ids = [item["id"] for item in kept_armable]
-        kept_steps = [
-            step
-            for item, step in zip(armable_items, earliest_steps, strict=True)
-            if item["id"] in kept_ids
-        ]
         result["armable"] = kept_armable
         result["arm_call"] = _arm_call_template(
-            seat, kept_ids, asserted, kept_steps, kept_armable[0]["when"], remembered
+            seat, kept_armable, occurrences, asserted, remembered
         )
     return result
 
@@ -833,6 +832,77 @@ def _earliest_step(steps: list[str]) -> str:
     return min(ordered, key=runtime.AUTOPASS_STEPS.index)
 
 
+def _next_step_at_or_after(steps: list[str], current_step: Any) -> str | None:
+    """The earliest of `steps` still at or after `current_step`, in
+    `runtime.AUTOPASS_STEPS` turn order - `None` when every one of them has
+    already gone by this occurrence. `current_step` outside
+    `AUTOPASS_STEPS` (untap/cleanup, or unrecognised) counts as "before
+    everything", the same as `_has_step_at_or_after` treats it: the
+    earliest of `steps` in turn order."""
+    ordered = [step for step in steps if step in runtime.AUTOPASS_STEPS]
+    if current_step not in runtime.AUTOPASS_STEPS:
+        return min(ordered, key=runtime.AUTOPASS_STEPS.index) if ordered else None
+    if not ordered:
+        return None
+    here = runtime.AUTOPASS_STEPS.index(current_step)
+    candidates = [step for step in ordered if runtime.AUTOPASS_STEPS.index(step) >= here]
+    return min(candidates, key=runtime.AUTOPASS_STEPS.index) if candidates else None
+
+
+def _next_occurrence(
+    state: dict[str, Any], when: dict[str, Any], me: str
+) -> tuple[int, str, str] | None:
+    """The nearest actual occurrence of `when`, from `state`'s current board
+    position, as `(phase, step, whose_turn)` - `step`/`whose_turn` already in
+    `pass_until`'s own vocabulary (`runtime.WHOSE_TURN_FOR_AUTOPASS`), `phase`
+    0 for a step still ahead in the turn already under way (whoever's turn
+    that is), 1 for one that only comes up in this seat's own following turn.
+
+    Two entries' occurrences are directly comparable: every phase-0 window
+    shares the one turn now in progress, so their `runtime.AUTOPASS_STEPS`
+    index alone orders them; every phase-1 window shares the same following
+    own turn, likewise; and phase 0 is always sooner than phase 1 by
+    construction. `_arm_call_template` uses exactly that to find the single
+    nearest window among several kept `armable` entries (S2 arming re-review
+    finding 1) - the old template instead took the earliest step named
+    anywhere among them, in bare turn-order, regardless of whether the board
+    had already passed it *this* occurrence (a `theirs` `when` naming
+    `[upkeep, end_step]`, read from the opponent's own main phase - upkeep
+    already behind it this turn - used to template a wait for the opponent's
+    NEXT upkeep, skipping this very turn's end step).
+
+    `None` only when `when` does not actually recur before this seat's own
+    next turn ends - every caller has already confirmed that with
+    `_when_recurs_before_next_own_turn_ends`, so this mirrors its own two
+    cases in more detail rather than duplicating its own gating."""
+    whose = when.get("whose_turn") or "mine"
+    steps = when.get("steps") or []
+    target = runtime.WHOSE_TURN_FOR_AUTOPASS.get(whose, "mine")
+    active = state.get("active_player")
+    if active != me:
+        # Somewhere in the opponent's turn: a theirs/either step still ahead
+        # of the current one this same turn is phase 0 and comes first;
+        # otherwise (mine alone, or theirs/either with every one of its
+        # steps already behind it this turn) the next occurrence is this
+        # seat's own following turn, phase 1, at the earliest of `steps` in
+        # turn order (that turn has not started yet, so nothing is "already
+        # behind" in it).
+        if whose in ("theirs", "either"):
+            step = _next_step_at_or_after(steps, state.get("step"))
+            if step is not None:
+                return 0, step, target
+        if whose in ("mine", "either"):
+            return 1, _earliest_step(steps), target
+        return None
+    # Already in this seat's own upkeep/draw: only a step still ahead this
+    # same turn ever qualifies (theirs alone never does - see
+    # `_when_recurs_before_next_own_turn_ends`), so this is always phase 0.
+    if whose not in ("mine", "either"):
+        return None
+    step = _next_step_at_or_after(steps, state.get("step"))
+    return (0, step, target) if step is not None else None
+
+
 def _hint_bounded(
     applicable_items: list[dict[str, Any]], armable_items: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -859,33 +929,53 @@ def _hint_bounded(
 
 def _arm_call_template(
     seat: Seat,
-    armable_ids: list[str],
+    kept_armable: list[dict[str, Any]],
+    occurrences: dict[str, tuple[int, str, str]],
     asserted: str,
-    earliest_steps: list[str],
-    top_when: dict[str, Any],
     remembered: dict[str, Any] | None = None,
 ) -> str:
-    """A ready-to-use call arming every one of `armable_ids` at once -
-    `pass_until(...)` for a seat, `wait_for_priority(...)` for an advisor
-    (advisors are refused `pass_until`). `top_when` is the highest-priority
-    kept `armable` entry's own `when` - `pass_until`'s destination is one
-    `step`/`whose_turn` pair, so a batch of several armed ids is targeted at
-    the top one's own window, in its own vocabulary
-    (`runtime.WHOSE_TURN_FOR_AUTOPASS`: `when`'s `theirs`/`either` are
-    `pass_until`'s `opponent`/`any`) - never a hardcoded `"mine"`, which sent
-    a `theirs` script's own template straight past the opponent's window and
-    into this seat's own next turn, never matching (S2 review finding 1).
+    """A ready-to-use call arming the subset of `kept_armable` that shares
+    the single nearest occurrence among them - `pass_until(...)` for a seat,
+    `wait_for_priority(...)` for an advisor (advisors are refused
+    `pass_until`).
+
+    `kept_armable` is already priority-ordered (`applicable_hint` sorts
+    `entries` highest priority first before building it, and `_hint_bounded`
+    preserves that order); `occurrences` is each one's own `_next_occurrence`
+    reading. `pass_until`'s own destination is one `step`/`whose_turn` pair,
+    so a batch of several armed ids built as one call has to be templated
+    from ONE window - the old version instead took `step` as the earliest
+    step named anywhere among the kept entries and `whose_turn` from the
+    top-priority entry alone, a combination that routinely matched neither
+    script's own `when` (S2 arming re-review finding 1). The fix: rank the
+    kept entries by their own nearest occurrence (`_next_occurrence`'s
+    `(phase, step)` - ties broken by priority, since `kept_armable` is
+    already in that order), take the single nearest one as the window, and
+    arm every entry whose own next occurrence is exactly that same
+    `(step, whose_turn)` pair - the rest stay listed under `armable` without
+    being in this call; a later `arm()` call, once the board has moved past
+    this window, judges them against their own next one instead.
+
     `remembered` is this seat's own non-archetype inputs last supplied to
     `run_script` (S1 finding 4b) - named here too, exactly as `_call_template`
     already names them for `applicable`, so an armed script whose condition
     reads one of them does not come back `needs_input` merely because the
     template left it out."""
+
+    def rank(item: dict[str, Any]) -> tuple[int, int]:
+        phase, step, _ = occurrences[str(item["id"])]
+        index = runtime.AUTOPASS_STEPS.index(step) if step in runtime.AUTOPASS_STEPS else -1
+        return phase, index
+
+    ranked = sorted(kept_armable, key=rank)
+    window = occurrences[str(ranked[0]["id"])][1:]
+    armed_ids = [
+        str(item["id"]) for item in kept_armable if occurrences[str(item["id"])][1:] == window
+    ]
     args: dict[str, Any] = {"player_uid": seat.uid}
     if not seat.advise:
-        step = min(earliest_steps, key=runtime.AUTOPASS_STEPS.index) if earliest_steps else ""
-        args["step"] = step
-        args["whose_turn"] = runtime.WHOSE_TURN_FOR_AUTOPASS.get(top_when.get("whose_turn"), "mine")
-    args["arm"] = armable_ids
+        args["step"], args["whose_turn"] = window
+    args["arm"] = armed_ids
     args["arm_reasoning"] = runtime.REASONING_PLACEHOLDER
     args["opposing_archetype"] = asserted
     if remembered:
