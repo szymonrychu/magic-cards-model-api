@@ -456,39 +456,59 @@ def _hint_judged(
 def applicable_hint(
     seat: Seat, corpora: dict[tuple[str, str], dict[str, Any]], state: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """`{"applicable": [...]}` for one seat's wake/action answer - the same
-    applicability judgement `listing` makes, over `state` this answer already
-    carries rather than a fresh board fetch (plus, at most, one extra fetch
-    for a contents-needing play whose position already matches - see below).
-    `None` when this MCP process has scripts switched off
-    (`scripts_enabled_here`), when this seat is not the one holding priority
-    (`runtime._drive` requires that before it ever sends a script's first
-    move - S1 review finding 4a), when this seat has no registered corpus, or
-    when nothing registered applies right now.
+    """`{"applicable": [...], "armable": [...], "arm_call": "..."}` for one
+    seat's wake/action answer - the same applicability judgement `listing`
+    makes, over `state` this answer already carries rather than a fresh board
+    fetch (plus, at most, one extra fetch for a contents-needing play whose
+    position already matches - see below). `None` when this MCP process has
+    scripts switched off (`scripts_enabled_here`), when this seat has no
+    registered corpus, or when neither block below has anything to say.
 
-    Judged with the archetype and other inputs this seat last supplied to
-    `run_script` (`_LAST_ASSERTED_KEY`/`_LAST_INPUTS_KEY` - S1 review finding
-    4b), and never re-offering a script this process has already run at this
-    same `(turn_number, step)` (`_RECENT_RUNS_KEY` - finding 4c).
-
-    Each entry is `{id, name, call}`, `call` a ready-to-use `run_script`
-    invocation, `inputs` among its arguments only when the remembered inputs
-    are non-empty - or, when two or more apply at once (`listing`'s own
+    **`applicable`** (S1): what this seat holds priority for and could run
+    right now (`runtime._drive` requires holding priority before it ever
+    sends a script's first move - S1 review finding 4a, so this block is
+    empty whenever `state.priority_holder != seat.player`). Judged with the
+    archetype and other inputs this seat last supplied to `run_script`
+    (`_LAST_ASSERTED_KEY`/`_LAST_INPUTS_KEY` - S1 review finding 4b), and
+    never re-offering a script this process has already run at this same
+    `(turn_number, step)` (`_RECENT_RUNS_KEY` - finding 4c). Each entry is
+    `{id, name, call}`, `call` a ready-to-use `run_script` invocation,
+    `inputs` among its arguments only when the remembered inputs are
+    non-empty - or, when two or more apply at once (`listing`'s own
     `runtime_conflict`), `{id, name, conflict: true}` with `call` left out,
-    since a seat has to pick one itself before either can commit. `name` is
-    truncated to `MAX_HINT_NAME_CHARS`, and the whole block is dropped down to
-    `MAX_HINT_BYTES` before `MAX_HINT_SCRIPTS`'s own cap on entry count
-    (finding 6). Never `static_conflicts` here - its result is not read out of
-    this answer's own items, only `listing`'s (finding 5)."""
+    since a seat has to pick one itself before either can commit.
+
+    **`armable`** (S2): scripts with `priority > 0`, a matching archetype,
+    that do NOT apply yet but whose `when` comes up again before this seat's
+    own next turn ends - only offered while the board is in the opponent's
+    turn or this seat's own upkeep/draw (`_armable_window`), the two windows
+    a human is waiting through rather than acting in. Unlike `applicable`,
+    this needs no priority check: it is meant for exactly the waits where
+    this seat does not hold priority. Each entry is `{id, name, when}`,
+    highest priority first, never re-checking anything `applicable` already
+    covers - a script that already applies now is `applicable`, never
+    `armable`. `arm_call` is one ready-to-use call arming every surviving
+    `armable` id at once: `pass_until(..., arm=[...])` for a seat (advisors
+    are refused `pass_until`), `wait_for_priority(..., arm=[...])` for an
+    advisor.
+
+    Both blocks share `MAX_HINT_NAME_CHARS`'s truncation on `name`, and
+    together share `MAX_HINT_SCRIPTS`'s cap on entry count and
+    `MAX_HINT_BYTES`'s cap on the whole block's own JSON size - `applicable`
+    entries always kept first (finding 6). Never `static_conflicts` here -
+    its result is not read out of this answer's own items, only `listing`'s
+    (finding 5)."""
     if not scripts_enabled_here():
-        return None
-    if state.get("priority_holder") != seat.player:
         return None
     corpus = runtime._corpus(seat, corpora, fresh=False)
     if isinstance(corpus, runtime.ScriptExit):
         return None
     docs = [doc for doc in corpus.get("scripts") or [] if isinstance(doc, dict)]
     if not docs:
+        return None
+    holds_priority = state.get("priority_holder") == seat.player
+    armable_window = _armable_window(state, seat.player)
+    if not holds_priority and not armable_window:
         return None
     asserted = corpus.get(_LAST_ASSERTED_KEY)
     asserted = asserted if isinstance(asserted, str) else WILDCARD
@@ -500,6 +520,7 @@ def applicable_hint(
     declared = list(corpus.get("inputs") or [])
     catalog = input_catalog(declared, [asserted])
     plays = _plays(corpus, docs)
+    plays_by_id = {doc["id"]: (doc, play) for doc, play in plays if isinstance(doc.get("id"), str)}
     entries: list[dict[str, Any]] = []
     deferred: list[tuple[dict[str, Any], dict[str, Any] | runtime.ScriptExit]] = []
     for doc, play in plays:
@@ -519,30 +540,180 @@ def applicable_hint(
             for doc, play in deferred
         )
     entries.sort(key=lambda entry: (-_priority(entry), str(entry["id"])))
-    recent = {
-        (str(run[0]), run[1], run[2])
-        for run in corpus.get(_RECENT_RUNS_KEY) or []
-        if isinstance(run, list) and len(run) == 3
-    }
-    position = (state.get("turn_number"), state.get("step"))
-    applying = [
-        entry
-        for entry in entries
-        if entry["applies"] and (str(entry["id"]), *position) not in recent
-    ]
-    if not applying:
+
+    applicable_items: list[dict[str, Any]] = []
+    if holds_priority:
+        recent = {
+            (str(run[0]), run[1], run[2])
+            for run in corpus.get(_RECENT_RUNS_KEY) or []
+            if isinstance(run, list) and len(run) == 3
+        }
+        position = (state.get("turn_number"), state.get("step"))
+        applying = [
+            entry
+            for entry in entries
+            if entry["applies"] and (str(entry["id"]), *position) not in recent
+        ]
+        conflict = len(applying) > 1
+        for entry in applying:
+            item: dict[str, Any] = {"id": entry["id"], "name": _truncated_name(entry.get("name"))}
+            if conflict:
+                item["conflict"] = True
+            else:
+                item["call"] = _call_template(seat, str(entry["id"]), asserted, remembered)
+            applicable_items.append(item)
+
+    armable_items: list[dict[str, Any]] = []
+    armable_ids: list[str] = []
+    earliest_steps: list[str] = []
+    if armable_window:
+        for entry in entries:
+            script_id = str(entry["id"])
+            if entry["applies"]:
+                continue
+            found = plays_by_id.get(script_id)
+            if found is None:
+                continue
+            _, play = found
+            if not isinstance(play, dict) or play.get("priority", 0) <= 0:
+                continue
+            if not runtime._archetype_applies(play, asserted):
+                continue
+            when = play.get("when")
+            if not isinstance(when, dict) or not _when_recurs_before_next_own_turn_ends(
+                state, when, seat.player
+            ):
+                continue
+            armable_items.append(
+                {"id": entry["id"], "name": _truncated_name(entry.get("name")), "when": when}
+            )
+            armable_ids.append(script_id)
+            earliest_steps.append(_earliest_step(when["steps"]))
+
+    if not applicable_items and not armable_items:
         return None
-    conflict = len(applying) > 1
-    items: list[dict[str, Any]] = []
-    for entry in applying[:MAX_HINT_SCRIPTS]:
-        item: dict[str, Any] = {"id": entry["id"], "name": _truncated_name(entry.get("name"))}
-        if conflict:
-            item["conflict"] = True
-        else:
-            item["call"] = _call_template(seat, str(entry["id"]), asserted, remembered)
-        items.append(item)
-    bounded = _byte_bounded(items)
-    return {"applicable": bounded} if bounded else None
+
+    kept_applicable, kept_armable = _hint_bounded(applicable_items, armable_items)
+    if not kept_applicable and not kept_armable:
+        return None
+    result: dict[str, Any] = {}
+    if kept_applicable:
+        result["applicable"] = kept_applicable
+    if kept_armable:
+        kept_ids = [item["id"] for item in kept_armable]
+        kept_steps = [
+            step
+            for item, step in zip(armable_items, earliest_steps, strict=True)
+            if item["id"] in kept_ids
+        ]
+        result["armable"] = kept_armable
+        result["arm_call"] = _arm_call_template(seat, kept_ids, asserted, kept_steps)
+    return result
+
+
+#: The two windows an `armable` entry is ever offered in - the opponent's
+#: turn, or this seat's own upkeep/draw. `applicable` is what a human acts on
+#: right now; `armable` is what is worth arming for the wait ahead of it.
+_ARMABLE_OWN_STEPS = ("upkeep", "draw")
+
+
+def _armable_window(state: dict[str, Any], me: str) -> bool:
+    active = state.get("active_player")
+    if active is None:
+        return False
+    if active != me:
+        return True
+    return state.get("step") in _ARMABLE_OWN_STEPS
+
+
+def _has_step_at_or_after(steps: list[str], current_step: Any) -> bool:
+    if current_step not in runtime.AUTOPASS_STEPS:
+        # untap/cleanup (or an unrecognised step): every named step is still
+        # ahead of it in turn order.
+        return True
+    here = runtime.AUTOPASS_STEPS.index(current_step)
+    return any(
+        runtime.AUTOPASS_STEPS.index(step) >= here
+        for step in steps
+        if step in runtime.AUTOPASS_STEPS
+    )
+
+
+def _when_recurs_before_next_own_turn_ends(
+    state: dict[str, Any], when: dict[str, Any], me: str
+) -> bool:
+    """Whether `when` comes up again before this seat's own next turn ends,
+    from `state`'s current position - called only from within
+    `_armable_window`'s own two cases, below."""
+    whose = when.get("whose_turn")
+    steps = when.get("steps") or []
+    active = state.get("active_player")
+    if active != me:
+        # Somewhere in the opponent's turn (or a step naming no active
+        # player - defensive): `when` recurs before this seat's own next
+        # turn ends when either it can still happen later this same
+        # (opponent's) turn - only for `theirs`/`either`, and only if one of
+        # its steps has not already gone by - or it can happen at all during
+        # this seat's own following turn, which `mine`/`either` always does.
+        if whose in ("theirs", "either") and _has_step_at_or_after(steps, state.get("step")):
+            return True
+        return whose in ("mine", "either")
+    # Already in this seat's own upkeep/draw: the window is the rest of THIS
+    # turn. `theirs` alone can never come up before this own turn ends - that
+    # would cross into the opponent's next turn.
+    if whose not in ("mine", "either"):
+        return False
+    return _has_step_at_or_after(steps, state.get("step"))
+
+
+def _earliest_step(steps: list[str]) -> str:
+    ordered = [step for step in steps if step in runtime.AUTOPASS_STEPS]
+    if not ordered:
+        return str(steps[0]) if steps else ""
+    return min(ordered, key=runtime.AUTOPASS_STEPS.index)
+
+
+def _hint_bounded(
+    applicable_items: list[dict[str, Any]], armable_items: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """`applicable_items` and `armable_items`, combined under one shared
+    `MAX_HINT_SCRIPTS` entry cap and `MAX_HINT_BYTES` byte budget -
+    `applicable` entries kept first, `armable` filling whatever is left."""
+    combined = [("applicable", item) for item in applicable_items]
+    combined += [("armable", item) for item in armable_items]
+    combined = combined[:MAX_HINT_SCRIPTS]
+    kept: list[tuple[str, dict[str, Any]]] = []
+    for kind, item in combined:
+        candidate = [*kept, (kind, item)]
+        # Measured the same way `_byte_bounded` always has - the flat list
+        # of surviving items' own JSON size, not the two-key object they end
+        # up wrapped in: `applicable` and `armable` share one budget over
+        # what they themselves cost, not a second helping for the wrapper.
+        if len(json.dumps([entry for _, entry in candidate]).encode("utf-8")) > MAX_HINT_BYTES:
+            break
+        kept = candidate
+    kept_applicable = [item for kind, item in kept if kind == "applicable"]
+    kept_armable = [item for kind, item in kept if kind == "armable"]
+    return kept_applicable, kept_armable
+
+
+def _arm_call_template(
+    seat: Seat, armable_ids: list[str], asserted: str, earliest_steps: list[str]
+) -> str:
+    """A ready-to-use call arming every one of `armable_ids` at once -
+    `pass_until(...)` for a seat, `wait_for_priority(...)` for an advisor
+    (advisors are refused `pass_until`)."""
+    args: dict[str, Any] = {"player_uid": seat.uid}
+    if not seat.advise:
+        step = min(earliest_steps, key=runtime.AUTOPASS_STEPS.index) if earliest_steps else ""
+        args["step"] = step
+        args["whose_turn"] = "mine"
+    args["arm"] = armable_ids
+    args["arm_reasoning"] = runtime.REASONING_PLACEHOLDER
+    args["opposing_archetype"] = asserted
+    rendered = ", ".join(f"{name}={json.dumps(value)}" for name, value in args.items())
+    verb = "wait_for_priority" if seat.advise else "pass_until"
+    return f"{verb}({rendered})"
 
 
 def _truncated_name(name: Any) -> Any:

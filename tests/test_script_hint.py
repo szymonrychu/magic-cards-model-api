@@ -128,9 +128,13 @@ def test_the_hint_uses_the_archetype_last_asserted_to_list_scripts(
     assert 'opposing_archetype="dimir-frog"' in entry["call"]
 
 
-def test_the_wrong_step_carries_no_hint(
+def test_the_wrong_step_carries_no_applicable_hint(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """S2: this seat's own upkeep is one of `armable`'s own two windows, so
+    a script off its `when` right now (but coming up again later this same
+    turn) is offered there instead - `applicable` itself still carries
+    nothing, since nothing applies to run right now."""
     force_turn_position(game, Step.UPKEEP, "alice")
     alice = seat_uid(game, "alice")
     script = fetch_shock()
@@ -140,7 +144,10 @@ def test_the_wrong_step_carries_no_hint(
 
     answer = wait(server, alice)
 
-    assert "scripts" not in answer, answer
+    assert "scripts" in answer, answer
+    assert "applicable" not in answer["scripts"], answer["scripts"]
+    [entry] = answer["scripts"]["armable"]
+    assert entry["id"] == script["id"]
 
 
 def test_no_corpus_registered_carries_no_hint(
@@ -211,8 +218,10 @@ def test_a_contents_needing_play_whose_when_does_not_match_costs_no_extra_fetch(
     """A play whose condition reads the viewer's own library contents
     (`conditions.needs_contents`) is only worth an extra fetch once its
     priority, archetype and `when` already match (see the fixture-driven
-    test below) - one whose board position is wrong is filtered out before
-    that, at no extra cost."""
+    test below) - one whose board position is wrong right now costs no
+    extra fetch even though S2's `armable` still offers it (upkeep is one of
+    `armable`'s own windows): `armable` never evaluates `true`/`false` at
+    all, so it never reaches the contents check either."""
     force_turn_position(game, Step.UPKEEP, "alice")
     alice = seat_uid(game, "alice")
     needs_contents = land_script(
@@ -228,7 +237,9 @@ def test_a_contents_needing_play_whose_when_does_not_match_costs_no_extra_fetch(
 
     answer = wait(server, alice)
 
-    assert "scripts" not in answer, answer
+    assert "scripts" in answer, answer
+    [entry] = answer["scripts"]["armable"]
+    assert entry["id"] == "needs-library-count"
     assert calls["n"] == 1, f"a play whose when never matched still cost {calls['n']} state fetches"
 
 
@@ -512,3 +523,238 @@ def test_the_scripts_block_drops_entries_past_its_byte_budget(
 
     applicable = reply["scripts"]["applicable"]
     assert 0 < len(applicable) < 5, applicable
+
+
+# -- S2 A4: armable ------------------------------------------------------------
+
+
+def force_theirs_end_step(game_id: str) -> None:
+    force_turn_position(game_id, Step.END_STEP, "bob")
+
+
+def force_my_upkeep(game_id: str) -> None:
+    force_turn_position(game_id, Step.UPKEEP, "alice")
+
+
+def force_my_draw(game_id: str) -> None:
+    force_turn_position(game_id, Step.DRAW, "alice")
+
+
+def test_armable_during_the_opponents_turn(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_theirs_end_step(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    assert "scripts" in answer, answer
+    assert "applicable" not in answer["scripts"], answer
+    [entry] = answer["scripts"]["armable"]
+    assert entry["id"] == "drop"
+    assert entry["name"] == "Make the land drop"
+    assert entry["when"] == {
+        "whose_turn": "mine",
+        "steps": ["precombat_main"],
+        "stack": "empty",
+    }
+    assert answer["scripts"]["arm_call"] == (
+        f'pass_until(player_uid="{alice}", step="precombat_main", whose_turn="mine", '
+        'arm=["drop"], arm_reasoning="<say why>", opposing_archetype="*")'
+    )
+
+
+def test_armable_during_my_own_upkeep(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_my_upkeep(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    assert "scripts" in answer, answer
+    [entry] = answer["scripts"]["armable"]
+    assert entry["id"] == "drop"
+
+
+def test_armable_during_my_own_draw(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_my_draw(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    assert "scripts" in answer, answer
+    [entry] = answer["scripts"]["armable"]
+    assert entry["id"] == "drop"
+
+
+def test_no_armable_outside_the_two_windows(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """My own precombat_main is neither the opponent's turn nor my own
+    upkeep/draw - a script that does not apply now (wrong `when`) must not be
+    offered as armable there."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script(
+            "end-step-only", when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"}
+        ),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    assert "scripts" not in answer or "armable" not in answer.get("scripts", {}), answer
+
+
+def test_a_script_applying_now_is_never_armable(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `theirs`/`end_step` script that already applies right now (this
+    seat holds priority during the opponent's end step) is `applicable`, not
+    `armable` - armable is only for what does not apply yet.
+
+    `tap_island_script`, not `land_script`: a land drop needs a main phase
+    (CR 305.1), so a `land_script` can never apply during any `end_step`
+    regardless of whose turn - an activated mana ability has no such
+    restriction."""
+    force_theirs_end_step(game)
+    alice = seat_uid(game, "alice")
+    bob = seat_uid(game, "bob")
+    register(
+        client,
+        game,
+        alice,
+        tap_island_script(
+            "end-step-tap",
+            when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Island", "alice", "battlefield")
+    # `force_turn_position` grants priority to the active player (bob) - one
+    # real pass moves it to alice, who then genuinely holds priority in this
+    # same end_step.
+    passed = client.post(
+        f"/api/games/{game}/actions/pass-priority", params={"uid": bob}, json={"player": "bob"}
+    )
+    assert passed.status_code == 200 and passed.json()["allowed"] is True, passed.text
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    assert "scripts" in answer, answer
+    [entry] = answer["scripts"]["applicable"]
+    assert entry["id"] == "end-step-tap"
+    assert "armable" not in answer["scripts"], answer["scripts"]
+
+
+def test_priority_zero_and_wrong_archetype_scripts_are_never_armable(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_theirs_end_step(game)
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script("disabled", priority=0),
+        land_script("wrong-archetype", opposing_archetypes=["dimir-frog"]),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    assert "scripts" not in answer or "armable" not in answer.get("scripts", {}), answer
+
+
+def test_armable_is_highest_priority_first(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_theirs_end_step(game)
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script("drop-low", priority=10),
+        land_script("drop-high", priority=90),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    ids = [entry["id"] for entry in answer["scripts"]["armable"]]
+    assert ids == ["drop-high", "drop-low"]
+
+
+def test_armable_shares_the_cap_with_applicable(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_theirs_end_step(game)
+    alice = seat_uid(game, "alice")
+    scripts = [land_script(f"drop-{i}", priority=50 - i) for i in range(8)]
+    register(client, game, alice, *scripts)
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    armable = answer["scripts"]["armable"]
+    assert len(armable) == script_tools.MAX_HINT_SCRIPTS
+    assert len(json.dumps(answer)) < 20_000
+
+
+def test_advisor_armable_template_uses_wait_for_priority(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from magic_cards_model_api.repository import Advisor
+    from magic_cards_model_api.store import store
+
+    force_theirs_end_step(game)
+    advisor = "armable-advisor-uid"
+    store.register_advisors(game, {advisor: Advisor(player="alice")})
+    register(client, game, advisor, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, advisor)
+
+    assert answer["scripts"]["arm_call"] == (
+        f'wait_for_priority(player_uid="{advisor}", arm=["drop"], '
+        'arm_reasoning="<say why>", opposing_archetype="*")'
+    )
+
+
+def test_no_extra_state_fetch_computing_armable(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_theirs_end_step(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    seats, server = server_for(monkeypatch, game)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    calls = counting_fetch_state(monkeypatch, seat)
+
+    wait(server, alice)
+
+    assert calls["n"] == 1, f"armable cost {calls['n']} state fetches, expected exactly 1"
