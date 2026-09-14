@@ -788,13 +788,27 @@ LOOP_SCRIPT_DOCTRINE = (
 # to find out a script applies - the measured problem being that no seat ever
 # did, and cracked every fetch land by hand instead (`play_land` then
 # `activate`). This doctrine is pinned word for word in both MCP prompts.
+#: The sentence this whole doctrine replaces, everywhere it used to appear -
+#: pinned only as the string `test_the_old_never_run_sentence_is_gone_everywhere`
+#: asserts is now GONE, never as something any prompt or brief still carries.
+OLD_NEVER_RUN_SENTENCE = (
+    "Scripts never run on their own: a run you did not start yourself was started by someone "
+    "else, such as an operator, and is not something to wait for or expect."
+)
+
+#: 2026-09-14 S2 A8: the replacement, word for word, everywhere an MCP prompt
+#: (seat or buddy) said the old sentence above - arming is now a second,
+#: equally real way to start a run, and the old wording never admitted that.
+NEW_NEVER_RUN_SENTENCE_MCP = (
+    "Scripts only run when you start them with `run_script` or arm them on a "
+    "wait; a run you neither started nor armed was started by someone else."
+)
+
 HINT_DOCTRINE = (
     "When an answer carries `scripts.applicable`, that entry's `run_script` call is this "
     "turn's committing call - not the hand-played moves.",
     "After `play_land` of a fetch land, read that same answer's `scripts.applicable` before "
     "you `activate` it by hand.",
-    "Scripts never run on their own: a run you did not start yourself was started by someone "
-    "else, such as an operator, and is not something to wait for or expect.",
 )
 
 LOOP_HINT_DOCTRINE = (
@@ -807,11 +821,21 @@ LOOP_HINT_DOCTRINE = (
 #: is MCP-only), but the false belief this closes came from a CLI: root cause
 #: #3, staged `mcp-seat script run` calls during development that made a seat
 #: write "scripts auto-fire" into its own memory.
-CLI_HINT_CAUTION = (
-    "Scripts never run on their own: a run you did not start yourself - through `script run` "
-    "or the MCP `run_script` tool - was started by someone else, such as an operator staging a "
-    "run from the CLI, and is not something to wait for or expect."
-)
+#:
+#: 2026-09-14 S2 A8: replaced, same as `NEW_NEVER_RUN_SENTENCE_MCP` above -
+#: `--arm` (S2) is now a second real way a run starts from the CLI too, and
+#: the old wording never admitted that. Per brief: a buddy is refused
+#: `pass-until` outright, so its own wording only ever names `wait`.
+CLI_HINT_CAUTION = {
+    "ai_seat_brief.md": (
+        "Scripts only run when you start them with `script run` or arm them with `--arm` on "
+        "`wait`/`pass-until`; a run you neither started nor armed was started by someone else."
+    ),
+    "ai_buddy_brief.md": (
+        "Scripts only run when you start them with `script run` or arm them with `--arm` on "
+        "`wait`; a run you neither started nor armed was started by someone else."
+    ),
+}
 
 BRIEFS = Path(__file__).resolve().parents[2] / "src" / "magic_cards_model_api" / "docs"
 
@@ -884,7 +908,183 @@ def test_seat_prompt_loop_names_run_script_among_the_committing_calls(tmp_path, 
 @pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
 def test_briefs_scripts_section_says_scripts_never_auto_run(brief):
     section = _flat(_section((BRIEFS / brief).read_text(), "## Scripts"))
-    assert CLI_HINT_CAUTION in section, f"{brief} is missing the never-auto-run caution"
+    assert CLI_HINT_CAUTION[brief] in section, f"{brief} is missing the never-auto-run caution"
+
+
+# ---- S2 A8: plan ahead and arming, taught wherever a seat or buddy reads ---
+#
+# S1 gave a seat `scripts.applicable`; S2 gave every seat and buddy
+# `declare_plan(for_turn=...)`, `arm`/`arm_reasoning` on `wait_for_priority`/
+# `pass_until`, and the hint's own `armable`/`arm_call`; S2 A6 gave a buddy
+# `wait_for_priority(wake_to_draft=True)` and `stage_advice`. None of those
+# reached prompt.py or either CLI brief before this task - not one call, not
+# one field name.
+
+
+def test_the_old_never_run_sentence_is_gone_from_the_seat_prompt(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert OLD_NEVER_RUN_SENTENCE not in text
+
+
+def test_the_old_never_run_sentence_is_gone_from_the_buddy_prompt(tmp_path, guide):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert OLD_NEVER_RUN_SENTENCE not in text
+
+
+@pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
+def test_the_old_never_run_sentence_is_gone_from_the_briefs(brief):
+    assert OLD_NEVER_RUN_SENTENCE not in (BRIEFS / brief).read_text()
+
+
+def test_the_new_never_run_sentence_is_in_the_seat_prompt(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert NEW_NEVER_RUN_SENTENCE_MCP in _flat(_section(text, "## Scripts"))
+
+
+def test_the_new_never_run_sentence_is_in_the_buddy_prompt(tmp_path, guide):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert NEW_NEVER_RUN_SENTENCE_MCP in _flat(_section(text, "## Scripts"))
+
+
+def test_seat_prompt_names_plan_ahead_for_next_turn(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    flat = _flat(text)
+    assert 'for_turn="next"' in flat
+    assert "opponent's turn" in flat
+
+
+def test_seat_loop_names_arming_and_the_hints_own_fields(tmp_path, guide):
+    """`arm`, `armable` and `arm_call` are the fields the S2 hint carries -
+    named where the loop teaches a seat to copy the hint rather than compose
+    the arm arguments itself (per the coordinator's note: pin only the tool
+    name and the `arm` argument, never the hint's own full templated call)."""
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The loop"))
+    assert "arm=[...]" in section
+    assert "`armable`" in section
+    assert "`arm_call`" in section
+    assert "copy its `arm_call` verbatim" in section
+
+
+def test_seat_loop_says_arming_does_not_contradict_nothing_in_between(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The loop"))
+    assert "does not contradict" in section
+    assert '"nothing in between"' in section.lower()
+
+
+def test_seat_loop_names_the_fetch_land_arming_case(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The loop")).lower()
+    assert "arm the fetch play before your turn begins" in section
+
+
+def test_seat_loop_says_to_resume_a_wait_for_own_priority_to_fire_armed(tmp_path, guide):
+    """The concurrent arming fix this task was warned about: a `pass_until`
+    waiting for this seat's own priority to fire something armed hands back a
+    note, not a silent "reached". Pinned generically - only the verb and
+    `resume`, never a hardcoded field name for the note itself, since that
+    shape is still moving on `s2-arming`."""
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The loop")).lower()
+    assert "waiting for your own priority to fire" in section
+    assert "resume" in section
+    assert "never start a fresh run there" in section
+
+
+def test_plan_section_says_upkeep_and_draw_passes_with_an_empty_stack_need_no_plan(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## Declare your plan before you act")).lower()
+    assert "upkeep or draw step with an empty stack needs none" in section
+
+
+def test_plan_section_still_allows_a_current_turn_plan_if_not_planned_ahead(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## Declare your plan before you act"))
+    assert '"current"' in section
+    assert "if you did not plan ahead for it" in section
+
+
+def test_buddy_prompt_names_wake_to_draft_and_stage_advice(tmp_path, guide):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    flat = _flat(text)
+    assert "wake_to_draft=True" in flat
+    assert "stage_advice(player_uid, step, whose_turn)" in flat
+
+
+def test_buddy_prompt_names_arming_on_wait_for_priority(tmp_path, guide):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    flat = _flat(text)
+    assert "arm=[...]" in flat
+    assert "`armable`" in flat
+    assert "`arm_call`" in flat
+
+
+def test_buddy_prompt_names_every_draft_status(tmp_path, guide):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    flat = _flat(text)
+    for status in ('"held"', '"posted"', '"stale"', '"superseded_by_script"'):
+        assert status in flat, f"buddy prompt never names draft status {status!r}"
+
+
+def test_buddy_prompt_keeps_the_silence_rules(tmp_path, guide):
+    """The draft-ahead addition must not crowd out the existing silence
+    doctrine - no proposals in upkeep, draw or an empty-stack end step."""
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    flat = _flat(text).lower()
+    assert "propose nothing there" in flat
+    assert "untap step, the upkeep step, the draw step or the end step" in flat
+
+
+def test_buddy_prompt_keeps_the_rationale_cap(tmp_path, guide):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert "240 characters" in text
+    assert "reasoning_too_long" in text
+
+
+def test_seat_prompt_never_teaches_buddy_only_drafting_tools(tmp_path, guide):
+    """`stage_advice` and `wake_to_draft` are refused outright for a seat
+    (`seatkit.STAGE_ADVICE_ADVISOR_ONLY`/`WAKE_TO_DRAFT_ADVISOR_ONLY`) - the
+    seat prompt must never send a seat reaching for either."""
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert "stage_advice" not in text
+    assert "wake_to_draft" not in text
+
+
+@pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
+def test_briefs_name_repeatable_arm_and_arm_reasoning(brief):
+    text = (BRIEFS / brief).read_text()
+    flat = _flat(text)
+    assert "--arm" in flat
+    assert "--arm-reasoning" in flat
+
+
+def test_seat_brief_names_plan_for_turn_next():
+    flat = _flat((BRIEFS / "ai_seat_brief.md").read_text())
+    assert "plan --for-turn next" in flat or "--for-turn next" in flat
+
+
+def test_seat_brief_committing_command_list_includes_script_run():
+    section = _flat(_section((BRIEFS / "ai_seat_brief.md").read_text(), "## The loop"))
+    assert "`script run`" in section or "script run" in section
+
+
+def test_buddy_brief_names_stage_advice_and_wake_to_draft_flag():
+    flat = _flat((BRIEFS / "ai_buddy_brief.md").read_text())
+    assert "stage-advice" in flat
+    assert "--wake-to-draft" in flat
+
+
+def test_buddy_brief_names_every_draft_status():
+    flat = _flat((BRIEFS / "ai_buddy_brief.md").read_text())
+    for status in ('"held"', '"posted"', '"stale"', '"superseded_by_script"'):
+        assert status in flat, f"buddy brief never names draft status {status!r}"
+
+
+def test_seat_brief_never_teaches_buddy_only_drafting_commands():
+    text = (BRIEFS / "ai_seat_brief.md").read_text()
+    assert "stage-advice" not in text
+    assert "--wake-to-draft" not in text
 
 
 HANDOVER_PINS = (
