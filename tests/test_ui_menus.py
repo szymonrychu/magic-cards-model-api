@@ -614,7 +614,7 @@ def test_a_menu_taller_than_the_window_is_capped_and_scrolls_in_place():
 
 
 def test_a_narrow_window_still_fits_the_menu():
-    # The 1100px breakpoint stacks the grid; the menu still has to land inside.
+    # A phone-width window; the menu still has to land inside.
     narrow = {"width": 380, "height": 640}
     got = place(rect(300, 500, 96, 134), {"width": 340, "height": 200}, viewport=narrow)
     assert got["left"] >= 8

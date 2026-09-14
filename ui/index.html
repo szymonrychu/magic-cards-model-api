@@ -140,10 +140,11 @@
   <!-- Concede, Report and Lobby, pinned to the top-right corner of the
        viewport at every width (`style.css`'s `.game-toolbar`: `position:
        fixed`, so it holds that corner whether `#game` is the three-column
-       desktop grid or the narrow-width single-column stack) rather than
-       living inside `#topbar`'s own in-flow column. `#game`'s own top
-       padding reserves the strip this sits in, so nothing in the grid ever
-       renders underneath it.
+       desktop grid or mobile mode's board) rather than living inside
+       `#topbar`'s own in-flow column. `#game`'s own top padding - or, in
+       mobile mode, the rail it reserves on the right, where the toolbar wraps
+       into a column above `#drawer-toggle` - keeps the strip this sits in, so
+       nothing in the grid ever renders underneath it.
 
        Concede used to be the last button `ui/render/ribbon.js`'s
        `renderPriorityBox` appended to `#priority-box`; it is still rendered
@@ -158,43 +159,17 @@
     <button id="leave-game" class="ghost">Lobby</button>
   </div>
 
-  <!-- The right-hand ribbon's top block: turn, phase track, connection, AI
-       seat. Everything that is not the battlefield lives in that ribbon;
-       `#topbar`, `#banners` and `#side-panel` are placed into its column by
-       `style.css`'s grid, so the board gets the whole left side.
+  <!-- Opens and closes `#drawer` in mobile mode; hidden on a desktop. It sits
+       in a rail `#game` reserves on the right, under the toolbar, so it never
+       covers a card. -->
+  <button id="drawer-toggle" class="drawer-toggle" type="button" aria-controls="drawer" aria-expanded="false" title="Show the side panel">Panel</button>
 
-       Zones and Log used to sit in `.topbar-right` too (a "Zones" button
-       opening a popover of graveyards/exile/command zone that duplicated
-       what the zone ribbon beside the board already shows, and a "Log"
-       button toggling `#log-modal`). Both are gone at the owner's request;
-       see `ui/board_layout.js`'s `zoneRibbon` (now also drawing the command
-       zone, the one thing that popover showed that nothing else did) and
-       `#log-box` below (moved back into `#side-panel`, always visible,
-       rather than lost along with the button that used to reveal it). -->
-  <header id="topbar">
-    <div id="turn-info"></div>
-    <ol id="phase-track"></ol>
-    <div class="topbar-right">
-      <div id="ai-panel"></div>
-      <div id="conn-status-game" class="pill"></div>
-    </div>
-  </header>
-
-  <!-- Game over, CR 103.5/103.6's pregame, a live decision, the in-flight
-       action's summary, and the combat prompt all render inside
-       `#prompt-box` (`ui/render/ribbon.js`'s `renderPromptBox`), in that
-       priority order - so there is exactly one place asking the player
-       anything, not one banner per case. Only the AI seat's own silence -
-       which is not a question the game itself is asking - gets a banner of
-       its own: `#ai-loading-banner` while it is still booting (the pod's
-       image pull, initContainers, and the agent CLI's own boot - never
-       blocking, since CR 103.5/103.6 gate a human's own mulligan and
-       opening-hand actions on nothing but themselves), and
-       `#ai-stall-banner` once it has started and gone quiet mid-game. -->
-  <div id="banners">
-    <div id="ai-loading-banner" hidden></div>
-    <div id="ai-stall-banner" hidden></div>
-  </div>
+  <!-- Mobile mode's Pass and Pass until, in the same rail between the toolbar
+       and `#drawer-toggle` (`ui/render/ribbon.js`'s `renderRailPass`, the
+       same `onVerb` as `#priority-box`), so priority is passed with the
+       drawer closed. Hidden while this seat has nothing to pass, and never
+       shown on a desktop, where `#priority-box` is the control. -->
+  <div id="rail-pass" class="rail-pass" hidden></div>
 
   <!-- the board: opponent on top, shared zones in the middle, you at the
        bottom, mirrored the way MTGO and Arena lay it out.
@@ -206,25 +181,41 @@
        rule: the battlefield is a shared zone and the Comprehensive Rules
        prescribe no physical layout for it at all. `ui/board_layout.js` does
        the sorting; `#opp-battlefield`/`#my-battlefield` keep their names as
-       the non-land rows. -->
+       the non-land rows.
+
+       The seven `.fit-row`s are fixed shares of the board's height (0.6 / 1 /
+       1.2 / 0.8 / 1.2 / 1 / 1.2, `style.css`), kept whether or not a row has
+       a card in it, so the board never jumps. Every card on them is sized
+       from its row's `--card-w`, which `render/board.js` fits with
+       `ui/fit.js`. Attackers and blockers are marked on the permanents
+       themselves; there is no separate red zone row.
+
+       Each seat's name, life, hand and library counts, known library top,
+       mana pool and zone counts are a player badge (`render/board.js`'s
+       `patchBadge`) in its own left column of that seat's land row; the land
+       cards fit the rest of the row (`#opp-lands-cards`/`#my-lands-cards`),
+       so a badge never covers a card. A zone count opens `#zone-viewer`. -->
   <div id="mtg-board">
-    <div id="opp-info" class="info-row opp"></div>
-    <div id="opp-hand" class="hand-row hand-row-opp"></div>
-    <div id="opp-lands" class="battlefield-row lands-row"></div>
-    <div id="opp-battlefield" class="battlefield-row main-row"></div>
+    <div id="opp-hand" class="hand-row hand-row-opp fit-row"></div>
+    <div id="opp-lands" class="battlefield-row lands-row fit-row badge-row">
+      <div id="opp-badge" class="player-badge opp"></div>
+      <div id="opp-lands-cards" class="fit-cards"></div>
+    </div>
+    <div id="opp-battlefield" class="battlefield-row main-row fit-row"></div>
 
-    <div id="stack-row" class="stack-row"></div>
-    <div id="red-zone" class="red-zone" hidden></div>
+    <div id="stack-row" class="stack-row fit-row"></div>
 
-    <div id="my-battlefield" class="battlefield-row main-row"></div>
-    <div id="my-lands" class="battlefield-row lands-row"></div>
-    <div id="my-hand" class="hand-row"></div>
+    <div id="my-battlefield" class="battlefield-row main-row fit-row"></div>
+    <div id="my-lands" class="battlefield-row lands-row fit-row badge-row">
+      <div id="my-badge" class="player-badge you"></div>
+      <div id="my-lands-cards" class="fit-cards"></div>
+    </div>
+    <div id="my-hand" class="hand-row fit-row"></div>
     <!-- CR 601.3's dynamic play permissions - a flashback grant, an exiled
          card made playable "this turn" (not cascade or suspend, battle 8 -
          each of those casts inline instead) - cast again from wherever they
          were exiled to. -->
     <div id="permitted-row" class="hand-row permitted-row" hidden></div>
-    <div id="you-info" class="info-row you"></div>
   </div>
 
   <!-- The zone ribbon, between the battlefield and the control ribbon: the
@@ -239,47 +230,102 @@
        to be the sole way to see (a commander, an emblem): it moved in here
        rather than disappearing along with that button.
 
+       Hidden in mobile mode (`style.css`), where the badges' zone counts and
+       `#zone-viewer` stand in for it.
+
        A card exiled *with* a permanent (an Isochron Scepter imprint, a
        hideaway land's card) is not drawn here - it is drawn tucked under that
        permanent, which is where it physically sits. -->
   <aside id="zone-ribbon"></aside>
 
-  <!-- the one place anything is ever asked of the player - the bottom of
-       the right-hand ribbon, under the turn block and the banners.
+  <!-- Mobile mode's drawer (`ui/drawer.js`). On a desktop it is a `display:
+       contents` wrapper, so the turn block, the banners and the side panel
+       below sit in `#game`'s grid exactly as before; at 1100px wide or less,
+       or on a coarse pointer in landscape, it is a panel that slides in from
+       the right over the board, toggled by `#drawer-toggle` and opened by
+       itself when a question for this seat appears. -->
+  <div id="drawer" class="drawer">
+    <!-- The right-hand ribbon's top block: turn, phase track, connection, AI
+         seat. Everything that is not the battlefield lives in that ribbon;
+         `#topbar`, `#banners` and `#side-panel` are placed into its column by
+         `style.css`'s grid, so the board gets the whole left side.
 
-       `#casting-strip` (the announcement in progress: modes, X,
-       alternative costs, target slots, division) is a panel here, directly
-       under `#prompt-box`, rather than a row of `#mtg-board`. It used to sit
-       between the land row and the hand, so beginning a cast inserted a
-       block into the board's own flex column and every card above it moved -
-       the board got uglier the more you clicked. It is also not an anchored
-       menu over the card (`ui/menus.js` has the reasoning): it stays open
-       while you click other cards to fill its slots, and a menu closes on
-       the first click-away.
+         Zones and Log used to sit in `.topbar-right` too (a "Zones" button
+         opening a popover of graveyards/exile/command zone that duplicated
+         what the zone ribbon beside the board already shows, and a "Log"
+         button toggling `#log-modal`). Both are gone at the owner's request;
+         see `ui/board_layout.js`'s `zoneRibbon` (now also drawing the command
+         zone, the one thing that popover showed that nothing else did) and
+         `#log-box` below (moved back into `#side-panel`, always visible,
+         rather than lost along with the button that used to reveal it). -->
+    <header id="topbar">
+      <div id="turn-info"></div>
+      <ol id="phase-track"></ol>
+      <div class="topbar-right">
+        <div id="ai-panel"></div>
+        <div id="conn-status-game" class="pill"></div>
+      </div>
+    </header>
 
-       `#advice-box` (`ui/render/advice.js`) absorbs whatever height the rest
-       of the column leaves: the mtg-buddy advisor's current proposal, with
-       its rationale and an Approve button - a static panel showing one
-       proposal, never a scrolling list, which is the corner the owner once
-       asked to reuse it for.
+    <!-- Game over, CR 103.5/103.6's pregame, a live decision, the in-flight
+         action's summary, and the combat prompt all render inside
+         `#prompt-box` (`ui/render/ribbon.js`'s `renderPromptBox`), in that
+         priority order - so there is exactly one place asking the player
+         anything, not one banner per case. Only the AI seat's own silence -
+         which is not a question the game itself is asking - gets a banner of
+         its own: `#ai-loading-banner` while it is still booting (the pod's
+         image pull, initContainers, and the agent CLI's own boot - never
+         blocking, since CR 103.5/103.6 gate a human's own mulligan and
+         opening-hand actions on nothing but themselves), and
+         `#ai-stall-banner` once it has started and gone quiet mid-game. -->
+    <div id="banners">
+      <div id="ai-loading-banner" hidden></div>
+      <div id="ai-stall-banner" hidden></div>
+    </div>
 
-       `#log-box` (`ui/render/log.js`'s `mountLog`) is the last child, always
-       visible rather than behind the removed topbar Log button: it used to
-       live here, then moved out to `#log-modal` behind that button, and now
-       the button is gone the log came back rather than being lost along
-       with it. It gets a bounded height of its own (`style.css`) and scrolls
-       inside itself, so it never competes with the advisor panel above it
-       for the column's remaining room. -->
-  <aside id="side-panel">
-    <div id="prompt-box"></div>
-    <div id="casting-strip" class="casting-strip" hidden></div>
-    <div id="priority-box"></div>
-    <div id="stops-box"></div>
-    <div id="advice-box"></div>
-    <div id="log-box"></div>
-  </aside>
+    <!-- the one place anything is ever asked of the player - the bottom of
+         the right-hand ribbon, under the turn block and the banners.
 
-  <div id="card-preview" class="card-preview" hidden></div>
+         `#casting-strip` (the announcement in progress: modes, X,
+         alternative costs, target slots, division) is a panel here, directly
+         under `#prompt-box`, rather than a row of `#mtg-board`. It used to sit
+         between the land row and the hand, so beginning a cast inserted a
+         block into the board's own flex column and every card above it moved -
+         the board got uglier the more you clicked. It is also not an anchored
+         menu over the card (`ui/menus.js` has the reasoning): it stays open
+         while you click other cards to fill its slots, and a menu closes on
+         the first click-away.
+
+         `#advice-box` (`ui/render/advice.js`) absorbs whatever height the rest
+         of the column leaves: the mtg-buddy advisor's current proposal, with
+         its rationale and an Approve button - a static panel showing one
+         proposal, never a scrolling list, which is the corner the owner once
+         asked to reuse it for.
+
+         `#log-box` (`ui/render/log.js`'s `mountLog`) is the last child, always
+         visible rather than behind the removed topbar Log button: it used to
+         live here, then moved out to `#log-modal` behind that button, and now
+         the button is gone the log came back rather than being lost along
+         with it. It gets a bounded height of its own (`style.css`) and scrolls
+         inside itself, so it never competes with the advisor panel above it
+         for the column's remaining room. -->
+    <aside id="side-panel">
+      <div id="prompt-box"></div>
+      <div id="casting-strip" class="casting-strip" hidden></div>
+      <div id="priority-box"></div>
+      <div id="stops-box"></div>
+      <div id="advice-box"></div>
+      <div id="log-box"></div>
+    </aside>
+  </div>
+
+  <!-- The card preview (`ui/preview.js`): a hovered card enlarged over
+       itself, or a long-pressed card as a centred overlay. -->
+  <div id="card-zoom" class="card-zoom" aria-hidden="true" hidden></div>
+  <!-- One seat's graveyard, exile or command zone as cards
+       (`ui/render/zone_viewer.js`), opened from a player badge's zone count;
+       the element itself is the backdrop. -->
+  <div id="zone-viewer" class="zone-viewer" role="dialog" aria-modal="true" aria-labelledby="zone-viewer-title" hidden></div>
   <div id="toast" class="toast" hidden></div>
   <div id="popover" class="popover" hidden></div>
   <!-- A small decision (yes/no, a payment, an amount, a quality or mode, top
@@ -311,6 +357,13 @@
   </div>
 
   <div id="modal" class="modal" hidden></div>
+
+  <!-- A coarse pointer held upright: the board needs a landscape screen, so
+       this covers the game until the device is turned (`style.css`). -->
+  <div id="rotate-overlay" class="rotate-overlay" role="alert">
+    <p class="rotate-title">Turn your device sideways</p>
+    <p class="hint">The board needs a landscape screen.</p>
+  </div>
 </section>
 
 <script type="module" src="app.js"></script>

@@ -42,7 +42,10 @@ import { mountAdvice } from "./render/advice.js";
 import { withoutUid } from "./advice_model.js";
 import { mountLobby } from "./render/lobby.js";
 import { mountReview } from "./render/review.js";
-import { mountTopbar, mountHoverPreview, closeModal } from "./render/panels.js";
+import { mountTopbar, closeModal } from "./render/panels.js";
+import { mountCardPreview } from "./preview.js";
+import { mountZoneViewer } from "./render/zone_viewer.js";
+import { mountDrawer } from "./drawer.js";
 import { loadSavedGames, saveGames, upsertSavedGame, seatsFromRow } from "./lobby_model.js";
 import { loadConfig, apiBase, lobbyBase } from "./config.js";
 
@@ -1762,12 +1765,17 @@ async function main() {
     startGame,
     showReview: (target) => reviewApi.open(target).catch((e) => console.error(e)),
   });
+  // A seat's graveyard, exile or command zone as cards, opened from the zone
+  // counts on its player badge - the only way into a zone in mobile mode,
+  // where `#zone-ribbon` is hidden. Its cards click like the ribbon's.
+  const zoneViewer = mountZoneViewer(document, store, { onPermanent, onPermission });
   mountBoard(document, store, {
     onHandCard,
     onPermanent,
     onPlayer: (u) => tryTarget(u),
     onStackObject: (o) => tryTarget(o.id),
     onPermission,
+    onOpenZone: (key) => zoneViewer.open(key),
   });
   // One draft for both decision surfaces: the prompt box's small controls and
   // the decision window's cards write the same `decisionDraft` keys.
@@ -1899,7 +1907,9 @@ async function main() {
     onPassForAiSeat: passForAiSeat,
     onReportProblem: reportProblem,
   });
-  mountHoverPreview(document, store);
+  mountCardPreview(document, store);
+  // Mobile mode's side-panel drawer: opens itself for each new question.
+  mountDrawer(document, store);
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     const modal = document.querySelector("#modal");

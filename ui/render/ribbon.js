@@ -7,7 +7,9 @@
 // a panel in this ribbon rather than a row of the board), `#priority-box`
 // (the two pass verbs, plus the untap/cleanup escape hatch `priority.js`'s
 // `advanceOffered` explains), and `#stops-box` (the step ticks and the
-// `anything on the stack` tick beside them). Plus the one floating
+// `anything on the stack` tick beside them). Mobile mode repeats the two pass
+// verbs on the right rail (`#rail-pass`, `renderRailPass`), through the same
+// `onVerb`, so priority can be passed with the drawer closed. Plus the one floating
 // `#popover` every card-scoped "pick one of these" menu shares - anchored
 // over the card it is about, drawn on top of the board rather than into it,
 // so a click never changes the board's geometry (`ui/menus.js`).
@@ -733,6 +735,12 @@ function renderCastingStrip(el, app, handlers) {
 
 // ------------------------------------------------------------ #priority-box
 
+/** One pass verb's button - the same node for `#priority-box` and the rail,
+ * so both make exactly the same `onVerb` call. */
+function verbButton(verb, handlers) {
+  return h("button", { type: "button", onClick: () => handlers.onVerb(verb) }, VERB_LABELS[verb]);
+}
+
 function renderPriorityBox(el, app, handlers) {
   clear(el);
   if (app.run) {
@@ -740,7 +748,7 @@ function renderPriorityBox(el, app, handlers) {
     el.appendChild(h("button", { onClick: handlers.onStopRun }, "Stop"));
   } else {
     const verbs = passButtonsFor(app.state);
-    el.appendChild(h("div", { class: "chip-row" }, ...verbs.map((v) => h("button", { onClick: () => handlers.onVerb(v) }, VERB_LABELS[v]))));
+    el.appendChild(h("div", { class: "chip-row" }, ...verbs.map((v) => verbButton(v, handlers))));
     // CR 502.4/514.3: nobody receives priority during untap or (most)
     // cleanup steps, so `passButtonsFor` offers nothing there at all. The
     // server crosses both for every caller (CR 500.3), so this should be
@@ -753,6 +761,24 @@ function renderPriorityBox(el, app, handlers) {
       );
     }
   }
+}
+
+// ---------------------------------------------------------------- #rail-pass
+
+/** Mobile mode's Pass and Pass until on the right rail (`style.css` shows
+ * `#rail-pass` only there), so plain priority can be passed with the drawer
+ * closed - `ui/drawer.js` no longer opens the drawer for it. The verbs are
+ * the ones `#priority-box` offers, made through the same `onVerb`, and the
+ * rail is hidden whenever that box offers none, while an autopass run is
+ * answering (the box shows Stop instead), and while any decision is pending:
+ * that question is answered in its own surface, and the drawer opens for it. */
+export function renderRailPass(el, app, handlers) {
+  if (!el) return;
+  clear(el);
+  const state = app.state;
+  const verbs = state && !app.run && !state.pending_decision ? passButtonsFor(state) : [];
+  for (const verb of verbs) el.appendChild(verbButton(verb, handlers));
+  el.hidden = verbs.length === 0;
 }
 
 // -------------------------------------------------------------- #concede-slot
@@ -867,12 +893,14 @@ export function mountRibbon(root, store, handlers) {
     priority: root.querySelector("#priority-box"),
     stops: root.querySelector("#stops-box"),
     concedeSlot: root.querySelector("#concede-slot"),
+    railPass: root.querySelector("#rail-pass"),
   };
   return store.subscribe((app) => {
     if (!app.state) return;
     renderPromptBox(els.prompt, app, handlers, root);
     renderCastingStrip(els.strip, app, handlers);
     renderPriorityBox(els.priority, app, handlers);
+    renderRailPass(els.railPass, app, handlers);
     renderStopsBox(els.stops, app, handlers);
     renderConcedeButton(els.concedeSlot, app, handlers);
   });

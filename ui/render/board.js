@@ -1,13 +1,22 @@
-// The board itself: opponent info/hand/battlefield, the shared stack, the red
-// zone (attackers, shown only while there are any), your battlefield, your
-// hand, and your own info row - plus the zone ribbon (`#zone-ribbon`), the
-// column of graveyards and exiles standing between the battlefield and the
-// control ribbon. One `mountBoard(root, store, handlers)` subscribes to the
-// store and keeps `#opp-info`/`#opp-hand`/`#opp-lands`/`#opp-battlefield`/
-// `#stack-row`/`#zone-ribbon`/`#red-zone`/`#my-battlefield`/`#my-lands`/
-// `#my-hand`/`#you-info` patched via `dom.js`'s keyed `patchChildren`, so a
-// card kept alive across a poll tick does not lose a hover preview or a
-// mid-flight transition.
+// The board itself: opponent hand/battlefield, the shared stack, your
+// battlefield and your hand, with each seat's player badge at the left edge
+// of its land row - plus the zone ribbon (`#zone-ribbon`), the column of
+// graveyards and exiles standing between the battlefield and the control
+// ribbon on a desktop. One `mountBoard(root, store, handlers)` subscribes to
+// the store and keeps `#opp-hand`/`#opp-badge`/`#opp-lands-cards`/
+// `#opp-battlefield`/`#stack-row`/`#zone-ribbon`/`#my-battlefield`/
+// `#my-badge`/`#my-lands-cards`/`#my-hand` patched via `dom.js`'s keyed
+// `patchChildren`, so a card kept alive across a poll tick does not lose a
+// hover preview or a mid-flight transition. Attackers and blockers are marked
+// where they stand (`.attacking`/`.blocking`); there is no separate red zone.
+//
+// Every card on the seven board rows, and on `#permitted-row` under them, is
+// `card-fit`: its size is the row's `--card-w`, which `fitBoardRow` sets from
+// `ui/fit.js` after every render and whenever the board is resized, so a
+// row's cards always fit its width and height and a crowded row scrolls
+// sideways once they reach the floor. `#permitted-row` is fitted the same way
+// from its own flex share while it has cards, and is `hidden` (no box, no
+// share) while it has none.
 //
 // Which permanent belongs in which row, and which cards are drawn tucked
 // under another card, is decided by `ui/board_layout.js` - pure functions
@@ -27,6 +36,15 @@ import { activeSlotIndex, candidateIds } from "../targeting.js";
 import { targetSlotIndex } from "../actions.js";
 import { manaPoolNodes } from "../symbols.js";
 import { opponentOf } from "../combat.js";
+import { fitCardWidth, fitFloor } from "../fit.js";
+
+/** The size class of every card on the seven board rows - sized from the
+ * row's `--card-w` in `style.css`, not a fixed pixel width. */
+const FIT = "card-fit";
+
+/** Height of `.stack-caption` under a stack card (`style.css`: 14px line plus
+ * a 2px margin), taken off `#stack-row`'s height before its cards are fitted. */
+const STACK_CAPTION_PX = 16;
 
 // Exported (Task 17's addition to this render module) so `render/panels.js`'s
 // zones popover can highlight a legal graveyard/exile target with the exact
@@ -151,8 +169,136 @@ export function patchStacks(container, entries, size, decorate) {
           decorate(child, item.card);
         }
       );
+      // A pile with a tapped (or about-to-tap) card in it reserves a
+      // landscape-wide box (`style.css`'s `.perm-stack[data-tapped]`), and
+      // `fitBoardRow` counts it as tapped when sizing the row.
+      el.dataset.tapped = String([...el.children].some(isTapped));
     }
   );
+}
+
+function isTapped(el) {
+  return Boolean(el.classList && (el.classList.contains("tapped") || el.classList.contains("preview-tap")));
+}
+
+function pixels(style, property) {
+  return (style && parseFloat(style[property])) || 0;
+}
+
+/** What `fit.js` needs to know about one child of a board row: whether it
+ * stands in a landscape box, and how many cards are tucked under it. */
+function footprint(el) {
+  if (el.classList && el.classList.contains("perm-stack")) {
+    return { tapped: el.dataset.tapped === "true", depth: Number(el.dataset.under) || 0 };
+  }
+  return { tapped: isTapped(el), depth: 0 };
+}
+
+/** Measure one board row and set its `--card-w` from `ui/fit.js`, toggling
+ * `.fit-scroll` when even the floor width does not fit. `reserveY` is height
+ * inside the row that is not card (a stack card's caption), and `floor` the
+ * board's shared floor from `fitBoardFloor` (44px when omitted). A row with
+ * no layout box yet (hidden, or not in a rendering document) is left alone. */
+export function fitBoardRow(row, reserveY, floor) {
+  if (!row || !row.clientWidth || !row.clientHeight) return null;
+  const style = typeof getComputedStyle === "function" ? getComputedStyle(row) : null;
+  const prints = [...row.children].map(footprint);
+  const fit = fitCardWidth({
+    width: row.clientWidth - pixels(style, "paddingLeft") - pixels(style, "paddingRight"),
+    height: row.clientHeight - pixels(style, "paddingTop") - pixels(style, "paddingBottom") - (reserveY || 0),
+    count: prints.length,
+    tapped: prints.filter((p) => p.tapped).length,
+    depths: prints.map((p) => p.depth),
+    gap: pixels(style, "columnGap"),
+    floor,
+  });
+  if (row.style && typeof row.style.setProperty === "function") {
+    row.style.setProperty("--card-w", `${fit.cardWidth}px`);
+  }
+  row.classList.toggle("fit-scroll", fit.scroll);
+  return fit;
+}
+
+/** The card floor every row of `board` shares, written as the board's
+ * `--card-floor` (the rows' `min-height` in `style.css`). It is the height the
+ * board has left once its other children, the gaps between them, and each
+ * card row's padding, borders and reserved caption (`fitted`, row to
+ * `reserveY`) are taken off, split across the card rows - so on a window too
+ * short for seven 44px-wide cards (a phone in landscape) the floor drops and
+ * every row still fits rather than the board scrolling. A board with no
+ * layout box yet is left alone and the rows keep the 44px default. */
+export function fitBoardFloor(board, fitted) {
+  if (!board || !board.clientHeight) return undefined;
+  const reserves = new Map(fitted);
+  const style = typeof getComputedStyle === "function" ? getComputedStyle(board) : null;
+  const kids = [...(board.children || [])].filter((kid) => !kid.hidden);
+  let height =
+    board.clientHeight -
+    pixels(style, "paddingTop") -
+    pixels(style, "paddingBottom") -
+    pixels(style, "rowGap") * Math.max(0, kids.length - 1);
+  let rows = 0;
+  for (const kid of kids) {
+    if (!reserves.has(kid)) {
+      height -= kid.offsetHeight || 0;
+      continue;
+    }
+    const own = typeof getComputedStyle === "function" ? getComputedStyle(kid) : null;
+    rows += 1;
+    height -=
+      Math.max(0, (kid.offsetHeight || 0) - (kid.clientHeight || 0)) +
+      pixels(own, "paddingTop") +
+      pixels(own, "paddingBottom") +
+      reserves.get(kid);
+  }
+  const floor = fitFloor({ height, rows });
+  if (board.style && typeof board.style.setProperty === "function") {
+    board.style.setProperty("--card-floor", `${floor}px`);
+  }
+  return floor;
+}
+
+/** One object on the stack, drawn as the card it is (a spell's printing, an
+ * ability's text card) with a caption under it for the two things the card
+ * cannot say: the announced X and what it targets. */
+function patchStackObjects(container, stack, app, onClick) {
+  patchChildren(
+    container,
+    stack,
+    (obj) => obj.id,
+    (obj) => h("div", { class: "stack-object" }, cardNode(obj, FIT, {}), h("span", { class: "stack-caption" })),
+    (el, obj) => {
+      updateCardNode(el.querySelector(".card"), obj, targetingOpts(app, obj.id));
+      // `x_value` (CR 202.3e - only set at all when the spell's cost has
+      // an `{X}` to announce, see `serialize._card_view`) is the one thing
+      // about a stack object a player cannot re-derive from its name: a
+      // Nature's Rhythm harmonized for X=8 looks identical to one cast for
+      // X=2 without this (battle-7, B7-13).
+      const bits = [];
+      if (obj.x_value != null) bits.push(`X=${obj.x_value}`);
+      if ((obj.targets || []).length) bits.push(`-> ${obj.targets.join(", ")}`);
+      const caption = bits.join(" ");
+      setText(el.querySelector(".stack-caption"), caption);
+      el.title = `${obj.name}${obj.kind === "ability" ? " (ability)" : ""}${caption ? ` ${caption}` : ""}`;
+      el.onclick = () => onClick(obj);
+    }
+  );
+}
+
+/** What a card in a graveyard, exile or the command zone does, wherever it
+ * is drawn - the zone ribbon here, or `render/zone_viewer.js`'s overlay: the
+ * board's own targeting classes, and a click that begins a cast when a
+ * CR 601.3 permission names the card and is an ordinary targeting click
+ * otherwise. Returns the `decorate(el, card)` both hand to `patchChildren`. */
+export function zoneCardDecorator(app, handlers) {
+  const state = app.state;
+  const permissions = (state.play_permissions && state.play_permissions[state.you]) || [];
+  return (el, card) => {
+    updateCardNode(el, card, targetingOpts(app, card.id));
+    const permission = permissions.find((p) => p.card.id === card.id);
+    el.onclick = (event) =>
+      permission ? handlers.onPermission(permission, event) : handlers.onPermanent(card, event);
+  };
 }
 
 /** The zone ribbon: the opponent's graveyard, the opponent's exile, your
@@ -172,14 +318,7 @@ export function patchStacks(container, entries, size, decorate) {
  * the board at all rather than behind a button - a spell that targets a card
  * in a graveyard needs something to point at. */
 function patchZoneRibbon(container, rows, app, handlers) {
-  const state = app.state;
-  const permissions = (state.play_permissions && state.play_permissions[state.you]) || [];
-  const decorate = (el, card) => {
-    updateCardNode(el, card, targetingOpts(app, card.id));
-    const permission = permissions.find((p) => p.card.id === card.id);
-    el.onclick = (event) =>
-      permission ? handlers.onPermission(permission, event) : handlers.onPermanent(card, event);
-  };
+  const decorate = zoneCardDecorator(app, handlers);
   patchChildren(
     container,
     rows,
@@ -237,7 +376,7 @@ function patchPermissions(container, permissions, onClick) {
     container,
     permissions,
     (p) => p.card.id,
-    (p) => cardNode(p.card, "card-md", {}),
+    (p) => cardNode(p.card, FIT, {}),
     (el, p) => {
       updateCardNode(el, p.card, { dimmed: !p.usable_now });
       // `p.rule` already carries its own CR citation (whichever effect
@@ -287,40 +426,119 @@ function knownLibraryTop(state, username) {
   );
 }
 
-function infoRow(el, app, player) {
+/** The zones a player badge counts, in the order it lists them - the zone
+ * ribbon's own rows for that seat (`board_layout.js`'s `zoneRibbon`). */
+const BADGE_ZONES = ["graveyard", "exile", "command"];
+
+/** Life at or below this reads as low on a badge. */
+const LOW_LIFE = 5;
+
+/** Build a badge's parts once, into `el`, and hand them back on every later
+ * call - so a poll only rewrites text and classes, never the elements a
+ * player might be pressing. */
+function badgeParts(el) {
+  if (el.__badge) return el.__badge;
+  const parts = {
+    name: h("span", { class: "name" }),
+    life: h("span", { class: "life", title: "life" }),
+    hand: h("span", { class: "count count-hand" }),
+    library: h("span", { class: "count count-library" }),
+    pool: h("div", { class: "badge-pool" }),
+    poolKey: null,
+    top: null,
+    zones: {},
+  };
+  parts.counts = h("div", { class: "badge-counts" }, parts.hand, parts.library);
+  const zones = h("div", { class: "badge-zones" });
+  for (const zone of BADGE_ZONES) {
+    parts.zones[zone] = h("button", { type: "button", class: `zone-count zone-${zone}` });
+    zones.appendChild(parts.zones[zone]);
+  }
+  clear(el);
+  el.appendChild(h("div", { class: "badge-head" }, parts.name, parts.life));
+  el.appendChild(parts.counts);
+  el.appendChild(parts.pool);
+  el.appendChild(zones);
+  el.__badge = parts;
+  return parts;
+}
+
+/** One seat's player badge: name, life, hand and library counts, the known
+ * top of its library, its mana pool, and a count per zone that opens that
+ * zone (`handlers.onOpenZone(row.key)`, the zone ribbon row's own key). The
+ * badge itself targets the player (`mountBoard` wires its click); a zone
+ * count stops its click there so it opens the zone and targets nobody. */
+function patchBadge(el, app, player, side, rows, handlers) {
+  const parts = badgeParts(el);
   const opts = targetingOpts(app, player.username);
-  const top = knownLibraryTop(app.state, player.username);
+  el.classList.add("player-badge");
+  el.classList.add(side);
   el.classList.toggle("targetable", opts.targetable);
   el.classList.toggle("chosen", opts.chosen);
   el.classList.toggle("dimmed", opts.dimmed);
   el.classList.toggle("active", app.state.active_player === player.username);
   el.classList.toggle("priority", app.state.priority_holder === player.username);
-  clear(el);
-  el.appendChild(h("span", { class: "name" }, player.username));
-  el.appendChild(h("span", { class: "life", title: "life" }, String(player.life)));
-  el.appendChild(
-    h(
-      "span",
-      { class: "counts" },
-      `hand ${player.hand_count} / library ${player.library_count} / graveyard ${player.graveyard_count}`
-    )
-  );
+  setText(parts.name, player.username);
+  el.title = player.username;
+  setText(parts.life, String(player.life));
+  parts.life.classList.toggle("low", player.life <= LOW_LIFE);
+  setText(parts.hand, `hand ${player.hand_count}`);
+  setText(parts.library, `library ${player.library_count}`);
+
+  const top = knownLibraryTop(app.state, player.username);
   if (top) {
-    const title = top.source ? `${top.card.name} (known from ${top.source})` : top.card.name;
-    el.appendChild(h("span", { class: "known-top", title }, `top: ${top.card.name}`));
+    if (!parts.top) {
+      parts.top = h("span", { class: "known-top" });
+      parts.counts.appendChild(parts.top);
+    }
+    parts.top.setAttribute("title", top.source ? `${top.card.name} (known from ${top.source})` : top.card.name);
+    setText(parts.top, `top: ${top.card.name}`);
+  } else if (parts.top) {
+    parts.counts.removeChild(parts.top);
+    parts.top = null;
   }
-  // `manaPoolNodes` already returns its own `span.pool` - wrapping it in a
-  // second one nested `.pool` inside `.pool` for no reason.
-  el.appendChild(manaPoolNodes(app.symbols, player.mana_pool));
-  if (opts.heldCount > 1) el.appendChild(h("span", { class: "held-count" }, `x${opts.heldCount}`));
+
+  // `manaPoolNodes` builds a fresh `span.pool` (or its `.empty` state), so it
+  // is only rebuilt when the pool itself changed.
+  const poolKey = JSON.stringify(player.mana_pool || null);
+  if (poolKey !== parts.poolKey) {
+    clear(parts.pool);
+    parts.pool.appendChild(manaPoolNodes(app.symbols, player.mana_pool));
+    parts.poolKey = poolKey;
+  }
+
+  for (const zone of BADGE_ZONES) {
+    const row = rows.find((r) => r.side === side && r.zone === zone);
+    const count = row ? row.cards.length : 0;
+    const button = parts.zones[zone];
+    setText(button, `${zone} ${count}`);
+    button.setAttribute("title", `${player.username}'s ${zone}: ${count} card${count === 1 ? "" : "s"}`);
+    button.onclick = (event) => {
+      if (event && typeof event.stopPropagation === "function") event.stopPropagation();
+      if (row && handlers.onOpenZone) handlers.onOpenZone(row.key);
+    };
+  }
+
+  let held = el.querySelector(".held-count");
+  if (opts.heldCount > 1) {
+    if (!held) {
+      held = h("span", { class: "held-count" });
+      el.appendChild(held);
+    }
+    setText(held, `x${opts.heldCount}`);
+  } else if (held) {
+    el.removeChild(held);
+  }
 }
 
 /**
  * Mount the board region into `root` (the element containing the ids listed
- * below - normally `#game`) and return the `store.subscribe` unsubscribe
- * function. `handlers = {onHandCard(card), onPermanent(card, event),
+ * below - normally `#game`) and return a function that unsubscribes from the
+ * store and stops the rows' resize observer. `handlers = {onHandCard(card), onPermanent(card, event),
  * onPlayer(username), onStackObject(obj), onPermission(permission, event),
- * onLand(card)}`; `onLand` is not called from here (a land click is a
+ * onOpenZone(key), onLand(card)}`; `onOpenZone` gets a zone ribbon row's key
+ * (`opp-graveyard`, `you-exile`, ...) when a badge's zone count is clicked,
+ * and `onLand` is not called from here (a land click is a
  * `onHandCard`/`onPermanent` click the caller distinguishes by
  * `card.type_line`) but is accepted so callers can pass one handlers object
  * across every render module. `#permitted-row` (CR 601.3's dynamic play
@@ -333,34 +551,70 @@ function infoRow(el, app, player) {
 export function mountBoard(root, store, handlers) {
   const $ = (sel) => root.querySelector(sel);
   const els = {
-    oppInfo: $("#opp-info"),
+    oppBadge: $("#opp-badge"),
     oppHand: $("#opp-hand"),
     oppLands: $("#opp-lands"),
+    oppLandsCards: $("#opp-lands-cards"),
     oppBf: $("#opp-battlefield"),
     stack: $("#stack-row"),
     zoneRibbon: $("#zone-ribbon"),
-    redZone: $("#red-zone"),
     myBf: $("#my-battlefield"),
     myLands: $("#my-lands"),
+    myLandsCards: $("#my-lands-cards"),
     myHand: $("#my-hand"),
     permittedRow: $("#permitted-row"),
-    youInfo: $("#you-info"),
+    myBadge: $("#my-badge"),
   };
-  els.oppInfo.onclick = () => handlers.onPlayer(opponentOf(store.get().state));
-  els.youInfo.onclick = () => handlers.onPlayer(store.get().state.you);
-  return store.subscribe((app) => {
+  // A click anywhere on a badge but its zone counts targets that player, the
+  // way the info rows it replaced did.
+  const onBadge = (username) => (event) => {
+    const target = event && event.target;
+    if (target && typeof target.closest === "function" && target.closest(".zone-count")) return;
+    handlers.onPlayer(username());
+  };
+  els.oppBadge.onclick = onBadge(() => opponentOf(store.get().state));
+  els.myBadge.onclick = onBadge(() => store.get().state.you);
+  // `[row, reserveY, cards]`: a land row is fitted through its cards column,
+  // which is the row's width less the badge beside it, while the floor is
+  // still worked out from the row itself.
+  const fitted = [
+    [els.oppHand, 0],
+    [els.oppLands, 0, els.oppLandsCards],
+    [els.oppBf, 0],
+    [els.stack, STACK_CAPTION_PX],
+    [els.myBf, 0],
+    [els.myLands, 0, els.myLandsCards],
+    [els.myHand, 0],
+  ];
+  if (els.permittedRow) fitted.push([els.permittedRow, 0]);
+  const board = $("#mtg-board");
+  const fitAll = () => {
+    const floor = fitBoardFloor(board, fitted);
+    for (const [row, reserveY, cards] of fitted) fitBoardRow(cards || row, reserveY, floor);
+  };
+  // A window resize, the side panel growing, `#permitted-row` appearing: any
+  // of them changes a row's box without a render, so the rows are refitted
+  // on the resize itself as well as after every render below.
+  let observer = null;
+  if (typeof ResizeObserver === "function") {
+    observer = new ResizeObserver(fitAll);
+    if (board) observer.observe(board);
+    for (const [row, , cards] of fitted) {
+      observer.observe(row);
+      if (cards) observer.observe(cards);
+    }
+  }
+  const unsubscribe = store.subscribe((app) => {
     const state = app.state;
     if (!state) return;
     const you = state.you;
     const me = state.players.find((p) => p.username === you);
     const opp = state.players.find((p) => p.username !== you);
-    infoRow(els.oppInfo, app, opp);
-    infoRow(els.youInfo, app, me);
     patchChildren(
       els.oppHand,
       opponentHandItems(state, opp),
       (item) => item.key,
-      (item) => (item.card ? cardNode(item.card, "card-sm", {}) : cardBackNode()),
+      (item) => (item.card ? cardNode(item.card, FIT, {}) : cardBackNode()),
       (el, item) => {
         if (!item.card) return;
         updateCardNode(el, item.card, {});
@@ -375,46 +629,25 @@ export function mountBoard(root, store, handlers) {
     const mine = seatRows(layout, you);
     const theirs = seatRows(layout, opp.username);
     const live = (el, card) => updatePermanentNode(el, card, app, handlers.onPermanent);
-    patchStacks(els.oppLands, theirs.lands, "card-md", live);
-    patchStacks(els.oppBf, theirs.main, "card-md", live);
-    patchStacks(els.myBf, mine.main, "card-md", live);
-    patchStacks(els.myLands, mine.lands, "card-md", live);
-    if (els.zoneRibbon) patchZoneRibbon(els.zoneRibbon, zoneRibbon(state, layout), app, handlers);
-    patchCards(els.myHand, state.hands[you] || [], app, "card-lg", handlers.onHandCard);
+    patchStacks(els.oppLandsCards, theirs.lands, FIT, live);
+    patchStacks(els.oppBf, theirs.main, FIT, live);
+    patchStacks(els.myBf, mine.main, FIT, live);
+    patchStacks(els.myLandsCards, mine.lands, FIT, live);
+    const zones = zoneRibbon(state, layout);
+    patchBadge(els.oppBadge, app, opp, "opp", zones, handlers);
+    patchBadge(els.myBadge, app, me, "you", zones, handlers);
+    if (els.zoneRibbon) patchZoneRibbon(els.zoneRibbon, zones, app, handlers);
+    patchCards(els.myHand, state.hands[you] || [], app, FIT, handlers.onHandCard);
     if (els.permittedRow) {
       const permitted = (state.play_permissions && state.play_permissions[you]) || [];
       els.permittedRow.hidden = permitted.length === 0;
       patchPermissions(els.permittedRow, permitted, handlers.onPermission);
     }
-    patchChildren(
-      els.stack,
-      state.stack,
-      (o) => o.id,
-      () => h("div", { class: "stack-object" }, h("span", { class: "name" }), h("span", { class: "targets" })),
-      (el, obj) => {
-        const opts = targetingOpts(app, obj.id);
-        el.classList.toggle("targetable", opts.targetable);
-        el.classList.toggle("chosen", opts.chosen);
-        // `x_value` (CR 202.3e - only set at all when the spell's cost has
-        // an `{X}` to announce, see `serialize._card_view`) is the one thing
-        // about a stack object a player cannot re-derive from its name: a
-        // Nature's Rhythm harmonized for X=8 looks identical to one cast for
-        // X=2 without this (battle-7, B7-13).
-        const xNote = obj.x_value != null ? ` (X=${obj.x_value})` : "";
-        setText(
-          el.querySelector(".name"),
-          `${obj.name}${xNote}${obj.kind === "ability" ? " (ability)" : ""}`
-        );
-        setText(el.querySelector(".targets"), (obj.targets || []).length ? `-> ${obj.targets.join(", ")}` : "");
-        el.onclick = () => handlers.onStackObject(obj);
-      }
-    );
-    const attacking = state.battlefield.filter(
-      (c) =>
-        (app.combatDraft && app.state.step === "declare_attackers" && app.combatDraft[c.id]) ||
-        (state.combat.attacks || []).some((a) => a.attacker === c.id)
-    );
-    els.redZone.hidden = attacking.length === 0;
-    patchCards(els.redZone, attacking, app, "card-sm", handlers.onPermanent);
+    patchStackObjects(els.stack, state.stack, app, handlers.onStackObject);
+    fitAll();
   });
+  return () => {
+    unsubscribe();
+    if (observer) observer.disconnect();
+  };
 }
