@@ -877,6 +877,34 @@
           "name": "max_seconds",
           "type": "float",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "arm",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "arm_reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "*",
+          "has_default": true,
+          "name": "opposing_archetype",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "inputs",
+          "type": "dict[str, Any] | None",
+          "type_error": null
         }
       ]
     },
@@ -1108,6 +1136,34 @@
           "has_default": true,
           "name": "max_seconds",
           "type": "float",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "arm",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "arm_reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "*",
+          "has_default": true,
+          "name": "opposing_archetype",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "inputs",
+          "type": "dict[str, Any] | None",
           "type_error": null
         }
       ]

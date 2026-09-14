@@ -2281,6 +2281,100 @@ def block_until_wake(
         time.sleep(min(WAIT_POLL_SECONDS, remaining))
 
 
+def _fire_armed_scripts(
+    seat: Seat,
+    corpora: dict[tuple[str, str], dict[str, Any]] | None,
+    *,
+    arm: list[str] | None,
+    arm_reasoning: str,
+    opposing_archetype: str,
+    inputs: dict[str, Any] | None,
+    should_stop: Callable[[], bool] | None,
+) -> dict[str, Any] | str | None:
+    """`playscripts.arming.arm`, imported lazily: `playscripts` imports this
+    module (`script_tools`/`runtime` both read `Seat`/`scripts_enabled_here`
+    off it), so importing it back here at module load time would cycle.
+    `None` when there is nothing to arm - an empty `arm`, or a caller (like
+    `run_action`'s own post-action wake) that never passed a `corpora` cache
+    to arm against at all."""
+    if not arm or corpora is None:
+        return None
+    from .playscripts import arming as playscript_arming
+    from .playscripts.runtime import RUN_CAP_SECONDS
+
+    return playscript_arming.arm(
+        seat,
+        corpora,
+        arm=arm,
+        arm_reasoning=arm_reasoning,
+        opposing_archetype=opposing_archetype,
+        inputs=inputs,
+        # Arming has its own time budget on top of the wait's own
+        # `max_seconds` bound - it starts counting from the hand-back, not
+        # from whenever the wait itself began.
+        max_seconds=RUN_CAP_SECONDS,
+        should_stop=should_stop,
+    )
+
+
+def _merge_armed(result: dict[str, Any], armed: dict[str, Any] | str | None, seat: Seat) -> None:
+    """Splice one `_fire_armed_scripts` answer into `result` (a
+    `block_until_wake`-shaped or `pass_until`-shaped dict, both of which
+    carry a `state` key) - `armed`/`armed_conflict` added, `state` (and, for
+    a caller that reads it, `recent_log`) replaced with the post-arming board
+    when arming actually ran something."""
+    if armed is None:
+        return
+    if isinstance(armed, str):
+        result["armed_refusal"] = armed
+        return
+    result["armed"] = armed["armed"]
+    if "armed_conflict" in armed:
+        result["armed_conflict"] = armed["armed_conflict"]
+    if armed.get("state") is not None:
+        result["state"] = armed["state"]
+        result["recent_log"] = seat.recent_log()
+
+
+def wait_and_arm(
+    seat: Seat,
+    before: dict[str, Any] | None,
+    max_seconds: float = 0.0,
+    should_stop: Callable[[], bool] | None = None,
+    *,
+    corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
+    arm: list[str] | None = None,
+    arm_reasoning: str = "",
+    opposing_archetype: str = "*",
+    inputs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """`block_until_wake`, then fire this seat's armed scripts
+    (`playscripts.arming.arm`, S2) once the wait actually wakes it for a real
+    reason - never on a bare `NOTHING_NEW_YET`, a game-gone answer, or an
+    interrupted wait, since none of those is "this seat holding priority or a
+    decision pending for it", the one moment arming is allowed to act.
+
+    Arming is preferred, never mandatory: `arm` left empty (the default)
+    makes this behave exactly like `block_until_wake` always has - this is
+    `mcp.wait_for_priority`'s and `mcp-seat wait`'s own wrapper, not a
+    replacement for `block_until_wake` itself (`run_action`'s own post-action
+    wake check keeps calling that directly, and fires nothing)."""
+    woken = block_until_wake(seat, before=before, max_seconds=max_seconds, should_stop=should_stop)
+    if woken["wake_reason"] in (NOTHING_NEW_YET, GAME_GONE, WAIT_INTERRUPTED):
+        return woken
+    armed = _fire_armed_scripts(
+        seat,
+        corpora,
+        arm=arm,
+        arm_reasoning=arm_reasoning,
+        opposing_archetype=opposing_archetype,
+        inputs=inputs,
+        should_stop=should_stop,
+    )
+    _merge_armed(woken, armed, seat)
+    return woken
+
+
 def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
     """What this seat can actually do right now - `GET .../legal-actions`
     (`app.py`), the api's own door onto Phase 1's enumeration surface,
@@ -3253,10 +3347,23 @@ def pass_until(
     max_seconds: float = 0.0,
     include_actions: bool = True,
     should_stop: Callable[[], bool] | None = None,
+    corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
+    arm: list[str] | None = None,
+    arm_reasoning: str = "",
+    opposing_archetype: str = "*",
+    inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`_pass_until_once` (below), optionally ridden out across a bounded wait
     rather than handed straight back the first time it would otherwise have
     to wait for the opponent.
+
+    `arm` (S2) fires this seat's armed scripts (`playscripts.arming.arm`)
+    once this call is about to return with a real stop - `finished: True`,
+    or the `MAX_PASSES_PER_CALL` hand-back - never on a retryable hand-back
+    (the opponent still holds priority): that is not this seat's moment, and
+    arming judging the board there would be arming, not the wait, deciding
+    when to look. Arming is preferred, never mandatory: an empty `arm` (the
+    default) leaves this behaving exactly as it always has.
 
     Left at its default `max_seconds=0.0`, this is exactly one call to
     `_pass_until_once` and nothing else - the poll-and-return behaviour that
@@ -3317,7 +3424,26 @@ def pass_until(
             break
         time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
         result = _pass_until_once(seat, resume=result.get("resume"), **kwargs)
+    retryable = result.get("retryable", False)
     result.pop("retryable", None)
+    if arm and not retryable:
+        armed = _fire_armed_scripts(
+            seat,
+            corpora,
+            arm=arm,
+            arm_reasoning=arm_reasoning,
+            opposing_archetype=opposing_archetype,
+            inputs=inputs,
+            should_stop=should_stop,
+        )
+        _merge_armed(result, armed, seat)
+        if (
+            include_actions
+            and armed is not None
+            and not isinstance(armed, str)
+            and armed.get("state") is not None
+        ):
+            result["available_actions"] = available_actions(seat, result["state"])
     return result
 
 

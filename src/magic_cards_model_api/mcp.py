@@ -790,7 +790,13 @@ def build_server(seats: Seats) -> MCPServer:
     @server.tool()
     @_guarded(seats)
     def wait_for_priority(
-        player_uid: str, max_seconds: float = 0.0, ctx: Context | None = None
+        player_uid: str,
+        max_seconds: float = 0.0,
+        arm: str = "",
+        arm_reasoning: str = "",
+        opposing_archetype: str = "*",
+        inputs: dict[str, Any] | None = None,
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Check whether it is your moment to act, then hand you the board.
 
@@ -855,15 +861,43 @@ def build_server(seats: Seats) -> MCPServer:
                 is fetched only when a wake condition holds: an answer saying
                 `nothing new yet` carries no list. A seat's own wait carries
                 none either - its list rides the actions it takes.
+
+        **`arm` (S2)**: a comma-separated list of registered script ids, in
+                priority order, to fire on their own the moment this wait wakes
+                for a real reason - "wait until you could require picking scripts
+                to run: if the situation still matches a script's conditions, it
+                fires automatically". Never mandatory: left empty (the default),
+                this behaves exactly as it always has. Judged the same way
+                `run_script`/the hint judge; two armed scripts applying at once
+                is a conflict and neither fires (`armed_conflict` names them).
+                `arm_reasoning` is required whenever `arm` is non-empty - every
+                fire is judged and recorded with it. `opposing_archetype` and
+                `inputs` mean what they mean for `run_script`. An advisor here
+                fires in advise mode: the first applicable armed script proposes
+                a move (`advised`) and the batch stops there.
         """
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        woken = seatkit.block_until_wake(
-            seat, before=None, max_seconds=max_seconds, should_stop=cancel_probe(ctx)
+        woken = seatkit.wait_and_arm(
+            seat,
+            before=None,
+            max_seconds=max_seconds,
+            should_stop=cancel_probe(ctx),
+            corpora=seats.script_corpora,
+            arm=_parse_ids(arm),
+            arm_reasoning=arm_reasoning,
+            opposing_archetype=opposing_archetype,
+            inputs=inputs,
         )
         woken["state"]["wake_reason"] = woken["wake_reason"]
         woken["state"]["recent_log"] = woken["recent_log"]
+        if "armed" in woken:
+            woken["state"]["armed"] = woken["armed"]
+        if "armed_conflict" in woken:
+            woken["state"]["armed_conflict"] = woken["armed_conflict"]
+        if "armed_refusal" in woken:
+            woken["state"]["armed_refusal"] = woken["armed_refusal"]
         if seat.advise and woken["wake_reason"] != seatkit.NOTHING_NEW_YET:
             # The advisor's legal plays, on the one answer that wakes it
             # (`pass_until` is refused to an advise seat). A GET, like every
@@ -2259,6 +2293,10 @@ def build_server(seats: Seats) -> MCPServer:
         stop_when_you_can_attack: bool = True,
         reasoning: str = "",
         max_seconds: float = 0.0,
+        arm: str = "",
+        arm_reasoning: str = "",
+        opposing_archetype: str = "*",
+        inputs: dict[str, Any] | None = None,
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Keep passing priority - one `pass` after another, automatically -
@@ -2388,7 +2426,21 @@ def build_server(seats: Seats) -> MCPServer:
 
         `reasoning`: why you are giving up this whole stretch, in your own
         words - said once, for the run, and threaded onto every pass it
-        makes."""
+        makes.
+
+        ## Arming (S2)
+
+        `arm`: a comma-separated list of registered script ids, in priority
+        order, to fire on their own the instant this run finishes here - or
+        hits its own `MAX_PASSES_PER_CALL` hand-back - never on a plain
+        "waiting for the opponent" hand-back, which is not this seat's moment.
+        Judged the same way `run_script`/the hint judge; two armed scripts
+        applying at once is a conflict and neither fires (`armed_conflict`
+        names them). `arm_reasoning` is required whenever `arm` is non-empty.
+        `opposing_archetype` and `inputs` mean what they mean for
+        `run_script`. Never mandatory - left empty (the default), this call
+        behaves exactly as it always has. Refused outright to an advisor, same
+        as this whole tool."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -2427,6 +2479,11 @@ def build_server(seats: Seats) -> MCPServer:
                 reasoning=reasoning or None,
                 max_seconds=max_seconds,
                 should_stop=cancel_probe(ctx),
+                corpora=seats.script_corpora,
+                arm=_parse_ids(arm),
+                arm_reasoning=arm_reasoning,
+                opposing_archetype=opposing_archetype,
+                inputs=inputs,
             ),
             ctx.protocol_version if ctx is not None else None,
         )

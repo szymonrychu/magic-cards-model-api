@@ -1,0 +1,494 @@
+"""S2 A3: wire `playscripts.arming.arm` into the waits.
+
+An armed script only ever fires at the moment the answer is about to go back
+to the seat holding priority, or with a decision pending for it - after
+`seatkit.block_until_wake` (wrapped as `wait_and_arm`) returns a real wake,
+or when `pass_until` finishes (or hits the `MAX_PASSES_PER_CALL` hand-back).
+Never on a retryable hand-back, where the opponent still holds priority: that
+is not this seat's moment, and arming firing there would mean arming decided
+something the wait itself was built to avoid deciding.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from conftest import add_card, force_turn_position
+from fastapi.testclient import TestClient
+from magic_cards_model.machines import Step
+from test_autopass import Opponent, stock_libraries
+from test_playscript_runtime import (
+    hooked_seat,
+    land_script,
+    register,
+    seat_uid,
+    wired,
+)
+
+from magic_cards_model_api import seat_cli, seatkit
+from magic_cards_model_api.repository import Advisor
+from magic_cards_model_api.seatkit import block_until_wake, pass_until, wait_and_arm
+from magic_cards_model_api.store import store
+
+ARM_REASONING = "the human is thinking; fire this the moment it is legal"
+
+
+def drop_island_script(script_id: str) -> dict[str, Any]:
+    """`land_script`, narrowed to Island specifically - a run that crosses a
+    turn boundary draws a card, and `land_script`'s own bare `types_all:
+    Land` selector ties (ambiguous) once a second, differently-named land is
+    in hand."""
+    doc = land_script(script_id)
+    doc["moves"] = [
+        {
+            "kind": "play_land",
+            "card": {"select": {"types_all": ["Land"], "subtypes_any": ["Island"]}},
+        }
+    ]
+    return doc
+
+
+@pytest.fixture()
+def board(client: TestClient, game: str) -> str:
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    return game
+
+
+# -- pass_until -------------------------------------------------------------
+
+
+def test_a_fetch_land_armed_from_the_opponents_end_step_fires_in_my_own_main(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    force_turn_position(game, Step.END_STEP, "bob")
+    register(client, game, alice, drop_island_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    with Opponent(game, "bob"):
+        result = pass_until(
+            seat,
+            until_step="precombat_main",
+            whose_turn="mine",
+            corpora=seats.script_corpora,
+            arm=["drop"],
+            arm_reasoning=ARM_REASONING,
+            max_seconds=10.0,
+        )
+
+    assert result["finished"] is True, result
+    assert result.get("armed_conflict") is None, result
+    [entry] = result["armed"]
+    assert entry["script"] == "drop"
+    assert entry["exit"] == "chain_complete", entry
+    assert hook.posts("/actions/play-land"), "the armed script actually played the land"
+    assert result["state"]["step"] == "precombat_main"
+
+
+def test_a_play_whose_when_does_not_match_does_not_fire(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A script keyed to `theirs`/`end_step` is armed on the same run that
+    reaches the seat's own precombat_main (the same real crossing as the
+    fires-for-real test above): it never matches there, so `armed` comes
+    back empty rather than firing anything."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    force_turn_position(game, Step.END_STEP, "bob")
+    register(
+        client,
+        game,
+        alice,
+        land_script(
+            "end-step-only", when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"}
+        ),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    with Opponent(game, "bob"):
+        result = pass_until(
+            seat,
+            until_step="precombat_main",
+            whose_turn="mine",
+            corpora=seats.script_corpora,
+            arm=["end-step-only"],
+            arm_reasoning=ARM_REASONING,
+            max_seconds=10.0,
+        )
+
+    assert result["finished"] is True, result
+    assert result["armed"] == []
+    assert hook.posts("/actions/play-land") == []
+
+
+def test_nothing_fires_on_a_retryable_hand_back(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`pass_until` hands the board straight back the moment it would have to
+    wait for the opponent (no `max_seconds`, no `Opponent` thread here) - a
+    retryable hand-back, and arming must not even look at the board then."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="mine",
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert result["finished"] is False
+    assert "armed" not in result, result
+    assert "armed_conflict" not in result, result
+    assert hook.posts("/actions/play-land") == []
+
+
+def test_arming_is_skipped_entirely_when_arm_is_empty(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="mine",
+        corpora=seats.script_corpora,
+    )
+
+    # No `Opponent` thread here on purpose: whatever this hand-back looks
+    # like, an empty `arm` must never even try arming.
+    assert "armed" not in result
+    assert hook.posts("/actions/play-land") == []
+
+
+def test_advisor_pass_until_is_still_refused_even_with_arm_given(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advisor = "arming-advisor-uid"
+    store.register_advisors(board, {advisor: Advisor(player="alice")})
+    register(client, board, advisor, land_script("drop"))
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, advisor)
+
+    result = pass_until(
+        seat,
+        until_step="precombat_main",
+        whose_turn="mine",
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert result["finished"] is True
+    assert result["stopped_because"] == seatkit.ADVISE_NO_PASS_UNTIL
+    assert "armed" not in result
+    assert hook.posts("/actions/play-land") == []
+
+
+# -- wait_and_arm -------------------------------------------------------------
+
+
+def test_wait_and_arm_fires_on_a_real_wake(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    woken = wait_and_arm(
+        seat,
+        before=None,
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert woken["wake_reason"] != seatkit.NOTHING_NEW_YET
+    [entry] = woken["armed"]
+    assert entry["exit"] == "chain_complete", entry
+    assert hook.posts("/actions/play-land")
+
+
+def test_wait_and_arm_never_fires_on_nothing_new_yet(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`before` is this same board's own signature, so the wake condition is
+    already satisfied and the bare check finds nothing new - arming must not
+    run against a board nothing changed on."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    baseline = seat.fetch_state()
+
+    woken = wait_and_arm(
+        seat,
+        before=baseline,
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert woken["wake_reason"] == seatkit.NOTHING_NEW_YET
+    assert "armed" not in woken
+    assert hook.posts("/actions/play-land") == []
+
+
+def test_an_advisors_armed_script_posts_an_advice_row(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advisor = "arming-advisor-wait-uid"
+    store.register_advisors(board, {advisor: Advisor(player="alice")})
+    register(client, board, advisor, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, _ = hooked_seat(seats, advisor)
+
+    woken = wait_and_arm(
+        seat,
+        before=None,
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert woken["wake_reason"] != seatkit.NOTHING_NEW_YET
+    [entry] = woken["armed"]
+    assert entry["exit"] == "advised", entry
+
+    rows = [
+        row
+        for row in seatkit_audit_entries(board)
+        if row["action"] == "script_run" and row["detail"].get("role") == "advisor"
+    ]
+    assert rows and rows[-1]["detail"]["invoked_via"] == "armed"
+
+
+def seatkit_audit_entries(game_id: str) -> list[dict[str, Any]]:
+    from magic_cards_model_api import audit
+
+    return list(audit.entries(game_id))
+
+
+def test_bare_block_until_wake_is_unaffected(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`block_until_wake` itself - `run_action`'s own post-action wake check
+    - is untouched: it takes no `arm` at all, so nothing here can fire from
+    inside an ordinary action's own follow-up check."""
+    alice = seat_uid(board, "alice")
+    seats = wired(monkeypatch, board)
+    seat, _ = hooked_seat(seats, alice)
+
+    woken = block_until_wake(seat, before=None)
+
+    assert "armed" not in woken
+
+
+# -- CLI ----------------------------------------------------------------------
+
+
+def test_cli_wait_passes_arm_through(
+    client: TestClient,
+    board: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from test_front_end_parity import wire
+
+    wire(monkeypatch)
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+
+    exit_code = seat_cli.run(
+        [
+            "--uid",
+            alice,
+            "--game",
+            board,
+            "wait",
+            "--arm",
+            "drop",
+            "--arm-reasoning",
+            ARM_REASONING,
+        ]
+    )
+
+    assert exit_code == 0
+    import json
+
+    printed = json.loads(capsys.readouterr().out)
+    [entry] = printed["armed"]
+    assert entry["script"] == "drop"
+    assert entry["exit"] == "chain_complete", entry
+
+
+def test_cli_pass_until_arm_is_repeatable(
+    client: TestClient,
+    game: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Two `--arm` flags collect into one list rather than the second
+    overwriting the first - proven by both being judged: the unregistered
+    `another-one` is silently ignored (it never becomes a firing candidate)
+    while `drop` still fires once the crossing reaches alice's own main."""
+    from test_front_end_parity import wire
+
+    wire(monkeypatch)
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    force_turn_position(game, Step.END_STEP, "bob")
+    register(client, game, alice, drop_island_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    stock_libraries(client, game)
+
+    with Opponent(game, "bob"):
+        exit_code = seat_cli.run(
+            [
+                "--uid",
+                alice,
+                "--game",
+                game,
+                "pass-until",
+                "precombat_main",
+                "--arm",
+                "drop",
+                "--arm",
+                "another-one",
+                "--arm-reasoning",
+                ARM_REASONING,
+                "--max-seconds",
+                "10.0",
+            ]
+        )
+
+    assert exit_code == 0
+    import json
+
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["finished"] is True, printed
+    [entry] = printed["armed"]
+    assert entry["script"] == "drop"
+    assert entry["exit"] == "chain_complete", entry
+
+
+# -- MCP tools ------------------------------------------------------------------
+
+
+def test_mcp_wait_for_priority_fires_an_armed_script(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from test_mcp_input_required import call_tool
+
+    from magic_cards_model_api.mcp import build_server
+
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    server = build_server(seats)
+
+    result = call_tool(
+        server,
+        "wait_for_priority",
+        {"player_uid": alice, "arm": "drop", "arm_reasoning": ARM_REASONING},
+    )
+
+    answer = json.loads(result.content[0].text)
+    [entry] = answer["armed"]
+    assert entry["script"] == "drop"
+    assert entry["exit"] == "chain_complete", entry
+
+
+def test_mcp_pass_until_fires_an_armed_script_on_a_real_crossing(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from test_mcp_input_required import call_tool
+
+    from magic_cards_model_api.mcp import build_server
+
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    force_turn_position(game, Step.END_STEP, "bob")
+    register(client, game, alice, drop_island_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    server = build_server(seats)
+
+    with Opponent(game, "bob"):
+        result = call_tool(
+            server,
+            "pass_until",
+            {
+                "player_uid": alice,
+                "step": "precombat_main",
+                "arm": "drop",
+                "arm_reasoning": ARM_REASONING,
+                "max_seconds": 10.0,
+            },
+        )
+
+    answer = json.loads(result.content[0].text)
+    assert answer["finished"] is True, answer
+    [entry] = answer["armed"]
+    assert entry["script"] == "drop"
+    assert entry["exit"] == "chain_complete", entry
+
+
+def test_mcp_pass_until_never_fires_on_a_retryable_hand_back(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from test_mcp_input_required import call_tool
+
+    from magic_cards_model_api.mcp import build_server
+
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    server = build_server(seats)
+
+    # No `Opponent` here: alice's own single pass hands the board straight
+    # back "you do not hold priority", a retryable hand-back.
+    result = call_tool(
+        server,
+        "pass_until",
+        {
+            "player_uid": alice,
+            "step": "precombat_main",
+            "arm": "drop",
+            "arm_reasoning": ARM_REASONING,
+        },
+    )
+
+    answer = json.loads(result.content[0].text)
+    assert "armed" not in answer, answer

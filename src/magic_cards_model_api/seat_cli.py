@@ -88,12 +88,12 @@ from .seatkit import (
     _parse_pairs,
     api_trouble,
     autopass_target_error,
-    block_until_wake,
     card_reference,
     parse_convoke,
     parse_optional_costs,
     pass_until,
     run_action,
+    wait_and_arm,
 )
 
 
@@ -211,6 +211,52 @@ def build_parser() -> argparse.ArgumentParser:
             "check-and-return it has always been"
         ),
     )
+
+    def arm_flags(command: Any) -> None:
+        """S2: `--arm`/`--arm-reasoning`/`--opposing-archetype`/`--input`,
+        shared by `wait` and `pass-until` - the same `playscripts.arming.arm`
+        arguments `mcp.wait_for_priority`/`mcp.pass_until` take. Arming fires
+        only once this command is about to return with a real stop: after
+        `wait`'s own check wakes for a real reason, or when `pass-until`
+        finishes (or hits its own pass cap) - never on a retryable hand-back
+        where the opponent still holds priority."""
+        command.add_argument(
+            "--arm",
+            dest="arm",
+            action="append",
+            default=None,
+            metavar="SCRIPT_ID",
+            help=(
+                "a registered script id to arm, in priority order; repeat for each. "
+                "If it already applies the moment this command is about to return, it "
+                "fires on its own (playscripts.arming.arm) - never mandatory, and never "
+                "a reason to wait longer than this command already would"
+            ),
+        )
+        command.add_argument(
+            "--arm-reasoning",
+            dest="arm_reasoning",
+            default="",
+            metavar="TEXT",
+            help="why you are arming these, in your own words - required whenever --arm is given",
+        )
+        command.add_argument(
+            "--opposing-archetype",
+            dest="opposing_archetype",
+            default="*",
+            metavar="KEY",
+            help="the opponent's archetype as you read it, judged the same as run_script's own",
+        )
+        command.add_argument(
+            "--input",
+            dest="arm_inputs",
+            action="append",
+            default=None,
+            metavar="NAME=VALUE",
+            help="one input an armed script's conditions read; repeat for each (see script run)",
+        )
+
+    arm_flags(wait_cmd)
 
     def priority_flag(command: Any) -> None:
         """The one flag every action shares: keep priority instead of
@@ -823,6 +869,7 @@ def build_parser() -> argparse.ArgumentParser:
             "'I am not attacking this turn'"
         ),
     )
+    arm_flags(until)
 
     # CR 103.5 and CR 103.6. A game booted from decklists *rests* in these two
     # steps before turn 1, and nothing on the board can happen until every seat
@@ -1146,8 +1193,28 @@ def run(argv: list[str] | None = None) -> int:
         print(json.dumps(current, indent=1, sort_keys=True))
         note(current)
     elif args.command == "wait":
-        woken = block_until_wake(seat, before=None, max_seconds=args.max_seconds)
+        try:
+            arm_inputs = parse_inputs(args.arm_inputs)
+        except ValueError as exc:
+            print(exc)
+            return 1
+        woken = wait_and_arm(
+            seat,
+            before=None,
+            max_seconds=args.max_seconds,
+            corpora=seats.script_corpora,
+            arm=args.arm,
+            arm_reasoning=args.arm_reasoning,
+            opposing_archetype=args.opposing_archetype,
+            inputs=arm_inputs,
+        )
         woken["state"]["wake_reason"] = woken["wake_reason"]
+        if "armed" in woken:
+            woken["state"]["armed"] = woken["armed"]
+        if "armed_conflict" in woken:
+            woken["state"]["armed_conflict"] = woken["armed_conflict"]
+        if "armed_refusal" in woken:
+            woken["state"]["armed_refusal"] = woken["armed_refusal"]
         print(json.dumps(woken["state"], indent=1, sort_keys=True))
         note(woken["state"])
     elif args.command == "cast":
@@ -1300,6 +1367,11 @@ def run(argv: list[str] | None = None) -> int:
         if problem:
             print(problem)
             return 1
+        try:
+            arm_inputs = parse_inputs(args.arm_inputs)
+        except ValueError as exc:
+            print(exc)
+            return 1
         result = pass_until(
             seat,
             until_step=args.step,
@@ -1310,6 +1382,11 @@ def run(argv: list[str] | None = None) -> int:
             resume=json.loads(args.resume) if args.resume else None,
             reasoning=args.reasoning,
             max_seconds=args.max_seconds,
+            corpora=seats.script_corpora,
+            arm=args.arm,
+            arm_reasoning=args.arm_reasoning,
+            opposing_archetype=args.opposing_archetype,
+            inputs=arm_inputs,
         )
         print(json.dumps(result, indent=1, sort_keys=True))
         note(result.get("state"))
