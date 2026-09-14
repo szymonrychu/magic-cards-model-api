@@ -1338,6 +1338,7 @@ class Seat:
         advise: bool = False,
         wake_signatures: dict[str, Any] | None = None,
         advice_drafts: dict[str, Any] | None = None,
+        advice_draft_locks: dict[str, threading.Lock] | None = None,
     ) -> None:
         self.player = player
         self.uid = uid
@@ -1416,6 +1417,15 @@ class Seat:
         #: `seat_cli`'s one-shot process) gets its own private dict, exactly
         #: as `_wake_signatures` does.
         self._advice_drafts: dict[str, Any] = advice_drafts if advice_drafts is not None else {}
+        #: `uid` -> the lock `resolve_advice_draft` claims before reading and
+        #: posting that uid's draft (review fix 5, 2026-09-14). Shared by
+        #: reference the same way `_advice_drafts` is - a lock owned by one
+        #: short-lived `Seat` would guard nothing, since sync MCP tools each
+        #: run in their own thread against a freshly minted `Seat` (`Seats.
+        #: seat_for`) and it is exactly two of THOSE racing this is for.
+        self._advice_draft_locks: dict[str, threading.Lock] = (
+            advice_draft_locks if advice_draft_locks is not None else {}
+        )
         #: The HTTP status of the latest `fetch_state`, read by `game_gone`.
         self.last_state_status: int | None = None
 
@@ -1965,6 +1975,13 @@ class Seats:
         #: on every call, so this is the only thing that survives between a
         #: `stage_advice` call and the committing call it arms.
         self.advice_drafts: dict[str, Any] = {}
+        #: uid -> the lock `resolve_advice_draft` claims for that uid (review
+        #: fix 5) - shared by reference the same way `advice_drafts` is, for
+        #: the same reason: two sync MCP tool calls for the same advisor each
+        #: mint their own `Seat` and run in their own thread, and this is
+        #: what serialises them onto one draft rather than a fresh, unlocked
+        #: dict per call that guards nothing.
+        self.advice_draft_locks: dict[str, threading.Lock] = {}
         #: `(game_id, uid)` -> the play-script corpus that uid registered
         #: (`GET /api/games/{id}/seats/{uid}/scripts`), read once by
         #: `playscripts.runtime` and handed to it by reference. It lives here
@@ -2057,6 +2074,7 @@ class Seats:
             advise=role == "advisor",
             wake_signatures=self._wake_signatures,
             advice_drafts=self.advice_drafts,
+            advice_draft_locks=self.advice_draft_locks,
         )
 
     def _lookup(self, uid: str) -> tuple[str, str, str] | None:
@@ -3680,54 +3698,86 @@ def resolve_advice_draft(seat: Seat, state: dict[str, Any]) -> dict[str, Any] | 
     caller still wraps this in `try`/`except` per this project's rule that a
     seat's real answer must never be broken by a feature reading alongside
     it, but there is no known way to reach it from here.
+
+    **Review fix 5 (2026-09-14): a per-uid lock around the whole read-check-
+    post-pop sequence.** Sync MCP tools each run in their own thread against
+    a freshly minted `Seat` (`Seats.seat_for`), so two advisor calls arriving
+    close together used to race: both could read the same staged, ready
+    draft, both probe it legal, and both `POST .../advice` - two ledger rows
+    for one proposal. `lock.acquire(blocking=False)` claims the draft before
+    doing any of that work; a second caller that finds the lock already held
+    does none of it either and answers `{"status": "held"}` at once, exactly
+    as it would have if the window simply were not reached yet - never a
+    second probe, never a second POST. The lock is released before this
+    returns either way, so it never outlives one call. The final cleanup
+    (`_pop_draft_if_same`) checks identity, not merely presence: a `stage_
+    advice` call that lands while this one's own `POST .../advice` is still
+    in flight replaces `seat._advice_drafts[seat.uid]` with a brand new dict,
+    and that restage must survive this call's own cleanup rather than being
+    swept away by an unconditional pop.
     """
     if not seat.advise:
         return None
     entry = seat._advice_drafts.get(seat.uid)
     if entry is None or entry.get("action") is None:
         return None
-    window = forget_starting_occurrence(dict(entry["window"]), state)
-    entry["window"] = window
-    status = draft_window_status(window, state, seat.player)
-    if status == "before":
+    lock = seat._advice_draft_locks.setdefault(seat.uid, threading.Lock())
+    if not lock.acquire(blocking=False):
         return {"status": "held"}
-    if status == "after":
-        seat._advice_drafts.pop(seat.uid, None)
-        return {"status": "stale", "failed": "window"}
-    if state.get("priority_holder") != seat.player:
-        return {"status": "held"}
-    action = entry["action"]
-    current_signature = opponent_board_signature(state, seat.player)
-    if current_signature != entry.get("opponent_signature"):
-        seat._advice_drafts.pop(seat.uid, None)
-        return {"status": "stale", "failed": "board"}
-    if action["validated"]:
-        _probe_status, probe_outcome = seat._request_json(
-            action["method"], action["path"], {**action["body"], "dry_run": True}
+    try:
+        # Re-read after claiming the lock: nothing above this point mutated
+        # anything, so `entry` itself is still whatever this call is about to
+        # act on, but reading it fresh here is what makes the identity check
+        # in `_pop_draft_if_same` below mean "the entry THIS call claimed",
+        # not "whatever was staged a moment before the lock was even asked
+        # for".
+        entry = seat._advice_drafts.get(seat.uid)
+        if entry is None or entry.get("action") is None:
+            return {"status": "held"}
+        window = forget_starting_occurrence(dict(entry["window"]), state)
+        entry["window"] = window
+        status = draft_window_status(window, state, seat.player)
+        if status == "before":
+            return {"status": "held"}
+        if status == "after":
+            _pop_draft_if_same(seat, entry)
+            return {"status": "stale", "failed": "window"}
+        if state.get("priority_holder") != seat.player:
+            return {"status": "held"}
+        action = entry["action"]
+        current_signature = opponent_board_signature(state, seat.player)
+        if current_signature != entry.get("opponent_signature"):
+            _pop_draft_if_same(seat, entry)
+            return {"status": "stale", "failed": "board"}
+        if action["validated"]:
+            _probe_status, probe_outcome = seat._request_json(
+                action["method"], action["path"], {**action["body"], "dry_run": True}
+            )
+            legal = isinstance(probe_outcome, dict) and probe_outcome.get("allowed") is True
+        else:
+            legal = _unvalidated_action_still_legal(action, state, seat.player)
+        if not legal:
+            _pop_draft_if_same(seat, entry)
+            return {"status": "stale", "failed": "legality"}
+        _post_status, advice = seat._request_json(
+            "POST",
+            f"/api/games/{seat.game_id()}/advice",
+            {
+                "player": seat.player,
+                "method": action["method"],
+                "path": action["path"],
+                "body": action["body"],
+                "reasoning": action["reasoning"],
+                "validated": action["validated"],
+                "drafted_at_seq": entry.get("drafted_at_seq"),
+            },
         )
-        legal = isinstance(probe_outcome, dict) and probe_outcome.get("allowed") is True
-    else:
-        legal = _unvalidated_action_still_legal(action, state, seat.player)
-    if not legal:
-        seat._advice_drafts.pop(seat.uid, None)
-        return {"status": "stale", "failed": "legality"}
-    _post_status, advice = seat._request_json(
-        "POST",
-        f"/api/games/{seat.game_id()}/advice",
-        {
-            "player": seat.player,
-            "method": action["method"],
-            "path": action["path"],
-            "body": action["body"],
-            "reasoning": action["reasoning"],
-            "validated": action["validated"],
-            "drafted_at_seq": entry.get("drafted_at_seq"),
-        },
-    )
-    seat._advice_drafts.pop(seat.uid, None)
-    if not (isinstance(advice, dict) and advice.get("proposed") is True):
-        return {"status": "stale", "failed": "refused"}
-    return {"status": "posted", "log_seq": advice["log_seq"]}
+        _pop_draft_if_same(seat, entry)
+        if not (isinstance(advice, dict) and advice.get("proposed") is True):
+            return {"status": "stale", "failed": "refused"}
+        return {"status": "posted", "log_seq": advice["log_seq"]}
+    finally:
+        lock.release()
 
 
 def autopass_label(run: dict[str, Any]) -> str:

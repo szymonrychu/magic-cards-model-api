@@ -808,6 +808,92 @@ def test_a_decide_draft_still_posts_while_the_same_question_stands(
 
 
 # ---------------------------------------------------------------------------
+# 5d. a per-uid lock: no double post, a restage during posting survives
+# (2026-09-14 review, finding 5)
+# ---------------------------------------------------------------------------
+
+
+def _slow_advice_post(delay: float) -> Any:
+    """Patches `Seat._request_json` so the `POST .../advice` call specifically
+    takes `delay` seconds - long enough that a second, concurrent `resolve_
+    advice_draft` call is guaranteed to find the lock still held. Every other
+    request (`fetch_state`, the dry-run probe, ...) is untouched."""
+    original = seatkit.Seat._request_json
+
+    def slow(self: Seat, method: str, path: str, body: Any) -> Any:
+        if method == "POST" and path.endswith("/advice"):
+            time.sleep(delay)
+        return original(self, method, path, body)
+
+    return slow
+
+
+def test_two_concurrent_resolves_produce_exactly_one_post(
+    client: TestClient, game: str, wired: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seat = buddy(game)
+    seat.stage_advice("declare_attackers", "mine")
+    capture_a_pass_draft(seat, game)
+    force_turn_position(game, Step.DECLARE_ATTACKERS, "alice")
+    state_now = seat.fetch_state()
+    monkeypatch.setattr(seatkit.Seat, "_request_json", _slow_advice_post(0.15))
+
+    results: list[Any] = []
+    results_lock = threading.Lock()
+
+    def resolve() -> None:
+        result = seatkit.resolve_advice_draft(seat, state_now)
+        with results_lock:
+            results.append(result)
+
+    first = threading.Thread(target=resolve)
+    second = threading.Thread(target=resolve)
+    first.start()
+    time.sleep(0.03)  # let `first` claim the lock and reach the slow POST
+    second.start()
+    first.join(5)
+    second.join(5)
+
+    posted = [r for r in results if r.get("status") == "posted"]
+    held = [r for r in results if r.get("status") == "held"]
+    assert len(posted) == 1, results
+    assert len(held) == 1, results
+    assert len(advice_rows(game)) == 1
+
+
+def test_a_restage_during_posting_survives(
+    client: TestClient, game: str, wired: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The unconditional pop the old code ran right after its own POST would
+    remove a NEW draft staged in the meantime just as readily as its own -
+    `resolve_advice_draft` must only ever drop the entry it itself claimed."""
+    seat = buddy(game)
+    seat.stage_advice("declare_attackers", "mine")
+    capture_a_pass_draft(seat, game)
+    force_turn_position(game, Step.DECLARE_ATTACKERS, "alice")
+    state_now = seat.fetch_state()
+    monkeypatch.setattr(seatkit.Seat, "_request_json", _slow_advice_post(0.2))
+
+    outcome: dict[str, Any] = {}
+
+    def resolve() -> None:
+        outcome["result"] = seatkit.resolve_advice_draft(seat, state_now)
+
+    thread = threading.Thread(target=resolve)
+    thread.start()
+    time.sleep(0.05)  # `resolve` is now inside the slow POST, lock held
+    seat.stage_advice("end_step", "mine")
+    capture_a_pass_draft(seat, game, reasoning="restaged while the first draft posts")
+    thread.join(5)
+
+    assert outcome["result"]["status"] == "posted"
+    assert len(advice_rows(game)) == 1
+    survived = seat._advice_drafts.get(ADVISOR_UID)
+    assert survived is not None, "the restage must survive the first draft's own cleanup"
+    assert survived["window"]["step"] == "end_step"
+
+
+# ---------------------------------------------------------------------------
 # 6. exceptions never break the underlying tool answer
 # ---------------------------------------------------------------------------
 
