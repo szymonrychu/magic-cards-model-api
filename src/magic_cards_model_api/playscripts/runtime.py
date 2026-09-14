@@ -341,9 +341,10 @@ def run_script(
     chain; `declared_inputs` is the deck's `inputs.json` list, which says
     which inputs are required. Advise seats get `Exit.ADVISED`.
 
-    `invoked_via` is who started this run - `"mcp"` or `"cli"` - carried onto
-    the start and finish rows this run posts (`schemas.ScriptRunIn.
-    invoked_via`, required there)."""
+    `invoked_via` is who started this run - `"mcp"`, `"cli"` or `"armed"`
+    (`playscripts.arming.arm`, firing a script on its own between a seat's
+    own moves) - carried onto the start and finish rows this run posts
+    (`schemas.ScriptRunIn.invoked_via`, required there)."""
     if not reasoning or not reasoning.strip():
         return RunResult(
             True,

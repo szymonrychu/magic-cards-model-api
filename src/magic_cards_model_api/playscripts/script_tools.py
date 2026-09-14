@@ -177,9 +177,9 @@ def run(
     no run can start from. `max_seconds` left at 0 runs up to
     `runtime.RUN_CAP_SECONDS`; a positive value caps the call below that.
     `should_stop` ends the run's waiting early, as its time cap does.
-    `invoked_via` ("mcp" or "cli") is carried onto the start/finish rows this
-    run posts - `mcp.run_script` sends "mcp", `mcp-seat script run` sends
-    "cli"."""
+    `invoked_via` ("mcp", "cli" or "armed") is carried onto the start/finish
+    rows this run posts - `mcp.run_script` sends "mcp", `mcp-seat script run`
+    sends "cli", `playscripts.arming.arm` sends "armed"."""
     supplied = merged_inputs(opposing_archetype, inputs)
     if isinstance(supplied, str):
         return supplied

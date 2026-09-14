@@ -10846,7 +10846,8 @@
           "invoked_via": {
             "enum": [
               "mcp",
-              "cli"
+              "cli",
+              "armed"
             ],
             "title": "Invoked Via",
             "type": "string"
