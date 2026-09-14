@@ -9,9 +9,9 @@
 // `showAiError`, `showFallbackBox` (app.js:2835-2883), `renderPhaseTrack`/the
 // `$("#turn-info")` line (app.js:456-512), `renderAiStallBanner`/
 // `aiUnchangedSeconds` (app.js:1712-1748), `setConnection` (app.js:411-418),
-// `openReportModal`/`showModal`/`closeModal` (app.js:2645-2698), and
-// `wireCardPreview`/`showPreview`/`hidePreview` (app.js:656-700) - rebuilt as
-// `h()`/`patchChildren` nodes instead of `innerHTML` strings.
+// and `openReportModal`/`showModal`/`closeModal` (app.js:2645-2698) - rebuilt
+// as `h()`/`patchChildren` nodes instead of `innerHTML` strings. The card
+// preview is not here: it is `ui/preview.js`'s `mountCardPreview`.
 //
 // This file used to hold a "Zones" popover too (graveyards, shared exile,
 // CR 406.4's marked exile piles, and the command zone) and a `toggleLogModal`/

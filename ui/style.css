@@ -387,8 +387,8 @@ h3 { font-size: 14px; }
    never changes the board's geometry.
 
    The seven card rows (`.fit-row`) are fixed shares of the board's height -
-   see `#mtg-board > .fit-row` below - and `#permitted-row` is content-sized
-   around them, so the board is exactly as tall as its grid
+   see `#mtg-board > .fit-row` below - and `#permitted-row`, while it has
+   cards, is an eighth share fitted the same way, so the board is exactly as tall as its grid
    area and the page never scrolls. Every row keeps a one-card floor and clips
    inside itself, because a row that collapsed once painted over the row
    beneath and swallowed its clicks. In the browser pass that put a Forest on
@@ -664,8 +664,24 @@ h3 { font-size: 14px; }
   writing-mode: vertical-rl;
   transform: translateY(-50%) rotate(180deg);
 }
-/* Content sized, never squeezed to nothing by the fixed-share rows. */
-#mtg-board > #permitted-row { flex: 0 0 auto; }
+/* CR 601.3's permitted casts, under the hand. Not one of the seven rows, so
+   it is `hidden` - no box and no share - while there is nothing to cast. With
+   cards it is a share of the board like a `.fit-row` (not one, so the seven
+   stay exactly seven), and `render/board.js` fits its `--card-w` from that
+   share: a fixed-width card here pushed the seven rows under their floor and
+   scrolled the board on a phone. */
+#mtg-board > #permitted-row {
+  --card-w: 76px;
+  --card-h: calc(var(--card-w, 76px) * 88 / 63);
+  flex: 1 1 0;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  min-width: 0;
+  min-height: calc(var(--card-floor) * 88 / 63 + 2 * var(--row-pad));
+  padding: var(--row-pad);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
 
 /* One stack object on the live board: the card itself, then a one-line
    caption for what the card cannot say - the announced X and its targets.

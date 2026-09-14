@@ -62,6 +62,13 @@ VIEWPORTS = [
 #: The one extra frame measured with the drawer open.
 DRAWER_OPEN = (844, 390)
 
+#: Frames measured with CR 601.3 play permissions on the board, so
+#: `#permitted-row` draws cards under the hand.
+PERMITTED = [(1920, 1080), (844, 390)]
+
+#: How many cards the permitted frames' `play_permissions` name.
+PERMITTED_CARDS = 3
+
 MOBILE_QUERY = "(max-width: 1100px), (pointer: coarse) and (orientation: landscape)"
 
 SEVEN_ROWS = [
@@ -146,7 +153,26 @@ def _crowded_state() -> dict:
     for player in state["players"]:
         player["hand_count"] = 7
     state["pending_decision"] = None
+    state["play_permissions"] = {}
     return state
+
+
+def _permissions() -> dict:
+    """`state.play_permissions` naming `PERMITTED_CARDS` exiled cards, in the
+    shape `serialize.py`'s `_play_permission_view` writes."""
+    return {
+        "alice": [
+            {
+                "card": _card(f"alice-p{i}", "alice", "Instant", "exile"),
+                "granted_by": "Bloodbraid Elf",
+                "from_zone": "exile",
+                "usable_now": i != 1,
+                "why_not": None if i != 1 else "not your main phase",
+                "rule": "CR 601.3",
+            }
+            for i in range(PERMITTED_CARDS)
+        ]
+    }
 
 
 def _game_page() -> str:
@@ -163,6 +189,7 @@ def _game_page() -> str:
 <script type="module">
 import {{ mountBoard }} from "/render/board.js";
 const state = {json.dumps(_crowded_state())};
+if (location.search.includes("permitted=1")) state.play_permissions = {json.dumps(_permissions())};
 let app = {{
   state, action: null, decisionDraft: {{}}, combatDraft: {{}}, preview: null, symbols: {{}},
 }};
@@ -212,8 +239,9 @@ def _harness_page() -> str:
 <div id="frames"></div>
 <script>
 const SIZES = {json.dumps(VIEWPORTS)};
-const FRAMES = [...SIZES.map((size) => ({{ size, open: false }})),
-  {{ size: {json.dumps(list(DRAWER_OPEN))}, open: true }}];
+const FRAMES = [...SIZES.map((size) => ({{ size, open: false, permitted: false }})),
+  {{ size: {json.dumps(list(DRAWER_OPEN))}, open: true, permitted: false }},
+  ...{json.dumps(PERMITTED)}.map((size) => ({{ size, open: false, permitted: true }}))];
 const MOBILE = {json.dumps(MOBILE_QUERY)};
 const ROWS = {json.dumps(SEVEN_ROWS)};
 const REGIONS = ["#topbar", "#banners", "#zone-ribbon", "#side-panel", "#mtg-board"];
@@ -227,7 +255,7 @@ const box = (el) => {{
   const {{ left, top, right, bottom, width, height }} = el.getBoundingClientRect();
   return {{ left, top, right, bottom, width, height }};
 }};
-function measure(frame, {{ size, open }}) {{
+function measure(frame, {{ size, open, permitted }}) {{
   const w = frame.contentWindow;
   const d = frame.contentDocument;
   const $ = (sel) => d.querySelector(sel);
@@ -248,12 +276,31 @@ function measure(frame, {{ size, open }}) {{
       cards: [...row.querySelectorAll(".card, .card-back, .stack-caption")].map(box),
     }};
   }});
+  const permittedRow = $("#permitted-row");
+  const permittedStyle = w.getComputedStyle(permittedRow);
+  const permittedInner = box(permittedRow);
+  permittedInner.left += parseFloat(permittedStyle.borderLeftWidth);
+  permittedInner.right -= parseFloat(permittedStyle.borderRightWidth);
+  permittedInner.top += parseFloat(permittedStyle.borderTopWidth);
+  permittedInner.bottom -= parseFloat(permittedStyle.borderBottomWidth);
+  const permittedCards = [...permittedRow.querySelectorAll(".card")];
   w.scrollTo(100000, 100000);
   const scrolled = [w.scrollX, w.scrollY];
   const display = (sel) => ($(sel) ? w.getComputedStyle($(sel)).display : null);
   return {{
     size,
     open,
+    permitted,
+    permittedRow: {{
+      box: box(permittedRow),
+      inner: permittedInner,
+      display: permittedStyle.display,
+      cardW: permittedStyle.getPropertyValue("--card-w").trim(),
+      scrollWidth: permittedRow.scrollWidth,
+      clientWidth: permittedRow.clientWidth,
+      cards: permittedCards.map(box),
+      classes: permittedCards.map((c) => c.className),
+    }},
     mobile: w.matchMedia(MOBILE).matches,
     scrolled,
     viewport: [w.innerWidth, w.innerHeight],
@@ -281,10 +328,12 @@ function measure(frame, {{ size, open }}) {{
     stackCards: $("#stack-row").querySelectorAll(".card").length,
   }};
 }}
-const frames = FRAMES.map(({{ size: [width, height], open }}) => {{
+const frames = FRAMES.map(({{ size: [width, height], open, permitted }}) => {{
   const f = document.createElement("iframe");
   f.style.cssText = `width:${{width}}px;height:${{height}}px;border:0;display:block`;
-  f.src = "/__viewport_game.html" + (open ? "?drawer=open" : "");
+  const query = [open ? "drawer=open" : "", permitted ? "permitted=1" : ""]
+    .filter(Boolean).join("&");
+  f.src = "/__viewport_game.html" + (query ? "?" + query : "");
   document.getElementById("frames").appendChild(f);
   return new Promise((resolve) => f.addEventListener("load", () => resolve(f)));
 }});
@@ -377,7 +426,7 @@ def measurements(tmp_path_factory: pytest.TempPathFactory) -> list[dict]:
         tmp_path_factory.mktemp("chrome-profile"),
     )
     assert not isinstance(data, dict), data
-    assert len(data) == len(VIEWPORTS) + 1, len(data)
+    assert len(data) == len(VIEWPORTS) + 1 + len(PERMITTED), len(data)
     return data
 
 
@@ -613,3 +662,85 @@ def test_an_open_drawer_is_on_screen_and_keeps_the_toggle_and_toolbar_reachable(
     for button in m["toolbarButtons"]:
         assert _inside(button, width, height), button
         assert not _overlap(button, m["drawer"]), (button, m["drawer"])
+
+
+@EACH
+def test_an_empty_permitted_row_takes_no_board_height(measurements: list[dict], index: int) -> None:
+    """No permission, no row: it is not one of the seven, so it collapses to
+    nothing rather than taking height from them or painting over a row."""
+    m = measurements[index]
+    assert m["permitted"] is False
+    assert m["permittedRow"]["display"] == "none", m["size"]
+    assert m["permittedRow"]["box"]["height"] == 0, (m["size"], m["permittedRow"]["box"])
+
+
+PERMITTED_EACH = pytest.mark.parametrize(
+    "size", PERMITTED, ids=[f"permitted-{w}x{h}" for w, h in PERMITTED]
+)
+
+
+def _permitted_frame(measurements: list[dict], size: tuple[int, int]) -> dict:
+    m = measurements[len(VIEWPORTS) + 1 + PERMITTED.index(size)]
+    assert m["permitted"] is True and m["size"] == list(size), (m["size"], size)
+    return m
+
+
+@PERMITTED_EACH
+def test_permitted_cards_never_scroll_the_page_or_the_board(
+    measurements: list[dict], size: tuple[int, int]
+) -> None:
+    m = _permitted_frame(measurements, size)
+    width, height = size
+    assert m["scrolled"] == [0, 0], size
+    assert m["page"][0] <= width and m["page"][1] <= height, (size, m["page"])
+    board = m["board"]
+    assert board["scrollHeight"] <= board["clientHeight"] + 1, (size, board)
+    assert _inside(m["regions"]["#mtg-board"], width, height), m["regions"]["#mtg-board"]
+
+
+@PERMITTED_EACH
+def test_permitted_cards_sit_inside_their_row_below_the_seven(
+    measurements: list[dict], size: tuple[int, int]
+) -> None:
+    m = _permitted_frame(measurements, size)
+    row = m["permittedRow"]
+    assert len(row["cards"]) == PERMITTED_CARDS, row
+    assert row["box"]["height"] > 0, row["box"]
+    assert m["rows"][-1]["box"]["bottom"] <= row["box"]["top"] + 0.5, (m["rows"][-1], row["box"])
+    assert row["scrollWidth"] <= row["clientWidth"] + 1, (size, row)
+    for card in row["cards"]:
+        assert card["top"] >= row["inner"]["top"] - 0.5, (size, card, row["inner"])
+        assert card["bottom"] <= row["inner"]["bottom"] + 0.5, (size, card, row["inner"])
+        assert card["left"] >= row["inner"]["left"] - 0.5, (size, card, row["inner"])
+        assert card["right"] <= row["inner"]["right"] + 0.5, (size, card, row["inner"])
+    for seven in m["rows"]:
+        assert seven["box"]["height"] > 0, (size, seven["id"])
+        for rect in seven["children"] + seven["cards"]:
+            assert rect["bottom"] <= seven["inner"]["bottom"] + 0.5, (size, seven["id"], rect)
+
+
+@PERMITTED_EACH
+def test_no_two_cards_overlap_with_permitted_cards_on_the_board(
+    measurements: list[dict], size: tuple[int, int]
+) -> None:
+    m = _permitted_frame(measurements, size)
+    cards = m["boardCards"]
+    assert len(cards) >= PERMITTED_CARDS + 30, len(cards)
+    for i, a in enumerate(cards):
+        for b in cards[i + 1 :]:
+            assert not _overlap(a, b), (size, a, b)
+
+
+@PERMITTED_EACH
+def test_permitted_cards_are_as_wide_as_the_fitted_card_w(
+    measurements: list[dict], size: tuple[int, int]
+) -> None:
+    m = _permitted_frame(measurements, size)
+    row = m["permittedRow"]
+    assert row["cardW"].endswith("px"), row["cardW"]
+    card_w = float(row["cardW"][:-2])
+    for classes in row["classes"]:
+        assert "card-fit" in classes.split() and "card-md" not in classes.split(), classes
+    for card in row["cards"]:
+        assert abs(card["width"] - card_w) <= 0.5, (size, card, row["cardW"])
+        assert abs(card["width"] - 108) > 0.5, (size, card)

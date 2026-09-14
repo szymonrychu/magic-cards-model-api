@@ -420,6 +420,39 @@ def test_the_hover_preview_goes_away_on_scroll_and_on_a_mouse_press() -> None:
     assert result == {"scrolled": False, "pressed": False, "clicked": 1}
 
 
+def test_a_scroll_elsewhere_leaves_the_hover_preview_open_where_it_was() -> None:
+    """`render/log.js` scrolls the log to its newest line on every poll, and a
+    row next to the card may scroll too. Neither moves the hovered card, so
+    the preview stays open and in place; only a scroll of something holding
+    the card (its row, the board) or of the page itself closes it."""
+    result = run(
+        """
+        (async () => {
+          const log = box("log-box");
+          const card = cardEl("a", { left: 500, top: 300, width: 100, height: 140 });
+          await mounted(STATE({ battlefield: [CARD("a")] }));
+          mouse(card, "pointerover");
+          const before = zoomBox();
+          dispatch(log, "scroll", {});
+          dispatch(STACK, "scroll", {});
+          const afterUnrelated = { shown: shown(), box: zoomBox() };
+          dispatch(BOARD, "scroll", {});
+          const afterAncestor = shown();
+          mouse(card, "pointerout", { relatedTarget: document.body });
+          mouse(card, "pointerover");
+          const reopened = shown();
+          dispatch(document, "scroll", {});
+          const afterPage = shown();
+          return { before, afterUnrelated, afterAncestor, reopened, afterPage };
+        })()
+        """
+    )
+    assert result["afterUnrelated"] == {"shown": True, "box": result["before"]}
+    assert result["afterAncestor"] is False
+    assert result["reopened"] is True
+    assert result["afterPage"] is False
+
+
 def test_the_hover_preview_follows_a_card_updated_in_place() -> None:
     """`patchChildren` keeps a keyed card element alive across a poll and
     `updateCardNode` rewrites it in place, so the same element can come to

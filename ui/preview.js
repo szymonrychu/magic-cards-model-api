@@ -7,7 +7,9 @@
 //   `position: fixed` and `pointer-events: none` (`style.css`), so nothing on
 //   the board moves and every click still lands on the real card underneath.
 //   It goes away when the mouse leaves the card, when the card leaves the
-//   DOM, on any scroll, and on a press (the click that press becomes opens an
+//   DOM, when the page or anything holding the card scrolls (a scroll
+//   elsewhere - the log following its newest line, another row - leaves the
+//   card where it is, so the preview stays), and on a press (the click that press becomes opens an
 //   anchored confirm `#popover`, which the preview must not cover).
 //
 // * A finger (or pen) held on a card for `LONG_PRESS_MS` without moving more
@@ -406,6 +408,14 @@ export function mountCardPreview(root, store, view) {
     hideHover();
   };
 
+  // A scroll only moves the hovered card when the thing scrolling holds it,
+  // or is the page itself (`document`, or the window, which holds nothing).
+  const onScroll = (e) => {
+    if (!hoverAnchor) return;
+    const target = e.target;
+    if (!target || typeof target.contains !== "function" || target.contains(hoverAnchor)) hideHover();
+  };
+
   const onStore = () => {
     if (!hoverAnchor) return;
     if (!hoverAnchor.isConnected || !cardIdOf(hoverAnchor)) {
@@ -424,7 +434,7 @@ export function mountCardPreview(root, store, view) {
     ["pointercancel", onRelease],
     ["contextmenu", onCardDefault],
     ["selectstart", onCardDefault],
-    ["scroll", hideHover],
+    ["scroll", onScroll],
   ];
   const winListeners = [
     ["click", onClick, true],

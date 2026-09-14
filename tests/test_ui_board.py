@@ -639,6 +639,74 @@ def test_every_card_on_the_seven_rows_sizes_from_card_w() -> None:
     assert sum("card-back" in c for c in result) == 2
 
 
+def test_permitted_cards_size_from_their_own_fitted_card_w() -> None:
+    """`#permitted-row` used to draw fixed 108px `card-md` cards in a
+    content-sized row, so on a short board it pushed the seven rows under
+    their floor and scrolled. Its cards are `card-fit` now, sized by the
+    `--card-w` the fit pass writes on the row itself, and the row is hidden
+    while no permission exists."""
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + FIT_MOUNT
+        + """
+        (() => {
+          const permitted = boxed("permitted-row", true);
+          permitted.clientWidth = 600;
+          permitted.clientHeight = 130;
+          const exiled = (id) => ({
+            id, name: id, zone: "exile", controller: "alice", abilities: [],
+          });
+          const grant = (id) => ({ card: exiled(id), granted_by: "Bloodbraid Elf",
+            from_zone: "exile", usable_now: true, why_not: null });
+          const state = baseState();
+          const store = makeStore(baseApp(state));
+          const clicked = [];
+          m.mountBoard(document, store, {
+            onHandCard: NOOP, onPlayer: NOOP, onStackObject: NOOP, onPermanent: NOOP,
+            onPermission: (p) => clicked.push(p.card.id),
+          });
+          store.set({});
+          const empty = { hidden: permitted.hidden, cards: permitted.children.length };
+          const permissions = { alice: [grant("x1"), grant("x2")] };
+          store.set({ state: { ...state, play_permissions: permissions } });
+          permitted.children[1].onclick({});
+          const observed = observers.flatMap((o) => o.targets.map((t) => t.attrs.id));
+          return {
+            empty,
+            hidden: permitted.hidden,
+            classes: permitted.children.map((c) => [...c.classList.set]),
+            cardW: cardW("#permitted-row"),
+            clicked,
+            observed: observed.includes("permitted-row"),
+          };
+        })()
+        """,
+    )
+    assert result["empty"] == {"hidden": True, "cards": 0}
+    assert result["hidden"] is False
+    assert len(result["classes"]) == 2
+    for classes in result["classes"]:
+        assert "card-fit" in classes, classes
+        assert not {"card-sm", "card-md", "card-lg"} & set(classes), classes
+    # 130px high: floor((130) / (88/63)) = 93px, well inside 600px for two.
+    assert result["cardW"] == "93px"
+    assert result["clicked"] == ["x2"]
+    assert result["observed"] is True
+
+
+def test_the_permitted_row_is_a_fitted_share_of_the_board_not_content_sized() -> None:
+    css = (UI / "style.css").read_text()
+    found = re.search(r"\n#mtg-board > #permitted-row \{([^}]*)\}", css)
+    assert found is not None, "no #mtg-board > #permitted-row rule"
+    rule = found.group(1)
+    assert re.search(r"flex:\s*[0-9.]+ 1 0;", rule), rule
+    assert "flex: 0 0 auto" not in rule
+    assert "overflow-x: auto;" in rule and "overflow-y: hidden;" in rule
+    assert "flex-wrap: nowrap;" in rule
+    assert "--card-h: calc(var(--card-w, 76px) * 88 / 63);" in rule
+
+
 FIT_MOUNT = """
 const observers = [];
 globalThis.ResizeObserver = class {

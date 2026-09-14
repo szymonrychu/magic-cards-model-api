@@ -10,10 +10,13 @@
 // hover preview or a mid-flight transition. Attackers and blockers are marked
 // where they stand (`.attacking`/`.blocking`); there is no separate red zone.
 //
-// Every card on the seven board rows is `card-fit`: its size is the row's
-// `--card-w`, which `fitBoardRow` sets from `ui/fit.js` after every render
-// and whenever the board is resized, so a row's cards always fit its width
-// and height and a crowded row scrolls sideways once they reach the floor.
+// Every card on the seven board rows, and on `#permitted-row` under them, is
+// `card-fit`: its size is the row's `--card-w`, which `fitBoardRow` sets from
+// `ui/fit.js` after every render and whenever the board is resized, so a
+// row's cards always fit its width and height and a crowded row scrolls
+// sideways once they reach the floor. `#permitted-row` is fitted the same way
+// from its own flex share while it has cards, and is `hidden` (no box, no
+// share) while it has none.
 //
 // Which permanent belongs in which row, and which cards are drawn tucked
 // under another card, is decided by `ui/board_layout.js` - pure functions
@@ -373,7 +376,7 @@ function patchPermissions(container, permissions, onClick) {
     container,
     permissions,
     (p) => p.card.id,
-    (p) => cardNode(p.card, "card-md", {}),
+    (p) => cardNode(p.card, FIT, {}),
     (el, p) => {
       updateCardNode(el, p.card, { dimmed: !p.usable_now });
       // `p.rule` already carries its own CR citation (whichever effect
@@ -583,6 +586,7 @@ export function mountBoard(root, store, handlers) {
     [els.myLands, 0, els.myLandsCards],
     [els.myHand, 0],
   ];
+  if (els.permittedRow) fitted.push([els.permittedRow, 0]);
   const board = $("#mtg-board");
   const fitAll = () => {
     const floor = fitBoardFloor(board, fitted);
