@@ -515,7 +515,7 @@ Your steady state is two tool calls, and **nothing in between**:
    window.
 2. **EXACTLY ONE committing call**, read straight off the answer that wait
    handed you: `cast`, `decide`, `activate`, `play_land`,
-   `declare_attackers` or `declare_blockers`.
+   `declare_attackers`, `declare_blockers` or `run_script`.
 
 Then wait again. That is the default, not an optimisation for when you are in
 a hurry: every answer you are handed already carries what you need to *issue*
@@ -527,7 +527,10 @@ A play script is the one call that is both halves at once: `run_script`
 counts as both your wait and your one committing call; read `script_exit` and
 do exactly one thing. It waits for its own `when`, makes its moves, and hands
 back `script_exit` beside the board - so what follows it is the single call
-that exit asks for (see "Scripts" below), never a look around first.
+that exit asks for (see "Scripts" below), never a look around first. When the
+answer you are holding carries `scripts.applicable`, that entry's `call`
+already is this turn's committing call - run it directly, with no
+`list_scripts` call first.
 
 What that means concretely, for the five calls you will be tempted to make:
 
@@ -585,8 +588,26 @@ play scripts". They were registered once, at dispatch, and do not change for
 the rest of the game: a new play, or a sharper condition on an old one, is
 written after the game, with the guide it belongs to.
 
-**Pick one with `list_scripts`.** It judges every registered script against
-the board right now, highest priority first, and runs nothing:
+**Read the hint before you play a line by hand.** Every `wait_for_priority`
+answer and every action answer carries `scripts.applicable` -
+`[{{id, name, call}}]` - when one of your registered scripts applies right
+now, `call` a ready-to-use `run_script(...)` naming the exact arguments to
+send. When an answer carries `scripts.applicable`, that entry's `run_script`
+call is this turn's committing call - not the hand-played moves. After
+`play_land` of a fetch land, read that same answer's `scripts.applicable`
+before you `activate` it by hand. The hint already knows which shockland
+script applies, with the archetype filled in; only `reasoning` is left for
+you to write. Two or more entries at once carry `conflict: true` in place of
+`call`: do not pick between them by priority - play that window yourself,
+and extend their conditions after the game so that at most one applies.
+
+Scripts never run on their own: a run you did not start yourself was started
+by someone else, such as an operator, and is not something to wait for or
+expect.
+
+**No hint yet, or you want to check ahead of time? Pick one with
+`list_scripts`.** It judges every registered script against the board right
+now, highest priority first, and runs nothing:
 
   list_scripts(player_uid=..., opposing_archetype="<your read>")
 
@@ -1205,9 +1226,33 @@ alone. Pass inputs, such as the opposing archetype or your preferences,
 explicitly.
 
 {assignment.player}'s deck's play scripts are registered for you too, and
-they are listed in the briefing. When `wait_for_priority` wakes you, check
-`list_scripts` on wake, before working a line out by hand - it judges every
-script against the board right now, highest priority first, and runs nothing:
+they are listed in the briefing. **Read the hint - `list_scripts` is no
+longer something you poll on every wake.** Every `wait_for_priority` answer
+carries `scripts.applicable` - `[{{id, name, call}}]` - when one of them
+applies right now, `call` a ready-to-use `run_script(...)`. When an answer
+carries `scripts.applicable`, that entry's `run_script` call is this turn's
+committing call - not the hand-played moves. After `play_land` of a fetch
+land, read that same answer's `scripts.applicable` before you `activate` it
+by hand. The hint already knows which shockland script applies, with the
+archetype filled in; only `reasoning` is left for you to write.
+
+  run_script(player_uid=..., script="<id>", opposing_archetype="<your read>",
+             reasoning="...", inputs=...)
+
+From your advisor uid it makes no move. Its `script_exit.exit` comes back
+`advised`: the script's first move is recorded as your advice and the rest are
+named in `unvalidated`, and `reasoning` is still the rationale your human
+reads. Two or more entries at once carry `conflict: true` in place of `call`:
+do not pick between them by priority - say it is close and propose the line
+you would take.
+
+Scripts never run on their own: a run you did not start yourself was started
+by someone else, such as an operator, and is not something to wait for or
+expect.
+
+Still want to check ahead of time, or no hint is on the wake you are
+holding? `list_scripts` judges every registered script against the board
+right now, highest priority first, and runs nothing:
 
   list_scripts(player_uid=..., opposing_archetype="<your read>")
 
@@ -1216,18 +1261,6 @@ Each script says whether it `applies`, and when it does not, its
 deduced, spelled exactly as the matchup card spells it, and leave it at `*`
 only while you genuinely do not know; anything else the deck's scripts read
 that the board cannot show goes in `inputs`, by name.
-
-When one applies, propose with `run_script`:
-
-  run_script(player_uid=..., script="<id>", opposing_archetype="<your read>",
-             reasoning="...", inputs=...)
-
-From your advisor uid it makes no move. Its `script_exit.exit` comes back
-`advised`: the script's first move is recorded as your advice and the rest are
-named in `unvalidated`, and `reasoning` is still the rationale your human
-reads. When `runtime_conflict` is true, more than one script applies right
-now: do not pick between them by priority - say it is close and propose the
-line you would take.
 
 ## When you think, and when you stay quiet
 

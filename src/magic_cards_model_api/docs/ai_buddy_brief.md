@@ -90,6 +90,11 @@ line you would take.
   is JSON (`true`, `3`) and as text otherwise. It is the CLI spelling of the
   `inputs` parameter `run_script` and `list_scripts` take over MCP.
 
+Scripts never run on their own: a run you did not start yourself - through
+`script run` or the MCP `run_script` tool - was started by someone else,
+such as an operator staging a run from the CLI, and is not something to wait
+for or expect.
+
 ## When you think, and when you stay quiet
 
 You run the same wake loop an opponent's agent runs, and you run it for your

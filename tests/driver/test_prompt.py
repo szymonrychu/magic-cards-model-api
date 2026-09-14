@@ -783,6 +783,36 @@ LOOP_SCRIPT_DOCTRINE = (
     "read `script_exit` and do exactly one thing."
 )
 
+# S1: a script applicability hint (`scripts.applicable`) now rides every
+# wait/wake and action answer, so a seat no longer has to call `list_scripts`
+# to find out a script applies - the measured problem being that no seat ever
+# did, and cracked every fetch land by hand instead (`play_land` then
+# `activate`). This doctrine is pinned word for word in both MCP prompts.
+HINT_DOCTRINE = (
+    "When an answer carries `scripts.applicable`, that entry's `run_script` call is this "
+    "turn's committing call - not the hand-played moves.",
+    "After `play_land` of a fetch land, read that same answer's `scripts.applicable` before "
+    "you `activate` it by hand.",
+    "Scripts never run on their own: a run you did not start yourself was started by someone "
+    "else, such as an operator, and is not something to wait for or expect.",
+)
+
+LOOP_HINT_DOCTRINE = (
+    "When the answer you are holding carries `scripts.applicable`, that entry's `call` "
+    "already is this turn's committing call - run it directly, with no `list_scripts` call first."
+)
+
+#: The universal half of the same caution, for the two CLI briefs
+#: (`ai_seat_brief.md`, `ai_buddy_brief.md`) - no CLI hint field exists (S1
+#: is MCP-only), but the false belief this closes came from a CLI: root cause
+#: #3, staged `mcp-seat script run` calls during development that made a seat
+#: write "scripts auto-fire" into its own memory.
+CLI_HINT_CAUTION = (
+    "Scripts never run on their own: a run you did not start yourself - through `script run` "
+    "or the MCP `run_script` tool - was started by someone else, such as an operator staging a "
+    "run from the CLI, and is not something to wait for or expect."
+)
+
 BRIEFS = Path(__file__).resolve().parents[2] / "src" / "magic_cards_model_api" / "docs"
 
 
@@ -824,10 +854,37 @@ def test_seat_prompt_scripts_section_says_how_to_pick_a_script(tmp_path, guide):
     assert "inputs" in section
 
 
-def test_buddy_prompt_checks_list_scripts_on_wake_and_proposes_with_run_script(tmp_path, guide):
+def test_buddy_prompt_no_longer_checks_list_scripts_on_wake(tmp_path, guide):
+    """S1: the hint replaces the old "check `list_scripts` on wake"
+    instruction - a buddy proposes straight off `scripts.applicable` now."""
     section = _flat(_section(advisor_turn_zero(assignment(guide), tmp_path / "x.md"), "## Scripts"))
-    assert "check `list_scripts` on wake" in section
-    assert "propose with `run_script`" in section
+    assert "check `list_scripts` on wake" not in section
+    assert "run_script(" in section
+
+
+@pytest.mark.parametrize("sentence", HINT_DOCTRINE)
+def test_seat_prompt_scripts_section_carries_the_hint_doctrine(tmp_path, guide, sentence):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert sentence in _flat(_section(text, "## Scripts"))
+
+
+@pytest.mark.parametrize("sentence", HINT_DOCTRINE)
+def test_buddy_prompt_scripts_section_carries_the_hint_doctrine(tmp_path, guide, sentence):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert sentence in _flat(_section(text, "## Scripts"))
+
+
+def test_seat_prompt_loop_names_run_script_among_the_committing_calls(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The loop"))
+    assert "`run_script`" in section
+    assert LOOP_HINT_DOCTRINE in section
+
+
+@pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
+def test_briefs_scripts_section_says_scripts_never_auto_run(brief):
+    section = _flat(_section((BRIEFS / brief).read_text(), "## Scripts"))
+    assert CLI_HINT_CAUTION in section, f"{brief} is missing the never-auto-run caution"
 
 
 HANDOVER_PINS = (

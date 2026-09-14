@@ -429,6 +429,11 @@ and `--max-seconds` caps the command.
 A `script run` counts as both the wait and the one committing command of the
 loop: read `script_exit.exit` and do exactly one thing.
 
+Scripts never run on their own: a run you did not start yourself - through
+`script run` or the MCP `run_script` tool - was started by someone else,
+such as an operator staging a run from the CLI, and is not something to wait
+for or expect.
+
 - `chain_complete`: the moves are done and no next script applies. Wait again.
 - `not_applicable`: `failing_condition` says why. Play the window by hand.
 - `needs_input` or `invalid_input`: run it again with that input given, as a
