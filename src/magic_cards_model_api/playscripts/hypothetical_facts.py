@@ -37,7 +37,16 @@ anywhere else.
   something in the same matrix - the search targets are already asked about
   as ordinary lands (`_land_candidates` below includes every library land),
   so this reads their own `unlocks` answer rather than computing anything
-  new.
+  new. A land's own `unlocks` already fails closed for a lethal *optional*
+  payment against life *now* (CR 704.5a - `lethal_if_paid`), but the
+  search itself has its own life cost (a fetchland's "Pay 1 life", read off
+  the same line the search template matched, never a constant - the fetch
+  could cost something else or nothing at all) that is paid *first*, before
+  the found land's own optional payment is ever asked - so `unlocks_by_
+  search` fails closed too, for a found land whose optional payment would
+  be lethal only once the fetch's own life cost already came off first
+  (life at or below the two combined), even when neither payment alone
+  crosses zero.
 
 `payability_matrix` is called once per `build_hypothetical_facts` call, over
 every hand card and every candidate land (hand lands, library lands): "use
@@ -47,16 +56,49 @@ per pair" (O7).
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from magic_cards_model.machines.hypothetical import EntersState, payability_matrix
 from magic_cards_model.models import CardState, Game, Zone
 
 from ..serialize import _card_view
-from .selectors import BASIC_LAND_TYPES, _searched_basic_types
+from .selectors import BASIC_LAND_TYPES, SEARCH_TEMPLATE, _searched_basic_types, _texts
 
 #: `_BASIC_LAND_TYPES_FOLDED`-equivalent, cased as `Card.subtypes` reports.
 _BASIC_LAND_TYPES = frozenset(BASIC_LAND_TYPES)
+
+#: A card's own words for a life payment ("Pay 1 life", a fetchland's own
+#: activation cost; "pay 2 life", a shockland's optional payment prompt,
+#: `hypothetical.EntersPrediction.optional_costs`) - read off the card, D3,
+#: never a constant.
+_PAY_LIFE = re.compile(r"\bpay (?P<amount>\d+) life\b", re.IGNORECASE)
+
+
+def _fetch_life_cost(card_view: dict[str, Any], oracle_text: str) -> int:
+    """The life a search-template ability's own activation cost pays (a
+    fetchland's "Pay 1 life"), read off the same line - an ability's own
+    text, or one line of the printed oracle text - the search template
+    itself matched (D3): the card's own words, since a printing could cost a
+    different amount or none at all, never a constant. 0 when that line has
+    no life cost."""
+    for text in (*_texts(card_view), *oracle_text.splitlines()):
+        if SEARCH_TEMPLATE.search(text):
+            match = _PAY_LIFE.search(text)
+            if match is not None:
+                return int(match.group("amount"))
+    return 0
+
+
+def _optional_payment_life(prediction_optional_costs: tuple[str, ...]) -> int:
+    """The life a land's own optional payment prompts (`EntersPrediction.
+    optional_costs`) ask for, summed - 0 for a land with no such prompt, or
+    one whose optional cost is not a life payment at all."""
+    return sum(
+        int(match.group("amount"))
+        for prompt in prediction_optional_costs
+        if (match := _PAY_LIFE.search(prompt)) is not None
+    )
 
 
 def _is_land_candidate(card: CardState) -> bool:
@@ -110,7 +152,11 @@ def build_hypothetical_facts(game: Game, player: str) -> dict[str, Any]:
     matrix = payability_matrix(game, player, hand, lands)
     now_payable = {payability.card_id: payability for payability in matrix.now}
 
-    unlocking_land_ids: set[str] = set()
+    #: land id -> the life its own optional payment costs (0 for a land
+    #: with none), for every land that unlocks something - D3 needs the
+    #: amount, not just whether it unlocks, to fail closed when a hand
+    #: card's own search cost would already have been paid first.
+    unlocking_land_ids: dict[str, int] = {}
     for column in matrix.lands:
         prediction = column.prediction
         state = prediction.state.value
@@ -142,19 +188,29 @@ def build_hypothetical_facts(game: Game, player: str) -> dict[str, Any]:
         if is_hand_land:
             entry["unlocks"] = unlocks
         if unlocks:
-            unlocking_land_ids.add(land_id)
+            unlocking_land_ids[land_id] = _optional_payment_life(prediction.optional_costs)
 
     library_land_types: dict[str, set[str]] = {
         str(card.id): _land_subtypes(card) for card in library if card.card.is_land
     }
     for card in hand:
         view = _card_view(game, card, {})
-        searched = _searched_basic_types(view, str(view.get("oracle_text") or ""))
+        oracle_text = str(view.get("oracle_text") or "")
+        searched = _searched_basic_types(view, oracle_text)
         searched &= {word.casefold() for word in _BASIC_LAND_TYPES}
         if not searched:
             continue
+        # D3: the search's own life cost is paid before the found land's own
+        # optional payment is ever asked (CR 601.2h, then CR 119.4 as it
+        # enters), so both have to fit under the same life total - a land
+        # whose own optional payment reads safe against life *now*
+        # (`lethal_if_paid`, above) can still be lethal only once the
+        # fetch's own cost has already come off first.
+        fetch_cost = _fetch_life_cost(view, oracle_text)
         by_search = any(
-            types & searched and land_id in unlocking_land_ids
+            types & searched
+            and land_id in unlocking_land_ids
+            and me.life > fetch_cost + unlocking_land_ids[land_id]
             for land_id, types in library_land_types.items()
         )
         cards.setdefault(str(card.id), {})["unlocks_by_search"] = by_search

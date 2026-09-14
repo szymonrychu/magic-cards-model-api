@@ -206,6 +206,44 @@ def test_polluted_delta_unlocks_by_search_via_a_watery_grave_in_the_library(clie
     assert facts["cards"][delta_id]["unlocks_by_search"] is True
 
 
+def test_polluted_delta_fails_closed_when_the_fetch_cost_and_the_shock_are_lethal_together(
+    client, game
+):
+    """D3: Polluted Delta's own fetch cost is "Pay 1 life"; Watery Grave's
+    optional payment is "pay 2 life" (CR 614.1c). Neither alone is lethal
+    at 3 life read in isolation - the fetch leaves 2, and the shock's own
+    `lethal_if_paid` check (against life *now*, before the fetch's own cost
+    is paid) reads 3 - 2 = 1, not lethal either - but going through with
+    both in order (CR 601.2h, CR 119.4) leaves 0, a state-based loss (CR
+    704.5a). unlocks_by_search must fail closed rather than claim this is
+    safe."""
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Polluted Delta", "alice", "hand")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    add_card(client, game, "Watery Grave", "alice", "library")
+    live = _live(game)
+    alice = live.player("alice")
+    alice.life = 3
+    delta_id = str(_by_name(alice.hand, "Polluted Delta").id)
+
+    assert _facts(game)["cards"][delta_id]["unlocks_by_search"] is False
+
+
+def test_polluted_delta_unlocks_by_search_once_life_covers_both_costs(client, game):
+    """The same board, one life higher: 4 - (1 fetch + 2 shock) = 1, alive,
+    so it is safe and unlocks_by_search reads True again."""
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Polluted Delta", "alice", "hand")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    add_card(client, game, "Watery Grave", "alice", "library")
+    live = _live(game)
+    alice = live.player("alice")
+    alice.life = 4
+    delta_id = str(_by_name(alice.hand, "Polluted Delta").id)
+
+    assert _facts(game)["cards"][delta_id]["unlocks_by_search"] is True
+
+
 def test_without_the_swamp_island_does_not_unlock_psychic_frog(client, game):
     add_card(client, game, "Psychic Frog", "alice", "hand")
     add_card(client, game, "Island", "alice", "hand")
