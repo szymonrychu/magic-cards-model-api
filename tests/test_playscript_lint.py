@@ -314,6 +314,53 @@ def test_a_disabled_play_does_not_count_as_active(root):
     assert check_report(root)[0] == []
 
 
+# -- O8: too-many-active-for-archetype counts the live-together group --------
+
+
+def turn_condition(op: str, n: int) -> dict[str, Any]:
+    return {"kind": "turn", "op": op, "n": n}
+
+
+def test_5_plays_turn_ge_3_plus_3_plays_turn_le_2_pass_the_cap(root):
+    # Turn-range-disjoint plays can never both be live, so the cap compares
+    # the largest of the two groups (5), not their sum (8), against 6.
+    for i in range(5):
+        put(root, play(id=f"late{i}", priority=10, true=[turn_condition(">=", 3)], false=[]))
+    for i in range(3):
+        put(root, play(id=f"early{i}", priority=10, true=[turn_condition("<=", 2)], false=[]))
+    assert check_report(root)[0] == []
+
+
+def test_7_overlapping_plays_at_the_same_turn_range_fail_the_cap(root):
+    for i in range(7):
+        put(root, play(id=f"p{i}", priority=10, true=[turn_condition(">=", 3)], false=[]))
+    errors = [e for e in check_report(root)[0] if e.code == "too-many-active-for-archetype"]
+    assert len(errors) == 1
+    assert "7 " in errors[0].message
+
+
+def test_the_live_together_cap_is_also_proven_by_whose_turn_and_steps(root):
+    for i in range(4):
+        put(
+            root,
+            play(
+                id=f"mine{i}",
+                priority=10,
+                when={"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+            ),
+        )
+    for i in range(4):
+        put(
+            root,
+            play(
+                id=f"theirs{i}",
+                priority=10,
+                when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+            ),
+        )
+    assert check_report(root)[0] == []
+
+
 def test_unknown_archetype_key_reads_the_newest_analysis_run(tmp_path):
     root = make_root(tmp_path)
     older = (

@@ -14,7 +14,12 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   discriminated on `kind`. An optional field is left out, never `null`.
 - Top level: `schema_version` (1), `id` (equals the file stem), `name`,
   `intent?` (prose, ignored by machines), `priority` (0-100, higher tried
-  first, 0 = disabled), `opposing_archetypes` (1-32: `["*"]` alone, or matchup
+  first, 0 = disabled - at most 6 plays with priority > 0 may be *live
+  together* per archetype key, O8: the largest subset of the plays applying
+  to that key no two of which are provably exclusive by `whose_turn`,
+  `steps` or turn range, not the plain count that apply, so two groups a
+  deck's own turn guards already prove disjoint are never summed),
+  `opposing_archetypes` (1-32: `["*"]` alone, or matchup
   label slugs; `*` beside a key is `wildcard-with-keys`),
   `when {whose_turn: mine|theirs|either, steps: [1-4 distinct autopass steps,
   not declare_attackers/declare_blockers], stack: empty|any}` (a repeated step
