@@ -1462,6 +1462,7 @@ def run(argv: list[str] | None = None) -> int:
                 wait=args.wait,
                 max_seconds=args.max_seconds,
                 inputs=inputs,
+                invoked_via="cli",
             )
         else:
             answer = script_tools.listing(

@@ -50,6 +50,7 @@ def script_run(
     wall_ms: int | None = 100,
     priority: int | None = 50,
     reapplicable_after: str | None = None,
+    invoked_via: str = "mcp",
 ) -> dict[str, Any]:
     """One finished run's `script_run` row, every `ScriptRunIn` field set."""
     return row(
@@ -79,6 +80,7 @@ def script_run(
         resumes=resumes,
         wall_ms=wall_ms,
         reapplicable_after=reapplicable_after,
+        invoked_via=invoked_via,
     )
 
 
@@ -124,6 +126,68 @@ def test_no_script_runs_renders_as_a_named_absence():
 
 def test_an_empty_ledger_reports_an_empty_tally():
     assert eval_report.build_report([])["scripts"] == []
+
+
+# -- S1 T3: by_invoker, per seat -----------------------------------------------
+
+
+def test_a_seat_with_no_runs_reports_an_empty_by_invoker():
+    report = eval_report.build_report([ledger_game("g1", [], winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["by_invoker"] == {}
+
+
+def test_by_invoker_tallies_mcp_and_cli_separately_per_seat():
+    runs = [
+        script_run(2, "g1", "fetch-shock", invoked_via="mcp"),
+        script_run(3, "g1", "fetch-shock", invoked_via="mcp"),
+        script_run(4, "g1", "float", invoked_via="cli"),
+    ]
+    report = eval_report.build_report([ledger_game("g1", runs, winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["by_invoker"] == {"cli": 1, "mcp": 2}
+
+
+def test_by_invoker_keeps_each_seat_apart():
+    runs = [
+        script_run(2, "g1", "fetch-shock", seat="alice", invoked_via="mcp"),
+        script_run(3, "g1", "fetch-shock", seat="bob", invoked_via="cli"),
+    ]
+    report = eval_report.build_report([ledger_game("g1", runs, winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["by_invoker"] == {"mcp": 1}
+    assert report["seats"]["bob"]["scripts"]["by_invoker"] == {"cli": 1}
+
+
+def test_by_invoker_accumulates_across_games():
+    games = [
+        ledger_game("g1", [script_run(2, "g1", "s", invoked_via="cli")], winner="alice"),
+        ledger_game("g2", [script_run(2, "g2", "s", invoked_via="cli")], winner="alice"),
+    ]
+
+    report = eval_report.build_report(games)
+
+    assert report["seats"]["alice"]["scripts"]["by_invoker"] == {"cli": 2}
+
+
+def test_a_row_with_no_invoked_via_recorded_falls_back_to_unknown():
+    """A ledger row from before S1 carries no `invoked_via` at all."""
+    detail_row = script_run(2, "g1", "s")
+    del detail_row["payload"]["detail"]["invoked_via"]
+
+    report = eval_report.build_report([ledger_game("g1", [detail_row], winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["by_invoker"] == {"unknown": 1}
+
+
+def test_the_rendered_report_shows_by_invoker_on_the_seats_own_lines():
+    runs = [
+        script_run(2, "g1", "fetch-shock", seat="alice", invoked_via="mcp"),
+        script_run(3, "g1", "float", seat="alice", invoked_via="cli"),
+    ]
+    text = eval_report.render(eval_report.build_report([ledger_game("g1", runs, winner="alice")]))
+
+    assert "scripts by invoker cli=1, mcp=1" in text
 
 
 # -- one script ---------------------------------------------------------------

@@ -281,6 +281,11 @@ class _Context:
     deadline: float
     poll_seconds: float
     call_started: float
+    #: Who started this run - `"mcp"` (`mcp.run_script`) or `"cli"`
+    #: (`mcp-seat script run`) - carried onto both the start and the finish
+    #: row (`_run_fields`) so a seat, and `eval_report.py`, can tell its own
+    #: runs apart from one an operator staged from the CLI.
+    invoked_via: str = "mcp"
     #: The caller going away (an MCP call cancelled by an interrupt): read
     #: like the time cap, so a run waiting on the board stops at once.
     should_stop: Callable[[], bool] | None = None
@@ -318,11 +323,16 @@ def run_script(
     max_seconds: float = RUN_CAP_SECONDS,
     poll_seconds: float = POLL_SECONDS,
     should_stop: Callable[[], bool] | None = None,
+    invoked_via: str = "mcp",
 ) -> RunResult:
     """Run one registered script (and whatever single `next` play applies
     after it) for `seat`. `inputs` is passed to every condition check in the
     chain; `declared_inputs` is the deck's `inputs.json` list, which says
-    which inputs are required. Advise seats get `Exit.ADVISED`."""
+    which inputs are required. Advise seats get `Exit.ADVISED`.
+
+    `invoked_via` is who started this run - `"mcp"` or `"cli"` - carried onto
+    the start and finish rows this run posts (`schemas.ScriptRunIn.
+    invoked_via`, required there)."""
     if not reasoning or not reasoning.strip():
         return RunResult(
             True,
@@ -355,6 +365,7 @@ def run_script(
         poll_seconds=poll_seconds,
         call_started=now,
         should_stop=should_stop,
+        invoked_via=invoked_via,
     )
     if resume:
         return _resume(ctx, script_id, resume)
@@ -1435,6 +1446,7 @@ def _run_fields(ctx: _Context, run: _Run, play: dict[str, Any] | None) -> dict[s
         "turn": run.turn if isinstance(run.turn, int) else 0,
         "step": run.step or "unknown",
         "seq_start": run.seq_start,
+        "invoked_via": ctx.invoked_via,
     }
 
 

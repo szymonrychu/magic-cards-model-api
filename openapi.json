@@ -10843,6 +10843,14 @@
             ],
             "title": "Guides Revision"
           },
+          "invoked_via": {
+            "enum": [
+              "mcp",
+              "cli"
+            ],
+            "title": "Invoked Via",
+            "type": "string"
+          },
           "moves_done": {
             "anyOf": [
               {
@@ -11042,7 +11050,8 @@
           "role",
           "script_id",
           "turn",
-          "step"
+          "step",
+          "invoked_via"
         ],
         "title": "ScriptRunIn",
         "type": "object"

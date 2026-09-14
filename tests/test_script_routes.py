@@ -58,6 +58,7 @@ RUN_FIELDS = {
     "resumes",
     "wall_ms",
     "reapplicable_after",
+    "invoked_via",
 }
 
 
@@ -97,6 +98,7 @@ def run(**over: Any) -> dict[str, Any]:
         "script_id": FETCH_SHOCK["id"],
         "turn": 3,
         "step": "precombat_main",
+        "invoked_via": "mcp",
     }
     body.update(over)
     return body
@@ -697,6 +699,54 @@ def test_a_finish_needs_an_exit(client: TestClient, game: str) -> None:
     assert post_run(client, game, body, uid=alice).status_code == 422
 
 
+# ---------------------------------------------------------------------------
+# S1 T3: invoked_via - who started this run, mcp or cli
+# ---------------------------------------------------------------------------
+
+
+def test_a_start_needs_invoked_via(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    body = run()
+    del body["invoked_via"]
+
+    assert post_run(client, game, body, uid=alice).status_code == 422
+
+
+def test_a_finish_needs_invoked_via(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+    body = finish()
+    del body["invoked_via"]
+
+    assert post_run(client, game, body, uid=alice).status_code == 422
+
+
+def test_an_unknown_invoked_via_is_refused(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+
+    assert post_run(client, game, run(invoked_via="operator"), uid=alice).status_code == 422
+    assert post_run(client, game, finish(invoked_via="webhook"), uid=alice).status_code == 422
+
+
+@pytest.mark.parametrize("value", ["mcp", "cli"])
+def test_mcp_and_cli_are_both_accepted(client: TestClient, game: str, value: str) -> None:
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+
+    assert post_run(client, game, run(invoked_via=value), uid=alice).status_code == 200
+    assert post_run(client, game, finish(invoked_via=value), uid=alice).status_code == 200
+
+
+def test_a_finish_row_records_its_invoked_via(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+
+    assert post_run(client, game, finish(invoked_via="cli"), uid=alice).status_code == 200
+
+    [row] = script_rows(audit.entries(game))
+    assert row["detail"]["invoked_via"] == "cli"
+
+
 def test_an_unknown_phase_is_refused(client: TestClient, game: str) -> None:
     alice = seat_uid(game, "alice")
 
@@ -986,7 +1036,8 @@ def test_script_runs_is_not_a_mutating_game_action() -> None:
 
 def test_the_seatkit_19_paragraph_names_the_script_routes() -> None:
     source = Path(seatkit.__file__).read_text()
-    paragraph = source.split("PROTOCOL_VERSION = ", 1)[1].split("`seatkit-18`", 1)[0]
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-19`", 1)[1].split("`seatkit-18`", 1)[0]
     for term in (
         "/seats/{uid}/scripts",
         "/script-runs",

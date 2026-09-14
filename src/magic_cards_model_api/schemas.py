@@ -560,6 +560,14 @@ class ScriptRunIn(RequestModel):
     wall_ms: int | None = Field(default=None, ge=0)
     reapplicable_after: str | None = None
     """When the runner may try this script again."""
+    invoked_via: Literal["mcp", "cli"]
+    """Which front end started this run: the MCP `run_script` tool, or
+    `mcp-seat script run`. Required on both `start` and `finish` - S1: a live
+    seat cracked every fetch land by hand because nothing told it a script
+    applied, and a stale memory line claiming scripts "auto-fire" traced back
+    to runs a human had staged from the CLI during development. Recording who
+    actually started a run is what lets a seat (and `eval_report.py`) tell
+    its own runs apart from one an operator staged."""
 
     @model_validator(mode="after")
     def _a_finish_names_its_exit(self) -> ScriptRunIn:

@@ -104,6 +104,21 @@ def test_a_run_answers_with_the_narrowed_board_and_script_exit_only(
     assert [row["exit"] for row in finished(board)] == ["chain_complete"]
 
 
+def test_a_run_records_invoked_via_mcp(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 T3: the MCP `run_script` tool reports its own runs as `"mcp"`."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    _, server = server_for(client, monkeypatch, board)
+
+    run(server, alice, "drop")
+
+    [row] = finished(board)
+    assert row["invoked_via"] == "mcp"
+
+
 # -- exit propagation -----------------------------------------------------------
 
 

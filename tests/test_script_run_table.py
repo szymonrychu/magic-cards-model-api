@@ -19,6 +19,7 @@ def run_detail(
     priority: int | None = 50,
     advise: bool = False,
     reapplicable_after: str | None = None,
+    invoked_via: str = "mcp",
 ) -> dict[str, Any]:
     return {
         "player": seat,
@@ -45,6 +46,7 @@ def run_detail(
         "resumes": 0,
         "wall_ms": 10,
         "reapplicable_after": reapplicable_after,
+        "invoked_via": invoked_via,
     }
 
 
@@ -107,8 +109,8 @@ def test_one_script_is_a_header_and_one_row():
     table = report.script_run_table(records, "g1", "alice")
 
     assert lines_of(table) == [
-        "script | priority | runs | exits | reapplicable_after",
-        "fetch-shock | 60 | 3 | chain_complete=2 refused=1 | 1",
+        "script | priority | runs | exits | reapplicable_after | invoked_via",
+        "fetch-shock | 60 | 3 | chain_complete=2 refused=1 | 1 | mcp=3",
     ]
     assert report.TRUNCATION_MARKER not in table
 
@@ -126,7 +128,7 @@ def test_reapplicable_after_counts_only_runs_whose_recheck_still_applies():
     ]
 
     assert row_for(report.script_run_table(records, "g1", "alice"), "s") == (
-        "s | 50 | 5 | chain_complete=4 no_match=1 | 2"
+        "s | 50 | 5 | chain_complete=4 no_match=1 | 2 | mcp=5"
     )
 
 
@@ -134,7 +136,7 @@ def test_audit_entries_shaped_rows_are_read_the_same():
     records = [entry(1, audit.SCRIPT_RUN_ACTION, run_detail("fetch-shock", priority=60))]
 
     assert row_for(report.script_run_table(records, "g1", "alice"), "fetch-shock") == (
-        "fetch-shock | 60 | 1 | chain_complete=1 | 0"
+        "fetch-shock | 60 | 1 | chain_complete=1 | 0 | mcp=1"
     )
 
 
@@ -142,7 +144,7 @@ def test_a_script_with_no_priority_prints_a_dash():
     records = [stored(1, audit.SCRIPT_RUN_ACTION, run_detail("s", priority=None))]
 
     assert row_for(report.script_run_table(records, "g1", "alice"), "s") == (
-        "s | - | 1 | chain_complete=1 | 0"
+        "s | - | 1 | chain_complete=1 | 0 | mcp=1"
     )
 
 
@@ -176,8 +178,8 @@ def test_many_scripts_are_ordered_by_priority_then_id():
         "low",
         "unranked",
     ]
-    assert row_for(table, "low") == "low | 10 | 2 | chain_complete=1 refused=1 | 0"
-    assert row_for(table, "high-a") == "high-a | 90 | 1 | no_match=1 | 0"
+    assert row_for(table, "low") == "low | 10 | 2 | chain_complete=1 refused=1 | 0 | mcp=2"
+    assert row_for(table, "high-a") == "high-a | 90 | 1 | no_match=1 | 0 | mcp=1"
 
 
 # -- advise separation --------------------------------------------------------
@@ -196,8 +198,52 @@ def test_advise_runs_are_a_row_of_their_own():
 
     table = report.script_run_table(records, "g1", "alice")
 
-    assert row_for(table, "s") == "s | 50 | 1 | chain_complete=1 | 0"
-    assert row_for(table, "s (advise)") == "s (advise) | 50 | 2 | chain_complete=1 declined=1 | 1"
+    assert row_for(table, "s") == "s | 50 | 1 | chain_complete=1 | 0 | mcp=1"
+    assert row_for(table, "s (advise)") == (
+        "s (advise) | 50 | 2 | chain_complete=1 declined=1 | 1 | mcp=2"
+    )
+
+
+# -- invoked_via ----------------------------------------------------------------
+
+
+def test_a_seats_own_mcp_run_names_no_operator():
+    records = [stored(1, audit.SCRIPT_RUN_ACTION, run_detail("s", invoked_via="mcp"))]
+
+    assert row_for(report.script_run_table(records, "g1", "alice"), "s") == (
+        "s | 50 | 1 | chain_complete=1 | 0 | mcp=1"
+    )
+
+
+def test_a_cli_run_is_labelled_not_started_by_you():
+    records = [stored(1, audit.SCRIPT_RUN_ACTION, run_detail("s", invoked_via="cli"))]
+
+    assert row_for(report.script_run_table(records, "g1", "alice"), "s") == (
+        "s | 50 | 1 | chain_complete=1 | 0 | cli=1 (not started by you)"
+    )
+
+
+def test_a_mix_of_mcp_and_cli_runs_tallies_both_and_still_flags_cli():
+    records = [
+        stored(1, audit.SCRIPT_RUN_ACTION, run_detail("s", invoked_via="mcp")),
+        stored(2, audit.SCRIPT_RUN_ACTION, run_detail("s", invoked_via="mcp")),
+        stored(3, audit.SCRIPT_RUN_ACTION, run_detail("s", invoked_via="cli")),
+    ]
+
+    assert row_for(report.script_run_table(records, "g1", "alice"), "s") == (
+        "s | 50 | 3 | chain_complete=3 | 0 | cli=1 mcp=2 (not started by you)"
+    )
+
+
+def test_a_row_with_no_invoked_via_recorded_falls_back_to_unknown():
+    """A ledger row from before S1 carries no `invoked_via` at all."""
+    detail = run_detail("s")
+    del detail["invoked_via"]
+    records = [stored(1, audit.SCRIPT_RUN_ACTION, detail)]
+
+    assert row_for(report.script_run_table(records, "g1", "alice"), "s") == (
+        "s | 50 | 1 | chain_complete=1 | 0 | unknown=1"
+    )
 
 
 # -- truncation -----------------------------------------------------------------
@@ -227,8 +273,8 @@ def test_a_table_past_four_kilobytes_is_cut_with_a_marker():
 
 
 def test_a_table_exactly_at_the_limit_is_not_cut():
-    header = "script | priority | runs | exits | reapplicable_after\n"
-    fixed = " | 1 | 1 | chain_complete=1 | 0"
+    header = "script | priority | runs | exits | reapplicable_after | invoked_via\n"
+    fixed = " | 1 | 1 | chain_complete=1 | 0 | mcp=1"
     script_id = "x" * (report.TABLE_LIMIT_BYTES - len(header) - len(fixed))
     records = [stored(1, audit.SCRIPT_RUN_ACTION, run_detail(script_id, priority=1))]
 

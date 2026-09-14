@@ -399,6 +399,7 @@ class _SeatTally:
     unknown: int = 0
     unchecked: int = 0
     unclassified: dict[str, int] = field(default_factory=dict)
+    by_invoker: dict[str, int] = field(default_factory=dict)
 
 
 def ending_of(payloads: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
@@ -470,6 +471,14 @@ def build_report(
             detail = payload.get("detail") or {}
             player = detail.get("player")
             if not isinstance(player, str) or player not in seats:
+                continue
+            if action == SCRIPT_RUN_ACTION:
+                # `by_invoker`: who started each of this seat's finished
+                # script runs - `mcp` (its own `run_script` calls) or `cli`
+                # (`mcp-seat script run`, most often an operator staging one).
+                invoker = str(detail.get("invoked_via") or "unknown")
+                tally = seats[player]
+                tally.by_invoker[invoker] = tally.by_invoker.get(invoker, 0) + 1
                 continue
             if action in NOT_PLAY:
                 continue
@@ -661,6 +670,10 @@ def _seat_report(tally: _SeatTally) -> dict[str, Any]:
         "rules_error_rate": beta_interval(tally.rules, tally.attempts),
         "offered_refusal_rate": beta_interval(tally.offered, tally.attempts),
         "stale_race_rate": beta_interval(tally.stale, tally.attempts),
+        # S1 T3: who started each of this seat's finished script runs -
+        # `mcp` (`mcp.run_script`) or `cli` (`mcp-seat script run`, most
+        # often an operator staging one rather than the seat itself).
+        "scripts": {"by_invoker": dict(sorted(tally.by_invoker.items()))},
     }
 
 
@@ -806,6 +819,10 @@ def render(report: Mapping[str, Any]) -> str:
                 f"    unchecked       {split['unchecked']} refusal(s) carry no detail.offered - "
                 "not counted as either"
             )
+        by_invoker = seat.get("scripts", {}).get("by_invoker") or {}
+        if by_invoker:
+            rows = ", ".join(f"{name}={count}" for name, count in sorted(by_invoker.items()))
+            lines.append(f"  scripts by invoker {rows}")
         lines.append("")
 
     lines.extend(_script_lines(report.get("scripts") or []))

@@ -969,6 +969,7 @@ def test_already_ran_from_the_start_route_is_surfaced(
             "script_id": "drop",
             "turn": now["turn_number"],
             "step": now["step"],
+            "invoked_via": "mcp",
         },
     )
     assert earlier.status_code == 200, earlier.text

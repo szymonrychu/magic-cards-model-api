@@ -1010,6 +1010,7 @@ def _script_run(client: TestClient, game_id: str, uid: str, phase: str, **over: 
         "opposing_archetype_asserted": "dimir-frog",
         "turn": 1,
         "step": "precombat_main",
+        "invoked_via": "mcp",
         **({"exit": "completed", "refusal_text": "a secret refusal"} if phase == "finish" else {}),
         **over,
     }
