@@ -7,8 +7,10 @@
 <!-- A home-screen app: Android installs it fullscreen in landscape; iOS opens
      it standalone (apple-mobile-web-app-capable only matters before iOS 26).
      Relative like every other asset, so the manifest's own relative
-     start_url reopens the game it was installed from. -->
-<link rel="manifest" href="manifest.webmanifest" />
+     start_url reopens the game it was installed from. `use-credentials`
+     because a manifest is fetched without cookies otherwise, and behind
+     oauth2-proxy that fetch would get the login page instead. -->
+<link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials" />
 <meta name="theme-color" content="#10131a" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />

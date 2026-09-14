@@ -79,6 +79,12 @@ PERMITTED_CARDS = 3
 SAFE_AREA = (844, 390)
 SAFE_INSETS = {"top": 0, "right": 47, "bottom": 21, "left": 47}
 
+#: The one frame where the decision window is open on a phone with its
+#: remembered spot at the very top edge (`localStorage`, as a drag there used
+#: to leave it), mounted twice as a reload would. Its title bar is the only
+#: way to move it, so it must never sit under the top row.
+DECISION_TOP = (844, 390)
+
 MOBILE_QUERY = "(max-width: 1100px), (pointer: coarse) and (orientation: landscape)"
 
 SEVEN_ROWS = [
@@ -204,6 +210,7 @@ import {{ mountBoard }} from "/render/board.js";
 import {{ mountTopbar }} from "/render/panels.js";
 import * as ribbon from "/render/ribbon.js";
 import {{ mountFullscreen }} from "/fullscreen.js";
+import {{ mountDecisionWindow, WINDOW_POSITION_KEY }} from "/render/decision_window.js";
 if (location.search.includes("safe=1")) {{
   const insets = document.createElement("style");
   insets.textContent = ":root {{ " + Object.entries({json.dumps(SAFE_INSETS)})
@@ -250,6 +257,21 @@ if (location.search.includes("drawer=open")) {{
 const rail = $("#rail-pass");
 if (rail) store.subscribe((a) => ribbon.renderRailPass(rail, a, {{ onVerb: noop }}));
 store.set({{}});
+if (location.search.includes("decision=top")) {{
+  const spot = JSON.stringify({{ left: 40, top: 0 }});
+  try {{ localStorage.setItem(WINDOW_POSITION_KEY, spot); }} catch {{}}
+  const scry = {{
+    generation: 1, player: state.you, kind: "scry", prompt: "Scry 2.", source: "Opt",
+    amount: 2, exact: false, cards: ["x1", "x2"], card_labels: ["Opt", "Island"],
+    targets: [], target_minimum: 0, target_maximum: null, affirmative_is_legal: true,
+    options: [], moved_label: "", kept_label: "", default_cards: null,
+  }};
+  const handlers = {{ onDecisionDraft: noop, onDecide: noop, onPregame: noop }};
+  // Mounted, shown, then mounted again: the reload a saved spot survives.
+  mountDecisionWindow(document, store, handlers);
+  store.set({{ state: {{ ...state, pending_decision: scry }} }});
+  mountDecisionWindow(document, store, handlers);
+}}
 </script>
 </body></html>"""
 
@@ -264,7 +286,8 @@ const SIZES = {json.dumps(VIEWPORTS)};
 const FRAMES = [...SIZES.map((size) => ({{ size, open: false, permitted: false }})),
   {{ size: {json.dumps(list(DRAWER_OPEN))}, open: true, permitted: false }},
   ...{json.dumps(PERMITTED)}.map((size) => ({{ size, open: false, permitted: true }})),
-  {{ size: {json.dumps(list(SAFE_AREA))}, open: false, permitted: false, safe: true }}];
+  {{ size: {json.dumps(list(SAFE_AREA))}, open: false, permitted: false, safe: true }},
+  {{ size: {json.dumps(list(DECISION_TOP))}, open: false, permitted: false, decision: true }}];
 const MOBILE = {json.dumps(MOBILE_QUERY)};
 const ROWS = {json.dumps(SEVEN_ROWS)};
 const REGIONS = ["#topbar", "#banners", "#zone-ribbon", "#side-panel", "#mtg-board"];
@@ -278,7 +301,7 @@ const box = (el) => {{
   const {{ left, top, right, bottom, width, height }} = el.getBoundingClientRect();
   return {{ left, top, right, bottom, width, height }};
 }};
-function measure(frame, {{ size, open, permitted, safe }}) {{
+function measure(frame, {{ size, open, permitted, safe, decision }}) {{
   const w = frame.contentWindow;
   const d = frame.contentDocument;
   const $ = (sel) => d.querySelector(sel);
@@ -351,6 +374,9 @@ function measure(frame, {{ size, open, permitted, safe }}) {{
     open,
     permitted,
     safe: Boolean(safe),
+    decision: Boolean(decision),
+    decisionWindowHidden: $("#decision-window").hidden,
+    decisionHandle: box($("#decision-window-handle")),
     fullscreen: box($("#fullscreen-toggle")),
     fullscreenDisplay: display("#fullscreen-toggle"),
     fullscreenFirst: $("#game-toolbar").firstElementChild === $("#fullscreen-toggle"),
@@ -413,11 +439,15 @@ function measure(frame, {{ size, open, permitted, safe }}) {{
     stackCards: $("#stack-row").querySelectorAll(".card").length,
   }};
 }}
-const frames = FRAMES.map(({{ size: [width, height], open, permitted, safe }}) => {{
+const frames = FRAMES.map(({{ size: [width, height], open, permitted, safe, decision }}) => {{
   const f = document.createElement("iframe");
   f.style.cssText = `width:${{width}}px;height:${{height}}px;border:0;display:block`;
-  const query = [open ? "drawer=open" : "", permitted ? "permitted=1" : "", safe ? "safe=1" : ""]
-    .filter(Boolean).join("&");
+  const query = [
+    open ? "drawer=open" : "",
+    permitted ? "permitted=1" : "",
+    safe ? "safe=1" : "",
+    decision ? "decision=top" : "",
+  ].filter(Boolean).join("&");
   f.src = "/__viewport_game.html" + (query ? "?" + query : "");
   document.getElementById("frames").appendChild(f);
   return new Promise((resolve) => f.addEventListener("load", () => resolve(f)));
@@ -511,7 +541,7 @@ def measurements(tmp_path_factory: pytest.TempPathFactory) -> list[dict]:
         tmp_path_factory.mktemp("chrome-profile"),
     )
     assert not isinstance(data, dict), data
-    assert len(data) == len(VIEWPORTS) + 1 + len(PERMITTED) + 1, len(data)
+    assert len(data) == len(VIEWPORTS) + 1 + len(PERMITTED) + 1 + 1, len(data)
     return data
 
 
@@ -1077,7 +1107,7 @@ def test_the_fullscreen_button_leads_the_toolbar_on_screen_and_covers_nothing(
 
 
 def _safe_frame(measurements: list[dict]) -> dict:
-    m = measurements[-1]
+    m = measurements[-2]
     assert m["safe"] is True and m["size"] == list(SAFE_AREA), m["size"]
     return m
 
@@ -1124,3 +1154,20 @@ def test_nothing_a_player_touches_sits_in_the_safe_area_insets(measurements: lis
     for bar_button in m["toolbarButtons"]:
         for rail_button in m["railButtons"] + [m["toggle"]]:
             assert not _overlap(bar_button, rail_button), (bar_button, rail_button)
+
+
+def test_a_decision_window_remembered_at_the_top_keeps_its_title_bar_below_the_row(
+    measurements: list[dict],
+) -> None:
+    """At 844x390 a saved spot at top 0, mounted again as a reload does, still
+    leaves the whole title bar - the window's only drag handle - below the
+    top row that paints over it, and on screen."""
+    m = measurements[-1]
+    assert m["decision"] is True and m["size"] == list(DECISION_TOP), m["size"]
+    width, height = m["size"]
+    handle, bar = m["decisionHandle"], m["toolbar"]
+    assert m["decisionWindowHidden"] is False, m
+    assert handle["height"] > 0, handle
+    assert not _overlap(handle, bar), (handle, bar)
+    assert handle["top"] >= bar["bottom"] - 0.5, (handle, bar)
+    assert _inside(handle, width, height), (handle, m["size"])

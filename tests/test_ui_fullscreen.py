@@ -401,8 +401,13 @@ def _head() -> str:
     return head.group(1)
 
 
-def test_the_head_links_the_manifest_relatively() -> None:
-    assert '<link rel="manifest" href="manifest.webmanifest" />' in _head()
+def test_the_head_links_the_manifest_relatively_with_credentials() -> None:
+    """Behind oauth2-proxy every non-/api/ request needs the session cookie, and
+    a browser fetches the manifest without cookies unless the link asks for
+    them - the proxy would answer with the login page and the manifest would
+    be dropped (no install prompt, no fullscreen, no icon)."""
+    link = '<link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials" />'
+    assert link in _head()
 
 
 def test_the_head_carries_the_home_screen_meta_tags() -> None:

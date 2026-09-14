@@ -1180,6 +1180,147 @@ def test_a_remembered_position_off_screen_is_clamped_back_inside() -> None:
     assert result == {"left": 720, "top": 0, "clamp": {"left": 0, "top": 400}}
 
 
+# The top row (`#game-toolbar`) spans the width above the board and paints
+# over the window (z-index 55 over 35). The window moves only by its title
+# bar, so a title bar under the row could never be grabbed again - and a
+# remembered spot would put it back there on every reload.
+TOP_ROW = """
+function topRow(top, bottom) {
+  const row = boxed("div", "game-toolbar");
+  row.rect = { left: 0, right: 1200, top, bottom, width: 1200, height: bottom - top };
+  return row;
+}
+HANDLE.rect = { left: 0, right: 480, top: 0, bottom: 30, width: 480, height: 30 };
+"""
+
+
+def test_the_pure_clamp_keeps_the_title_bar_below_the_row_and_above_the_bottom() -> None:
+    result = _run(
+        """
+        (() => {
+          const size = { width: 480, height: 360 };
+          const viewport = { width: 844, height: 390 };
+          const limits = { top: 48, handle: 30 };
+          return {
+            atZero: m.clampPosition({ left: 10, top: 0 }, size, viewport, limits),
+            above: m.clampPosition({ left: 10, top: -300 }, size, viewport, limits),
+            // taller than the room below the row: its title bar still shows
+            tallLow: m.clampPosition({ left: 10, top: 5000 }, size, viewport, limits),
+            small: m.clampPosition(
+              { left: 10, top: 5000 }, { width: 200, height: 30 }, viewport, limits
+            ),
+            noLimits: m.clampPosition({ left: 10, top: 0 }, size, viewport),
+          };
+        })()
+        """
+    )
+    assert result["atZero"] == {"left": 10, "top": 48}
+    assert result["above"] == {"left": 10, "top": 48}
+    assert result["tallLow"] == {"left": 10, "top": 48}
+    assert result["small"] == {"left": 10, "top": 390 - 30}
+    assert result["noLimits"] == {"left": 10, "top": 0}
+
+
+def test_dragging_to_the_top_edge_stops_the_title_bar_under_the_row() -> None:
+    result = _run(
+        TOP_ROW
+        + """
+        (() => {
+          const storage = memoryStorage();
+          topRow(20, 48);  // a 28px strip dropped by a 20px safe-area inset
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          m.mountDecisionWindow(document, store, handlersFor(store, []), { storage });
+          store.set({});
+          const at = pos();
+          ptr(TITLE, "pointerdown", at.left + 20, at.top + 10, "touch", 2);
+          ptr(document, "pointermove", 300, -900, "touch", 2);
+          const dragged = pos();
+          ptr(document, "pointerup", 300, -900, "touch", 2);
+          return { dragged, saved: JSON.parse(storage.data[m.WINDOW_POSITION_KEY]) };
+        })()
+        """,
+        P=SCRY,
+    )
+    assert result["dragged"]["top"] == 48, result
+    assert result["saved"]["top"] == 48, result
+
+
+def test_a_remembered_top_of_zero_is_reclamped_below_the_row_on_mount() -> None:
+    result = _run(
+        TOP_ROW
+        + """
+        (() => {
+          const out = {};
+          topRow(0, 44);
+          const remembered = JSON.stringify({ left: 40, top: 0 });
+          const storage = memoryStorage({ [m.WINDOW_POSITION_KEY]: remembered });
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          m.mountDecisionWindow(document, store, handlersFor(store, []), { storage });
+          store.set({});
+          out.shown = pos();
+          // a window already showing at the top when the page mounts again
+          WIN.style.top = "0px";
+          m.mountDecisionWindow(document, store, handlersFor(store, []), { storage });
+          out.remounted = pos();
+          return out;
+        })()
+        """,
+        P=SCRY,
+    )
+    assert result["shown"] == {"left": 40, "top": 44}, result
+    assert result["remounted"] == {"left": 40, "top": 44}, result
+
+
+def test_without_a_top_row_the_window_may_still_reach_the_top_edge() -> None:
+    result = _run(
+        """
+        (() => {
+          const remembered = JSON.stringify({ left: 40, top: 0 });
+          const storage = memoryStorage({ [m.WINDOW_POSITION_KEY]: remembered });
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          m.mountDecisionWindow(document, store, handlersFor(store, []), { storage });
+          store.set({});
+          return pos();
+        })()
+        """,
+        P=SCRY,
+    )
+    assert result == {"left": 40, "top": 0}
+
+
+def test_a_resize_reclamps_below_the_row_and_above_the_bottom() -> None:
+    result = _run(
+        TOP_ROW
+        + """
+        (() => {
+          const out = {};
+          const row = topRow(0, 28);
+          const remembered = JSON.stringify({ left: 40, top: 28 });
+          const storage = memoryStorage({ [m.WINDOW_POSITION_KEY]: remembered });
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          m.mountDecisionWindow(document, store, handlersFor(store, []), { storage });
+          store.set({});
+          out.before = pos();
+          const resize = () => { for (const fn of window.listeners.resize || []) fn({}); };
+          // the row grows (a desktop row, or a new safe-area inset)
+          row.rect = { ...row.rect, top: 8, bottom: 60, height: 52 };
+          resize();
+          out.taller = pos();
+          // the viewport shrinks below the window: the title bar stays on screen
+          WIN.style.top = "700px";
+          window.innerHeight = 300;
+          resize();
+          out.shorter = pos();
+          return out;
+        })()
+        """,
+        P=SCRY,
+    )
+    assert result["before"] == {"left": 40, "top": 28}, result
+    assert result["taller"] == {"left": 40, "top": 60}, result
+    assert result["shorter"] == {"left": 40, "top": 60}, result
+
+
 def test_the_window_works_when_storage_throws() -> None:
     result = _run(
         """
