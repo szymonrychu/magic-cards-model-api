@@ -154,3 +154,21 @@ def test_the_app_mounts_the_advisor_panel_and_no_log_panel() -> None:
     assert "mountLog" not in app, "app.js still mounts the removed log panel"
     assert "render/log.js" not in app, "app.js still imports the removed log panel's module"
     assert "log?since=" in app, "the log poll the advisor panel reads must stay"
+
+
+def test_the_stylesheets_side_panel_comment_counts_its_sections() -> None:
+    """The comment above the side panel's flex rules names each stacked
+    section and how many there are. With the log panel gone that count must
+    match both the ids it lists and `#side-panel`'s real children, so the
+    comment does not keep describing a removed panel."""
+    words = {"four": 4, "five": 5, "six": 6, "seven": 7}
+    comment = re.search(r"/\* The side panel's (\w+) stacked sections:(.*?)\*/", _css(), re.S)
+    assert comment, "could not find the side panel's section comment in ui/style.css"
+    listed = re.findall(r"\(`#([\w-]+)`", comment.group(2))
+    side = SIDE_PANEL.search(_index())
+    assert side, "could not find #side-panel in ui/index.html"
+    children = re.findall(r'<div id="([\w-]+)"', side.group(1))
+    assert listed == children, (listed, children)
+    assert words.get(comment.group(1)) == len(children), (
+        f"comment says {comment.group(1)!r} sections, #side-panel has {len(children)}"
+    )

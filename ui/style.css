@@ -1289,7 +1289,7 @@ h3 { font-size: 14px; }
   border-radius: 9px;
   padding: 10px 12px;
 }
-/* The side panel's six stacked sections: what is being asked
+/* The side panel's five stacked sections: what is being asked
    (`#prompt-box`), the announcement in progress (`#casting-strip`), the
    priority controls (`#priority-box`), the stop conditions autopilot will
    halt for (`#stops-box`), the mtg-buddy advisor's current proposal
