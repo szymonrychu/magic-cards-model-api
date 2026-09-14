@@ -183,10 +183,9 @@ GAME_OVER_ACTION = "game_over"
 SCRIPT_RUN_ACTION = "script_run"
 CHAIN_COMPLETE_EXIT = "chain_complete"
 
-#: `audit.PLAN_ACTION`/`audit.ADVICE_ACTION`, named locally like every other
-#: action constant above rather than imported - this module reads `audit`'s
-#: rows, never its code.
-PLAN_ACTION = "plan_declared"
+#: `audit.ADVICE_ACTION`, named locally like every other action constant
+#: above rather than imported - this module reads `audit`'s rows, never its
+#: code.
 ADVICE_ACTION = "advice"
 
 
@@ -359,29 +358,33 @@ def _turn_instances(payloads: Sequence[dict[str, Any]]) -> list[_TurnInstance]:
     actually begun (CR 500.1), oldest first - the unit `own_turn_first_
     action_ms` measures over.
 
-    **Identity.** A row's own `turn`/`active_player` - what `audit.record`
-    stamped it with at *write* time - is the primary identity: every row
-    already carries it (T-S2A7), and it is always the physical position, so
-    grouping by the `(turn, active_player)` pair is already correct for the
-    overwhelmingly common case (no extra turn repeating a player).
+    **Identity.** A row's own `active_player`/`turns_taken` - what `audit.
+    record` stamps at *write* time - is the primary identity: `turns_taken`
+    (`TurnMachine.turns_taken`) goes up once per turn that actually begins,
+    extra turns (CR 500.7) included, unlike `turn_number` (CR 500.1's count
+    of rounds of the table), which CR 500.7 leaves alone for one. So an
+    ordinary turn and an extra turn granted to the same seat right after it
+    share one `(turn_number, active_player)` pair but never one
+    `turns_taken`, and grouping on `(active_player, turns_taken)` is what
+    tells the two apart - the plain pair alone cannot, since it is
+    identical for both.
 
     A `plan_declared` row planning ahead (`for_turn: "next"`,
     `schemas.DeclarePlanIn`) is written *during the other seat's turn*, for
-    a turn that has not started yet. Its own `turn`/`active_player` are
-    still the physical, write-time ones - the *target* turn instead lives
-    in `detail.turns_taken` (`app.py`'s `declare_plan` docstring spells out
-    the split) - so grouping on the physical pair alone already keeps a
+    a turn that has not started yet. Its own `active_player`/`turns_taken`
+    are still the physical, write-time ones - the *target* turn instead
+    lives in `detail.turns_taken` (`app.py`'s `declare_plan` docstring
+    spells out the split) - so grouping on the write-time pair keeps a
     plan-ahead row out of the seat's own future turn: it lands in the turn
     it was actually written in, same as everything else.
 
-    `detail.declared_turns_taken` - also on every `plan_declared` row, and
-    always the *physical* turns-taken count regardless of `for_turn` - is
-    used, where present, only to fold a plan row into the same instance as
-    that turn's other rows even across the one case the plain pair cannot:
-    an extra turn (CR 500.7) that repeats a `(turn_number, active_player)`
-    pair a plan row also touched. Nothing else in this ledger carries a
-    physical turns-taken count today, so this is the only place that bridge
-    is built.
+    **Old rows.** A row recorded before this stamp existed carries no
+    `turns_taken` at all, and falls back to the `(turn_number,
+    active_player)` pair - the grouping every row used before the stamp.
+    This is approximate for exactly the case above: an old ledger's own
+    extra turn, sharing its ordinary turn's pair, still collapses into it,
+    since the pair is all a row that old carries. A ledger with the stamp
+    resolves that case correctly; one without it reads as it always did.
 
     **What is dropped.** The pregame (`turn_number` 0 - `audit.record`'s own
     docstring on why pregame carries no phase applies equally here) is not
@@ -394,25 +397,18 @@ def _turn_instances(payloads: Sequence[dict[str, Any]]) -> list[_TurnInstance]:
     `player`-shaped detail on, so that field is not a safe stand-in for
     whose turn it was.
     """
-    pair_to_ttaken: dict[tuple[int, str], int] = {}
-    for payload in payloads:
-        if payload.get("action") != PLAN_ACTION:
-            continue
-        detail = payload.get("detail") or {}
-        declared = detail.get("declared_turns_taken")
-        turn_number, active = payload.get("turn"), payload.get("active_player")
-        if isinstance(declared, int) and isinstance(turn_number, int) and isinstance(active, str):
-            pair_to_ttaken[(turn_number, active)] = declared
-
     groups: dict[Any, _TurnInstance] = {}
     order: list[Any] = []
     for payload in payloads:
         turn_number, active = payload.get("turn"), payload.get("active_player")
         if not isinstance(turn_number, int) or turn_number < 1 or not isinstance(active, str):
             continue  # pregame, or a row with no turn-identity signal at all
-        pair = (turn_number, active)
-        ttaken = pair_to_ttaken.get(pair)
-        key: Any = ("t", ttaken) if ttaken is not None else ("pair", pair)
+        turns_taken = payload.get("turns_taken")
+        key: Any = (
+            ("stamped", active, turns_taken)
+            if isinstance(turns_taken, int)
+            else ("pair", turn_number, active)
+        )
         if key not in groups:
             groups[key] = _TurnInstance(active_player=active)
             order.append(key)

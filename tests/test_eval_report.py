@@ -29,18 +29,20 @@ FIXTURE = Path(__file__).parent / "fixtures" / "eval" / "ledger.json"
 def row(seq: int, action: str, **detail: Any) -> dict[str, Any]:
     """One `records` row, shaped exactly as `audit.record` writes it.
 
-    `_active_player`/`_priority_holder` are S2 A7's own stamps: omitted by
-    default (so every existing call site here still builds an "old row"
-    with neither key at all, the exact shape a pre-S2A7 ledger has), and set
-    only when a test passes them explicitly. `_ts` overrides the shared
-    fixed timestamp every other row still gets, for the latency tests that
-    need rows spread out in time.
+    `_active_player`/`_priority_holder`/`_turns_taken` are S2 A7's own
+    stamps: omitted by default (so every existing call site here still
+    builds an "old row" with none of the three keys at all, the exact shape
+    a pre-S2A7, or pre-turns_taken-fix, ledger has), and set only when a
+    test passes them explicitly. `_ts` overrides the shared fixed timestamp
+    every other row still gets, for the latency tests that need rows spread
+    out in time.
     """
     reasoning = detail.pop("_reasoning", None)
     turn = detail.pop("_turn", 1)
     ts = detail.pop("_ts", None)
     active_player = detail.pop("_active_player", None)
     priority_holder = detail.pop("_priority_holder", None)
+    turns_taken = detail.pop("_turns_taken", None)
     payload = {
         "ts": ts or "2026-09-10T00:00:00+00:00",
         "action": action,
@@ -58,6 +60,8 @@ def row(seq: int, action: str, **detail: Any) -> dict[str, Any]:
         payload["active_player"] = active_player
     if priority_holder is not None:
         payload["priority_holder"] = priority_holder
+    if turns_taken is not None:
+        payload["turns_taken"] = turns_taken
     return {"seq": seq, "payload": payload}
 
 
@@ -840,6 +844,108 @@ def test_own_turn_first_action_ms_excludes_pregame():
         "p50": None,
         "max": None,
         "n": 0,
+    }
+
+
+def test_own_turn_first_action_ms_splits_an_extra_turn_from_the_one_before_it():
+    """The reviewer's scenario (HIGH defect on 24d5d19): CR 500.7's extra
+    turn keeps the same `turn`/`active_player` as the ordinary turn before
+    it, so the physical pair alone cannot tell the two apart. `turns_taken`
+    - `audit.record`'s stamp of `turn.turns_taken`, which goes up once per
+    turn that actually begins, extra turns included - can, and
+    `_turn_instances` groups on `(active_player, turns_taken)` for any row
+    that carries it.
+
+    Before that fix, both turns collapsed into one instance, whose first row
+    is alice's own near-instant ordinary-turn action (seq 3, 0ms after the
+    instance's first row) - so the real 30s stall at the start of her extra
+    turn was never measured at all and the metric read a single 0ms data
+    point instead of two real ones.
+    """
+    rows = [
+        row(1, "create_game", players=["alice", "bob"]),
+        row(
+            2,
+            "step",
+            to="precombat_main",
+            _turn=1,
+            _active_player="alice",
+            _turns_taken=1,
+            _ts="2026-01-01T00:00:00+00:00",
+        ),
+        row(
+            3,
+            "cast",
+            player="alice",
+            allowed=True,
+            _turn=1,
+            _active_player="alice",
+            _turns_taken=1,
+            _ts="2026-01-01T00:00:00+00:00",
+        ),
+        row(
+            4,
+            "step",
+            to="precombat_main",
+            _turn=1,
+            _active_player="alice",
+            _turns_taken=2,
+            _ts="2026-01-01T00:01:00+00:00",
+        ),
+        row(
+            5,
+            "pass_priority",
+            player="alice",
+            allowed=True,
+            _turn=1,
+            _active_player="alice",
+            _turns_taken=2,
+            _ts="2026-01-01T00:01:30+00:00",
+        ),
+    ]
+    report = eval_report.build_report([game("g1", rows)])
+
+    alice = report["seats"]["alice"]["own_turn_first_action_ms"]
+    assert alice["n"] == 2, alice
+    assert alice["p50"] == 15000.0, alice
+    assert alice["max"] == 30000.0, alice
+
+
+def test_own_turn_first_action_ms_old_rows_fall_back_to_the_turn_pair():
+    """A ledger written before either stamp existed carries no top-level
+    `turns_taken` on any row - `_turn_instances` falls back to grouping by
+    the write-time `(turn, active_player)` pair for those, exactly the
+    grouping every row used before the stamp, so an old ledger's ordinary
+    (non-extra-turn) instances still read correctly. This is documented as
+    approximate: an old ledger's own extra turn, sharing its ordinary
+    turn's pair, is exactly the case the fallback cannot resolve - see the
+    turns_taken-stamped scenario above for what fixes it.
+    """
+    rows = [
+        row(
+            1,
+            "step",
+            to="precombat_main",
+            _turn=1,
+            _active_player="alice",
+            _ts="2026-01-01T00:00:00+00:00",
+        ),
+        row(
+            2,
+            "pass_priority",
+            player="alice",
+            allowed=True,
+            _turn=1,
+            _active_player="alice",
+            _ts="2026-01-01T00:00:07+00:00",
+        ),
+    ]
+    report = eval_report.build_report([game("g1", rows)])
+
+    assert report["seats"]["alice"]["own_turn_first_action_ms"] == {
+        "p50": 7000.0,
+        "max": 7000.0,
+        "n": 1,
     }
 
 

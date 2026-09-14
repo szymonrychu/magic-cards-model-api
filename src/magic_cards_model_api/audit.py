@@ -272,11 +272,12 @@ def record(
     turn = game.turn if game is not None else None
     turn_number = turn.turn_number if turn is not None else None
     step = turn.step if turn is not None else None
-    # S2 A7: whose turn this row was written in, and who held priority the
-    # moment after it landed - both read off the live `game` at write time,
-    # exactly like `turn_number`/`step` above, so they are as honest as those
-    # already are about a game this build cannot decode (`None`, same as
-    # every other board-derived field on such a row).
+    # S2 A7: whose turn this row was written in, who held priority the
+    # moment after it landed, and how many turns had actually begun - all
+    # three read off the live `game` at write time, exactly like `turn_
+    # number`/`step` above, so they are as honest as those already are about
+    # a game this build cannot decode (`None`, same as every other
+    # board-derived field on such a row).
     #
     # `active_player` is what `scripts/eval_report.py`'s `own_turn_first_
     # action_ms` groups rows by: a plan-ahead row (`declare_plan`,
@@ -285,6 +286,20 @@ def record(
     # turn it was actually written in - never the turn `detail.turns_taken`
     # names it is *about* - which is exactly what keeps that row out of the
     # seat's own-turn bucket it is not yet in.
+    #
+    # `turns_taken` (`TurnMachine.turns_taken`) is the count that goes up
+    # once per turn that actually begins, extra turns (CR 500.7) included -
+    # unlike `turn_number`, which CR 500.7 leaves alone for one. A seat's
+    # ordinary turn and an extra turn granted to that same seat right after
+    # it therefore share one `(turn_number, active_player)` pair but never
+    # one `turns_taken`, which is exactly the signal `eval_report._turn_
+    # instances` needs to keep the two apart instead of collapsing them into
+    # a single instance (and losing whatever happened at the real start of
+    # the extra turn - the HIGH defect a review of this change's first
+    # version found: a 30s stall at an extra turn's start read back as 0ms).
+    # Stamped from the live game the same as `active_player`, so a
+    # plan-ahead row reads the *write-time* value here too, same reasoning
+    # as `active_player` above: it is never mistaken for its target turn.
     #
     # `priority_holder` is the sound signal `advice.latency_ms` measures
     # from: rather than guessing "the human's window" from an action's name
@@ -295,11 +310,12 @@ def record(
     # game's first row - is the row that gave them the window an advice row
     # is timed from.
     #
-    # Both are `None` on every row recorded before this change, exactly like
-    # `stale`/`offered` before P4/T11 added those: a reader must treat a
-    # missing key as "not known", never as "no active player" - see
+    # All three are `None` on every row recorded before this change, exactly
+    # like `stale`/`offered` before P4/T11 added those: a reader must treat
+    # a missing key as "not known", never as "no active player" - see
     # `_UNRECORDED_DEFAULTS` and `eval_report.py`'s own fallback.
     active_player = turn.players[turn.active_index] if turn is not None else None
+    turns_taken = turn.turns_taken if turn is not None else None
     priority_holder = (
         game.priority.holder if game is not None and game.priority is not None else None
     )
@@ -327,6 +343,7 @@ def record(
         "snapshot": snapshot(game) if game is not None else None,
         "active_player": active_player,
         "priority_holder": priority_holder,
+        "turns_taken": turns_taken,
         "reasoning": reasoning,
         # Two keys, written from one object or not at all: the actions
         # and the single seat they belong to. `visibility.redact_log_
@@ -379,6 +396,7 @@ _UNRECORDED_DEFAULTS: dict[str, Any] = {
     "snapshot": None,
     "active_player": None,
     "priority_holder": None,
+    "turns_taken": None,
     "reasoning": None,
     "legal_actions_before": None,
     "legal_actions_for": None,

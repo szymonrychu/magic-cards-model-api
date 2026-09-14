@@ -656,6 +656,29 @@ def test_entries_carry_active_player_and_priority_holder(client, game):
     assert pass_entry["priority_holder"] == "bob", "alice's pass handed bob priority"
 
 
+def test_entries_carry_turns_taken(client, game):
+    """Every row is also stamped with `turn.turns_taken` - the count that
+    goes up once per turn that actually begins, including an extra turn
+    (CR 500.7), unlike `turn_number` (CR 500.1's count of rounds of the
+    table), which CR 500.7 leaves alone for one. This is what lets
+    `scripts/eval_report.py` tell an extra turn apart from the ordinary
+    turn right before it even though both share the same
+    `turn`/`active_player`. The `game` fixture starts already on the
+    starting player's first turn, so `turns_taken` reads 1 on every row
+    here, same as `turn`."""
+    add_card(client, game, "Mountain", "alice", "hand")
+    log = log_of(client, game)
+    added = entry_of(log, "add_card")
+    assert added["turns_taken"] == 1
+
+    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    assert passed.json()["allowed"] is True
+
+    log = log_of(client, game)
+    pass_entry = entry_of(log, "pass_priority")
+    assert pass_entry["turns_taken"] == 1, "still alice's first turn - turns_taken has not moved"
+
+
 def test_dry_run_cast_is_not_audited(client, game):
     """A `dry_run` cast probe - what `seatkit.available_actions` used to
     issue per hand card, before T11 pointed it at the engine's own
