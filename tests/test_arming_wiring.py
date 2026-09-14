@@ -26,6 +26,7 @@ from test_playscript_runtime import (
     register,
     seat_uid,
     started,
+    tap_island_script,
     wired,
 )
 
@@ -130,6 +131,57 @@ def test_a_play_whose_when_does_not_match_does_not_fire(
     assert result["finished"] is True, result
     assert result["armed"] == []
     assert hook.posts("/actions/play-land") == []
+
+
+# -- finding 2: a theirs/either destination waits for OWN priority to fire ---
+
+
+def test_a_theirs_end_step_script_fires_once_the_opponent_passes_priority_there(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 2: `autopass_stop_reason` stops a
+    `pass_until` run the instant the named destination step begins,
+    board-wide - for a `theirs`/`either` destination that is usually still
+    the active opponent's own first priority in it (CR 117.3a), the old code
+    treated that as the run's own finish and never even tried arming
+    (`_arming_moment` false there). The run must instead keep waiting,
+    inside its own bounded call, until this seat holds priority in that same
+    occurrence - which happens here the moment bob's `Opponent` thread passes
+    its own first priority in its end step."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
+    register(
+        client,
+        game,
+        alice,
+        tap_island_script(
+            "theirs-end", when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"}
+        ),
+    )
+    add_card(client, game, "Island", "alice", "battlefield")
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    with Opponent(game, "bob"):
+        result = pass_until(
+            seat,
+            until_step="end_step",
+            whose_turn="opponent",
+            corpora=seats.script_corpora,
+            arm=["theirs-end"],
+            arm_reasoning=ARM_REASONING,
+            max_seconds=10.0,
+        )
+
+    assert result["finished"] is True, result
+    assert result.get("armed_conflict") is None, result
+    [entry] = result["armed"]
+    assert entry["script"] == "theirs-end"
+    assert entry["exit"] == "chain_complete", entry
+    assert hook.posts("/actions/activate"), "the armed script actually activated the island"
+    assert result["state"]["step"] == "end_step"
 
 
 def test_nothing_fires_on_a_retryable_hand_back(
@@ -624,6 +676,170 @@ def test_pass_until_refuses_disagreeing_opposing_archetype_and_inputs_before_any
     assert "armed" not in result
     assert result.get("armed_refusal")
     assert hook.posts("/actions/pass-priority") == []
+
+
+# -- S2 arming re-review finding 6: one shared call budget over wait + arming --
+
+
+class _MonotonicSequence:
+    """A `time.monotonic` stand-in that hands back each of `readings` in
+    turn, then repeats the last one - enough to make `wait_and_arm`/
+    `pass_until`'s own "elapsed since call start" measurement deterministic
+    without a real clock or a real wait."""
+
+    def __init__(self, *readings: float) -> None:
+        self._readings = list(readings)
+        self._index = 0
+
+    def monotonic(self) -> float:
+        value = self._readings[min(self._index, len(self._readings) - 1)]
+        self._index += 1
+        return value
+
+    def sleep(self, _seconds: float) -> None:
+        return None
+
+
+def test_wait_and_arm_hands_arming_only_the_remainder_of_one_shared_call_budget(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 6: arming used to get a full, fresh
+    `RUN_CAP_SECONDS` (25s) on top of whatever the wait itself already spent
+    (up to its own `MAX_WAIT_SECONDS`, also 25s) - up to ~50s for one call,
+    breaking `MAX_WAIT_SECONDS`'s own rationale of staying comfortably under
+    the ~30s client/transport timeout. `wait_and_arm` now shares one
+    `TOTAL_CALL_BUDGET_SECONDS` deadline across the wait and arming: arming
+    gets only whatever the wait left of it - here, the wait "spent" 20 of the
+    call's 29-second total, leaving arming only 9, never a fresh 25."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, _ = hooked_seat(seats, alice)
+    woken_state = seat.fetch_state()
+
+    clock = _MonotonicSequence(0.0, 20.0)
+    monkeypatch.setattr(seatkit, "time", clock)
+    monkeypatch.setattr(
+        seatkit,
+        "block_until_wake",
+        lambda *a, **kw: {"state": woken_state, "wake_reason": "priority", "recent_log": []},
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_arm(*a: Any, **kw: Any) -> Any:
+        captured["max_seconds"] = kw.get("max_seconds")
+        return {"armed": []}
+
+    from magic_cards_model_api.playscripts import arming as playscript_arming
+
+    monkeypatch.setattr(playscript_arming, "arm", fake_arm)
+
+    seatkit.wait_and_arm(
+        seat,
+        before=None,
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert captured["max_seconds"] == pytest.approx(seatkit.TOTAL_CALL_BUDGET_SECONDS - 20.0)
+    assert captured["max_seconds"] < seatkit.MAX_WAIT_SECONDS, (
+        "arming must never get a fresh RUN_CAP_SECONDS on top of what the wait already spent"
+    )
+
+
+def test_wait_and_arm_skips_arming_when_too_little_budget_remains(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half: once the wait alone has spent enough of the shared
+    budget that less than `MIN_ARMED_RUN_SECONDS` is left, arming is skipped
+    entirely - never even attempted - with a note telling the caller to call
+    again (the hint's own `arm_call` is still valid)."""
+    from magic_cards_model_api.playscripts.arming import MIN_ARMED_RUN_SECONDS
+
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    woken_state = seat.fetch_state()
+
+    spent = seatkit.TOTAL_CALL_BUDGET_SECONDS - (MIN_ARMED_RUN_SECONDS - 0.5)
+    clock = _MonotonicSequence(0.0, spent)
+    monkeypatch.setattr(seatkit, "time", clock)
+    monkeypatch.setattr(
+        seatkit,
+        "block_until_wake",
+        lambda *a, **kw: {"state": woken_state, "wake_reason": "priority", "recent_log": []},
+    )
+
+    def never_called(*a: Any, **kw: Any) -> Any:
+        raise AssertionError("arm() must never be called on too little remaining budget")
+
+    from magic_cards_model_api.playscripts import arming as playscript_arming
+
+    monkeypatch.setattr(playscript_arming, "arm", never_called)
+
+    woken = seatkit.wait_and_arm(
+        seat,
+        before=None,
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert "armed" not in woken
+    assert woken.get("armed_skipped") == seatkit.ARMING_SKIPPED_LOW_BUDGET
+    assert hook.posts("/actions/play-land") == []
+
+
+def test_pass_until_hands_arming_only_the_remainder_of_one_shared_call_budget(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same sharing, on `pass_until`'s own arming call."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, _ = hooked_seat(seats, alice)
+    finished_state = seat.fetch_state()
+
+    clock = _MonotonicSequence(0.0, 0.0, 18.0, 18.0)
+    monkeypatch.setattr(seatkit, "time", clock)
+    monkeypatch.setattr(
+        seatkit,
+        "_pass_until_once",
+        lambda *a, **kw: {
+            "stopped_because": "reached your postcombat main",
+            "passes": 3,
+            "finished": True,
+            "until": {"step": "postcombat_main", "whose_turn": "mine"},
+            "state": finished_state,
+            "recent_log": [],
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_arm(*a: Any, **kw: Any) -> Any:
+        captured["max_seconds"] = kw.get("max_seconds")
+        return {"armed": []}
+
+    from magic_cards_model_api.playscripts import arming as playscript_arming
+
+    monkeypatch.setattr(playscript_arming, "arm", fake_arm)
+
+    pass_until(
+        seat,
+        until_step="postcombat_main",
+        whose_turn="mine",
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert captured["max_seconds"] == pytest.approx(seatkit.TOTAL_CALL_BUDGET_SECONDS - 18.0)
+    assert captured["max_seconds"] < seatkit.MAX_WAIT_SECONDS
 
 
 # -- CLI ----------------------------------------------------------------------

@@ -2222,6 +2222,22 @@ def _arming_moment(state: dict[str, Any], me: str) -> bool:
 #: above this is silently capped, never honoured past it.
 MAX_WAIT_SECONDS = 25.0
 
+#: The whole MCP call's own bound - the wait (`MAX_WAIT_SECONDS`) plus
+#: whatever armed batch fires once it wakes - kept under the same
+#: `CLIENT_TIMEOUT_SECONDS`/transport-read-timeout rationale `MAX_WAIT_
+#: SECONDS`'s own comment gives, rather than a second `RUN_CAP_SECONDS`
+#: (also `MAX_WAIT_SECONDS`) restarting the clock from zero purely for
+#: arming - which is what `wait_and_arm`/`pass_until` used to hand
+#: `playscripts.arming.arm`, up to ~50s total for one call (S2 arming
+#: re-review finding 6). `_ARMING_ALLOWANCE_SECONDS` is the small top-up
+#: arming gets on top of the wait's own bound when the wait spends the whole
+#: of it; `wait_and_arm`/`pass_until` measure their own elapsed time from the
+#: call's own start against this total and hand arming whatever is left of
+#: it - which is *more* than the allowance whenever the wait wakes early,
+#: never less.
+_ARMING_ALLOWANCE_SECONDS = 4.0
+TOTAL_CALL_BUDGET_SECONDS = MAX_WAIT_SECONDS + _ARMING_ALLOWANCE_SECONDS
+
 #: How often a bounded wait re-checks the wake condition. Short enough that a
 #: wake condition is noticed promptly once it actually holds; long enough not
 #: to hammer the game API with a read every few milliseconds.
@@ -2328,6 +2344,30 @@ def block_until_wake(
         time.sleep(min(WAIT_POLL_SECONDS, remaining))
 
 
+#: `wait_and_arm`/`pass_until`'s own note when arming is skipped entirely -
+#: never even attempted - because too little of `TOTAL_CALL_BUDGET_SECONDS`
+#: remained once the wait itself was done (S2 arming re-review finding 6).
+#: The hint's own `arm_call` named exactly the same `arm` ids and is still
+#: valid - a caller that reads this just calls it (or this same tool) again.
+ARMING_SKIPPED_LOW_BUDGET = (
+    "arming was skipped: fewer than MIN_ARMED_RUN_SECONDS of this call's own budget remained "
+    "once the wait was done, and starting a run that close to the deadline risks leaving a "
+    "start row with no matching finish, which would block the script for the rest of the step. "
+    "Call again - the hint's own `arm_call` is still valid."
+)
+
+
+def _arming_budget(call_start: float) -> float:
+    """What is left of `TOTAL_CALL_BUDGET_SECONDS`, measured from
+    `call_start` (this call's own entry, captured once by its caller) rather
+    than a fresh `RUN_CAP_SECONDS` starting the clock over purely for
+    arming - see `TOTAL_CALL_BUDGET_SECONDS`'s own comment. Never negative:
+    a wait that overran its own bound (should not happen, `block_until_wake`/
+    `_pass_until_once` are themselves bounded) still hands arming a number
+    its own `run_budget < MIN_ARMED_RUN_SECONDS` check can act on."""
+    return max(0.0, TOTAL_CALL_BUDGET_SECONDS - (time.monotonic() - call_start))
+
+
 def _fire_armed_scripts(
     seat: Seat,
     corpora: dict[tuple[str, str], dict[str, Any]] | None,
@@ -2337,17 +2377,23 @@ def _fire_armed_scripts(
     opposing_archetype: str,
     inputs: dict[str, Any] | None,
     should_stop: Callable[[], bool] | None,
+    max_seconds: float,
 ) -> dict[str, Any] | str | None:
     """`playscripts.arming.arm`, imported lazily: `playscripts` imports this
     module (`script_tools`/`runtime` both read `Seat`/`scripts_enabled_here`
     off it), so importing it back here at module load time would cycle.
     `None` when there is nothing to arm - an empty `arm`, or a caller (like
     `run_action`'s own post-action wake) that never passed a `corpora` cache
-    to arm against at all."""
+    to arm against at all.
+
+    `max_seconds` is the caller's own remaining share of
+    `TOTAL_CALL_BUDGET_SECONDS` (`_arming_budget`) - never a fresh
+    `RUN_CAP_SECONDS` restarting the clock at the hand-back, which is what
+    let one call's wait and its own arming together run up to ~50s (S2
+    arming re-review finding 6)."""
     if not arm or corpora is None:
         return None
     from .playscripts import arming as playscript_arming
-    from .playscripts.runtime import RUN_CAP_SECONDS
 
     return playscript_arming.arm(
         seat,
@@ -2356,10 +2402,7 @@ def _fire_armed_scripts(
         arm_reasoning=arm_reasoning,
         opposing_archetype=opposing_archetype,
         inputs=inputs,
-        # Arming has its own time budget on top of the wait's own
-        # `max_seconds` bound - it starts counting from the hand-back, not
-        # from whenever the wait itself began.
-        max_seconds=RUN_CAP_SECONDS,
+        max_seconds=max_seconds,
         should_stop=should_stop,
     )
 
@@ -2421,6 +2464,11 @@ def wait_and_arm(
             woken = block_until_wake(seat, before=before, max_seconds=0.0, should_stop=should_stop)
             woken["armed_refusal"] = problem
             return woken
+    # S2 arming re-review finding 6: captured before the wait itself runs, so
+    # arming's own share below is measured against the WHOLE call, never a
+    # fresh `RUN_CAP_SECONDS` restarting the clock purely for it - see
+    # `TOTAL_CALL_BUDGET_SECONDS`.
+    call_start = time.monotonic()
     woken = block_until_wake(seat, before=before, max_seconds=max_seconds, should_stop=should_stop)
     if woken["wake_reason"] in (NOTHING_NEW_YET, GAME_GONE, WAIT_INTERRUPTED):
         return woken
@@ -2429,6 +2477,14 @@ def wait_and_arm(
         # over" as a real wake once a winner or a draw is set, and none of
         # the three reasons excluded above catch that - there is nothing
         # left here for an armed script to do.
+        return woken
+    if not arm:
+        return woken
+    from .playscripts.arming import MIN_ARMED_RUN_SECONDS
+
+    arm_budget = _arming_budget(call_start)
+    if arm_budget < MIN_ARMED_RUN_SECONDS:
+        woken["armed_skipped"] = ARMING_SKIPPED_LOW_BUDGET
         return woken
     try:
         armed = _fire_armed_scripts(
@@ -2439,6 +2495,7 @@ def wait_and_arm(
             opposing_archetype=opposing_archetype,
             inputs=inputs,
             should_stop=should_stop,
+            max_seconds=arm_budget,
         )
     except Exception as exc:  # noqa: BLE001 - arming must never cost the wait its own answer
         # S2 review finding 2: nothing between here and `playscripts.arming.arm`
@@ -3413,6 +3470,88 @@ def autopass_stop_reason(
 #: takes.
 MAX_PASSES_PER_CALL = 100
 
+#: `autopass_stop_reason`'s own "reached" message always starts with this -
+#: `pass_until`'s own arming wrapper (`_wait_for_own_priority_at_destination`,
+#: below) matches on it to tell "reached the named destination" apart from
+#: every other stop reason, without duplicating `autopass_label`'s own
+#: rendering.
+_REACHED_STOP_PREFIX = "reached "
+
+
+def _window_passed_note(stopped_because: str) -> str:
+    """`pass_until`'s own `stopped_because` when an armed `theirs`/`either`
+    destination came and went without this seat ever holding priority there
+    (S2 arming re-review finding 2)."""
+    return (
+        f"{stopped_because} - but the step moved on before you ever held priority there (or had "
+        "a decision pending for you), so nothing armed could fire this occurrence. Call again to "
+        "arm for its next one."
+    )
+
+
+def _restate(
+    result: dict[str, Any], seat: Seat, state: dict[str, Any], include_actions: bool
+) -> None:
+    result["state"] = state
+    if include_actions:
+        result["available_actions"] = available_actions(seat, state)
+    result["recent_log"] = seat.recent_log()
+
+
+def _wait_for_own_priority_at_destination(
+    seat: Seat,
+    result: dict[str, Any],
+    until_step: str,
+    deadline: float,
+    should_stop: Callable[[], bool] | None,
+    include_actions: bool,
+) -> dict[str, Any]:
+    """`pass_until`'s own extra wait, entered only once `_pass_until_once`
+    has already answered "reached" a destination with something armed for it
+    and this seat does not yet hold priority there (S2 arming re-review
+    finding 2).
+
+    `autopass_stop_reason` stops a run the instant the named step begins,
+    board-wide, regardless of who holds priority there - which for a
+    `theirs`/`either` destination is usually still the active opponent's own
+    first priority in it (CR 117.3a): a step's active player gets priority
+    before anyone else does. Arming needs this seat to actually hold
+    priority (or have a decision pending for it) before anything it fires
+    can be legal (`runtime._drive` requires holding priority before a
+    script's first move - S1 review finding 4a), so firing on the raw
+    "reached" board would silently do nothing, and a caller that did not
+    retry would never learn the window had even opened.
+
+    This polls the board directly - never `_pass_until_once`'s own `resume`:
+    re-entering its state machine here would reset `started_step`/
+    `started_turn` to the step already reached and permanently exempt it
+    from ever "reaching" it again (`autopass_stop_reason`'s own
+    `same_occurrence_this_run_started_in` check) - until either this seat
+    gets priority in the SAME occurrence, the step (or the game) moves on
+    without that ever happening, the caller interrupts, or the call's own
+    bounded wait runs out - the last of which returns `result` completely
+    unchanged, exactly the immediate `max_seconds=0.0` behaviour this had
+    before the fix (the loop below never executes when `deadline` is already
+    in the past)."""
+    while time.monotonic() < deadline:
+        if should_stop is not None and should_stop():
+            result["stopped_because"] = WAIT_INTERRUPTED
+            return result
+        time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
+        state = seat.fetch_state()
+        if game_gone(seat):
+            _restate(result, seat, state, include_actions)
+            result["stopped_because"] = GAME_GONE
+            return result
+        if state.get("winner") or state.get("drawn") or state.get("step") != until_step:
+            _restate(result, seat, state, include_actions)
+            result["stopped_because"] = _window_passed_note(result["stopped_because"])
+            return result
+        if _arming_moment(state, seat.player):
+            _restate(result, seat, state, include_actions)
+            return result
+    return result
+
 
 def pass_until(
     seat: Seat,
@@ -3509,6 +3648,11 @@ def pass_until(
                 refused_arm["available_actions"] = available_actions(seat, state)
             refused_arm["recent_log"] = seat.recent_log()
             return refused_arm
+    # S2 arming re-review finding 6: captured before the wait/pass loop
+    # below runs, so arming's own share (computed once the run stops) is
+    # measured against the WHOLE call, never a fresh `RUN_CAP_SECONDS`
+    # restarting the clock purely for it - see `TOTAL_CALL_BUDGET_SECONDS`.
+    call_start = time.monotonic()
     max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
     deadline = time.monotonic() + max_seconds
     kwargs: dict[str, Any] = {
@@ -3532,10 +3676,32 @@ def pass_until(
     inner_arm_eligible = result.pop("_arm_eligible", True)
     if (
         arm
+        and result["finished"]
+        and inner_arm_eligible
+        and not retryable
+        and str(result.get("stopped_because") or "").startswith(_REACHED_STOP_PREFIX)
+        and not _arming_moment(result["state"], seat.player)
+    ):
+        # S2 arming re-review finding 2: reached the destination without
+        # this seat holding priority there yet - see
+        # `_wait_for_own_priority_at_destination`'s own docstring.
+        result = _wait_for_own_priority_at_destination(
+            seat, result, until_step, deadline, should_stop, include_actions
+        )
+    if (
+        arm
         and not retryable
         and inner_arm_eligible
         and _arming_moment(result["state"], seat.player)
     ):
+        from .playscripts.arming import MIN_ARMED_RUN_SECONDS
+
+        arm_budget = _arming_budget(call_start)
+        if arm_budget < MIN_ARMED_RUN_SECONDS:
+            # S2 arming re-review finding 6: too little of the call's own
+            # shared budget is left to safely start a run.
+            result["armed_skipped"] = ARMING_SKIPPED_LOW_BUDGET
+            return result
         try:
             armed = _fire_armed_scripts(
                 seat,
@@ -3545,6 +3711,7 @@ def pass_until(
                 opposing_archetype=opposing_archetype,
                 inputs=inputs,
                 should_stop=should_stop,
+                max_seconds=arm_budget,
             )
         except Exception as exc:  # noqa: BLE001 - see wait_and_arm's own guard
             # S2 review finding 2: a raise here must not cost the run its own
