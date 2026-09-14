@@ -241,6 +241,28 @@ def _judge_round(
                 doc, play, contents_state, seat.player, supplied, catalog, []
             )
         state = contents_state
+    # S2 review finding 5: an id this process already ran at this exact
+    # `(turns_taken, step)` position must not count toward the conflict
+    # check either - `applicable_hint` already never re-offers one of these
+    # (S1 finding 4c), and a script still condition-true after firing once
+    # (two untapped Islands still satisfy "at least one untapped" after
+    # tapping one) could otherwise tie with a genuinely new applier and
+    # report a conflict that was never really there.
+    recent = {
+        (str(run[0]), run[1], run[2])
+        for run in corpus.get(script_tools._RECENT_RUNS_KEY) or []
+        if isinstance(run, list) and len(run) == 3
+    }
+    if recent:
+        position = (script_tools._turn_position(state), state.get("step"))
+        for script_id, entry in judged.items():
+            if entry.get("applies") and (script_id, *position) in recent:
+                entry["applies"] = False
+                entry["failing_condition"] = {
+                    "list": "already_run_this_step",
+                    "index": None,
+                    "seen": position,
+                }
     return judged, state
 
 

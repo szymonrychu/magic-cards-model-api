@@ -34,6 +34,7 @@ from test_playscript_runtime import (
     register,
     seat_uid,
     started,
+    tap_island_script,
     wired,
 )
 
@@ -302,6 +303,55 @@ def test_advisor_armed_run_blocked_by_a_pending_decision_is_not_locked_out(
     [entry] = proposed["armed"]
     assert entry["exit"] == "advised", entry
     assert entry.get("refusal") is None, entry
+
+
+# -- conflict excludes ids already run this step --------------------------------
+
+
+def test_a_script_already_run_this_step_does_not_count_toward_a_conflict(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 review finding 5: `_judge_round`'s conflict check used to judge
+    every armed id fresh against the board, including one this process
+    already ran at this same turn and step - so a script that had already
+    fired earlier this step, still condition-true (two untapped Islands
+    means tapping one still leaves the count condition true), could tie
+    with a genuinely new applier and report a conflict that was not really
+    there. `_judge_round` now skips an id `applicable_hint`'s own
+    already-ran cache holds for this position, the same way the hint
+    itself does."""
+    alice = seat_uid(board, "alice")
+    register(
+        client,
+        board,
+        alice,
+        tap_island_script("float-a", priority=60),
+        tap_island_script("float-b", priority=50),
+    )
+    add_card(client, board, "Island", "alice", "battlefield")
+    add_card(client, board, "Island", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    first = script_tools.run(
+        seat,
+        seats.script_corpora,
+        script="float-a",
+        reasoning=ARM_REASONING,
+        wait=False,
+        invoked_via="armed",
+    )
+    assert first["script_exit"]["exit"] == "chain_complete", first["script_exit"]
+
+    judged, _ = arming._judge_round(
+        seat, seats.script_corpora, ["float-a", "float-b"], {"opposing_archetype": "*"}
+    )
+
+    assert judged["float-a"]["applies"] is False, judged["float-a"]
+    assert judged["float-a"]["failing_condition"]["list"] == "already_run_this_step", judged[
+        "float-a"
+    ]
+    assert judged["float-b"]["applies"] is True, judged["float-b"]
 
 
 # -- one shared deadline over the whole batch -----------------------------------
