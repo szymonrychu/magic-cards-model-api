@@ -46,6 +46,7 @@ from test_advise_mode import (
     seats_for,
     tool_text,
 )
+from test_decisions import advance_into_cleanup, stuff_hand
 from test_playscript_runtime import land_script, register
 
 from magic_cards_model_api import seat_cli, seatkit
@@ -662,6 +663,148 @@ def test_an_armed_scripts_proposal_supersedes_a_reached_staged_draft(
     assert len(rows) == 1, rows
     assert rows[0]["detail"]["path"].endswith("/actions/play-land"), rows[0]["detail"]["path"]
     assert uid not in seat._advice_drafts, "a superseded draft must be dropped, not left staged"
+
+
+# ---------------------------------------------------------------------------
+# 5c. decide drafts check the pending decision's own kind and id, not merely
+# whether ANY decision is pending (2026-09-14 review, finding 6)
+# ---------------------------------------------------------------------------
+
+
+def test_unvalidated_decide_legality_requires_kind_and_generation_to_match() -> None:
+    """Pure unit test of `_unvalidated_action_still_legal`'s `decide` branch -
+    the exact place the pre-fix code only asked `pending is not None and
+    pending.player == player`, legal against ANY decision addressed to the
+    player, not the one the draft actually answers."""
+    action = {"action_key": "decide", "decision_kind": "choose_cards", "decision_generation": 3}
+
+    matching = {"pending_decision": {"player": "alice", "kind": "choose_cards", "generation": 3}}
+    assert seatkit._unvalidated_action_still_legal(action, matching, "alice") is True
+
+    wrong_generation = {
+        "pending_decision": {"player": "alice", "kind": "choose_cards", "generation": 4}
+    }
+    assert seatkit._unvalidated_action_still_legal(action, wrong_generation, "alice") is False
+
+    wrong_kind = {"pending_decision": {"player": "alice", "kind": "may", "generation": 3}}
+    assert seatkit._unvalidated_action_still_legal(action, wrong_kind, "alice") is False
+
+    nothing_pending = {"pending_decision": None}
+    assert seatkit._unvalidated_action_still_legal(action, nothing_pending, "alice") is False
+
+
+def test_capturing_a_decide_draft_stores_the_real_pending_decisions_kind_and_generation(
+    client: TestClient, game: str, wired: None
+) -> None:
+    seat = buddy(game)
+    stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard
+    paused = advance_into_cleanup(game)
+    assert paused is not None, "the discard should have asked, not defaulted silently"
+    alice_uid = next(uid for uid, name in store.seat_uids(game).items() if name == "alice")
+    pending = state(client, game, alice_uid)["pending_decision"]
+    assert pending["kind"] == "choose_cards"
+
+    seat.stage_advice("end_step", "mine")
+    drafted = seat.call_json(
+        "POST",
+        f"/api/games/{game}/decide",
+        {
+            "player": "alice",
+            "card_ids": [pending["cards"][0]],
+            "reasoning": "discard the excess",
+        },
+    )
+
+    assert drafted["drafted"] is True
+    action = seat._advice_drafts[ADVISOR_UID]["action"]
+    assert action["decision_kind"] == "choose_cards"
+    assert action["decision_generation"] == pending["generation"]
+
+
+def _decide_window_and_state(
+    game_id: str, *, decision_generation: int, pending_generation: int | None
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """A hand-built `(window, action, state)` triple for a decide draft
+    already reached, with a fully controlled `pending_decision` - isolates
+    the legality check `resolve_advice_draft` makes for it without needing a
+    second real decision replayed through the engine to go stale."""
+    staged = {
+        "step": "precombat_main",
+        "active_player": "alice",
+        "turn_number": 1,
+        "turns_taken": 1,
+    }
+    window = seatkit.start_autopass(staged, "declare_attackers", "mine")
+    window["stamped_step"] = staged["step"]
+    window["stamped_turns_taken"] = staged["turns_taken"]
+    now_state: dict[str, Any] = {
+        "step": "declare_attackers",
+        "active_player": "alice",
+        "priority_holder": "alice",
+        "turn_number": 1,
+        "turns_taken": 1,
+        "battlefield": [],
+        "stack": [],
+        "players": [{"username": "alice", "life": 20}, {"username": "bob", "life": 20}],
+        "pending_decision": (
+            None
+            if pending_generation is None
+            else {"player": "alice", "kind": "choose_cards", "generation": pending_generation}
+        ),
+    }
+    action = {
+        "method": "POST",
+        "path": f"/api/games/{game_id}/decide",
+        "body": {"player": "alice", "card_ids": []},
+        "reasoning": "discard the excess",
+        "validated": False,
+        "action_key": "decide",
+        "outcome": {"allowed": None},
+        "decision_kind": "choose_cards",
+        "decision_generation": decision_generation,
+    }
+    return window, action, now_state
+
+
+def test_a_decide_draft_goes_stale_when_the_pending_decision_has_moved_on(
+    client: TestClient, game: str, wired: None
+) -> None:
+    seat = buddy(game)
+    window, action, now_state = _decide_window_and_state(
+        game, decision_generation=3, pending_generation=4
+    )
+    seat._advice_drafts[ADVISOR_UID] = {
+        "window": window,
+        "action": action,
+        "opponent_signature": seatkit.opponent_board_signature(now_state, "alice"),
+        "drafted_at_seq": 0,
+    }
+
+    result = seatkit.resolve_advice_draft(seat, now_state)
+
+    assert result == {"status": "stale", "failed": "legality"}
+    assert advice_rows(game) == []
+    assert ADVISOR_UID not in seat._advice_drafts
+
+
+def test_a_decide_draft_still_posts_while_the_same_question_stands(
+    client: TestClient, game: str, wired: None
+) -> None:
+    seat = buddy(game)
+    window, action, now_state = _decide_window_and_state(
+        game, decision_generation=3, pending_generation=3
+    )
+    seat._advice_drafts[ADVISOR_UID] = {
+        "window": window,
+        "action": action,
+        "opponent_signature": seatkit.opponent_board_signature(now_state, "alice"),
+        "drafted_at_seq": 0,
+    }
+
+    result = seatkit.resolve_advice_draft(seat, now_state)
+
+    assert result["status"] == "posted"
+    assert len(advice_rows(game)) == 1
 
 
 # ---------------------------------------------------------------------------

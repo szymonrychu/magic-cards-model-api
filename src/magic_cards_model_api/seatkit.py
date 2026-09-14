@@ -1676,6 +1676,19 @@ class Seat:
                 "action_key": action_key,
                 "outcome": outcome,
             }
+            if action_key == "decide":
+                # Review fix 6 (2026-09-14): the identity of the pending
+                # decision this draft actually answers, from the board right
+                # now - `_unvalidated_action_still_legal` requires both to
+                # still match the pending decision standing at the window,
+                # not merely that some decision is pending for this player.
+                drafted_pending = drafted_state.get("pending_decision")
+                armed["action"]["decision_kind"] = (
+                    drafted_pending.get("kind") if isinstance(drafted_pending, dict) else None
+                )
+                armed["action"]["decision_generation"] = (
+                    drafted_pending.get("generation") if isinstance(drafted_pending, dict) else None
+                )
             armed["opponent_signature"] = opponent_board_signature(drafted_state, self.player)
             armed["drafted_at_seq"] = self.recent_log().get("last_seq")
             return 200, {
@@ -3513,17 +3526,37 @@ def opponent_board_signature(state: dict[str, Any], player: str) -> Any:
     return (tuple(permanents), stack_ids, life)
 
 
-def _unvalidated_action_still_legal(action_key: str, state: dict[str, Any], player: str) -> bool:
+def _unvalidated_action_still_legal(
+    action: dict[str, Any], state: dict[str, Any], player: str
+) -> bool:
     """Condition (c) for the 5 `ACTION_REQUEST_SHAPES` with no `dry_run`
     (`DRY_RUN_SHAPES`'s complement): there is no probe to re-ask, so this
     reads the same board-truth fields `compute_wake_reason`/`autopass_stop_
     reason` already read for exactly these questions, rather than guessing.
     Never card/mechanic legality - only whether this seat could still open
     the request at all, the same narrow question `ADVISE_UNVALIDATED_REASON`
-    already says a proposal of one of these was never more than."""
+    already says a proposal of one of these was never more than.
+
+    `action` is the drafted `entry["action"]` dict, not merely its
+    `action_key` - **review fix 6 (2026-09-14)**: `decide`'s own branch used
+    to ask only whether *some* decision was pending for this player, legal
+    the moment any decision at all was addressed to them even when it was
+    not the one the draft actually answers (a first decision answered by the
+    human directly and a second, unrelated one arriving before the window is
+    reached, say). `action["decision_kind"]`/`["decision_generation"]`
+    (stamped by `_advise_answer` at capture time, from the pending decision
+    that was standing then) now have to match the pending decision standing
+    now - `generation` (`repository.GameRepository.pause_generation`) is
+    exactly the field that tells two decisions of the same `kind` apart."""
+    action_key = action.get("action_key") or ""
     pending = state.get("pending_decision")
     if action_key == "decide":
-        return pending is not None and pending.get("player") == player
+        return (
+            pending is not None
+            and pending.get("player") == player
+            and pending.get("kind") == action.get("decision_kind")
+            and pending.get("generation") == action.get("decision_generation")
+        )
     if action_key == "actions/declare-blockers":
         return (
             pending is not None
@@ -3674,7 +3707,7 @@ def resolve_advice_draft(seat: Seat, state: dict[str, Any]) -> dict[str, Any] | 
         )
         legal = isinstance(probe_outcome, dict) and probe_outcome.get("allowed") is True
     else:
-        legal = _unvalidated_action_still_legal(action.get("action_key") or "", state, seat.player)
+        legal = _unvalidated_action_still_legal(action, state, seat.player)
     if not legal:
         seat._advice_drafts.pop(seat.uid, None)
         return {"status": "stale", "failed": "legality"}
