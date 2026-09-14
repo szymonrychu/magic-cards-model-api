@@ -164,6 +164,13 @@
        covers a card. -->
   <button id="drawer-toggle" class="drawer-toggle" type="button" aria-controls="drawer" aria-expanded="false" title="Show the side panel">Panel</button>
 
+  <!-- Mobile mode's Pass and Pass until, in the same rail between the toolbar
+       and `#drawer-toggle` (`ui/render/ribbon.js`'s `renderRailPass`, the
+       same `onVerb` as `#priority-box`), so priority is passed with the
+       drawer closed. Hidden while this seat has nothing to pass, and never
+       shown on a desktop, where `#priority-box` is the control. -->
+  <div id="rail-pass" class="rail-pass" hidden></div>
+
   <!-- the board: opponent on top, shared zones in the middle, you at the
        bottom, mirrored the way MTGO and Arena lay it out.
 

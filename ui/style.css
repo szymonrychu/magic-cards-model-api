@@ -116,6 +116,7 @@ body.busy { cursor: progress; }
    are left alone for the same reason they always were - a page that traps
    the player in it while a request is out is worse than a slow one. */
 body.busy #side-panel button,
+body.busy #rail-pass button,
 body.busy #decision-window button,
 body.busy #decision-popover button {
   opacity: 0.55;
@@ -293,6 +294,9 @@ h3 { font-size: 14px; }
    sliding panel and shows its toggle. */
 #drawer { display: contents; }
 #drawer-toggle { display: none; }
+/* Mobile mode's rail copy of the pass verbs (`renderRailPass`); a desktop
+   passes from `#priority-box` in the side panel. */
+#rail-pass { display: none; }
 
 /* A coarse pointer held upright gets this instead of a board (the portrait
    media block at the end of this file shows it). Above every other layer and
@@ -2059,8 +2063,9 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 
    The board takes the whole viewport but for a rail on the right. The rail
    holds the fixed toolbar, which wraps into a column inside it
-   (`--toolbar-max`), and `#drawer-toggle` at its foot, so neither ever sits
-   over a card. The zone ribbon is hidden - the badges' zone counts open
+   (`--toolbar-max`), `#drawer-toggle` at its foot, and `#rail-pass` (Pass and
+   Pass until) just above the toggle, so none of them ever sits over a card
+   and priority is passed without opening the drawer. The zone ribbon is hidden - the badges' zone counts open
    `#zone-viewer` instead - and `#drawer` (the turn block, the banners and the
    side panel) is a fixed panel beside the rail that slides in over the board
    when `ui/drawer.js` puts `drawer-open` on `#game`. Closed, it is off screen
@@ -2128,6 +2133,23 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
     border-radius: 9px;
   }
   #game.drawer-open #drawer-toggle { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  #rail-pass {
+    position: fixed;
+    right: 8px;
+    bottom: calc(8px + 88px + 8px);
+    z-index: 56;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: var(--rail-w);
+  }
+  #rail-pass button {
+    min-height: 36px;
+    padding: 2px 4px;
+    white-space: normal;
+    font-weight: 600;
+    line-height: 1.15;
+  }
   #game-toolbar > #concede-slot, #game-toolbar > button { flex: 1 0 100%; }
   #concede-slot button { width: 100%; white-space: normal; }
 }

@@ -8,25 +8,27 @@
 // `aria-expanded`; on a desktop the class changes nothing, because there the
 // drawer is a `display: contents` wrapper and its panels sit in the grid.
 //
-// The drawer opens by itself when a new question for this seat appears:
-// `promptKey` names the question, and a key different from the last one
-// opens the drawer. The same key on the next poll does not, so a player who
-// closed the drawer on a question keeps it closed until a different one
-// comes along.
+// The drawer opens by itself when a new question that needs a choice from
+// this seat appears: `promptKey` names the question, and a key different from
+// the last one opens the drawer. The same key on the next poll does not, so a
+// player who closed the drawer on a question keeps it closed until a
+// different one comes along. Plain priority is not such a question: in
+// mobile mode Pass and Pass until sit on the rail (`#rail-pass`,
+// `render/ribbon.js`'s `renderRailPass`), so holding priority never slides
+// the drawer over the board.
 
 import { windowSubject, decisionKey } from "./render/decision_window.js";
 
 /**
- * The question this seat is being asked right now, as a string that stays the
- * same across polls for as long as the same question stands, or `null` when
- * nothing waits on this seat. In `#prompt-box`'s own priority order: a
- * finished game asks nothing; the decision window's subject (this seat's
- * mulligan, a scry, a choose-cards); this seat's CR 103.6 opening-hand turn;
- * this seat's pending decision (a popover or `#prompt-box` one, combat
- * declarations included); a cast or activation being announced in
- * `#casting-strip`; and priority held by this seat, unless an autopass run is
- * answering it - keyed by turn, step and the stack, so a new object on the
- * stack is a new question.
+ * The question needing a choice this seat is being asked right now, as a
+ * string that stays the same across polls for as long as the same question
+ * stands, or `null` when nothing of the kind waits on this seat. In
+ * `#prompt-box`'s own priority order: a finished game asks nothing; the
+ * decision window's subject (this seat's mulligan, a scry, a choose-cards);
+ * this seat's CR 103.6 opening-hand turn; this seat's pending decision (a
+ * popover or `#prompt-box` one, combat declarations included); and a cast or
+ * activation being announced in `#casting-strip`. Priority held by this seat
+ * is `null`: the rail's Pass controls answer it with the drawer closed.
  */
 export function promptKey(app) {
   const state = app && app.state;
@@ -41,11 +43,7 @@ export function promptKey(app) {
   const pending = state.pending_decision;
   if (pending) return pending.player === you ? `decision|${decisionKey(pending)}` : null;
   const action = app.action;
-  if (action) return `action|${action.kind}|${action.cardId}|${action.abilityIndex}`;
-  if (app.run) return null;
-  if (state.priority_holder !== you) return null;
-  const stack = (state.stack || []).map((obj) => obj.id).join(",");
-  return `priority|${state.turn_number}|${state.step}|${stack}`;
+  return action ? `action|${action.kind}|${action.cardId}|${action.abilityIndex}` : null;
 }
 
 /**

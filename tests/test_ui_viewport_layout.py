@@ -11,7 +11,10 @@ screen and out from under the fixed toolbar. In mobile mode (1100px wide or
 less here - headless Chrome has a fine pointer) the zone ribbon is hidden,
 the board takes the width, and the turn block and side panel live in a
 drawer that is off screen until opened; one extra 844x390 frame is measured
-with the drawer open. No frame ever shows the rotate overlay, which is only
+with the drawer open. The crowded board has this seat holding priority, so in
+mobile mode the rail's Pass controls (`#rail-pass`) are on screen with the
+drawer closed, clear of every card, the toolbar and the toggle; on a desktop
+they are not shown. No frame ever shows the rotate overlay, which is only
 for a coarse pointer held upright.
 
 CSS layout cannot be checked from a regex, so this serves `ui/` over HTTP,
@@ -188,6 +191,7 @@ def _game_page() -> str:
 {markup}
 <script type="module">
 import {{ mountBoard }} from "/render/board.js";
+import * as ribbon from "/render/ribbon.js";
 const state = {json.dumps(_crowded_state())};
 if (location.search.includes("permitted=1")) state.play_permissions = {json.dumps(_permissions())};
 let app = {{
@@ -227,6 +231,10 @@ if (location.search.includes("drawer=open")) {{
   document.head.appendChild(still);
   $("#game").classList.add("drawer-open");
 }}
+// This seat holds priority on the crowded board: the rail's Pass controls
+// render from the real `ribbon.js`, as `mountRibbon` draws them.
+const rail = $("#rail-pass");
+if (rail) store.subscribe((a) => ribbon.renderRailPass(rail, a, {{ onVerb: noop }}));
 store.set({{}});
 </script>
 </body></html>"""
@@ -318,6 +326,12 @@ function measure(frame, {{ size, open, permitted }}) {{
     drawerVisibility: w.getComputedStyle($("#drawer")).visibility,
     toggle: box($("#drawer-toggle")),
     toggleDisplay: display("#drawer-toggle"),
+    railPass: box($("#rail-pass")),
+    railPassDisplay: display("#rail-pass"),
+    railButtons: $("#rail-pass")
+      ? [...$("#rail-pass").querySelectorAll("button")]
+          .map((b) => ({{ ...box(b), text: b.textContent }}))
+      : [],
     badges: {{ opp: box($("#opp-badge")), my: box($("#my-badge")) }},
     badgeFit: Object.fromEntries(["opp", "my"].map((side) => {{
       const el = $("#" + side + "-badge");
@@ -479,6 +493,15 @@ def _inside(rect: dict, width: float, height: float) -> bool:
     )
 
 
+def _clip(rect: dict, bound: dict) -> dict | None:
+    """The part of `rect` inside `bound`, or `None` when nothing of it is."""
+    left, right = max(rect["left"], bound["left"]), min(rect["right"], bound["right"])
+    top, bottom = max(rect["top"], bound["top"]), min(rect["bottom"], bound["bottom"])
+    if right <= left or bottom <= top:
+        return None
+    return {"left": left, "right": right, "top": top, "bottom": bottom}
+
+
 def _overlap(a: dict, b: dict) -> bool:
     overlap_x = min(a["right"], b["right"]) - max(a["left"], b["left"])
     overlap_y = min(a["bottom"], b["bottom"]) - max(a["top"], b["top"])
@@ -631,6 +654,46 @@ def test_at_844x390_the_closed_drawer_leaves_the_whole_board_in_mobile_mode(
     assert m["regions"]["#mtg-board"]["width"] >= 844 * 0.85, m["regions"]["#mtg-board"]
 
 
+@EACH
+def test_the_rail_pass_is_on_screen_in_mobile_mode_and_covers_nothing(
+    measurements: list[dict], index: int
+) -> None:
+    m = measurements[index]
+    width, height = m["size"]
+    if not m["mobile"]:
+        assert m["railPassDisplay"] == "none", m["size"]
+        return
+    assert m["railPassDisplay"] not in (None, "none"), m["size"]
+    assert [b["text"] for b in m["railButtons"]] == ["Pass", "Pass until"], m["railButtons"]
+    for button in m["railButtons"]:
+        assert button["width"] >= 40 and button["height"] >= 28, (button, m["size"])
+        assert _inside(button, width, height), (button, m["size"])
+        assert not _overlap(button, m["toggle"]), (button, m["toggle"], m["size"])
+        assert not _overlap(button, m["toolbar"]), (button, m["toolbar"], m["size"])
+        for bar_button in m["toolbarButtons"]:
+            assert not _overlap(button, bar_button), (button, bar_button, m["size"])
+        assert not _overlap(button, m["regions"]["#mtg-board"]), (button, m["size"])
+        # A card past a sideways-scrolling row's edge is clipped by the board
+        # (`#mtg-board` is `overflow-x: hidden`), so only its visible part counts.
+        for card in m["boardCards"]:
+            visible = _clip(card, m["board"]["box"])
+            assert visible is None or not _overlap(button, visible), (button, card, m["size"])
+
+
+def test_at_844x390_with_priority_held_pass_is_on_the_rail_and_the_drawer_stays_closed(
+    measurements: list[dict],
+) -> None:
+    m = measurements[VIEWPORTS.index((844, 390))]
+    assert m["mobile"] is True
+    assert m["scrolled"] == [0, 0] and m["page"] == [844, 390]
+    assert m["drawerVisibility"] == "hidden"
+    assert m["railPassDisplay"] not in (None, "none")
+    texts = [b["text"] for b in m["railButtons"]]
+    assert "Pass" in texts and "Pass until" in texts, texts
+    board = m["board"]
+    assert board["scrollHeight"] <= board["clientHeight"] + 1, board
+
+
 def test_at_1920x1080_the_desktop_keeps_the_zone_ribbon_and_no_overlay(
     measurements: list[dict],
 ) -> None:
@@ -639,6 +702,7 @@ def test_at_1920x1080_the_desktop_keeps_the_zone_ribbon_and_no_overlay(
     assert m["zoneRibbonDisplay"] != "none" and m["regions"]["#zone-ribbon"]["height"] >= 24
     assert m["rotateDisplay"] == "none"
     assert m["toggleDisplay"] == "none"
+    assert m["railPassDisplay"] == "none"
 
 
 def test_an_open_drawer_is_on_screen_and_keeps_the_toggle_and_toolbar_reachable(
@@ -659,7 +723,7 @@ def test_an_open_drawer_is_on_screen_and_keeps_the_toggle_and_toolbar_reachable(
         assert _inside(rect, width, height), (name, rect)
     assert m["regions"]["#side-panel"]["height"] >= 60, m["regions"]["#side-panel"]
     assert _inside(m["toggle"], width, height) and not _overlap(m["toggle"], m["drawer"])
-    for button in m["toolbarButtons"]:
+    for button in m["toolbarButtons"] + m["railButtons"]:
         assert _inside(button, width, height), button
         assert not _overlap(button, m["drawer"]), (button, m["drawer"])
 

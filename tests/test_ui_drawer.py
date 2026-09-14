@@ -4,9 +4,11 @@ In mobile mode - a coarse pointer in landscape, or any window 1100px wide or
 less - the board takes the whole width, the zone ribbon is hidden, and the
 turn block, the banners and the side panel live in a drawer that slides in
 from the right over the board. A fixed tab toggles it. The drawer opens by
-itself when something asks this seat for an answer (a decision, the pregame,
-a cast being announced, priority), and once the player closes it, it stays
-closed until a different question comes.
+itself when something asks this seat for a choice (a decision, the decision
+window, the pregame, a cast being announced), and once the player closes it,
+it stays closed until a different question comes. Plain priority does not open
+it: in mobile mode Pass and Pass until sit on the right rail instead
+(`tests/test_ui_rail_pass.py`).
 
 A coarse pointer held upright gets a full-screen "rotate your device"
 overlay instead of a board.
@@ -85,11 +87,8 @@ def test_prompt_key_names_each_question_this_seat_must_answer() -> None:
           theirs: m.promptKey(app(BASE({ pending_decision: decision(4, "bob") }))),
           scry: m.promptKey(app(BASE({ pending_decision: decision(6, "alice", "scry") }))),
           priority: m.promptKey(app(BASE({ priority_holder: "alice" }))),
-          prioritySameStep: m.promptKey(app(BASE({ priority_holder: "alice" }))) ===
-            m.promptKey(app(BASE({ priority_holder: "alice" }), { action: null })),
-          priorityNewStack:
-            m.promptKey(app(BASE({ priority_holder: "alice", stack: [{ id: "s1" }] }))) !==
-            m.promptKey(app(BASE({ priority_holder: "alice" }))),
+          priorityOverStack:
+            m.promptKey(app(BASE({ priority_holder: "alice", stack: [{ id: "s1" }] }))),
           running: m.promptKey(
             app(BASE({ priority_holder: "alice" }), { run: { verb: "pass_until" } })
           ),
@@ -117,10 +116,11 @@ def test_prompt_key_names_each_question_this_seat_must_answer() -> None:
     assert result["sameAgain"] is True and result["nextOne"] is True
     assert result["theirs"] is None
     assert isinstance(result["scry"], str)
-    assert isinstance(result["priority"], str)
-    assert result["prioritySameStep"] is True and result["priorityNewStack"] is True
+    # Plain priority is not a question that needs a choice: Pass is on the rail.
+    assert result["priority"] is None
+    assert result["priorityOverStack"] is None
     assert result["running"] is None
-    assert isinstance(result["casting"], str) and result["casting"] != result["priority"]
+    assert isinstance(result["casting"], str)
     assert result["over"] is None
     assert isinstance(result["openingHand"], str)
     assert result["openingHandTheirs"] is None
@@ -176,7 +176,6 @@ def test_a_new_prompt_opens_the_drawer_once_and_a_closed_drawer_stays_closed() -
           const answered = isOpen();
           store.set({ state: BASE({ priority_holder: "alice", step: "draw" }) });
           const priority = isOpen();
-          dispatch(TOGGLE, "click");
           store.set({ state: BASE({ pending_decision: decision(6, "bob") }) });
           const theirs = isOpen();
           return { idle, asked, samePrompt, nextPrompt, answered, priority, theirs };
@@ -189,9 +188,63 @@ def test_a_new_prompt_opens_the_drawer_once_and_a_closed_drawer_stays_closed() -
         "samePrompt": False,
         "nextPrompt": True,
         "answered": False,
-        "priority": True,
+        "priority": False,
         "theirs": False,
     }
+
+
+@requires_node
+def test_plain_priority_never_opens_the_drawer_but_every_real_question_still_does() -> None:
+    """Each question is shown to a closed drawer that has just seen plain
+    priority, so the opening comes from the question and not from a key that
+    changed on the way in."""
+    result = run(
+        """
+        (async () => {
+          const { store, drawer } = await mountWith(BASE());
+          const PRIORITY = BASE({ priority_holder: "alice", step: "draw" });
+          const seen = {};
+          const show = (name, state, extra) => {
+            drawer.close();
+            store.set({ state: PRIORITY, action: null, run: null });
+            const beforeOpen = isOpen();
+            store.set({ state, action: null, run: null, ...(extra || {}) });
+            seen[name] = { before: beforeOpen, after: isOpen() };
+          };
+          store.set({ state: PRIORITY });
+          seen.priority = isOpen();
+          store.set({
+            state: BASE({ priority_holder: "alice", step: "draw", stack: [{ id: "s1" }] }),
+          });
+          seen.priorityNewStack = isOpen();
+          store.set({ state: BASE({ priority_holder: "alice", step: "end", turn_number: 4 }) });
+          seen.priorityNewStep = isOpen();
+          show("decision", BASE({ priority_holder: "alice", pending_decision: decision(7) }));
+          show("combat", BASE({
+            priority_holder: "alice",
+            pending_decision: decision(8, "alice", "declare_attackers"),
+          }));
+          show("windowSubject", BASE({ pending_decision: decision(9, "alice", "scry") }));
+          show("mulligan", BASE({
+            pregame: { step: "mulligan", awaiting_mulligan: ["alice"], mulligans_taken: {} },
+          }));
+          show("pregame", BASE({
+            pregame: {
+              step: "opening_hand", opening_hand_actor: "alice", opening_hand_options: {},
+            },
+          }));
+          show("action", PRIORITY, {
+            action: { kind: "cast", cardId: "h1", abilityIndex: null },
+          });
+          return seen;
+        })()
+        """
+    )
+    assert result["priority"] is False
+    assert result["priorityNewStack"] is False
+    assert result["priorityNewStep"] is False
+    for name in ("decision", "combat", "windowSubject", "mulligan", "pregame", "action"):
+        assert result[name] == {"before": False, "after": True}, (name, result[name])
 
 
 @requires_node
@@ -299,3 +352,32 @@ def test_a_coarse_pointer_upright_gets_the_rotate_overlay() -> None:
     assert "position: fixed;" in base and "inset: 0;" in base
     z = re.search(r"z-index:\s*(\d+)", base)
     assert z and int(z.group(1)) >= 100, "the overlay must sit above every other layer"
+
+
+# ------------------------------------------------------ the rail's Pass --
+
+
+def test_the_rail_pass_controls_sit_outside_the_drawer_in_the_game_screen() -> None:
+    html = _index()
+    game = re.search(r'<section id="game" hidden>(.*?)</section>', html, re.S)
+    assert game and 'id="rail-pass"' in game.group(1)
+    drawer = re.search(r'<div id="drawer" class="drawer">(.*?)\n  </div>', html, re.S)
+    assert drawer and 'id="rail-pass"' not in drawer.group(1)
+
+
+def test_the_rail_pass_controls_show_only_in_mobile_mode() -> None:
+    css = _css()
+    assert "display: none;" in _rule(css, "#rail-pass")
+    block = _media_block(css, MOBILE_QUERY)
+    rail = _rule(block, "#rail-pass")
+    assert "position: fixed;" in rail and "display: flex;" in rail
+    assert "width: var(--rail-w);" in rail
+
+
+def test_a_submission_in_flight_dims_the_rail_pass_like_the_priority_box() -> None:
+    css = _css()
+    busy = re.search(r"((?:body\.busy [^,{]+button,?\s*)+)\{\s*opacity: 0\.55;", css)
+    assert busy, "no body.busy dimming rule"
+    selectors = busy.group(1)
+    assert "body.busy #side-panel button" in selectors
+    assert "body.busy #rail-pass button" in selectors
