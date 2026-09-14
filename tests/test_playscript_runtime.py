@@ -26,7 +26,7 @@ import pytest
 from conftest import add_card, force_turn_position, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
-from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG
+from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG, state_view
 
 from magic_cards_model_api import audit, seatkit
 from magic_cards_model_api.main import app
@@ -2101,6 +2101,50 @@ def test_play_land_ties_any_takes_the_first_by_sorted_name_instead_of_ambiguous(
     foundry = cards_named(state(client, board)["battlefield"], "Sacred Foundry")
     assert foundry, "the alphabetically-first tied land was played"
     assert hook.posts("/actions/play-land")[0]["card_id"] == foundry[0]["id"]
+
+
+def test_play_land_plays_an_mdfcs_land_face_by_the_cards_own_id() -> None:
+    """O5: "play_land plays that face by card_id; confirm the route does
+    this." Confirmed by reading, not assumed: `_move_request`'s play_land
+    branch (below) sends only `card_id`, no separate face id, for every
+    land pick alike; the engine's own `Game.play_land` (magic_cards_model/
+    models/game.py) already resolves an MDFC's back face from that one id
+    via `Card.land_face` - "There is no separate 'playing an MDFC's land
+    face' special action in the rules - it is the same CR 305.1 land drop."
+    No live MDFC-land card is cached in tests/fixtures/scryfall (checked),
+    so this proves the runner's half directly against a hand-built view in
+    the same shape `serialize.state_view` emits, the way most of
+    `test_playscript_selectors.py`'s double-faced-card tests already do."""
+    witch = {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "name": "Witch Enchanter",
+        "card_name": "Witch Enchanter // Witch-Blessed Meadow",
+        "zone": "hand",
+        "controller": "alice",
+        "type_line": "Creature — Human Warlock",
+        "oracle_text": None,
+        "faces": [
+            {
+                "name": "Witch Enchanter",
+                "mana_cost": "{3}{W}",
+                "type_line": "Creature — Human Warlock",
+                "oracle_text": "When this creature enters, destroy target artifact or enchantment.",
+            },
+            {
+                "name": "Witch-Blessed Meadow",
+                "mana_cost": "",
+                "type_line": "Land",
+                "oracle_text": "As this land enters, you may pay 3 life.",
+            },
+        ],
+    }
+    state = state_view(hands={"alice": [witch]})
+    move = {"kind": "play_land", "card": {"select": {"land_face": True}}}
+    built = runtime._move_request(move, state, "alice", "reasoning")
+    assert built == (
+        "actions/play-land",
+        {"player": "alice", "card_id": witch["id"], "reasoning": "reasoning"},
+    )
 
 
 def test_an_off_zone_ability_activates_from_the_hand(

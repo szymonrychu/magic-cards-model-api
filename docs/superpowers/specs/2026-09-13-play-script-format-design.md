@@ -32,7 +32,7 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   `supertypes_any`, `colors_any`, `keywords_any` (each 0-15 words);
   `mana_value {op, n}`; `power {op, n}`; `toughness {op, n}`; `tapped`;
   `counters {name, op, n}`; `ability_text_has`; `oracle_has`;
-  `searches_for_any` (0-5 basic land type words);
+  `searches_for_any` (0-5 basic land type words); `land_face`;
   `missing_from {zones: [1-7 zone], side: me|opponent, by: subtype|name}`.
 - `colors_any` reads the card's `colors` by name or letter, any case, from a
   closed vocabulary: the five colors and `colorless`. `colorless` (or `C`)
@@ -104,6 +104,20 @@ word the template names that is not one of the five (Expedition Map's "a land
 card") contributes nothing, so a generic land search never matches.
 
 - Basic land types: `Plains`, `Island`, `Swamp`, `Mountain`, `Forest`
+
+### `land_face`
+
+A boolean selector field: true when any face the view carries (`faces`,
+present for a modal double-faced card regardless of its current zone or
+chosen face - `serialize._faces_view`) types as a Land. A creature-fronted
+MDFC land (Witch Enchanter // Witch-Blessed Meadow, Sink into Stupor) matches
+it in hand even though its up face is a Creature or a Sorcery, so a plain
+`types_all: [Land]` still does not match it - that reads only the up face,
+CR 712.8a. A single-faced card has no `faces`, so its own type line is read
+instead: a plain land matches `land_face: true` too. `play_land` plays
+whichever face is a land by the card's own `card_id` - there is no separate
+face id in the request, because CR 712.12 is the same land drop either way
+and the engine resolves the face from the id (`Card.land_face`).
 
 ### `missing_from`
 

@@ -291,6 +291,7 @@ class Selector(_Strict):
     ability_text_has: NonBlank = None
     oracle_has: NonBlank = None
     searches_for_any: SearchesForWords = None
+    land_face: bool = None
     missing_from: MissingFrom = None
 
 

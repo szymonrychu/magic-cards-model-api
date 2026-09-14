@@ -75,6 +75,19 @@ def test_doc_defines_searches_for_any_and_names_the_basic_land_types() -> None:
         assert phrase in text.split("### `searches_for_any`", 1)[1].split("\n## ", 1)[0]
 
 
+def test_doc_defines_land_face() -> None:
+    text = DOC.read_text()
+    assert "`land_face`" in text
+    section = text.split("### `land_face`", 1)[1].split("\n## ", 1)[0]
+    for phrase in (
+        "`faces`",
+        "types_all: [Land]",
+        "own `card_id`",
+        "Card.land_face",
+    ):
+        assert phrase in section
+
+
 def test_doc_names_every_answerable_decision_kind() -> None:
     assert _listed("- Decision kinds:") == list(DECISION_KINDS)
 

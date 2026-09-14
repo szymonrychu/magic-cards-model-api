@@ -274,6 +274,53 @@ def test_a_double_faced_permanent_reads_its_computed_type_line_and_up_face_text(
     assert matches({"oracle_has": "pay 3 life"}, meadow)
 
 
+# -- land_face (O5) ----------------------------------------------------------
+
+SINK_FACES = [
+    {
+        "name": "Sink into Stupor",
+        "mana_cost": "{1}{U}",
+        "type_line": "Sorcery",
+        "oracle_text": "Return target creature to its owner's hand.",
+    },
+    {
+        "name": "Sink into Stupor's land back face",
+        "mana_cost": "",
+        "type_line": "Land",
+        "oracle_text": "This land enters tapped.",
+    },
+]
+
+
+def _sink(zone: str) -> dict:
+    view = card("Sink into Stupor", type_line="Sorcery // Land", zone=zone, oracle_text=None)
+    view["card_name"] = "Sink into Stupor // Sink into Stupor's land back face"
+    view["faces"] = [dict(face) for face in SINK_FACES]
+    return view
+
+
+def test_land_face_matches_an_mdfc_with_a_land_back_face_in_hand():
+    assert matches({"land_face": True}, _sink("hand"))
+    assert matches({"land_face": True}, _dfc("hand", "Witch Enchanter"))
+
+
+def test_land_face_false_matches_a_card_with_no_land_face():
+    assert matches({"land_face": False}, bolt())
+    assert not matches({"land_face": True}, bolt())
+
+
+def test_a_plain_types_all_land_does_not_match_an_mdfc_whose_front_face_is_not_a_land():
+    assert not matches({"types_all": ["Land"]}, _sink("hand"))
+    assert not matches({"types_all": ["Land"]}, _dfc("hand", "Witch Enchanter"))
+    selector = {"land_face": True, "types_all": ["Land"]}
+    assert not matches(selector, _sink("hand")), "types_all still reads the up face"
+
+
+def test_land_face_matches_a_plain_land_too():
+    assert matches({"land_face": True}, fetchland())
+    assert matches({"land_face": True}, mountain())
+
+
 # -- searches_for_any (O3) --------------------------------------------------------
 
 FETCH_TEMPLATE = "{T}, Pay 1 life, Sacrifice this land: Search your library for %s card, put it onto the battlefield, then shuffle."

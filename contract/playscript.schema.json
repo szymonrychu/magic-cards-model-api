@@ -716,6 +716,11 @@
           "title": "Keywords Any",
           "type": "array"
         },
+        "land_face": {
+          "default": null,
+          "title": "Land Face",
+          "type": "boolean"
+        },
         "mana_value": {
           "$ref": "#/$defs/Comparison",
           "default": null

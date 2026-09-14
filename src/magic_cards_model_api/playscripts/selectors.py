@@ -26,6 +26,12 @@ card name (design D3):
   even in hand (`off_zone_abilities`). A word the template names outside the
   five (Expedition Map's "a land card") contributes nothing, so a generic
   land search never matches it;
+- `land_face` (O5) is true when any face the view carries (`faces`, present
+  regardless of zone for a modal double-faced card) types as a Land - a
+  creature-fronted MDFC land matches it in hand even though a plain
+  `types_all: [Land]` never does, since that reads only the up face. A
+  single-faced card is read on its own type line, so a plain land matches
+  too;
 - `missing_from {zones, side, by}` compares the candidate with the cards
   already on that side in those zones, read through `present` (the board
   `conditions.presence` builds from the same redacted view). `by: subtype`
@@ -134,6 +140,22 @@ def _searched_basic_types(card: dict[str, Any], oracle_text: str) -> set[str]:
     return found
 
 
+def _has_land_face(card: dict[str, Any]) -> bool:
+    """O5's `land_face`: does this card have a face that types as a Land? A
+    modal double-faced card carries `faces` (`serialize._faces_view`)
+    regardless of its current zone or chosen face, so a creature-fronted
+    MDFC whose back is a land (Witch Enchanter // Witch-Blessed Meadow)
+    matches this in hand even though its up face does not have the Land
+    type - `play_land` plays that face by the card's own id (`Game.
+    play_land`'s `Card.land_face` mirror read), never a separate id. A
+    single-faced card carries no `faces`, so its own type line is read
+    instead - a plain land is its own land face."""
+    faces = [face for face in card.get("faces") or [] if isinstance(face, dict)]
+    if faces:
+        return any("land" in parse_type_line(face.get("type_line"))[1] for face in faces)
+    return "land" in parse_type_line(card.get("type_line"))[1]
+
+
 def _face(card: dict[str, Any]) -> dict[str, Any] | None:
     """The face a double-faced card view has in its zone, or None when the
     view's own `type_line`/`oracle_text` already are its characteristics (a
@@ -198,6 +220,8 @@ def matches(
     ):
         return False
     if "tapped" in wanted and card.get("tapped") is not wanted["tapped"]:
+        return False
+    if "land_face" in wanted and _has_land_face(card) is not wanted["land_face"]:
         return False
     if "counters" in wanted:
         kind = wanted["counters"]["name"].casefold()

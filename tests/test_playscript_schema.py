@@ -347,6 +347,7 @@ def test_no_selector_field_takes_a_card_name():
         "ability_text_has",
         "oracle_has",
         "searches_for_any",
+        "land_face",
         "missing_from",
     }
 
@@ -380,6 +381,22 @@ def test_searches_for_any_is_bounded_at_the_five_basic_land_types():
     assert codes(over) == ["bounds-exceeded"]
     with pytest.raises(ValidationError):
         Play.model_validate(over)
+
+
+# -- O5: land_face ------------------------------------------------------------
+
+
+def test_land_face_validates_as_a_bool():
+    doc = mutate("true.0.select", {"land_face": True})
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).true[0].select.land_face is True
+
+
+def test_land_face_non_bool_is_malformed():
+    doc = mutate("true.0.select", {"land_face": "yes"})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
 
 
 def test_an_input_condition_is_usable_in_true_and_false():
