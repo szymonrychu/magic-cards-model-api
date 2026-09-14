@@ -1272,7 +1272,9 @@ and nothing is staged - so you can think ahead of the window rather than
 only once your human's own priority actually arrives.
 
 Woken to draft, call `stage_advice(player_uid, step, whose_turn)` for the
-window you expect next (the same `step`/`whose_turn` `pass_until` takes),
+window you expect next (the same `step`/`whose_turn` `pass_until` takes;
+refused before the first turn - there is no window to mean yet during
+mulligans or opening-hand actions),
 then make your one committing call exactly as you always would - it is
 captured as the staged draft instead of posted right away. The MCP process
 posts it on its own the instant your human's priority reaches that window

@@ -1027,6 +1027,16 @@ def test_buddy_prompt_names_every_draft_status(tmp_path, guide):
         assert status in flat, f"buddy prompt never names draft status {status!r}"
 
 
+def test_buddy_prompt_names_the_pregame_refusal_for_stage_advice(tmp_path, guide):
+    """S2 A6 re-review: `stage_advice` refuses outright before the game has
+    a turn (pregame - mulligans, opening-hand actions), `STAGE_ADVICE_
+    PREGAME`. One short clause in the draft-ahead section is enough."""
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## Draft ahead while your human plays")).lower()
+    assert "before the first turn" in section or "pregame" in section
+    assert "stage_advice" in section
+
+
 def test_buddy_prompt_keeps_the_silence_rules(tmp_path, guide):
     """The draft-ahead addition must not crowd out the existing silence
     doctrine - no proposals in upkeep, draw or an empty-stack end step."""
@@ -1157,6 +1167,13 @@ def test_buddy_brief_names_stage_advice_and_wake_to_draft_flag():
     flat = _flat((BRIEFS / "ai_buddy_brief.md").read_text())
     assert "stage-advice" in flat
     assert "--wake-to-draft" in flat
+
+
+def test_buddy_brief_names_the_pregame_refusal_for_stage_advice():
+    text = (BRIEFS / "ai_buddy_brief.md").read_text()
+    section = _flat(_section(text, "## Draft ahead while your human plays")).lower()
+    assert "before the first turn" in section or "pregame" in section
+    assert "stage-advice" in section
 
 
 def test_buddy_brief_names_every_draft_status():

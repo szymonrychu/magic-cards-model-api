@@ -305,6 +305,18 @@ PROTOCOL_VERSION = "seatkit-20"
 #: argument and no `stage_advice` tool to call, and reads a `draft` key on
 #: any other answer the same as any other extra one - untouched.
 #:
+#: `stage_advice` itself refuses outright, `{"staged": false, "reason":
+#: ...}`, before the game has left the pregame (mulligans, opening-hand
+#: actions have no turn or step for a window to mean) - `STAGE_ADVICE_
+#: PREGAME`, client-visible and distinct from a `stage`d draft later going
+#: `"stale"`. And the CLI transport (`mcp-seat`, `seat_cli.py`) alone can
+#: fold a `draft.note` string into any answer's `draft` block - a filesystem
+#: problem persisting or reloading its own on-disk staged draft, surfaced
+#: rather than raised past the command's own JSON, with no MCP equivalent
+#: (the MCP transport keeps its draft in memory, not on disk, and has
+#: nothing of the kind to report). A pre-bump process reads both the same as
+#: any other extra key or refusal shape it does not recognise yet.
+#:
 #: Also `seatkit-20`, response-only, no request shape moved (S2 A7): every
 #: ledger row now stamps `active_player`, `priority_holder` and
 #: `turns_taken` (this one on the row itself, at write time - distinct

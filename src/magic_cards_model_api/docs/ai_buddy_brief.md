@@ -52,7 +52,9 @@ changes and nothing is staged - so you can think ahead of the window rather
 than only once your human's own priority actually arrives.
 
 Woken to draft, run `stage-advice STEP --whose-turn WHOSE` for the window
-you expect next (the same `STEP`/`--whose-turn` `pass-until` takes), then
+you expect next (the same `STEP`/`--whose-turn` `pass-until` takes; refused
+before the first turn - mulligans and opening-hand actions have no window to
+mean yet), then
 make your one committing command exactly as you always would - it is
 captured as the staged draft instead of posted right away. The next `wait`
 (or any other command) posts it on its own the instant your human's priority

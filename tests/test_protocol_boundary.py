@@ -209,6 +209,21 @@ def test_seatkit_20_names_buddy_drafts() -> None:
         assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
 
 
+def test_seatkit_20_names_the_stage_advice_pregame_refusal_and_cli_draft_note() -> None:
+    """S2 A6 re-review: `stage_advice` refuses outright, `{"staged": false,
+    "reason": ...}`, before the game has a turn (`STAGE_ADVICE_PREGAME`) -
+    client-visible and distinct from a draft going stale later. And the CLI
+    transport's own `draft.note` (folded into a printed answer's `draft`
+    block by `seat_cli.py`'s `emit`, never by the MCP transport) surfaces a
+    filesystem problem persisting or loading a staged draft rather than
+    raising past the command's own JSON answer."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in ("pregame", "staged", "draft.note", "CLI"):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
 def test_seatkit_20_names_the_ledger_metrics_stamps() -> None:
     """S2 A7: `active_player`, `priority_holder` and `turns_taken` are
     stamped on every ledger row, not only the state view."""
