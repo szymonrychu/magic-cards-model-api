@@ -245,9 +245,11 @@ h3 { font-size: 14px; }
   grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-areas: "board zones top" "board zones banner" "board zones side";
   /* `dvh` where the browser has it: a phone's `100vh` is the height with its
-     address bar hidden, which is taller than the window it actually shows. */
-  height: 100vh;
-  height: 100dvh;
+     address bar hidden, which is taller than the window it actually shows.
+     Less the body's safe-area padding (the fullscreen section at the end of
+     this file), or a notched phone would scroll the page. */
+  height: calc(100vh - var(--safe-top) - var(--safe-bottom));
+  height: calc(100dvh - var(--safe-top) - var(--safe-bottom));
   gap: 8px;
   padding: 8px;
   /* A reserved strip along the very top of the viewport, exclusively for
@@ -2202,4 +2204,74 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
+}
+
+/* ------------------------ fullscreen and safe areas (ui/fullscreen.js) ---- */
+
+/* `viewport-fit=cover` (index.html) draws the page under a phone's notch and
+   home indicator; these insets keep what a player reads or touches out from
+   under them. Read once here so every rule uses the same four values - and so
+   `tests/test_ui_viewport_layout.py` can stand in for a notch Chrome does not
+   have. On a desktop they are all 0 and nothing moves. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+body { padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left); }
+/* The fixed controls are placed against the viewport, not the padded body, so
+   each moves in from the edge it is anchored to. `translate` rather than
+   their own `top`/`right`/`bottom`, which the rules above own.
+
+   The top row is the exception: it spans the width, so a sideways `translate`
+   would slide its phase track under the left notch. It drops by the top
+   inset instead and pads its content in from both side insets - its
+   background still reaches the edges, nothing in it does. The board below
+   starts under it because the body's own top padding moves `#game` by the
+   same inset. */
+#game-toolbar {
+  top: calc(8px + var(--safe-top));
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+#rail-pass, #drawer-toggle { translate: calc(-1 * var(--safe-right)) calc(-1 * var(--safe-bottom)); }
+#drawer { translate: calc(-1 * var(--safe-right)) 0; }
+@media (max-width: 1100px), (pointer: coarse) and (orientation: landscape) {
+  #game-toolbar {
+    top: var(--safe-top);
+    padding-left: calc(8px + var(--safe-left));
+    padding-right: calc(8px + var(--safe-right));
+  }
+  #drawer {
+    padding-top: calc(8px + var(--safe-top));
+    padding-bottom: calc(8px + var(--safe-bottom));
+  }
+}
+
+/* The button itself: an icon of four corner brackets, lit while fullscreen. */
+.fullscreen-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 24px;
+}
+.fullscreen-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.fullscreen-glyph {
+  --arm: 5px;
+  --thick: 2px;
+  display: block;
+  width: 14px;
+  height: 14px;
+  background:
+    linear-gradient(currentColor, currentColor) left top / var(--arm) var(--thick),
+    linear-gradient(currentColor, currentColor) left top / var(--thick) var(--arm),
+    linear-gradient(currentColor, currentColor) right top / var(--arm) var(--thick),
+    linear-gradient(currentColor, currentColor) right top / var(--thick) var(--arm),
+    linear-gradient(currentColor, currentColor) left bottom / var(--arm) var(--thick),
+    linear-gradient(currentColor, currentColor) left bottom / var(--thick) var(--arm),
+    linear-gradient(currentColor, currentColor) right bottom / var(--arm) var(--thick),
+    linear-gradient(currentColor, currentColor) right bottom / var(--thick) var(--arm);
+  background-repeat: no-repeat;
 }

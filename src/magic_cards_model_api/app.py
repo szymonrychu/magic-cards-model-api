@@ -9,6 +9,7 @@ one origin.
 
 from __future__ import annotations
 
+import mimetypes
 import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -4078,6 +4079,9 @@ class _GameIdConvertor(Convertor[str]):
 register_url_convertor("game_id", _GameIdConvertor())
 
 _ui_dir = Path(__file__).resolve().parents[2] / "ui"
+# `ui/manifest.webmanifest` must answer as a manifest. Python's own table says
+# so, but a host's /etc/mime.types is read over it, so pin it for every image.
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 _frontend = frontend_dir()
 
 if _frontend is not None:

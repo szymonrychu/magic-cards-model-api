@@ -72,6 +72,13 @@ PERMITTED = [(1920, 1080), (844, 390)]
 #: How many cards the permitted frames' `play_permissions` name.
 PERMITTED_CARDS = 3
 
+#: The one frame measured with an iPhone's landscape safe-area insets (the
+#: notch on both sides, the home indicator along the bottom). Chrome has no
+#: notch to report through `env()`, so the frame sets the `--safe-*` tokens
+#: `style.css` reads those insets into.
+SAFE_AREA = (844, 390)
+SAFE_INSETS = {"top": 0, "right": 47, "bottom": 21, "left": 47}
+
 MOBILE_QUERY = "(max-width: 1100px), (pointer: coarse) and (orientation: landscape)"
 
 SEVEN_ROWS = [
@@ -196,6 +203,13 @@ def _game_page() -> str:
 import {{ mountBoard }} from "/render/board.js";
 import {{ mountTopbar }} from "/render/panels.js";
 import * as ribbon from "/render/ribbon.js";
+import {{ mountFullscreen }} from "/fullscreen.js";
+if (location.search.includes("safe=1")) {{
+  const insets = document.createElement("style");
+  insets.textContent = ":root {{ " + Object.entries({json.dumps(SAFE_INSETS)})
+    .map(([side, px]) => `--safe-${{side}}: ${{px}}px;`).join(" ") + " }}";
+  document.head.appendChild(insets);
+}}
 const state = {json.dumps(_crowded_state())};
 if (location.search.includes("permitted=1")) state.play_permissions = {json.dumps(_permissions())};
 let app = {{
@@ -216,6 +230,10 @@ mountBoard(document, store, {{
 // The real turn line, phase track and connection pill, as `app.js` mounts them.
 mountTopbar(document, store, {{ onLeaveGame: noop, onPassForAiSeat: noop, onReportProblem: noop }});
 $("#concede-slot").innerHTML = "<button>Concede - click again to confirm</button>";
+// The fullscreen button as an Android phone shows it: a frame has no
+// fullscreen permission of its own, so the API is reported present here.
+Object.defineProperty(document, "fullscreenEnabled", {{ value: true, configurable: true }});
+mountFullscreen(document);
 $("#prompt-box").textContent = "You have priority in your precombat main phase.";
 $("#priority-box").innerHTML = "<button>Pass priority</button> <button>Resolve top</button>";
 $("#stops-box").textContent = "Stops: upkeep, draw, attackers, blockers, end";
@@ -245,7 +263,8 @@ def _harness_page() -> str:
 const SIZES = {json.dumps(VIEWPORTS)};
 const FRAMES = [...SIZES.map((size) => ({{ size, open: false, permitted: false }})),
   {{ size: {json.dumps(list(DRAWER_OPEN))}, open: true, permitted: false }},
-  ...{json.dumps(PERMITTED)}.map((size) => ({{ size, open: false, permitted: true }}))];
+  ...{json.dumps(PERMITTED)}.map((size) => ({{ size, open: false, permitted: true }})),
+  {{ size: {json.dumps(list(SAFE_AREA))}, open: false, permitted: false, safe: true }}];
 const MOBILE = {json.dumps(MOBILE_QUERY)};
 const ROWS = {json.dumps(SEVEN_ROWS)};
 const REGIONS = ["#topbar", "#banners", "#zone-ribbon", "#side-panel", "#mtg-board"];
@@ -259,7 +278,7 @@ const box = (el) => {{
   const {{ left, top, right, bottom, width, height }} = el.getBoundingClientRect();
   return {{ left, top, right, bottom, width, height }};
 }};
-function measure(frame, {{ size, open, permitted }}) {{
+function measure(frame, {{ size, open, permitted, safe }}) {{
   const w = frame.contentWindow;
   const d = frame.contentDocument;
   const $ = (sel) => d.querySelector(sel);
@@ -331,6 +350,10 @@ function measure(frame, {{ size, open, permitted }}) {{
     size,
     open,
     permitted,
+    safe: Boolean(safe),
+    fullscreen: box($("#fullscreen-toggle")),
+    fullscreenDisplay: display("#fullscreen-toggle"),
+    fullscreenFirst: $("#game-toolbar").firstElementChild === $("#fullscreen-toggle"),
     permittedRow: {{
       box: box(permittedRow),
       inner: permittedInner,
@@ -390,10 +413,10 @@ function measure(frame, {{ size, open, permitted }}) {{
     stackCards: $("#stack-row").querySelectorAll(".card").length,
   }};
 }}
-const frames = FRAMES.map(({{ size: [width, height], open, permitted }}) => {{
+const frames = FRAMES.map(({{ size: [width, height], open, permitted, safe }}) => {{
   const f = document.createElement("iframe");
   f.style.cssText = `width:${{width}}px;height:${{height}}px;border:0;display:block`;
-  const query = [open ? "drawer=open" : "", permitted ? "permitted=1" : ""]
+  const query = [open ? "drawer=open" : "", permitted ? "permitted=1" : "", safe ? "safe=1" : ""]
     .filter(Boolean).join("&");
   f.src = "/__viewport_game.html" + (query ? "?" + query : "");
   document.getElementById("frames").appendChild(f);
@@ -488,7 +511,7 @@ def measurements(tmp_path_factory: pytest.TempPathFactory) -> list[dict]:
         tmp_path_factory.mktemp("chrome-profile"),
     )
     assert not isinstance(data, dict), data
-    assert len(data) == len(VIEWPORTS) + 1 + len(PERMITTED), len(data)
+    assert len(data) == len(VIEWPORTS) + 1 + len(PERMITTED) + 1, len(data)
     return data
 
 
@@ -1035,3 +1058,69 @@ def test_a_hidden_advice_panel_breaks_nothing_in_the_open_drawer(
     assert hidden["page"] == [width, height], hidden["page"]
     assert _inside(hidden["sidePanel"]["box"], width, height), hidden["sidePanel"]["box"]
     _stacked_inside(hidden["sidePanel"])
+
+
+@EACH
+def test_the_fullscreen_button_leads_the_toolbar_on_screen_and_covers_nothing(
+    measurements: list[dict], index: int
+) -> None:
+    m = measurements[index]
+    width, height = m["size"]
+    button = m["fullscreen"]
+    assert m["fullscreenFirst"] is True, m["size"]
+    assert m["fullscreenDisplay"] not in (None, "none"), m["size"]
+    assert button["width"] >= 20 and button["height"] >= 20, (button, m["size"])
+    assert _inside(button, width, height), (button, m["size"])
+    assert not _overlap(button, m["regions"]["#mtg-board"]), (button, m["size"])
+    for other in m["railButtons"] + ([m["toggle"]] if m["mobile"] else []):
+        assert not _overlap(button, other), (button, other, m["size"])
+
+
+def _safe_frame(measurements: list[dict]) -> dict:
+    m = measurements[-1]
+    assert m["safe"] is True and m["size"] == list(SAFE_AREA), m["size"]
+    return m
+
+
+def test_nothing_a_player_touches_sits_in_the_safe_area_insets(measurements: list[dict]) -> None:
+    """The notch and the home indicator never cover a card, the top row's phase
+    track or buttons, the rail's Pass or the drawer toggle, and the page still
+    does not scroll. The top row stays a thin strip across the whole width with
+    the board starting under it."""
+    m = _safe_frame(measurements)
+    width, height = m["size"]
+    assert m["scrolled"] == [0, 0] and m["page"] == [width, height], (m["scrolled"], m["page"])
+    board = m["board"]
+    assert board["scrollHeight"] <= board["clientHeight"] + 1, board
+    safe = {
+        "left": SAFE_INSETS["left"],
+        "top": SAFE_INSETS["top"],
+        "right": width - SAFE_INSETS["right"],
+        "bottom": height - SAFE_INSETS["bottom"],
+    }
+
+    def within(rect: dict) -> bool:
+        return (
+            rect["left"] >= safe["left"] - 0.5
+            and rect["top"] >= safe["top"] - 0.5
+            and rect["right"] <= safe["right"] + 0.5
+            and rect["bottom"] <= safe["bottom"] + 0.5
+        )
+
+    assert within(m["regions"]["#mtg-board"]), (m["regions"]["#mtg-board"], safe)
+    for card in m["boardCards"]:
+        visible = _clip(card, board["box"])
+        assert visible is None or within(visible), (card, safe)
+    # The top row is a full-width strip whose background reaches the edges;
+    # what it holds - the phase track and every button - stays clear.
+    controls = m["toolbarButtons"] + m["railButtons"] + [m["phaseTrack"]["box"], m["toggle"]]
+    assert m["railButtons"] and m["toolbarButtons"], m
+    for control in controls:
+        assert within(control), (control, safe)
+    bar = m["toolbar"]
+    assert bar["height"] <= 32 and bar["left"] <= 0.5 and bar["right"] >= width - 0.5, bar
+    board_box = m["regions"]["#mtg-board"]
+    assert bar["bottom"] <= board_box["top"] + 0.5, (bar, board_box)
+    for bar_button in m["toolbarButtons"]:
+        for rail_button in m["railButtons"] + [m["toggle"]]:
+            assert not _overlap(bar_button, rail_button), (bar_button, rail_button)

@@ -48,6 +48,10 @@ run = "uv run python scripts/dump_openapi.py"
 description = "Write fixtures/payloads/<case>.json (T2) by playing seven real boards through the live API - the artifact tests/test_ui_fixture_shape.py checks against. Deterministic - run twice, git status stays clean."
 run = "uv run python scripts/generate_payload_fixtures.py"
 
+[tasks."icons:generate"]
+description = "Write ui/icons/icon-192.png and icon-512.png, the home-screen app icons ui/manifest.webmanifest names. Stdlib only. Deterministic - run twice, git status stays clean."
+run = "uv run python scripts/generate_app_icons.py"
+
 [tasks.lint]
 description = "Ruff check"
 run = "uv run ruff check ."

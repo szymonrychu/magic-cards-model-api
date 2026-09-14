@@ -2,8 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>magic-cards-model: play</title>
+<!-- A home-screen app: Android installs it fullscreen in landscape; iOS opens
+     it standalone (apple-mobile-web-app-capable only matters before iOS 26).
+     Relative like every other asset, so the manifest's own relative
+     start_url reopens the game it was installed from. -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#10131a" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
