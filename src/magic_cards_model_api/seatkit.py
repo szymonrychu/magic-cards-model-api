@@ -1578,19 +1578,17 @@ class Seat:
         return state
 
     def hypothetical_facts(self) -> dict[str, Any]:
-        """O4's `enters_any` and O7's `unlocks`/`unlocks_by_search`/
-        `unlocks_by_basic_search`: this seat's own engine-computed facts, one
-        HTTP call (`GET .../playscripts/hypothetical-facts`,
-        `hypothetical_facts.build_hypothetical_facts` server-side). This
-        process holds no `Game` of its own - `run_action`/`fetch_state` are
-        its only way to reach one - so these four selector fields cannot be
-        answered any other way from here. Call it only when `playscripts.
-        conditions.needs_hypothetical` says a play's selectors need it, and
-        cache the
-        answer (`playscripts.runtime`'s own cache) rather than calling this
-        once per script judged against an unchanged board.
-
-        once per script judged against an unchanged board.
+        """O4's `enters_any`, O7's `unlocks`/`unlocks_by_search`/
+        `unlocks_by_basic_search`, and item 3's `affordable`: this seat's own
+        engine-computed facts, one HTTP call (`GET .../playscripts/
+        hypothetical-facts`, `hypothetical_facts.build_hypothetical_facts`
+        server-side). This process holds no `Game` of its own -
+        `run_action`/`fetch_state` are its only way to reach one - so these
+        five selector fields cannot be answered any other way from here.
+        Call it only when `playscripts.conditions.needs_hypothetical` says a
+        play's selectors need it, and cache the answer (`playscripts.
+        runtime`'s own cache) rather than calling this once per script
+        judged against an unchanged board.
 
         Raises `HypotheticalFactsUnavailable` (D2) on a non-200 status or a
         body that is not JSON, rather than handing a caller a 404's error
