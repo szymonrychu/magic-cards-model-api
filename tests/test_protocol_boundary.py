@@ -268,3 +268,16 @@ def test_seatkit_20_names_the_opening_dsl_additions() -> None:
         "affirmative_is_legal",
     ):
         assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_the_arming_facts_unavailable_surfacing() -> None:
+    """int-agents-dsl follow-up: `arm()` used to drop a `HypotheticalFacts
+    Unavailable` fetch failure on the floor - the scripts it left not
+    applicable for that reason read exactly like any other non-applying
+    script. The new `armed_facts_unavailable` answer key names them back,
+    and the S1 hint gets the same signal as a short `scripts.note`."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in ("armed_facts_unavailable", "scripts.note", "HypotheticalFactsUnavailable"):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"

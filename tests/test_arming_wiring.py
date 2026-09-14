@@ -22,6 +22,7 @@ from magic_cards_model.machines import Step
 from test_autopass import Opponent, stock_libraries
 from test_playscript_runtime import (
     FakeResponse,
+    _unlocks_land_script,
     hooked_seat,
     land_script,
     register,
@@ -132,6 +133,47 @@ def test_a_play_whose_when_does_not_match_does_not_fire(
 
     assert result["finished"] is True, result
     assert result["armed"] == []
+    assert hook.posts("/actions/play-land") == []
+
+
+def test_pass_until_surfaces_scripts_it_skipped_for_unavailable_facts(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 500 from the facts route during the arming judge (D2) must not stay
+    silent about it the way any other non-applying script would: the id it
+    left un-fired for that reason, and the HTTP status/reason, come back on
+    `armed_facts_unavailable`."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    force_turn_position(game, Step.END_STEP, "bob")
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    register(client, game, alice, _unlocks_land_script("needs-facts"))
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    def refuse(self: seatkit.Seat) -> dict[str, Any]:
+        raise seatkit.HypotheticalFactsUnavailable(500)
+
+    monkeypatch.setattr(seatkit.Seat, "hypothetical_facts", refuse)
+
+    with Opponent(game, "bob"):
+        result = pass_until(
+            seat,
+            until_step="precombat_main",
+            whose_turn="mine",
+            corpora=seats.script_corpora,
+            arm=["needs-facts"],
+            arm_reasoning=ARM_REASONING,
+            max_seconds=10.0,
+        )
+
+    assert result["finished"] is True, result
+    assert result["armed"] == []
+    [skip] = result["armed_facts_unavailable"]
+    assert skip["id"] == "needs-facts"
+    assert "500" in skip["reason"]
     assert hook.posts("/actions/play-land") == []
 
 

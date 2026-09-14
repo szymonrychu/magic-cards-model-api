@@ -360,6 +360,22 @@ PROTOCOL_VERSION = "seatkit-20"
 #: invalid rather than misjudged, and it reads `own_turns_taken` as one more
 #: extra key.
 #:
+#: Still `seatkit-20` (int-agents-dsl follow-up, no field renamed, one added):
+#: a `HypotheticalFactsUnavailable` fetch failure used to only ever mark the
+#: plays that needed it not applicable, with no further trace in the
+#: answer - indistinguishable from those same plays genuinely not applying.
+#: `arm()` (`playscripts/arming.py`) now also answers
+#: `armed_facts_unavailable: [{"id": ..., "reason": ...}, ...]`, naming
+#: every armed script a judge round this call made left un-fired for that
+#: reason and the
+#: HTTP status/reason `Seat.hypothetical_facts` raised on - deduplicated
+#: across the rounds one `arm()` call can make, logged once per round by
+#: `_FactsOnce` itself rather than once per affected script. The S1 hint
+#: (`scripts.applicable`/`armable` above) gains the same signal as a short
+#: `scripts.note` string instead, present even when it is the only thing
+#: that answer has to say. A pre-bump process reads both the same as any
+#: other extra key it does not recognise yet.
+#:
 #: `seatkit-19` is the play-script DSL's version, with battle 8's cast-during-
 #: resolution funnel (z1) and the buddy rationale cap (bd1) folded in: a
 #: **response** shape change plus **additive requests** and two new tools,
@@ -2863,9 +2879,9 @@ def _fire_armed_scripts(
 def _merge_armed(result: dict[str, Any], armed: dict[str, Any] | str | None, seat: Seat) -> None:
     """Splice one `_fire_armed_scripts` answer into `result` (a
     `block_until_wake`-shaped or `pass_until`-shaped dict, both of which
-    carry a `state` key) - `armed`/`armed_conflict` added, `state` (and, for
-    a caller that reads it, `recent_log`) replaced with the post-arming board
-    when arming actually ran something."""
+    carry a `state` key) - `armed`/`armed_conflict`/`armed_facts_unavailable`
+    added, `state` (and, for a caller that reads it, `recent_log`) replaced
+    with the post-arming board when arming actually ran something."""
     if armed is None:
         return
     if isinstance(armed, str):
@@ -2874,6 +2890,8 @@ def _merge_armed(result: dict[str, Any], armed: dict[str, Any] | str | None, sea
     result["armed"] = armed["armed"]
     if "armed_conflict" in armed:
         result["armed_conflict"] = armed["armed_conflict"]
+    if "armed_facts_unavailable" in armed:
+        result["armed_facts_unavailable"] = armed["armed_facts_unavailable"]
     if armed.get("state") is not None:
         result["state"] = armed["state"]
         result["recent_log"] = seat.recent_log()

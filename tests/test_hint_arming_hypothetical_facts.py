@@ -116,6 +116,32 @@ def test_a_failed_facts_fetch_drops_only_the_play_that_needed_it_from_the_hint(
     assert "call" in entry, entry
 
 
+def test_a_failed_facts_fetch_adds_a_skip_note_to_the_hint(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dropped play above must not go unmentioned: the hint names it and
+    the HTTP status/reason the facts fetch failed with, the same way the S2
+    arming judge's own `armed_facts_unavailable` does."""
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    alice = seat_uid(game, "alice")
+    unlocks_hand(client, game)
+    register(
+        client,
+        game,
+        alice,
+        _unlocks_land_script("needs-facts"),
+        land_script("plain-drop", priority=10),
+    )
+    broken_facts(monkeypatch)
+
+    answer = wait(monkeypatch, game, alice)
+
+    assert "scripts" in answer, answer
+    note = answer["scripts"]["note"]
+    assert "needs-facts" in note
+    assert "404" in note
+
+
 def test_armable_never_fetches_facts(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -201,3 +227,35 @@ def test_the_arming_judge_marks_only_the_play_needing_missing_facts(
     assert affected["failing_condition"]["list"] == "hypothetical"
     assert "404" in affected["failing_condition"]["seen"]
     assert judged["plain-drop"]["applies"] is True, judged
+
+
+def test_arm_surfaces_scripts_it_skipped_for_unavailable_facts(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_judge_round` already marks a facts-needing play not applicable when
+    the fetch fails (test above); before this, `arm()` dropped that fact on
+    the floor the same as any other non-applying script. It must now name
+    the skipped id and the HTTP status/reason back, on a new
+    `armed_facts_unavailable` key - the plain-drop play still fires, since
+    it never needed the facts at all."""
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    alice = seat_uid(game, "alice")
+    unlocks_hand(client, game)
+    register(client, game, alice, _unlocks_land_script("needs-facts"))
+    seats = wired(monkeypatch, game)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    broken_facts(monkeypatch)
+
+    result = arming.arm(
+        seat,
+        seats.script_corpora,
+        arm=["needs-facts"],
+        arm_reasoning="the human is thinking; fire this the moment it is legal",
+    )
+
+    assert isinstance(result, dict), result
+    assert result["armed"] == []
+    [skip] = result["armed_facts_unavailable"]
+    assert skip["id"] == "needs-facts"
+    assert "404" in skip["reason"]

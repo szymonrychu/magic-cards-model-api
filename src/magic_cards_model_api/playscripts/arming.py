@@ -148,7 +148,17 @@ def arm(
     Otherwise `{"armed": [...], "state": {...}}`, `armed_conflict: [ids]`
     added when two or more armed scripts applied at once (nothing fired that
     round). Each `armed` entry is a `script_exit`-shaped dict: `script`,
-    `exit`, `moves_done`, `moves_total`, plus whatever else that exit sets."""
+    `exit`, `moves_done`, `moves_total`, plus whatever else that exit sets.
+
+    `armed_facts_unavailable: [{"id": ..., "reason": ...}, ...]` is added
+    whenever a `_judge_round` this call made left one or more of `arm`'s own
+    scripts not applicable because the hypothetical-facts fetch their
+    selectors needed failed (`script_tools.hypothetical_skips`, D2) - `id`
+    the script, `reason` the HTTP status/reason `Seat.hypothetical_facts`
+    raised on. Before this, that failure only ever showed up as the script
+    silently never firing, indistinguishable from its condition genuinely
+    not holding; deduplicated across rounds within this one call, and logged
+    once per round by `_FactsOnce` itself, never here."""
     if not arm:
         return None
     problem = validate_arm_request(arm, arm_reasoning, opposing_archetype, inputs)
@@ -176,12 +186,18 @@ def arm(
     cap = max_seconds if max_seconds > 0 else RUN_CAP_SECONDS
     deadline = time.monotonic() + cap
     note: str | None = None
+    facts_unavailable: list[dict[str, str]] = []
+    facts_unavailable_ids: set[str] = set()
 
     while remaining and runs < MAX_ARMED_RUNS:
         if deadline - time.monotonic() <= 0:
             break
         judged, state = _judge_round(seat, corpora, remaining, supplied)
         state_from_run = False
+        for skip in script_tools.hypothetical_skips(judged):
+            if skip["id"] not in facts_unavailable_ids:
+                facts_unavailable_ids.add(skip["id"])
+                facts_unavailable.append(skip)
         applying = [
             script_id for script_id in remaining if judged.get(script_id, {}).get("applies")
         ]
@@ -254,6 +270,8 @@ def arm(
         out["armed_conflict"] = conflict
     if note is not None:
         out["note"] = note
+    if facts_unavailable:
+        out["armed_facts_unavailable"] = facts_unavailable
     if state is not None:
         if not state_from_run:
             state = {

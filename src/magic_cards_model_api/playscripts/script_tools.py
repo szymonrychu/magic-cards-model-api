@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -32,6 +33,8 @@ from ..seatkit import MAX_WAIT_SECONDS, HypotheticalFactsUnavailable, Seat, scri
 from . import conditions, lint, runtime
 from .inputs import BUILTIN_INPUT, input_catalog
 from .schema import WILDCARD
+
+logger = logging.getLogger("mcm.script_tools")
 
 #: `script_exit`'s fields, in the order they are written: `runtime.ScriptExit`'s
 #: own, with `script_id` spelled `script` and the ledger's `run_id` left out,
@@ -355,7 +358,11 @@ class _FactsOnce:
     so `_judged` marks only the plays that needed the facts not applicable,
     with why - never raises out of the answer, and never stands in a bare
     `{}` (a `count {unlocks: true} == 0` would read that as a real, empty
-    answer)."""
+    answer). Logged once here, the one place the fetch itself is ever made,
+    rather than once per play `_judged` goes on to mark not applicable for
+    it - `hypothetical_skips` (below) is how `applicable_hint` and
+    `arming._judge_round` read which plays that was, to surface it back to
+    the caller rather than let it read as an ordinary non-applying script."""
 
     def __init__(self, seat: Seat) -> None:
         self._seat = seat
@@ -370,7 +377,37 @@ class _FactsOnce:
                 self._cards = dict(self._seat.hypothetical_facts().get("cards") or {})
             except HypotheticalFactsUnavailable as exc:
                 self._unavailable = str(exc)
+                logger.warning(
+                    "hypothetical facts unavailable for %s: %s", self._seat.uid, self._unavailable
+                )
         return self._cards, self._unavailable
+
+
+def hypothetical_skips(
+    entries: list[dict[str, Any]] | dict[str, dict[str, Any]],
+) -> list[dict[str, str]]:
+    """The ids among `entries` (an `applicable_hint`-style list of judged
+    entries, or an `arming._judge_round`-style id -> entry dict) that
+    `_judged` marked not applicable because the facts fetch `_FactsOnce`
+    made for this same round failed (`failing_condition.list ==
+    "hypothetical"`), paired with the reason - the HTTP status/reason
+    `Seat.hypothetical_facts` raised on (D2). `[]` when nothing was skipped
+    for that reason this round."""
+    values = entries.values() if isinstance(entries, dict) else entries
+    return [
+        {"id": str(entry.get("id")), "reason": entry["failing_condition"]["seen"]}
+        for entry in values
+        if isinstance(entry, dict)
+        and (entry.get("failing_condition") or {}).get("list") == "hypothetical"
+    ]
+
+
+def hypothetical_skip_note(skips: list[dict[str, str]]) -> str:
+    """One short line for `applicable_hint`'s own `note`: every id
+    `hypothetical_skips` found, and the reason - every skip in one round
+    shares the same failed fetch, so the same reason for all of them."""
+    ids = ", ".join(item["id"] for item in skips)
+    return f"skipped for hypothetical facts unavailable ({skips[0]['reason']}): {ids}"
 
 
 def _judged(
@@ -714,7 +751,14 @@ def applicable_hint(
     fetch (plus, at most, one extra fetch for a contents-needing play whose
     position already matches - see below). `None` when this MCP process has
     scripts switched off (`scripts_enabled_here`), when this seat has no
-    registered corpus, or when neither block below has anything to say.
+    registered corpus, or when neither block below has anything to say and
+    no play was skipped for unavailable hypothetical facts either.
+
+    **`note`**: a short string, present whenever a play's own selectors
+    needed `Seat.hypothetical_facts` and the fetch failed
+    (`hypothetical_skips`/D2) - present even when that is the only thing
+    this answer has to say, so the caller learns a play went unjudged rather
+    than reading a bare missing `scripts` key as "nothing applies".
 
     **`applicable`** (S1): what this seat holds priority for and could run
     right now (`runtime._drive` requires holding priority before it ever
@@ -876,11 +920,12 @@ def applicable_hint(
             )
             occurrences[script_id] = occurrence
 
-    if not applicable_items and not armable_items:
+    hyp_skips = hypothetical_skips(entries)
+    if not applicable_items and not armable_items and not hyp_skips:
         return None
 
     kept_applicable, kept_armable = _hint_bounded(applicable_items, armable_items)
-    if not kept_applicable and not kept_armable:
+    if not kept_applicable and not kept_armable and not hyp_skips:
         return None
     result: dict[str, Any] = {}
     if kept_applicable:
@@ -890,6 +935,8 @@ def applicable_hint(
         result["arm_call"] = _arm_call_template(
             seat, kept_armable, occurrences, asserted, remembered
         )
+    if hyp_skips:
+        result["note"] = hypothetical_skip_note(hyp_skips)
     return result
 
 
