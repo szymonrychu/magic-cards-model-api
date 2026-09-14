@@ -118,15 +118,37 @@ cast/activation/attack.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
 
 DEFAULT_API = "http://127.0.0.1:8000"
+
+#: Mirrors `records.SCRIPTS_ENABLED_ENV`/`records.scripts_enabled` - a
+#: duplicate, not an import, for the same reason `PROTOCOL_VERSION` below is:
+#: this module is moving to its own repo (`magic-cards-mcp`) where
+#: `magic_cards_model_api.records` will not exist to import. Read from this
+#: process's own environment - an operator flips the switch for a whole
+#: deployment, api pod and seat pod alike, so the MCP process's own view of it
+#: agrees with the server's.
+SCRIPTS_ENABLED_ENV = "SCRIPTS_ENABLED"
+_SCRIPTS_SWITCHED_OFF = frozenset({"false", "0", "no", "off"})
+
+
+def scripts_enabled_here(env: Mapping[str, str] | None = None) -> bool:
+    """Whether this MCP process's own environment has scripts switched on -
+    the local half of the kill switch a script-applicability hint checks
+    before ever offering `run_script` as a committing call (`playscripts.
+    script_tools.applicable_hint`). Read per call, not at import: a test sets
+    it for one call, and flipping it for real restarts the pod anyway."""
+    env = os.environ if env is None else env
+    return env.get(SCRIPTS_ENABLED_ENV, "true").strip().lower() not in _SCRIPTS_SWITCHED_OFF
+
 
 #: Bumped whenever an action tool's contract changes shape. Every tool call in
 #: `mcp.py` checks it against its own import of this constant (`api_trouble`,
@@ -161,7 +183,38 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-19"
+PROTOCOL_VERSION = "seatkit-20"
+#: `seatkit-20` (S1): every wait/wake answer (`wait_for_priority`) and every
+#: action answer (`cast`, `activate`, `play_land`, `pass_priority`,
+#: `pass_until`, `run_script`, ...) now carries `scripts: {"applicable":
+#: [...]}` when at least one of the seat's registered play scripts applies
+#: right now - `playscripts.script_tools.applicable_hint`, the same
+#: applicability judgement `list_scripts` makes, built from the state the
+#: answer already carries rather than a second board fetch. The measured
+#: problem this closes: a live seat cracked a fetch land by hand (`play_land`
+#: then `activate`) every single time, because finding out a script applied
+#: cost a separate `list_scripts` call no seat ever made on its own -
+#: `run_script` sat registered and unused for the whole session.
+#:
+#: Each `applicable` entry is `{id, name, call}`, `call` a ready-to-use
+#: `run_script(player_uid=..., script=..., reasoning="<say why>",
+#: opposing_archetype=...)` invocation string naming the exact arguments the
+#: tool accepts - or, when two or more registered scripts apply at once (the
+#: runtime's own `runtime_conflict`), `{id, name, conflict: true}` with `call`
+#: left out, since a seat has to pick one itself before either can commit.
+#: The archetype it names is whichever this seat last asserted to `run_script`
+#: or `list_scripts`, `*` when it never has. Capped at `MAX_HINT_SCRIPTS` (5)
+#: so a corpus registering many scripts cannot blow out every answer's size.
+#: `scripts` is absent outright - never an empty `applicable` - when nothing
+#: applies, when this seat has no registered corpus, or when this MCP
+#: process's own `SCRIPTS_ENABLED` is switched off (`scripts_enabled_here`).
+#:
+#: An MCP process built before this bump simply does not read or advertise
+#: `scripts` on any answer - a stale process, in other words, keeps exactly
+#: today's silent behaviour, which is precisely the case this bump exists to
+#: turn into a loud PROTOCOL MISMATCH rather than a seat quietly starved of a
+#: signal a newer build's own prose now tells it to expect.
+#:
 #: `seatkit-19` is the play-script DSL's version, with battle 8's cast-during-
 #: resolution funnel (z1) and the buddy rationale cap (bd1) folded in: a
 #: **response** shape change plus **additive requests** and two new tools,

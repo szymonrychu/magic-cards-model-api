@@ -660,7 +660,9 @@ def test_the_worst_case_run_script_answer_still_fits(client, game, monkeypatch):
         {"index": index, "kind": "cast"} for index in range(2, schema.MAX_MOVES + 1)
     ]
     assert WORST_PHRASE not in json.dumps(out), "script_exit echoed a move back"
-    assert set(payload) == {"script_exit", "board"}, list(payload)
+    # S1: an advise run moves nothing, so the same script's own hint still
+    # applies to the board it left behind - `scripts` rides this answer too.
+    assert set(payload) == {"script_exit", "board", "scripts"}, list(payload)
     assert payload["board"]["battlefield_digest"]
     assert len(text) < MAX_ANSWER_BYTES, f"{len(text)} bytes"
 

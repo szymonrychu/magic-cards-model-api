@@ -64,10 +64,9 @@ def test_seatkit_19_names_the_known_cards_and_contents_blocks() -> None:
     """The bump that added `known_cards` to the state view and the
     own-only `library_contents`/`sideboard_contents` behind
     `?include=contents`: its changelog paragraph names all four."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-19"
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
-    paragraph = changelog.split("`seatkit-18`", 1)[0]
+    paragraph = changelog.split("`seatkit-19`", 1)[1].split("`seatkit-18`", 1)[0]
     for term in ("known_cards", "library_contents", "sideboard_contents", "include=contents"):
         assert term in paragraph, f"the seatkit-19 paragraph does not name {term}"
 
@@ -78,7 +77,7 @@ def test_seatkit_19_names_the_double_faced_views_and_known_cards_while_paused() 
     command already showed while its choice is pending."""
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
-    paragraph = changelog.split("`seatkit-18`", 1)[0]
+    paragraph = changelog.split("`seatkit-19`", 1)[1].split("`seatkit-18`", 1)[0]
     for term in ("faces", "oracle_text", "pending"):
         assert term in paragraph, f"the seatkit-19 paragraph does not name {term}"
 
@@ -112,12 +111,23 @@ def test_seatkit_19_names_the_script_tools_and_their_exit_block() -> None:
     """In the seatkit-19 paragraph: `run_script` and `list_scripts` are new
     tools over the play-script routes, and `script_exit` is the typed block
     `run_script` answers with."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-19"
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
-    paragraph = changelog.split("`seatkit-18`", 1)[0]
+    paragraph = changelog.split("`seatkit-19`", 1)[1].split("`seatkit-18`", 1)[0]
     for term in ("run_script", "list_scripts", "script_exit"):
         assert term in paragraph, f"the seatkit-19 paragraph does not name {term}"
     assert "No MCP tool calls any of them" not in paragraph, (
         "the play-script routes paragraph still says no tool calls them"
     )
+
+
+def test_seatkit_20_names_the_script_applicability_hint() -> None:
+    """The bump that put `scripts.applicable` on every wait/wake and action
+    answer: its changelog paragraph names the hint's shape and the kill
+    switch it checks."""
+    assert protocol.PROTOCOL_VERSION == "seatkit-20"
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in ("scripts", "applicable", "call", "conflict", "MAX_HINT_SCRIPTS", "run_script"):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"

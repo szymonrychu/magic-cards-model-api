@@ -674,6 +674,16 @@ def build_server(seats: Seats) -> MCPServer:
     def resolve(player_uid: str) -> Seat | None:
         return seats.seat_for(player_uid)
 
+    def _attach_script_hint(answer: dict[str, Any], seat: Seat, state: dict[str, Any]) -> None:
+        """S1: bolt `scripts: {"applicable": [...]}` onto `answer` when at
+        least one of `seat`'s registered play scripts applies right now
+        (`script_tools.applicable_hint`) - the same treatment `wake_reason`/
+        `recent_log` already get on a bare state view, over `state` this
+        answer already carries rather than a second board fetch."""
+        hint = script_tools.applicable_hint(seat, seats.script_corpora, state)
+        if hint is not None:
+            answer["scripts"] = hint
+
     def _tool_result(
         seat: Seat, payload: dict[str, Any], protocol_version: str | None
     ) -> str | InputRequiredResult:
@@ -734,9 +744,12 @@ def build_server(seats: Seats) -> MCPServer:
             # character 13,724, behind the whole legal-action list, in the
             # very answer a stuck seat was trying to read the refusal out of.
             answer = _action_answer(payload)
+            raw_state = payload.get("state")
+            _attach_script_hint(answer, seat, raw_state if isinstance(raw_state, dict) else {})
             pending = answer.get("pending_decision")
             text = json.dumps(answer, indent=1)
         else:
+            _attach_script_hint(payload, seat, payload)
             pending = payload.get("pending_decision")
             text = json.dumps(payload, indent=1, sort_keys=True)
         modern = protocol_version is None or protocol_version in MODERN_PROTOCOL_VERSIONS
@@ -2474,6 +2487,7 @@ def build_server(seats: Seats) -> MCPServer:
             max_seconds=max_seconds,
             inputs=inputs,
             should_stop=cancel_probe(ctx),
+            invoked_via="mcp",
         )
         if isinstance(answer, str):
             return answer
