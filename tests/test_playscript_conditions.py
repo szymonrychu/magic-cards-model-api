@@ -379,37 +379,49 @@ def turn(op: str, n: int) -> dict[str, Any]:
     return {"kind": "turn", "op": op, "n": n}
 
 
-def test_turn_reads_turn_number():
-    assert holds(turn("==", 1), state_view(turn_number=1))
-    assert not holds(turn("==", 2), state_view(turn_number=1))
-    assert seen(turn("<=", 2), state_view(turn_number=5)) == 5
+def test_turn_reads_the_viewers_own_turns_taken():
+    assert holds(turn("==", 1), state_view(own_turns_taken={"alice": 1}))
+    assert not holds(turn("==", 2), state_view(own_turns_taken={"alice": 1}))
+    assert seen(turn("<=", 2), state_view(own_turns_taken={"alice": 5})) == 5
 
 
-def test_turn_holds_for_my_nth_turn_on_the_play_and_on_the_draw():
-    # TurnMachine.turn_number counts rounds of the table (magic_cards_model.
-    # machines.turn.TurnMachine.begin_next_turn), so it does not advance until
-    # the rotation wraps back to seat 0 - meaning both the starting player's
-    # first turn (on the play) and the second player's first turn (on the
-    # draw) share turn_number 1. See test_turn_number_matches_the_engines_
-    # turnmachine_semantics below for the live engine proof.
-    on_the_play = state_view(viewer="alice", active="alice", turn_number=1)
-    on_the_draw = state_view(viewer="bob", active="bob", turn_number=1)
-    assert holds(turn("==", 1), on_the_play)
-    assert holds(turn("==", 1), on_the_draw)
+def test_turn_reads_own_turns_taken_not_turn_number():
+    # own_turns_taken (TurnMachine.own_turns_taken, CR 500.7) is what `turn`
+    # reads, never turn_number (rounds of the table) - the two happen to
+    # coincide before any extra turn, so this pins them apart on purpose.
+    # See test_own_turns_taken_reaches_the_view_and_the_turn_condition below
+    # for the live-engine proof that they are the same on the play and on
+    # the draw, and differ after an extra turn.
+    view = state_view(turn_number=5, own_turns_taken={"alice": 1})
+    assert holds(turn("==", 1), view)
+    assert not holds(turn("==", 5), view)
 
 
-def test_turn_condition_does_not_advance_for_an_extra_turn():
-    # CR 500.7's extra turn is inserted without incrementing turn_number
-    # (TurnMachine.begin_next_turn), so a second consecutive turn for one
-    # player still reads the same turn number.
-    assert holds(turn("==", 2), state_view(turn_number=2))
+def test_turn_condition_advances_on_an_extra_turn():
+    # Unlike turn_number (which CR 500.7's extra turn does not move -
+    # test_turn_number_matches_the_engines_turnmachine_semantics below),
+    # own_turns_taken counts the extra turn as the player's own next turn.
+    view = state_view(turn_number=2, own_turns_taken={"alice": 3})
+    assert holds(turn("==", 3), view)
+    assert not holds(turn("==", 2), view)
 
 
-def test_a_null_turn_number_never_holds():
-    view = state_view(turn_number=None)
+def test_a_missing_own_turns_taken_never_holds():
+    view = state_view()
+    view["players"][0]["own_turns_taken"] = None
     for op in ("<", "<=", "==", "!=", ">", ">="):
         assert not holds(turn(op, 0), view)
     assert seen(turn(">=", 0), view) is None
+
+
+def test_pregame_own_turns_taken_is_zero_and_can_hold():
+    # CR 103.8: the pregame precedes turn 1, and own_turns_taken reads 0 for
+    # every player then - a real int, never null - so turn <= 0 / turn == 0
+    # hold in the pregame, and turn >= 1 does not.
+    view = state_view(turn_number=0, own_turns_taken={"alice": 0})
+    assert holds(turn("==", 0), view)
+    assert holds(turn("<=", 0), view)
+    assert not holds(turn(">=", 1), view)
 
 
 def test_turn_number_matches_the_engines_turnmachine_semantics(game):
@@ -437,6 +449,51 @@ def test_turn_number_matches_the_engines_turnmachine_semantics(game):
         turn_machine.advance()
     assert (turn_machine.active_player, turn_machine.turn_number) == ("alice", 2), (
         "the extra turn does not advance turn_number"
+    )
+
+
+def test_own_turns_taken_reaches_the_view_and_the_turn_condition(game):
+    """The fix for O1's "turn repeats on an extra turn": `serialize._player_
+    view`'s `own_turns_taken` (`TurnMachine.own_turns_taken`, CR 500.7) is
+    what the `turn` condition actually reads (test_turn_condition_advances_
+    on_an_extra_turn above), proven end to end - live engine, the real
+    serializer, and `evaluate` - on the play, on the draw, and across an
+    extra turn."""
+    live = store.get(game)
+    turn_machine = live.turn
+    turn_machine.begin_first_turn()
+
+    def own_turns(name: str) -> int | None:
+        players = live_state_view(live, game)["players"]
+        return next(p["own_turns_taken"] for p in players if p["username"] == name)
+
+    def turn_condition_holds(n: int, viewer: str) -> bool:
+        view = redact_view(live_state_view(live, game), viewer)
+        return evaluate(script(true=[turn("==", n)]), view, viewer) == HOLDS
+
+    assert own_turns("alice") == 1, "on the play: alice's own first turn"
+    assert own_turns("bob") == 0
+    assert turn_condition_holds(1, "alice")
+    assert not turn_condition_holds(2, "alice")
+
+    while turn_machine.active_player == "alice":
+        turn_machine.advance()
+    assert own_turns("bob") == 1, "on the draw: bob's own first turn too"
+    assert own_turns("alice") == 1
+    assert turn_condition_holds(1, "bob")
+
+    while turn_machine.active_player == "bob":
+        turn_machine.advance()
+    assert own_turns("alice") == 2
+
+    turn_machine.grant_extra_turn("alice")
+    turns_taken = turn_machine.turns_taken
+    while turn_machine.turns_taken == turns_taken:
+        turn_machine.advance()
+    assert own_turns("alice") == 3, "the extra turn is alice's own third turn"
+    assert turn_condition_holds(3, "alice")
+    assert not turn_condition_holds(2, "alice"), (
+        "the extra turn must not repeat as alice's second turn (O1)"
     )
 
 

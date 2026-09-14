@@ -87,14 +87,17 @@ make right now from untapped sources, not the number of sources:
 
 ### `turn`
 
-`{kind: turn, op, n}` compares `n` with the view's `turn_number`. The engine's
-`TurnMachine.turn_number` counts rounds of the table (`machines/turn.py`), not
-player-turns, so it does not advance until the rotation wraps back to the
-starting seat: on my own turn `turn_number` is my Nth turn, on the play and on
-the draw alike, and an extra turn (CR 500.7) is spliced in without moving it
-at all. A null `turn_number` (pregame) never holds, whatever `op` is. It is a
-`numeric_range` key for never-applicable lint and conflict exclusivity, on the
-same footing as `count`, `zone_size`, `life` and `untapped_mana`.
+`{kind: turn, op, n}` compares `n` with the viewer's own `own_turns_taken` -
+the engine's own count of how many of their own turns they have begun
+(`TurnMachine.own_turns_taken`, CR 500.7 extra turns included). It is my Nth
+turn on the play and on the draw alike, and an extra turn is its own turn
+and moves this - unlike `TurnMachine.turn_number` (rounds of the table,
+`machines/turn.py`), which does not advance until the rotation wraps back to
+the starting seat and so cannot tell a normal turn from an extra one spliced
+into it. `own_turns_taken` is 0 before the viewer's first turn, pregame
+included - never null. It is a `numeric_range` key for never-applicable lint
+and conflict exclusivity, on the same footing as `count`, `zone_size`, `life`
+and `untapped_mana`.
 
 ### `searches_for_any`
 

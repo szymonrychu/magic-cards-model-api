@@ -54,10 +54,11 @@ def test_doc_defines_the_turn_condition() -> None:
     text = DOC.read_text()
     for phrase in (
         "`{kind: turn, op, n}`",
-        "`turn_number`",
+        "`own_turns_taken`",
+        "`TurnMachine.turn_number`",
         "rounds of the table",
-        "extra turn",
-        "never holds",
+        "CR 500.7",
+        "never null",
     ):
         assert phrase in text
 

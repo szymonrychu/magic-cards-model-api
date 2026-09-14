@@ -1783,6 +1783,11 @@ class PlayerView(BaseModel):
     only so a snapshot recorded before the field existed still reads."""
     land_allowance: int | None = None
     """How many lands this player may play this turn (`Game.land_allowance`)."""
+    own_turns_taken: int | None = None
+    """How many of this player's own turns have begun, extra turns included
+    (CR 500.7, `TurnMachine.own_turns_taken`) - 0 before their first turn,
+    pregame included. Optional only so a snapshot recorded before this field
+    existed (schema < 17) still reads; a live view always carries it."""
 
 
 class PlayPermissionView(BaseModel):

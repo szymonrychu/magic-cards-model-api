@@ -889,7 +889,7 @@
     },
     "TurnCondition": {
       "additionalProperties": false,
-      "description": "The view's `turn_number` op `n`: rounds of the table\n(`TurnMachine.turn_number`), so on my own turn it is my Nth turn, on the\nplay and on the draw alike - it does not advance until the rotation\nwraps back to the starting seat, so an extra turn (CR 500.7) never moves\nit. A null `turn_number` (pregame) never holds, whatever `op` is.",
+      "description": "The viewer's own `own_turns_taken` op `n`: how many of their own\nturns they have begun (`TurnMachine.own_turns_taken`, CR 500.7 extra\nturns included), so it reads my Nth turn on the play and on the draw\nalike, and an extra turn is its own turn - unlike `turn_number` (rounds\nof the table), it moves for one. 0 before the viewer's first turn,\npregame included - never null.",
       "properties": {
         "kind": {
           "const": "turn",

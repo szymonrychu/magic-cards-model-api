@@ -392,11 +392,12 @@ class UntappedManaCondition(_Strict):
 
 
 class TurnCondition(_Strict):
-    """The view's `turn_number` op `n`: rounds of the table
-    (`TurnMachine.turn_number`), so on my own turn it is my Nth turn, on the
-    play and on the draw alike - it does not advance until the rotation
-    wraps back to the starting seat, so an extra turn (CR 500.7) never moves
-    it. A null `turn_number` (pregame) never holds, whatever `op` is."""
+    """The viewer's own `own_turns_taken` op `n`: how many of their own
+    turns they have begun (`TurnMachine.own_turns_taken`, CR 500.7 extra
+    turns included), so it reads my Nth turn on the play and on the draw
+    alike, and an extra turn is its own turn - unlike `turn_number` (rounds
+    of the table), it moves for one. 0 before the viewer's first turn,
+    pregame included - never null."""
 
     kind: Literal["turn"]
     op: Op

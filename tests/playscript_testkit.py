@@ -327,6 +327,7 @@ def state_view(
     lands_played: dict[str, int] | None = None,
     land_allowance: dict[str, int] | None = None,
     turn_number: int | None = 3,
+    own_turns_taken: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """A redacted `GameStateView` as `viewer` receives it."""
     names = (viewer, opponent)
@@ -341,6 +342,10 @@ def state_view(
     sideboards = per(sideboard_count, 15)
     played = per(lands_played, 0)
     allowance = per(land_allowance, 1)
+    # Defaults to `turn_number`'s own value: most callers never touch either
+    # field and the two happen to coincide before any extra turn is taken,
+    # so a test that only sets `turn_number` still gets a coherent view.
+    taken = per(own_turns_taken, turn_number if turn_number is not None else 0)
     view: dict[str, Any] = {
         "game_id": "g",
         "pending_decision": None,
@@ -361,6 +366,7 @@ def state_view(
                 "maximum_hand_size": 7,
                 "lands_played": played[name],
                 "land_allowance": allowance[name],
+                "own_turns_taken": taken[name],
             }
             for name in names
         ],

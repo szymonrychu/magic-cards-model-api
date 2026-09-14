@@ -16,9 +16,10 @@ information by construction:
   nor a known record's position is order, and nothing here reads one.
 - `zone_size` reads the public `*_count`; `life`, `stack_top`,
   `land_drop_available` (the viewer's turn, a land play left),
-  `untapped_mana` (`untapped_mana` below) and `turn` (the view's
-  `turn_number`, rounds of the table - null pregame never holds) read the
-  public board.
+  `untapped_mana` (`untapped_mana` below) and `turn` (the viewer's own
+  `own_turns_taken` - how many of their own turns they have begun, extra
+  turns included, CR 500.7 - 0 in the pregame, never null) read the public
+  board.
 - `input` reads the caller's `inputs`. A missing required input makes the
   script unevaluable (`needs_input`); a missing optional one does not hold.
   Every supplied input is first checked against the catalog: a name it does
@@ -395,7 +396,7 @@ def _check(
         seen = untapped_mana(view, viewer)
         return compare(seen, condition["op"], condition["n"]), seen, None
     if kind == "turn":
-        seen = view.get("turn_number")
+        seen = _player(view, viewer).get("own_turns_taken")
         holds = seen is not None and compare(seen, condition["op"], condition["n"])
         return holds, seen, None
     if kind == "input":

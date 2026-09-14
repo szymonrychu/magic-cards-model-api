@@ -724,6 +724,15 @@ def _player_view(
         # left" is read, never re-derived (`Game.why_cannot_play_land`).
         "lands_played": game.lands_played.get(player.username, 0),
         "land_allowance": game.land_allowance(player.username),
+        # How many of this player's own turns have begun, extra turns
+        # included (CR 500.7) - the engine's own count
+        # (`TurnMachine.own_turns_taken`), never `turn_number` (rounds of
+        # the table, blind to an extra turn). 0, never null, whenever `turn`
+        # is set at all (pregame included); null only for the no-turn-
+        # machine-at-all case a fresh `Game` before setup could carry.
+        "own_turns_taken": game.turn.own_turns_taken(player.username)
+        if game.turn is not None
+        else None,
     }
 
 

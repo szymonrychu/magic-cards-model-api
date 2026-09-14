@@ -9064,6 +9064,17 @@
             "title": "Maximum Hand Size",
             "type": "integer"
           },
+          "own_turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Own Turns Taken"
+          },
           "sideboard_count": {
             "title": "Sideboard Count",
             "type": "integer"
