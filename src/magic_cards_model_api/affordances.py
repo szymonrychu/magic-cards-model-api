@@ -104,6 +104,7 @@ from magic_cards_model.machines.targeting import (
 from magic_cards_model.models import CardState, Game, Player, Zone
 from magic_cards_model.models.action import TargetSlot
 
+from .board_scope import on_one_board
 from .engine_api import dry_run_copy
 
 #: Zones whose contents a spell or ability can realistically be asked to
@@ -398,6 +399,7 @@ def _profile_for(
     return profile, None
 
 
+@on_one_board
 def candidates(
     game: Game,
     state: CardState,
@@ -498,6 +500,7 @@ def candidate_line(thing: Any) -> str:
     return f"{label['id']} {label['name']} ({label['zone']}, {controller})"
 
 
+@on_one_board
 def slot_candidates(game: Game, slots: Sequence[TargetSlot]) -> dict[str, Any]:
     """A row's `targets` block: the engine's own candidates for each of its
     `target_slots` (`TargetSlot.candidates`/`player_candidates`, built by
@@ -536,6 +539,7 @@ def slot_candidates(game: Game, slots: Sequence[TargetSlot]) -> dict[str, Any]:
     return block
 
 
+@on_one_board
 def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[str, Any]]:
     """Every CR 118.9 alternative cost this card could be cast under.
 
@@ -667,6 +671,7 @@ def _cards_in_reach(game: Game, component: Any, caster: str) -> list[CardState]:
     return []
 
 
+@on_one_board
 def object_costs(game: Game, state: CardState, player: str) -> dict[str, Any]:
     """Which objects could be spent on this card's cost, and for what.
 

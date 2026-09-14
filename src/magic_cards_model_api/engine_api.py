@@ -26,6 +26,7 @@ from magic_cards_model.models import CardState, Color, Game, Layout, Zone
 from magic_cards_model.models.card_state import Counter, ExileMarker, counter_state_based_actions
 from pydantic import ValidationError
 
+from .board_scope import read_on_one_board
 from .decisions import player_or_card
 from .schemas import (
     ActivateRequest,
@@ -105,6 +106,12 @@ def without_loyalty_mana_advice(game: Game, text: str | None) -> str | None:
     left as the engine wrote it."""
     if not text or "activate it manually" not in text:
         return text
+    # Every permanent's abilities read the layered board: one board for all.
+    return read_on_one_board(lambda: _without_loyalty_mana_advice(game, text), game)
+
+
+def _without_loyalty_mana_advice(game: Game, text: str) -> str:
+    """`without_loyalty_mana_advice`'s filtering, on one layered board."""
     for permanent in list(game.battlefield):
         try:
             abilities = game.activated_abilities(permanent)

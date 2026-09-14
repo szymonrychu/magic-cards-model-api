@@ -26,6 +26,7 @@ from magic_cards_model.models.mana import ManaPool
 
 from . import assets, commands, scryfall
 from .affordances import cast_hints
+from .board_scope import on_one_board, read_on_one_board
 from .commands import paused_game
 from .decisions import PendingDecision
 from .engine_api import list_abilities
@@ -770,6 +771,7 @@ def _mana_pool_view(pool: ManaPool) -> dict[str, Any]:
     }
 
 
+@on_one_board
 def snapshot(game: Game) -> dict[str, Any]:
     """A compact, full-information snapshot for the audit log.
 
@@ -1210,6 +1212,39 @@ def state_view(game: Game, game_id: str, *, include_contents: bool = False) -> d
         board = commands.board_at_pause(game, paused[0], paused[1]) or game
     overlay = _paused_overlay(game_id, committed, paused) if game is committed else {}
     images = _images_for(board) if board is game else {**_images_for(game), **_images_for(board)}
+    # Replayed before any board is read, never part-way through the view: a
+    # replay runs a command on a copy, and a change announced while a board
+    # snapshot is open drops the board every later read would have shared.
+    known_paused = paused_game(committed, paused[0], paused[1]) if paused is not None else None
+    return read_on_one_board(
+        lambda: _state_view_on(
+            game_id,
+            game,
+            board,
+            paused,
+            overlay,
+            images,
+            known_paused,
+            include_contents=include_contents,
+        ),
+        game,
+        board,
+    )
+
+
+def _state_view_on(
+    game_id: str,
+    game: Game,
+    board: Game,
+    paused: Any,
+    overlay: dict[str, Any],
+    images: dict[str, dict[str, str]],
+    known_paused: Game | None,
+    *,
+    include_contents: bool,
+) -> dict[str, Any]:
+    """`state_view`'s view of `game` (turn, stack, combat) and `board` (zones,
+    players), read on one layered board each (`board_scope`)."""
 
     def views(cards: list[StackObject]) -> list[dict[str, Any]]:
         return [_card_view(board, state, images) for state in cards if isinstance(state, CardState)]
@@ -1291,11 +1326,7 @@ def state_view(game: Game, game_id: str, *, include_contents: bool = False) -> d
         "libraries": {player.username: views(player.library) for player in board.players},
         "sideboards": {player.username: views(player.sideboard) for player in board.players},
         # A sibling of `hands`, never inside it - see `_known_cards_view`.
-        "known_cards": _known_cards_view(
-            board,
-            images,
-            paused_game(committed, paused[0], paused[1]) if paused is not None else None,
-        ),
+        "known_cards": _known_cards_view(board, images, known_paused),
         "winner": game.winner,
         "drawn": game.drawn,
         "losers": list(game.losers),

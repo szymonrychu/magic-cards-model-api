@@ -53,6 +53,7 @@ from . import (
     visibility,
 )
 from .action_rows import legal_action_rows
+from .board_scope import read_on_one_board
 from .repository import RECENT_RECORDS_WINDOW, ArchivedGame, GameUnloadable
 from .repository_postgres import VersionConflict
 from .schemas import (
@@ -2050,6 +2051,20 @@ def get_affordances(
     except ValueError as exc:
         raise KeyError(str(exc)) from exc
     mode_numbers = [int(part) for part in modes.split(",") if part.strip()] if modes else None
+    return read_on_one_board(
+        lambda: _affordances_of(game, state, player, ability_index, mode_numbers, x_value), game
+    )
+
+
+def _affordances_of(
+    game: Game,
+    state: CardState,
+    player: str,
+    ability_index: int | None,
+    mode_numbers: list[int] | None,
+    x_value: int | None,
+) -> dict[str, Any]:
+    """`get_affordances`' answer, on one layered board."""
     result = affordances.candidates(
         game,
         state,
@@ -2156,20 +2171,15 @@ def get_legal_actions(
 
     **`candidates=true` folds each targeting action's legal targets into its
     own entry** (`_attach_target_candidates`), so a seat can choose AND issue
-    its next action out of one answer. Opt-in, and measured rather than
-    guessed: on a 28-permanent board with three targeting spells in hand the
-    enumeration costs ~106 ms on top of the ~350 ms the enumeration itself
-    already takes, because `TargetRequirement.rejects` reaches
-    `Game.characteristics_of` and `Game.computed_board` is deliberately
-    uncached in the engine (CR 613.5 - "continually and automatically
-    performed", so an anthem that left the battlefield a moment ago is
-    already not applying). That is a good trade for a seat, which pays it
-    once per action and saves a whole round trip - and so a whole inference
-    cycle, seconds rather than milliseconds - and a bad one for the browser,
-    which asks this on a 1.2s poll and already has the whole board on screen
-    to pick targets from. So `seatkit.available_actions` passes it and
-    `ui/app.js` does not, and the default is off: a caller that says nothing
-    pays nothing.
+    its next action out of one answer. Opt-in: the enumeration and its
+    candidates share one layered board (`board_scope.read_on_one_board`), so
+    the candidates no longer rebuild it per target check, but walking every
+    public object against every slot is still work the browser - which asks
+    this on a 1.2s poll and already has the whole board on screen to pick
+    targets from - has no use for. A seat pays it once per action and saves a
+    whole round trip, and so a whole inference cycle. So
+    `seatkit.available_actions` passes it and `ui/app.js` does not, and the
+    default is off: a caller that says nothing pays nothing.
 
     `get_affordances` needs no such guard and is not a precedent for
     skipping one: every candidate it names is an object in a public zone
@@ -2214,9 +2224,15 @@ def get_legal_actions(
         # board outside that step. The board the question was raised on is
         # what the rows describe (U1: a stolen, hasty creature's attack row).
         board = commands.board_at_pause(game, paused[0], paused[1]) or game
-    actions, views = legal_action_rows(board, player, pending)
-    if candidates:
-        _attach_target_candidates(board, actions, views)
+
+    def rows() -> list[dict[str, Any]]:
+        actions, views = legal_action_rows(board, player, pending)
+        if candidates:
+            _attach_target_candidates(board, actions, views)
+        return views
+
+    # One layered board for the enumeration and its target candidates both.
+    views = read_on_one_board(rows, board)
     # The ledger position this enumeration describes, handed back with it
     # (`LegalActionsResponse.last_seq`): a seat names it as `expected_seq` on
     # whatever it decides to do, and that is what makes its refusals
