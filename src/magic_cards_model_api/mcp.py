@@ -702,13 +702,17 @@ def build_server(seats: Seats) -> MCPServer:
 
     def _attach_draft(answer: dict[str, Any], seat: Seat, state: dict[str, Any]) -> None:
         """S2 A6: bolt `draft: {"status": ...}` onto `answer` for an advisor
-        with a staged draft (`seatkit.resolve_advice_draft`) - checked on
+        with a staged draft (`seatkit.draft_status_for_answer`) - checked on
         every advisor answer that reaches `_tool_result`, action tools and
         `wait_for_priority`/`pass_until` alike, which is what lets a draft get
         posted the moment the human's own poll notices the window (within one
         `wait_for_priority` call's own internal poll, not only on the next
         separate one) rather than only when the buddy happens to call
-        something else afterward.
+        something else afterward. `state` carries `armed` whenever this same
+        call also fired an armed script (`wait_for_priority`'s own splice),
+        which is what lets `draft_status_for_answer` catch the two colliding
+        in one answer (review fix 4) before either ever reaches `resolve_
+        advice_draft`.
 
         `None` for a seat, or an advisor with nothing staged - `draft` is left
         off the answer entirely rather than invented as some idle status.
@@ -717,7 +721,7 @@ def build_server(seats: Seats) -> MCPServer:
         must never break the tool answer whose action already landed, so it
         is caught, logged once, and `draft` is simply left off."""
         try:
-            result = seatkit.resolve_advice_draft(seat, state)
+            result = seatkit.draft_status_for_answer(seat, state)
         except Exception:
             logger.warning(
                 "resolving %s's staged advice draft raised - answer sent without `draft`",

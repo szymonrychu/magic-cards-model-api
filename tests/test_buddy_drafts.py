@@ -46,6 +46,7 @@ from test_advise_mode import (
     seats_for,
     tool_text,
 )
+from test_playscript_runtime import land_script, register
 
 from magic_cards_model_api import seat_cli, seatkit
 from magic_cards_model_api.main import app
@@ -611,6 +612,56 @@ def test_wake_to_draft_does_not_wake_while_staged_but_wakes_once_stale(
     )
     assert woken["wake_reason"] == seatkit.DRAFT_TIME_WAKE_REASON
     assert "draft" not in woken
+
+
+# ---------------------------------------------------------------------------
+# 5b. arming and a staged draft in the same answer silently superseding
+# (2026-09-14 review, finding 4)
+# ---------------------------------------------------------------------------
+
+
+def test_an_armed_scripts_proposal_supersedes_a_reached_staged_draft(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A captured draft whose window is reached in the very same poll that
+    also fires an armed script would otherwise double-post: `resolve_advice_
+    draft` sees the window reached, the board unchanged and the action still
+    legal, so it posts the draft right alongside the script's own `/advice`
+    row - two proposals in one answer, the second of which
+    `ui/advice_model.js`'s `currentAdvice` (newest-wins) then hides without a
+    trace. The fix drops the draft instead and says so."""
+    wire(monkeypatch)
+    uid = advisor_uid(game, player="alice")
+    register(client, game, uid, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+
+    seats = seats_for(game)
+    server = build_server(seats)
+    seat = seats.seat_for(uid)
+    assert seat is not None
+
+    # Stage a window earlier this same turn, for a step that ranks after
+    # where it is staged - "reached" the moment the board gets there, no
+    # extra turn or occurrence bookkeeping needed for this test.
+    force_turn_position(game, Step.UPKEEP, "alice")
+    seat.stage_advice("precombat_main", "mine")
+    capture_a_pass_draft(seat, game, reasoning="nothing to do until my main phase")
+
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    answer = json.loads(
+        tool_text(
+            server,
+            "wait_for_priority",
+            {"player_uid": uid, "arm": "drop", "arm_reasoning": "make the land drop"},
+        )
+    )
+
+    assert answer.get("armed") and answer["armed"][0]["exit"] == "advised"
+    assert answer["draft"] == {"status": "superseded_by_script", "script": "drop"}
+    rows = advice_rows(game)
+    assert len(rows) == 1, rows
+    assert rows[0]["detail"]["path"].endswith("/actions/play-land"), rows[0]["detail"]["path"]
+    assert uid not in seat._advice_drafts, "a superseded draft must be dropped, not left staged"
 
 
 # ---------------------------------------------------------------------------

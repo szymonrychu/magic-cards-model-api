@@ -3543,6 +3543,72 @@ def _unvalidated_action_still_legal(action_key: str, state: dict[str, Any], play
     return True
 
 
+def _script_already_advised(armed: Any) -> str | None:
+    """The id of the armed script that just proposed in this very answer
+    (`Exit.ADVISED`, `playscripts.runtime._advise`), or `None`.
+
+    `armed` is whatever `woken["state"]["armed"]` carries (`mcp.wait_for_
+    priority`'s own splice of `wait_and_arm`'s `armed` answer) - a list of
+    `script_exit`-shaped dicts, or absent/`None` for every answer that never
+    armed anything (every action tool, and a `wait_for_priority` call with no
+    `arm`). Reading the STRING `"advised"` rather than importing `playscripts.
+    runtime.Exit`: `playscripts` imports `seatkit` (`Seat`/`scripts_enabled_
+    here`), so importing back here would cycle - the same reason `_fire_
+    armed_scripts` imports `playscripts.arming` lazily instead."""
+    if not isinstance(armed, list):
+        return None
+    for entry in armed:
+        if isinstance(entry, dict) and entry.get("exit") == "advised":
+            script = entry.get("script")
+            return script if isinstance(script, str) else None
+    return None
+
+
+def _pop_draft_if_same(seat: Seat, entry: dict[str, Any]) -> None:
+    """Drop `seat`'s staged draft only if it is still the exact object
+    `entry` names - never a later one a restage since replaced it with. See
+    `resolve_advice_draft`'s own docstring (review fix 5, 2026-09-14) for why
+    an unconditional pop is wrong: a `stage_advice` call that lands while an
+    earlier draft's own `POST .../advice` is still in flight must survive
+    that in-flight call's own cleanup."""
+    if seat._advice_drafts.get(seat.uid) is entry:
+        seat._advice_drafts.pop(seat.uid, None)
+
+
+def draft_status_for_answer(seat: Seat, state: dict[str, Any]) -> dict[str, Any] | None:
+    """The `draft` value one answer for `seat` carries right now - shared by
+    `mcp._attach_draft` and `seat_cli`'s own per-command draft check
+    (2026-09-14 review fix 2) so the CLI and MCP transports report a staged
+    draft identically, exactly as they already share `resolve_advice_draft`
+    itself.
+
+    `None` when nothing is staged (see `resolve_advice_draft`'s own
+    docstring). Otherwise, review fix 4's own supersede check runs FIRST:
+    when a captured draft (`entry["action"]` filled in) stands staged and an
+    armed script already proposed in this very answer (`state["armed"]`,
+    present only on a `wait_for_priority`/CLI `wait` call that armed
+    something), posting the draft too would put two `/advice` rows in the
+    ledger for the one answer - the script's real proposal for right now, and
+    the draft meant for its own later window. The draft loses: it is dropped
+    outright and this answers `{"status": "superseded_by_script", "script":
+    ...}` rather than ever reaching `resolve_advice_draft`, which would
+    otherwise see a perfectly good window/board/legality and post it right
+    alongside the script's own row. `ui/advice_model.js`'s `currentAdvice`
+    (newest-wins) would have hidden whichever posted first without a trace -
+    this is what stops the second post from ever happening instead.
+
+    A window still empty (`entry["action"]` is `None`) is not a draft to
+    supersede at all - there is nothing here yet for a script to collide
+    with, and `resolve_advice_draft` itself already returns `None` for it."""
+    entry = seat._advice_drafts.get(seat.uid)
+    if entry is not None and entry.get("action") is not None:
+        scripted = _script_already_advised(state.get("armed"))
+        if scripted is not None:
+            _pop_draft_if_same(seat, entry)
+            return {"status": "superseded_by_script", "script": scripted}
+    return resolve_advice_draft(seat, state)
+
+
 def resolve_advice_draft(seat: Seat, state: dict[str, Any]) -> dict[str, Any] | None:
     """`None` for a seat with nothing staged (a seat, an advisor who has
     never called `stage_advice`, or one whose window is armed but not yet
