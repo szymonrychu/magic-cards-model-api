@@ -1983,8 +1983,16 @@ def _strip_card_weight(entry: dict[str, Any]) -> None:
             entry.pop(field, None)
 
 
-def _parse_ids(value: str) -> list[str]:
-    """A comma-separated list of card ids, or a JSON list."""
+def _parse_ids(value: str | list[str]) -> list[str]:
+    """A comma-separated list of card ids, a JSON list, or a plain list
+    already (S2 review finding 1: `arm`'s own call template renders its ids
+    as a JSON array literal - `arm=["a", "b"]` - so an agent that reads that
+    template and calls the tool with those exact arguments hands this a real
+    list, not a string; `arm` accepts both so the template it hands back
+    actually works, while a comma-separated string keeps working for the
+    CLI and any other existing caller)."""
+    if isinstance(value, list):
+        return [str(entry) for entry in value]
     value = value.strip()
     if not value:
         return []

@@ -462,6 +462,113 @@ def test_mcp_pass_until_fires_an_armed_script_on_a_real_crossing(
     assert entry["exit"] == "chain_complete", entry
 
 
+def _parse_call(call: str) -> tuple[str, dict[str, Any]]:
+    """Parse a `script_tools._arm_call_template`-rendered call string into
+    `(tool_name, kwargs)` the way an agent reading it would: split the
+    top-level `name=value` pairs (respecting brackets and quotes) and
+    `json.loads` each value half - proving the template's argument values
+    parse back to real Python objects (a list for `arm`), not merely that
+    the string looks right (S2 review finding 1)."""
+    import json as _json
+
+    verb, _, rest = call.partition("(")
+    rest = rest[:-1] if rest.endswith(")") else rest
+    parts: list[str] = []
+    depth = 0
+    in_string = False
+    current = ""
+    for ch in rest:
+        if in_string:
+            current += ch
+            if ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            current += ch
+        elif ch in "[{":
+            depth += 1
+            current += ch
+        elif ch in "]}":
+            depth -= 1
+            current += ch
+        elif ch == "," and depth == 0:
+            parts.append(current)
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        parts.append(current)
+    kwargs: dict[str, Any] = {}
+    for part in parts:
+        name, _, value = part.partition("=")
+        kwargs[name.strip()] = _json.loads(value.strip())
+    return verb.strip(), kwargs
+
+
+def test_the_armable_hints_own_call_template_actually_invokes(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 review finding 1: `arm_call` renders `arm` as a JSON list literal
+    (`arm=["drop"]`), and an agent that reads that template and calls the
+    tool with those exact arguments hands the MCP tool an actual Python
+    list, not a string. Prove the template really works by parsing its own
+    emitted call the way an agent would and invoking the real MCP tool
+    function through FastMCP's own argument validation - not by asserting
+    the string looks right and stopping there."""
+    import json as _json
+
+    from test_mcp_input_required import call_tool
+
+    from magic_cards_model_api.mcp import build_server
+
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    force_turn_position(game, Step.END_STEP, "bob")
+    register(client, game, alice, drop_island_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    server = build_server(seats)
+
+    hinted = call_tool(server, "wait_for_priority", {"player_uid": alice})
+    hint_answer = _json.loads(hinted.content[0].text)
+    arm_call = hint_answer["scripts"]["arm_call"]
+    assert arm_call == (
+        f'pass_until(player_uid="{alice}", step="precombat_main", whose_turn="mine", '
+        'arm=["drop"], arm_reasoning="<say why>", opposing_archetype="*")'
+    )
+
+    verb, kwargs = _parse_call(arm_call)
+    assert isinstance(kwargs["arm"], list)
+    kwargs["arm_reasoning"] = ARM_REASONING
+    # The template names only the arming arguments; a real caller still adds
+    # its own `max_seconds` on top, same as any other `pass_until` call.
+    kwargs["max_seconds"] = 10.0
+
+    with Opponent(game, "bob"):
+        result = call_tool(server, verb, kwargs)
+
+    answer = _json.loads(result.content[0].text)
+    assert answer["finished"] is True, answer
+    [entry] = answer["armed"]
+    assert entry["script"] == "drop"
+    assert entry["exit"] == "chain_complete", entry
+
+
+def test_arm_still_accepts_a_comma_separated_string(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Backward compatibility (S2 review finding 1): the CLI and any
+    existing caller that already sends `arm` as a comma-separated string
+    keeps working once `arm` also accepts a list."""
+    from magic_cards_model_api.seatkit import _parse_ids
+
+    assert _parse_ids("a, b") == ["a", "b"]
+    assert _parse_ids(["a", "b"]) == ["a", "b"]
+    assert _parse_ids([]) == []
+
+
 def test_mcp_pass_until_never_fires_on_a_retryable_hand_back(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

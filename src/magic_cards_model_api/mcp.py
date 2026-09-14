@@ -792,7 +792,7 @@ def build_server(seats: Seats) -> MCPServer:
     def wait_for_priority(
         player_uid: str,
         max_seconds: float = 0.0,
-        arm: str = "",
+        arm: str | list[str] = "",
         arm_reasoning: str = "",
         opposing_archetype: str = "*",
         inputs: dict[str, Any] | None = None,
@@ -862,8 +862,8 @@ def build_server(seats: Seats) -> MCPServer:
                 `nothing new yet` carries no list. A seat's own wait carries
                 none either - its list rides the actions it takes.
 
-        **`arm` (S2)**: a comma-separated list of registered script ids, in
-                priority order, to fire on their own the moment this wait wakes
+        **`arm` (S2)**: a list of registered script ids (or a comma-separated
+                string of them), in priority order, to fire on their own the moment this wait wakes
                 for a real reason - "wait until you could require picking scripts
                 to run: if the situation still matches a script's conditions, it
                 fires automatically". Never mandatory: left empty (the default),
@@ -2293,7 +2293,7 @@ def build_server(seats: Seats) -> MCPServer:
         stop_when_you_can_attack: bool = True,
         reasoning: str = "",
         max_seconds: float = 0.0,
-        arm: str = "",
+        arm: str | list[str] = "",
         arm_reasoning: str = "",
         opposing_archetype: str = "*",
         inputs: dict[str, Any] | None = None,
@@ -2430,8 +2430,8 @@ def build_server(seats: Seats) -> MCPServer:
 
         ## Arming (S2)
 
-        `arm`: a comma-separated list of registered script ids, in priority
-        order, to fire on their own the instant this run finishes here - or
+        `arm`: a list of registered script ids (or a comma-separated string of
+        them), in priority order, to fire on their own the instant this run finishes here - or
         hits its own `MAX_PASSES_PER_CALL` hand-back - never on a plain
         "waiting for the opponent" hand-back, which is not this seat's moment.
         Judged the same way `run_script`/the hint judge; two armed scripts

@@ -889,7 +889,7 @@
           "default": "",
           "has_default": true,
           "name": "arm",
-          "type": "str",
+          "type": "str | list[str]",
           "type_error": null
         },
         {
@@ -1149,7 +1149,7 @@
           "default": "",
           "has_default": true,
           "name": "arm",
-          "type": "str",
+          "type": "str | list[str]",
           "type_error": null
         },
         {
