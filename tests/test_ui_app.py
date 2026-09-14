@@ -4239,3 +4239,129 @@ def test_approving_refreshes_the_board_so_the_play_is_on_screen_at_once() -> Non
         """
     )
     assert result >= 1, "nothing re-read the board after the play was performed"
+
+
+# -- the engine-gap notice: a human otherwise has no way to know -------------
+
+
+def test_an_unread_spell_notice_from_the_log_toasts_the_engine_gap() -> None:
+    """Stock Up resolved as a silent no-op in a live game: the engine
+    recorded an `UnmodeledTriggerEffectNotice` (`Game.
+    unmodeled_trigger_effect_notices`), the API threaded it onto `GET
+    .../log`'s own `detail.notices` (`commands._new_notices`,
+    `visibility.redact_log_entry`), and nothing on screen ever said so - the
+    game log panel is gone (`ui/render/panels.js`'s own comment), `app.log`
+    was read only by `advice_model.js`'s staleness check, and no `ui/*.js`
+    module read a `notices` key at all (grep across the tree comes back
+    empty). The caster's own command response is not a fix either - the
+    resolving pass is routinely the OPPONENT's, not hers (see the API test
+    `test_an_unread_spells_notice_reaches_the_casters_own_log_after_the_
+    opponents_pass`) - so `poll()`'s own `/log` read, the one thing both
+    players' clients already poll every tick, is the path this pins."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          body: {
+            classList: { toggle: () => {} },
+            setAttribute: () => {},
+            removeAttribute: () => {},
+          },
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        const board = {
+          you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+          active_player: "bob", priority_holder: "alice", battlefield: [],
+          hands: { alice: [] }, stack: [], combat: { attacks: [] },
+          winner: null, drawn: false, pregame: null,
+        };
+        globalThis.fetch = (path) => {
+          if (path.includes("/log")) {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                log: [
+                  {
+                    seq: 1,
+                    action: "pass_priority",
+                    detail: {
+                      notices: [
+                        {
+                          kind: "unmodeled_trigger_effect_notices",
+                          source_id: "s1",
+                          source_name: "Ponder",
+                          text: "Look at the top three cards of your library, then put "
+                            + "them back in any order. You may shuffle your library. Draw a card.",
+                          zone: "graveyard",
+                          controller: "alice",
+                        },
+                      ],
+                    },
+                  },
+                ],
+                last_seq: 1,
+              }),
+            });
+          }
+          return Promise.resolve({ ok: true, json: async () => board });
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null, busy: 0,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: board, log: { entries: [], lastSeq: 0 },
+          });
+          await m.poll();
+          return { toast: globalThis.__toast.textContent, hidden: globalThis.__toast.hidden };
+        })()
+        """
+    )
+    assert result["hidden"] is False, "the notice never reached the player at all"
+    assert "Ponder" in result["toast"]
+    assert "engine" in result["toast"].lower()
+
+
+def test_a_notice_free_log_entry_toasts_nothing() -> None:
+    """An ordinary log entry - no `detail.notices` at all, the overwhelming
+    common case every tick - must not spam a toast on every poll."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          body: {
+            classList: { toggle: () => {} },
+            setAttribute: () => {},
+            removeAttribute: () => {},
+          },
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        const board = {
+          you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+          active_player: "bob", priority_holder: "alice", battlefield: [],
+          hands: { alice: [] }, stack: [], combat: { attacks: [] },
+          winner: null, drawn: false, pregame: null,
+        };
+        globalThis.fetch = (path) => {
+          if (path.includes("/log")) {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                log: [{ seq: 1, action: "pass_priority", detail: {} }],
+                last_seq: 1,
+              }),
+            });
+          }
+          return Promise.resolve({ ok: true, json: async () => board });
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null, busy: 0,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: board, log: { entries: [], lastSeq: 0 },
+          });
+          await m.poll();
+          return globalThis.__toast.hidden;
+        })()
+        """
+    )
+    assert result is True, "an ordinary log entry must never toast"

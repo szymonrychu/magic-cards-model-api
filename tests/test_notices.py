@@ -32,6 +32,8 @@ from magic_cards_model.models import Game, Zone
 
 from magic_cards_model_api import commands, engine_api, visibility
 from magic_cards_model_api.commands import Command, RunStatus, run_command
+from magic_cards_model_api.mcp import build_server
+from magic_cards_model_api.seatkit import run_action
 from magic_cards_model_api.store import store
 
 _ENGINE_PRINTINGS = (
@@ -174,6 +176,68 @@ def test_a_mode_this_wave_cannot_read_reaches_the_seats_own_result_and_the_log(
     assert logged_notice["source_name"] == "Cryptic Command"
 
 
+def test_an_unread_spells_notice_reaches_the_casters_own_log_after_the_opponents_pass(client, game):
+    """Stock Up resolved as a silent no-op in a live game: `effect_for` had
+    no reader for its text, the spell resolved anyway, and nothing reached
+    the human who cast it. The gap was not the notice itself - `Game.resolve`
+    already recorded an `UnmodeledTriggerEffectNotice` - it was the path: the
+    resolution that raised it was BOB's pass, not alice's own cast, and
+    `action_pass_priority` attaches `notices` only to the response of
+    whoever called it (`visibility.redact_notices(notices, req.player)`,
+    `req.player == "bob"` here). A caster whose own client only ever reads
+    the response to her own requests never sees it that way.
+
+    Ponder is the still-unread vehicle on this engine build - see the
+    engine's own `tests/scenarios/test_unread_spell_text_fails_closed.py`,
+    whose docstring names it as the replacement vehicle now that Stock Up's
+    fix (this hotfix's whole reason to exist) has landed. `GET .../log`
+    polled with alice's own seat uid - the path `ui/app.js` actually polls,
+    never `pass-priority`'s own response - is where this pins the notice
+    reaching her.
+    """
+    add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Ponder", "alice", "hand")
+    live = store.get(game)
+    island_id = str(_ids(live, "Island")[0])
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "alice", "card": "Ponder", "mana_sources": [island_id]},
+    )
+    assert cast.status_code == 200, cast.text
+    assert cast.json()["allowed"] is True
+    assert cast.json().get("notices", []) == [], "nothing has resolved yet - the cast is clean"
+
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+
+    # CR 117.3b: the caster receives priority right back after casting, so
+    # alice's own pass here is expected and carries no notices - it is BOB's
+    # pass, on the empty side of the table, that resolves Ponder. That is the
+    # part the live game reproduced: the human never calls pass-priority on
+    # her own spell, her opponent does.
+    alice_pass = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    assert alice_pass.status_code == 200, alice_pass.text
+    assert alice_pass.json().get("notices", []) == []
+
+    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert passed.status_code == 200, passed.text
+    assert passed.json().get("notices"), "bob's own pass is what resolved the spell"
+
+    log = client.get(f"/api/games/{game}/log", params={"uid": uids["alice"]}).json()["log"]
+    resolve_row = next(
+        row
+        for row in log
+        if row["action"] == "pass_priority" and row.get("detail", {}).get("notices")
+    )
+    (notice,) = resolve_row["detail"]["notices"]
+    assert notice["kind"] == "unmodeled_trigger_effect_notices"
+    assert notice["source_name"] == "Ponder"
+    assert "top three cards" in notice["text"].lower()
+    # a resolved instant/sorcery's graveyard is public - alice's own read is
+    # not redacted down to "<hidden>" the way an opponent's hand card is.
+    assert notice["source_name"] != "<hidden>"
+
+
 def test_a_spell_that_legitimately_does_nothing_carries_no_notices(client, game):
     """Lightning Bolt has one clause, and it is one this wave reads in
     full - resolving it must not manufacture a notice out of nothing."""
@@ -258,6 +322,58 @@ def test_an_opening_hand_notice_is_captured_as_hand_with_no_controller(monkeypat
     assert notice["kind"] == "opening_hand_notices"
     assert notice["zone"] == "hand"
     assert notice["controller"] is None
+
+
+# -- reaching an AI seat ------------------------------------------------------
+
+
+def test_an_unread_spells_notice_reaches_the_casters_own_seat(client, game, monkeypatch) -> None:
+    """The AI-seat side of the same gap: `seatkit.Seat.recent_log` rides
+    along on `battlefield_state`/`run_action`/`pass_until` (`test_seat_
+    round_trips.py`'s whole subject), and its headline fields
+    (`LOG_HEADLINE_FIELDS`) keep `detail` whole - `notices` included -
+    rather than dropping it, so an unread spell's notice needs no seat-side
+    change to reach a seat the way it needs a UI change to reach a human.
+    This pins that it actually does, for a real unread spell (Ponder, the
+    engine's own replacement vehicle - see the sibling API test above)
+    rather than a notice this suite manufactures by hand, and the same shape
+    the live bug had: BOB's pass is what resolves it, not alice's own cast."""
+    from test_seat_round_trips import call, wired
+
+    add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Ponder", "alice", "hand")
+    live = store.get(game)
+    island_id = str(_ids(live, "Island")[0])
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+
+    seats = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    cast_result = run_action(
+        alice,
+        lambda: alice.call_json(
+            "POST",
+            f"/api/games/{game}/actions/cast",
+            {"player": "alice", "card": "Ponder", "mana_sources": [island_id]},
+        ),
+    )
+    assert cast_result["outcome"]["allowed"] is True
+    assert not any(
+        entry.get("detail", {}).get("notices") for entry in cast_result["recent_log"]["entries"]
+    ), "nothing has resolved yet"
+
+    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert passed.json().get("notices"), "bob's own pass is what resolved the spell"
+
+    server = build_server(seats)
+    answer = call(server, "battlefield_state", {"player_uid": uids["alice"]})
+    notice_rows = [
+        entry for entry in answer["recent_log"]["entries"] if entry.get("detail", {}).get("notices")
+    ]
+    assert notice_rows, answer["recent_log"]
+    (notice,) = notice_rows[-1]["detail"]["notices"]
+    assert notice["kind"] == "unmodeled_trigger_effect_notices"
+    assert notice["source_name"] == "Ponder"
 
 
 # -- redaction ---------------------------------------------------------------
