@@ -30,7 +30,6 @@ import {
   popoverIsOpenFor,
   updatePopoverItems,
 } from "./render/ribbon.js";
-import { mountLog } from "./render/log.js";
 import {
   mountDecisionWindow,
   minimizeDecisionWindow,
@@ -46,6 +45,7 @@ import { mountTopbar, closeModal } from "./render/panels.js";
 import { mountCardPreview } from "./preview.js";
 import { mountZoneViewer } from "./render/zone_viewer.js";
 import { mountDrawer } from "./drawer.js";
+import { mountFullscreen } from "./fullscreen.js";
 import { loadSavedGames, saveGames, upsertSavedGame, seatsFromRow } from "./lobby_model.js";
 import { loadConfig, apiBase, lobbyBase } from "./config.js";
 
@@ -1900,7 +1900,6 @@ async function main() {
     onDecisionDraft,
     onDecide: decide,
   });
-  mountLog(document, store);
   mountAdvice(document, store, { onApprove: approveAdvice });
   mountTopbar(document, store, {
     onLeaveGame: leaveGame,
@@ -1910,6 +1909,8 @@ async function main() {
   mountCardPreview(document, store);
   // Mobile mode's side-panel drawer: opens itself for each new question.
   mountDrawer(document, store);
+  // First in `#game-toolbar`, where the Fullscreen API exists.
+  mountFullscreen(document);
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     const modal = document.querySelector("#modal");

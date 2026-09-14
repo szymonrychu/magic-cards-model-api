@@ -1,23 +1,23 @@
-"""Where the advisor panel lives, and where the game log went.
+"""Where the advisor panel lives, and that the game log panel is gone.
 
 The owner asked for the advisor to "reuse bottom-right corner, where game log
 lives right now". `ui/style.css`'s `#game` grid puts `#side-panel` in the
-right-hand column's bottom row, so its children ARE that corner - and reuse
-meant the log moved out, into `#log-modal`, a persistent overlay behind a new
-topbar button, keeping `render/log.js` and its own tests untouched.
+right-hand column's bottom row, so its children ARE that corner. The log
+first moved out into a topbar-button overlay, then came back into
+`#side-panel` as `#log-box` when that button was removed, and is now removed
+from the play UI entirely: `#advice-box` is the column's last child and takes
+all of the height the other panels leave.
 
-A later task removed that "Zones" and "Log" button pair from the topbar at
-the owner's request. The log came back into `#side-panel` as `#log-box`,
-always visible now rather than behind an overlay - `#log-modal` is gone
-entirely. The tests that pinned the modal's own shape moved to
-`tests/test_ui_menus.py` (the six-panel column) and
-`tests/test_ui_hidden_elements.py` (the overlay list); what is left here is
-what is still true: the advisor's own corner and its flexible-height CSS.
+Only the panel went. The log POLL stays: `app.js` still reads
+`GET /api/games/{id}/log?since=` into `app.log` every tick, because the
+advisor's proposals are ledger rows on that very read and
+`ui/advice_model.js` builds the panel from them
+(`tests/test_ui_advice.py` covers that the poll still feeds the panel).
 
-These read `ui/index.html` and `ui/style.css` directly rather than through
-Node, because the grid placement and the specificity trap below are decided
-in those two files and nowhere else - and because a layout guarantee should
-not be skipped on a machine with no node.
+These read `ui/index.html`, `ui/style.css` and `ui/app.js` directly rather
+than through Node, because the grid placement and the specificity trap below
+are decided in those files and nowhere else - and because a layout guarantee
+should not be skipped on a machine with no node.
 """
 
 from __future__ import annotations
@@ -26,15 +26,6 @@ import re
 from pathlib import Path
 
 UI = Path(__file__).resolve().parents[1] / "ui"
-
-# --------------------------------------------------------- the structure ---
-#
-# The panel takes over the bottom-right corner, which is where the game log
-# lived (the owner: "For this reuse bottom-right corner, where game log lives
-# right now"). Reuse, not replace: the log MOVES, into a persistent modal
-# behind the topbar's Log button. These read `ui/index.html` and
-# `ui/style.css` directly, because the grid placement and the specificity
-# trap below are decided there and nowhere else.
 
 SIDE_PANEL = re.compile(r'<aside id="side-panel">(.*?)</aside>', re.S)
 
@@ -47,45 +38,80 @@ def _css() -> str:
     return (UI / "style.css").read_text()
 
 
-def test_the_advisor_panel_and_the_log_share_the_control_ribbons_bottom() -> None:
+def _rule(selector: str) -> str | None:
+    block = re.search(r"\n" + re.escape(selector) + r" \{(.*?)\}", _css(), re.S)
+    return block.group(1) if block else None
+
+
+def test_the_log_panel_is_gone_and_the_advisor_is_the_ribbons_last_panel() -> None:
     """`#side-panel` is the right-hand column's bottom row (`style.css`'s
-    grid areas). The advisor panel sits there with the room the rest of the
-    column leaves it; the log (`#log-box`) is back in this same column too
-    (moved out of a topbar-button overlay once that button was removed), as
-    the column's last child so it reads after the advisor's proposal rather
-    than before it."""
-    side = SIDE_PANEL.search(_index())
+    grid areas). The game log panel is removed from the play UI entirely, so
+    the advisor panel is that column's last child."""
+    html = _index()
+    assert 'id="log-box"' not in html, "the game log panel should be removed from the play UI"
+    side = SIDE_PANEL.search(html)
     assert side, "could not find #side-panel in ui/index.html"
-    assert 'id="advice-box"' in side.group(1)
-    assert 'id="log-box"' in side.group(1), (
-        "the log is not in the control ribbon - it should be back here, always visible, "
-        "now that the topbar Log button that used to hide it behind #log-modal is gone"
-    )
-    assert re.search(r'id="advice-box".*id="log-box"', side.group(1), re.S), (
-        "the log should read after the advisor's proposal, not before it"
-    )
+    children = re.findall(r'<div id="([\w-]+)"', side.group(1))
+    assert children[-1] == "advice-box", children
 
 
 def test_log_modal_is_gone_entirely() -> None:
     """`#log-modal` (the persistent overlay behind the removed topbar Log
-    button) no longer exists - the log moved back into `#side-panel` as an
-    always-visible `#log-box` instead."""
+    button) no longer exists either."""
     html = _index()
     assert 'id="log-modal"' not in html, (
         "#log-modal should have been removed along with the Log button"
     )
 
 
-def test_the_advisor_panel_inherits_the_height_the_log_used_to_absorb() -> None:
-    """`#log-box` was the one child of that column with `flex: 1 1 auto` - it
-    absorbed whatever height the other panels left, which is what kept the
-    column exactly one viewport tall. Whatever sits in that slot has to carry
-    the same rule, or the ribbon grows past the window."""
-    block = re.search(r"\n#advice-box \{(.*?)\}", _css(), re.S)
-    assert block, "could not find the #advice-box rule in ui/style.css"
-    body = block.group(1)
+def test_the_log_panels_renderer_and_styles_are_deleted() -> None:
+    """Nothing is left behind for a panel that no longer exists: no
+    `render/log.js`, and no `#log-box` or `.log-line` rules in the
+    stylesheet."""
+    assert not (UI / "render" / "log.js").exists(), "ui/render/log.js should be deleted"
+    css = _css()
+    assert "#log-box" not in css, "style.css still styles the removed #log-box"
+    assert ".log-line" not in css, "style.css still styles the removed log lines"
+
+
+def test_the_advisor_panel_takes_the_remaining_height() -> None:
+    """`#advice-box` is the one flexible child of that column: `flex: 1 1
+    auto` absorbs whatever height the other panels leave, which is what
+    keeps the column exactly one viewport tall, and `min-height: 0` with
+    `overflow-y: auto` lets a long rationale scroll inside the panel rather
+    than pushing the ribbon past the window."""
+    body = _rule("#advice-box")
+    assert body is not None, "could not find the #advice-box rule in ui/style.css"
     for declaration in ("flex: 1 1 auto", "min-height: 0", "overflow-y: auto"):
         assert declaration in body, f"#advice-box is missing `{declaration}`"
+
+
+def test_no_other_panel_in_the_ribbon_competes_for_that_height() -> None:
+    """Every other child of `#side-panel` keeps its content height: none of
+    them carries a `flex` rule of its own, so the advisor alone grows."""
+    css = _css()
+    side = SIDE_PANEL.search(_index())
+    assert side
+    for child in re.findall(r'<div id="([\w-]+)"', side.group(1)):
+        if child == "advice-box":
+            continue
+        for block in re.findall(
+            r"\n([^{}\n]*#" + re.escape(child) + r"\b[^{}\n]*)\{(.*?)\}", css, re.S
+        ):
+            assert not re.search(r"(^|[\s;])flex(-grow)?\s*:", block[1]), (
+                f"{block[0].strip()} gives #{child} a flex rule, competing with #advice-box"
+            )
+
+
+def test_the_side_panel_fills_the_mobile_drawer_too() -> None:
+    """In mobile mode `#side-panel` is a flex child of `#drawer`; it takes
+    the drawer's remaining height and scrolls inside itself, so the advisor
+    panel's own `flex: 1 1 auto` fills the drawer the way it fills the
+    desktop column."""
+    body = _rule("  #drawer > #side-panel")
+    assert body is not None, "could not find the mobile #drawer > #side-panel rule"
+    for declaration in ("flex: 1 1 auto", "min-height: 0", "overflow-y: auto"):
+        assert declaration in body, f"#drawer > #side-panel is missing `{declaration}`"
 
 
 def test_no_advisor_rule_walks_into_the_documented_specificity_trap() -> None:
@@ -95,13 +121,12 @@ def test_no_advisor_rule_walks_into_the_documented_specificity_trap() -> None:
     `border-color` to it. Any advisor declaration that collides with that
     rule has to be written at matching specificity
     (`#side-panel > #advice-box`, the shape `#casting-strip` already uses)."""
-    css = _css()
-    outranking = re.search(r"\n#side-panel > div \{(.*?)\}", css, re.S)
+    outranking = _rule("#side-panel > div")
     assert outranking, "could not find the #side-panel > div rule in ui/style.css"
-    taken = {line.split(":")[0].strip() for line in outranking.group(1).split(";") if ":" in line}
-    bare = re.search(r"\n#advice-box \{(.*?)\}", css, re.S)
+    taken = {line.split(":")[0].strip() for line in outranking.split(";") if ":" in line}
+    bare = _rule("#advice-box")
     assert bare
-    mine = {line.split(":")[0].strip() for line in bare.group(1).split(";") if ":" in line}
+    mine = {line.split(":")[0].strip() for line in bare.split(";") if ":" in line}
     assert not (taken & mine), (
         f"a bare #advice-box rule sets {sorted(taken & mine)}, which "
         "`#side-panel > div` outranks - "
@@ -113,18 +138,37 @@ def test_a_stale_proposal_is_actually_dimmed_rather_than_merely_classed() -> Non
     """The renderer puts `.advice-stale` on the summary and rationale; the
     reduced opacity the acceptance asks for has to exist in the stylesheet
     for that class to mean anything."""
-    block = re.search(r"\n\.advice-stale \{(.*?)\}", _css(), re.S)
+    block = _rule(".advice-stale")
     assert block, "could not find the .advice-stale rule in ui/style.css"
-    opacity = re.search(r"opacity:\s*([0-9.]+)", block.group(1))
+    opacity = re.search(r"opacity:\s*([0-9.]+)", block)
     assert opacity, ".advice-stale sets no opacity"
     assert 0 < float(opacity.group(1)) < 1, "a stale proposal is either invisible or not dimmed"
 
 
-def test_the_app_mounts_the_advisor_panel_and_still_mounts_the_log() -> None:
-    """Moving the log must not have dropped it: both renderers are mounted,
-    and `mountLog` itself is untouched (its own five tests in
-    `tests/test_ui_log.py` build their own `#log-box` root and pass
-    unchanged)."""
+def test_the_app_mounts_the_advisor_panel_and_no_log_panel() -> None:
+    """The advisor panel is mounted; the log panel is not, and its module is
+    not imported. The log poll itself stays - `app.log` is what the advisor
+    panel reads."""
     app = (UI / "app.js").read_text()
     assert "mountAdvice(document, store" in app
-    assert "mountLog(document, store)" in app
+    assert "mountLog" not in app, "app.js still mounts the removed log panel"
+    assert "render/log.js" not in app, "app.js still imports the removed log panel's module"
+    assert "log?since=" in app, "the log poll the advisor panel reads must stay"
+
+
+def test_the_stylesheets_side_panel_comment_counts_its_sections() -> None:
+    """The comment above the side panel's flex rules names each stacked
+    section and how many there are. With the log panel gone that count must
+    match both the ids it lists and `#side-panel`'s real children, so the
+    comment does not keep describing a removed panel."""
+    words = {"four": 4, "five": 5, "six": 6, "seven": 7}
+    comment = re.search(r"/\* The side panel's (\w+) stacked sections:(.*?)\*/", _css(), re.S)
+    assert comment, "could not find the side panel's section comment in ui/style.css"
+    listed = re.findall(r"\(`#([\w-]+)`", comment.group(2))
+    side = SIDE_PANEL.search(_index())
+    assert side, "could not find #side-panel in ui/index.html"
+    children = re.findall(r'<div id="([\w-]+)"', side.group(1))
+    assert listed == children, (listed, children)
+    assert words.get(comment.group(1)) == len(children), (
+        f"comment says {comment.group(1)!r} sections, #side-panel has {len(children)}"
+    )

@@ -315,7 +315,7 @@ def test_the_ribbon_and_the_board_share_one_row_of_the_game_grid(
     client: TestClient,
 ) -> None:
     """Everything that is not the battlefield or the zones - the turn block,
-    the banners, the prompt/priority/stops/log panel - is one right-hand
+    the banners, the prompt/priority/stops/advice panel - is one right-hand
     column, and the board takes the whole of the far side. `#topbar` and
     `#banners` are still separate elements in `index.html`; only the grid puts
     them in the ribbon, so this is what says the three are actually in the
@@ -374,3 +374,60 @@ def test_the_armed_concede_button_actually_looks_armed(client: TestClient) -> No
     sees, and this is the one button where seeing it matters."""
     css = client.get("/style.css").text
     assert "button.danger.armed {" in css
+
+
+# -- the home-screen app: manifest and icons ----------------------------------
+
+GAME_HEX = "0123456789abcdef0123456789abcdef"
+MANIFEST_PATHS = ("/manifest.webmanifest", f"/{GAME_HEX}/manifest.webmanifest")
+
+
+def _png_size(body: bytes) -> tuple[int, int]:
+    """Width and height from a PNG's IHDR chunk, which must come first."""
+    assert body[:8] == b"\x89PNG\r\n\x1a\n", body[:8]
+    assert body[12:16] == b"IHDR", body[12:16]
+    return int.from_bytes(body[16:20], "big"), int.from_bytes(body[20:24], "big")
+
+
+def test_the_manifest_is_served_as_a_manifest_from_the_lobby_and_a_game(
+    client: TestClient,
+) -> None:
+    for path in MANIFEST_PATHS:
+        response = client.get(path)
+        assert response.status_code == 200, (path, response.status_code)
+        content_type = response.headers["content-type"].split(";")[0].strip()
+        assert content_type == "application/manifest+json", (path, content_type)
+        manifest = response.json()
+        assert manifest["name"] and manifest["short_name"], manifest
+        assert manifest["display"] == "fullscreen"
+        assert manifest["orientation"] == "landscape"
+        # Relative: installed from `/<game id>/` it reopens that game, from
+        # `/` the lobby - both inside the `/` scope.
+        assert manifest["start_url"] == "./"
+        assert manifest["scope"] == "/"
+        assert manifest["background_color"] == "#10131a"
+        assert manifest["theme_color"] == "#10131a"
+        icons = {icon["sizes"]: icon for icon in manifest["icons"]}
+        assert set(icons) == {"192x192", "512x512"}, icons
+        for size, icon in icons.items():
+            assert icon["type"] == "image/png"
+            assert icon["src"] == f"icons/icon-{size.split('x')[0]}.png"
+
+
+def test_the_manifest_start_url_resolves_to_the_page_it_was_installed_from(
+    client: TestClient,
+) -> None:
+    from urllib.parse import urljoin
+
+    for path, page in zip(MANIFEST_PATHS, ("/", f"/{GAME_HEX}/"), strict=True):
+        manifest = client.get(path).json()
+        assert urljoin(f"https://host{path}", manifest["start_url"]) == f"https://host{page}"
+
+
+def test_the_app_icons_are_pngs_of_their_declared_size(client: TestClient) -> None:
+    for prefix in ("", f"/{GAME_HEX}"):
+        for size in (192, 512):
+            response = client.get(f"{prefix}/icons/icon-{size}.png")
+            assert response.status_code == 200, (prefix, size, response.status_code)
+            assert response.headers["content-type"] == "image/png"
+            assert _png_size(response.content) == (size, size)

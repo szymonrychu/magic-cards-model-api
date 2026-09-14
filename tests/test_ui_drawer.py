@@ -307,6 +307,7 @@ def test_the_drawer_wraps_the_turn_block_banners_and_side_panel() -> None:
     assert ids == ["topbar", "banners", "side-panel"]
     assert 'id="zone-ribbon"' not in inner and 'id="mtg-board"' not in inner
     assert 'id="game-toolbar"' not in inner
+    assert 'id="phase-track"' not in inner, "the phase track lives in the top row, not the drawer"
     toggle = re.search(r'<button id="drawer-toggle"([^>]*)>', html)
     assert toggle, "no #drawer-toggle button"
     assert 'aria-controls="drawer"' in toggle.group(1)

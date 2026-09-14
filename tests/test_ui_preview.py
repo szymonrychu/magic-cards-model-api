@@ -421,19 +421,19 @@ def test_the_hover_preview_goes_away_on_scroll_and_on_a_mouse_press() -> None:
 
 
 def test_a_scroll_elsewhere_leaves_the_hover_preview_open_where_it_was() -> None:
-    """`render/log.js` scrolls the log to its newest line on every poll, and a
-    row next to the card may scroll too. Neither moves the hovered card, so
+    """A long advisor rationale scrolls inside `#advice-box`, and a row next
+    to the card may scroll too. Neither moves the hovered card, so
     the preview stays open and in place; only a scroll of something holding
     the card (its row, the board) or of the page itself closes it."""
     result = run(
         """
         (async () => {
-          const log = box("log-box");
+          const advice = box("advice-box");
           const card = cardEl("a", { left: 500, top: 300, width: 100, height: 140 });
           await mounted(STATE({ battlefield: [CARD("a")] }));
           mouse(card, "pointerover");
           const before = zoomBox();
-          dispatch(log, "scroll", {});
+          dispatch(advice, "scroll", {});
           dispatch(STACK, "scroll", {});
           const afterUnrelated = { shown: shown(), box: zoomBox() };
           dispatch(BOARD, "scroll", {});

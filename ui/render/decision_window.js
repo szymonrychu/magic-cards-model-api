@@ -7,7 +7,7 @@
 // place that says which is which.
 //
 // Built once in `ui/index.html` and only ever shown, hidden and patched,
-// never rebuilt on a poll - the lesson `#log-modal` already taught. The
+// never rebuilt on a poll. The
 // renderers in `#prompt-box` wipe and rebuild on every store update, and the
 // press guard (`ui/store.js`) stops holding those back after
 // `PRESS_CAP_MS`, so a card mid-drag or a half-made arrangement there would be
@@ -54,6 +54,12 @@ const FALLBACK_SIZE = { width: 480, height: 360 };
 const RIBBON_WIDTH_PX = 340;
 const EDGE_GAP_PX = 24;
 const DEFAULT_TOP_PX = 72;
+/** The top row's bottom edge when there is no row on the page (the lobby, a
+ * test page without one): nothing to stay below, the window may reach the
+ * top of the viewport. */
+const NO_TOP_ROW_PX = 0;
+/** The title bar's height when it cannot be measured (not laid out yet). */
+const FALLBACK_HANDLE_PX = 32;
 
 // ------------------------------------------------------------- position ---
 
@@ -97,13 +103,19 @@ export function saveWindowPosition(storage, pos) {
 }
 
 /** `pos` moved so a `size` box sits wholly inside `viewport` (or at its
- * top-left corner when it is bigger than the viewport). */
-export function clampPosition(pos, size, viewport) {
+ * top-left corner when it is bigger than the viewport). `limits.top` is the
+ * lowest edge the title bar must stay below (the top row's bottom, which
+ * paints over the window) and `limits.handle` the title bar's height, which
+ * never goes below the viewport's bottom either: the title bar is the only
+ * way to move the window, so it must always be reachable. */
+export function clampPosition(pos, size, viewport, limits) {
+  const floor = Math.max(0, (limits && limits.top) || 0);
+  const handle = Math.max(0, (limits && limits.handle) || 0);
   const maxLeft = Math.max(0, viewport.width - size.width);
-  const maxTop = Math.max(0, viewport.height - size.height);
+  const maxTop = Math.max(floor, Math.min(viewport.height - size.height, viewport.height - handle));
   return {
     left: Math.round(Math.min(Math.max(0, pos.left), maxLeft)),
-    top: Math.round(Math.min(Math.max(0, pos.top), maxTop)),
+    top: Math.round(Math.min(Math.max(floor, pos.top), maxTop)),
   };
 }
 
@@ -763,6 +775,17 @@ export function mountDecisionWindow(root, store, handlers, opts) {
     const rect = win.getBoundingClientRect ? win.getBoundingClientRect() : null;
     return rect && rect.width ? { width: rect.width, height: rect.height } : FALLBACK_SIZE;
   };
+  // Measured at every clamp: the row's height changes with the mobile
+  // breakpoint and its top with the safe-area inset.
+  const limits = () => {
+    const row = part(root, "game-toolbar");
+    const rowRect = row && row.getBoundingClientRect ? row.getBoundingClientRect() : null;
+    const handleRect = els.handle && els.handle.getBoundingClientRect ? els.handle.getBoundingClientRect() : null;
+    return {
+      top: rowRect && rowRect.height ? Math.ceil(rowRect.bottom) : NO_TOP_ROW_PX,
+      handle: handleRect && handleRect.height ? handleRect.height : FALLBACK_HANDLE_PX,
+    };
+  };
   const positionNow = () => ({ left: parseFloat(win.style.left) || 0, top: parseFloat(win.style.top) || 0 });
   const applyPosition = (pos) => {
     win.style.left = `${pos.left}px`;
@@ -775,11 +798,11 @@ export function mountDecisionWindow(root, store, handlers, opts) {
       left: viewport.width - RIBBON_WIDTH_PX - size.width - EDGE_GAP_PX,
       top: DEFAULT_TOP_PX,
     };
-    applyPosition(clampPosition(wanted, size, viewport));
+    applyPosition(clampPosition(wanted, size, viewport, limits()));
   };
   const reclamp = () => {
     if (win.hidden) return;
-    applyPosition(clampPosition(positionNow(), measure(), viewportOf(view)));
+    applyPosition(clampPosition(positionNow(), measure(), viewportOf(view), limits()));
   };
   win.__reclamp = reclamp;
 
@@ -853,7 +876,7 @@ export function mountDecisionWindow(root, store, handlers, opts) {
       pointermove: (move) => {
         if (!windowDrag) return;
         const wanted = { left: move.clientX - windowDrag.dx, top: move.clientY - windowDrag.dy };
-        applyPosition(clampPosition(wanted, windowDrag.size, viewportOf(view)));
+        applyPosition(clampPosition(wanted, windowDrag.size, viewportOf(view), limits()));
       },
       pointerup: end,
       pointercancel: end,
@@ -947,6 +970,12 @@ export function mountDecisionWindow(root, store, handlers, opts) {
   on(win, "keydown", onKey);
   on(view, "resize", reclamp);
   const unsubscribe = store.subscribe(render);
+  // A window already showing when the page mounts again goes back inside the
+  // current limits, from where it was or else from the remembered spot.
+  if (!win.hidden) {
+    if (win.style.left) reclamp();
+    else place();
+  }
 
   const unmount = () => {
     untrack();

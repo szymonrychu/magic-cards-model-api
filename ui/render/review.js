@@ -64,9 +64,9 @@ function text(node) {
   return node === null || node === undefined ? "" : String(node);
 }
 
-/** `#123`, the ledger's own way of naming a row - the same form `log.js`
- * and `audit.py`'s console line use, so a reader can match a line on this
- * page against the server's log. */
+/** `#123`, the ledger's own way of naming a row - the same form
+ * `audit.py`'s console line uses, so a reader can match a line on this page
+ * against the server's log. */
 function seqLabel(seq) {
   return `#${seq}`;
 }

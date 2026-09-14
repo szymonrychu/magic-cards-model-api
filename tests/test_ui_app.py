@@ -3,7 +3,7 @@ module rather than a Python restatement of it.
 
 `app.js` ties every pure module (`actions.js`, `priority.js`, `combat.js`,
 `decisions.js`, `targeting.js`) and every render module (`board.js`,
-`ribbon.js`, `log.js`, `lobby.js`, `panels.js`) together into the running
+`ribbon.js`, `advice.js`, `lobby.js`, `panels.js`) together into the running
 page - most of what it does is DOM and `fetch`, neither of which this file
 can exercise under Node. What it *can* exercise, and what actually decides
 the click flows the task brief asks for, is the two pure planners

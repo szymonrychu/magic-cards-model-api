@@ -18,9 +18,8 @@
 // `closeLogModal`/`logModalIsOpen` trio for a persistent log overlay, both
 // behind topbar buttons. The owner asked for both buttons gone: the command
 // zone (the one thing the popover showed that nothing else did) now draws in
-// the zone ribbon itself (`ui/board_layout.js`'s `zoneRibbon`), and the log
-// (`render/log.js`'s `mountLog`) moved back into `#side-panel`, always
-// visible, instead of behind an overlay.
+// the zone ribbon itself (`ui/board_layout.js`'s `zoneRibbon`). The game log
+// panel is removed from the play UI entirely.
 //
 // CR numbers here (verified with `knowledge_search(type="rules")` in the
 // session that wrote this file): 117.3d (passing priority for a silent AI
@@ -234,26 +233,35 @@ function renderTurnInfo(el, state) {
   el.appendChild(h("span", { class: "prio" }, `priority ${state.priority_holder || "-"}`));
 }
 
+/** The track is one line in the top row (`#game-toolbar`) and scrolls
+ * sideways inside itself when the row is too narrow for it, so the current
+ * step is scrolled to the middle of what shows rather than left past an edge. */
 function renderPhaseTrack(el, state) {
   if (!el) return;
   clear(el);
   const currentIndex = STEPS.indexOf(state.step);
+  let current = null;
   STEPS.forEach((step, index) => {
     const classes = [];
     if (index === currentIndex) classes.push("current");
     else if (index < currentIndex) classes.push("done");
-    el.appendChild(
-      h("li", { class: classes.join(" "), title: `${step} (${PHASE_OF[step]})` }, STEP_LABELS[step] || step)
-    );
+    const li = h("li", { class: classes.join(" "), title: `${step} (${PHASE_OF[step]})` }, STEP_LABELS[step] || step);
+    if (index === currentIndex) current = li;
+    el.appendChild(li);
   });
+  if (current && el.scrollWidth > el.clientWidth) {
+    const track = el.getBoundingClientRect();
+    const step = current.getBoundingClientRect();
+    el.scrollLeft += step.left + step.width / 2 - (track.left + track.width / 2);
+  }
 }
 
 /** Mount the topbar into `root` (normally `document`): `#turn-info`,
  * `#phase-track`, `#ai-panel`, `#conn-status`/`#conn-status-game`, and
  * `#ai-loading-banner`/`#ai-stall-banner`, plus wiring `#leave-game`/
- * `#report-problem` - moved out of `#topbar` into the pinned top-right
- * `.game-toolbar` (`index.html`), but wired the same way regardless of where
- * in the page they physically sit. `handlers = {onLeaveGame(),
+ * `#report-problem` - moved out of `#topbar` into the pinned top row
+ * `.game-toolbar` (`index.html`), with `#phase-track` beside them, but wired
+ * and rendered by id regardless of where in the page they physically sit. `handlers = {onLeaveGame(),
  * onPassForAiSeat(aiPlayer), onReportProblem(text)}`. Returns the
  * `store.subscribe` unsubscribe function.
  *
@@ -261,8 +269,7 @@ function renderPhaseTrack(el, state) {
  * `openZonesModal`, until this task) are removed, and `ui/board_layout.js`'s
  * `zoneRibbon` now also draws the command zone - the one thing that popover
  * showed that the always-visible ribbon did not already. The "Log" button
- * and `#log-modal` are removed too; `#log-box` moved back into `#side-panel`,
- * always visible, wired by `render/log.js`'s `mountLog` exactly as before. */
+ * and `#log-modal` are removed too, and so is the game log panel. */
 export function mountTopbar(root, store, handlers) {
   const leave = root.querySelector("#leave-game");
   if (leave) leave.onclick = () => handlers.onLeaveGame();

@@ -1,5 +1,5 @@
 // The mtg-buddy advisor panel (`#advice-box`): the bottom of the right-hand
-// ribbon, where the game log used to live.
+// ribbon, taking all of the height the panels above it leave.
 //
 // The owner's own spec, verbatim: "It mustn't be a scrolling log - more like
 // a static popup with: decision summary, rationale, approve button (once
@@ -7,12 +7,13 @@
 // on the webUI)". So this is a STATIC panel showing exactly one proposal:
 // never a list, never a history, and never a second proposal beside the
 // first - a newer `advice` row replaces the one on screen (`currentAdvice`
-// returns only the newest). The log itself is not gone, it moved into
-// `#log-modal` behind the topbar's Log button.
+// returns only the newest). There is no game log panel any more, but the log
+// read itself stays: `app.js` polls `GET .../log?since=` into `app.log`, and
+// a proposal is a row on that read.
 //
 // What is on screen, in reading order: the decision summary, the agent's own
 // reasoning (clipped to `RATIONALE_MAX_CHARS`), where in the game it was
-// proposed (`#seq`, turn, step) so the human can place it against the log,
+// proposed (`#seq`, turn, step) so it can be placed against the audit log,
 // one short status line (`advice_model.js`'s `adviceStatus`: "Buddy is
 // thinking", "Buddy is waiting for your call", ...), and Approve. The
 // internal verification and staleness sentences are not shown to the human;
@@ -41,13 +42,11 @@ const NEVER_RENDERED = Symbol("never rendered");
 
 /** The render key: every input this panel reads, and nothing else.
  *
- * `render/log.js` guards on `log.lastSeq` alone, and its own comment says
- * that guard must NOT become a general "did the state change" test. This
- * panel is exactly the case that comment warns about: it reads three
- * independent things, so all three are in its key. `busy` decides whether
- * Approve is clickable, and an Approve left enabled through a submission
- * this seat is still waiting on is the frozen control that comment is
- * about; `state.you` decides whose advice this even is. */
+ * A guard keyed on `log.lastSeq` alone would be wrong here: this panel
+ * reads three independent things, so all three are in its key. `busy`
+ * decides whether Approve is clickable, and an Approve left enabled through
+ * a submission this seat is still waiting on is a frozen control;
+ * `state.you` decides whose advice this even is. */
 function renderKey(app) {
   const log = app.log || {};
   const state = app.state || {};

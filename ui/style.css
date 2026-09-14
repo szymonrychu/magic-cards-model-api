@@ -245,47 +245,45 @@ h3 { font-size: 14px; }
   grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-areas: "board zones top" "board zones banner" "board zones side";
   /* `dvh` where the browser has it: a phone's `100vh` is the height with its
-     address bar hidden, which is taller than the window it actually shows. */
-  height: 100vh;
-  height: 100dvh;
+     address bar hidden, which is taller than the window it actually shows.
+     Less the body's safe-area padding (the fullscreen section at the end of
+     this file), or a notched phone would scroll the page. */
+  height: calc(100vh - var(--safe-top) - var(--safe-bottom));
+  height: calc(100dvh - var(--safe-top) - var(--safe-bottom));
   gap: 8px;
   padding: 8px;
   /* A reserved strip along the very top of the viewport, exclusively for
      `.game-toolbar` below - nothing in the grid (the board, the zone ribbon,
-     `#topbar`'s own turn/phase/AI content) is ever laid out under it, at any
-     width, so the fixed toolbar can never cover something a player is trying
-     to read or click. In mobile mode (the media block at the end of this
-     file) the toolbar sits in a rail reserved on the right instead, so the
-     board there keeps the full height. */
+     `#topbar`'s turn/AI content) is ever laid out under it, at any width, so
+     the fixed row can never cover something a player is trying to read or
+     click. Mobile mode (the media block at the end of this file) reserves a
+     thinner strip for a thinner row. */
   padding-top: 52px;
 }
 
-/* Concede, Report and Lobby, pinned to the top-right corner of the viewport
-   at every width - `position: fixed` is what makes "every width" true for
-   free: it is placed against the viewport, not against `#game`'s own grid,
-   so it holds the same corner whether that grid is the three-column desktop
-   layout or mobile mode's single board column. `#game`'s own `padding-top`
-   above, or mobile mode's right rail, reserves the room this sits in.
+/* The top row: the phase track on the left, Concede, Report and Lobby on the
+   right, pinned across the top of the viewport at every width. `position:
+   fixed` places it against the viewport, not `#game`'s grid, so it is the
+   same row whether that grid is the three-column desktop layout or mobile
+   mode's single board column; `#game`'s `padding-top` reserves its room.
 
-   `flex-wrap: wrap` with `justify-content: flex-end` rather than a fixed
-   `nowrap` row: an armed Concede's "click again to confirm" label is the one
-   thing here that can grow past a phone-width viewport's remaining room, and
-   wrapping it onto its own line keeps every button fully on screen rather
-   than clipping one off the edge. */
+   One line, never two: the buttons keep their size and the track takes
+   what is left, scrolling sideways inside itself (`#phase-track`) when that
+   is less than it needs - an armed Concede's longer label included. */
 .game-toolbar {
   position: fixed;
   top: 8px;
+  left: 8px;
   right: 8px;
   z-index: 55;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 6px;
-  /* `--toolbar-max` is set by mobile mode, which reserves a narrow rail on
-     the right - there the toolbar wraps into a column inside that rail
-     rather than reaching over the board. */
-  max-width: var(--toolbar-max, calc(100vw - 16px));
+  height: 36px;
 }
+.game-toolbar > * { flex: 0 0 auto; }
+.game-toolbar button { white-space: nowrap; }
 
 /* Mobile mode's drawer (`ui/drawer.js`). On a desktop it is only a wrapper:
    `display: contents` takes it out of the box tree, so `#topbar`, `#banners`
@@ -320,8 +318,7 @@ h3 { font-size: 14px; }
 #rotate-overlay .hint { margin: 0; }
 
 /* The ribbon's top block. A column rather than a bar now that it is 340px
-   wide instead of the full window: turn line, phase track, then the seat's
-   own controls. */
+   wide instead of the full window: turn line, then the seat's own controls. */
 #topbar {
   grid-area: top;
   display: flex;
@@ -338,17 +335,35 @@ h3 { font-size: 14px; }
 .topbar-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* The turn structure as a track, so "which step am I in" is a glance, not a
-   line of text to read. CR 500.1's phases and steps, in order. */
-#phase-track { display: flex; gap: 2px; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; }
+   line of text to read. CR 500.1's phases and steps, in order. First in the
+   top row whatever order its siblings are in (`order: -1`), and it takes
+   the row's spare width (`flex: 1 1 auto`, `min-width: 0`), scrolling
+   sideways inside itself - scrollbar hidden, `render/panels.js` scrolls the
+   current step into view - rather than wrapping or pushing the buttons. */
+#phase-track {
+  order: -1;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
 #phase-track li {
+  flex: 0 0 auto;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.4px;
+  white-space: nowrap;
   color: var(--ink-faint);
   padding: 2px 6px;
   border-radius: 4px;
   border: 1px solid transparent;
-  cursor: pointer;
 }
 #phase-track li.current {
   color: var(--accent-ink);
@@ -356,7 +371,6 @@ h3 { font-size: 14px; }
   font-weight: 700;
 }
 #phase-track li.done { color: var(--ink-dim); }
-#phase-track li.target { border-color: var(--accent); color: var(--accent); }
 
 #banners { grid-area: banner; display: flex; flex-direction: column; gap: 6px; }
 #banners > div {
@@ -1289,20 +1303,14 @@ h3 { font-size: 14px; }
   border-radius: 9px;
   padding: 10px 12px;
 }
-/* The side panel's six stacked sections: what is being asked
+/* The side panel's five stacked sections: what is being asked
    (`#prompt-box`), the announcement in progress (`#casting-strip`), the
    priority controls (`#priority-box`), the stop conditions autopilot will
    halt for (`#stops-box`), the mtg-buddy advisor's current proposal
-   (`#advice-box` - which takes whatever height the rest leave, so the panel
-   is exactly one viewport tall whatever is in it), and the game log
-   (`#log-box`, last).
-
-   `#log-box` used to live here, then moved out behind a topbar Log button
-   (`#log-modal`) once the advisor took this corner. That button is gone at
-   the owner's request, so the log came back rather than being lost entirely
-   - but with a bounded height of its own (below) rather than sharing
-   `#advice-box`'s flexible space, so the advisor keeps the room it was
-   given and the log scrolls inside its own smaller box instead. */
+   (`#advice-box`, last - which takes whatever height the rest leave, so the
+   panel is exactly one viewport tall whatever is in it). The game log panel
+   that used to sit under it is removed from the play UI, so the advisor has
+   all of that room. */
 /* Careful with the next two rules: `#side-panel > div` above is an id *and*
    a type selector, so it outranks a bare `#prompt-box`/`#priority-box`, and
    it does - measured with `getComputedStyle` in a real browser, both of them
@@ -1315,10 +1323,10 @@ h3 { font-size: 14px; }
 #prompt-box { border-color: var(--warn); }
 #priority-box { border-color: var(--accent); }
 #side-panel > #casting-strip { border-color: var(--accent); }
-/* The advisor's panel, in the slot `#log-box` used to hold - so it carries
-   the same `flex: 1 1 auto; min-height: 0; overflow-y: auto`: it absorbs the
-   height the other three panels leave, and a long rationale scrolls inside
-   itself rather than pushing the ribbon past the window. It is still a
+/* The advisor's panel, the column's one flexible child - `flex: 1 1 auto;
+   min-height: 0; overflow-y: auto`: it absorbs the height the other panels
+   leave, and a long rationale scrolls inside itself rather than pushing the
+   ribbon past the window. `hidden` while there is no proposal. It is still a
    static panel, never a list - `render/advice.js` shows exactly one
    proposal. */
 #advice-box {
@@ -1332,22 +1340,10 @@ h3 { font-size: 14px; }
    `#prompt-box`'s and `#priority-box`'s did. */
 #side-panel > #advice-box { border-color: var(--accent); }
 
-/* The game log (`render/log.js`'s `mountLog`), always visible now rather
-   than behind the removed topbar Log button. `flex: 0 1 200px` - a fixed
-   basis it can shrink from but never grows past - so it takes a modest,
-   consistent slice of the column and leaves `#advice-box` the rest, with its
-   own scrollbar rather than pushing the ribbon taller than the viewport. */
-#log-box {
-  flex: 0 1 200px;
-  min-height: 60px;
-  overflow-y: auto;
-  font-size: 12px;
-}
-
 /* One advisor proposal (`render/advice.js`). The summary is the play, the
    `.advice-why` block is the agent's own words, and `.advice-where` says
    which ledger entry and which step it was proposed at so it can be placed
-   against the log.
+   against the audit log.
 
    `.advice-stale` wraps all three once the board has moved: dimmed, because
    the reasoning is still worth reading while deciding whether it still
@@ -1371,18 +1367,6 @@ h3 { font-size: 14px; }
 .advice-status { margin-top: 8px; color: var(--ink-dim); font-size: 12px; }
 .advice-status-stale, .advice-status-unverified { color: var(--warn); }
 #advice-box button { margin-top: 10px; }
-
-/* One `render/log.js` audit-log line. A refused action's engine-verbatim
-   reason (`.refusal`) reads in the same red as everywhere else refusals show
-   up; a `report_problem` entry (`.log-problem`) is bold, matching the loud
-   banner `audit.py` gives it in the server's own console log. */
-.log-line {
-  padding: 1px 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.log-line.log-problem { font-weight: 700; }
-.refusal { color: var(--bad); }
 
 /* A short-lived message that appears near an action and fades - a refusal
    or confirmation that does not need a whole `.notice` banner.
@@ -2039,9 +2023,8 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
   .deck-pickers { grid-template-columns: 1fr; }
 }
 
-/* Phone-sized buttons in the fixed toolbar, so an armed Concede's longer
-   label stays short enough to wrap tidily inside mobile mode's rail rather
-   than growing down toward the drawer toggle. */
+/* Smaller buttons in the top row on a short or narrow window, so the phase
+   track keeps more of the row. */
 @media (max-height: 560px), (max-width: 600px) {
   .game-toolbar button { padding: 2px 8px; font-size: 12px; }
 }
@@ -2051,7 +2034,6 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
    badges pack by their row's height instead (`@container badge-row`). */
 @media (max-height: 560px) {
   #game { gap: 4px; padding-inline: 4px; padding-bottom: 4px; }
-  #phase-track { flex-wrap: nowrap; overflow-x: auto; }
   #mtg-board { gap: 2px; padding: 3px; --row-pad: 2px; }
   #topbar { padding: 4px 8px; }
   #side-panel > div { padding: 6px 8px; }
@@ -2061,11 +2043,12 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
    or any window 1100px wide or less. There is no room beside the board for
    the zone ribbon or the control column, and the page still never scrolls.
 
-   The board takes the whole viewport but for a rail on the right. The rail
-   holds the fixed toolbar, which wraps into a column inside it
-   (`--toolbar-max`), `#drawer-toggle` at its foot, and `#rail-pass` (Pass and
-   Pass until) just above the toggle, so none of them ever sits over a card
-   and priority is passed without opening the drawer. The zone ribbon is hidden - the badges' zone counts open
+   The top row is a thin strip (`--strip-h`) across the whole viewport: the
+   phase track on the left, Concede, Report and Lobby on the right, compact.
+   The board takes the rest of the viewport but for a rail on the right,
+   below the strip, holding `#drawer-toggle` at its foot and `#rail-pass`
+   (Pass and Pass until) just above the toggle, so none of them ever sits
+   over a card and priority is passed without opening the drawer. The zone ribbon is hidden - the badges' zone counts open
    `#zone-viewer` instead - and `#drawer` (the turn block, the banners and the
    side panel) is a fixed panel beside the rail that slides in over the board
    when `ui/drawer.js` puts `drawer-open` on `#game`. Closed, it is off screen
@@ -2074,17 +2057,29 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
    After the short-window block above, so its `#game` padding wins there. */
 @media (max-width: 1100px), (pointer: coarse) and (orientation: landscape) {
   #game {
-    --rail-w: 64px;
-    --toolbar-max: var(--rail-w);
+    --rail-w: 56px;
+    --strip-h: 28px;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
     grid-template-areas: "board";
-    padding: 8px calc(var(--rail-w) + 16px) 8px 8px;
+    padding: calc(var(--strip-h) + 4px) calc(var(--rail-w) + 16px) 8px 8px;
   }
+  #game-toolbar {
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--strip-h);
+    gap: 4px;
+    padding: 0 8px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  #game-toolbar button { height: 22px; padding: 0 8px; font-size: 11px; line-height: 1; }
+  #phase-track li { padding: 1px 5px; font-size: 9px; }
   #zone-ribbon { display: none; }
   #drawer {
     position: fixed;
-    top: 0;
+    top: var(--strip-h);
     bottom: 0;
     right: calc(var(--rail-w) + 16px);
     z-index: 34;
@@ -2150,8 +2145,6 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
     font-weight: 600;
     line-height: 1.15;
   }
-  #game-toolbar > #concede-slot, #game-toolbar > button { flex: 1 0 100%; }
-  #concede-slot button { width: 100%; white-space: normal; }
 }
 
 /* A coarse pointer held upright: ask for landscape instead of drawing a board
@@ -2211,4 +2204,74 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
+}
+
+/* ------------------------ fullscreen and safe areas (ui/fullscreen.js) ---- */
+
+/* `viewport-fit=cover` (index.html) draws the page under a phone's notch and
+   home indicator; these insets keep what a player reads or touches out from
+   under them. Read once here so every rule uses the same four values - and so
+   `tests/test_ui_viewport_layout.py` can stand in for a notch Chrome does not
+   have. On a desktop they are all 0 and nothing moves. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+body { padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left); }
+/* The fixed controls are placed against the viewport, not the padded body, so
+   each moves in from the edge it is anchored to. `translate` rather than
+   their own `top`/`right`/`bottom`, which the rules above own.
+
+   The top row is the exception: it spans the width, so a sideways `translate`
+   would slide its phase track under the left notch. It drops by the top
+   inset instead and pads its content in from both side insets - its
+   background still reaches the edges, nothing in it does. The board below
+   starts under it because the body's own top padding moves `#game` by the
+   same inset. */
+#game-toolbar {
+  top: calc(8px + var(--safe-top));
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+#rail-pass, #drawer-toggle { translate: calc(-1 * var(--safe-right)) calc(-1 * var(--safe-bottom)); }
+#drawer { translate: calc(-1 * var(--safe-right)) 0; }
+@media (max-width: 1100px), (pointer: coarse) and (orientation: landscape) {
+  #game-toolbar {
+    top: var(--safe-top);
+    padding-left: calc(8px + var(--safe-left));
+    padding-right: calc(8px + var(--safe-right));
+  }
+  #drawer {
+    padding-top: calc(8px + var(--safe-top));
+    padding-bottom: calc(8px + var(--safe-bottom));
+  }
+}
+
+/* The button itself: an icon of four corner brackets, lit while fullscreen. */
+.fullscreen-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 24px;
+}
+.fullscreen-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.fullscreen-glyph {
+  --arm: 5px;
+  --thick: 2px;
+  display: block;
+  width: 14px;
+  height: 14px;
+  background:
+    linear-gradient(currentColor, currentColor) left top / var(--arm) var(--thick),
+    linear-gradient(currentColor, currentColor) left top / var(--thick) var(--arm),
+    linear-gradient(currentColor, currentColor) right top / var(--arm) var(--thick),
+    linear-gradient(currentColor, currentColor) right top / var(--thick) var(--arm),
+    linear-gradient(currentColor, currentColor) left bottom / var(--arm) var(--thick),
+    linear-gradient(currentColor, currentColor) left bottom / var(--thick) var(--arm),
+    linear-gradient(currentColor, currentColor) right bottom / var(--arm) var(--thick),
+    linear-gradient(currentColor, currentColor) right bottom / var(--thick) var(--arm);
+  background-repeat: no-repeat;
 }
