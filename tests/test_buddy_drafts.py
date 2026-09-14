@@ -1335,3 +1335,46 @@ def test_the_cli_script_run_supersedes_a_reached_staged_draft(
     rows = advice_rows(game)
     assert len(rows) == 1, rows
     assert rows[0]["detail"]["path"].endswith("/actions/play-land")
+
+
+# ---------------------------------------------------------------------------
+# 10. re-review, 2026-09-14, finding 4: a window staged before the game has
+# a turn must refuse, and a `None` stamp must never be immortal either way
+# ---------------------------------------------------------------------------
+
+
+def test_stage_advice_refuses_before_the_game_has_a_turn(
+    client: TestClient, game: str, wired: None
+) -> None:
+    """`state["turns_taken"]` is `None` whenever `game.turn` itself is `None`
+    (`serialize.py`'s own fallback) - genuinely reachable before CR 103.8's
+    first turn exists at all, earlier even than CR 103's own mulligan/
+    opening-hand phase (which already has a real `Turn` with `turns_taken ==
+    0`, not the bug on its own). A window staged then could never go stale
+    on its own - see `STAGE_ADVICE_PREGAME`'s own docstring - so this is
+    refused outright instead."""
+    seat = buddy(game)
+    live = store.get(game)
+    assert live is not None
+    live.turn = None
+
+    result = seat.stage_advice("end_step", "mine")
+
+    assert result == {"staged": False, "reason": seatkit.STAGE_ADVICE_PREGAME}
+    assert ADVISOR_UID not in seat._advice_drafts
+
+
+def test_a_none_turns_taken_stamp_can_still_go_stale() -> None:
+    """The defensive half: even if a window's own stamp somehow still
+    carries a `None` `turns_taken` (belt and braces - `stage_advice` itself
+    now refuses to ever produce one), `draft_window_status` must never treat
+    that as "nothing to compare" and hold the draft forever. `None` is
+    normalised to `0`, the same as a genuine turn 0."""
+    staged = {"step": "upkeep", "active_player": "alice", "turn_number": None, "turns_taken": None}
+    window = seatkit.start_autopass(staged, "end_step", "mine")
+    window["stamped_step"] = staged["step"]
+    window["stamped_turns_taken"] = None  # what the old code would have stamped
+
+    now_state = {"step": "cleanup", "active_player": "alice", "turns_taken": 2}
+
+    assert seatkit.draft_window_status(window, now_state, "alice") == "after"

@@ -1182,6 +1182,27 @@ WAKE_TO_DRAFT_ADVISOR_ONLY = (
     "leave wake_to_draft unset"
 )
 
+#: Why `Seat.stage_advice` refuses while the game is still in CR 103's
+#: pregame (review fix 4, 2026-09-14). `serialize.py` has no `Turn` to read a
+#: step or a `turns_taken` from before CR 103.8's first turn begins, so a
+#: window staged here stamps `stamped_turns_taken: None` - and `draft_window_
+#: status`'s "after" check, keyed on comparing that stamp to the board's
+#: current `turns_taken`, never fires for a `None` stamp (its own guard reads
+#: "stamped_turns_taken is not None"). A draft staged before the game starts
+#: therefore never goes stale on its own: it sits `"held"` forever, and
+#: `wake_to_draft` - which stands aside the moment a draft is staged at
+#: all - never wakes the advisor again either. There is nothing useful to
+#: stage yet regardless: CR 103.5's mulligans and CR 103.6's opening-hand
+#: actions have no step or active player for a window to even mean, so this
+#: is refused outright rather than left to produce a draft that could never
+#: expire.
+STAGE_ADVICE_PREGAME = (
+    "stage_advice cannot arm a window before the game has started: the pregame "
+    "(mulligans, opening-hand actions) has no turn or step for a window to mean, "
+    "and a draft staged here would never be able to go stale on its own - wait "
+    "for the first turn to begin"
+)
+
 
 def _overlong_rationale(reasoning: Any) -> dict[str, Any] | None:
     """The typed refusal for an advisor rationale over
@@ -1743,9 +1764,12 @@ class Seat:
         `resolve_advice_draft` is what later decides the staged draft is
         actually at that window and still holds up before posting it.
 
-        Refused for a seat (`STAGE_ADVICE_ADVISOR_ONLY`) and for an
-        unrecognised `(step, whose_turn)` (`autopass_target_error`, the same
-        check `pass_until` makes) - neither sends a request or arms anything.
+        Refused for a seat (`STAGE_ADVICE_ADVISOR_ONLY`), for an unrecognised
+        `(step, whose_turn)` (`autopass_target_error`, the same check `pass_
+        until` makes), and for the pregame (`STAGE_ADVICE_PREGAME`, review
+        fix 4, 2026-09-14 - see its own docstring for why a window staged
+        before the first turn begins could never go stale) - none of the
+        three sends a request or arms anything.
 
         Only one window may be armed at a time: calling this again before the
         armed slot has been filled in by a committing call replaces it - the
@@ -1756,6 +1780,18 @@ class Seat:
         if problem:
             return {"staged": False, "reason": problem}
         state = self.fetch_state()
+        # Review fix 4 (2026-09-14): two distinct ways there is no real turn
+        # position yet to stage a window against. `state["pregame"]` is a
+        # dict throughout CR 103's own mulligan/opening-hand phase (`opening.
+        # pregame_view`) - already a real `Turn` with `turns_taken == 0`, not
+        # the bug on its own, but there is no attackers step or end step
+        # happening yet either. `state["turns_taken"] is None` is the actual
+        # defect trigger: `game.turn` itself can be `None` even earlier than
+        # that (`serialize.py`'s own fallback), and a window stamped then
+        # could never go stale on its own - see `STAGE_ADVICE_PREGAME`'s own
+        # docstring.
+        if isinstance(state.get("pregame"), dict) or state.get("turns_taken") is None:
+            return {"staged": False, "reason": STAGE_ADVICE_PREGAME}
         window = start_autopass(state, step, whose_turn)
         # Review fix 1 (2026-09-14): persistent stamps `draft_window_status`
         # reads for the "after" check - unlike `started_step`/`started_turn`
@@ -3482,10 +3518,24 @@ def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: s
     whose = window.get("whose_turn") or "mine"
     is_yours = state.get("active_player") == player
     whose_matches_now = whose == "any" or (whose == "mine") == is_yours
+    # Review fix 4 (2026-09-14): `turns_taken` is `None` throughout CR 103's
+    # pregame (`serialize.py` has no `Turn` yet to read one from) - normalised
+    # to 0 here rather than treated as "nothing to compare". `Seat.stage_
+    # advice` now refuses outright before the game starts (`STAGE_ADVICE_
+    # PREGAME`), so this is belt and braces: a window that somehow still
+    # carries a `None` stamp must never be the one comparison this whole
+    # function cannot make - the old "is not None" guards below turned that
+    # `None` into "skip the after check forever", which is exactly how a
+    # draft staged before the game started could sit `"held"` immortally,
+    # and `wake_to_draft` - which stands aside the moment ANY draft is
+    # staged - never woke the advisor again either.
+    stamped_turns_taken = window.get("stamped_turns_taken")
+    stamped_turns_taken = 0 if stamped_turns_taken is None else stamped_turns_taken
+    current_turns_taken = state.get("turns_taken")
+    current_turns_taken = 0 if current_turns_taken is None else current_turns_taken
     same_occurrence_started_in = (
-        window.get("stamped_turns_taken") is not None
-        and state.get("step") == window.get("stamped_step")
-        and state.get("turns_taken") == window.get("stamped_turns_taken")
+        state.get("step") == window.get("stamped_step")
+        and current_turns_taken == stamped_turns_taken
     )
     if (
         wanted
@@ -3499,15 +3549,7 @@ def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: s
     target_rank = _step_rank(wanted)
     current_rank = _step_rank(state.get("step"))
     stamped_rank = _step_rank(window.get("stamped_step"))
-    stamped_turns_taken = window.get("stamped_turns_taken")
-    current_turns_taken = state.get("turns_taken")
-    if (
-        whose_matches_now
-        and target_rank is not None
-        and current_rank is not None
-        and stamped_turns_taken is not None
-        and current_turns_taken is not None
-    ):
+    if whose_matches_now and target_rank is not None and current_rank is not None:
         later_turn_past_target = (
             current_turns_taken > stamped_turns_taken and current_rank >= target_rank
         )
