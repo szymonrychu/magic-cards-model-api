@@ -60,6 +60,30 @@ from .runtime import REASONING_PLACEHOLDER, RUN_CAP_SECONDS, Exit, ScriptExit, _
 #: to how many *separate* armed scripts one call may fire.
 MAX_ARMED_RUNS = 3
 
+#: The least a run needs left of the batch's own deadline before `arm()` will
+#: even start it (S2 arming re-review finding 5). `script_tools.run` posts
+#: its own `start` row before it ever checks the time cap it was handed - a
+#: run started with only a few milliseconds left posts that row, then exits
+#: null (`resume`) the moment it next checks, with no matching `finish`. A
+#: bare start with no finish yet still blocks the script for the rest of the
+#: step (`records._prior_script_run`'s own docstring), so a near-zero budget
+#: silently burns the slot instead of firing anything. Chosen with headroom
+#: over a single ordinary HTTP round trip or two (a fetch plus one move), not
+#: measured against any one script's own worst case - a script that
+#: genuinely needs longer than this just resumes on the caller's next call,
+#: the same as any other time-capped run.
+MIN_ARMED_RUN_SECONDS = 3.0
+
+#: `arm()`'s own note when the batch stops here rather than starting a run
+#: below `MIN_ARMED_RUN_SECONDS` - the remaining armable ids were never
+#: attempted, so a caller that wants them fired calls `arm()` again.
+INSUFFICIENT_RUN_BUDGET_NOTE = (
+    "stopped the batch here: fewer than MIN_ARMED_RUN_SECONDS remained of this call's own "
+    "budget once the board was judged, and starting a run that close to the deadline risks "
+    "posting a start row with no matching finish, which blocks the script for the rest of the "
+    "step. The remaining armable ids were left unfired - call arm again for them."
+)
+
 EMPTY_ARM_REASONING = (
     "arm needs your own arm_reasoning: every armed script is judged against the board with "
     "it before it is ever allowed to fire, and an armed batch without one is refused"
@@ -151,10 +175,10 @@ def arm(
     # cap. Every run below gets only what is left of this deadline.
     cap = max_seconds if max_seconds > 0 else RUN_CAP_SECONDS
     deadline = time.monotonic() + cap
+    note: str | None = None
 
     while remaining and runs < MAX_ARMED_RUNS:
-        run_budget = deadline - time.monotonic()
-        if run_budget <= 0:
+        if deadline - time.monotonic() <= 0:
             break
         judged, state = _judge_round(seat, corpora, remaining, supplied)
         state_from_run = False
@@ -176,6 +200,19 @@ def arm(
             if not needing:
                 break
             script_id = needing[0]
+
+        # S2 arming re-review finding 5: read fresh here, AFTER `_judge_round`'s
+        # own fetch - not once up front, which could hand a run whatever
+        # near-zero time `_judge_round` left of the deadline. `script_tools.run`
+        # posts its own `start` row before it ever checks the cap it is given,
+        # so a run started this close to the deadline posts that row and then
+        # exits null with no matching `finish` - which blocks the script for
+        # the rest of the step (`records._prior_script_run`'s own docstring).
+        # Below the minimum, the batch stops here rather than risk that.
+        run_budget = deadline - time.monotonic()
+        if run_budget < MIN_ARMED_RUN_SECONDS:
+            note = INSUFFICIENT_RUN_BUDGET_NOTE
+            break
 
         result = script_tools.run(
             seat,
@@ -215,6 +252,8 @@ def arm(
     out: dict[str, Any] = {"armed": armed_out}
     if conflict is not None:
         out["armed_conflict"] = conflict
+    if note is not None:
+        out["note"] = note
     if state is not None:
         if not state_from_run:
             state = {
@@ -306,7 +345,9 @@ def _judge_round(
 
 __all__ = [
     "EMPTY_ARM_REASONING",
+    "INSUFFICIENT_RUN_BUDGET_NOTE",
     "MAX_ARMED_RUNS",
+    "MIN_ARMED_RUN_SECONDS",
     "PLACEHOLDER_ARM_REASONING",
     "arm",
     "validate_arm_request",

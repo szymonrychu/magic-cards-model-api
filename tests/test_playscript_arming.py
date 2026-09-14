@@ -493,6 +493,57 @@ def test_the_batch_stops_rather_than_starting_a_run_with_no_budget_left(
     assert calls["n"] == 2, calls
 
 
+def test_a_near_zero_budget_after_judging_stops_the_batch_before_starting_a_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S2 arming re-review finding 5: `run_budget` used to be read BEFORE
+    `_judge_round`'s own fetch, so a batch whose deadline had almost (but not
+    quite) run out by the time judging finished still started a run with
+    whatever near-zero budget was left over - just long enough for
+    `script_tools.run` to post a `start` row before its own time cap cut the
+    run off with no `finish`, which blocks the script for the rest of the
+    step (`records._prior_script_run`: "a bare start with no matching finish
+    yet ... still blocks"). The fix reads the budget AFTER judging and
+    refuses to start a run below `MIN_ARMED_RUN_SECONDS`, stopping the batch
+    with a note instead - `script_tools.run` is never even called."""
+    clock = _FakeClock()
+    monkeypatch.setattr(arming, "time", clock)
+
+    def judge_and_burn_the_budget(
+        seat: Any, corpora: Any, ids: list[str], supplied: Any
+    ) -> tuple[dict[str, Any], Any]:
+        clock.now += 23.0  # judging itself burns nearly the whole 25s deadline
+        applies = ids[0] if ids else None
+        judged = {sid: {"id": sid, "applies": sid == applies} for sid in ids}
+        return judged, {"turn_number": 1, "step": "precombat_main"}
+
+    monkeypatch.setattr(arming, "_judge_round", judge_and_burn_the_budget)
+    started_runs = {"n": 0}
+
+    def run(seat: Any, corpora: Any, *, script: str, max_seconds: float, **kwargs: Any) -> Any:
+        started_runs["n"] += 1
+        return {
+            "script_exit": {"script": script, "exit": Exit.CHAIN_COMPLETE.value, "moves_done": 1},
+            "state": {"turn_number": 1, "step": "precombat_main"},
+        }
+
+    monkeypatch.setattr(script_tools, "run", run)
+    seat = object()
+
+    result = arming.arm(
+        seat,
+        {},
+        arm=["a"],
+        arm_reasoning=ARM_REASONING,  # type: ignore[arg-type]
+        max_seconds=25.0,
+    )
+
+    assert started_runs["n"] == 0, "a run must never start on a near-zero remaining budget"
+    assert isinstance(result, dict), result
+    assert result["armed"] == []
+    assert result.get("note") == arming.INSUFFICIENT_RUN_BUDGET_NOTE
+
+
 # -- the 3-run cap ---------------------------------------------------------------
 
 
