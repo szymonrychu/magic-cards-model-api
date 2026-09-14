@@ -202,6 +202,92 @@ def test_advisor_pass_until_is_still_refused_even_with_arm_given(
     assert hook.posts("/actions/play-land") == []
 
 
+# -- exceptions raised while arming ----------------------------------------
+
+
+def _boom(*_: Any, **__: Any) -> Any:
+    raise RuntimeError("arming blew up")
+
+
+def test_wait_and_arm_survives_arming_raising(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, caplog: Any
+) -> None:
+    """S2 review finding 2: nothing between `wait_and_arm` and
+    `playscripts.arming.arm` caught an exception (`_guarded`, the MCP
+    decorator, only catches `httpx.HTTPError`), so a bug in arming crashed
+    the whole wait - losing the board it had already fetched - rather than
+    just failing to arm. A raise there must not cost the caller the wait's
+    own answer."""
+    from magic_cards_model_api.playscripts import arming
+
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    monkeypatch.setattr(arming, "arm", _boom)
+
+    import logging
+
+    with caplog.at_level(logging.ERROR, logger="mcm.seatkit"):
+        woken = wait_and_arm(
+            seat,
+            before=None,
+            corpora=seats.script_corpora,
+            arm=["drop"],
+            arm_reasoning=ARM_REASONING,
+        )
+
+    assert woken["wake_reason"] != seatkit.NOTHING_NEW_YET
+    assert "state" in woken and woken["state"] is not None
+    assert "armed" not in woken
+    assert "arming blew up" in woken.get("armed_error", "")
+    assert hook.posts("/actions/play-land") == []
+    seatkit_records = [r for r in caplog.records if r.name == "mcm.seatkit"]
+    assert len(seatkit_records) == 1, caplog.records
+
+
+def test_pass_until_survives_arming_raising(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, caplog: Any
+) -> None:
+    """The same protection on `pass_until`'s own arming call: a raise there
+    must not cost the run its own `stopped_because`/`passes`/`state`. A real
+    finished crossing (not a retryable hand-back), so arming is genuinely
+    attempted."""
+    from magic_cards_model_api.playscripts import arming
+
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    force_turn_position(game, Step.END_STEP, "bob")
+    register(client, game, alice, drop_island_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+    monkeypatch.setattr(arming, "arm", _boom)
+
+    import logging
+
+    with caplog.at_level(logging.ERROR, logger="mcm.seatkit"), Opponent(game, "bob"):
+        result = pass_until(
+            seat,
+            until_step="precombat_main",
+            whose_turn="mine",
+            corpora=seats.script_corpora,
+            arm=["drop"],
+            arm_reasoning=ARM_REASONING,
+            max_seconds=10.0,
+        )
+
+    assert result["finished"] is True, result
+    assert result["stopped_because"]
+    assert "armed" not in result
+    assert "arming blew up" in result.get("armed_error", "")
+    assert hook.posts("/actions/play-land") == []
+    seatkit_records = [r for r in caplog.records if r.name == "mcm.seatkit"]
+    assert len(seatkit_records) == 1, caplog.records
+
+
 # -- wait_and_arm -------------------------------------------------------------
 
 

@@ -118,6 +118,7 @@ cast/activation/attack.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -126,6 +127,8 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger("mcm.seatkit")
 
 DEFAULT_API = "http://127.0.0.1:8000"
 
@@ -2388,15 +2391,27 @@ def wait_and_arm(
     woken = block_until_wake(seat, before=before, max_seconds=max_seconds, should_stop=should_stop)
     if woken["wake_reason"] in (NOTHING_NEW_YET, GAME_GONE, WAIT_INTERRUPTED):
         return woken
-    armed = _fire_armed_scripts(
-        seat,
-        corpora,
-        arm=arm,
-        arm_reasoning=arm_reasoning,
-        opposing_archetype=opposing_archetype,
-        inputs=inputs,
-        should_stop=should_stop,
-    )
+    try:
+        armed = _fire_armed_scripts(
+            seat,
+            corpora,
+            arm=arm,
+            arm_reasoning=arm_reasoning,
+            opposing_archetype=opposing_archetype,
+            inputs=inputs,
+            should_stop=should_stop,
+        )
+    except Exception as exc:  # noqa: BLE001 - arming must never cost the wait its own answer
+        # S2 review finding 2: nothing between here and `playscripts.arming.arm`
+        # caught an exception before this (`_guarded`, the MCP decorator, only
+        # catches `httpx.HTTPError`), so a bug in arming crashed the whole
+        # wait - losing the board it had already fetched - rather than just
+        # failing to arm. `woken` is already a complete, honest answer to the
+        # wait itself; arming failing must never take that away from the
+        # caller, so it is logged once and noted, not raised.
+        logger.exception("arming raised for %s while firing %r", seat.uid, arm)
+        woken["armed_error"] = f"arming raised {type(exc).__name__}: {exc}"
+        return woken
     _merge_armed(woken, armed, seat)
     return woken
 
@@ -3453,15 +3468,23 @@ def pass_until(
     retryable = result.get("retryable", False)
     result.pop("retryable", None)
     if arm and not retryable:
-        armed = _fire_armed_scripts(
-            seat,
-            corpora,
-            arm=arm,
-            arm_reasoning=arm_reasoning,
-            opposing_archetype=opposing_archetype,
-            inputs=inputs,
-            should_stop=should_stop,
-        )
+        try:
+            armed = _fire_armed_scripts(
+                seat,
+                corpora,
+                arm=arm,
+                arm_reasoning=arm_reasoning,
+                opposing_archetype=opposing_archetype,
+                inputs=inputs,
+                should_stop=should_stop,
+            )
+        except Exception as exc:  # noqa: BLE001 - see wait_and_arm's own guard
+            # S2 review finding 2: a raise here must not cost the run its own
+            # stopped_because/passes/state/resume - `result` is already a
+            # complete, honest answer to the run itself.
+            logger.exception("arming raised for %s while firing %r", seat.uid, arm)
+            result["armed_error"] = f"arming raised {type(exc).__name__}: {exc}"
+            return result
         _merge_armed(result, armed, seat)
         if (
             include_actions
