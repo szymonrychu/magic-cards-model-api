@@ -262,12 +262,14 @@ the ability's own source, `none` nothing.
 
 `play_land.card`, `cast.card`, `activate.source`, `Pick` (an answer's
 `pick`) and a sacrifice choice all take `prefer` (0-4 selectors, the same
-fan-out as `moves`) and `ties: "any"`. `prefer` narrows the match to the
-first selector in the list that still leaves at least one candidate, exactly
-as it already did; `ties: "any"` changes only what happens when candidates of
-different names are still tied after that: instead of exiting `ambiguous`, the
-runner takes the first `count` of them by sorted name. Left out, behaviour is
-unchanged.
+fan-out as `moves`) and `ties: "any"`. `prefer` narrows the match through
+every selector in the list in turn, each one applied against whatever the
+previous one left - a selector that would leave nothing is skipped rather
+than emptying the match, so the runner never discards a narrower tier for a
+looser one that comes after it; `ties: "any"` changes only what happens when
+candidates of different names are still tied after all of them: instead of
+exiting `ambiguous`, the runner takes the first `count` of them by sorted
+name. Left out, behaviour is unchanged.
 
 ### `cast.cost`
 
