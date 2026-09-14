@@ -16,22 +16,28 @@ import json
 from typing import Any
 
 import pytest
-from conftest import add_card
+from conftest import add_card, force_turn_position
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
+from test_cast_cost_choices import answer
 from test_mcp_input_required import call_tool
+from test_playscript_end_to_end import GUIDES_REVISION, fetch_shock_board, play_of
 from test_playscript_runtime import (
+    PREFERENCE,
+    REASONING,
     fetch_shock,
+    input_script,
     land_script,
     register,
     seat_uid,
     strand_board,
+    tap_island_script,
     wired,
 )
 
 from magic_cards_model_api import seatkit
 from magic_cards_model_api.mcp import build_server
-from magic_cards_model_api.playscripts import script_tools
+from magic_cards_model_api.playscripts import runtime, script_tools
 
 
 @pytest.fixture(autouse=True)
@@ -53,9 +59,22 @@ def wait(server: Any, uid: str) -> dict[str, Any]:
 
 
 def force_precombat_main(game_id: str) -> None:
-    from conftest import force_turn_position
-
     force_turn_position(game_id, Step.PRECOMBAT_MAIN, "alice")
+
+
+def counting_fetch_state(monkeypatch: pytest.MonkeyPatch, seat: Any) -> dict[str, int]:
+    """Patch `seat`'s whole class so every `Seat.fetch_state` call, on any
+    `Seat` instance this test mints, is counted - `seat_for` remakes a fresh
+    `Seat` per tool call, so patching one instance would miss the rest."""
+    calls = {"n": 0}
+    real_fetch_state = seat.__class__.fetch_state
+
+    def counting(self: Any, *a: Any, **kw: Any) -> Any:
+        calls["n"] += 1
+        return real_fetch_state(self, *a, **kw)
+
+    monkeypatch.setattr(seat.__class__, "fetch_state", counting)
+    return calls
 
 
 def test_a_fetch_land_on_the_battlefield_hints_the_run_script_call(
@@ -112,8 +131,6 @@ def test_the_hint_uses_the_archetype_last_asserted_to_list_scripts(
 def test_the_wrong_step_carries_no_hint(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from conftest import force_turn_position
-
     force_turn_position(game, Step.UPKEEP, "alice")
     alice = seat_uid(game, "alice")
     script = fetch_shock()
@@ -188,15 +205,15 @@ def test_the_applicable_list_is_capped_and_the_answer_stays_bounded(
     assert len(json.dumps(answer)) < 20_000
 
 
-def test_a_script_needing_contents_the_hint_never_fetched_is_skipped_not_crashed(
+def test_a_contents_needing_play_whose_when_does_not_match_costs_no_extra_fetch(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A play whose condition reads the viewer's own library contents
-    (`conditions.needs_contents`) normally needs `include=contents` - `listing`
-    fetches it, but the hint never fetches anything past what the answer
-    already carries, so this play must come back "not applying" rather than
-    raise `conditions.ContentsRequired`."""
-    force_precombat_main(game)
+    (`conditions.needs_contents`) is only worth an extra fetch once its
+    priority, archetype and `when` already match (see the fixture-driven
+    test below) - one whose board position is wrong is filtered out before
+    that, at no extra cost."""
+    force_turn_position(game, Step.UPKEEP, "alice")
     alice = seat_uid(game, "alice")
     needs_contents = land_script(
         "needs-library-count",
@@ -204,11 +221,54 @@ def test_a_script_needing_contents_the_hint_never_fetched_is_skipped_not_crashed
     )
     register(client, game, alice, needs_contents)
     add_card(client, game, "Island", "alice", "hand")
-    _, server = server_for(monkeypatch, game)
+    seats, server = server_for(monkeypatch, game)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    calls = counting_fetch_state(monkeypatch, seat)
 
     answer = wait(server, alice)
 
     assert "scripts" not in answer, answer
+    assert calls["n"] == 1, f"a play whose when never matched still cost {calls['n']} state fetches"
+
+
+def test_a_fetch_untapped_shock_play_needing_contents_is_offered_with_one_extra_fetch(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The measured bug (S1 review finding 1): 22 of 41 real plays - every
+    `fetch-untapped-shock` variant among them - read the viewer's own library
+    contents (`conditions.needs_contents`), and the old `_hint_judged` caught
+    `conditions.ContentsRequired` and silently marked every one of them not
+    applicable, so the hint never offered the exact fetch play a seat was
+    measured cracking by hand instead. Once a play's priority, archetype and
+    `when` already match, the hint now pays exactly one extra
+    `include=contents` fetch and judges it for real."""
+    alice = seat_uid(game, "alice")
+    play = play_of("boros-aggro", "fetch-untapped-shock")
+    body = {
+        "deck_slug": "boros-aggro",
+        "guides_revision": GUIDES_REVISION,
+        "scripts": [play],
+        "inputs": [],
+    }
+    response = client.put(
+        f"/api/games/{game}/seats/{alice}/scripts", params={"uid": alice}, json=body
+    )
+    assert response.status_code == 200, response.text
+    fetch_shock_board(client, game)
+    seats, server = server_for(monkeypatch, game)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    calls = counting_fetch_state(monkeypatch, seat)
+
+    answer = wait(server, alice)
+
+    assert "scripts" in answer, answer
+    [entry] = answer["scripts"]["applicable"]
+    assert entry["id"] == "fetch-untapped-shock"
+    assert calls["n"] == 2, (
+        f"expected exactly one wake fetch plus one contents fetch, got {calls['n']}"
+    )
 
 
 def test_no_extra_state_fetch_is_made_computing_the_hint(
@@ -221,17 +281,234 @@ def test_no_extra_state_fetch_is_made_computing_the_hint(
     seats, server = server_for(monkeypatch, game)
     seat = seats.seat_for(alice)
     assert seat is not None
-    calls = {"n": 0}
-    real_fetch_state = seat.__class__.fetch_state
-
-    def counting(self: Any, *a: Any, **kw: Any) -> Any:
-        calls["n"] += 1
-        return real_fetch_state(self, *a, **kw)
-
-    monkeypatch.setattr(seat.__class__, "fetch_state", counting)
+    calls = counting_fetch_state(monkeypatch, seat)
 
     wait(server, alice)
 
     # `block_until_wake` itself fetches the board once to check the wake
     # condition; the hint must not add a second fetch on top of it.
     assert calls["n"] == 1, f"the hint cost {calls['n']} state fetches, expected exactly 1"
+
+
+def test_a_hint_computation_that_raises_leaves_the_wait_answer_intact(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 2: an exception out of `applicable_hint` (an HTTP
+    error, or anything `conditions.evaluate`/`static_conflicts`/`lint` can
+    raise) must never replace or break an answer whose action already
+    landed - it is caught, logged once, and the `scripts` key is simply left
+    off."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, fetch_shock())
+    strand_board(client, game)
+    _, server = server_for(monkeypatch, game)
+
+    def boom(*_: Any, **__: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(script_tools, "applicable_hint", boom)
+
+    reply = wait(server, alice)
+
+    assert "scripts" not in reply
+    assert "priority_holder" in reply, reply
+
+
+def test_a_hint_computation_that_raises_leaves_the_run_script_answer_intact(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    def boom(*_: Any, **__: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(script_tools, "applicable_hint", boom)
+
+    payload = answer(
+        call_tool(
+            server,
+            "run_script",
+            {"player_uid": alice, "script": "drop", "reasoning": REASONING},
+        )
+    )
+
+    assert "scripts" not in payload
+    assert payload["script_exit"]["exit"] == "chain_complete", payload["script_exit"]
+
+
+def test_a_seat_not_holding_priority_gets_no_hint(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 4a: `runtime._drive` requires `state.priority_holder
+    == seat.player` before it ever sends a script's first move, so a hint
+    computed while another player holds priority would offer a call the
+    runner would only park in `_wait`, not the immediate action the hint's
+    wording promises."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, fetch_shock())
+    strand_board(client, game)
+    seats, _ = server_for(monkeypatch, game)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    not_holding = {**seat.fetch_state(), "priority_holder": "bob"}
+
+    hint = script_tools.applicable_hint(seat, seats.script_corpora, not_holding)
+
+    assert hint is None
+
+
+def test_remembered_inputs_from_run_script_are_used_and_offered_in_the_call(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 4b: the inputs a seat last supplied to `run_script`
+    are remembered next to the archetype it last asserted, judged with, and
+    named in the offered `call` when non-empty - a script whose condition
+    reads a custom input the seat never supplied still needs_input and stays
+    omitted."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    dummy = land_script("dummy-seed", opposing_archetypes=["nonexistent-matchup"])
+    register(client, game, alice, input_script(), dummy, inputs=[{**PREFERENCE, "required": True}])
+    _, server = server_for(monkeypatch, game)
+
+    assert "scripts" not in wait(server, alice), "tempo-drop needs_input before any input is given"
+
+    call_tool(
+        server,
+        "run_script",
+        {
+            "player_uid": alice,
+            "script": "dummy-seed",
+            "reasoning": REASONING,
+            "inputs": {"prefer_tempo": True},
+        },
+    )
+
+    reply = wait(server, alice)
+
+    [entry] = reply["scripts"]["applicable"]
+    assert entry["id"] == "tempo-drop"
+    assert 'inputs={"prefer_tempo": true}' in entry["call"], entry["call"]
+
+
+def test_a_script_this_process_already_ran_is_not_reoffered_at_the_same_position(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 4c: a script this MCP process ran (any exit) is not
+    re-offered at the same `(turn_number, step)`, even when the board still
+    satisfies its conditions - two untapped Islands mean one `activate` still
+    leaves the count condition true, so this proves the suppression is the
+    run record, not the board."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, tap_island_script("float"))
+    add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Island", "alice", "battlefield")
+    _, server = server_for(monkeypatch, game)
+
+    before = wait(server, alice)
+    assert [entry["id"] for entry in before["scripts"]["applicable"]] == ["float"]
+
+    ran = answer(
+        call_tool(
+            server,
+            "run_script",
+            {"player_uid": alice, "script": "float", "reasoning": REASONING},
+        )
+    )
+    assert ran["script_exit"]["exit"] == "chain_complete", ran["script_exit"]
+
+    after = wait(server, alice)
+
+    assert "scripts" not in after, after
+
+
+def test_the_hint_never_computes_static_conflicts(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 5: `static_conflicts` runs `plays check`'s conflict
+    lint over the whole corpus - expensive, and its result
+    (`entry["conflicts"]`) is never read out of the hint's own items, so the
+    hint must never pay for it."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, fetch_shock())
+    strand_board(client, game)
+    _, server = server_for(monkeypatch, game)
+
+    def boom(*_: Any, **__: Any) -> Any:
+        raise AssertionError("the hint computed static_conflicts")
+
+    monkeypatch.setattr(script_tools, "static_conflicts", boom)
+
+    reply = wait(server, alice)
+
+    assert "scripts" in reply, reply
+
+
+def test_normalised_plays_are_cached_on_the_corpus_not_revalidated_per_answer(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 5: `runtime._normalised` validates a play against
+    the `Play` schema - not free, and the same registered docs are judged on
+    every single wake/action answer, so the hint must validate each once and
+    cache the normalised form on the corpus rather than repeat it per call."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, fetch_shock())
+    strand_board(client, game)
+    _, server = server_for(monkeypatch, game)
+    calls = {"n": 0}
+    real_normalised = runtime._normalised
+
+    def counting(raw: Any) -> Any:
+        calls["n"] += 1
+        return real_normalised(raw)
+
+    monkeypatch.setattr(runtime, "_normalised", counting)
+
+    wait(server, alice)
+    wait(server, alice)
+
+    assert calls["n"] == 1, f"the corpus's one script was normalised {calls['n']} times"
+
+
+def test_a_long_script_name_is_truncated_in_the_hint(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    long_name = "Crack the fetch " * 20
+    register(client, game, alice, land_script("drop", name=long_name))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    reply = wait(server, alice)
+
+    [entry] = reply["scripts"]["applicable"]
+    assert len(entry["name"]) <= script_tools.MAX_HINT_NAME_CHARS
+    assert entry["name"] != long_name
+
+
+def test_the_scripts_block_drops_entries_past_its_byte_budget(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    long_name = "y" * script_tools.MAX_HINT_NAME_CHARS
+    scripts = [land_script(f"drop-{i}", priority=50 - i, name=long_name) for i in range(5)]
+    register(client, game, alice, *scripts)
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+    monkeypatch.setattr(script_tools, "MAX_HINT_BYTES", 150)
+
+    reply = wait(server, alice)
+
+    applicable = reply["scripts"]["applicable"]
+    assert 0 < len(applicable) < 5, applicable

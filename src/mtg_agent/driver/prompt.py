@@ -595,8 +595,8 @@ now, `call` a ready-to-use `run_script(...)` naming the exact arguments to
 send. When an answer carries `scripts.applicable`, that entry's `run_script`
 call is this turn's committing call - not the hand-played moves. After
 `play_land` of a fetch land, read that same answer's `scripts.applicable`
-before you `activate` it by hand. The hint already knows which shockland
-script applies, with the archetype filled in; only `reasoning` is left for
+before you `activate` it by hand. The hint already knows which script
+applies, with the archetype filled in; only `reasoning` is left for
 you to write. Two or more entries at once carry `conflict: true` in place of
 `call`: do not pick between them by priority - play that window yourself,
 and extend their conditions after the game so that at most one applies.
@@ -1233,7 +1233,7 @@ applies right now, `call` a ready-to-use `run_script(...)`. When an answer
 carries `scripts.applicable`, that entry's `run_script` call is this turn's
 committing call - not the hand-played moves. After `play_land` of a fetch
 land, read that same answer's `scripts.applicable` before you `activate` it
-by hand. The hint already knows which shockland script applies, with the
+by hand. The hint already knows which script applies, with the
 archetype filled in; only `reasoning` is left for you to write.
 
   run_script(player_uid=..., script="<id>", opposing_archetype="<your read>",

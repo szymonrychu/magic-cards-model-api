@@ -110,6 +110,17 @@ EMPTY_REASONING = (
     "and an agent seat's action without one is refused"
 )
 
+#: The reasoning `script_tools._call_template`'s `call` string leaves for the
+#: seat to fill in - a run sent with this exact text still in it never wrote
+#: its own reasoning, and is refused the same as an empty one (S1 review
+#: finding 7).
+REASONING_PLACEHOLDER = "<say why>"
+PLACEHOLDER_REASONING = (
+    f"run_script needs your own reasoning, not the call template's placeholder "
+    f"text: replace {REASONING_PLACEHOLDER!r} with why you are running this "
+    "script now"
+)
+
 
 class Exit(StrEnum):
     """How a run ended. Closed: a caller branches on this, never on prose."""
@@ -340,6 +351,16 @@ def run_script(
                 Exit.REFUSED,
                 script_id=script_id,
                 refusal=EMPTY_REASONING,
+                refusal_source="runner",
+            ),
+        )
+    if reasoning.strip() == REASONING_PLACEHOLDER:
+        return RunResult(
+            True,
+            ScriptExit(
+                Exit.REFUSED,
+                script_id=script_id,
+                refusal=PLACEHOLDER_REASONING,
                 refusal_source="runner",
             ),
         )
@@ -1458,18 +1479,49 @@ def _post_run(ctx: _Context, body: dict[str, Any]) -> Any:
 # -- corpus --------------------------------------------------------------------
 
 
+#: `_corpus`'s marker for "nothing is registered under this uid" - stashed in
+#: `corpora[key]` like a real corpus (S1 review finding 3) so a scriptless
+#: seat's every later call skips the HTTP GET too, not just a registered
+#: one's. `_UNREGISTERED_REASON` is carried alongside it so a cache hit and a
+#: cache miss refuse in the same words.
+_UNREGISTERED_MARKER = "_unregistered"
+_UNREGISTERED_REASON = "_unregistered_reason"
+
+#: `script_tools`' own private bookkeeping keys, stashed onto the very corpus
+#: dict `_corpus` caches (never a key the registered corpus itself carries -
+#: none of its real fields start with `_`) - the archetype/inputs a seat last
+#: asserted to `run_script`/`list_scripts` and the scripts this process has
+#: already run. A `fresh=True` read (every `resume`d run) replaces the cached
+#: dict wholesale; without this, that refresh would silently drop the hint's
+#: memory back to "nothing asserted yet" (S1 review finding 4d).
+_PRIVATE_KEY_PREFIX = "_"
+
+
 def _corpus(
     seat: Seat, corpora: dict[tuple[str, str], dict[str, Any]], *, fresh: bool
 ) -> dict[str, Any] | ScriptExit:
     key = (seat.game_id(), seat.uid)
     if not fresh and key in corpora:
-        return corpora[key]
+        cached = corpora[key]
+        if cached.get(_UNREGISTERED_MARKER):
+            return _no_corpus_refusal(str(cached.get(_UNREGISTERED_REASON)))
+        return cached
+    previous = corpora.get(key)
     read = seat.call_json("GET", f"/api/games/{key[0]}/seats/{seat.uid}/scripts")
     if not isinstance(read, dict) or not isinstance(read.get("scripts"), list):
         reason = read.get("reason") if isinstance(read, dict) else read
-        return ScriptExit(Exit.REFUSED, refusal=str(reason), refusal_source="server")
+        corpora[key] = {_UNREGISTERED_MARKER: True, _UNREGISTERED_REASON: str(reason)}
+        return _no_corpus_refusal(str(reason))
+    if isinstance(previous, dict) and not previous.get(_UNREGISTERED_MARKER):
+        for name, value in previous.items():
+            if name.startswith(_PRIVATE_KEY_PREFIX) and name not in read:
+                read[name] = value
     corpora[key] = read
     return read
+
+
+def _no_corpus_refusal(reason: str) -> ScriptExit:
+    return ScriptExit(Exit.REFUSED, refusal=reason, refusal_source="server")
 
 
 def _registered(corpus: dict[str, Any], script_id: str) -> dict[str, Any] | None:

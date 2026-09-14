@@ -103,6 +103,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import logging
 import sys
 from collections.abc import Callable
 from typing import Any
@@ -332,6 +333,8 @@ _READ_THE_BOARD_WITH = (
     "further."
 )
 
+
+logger = logging.getLogger("mcm.mcp")
 
 #: How many bytes the battlefield digest may take before the WHOLE thing is
 #: replaced by a pointer at `battlefield_state`. At the measured ~62 bytes a
@@ -679,8 +682,21 @@ def build_server(seats: Seats) -> MCPServer:
         least one of `seat`'s registered play scripts applies right now
         (`script_tools.applicable_hint`) - the same treatment `wake_reason`/
         `recent_log` already get on a bare state view, over `state` this
-        answer already carries rather than a second board fetch."""
-        hint = script_tools.applicable_hint(seat, seats.script_corpora, state)
+        answer already carries rather than a second board fetch.
+
+        S1 review finding 2: an HTTP error, or anything
+        `conditions.evaluate`/`static_conflicts`/`lint` can raise, must never
+        replace or break an answer whose action already landed - it is
+        caught here, logged once, and `scripts` is simply left off."""
+        try:
+            hint = script_tools.applicable_hint(seat, seats.script_corpora, state)
+        except Exception:
+            logger.warning(
+                "computing the script hint for %s raised - answer sent without `scripts`",
+                seat.uid,
+                exc_info=True,
+            )
+            return
         if hint is not None:
             answer["scripts"] = hint
 

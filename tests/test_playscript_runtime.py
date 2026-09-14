@@ -106,9 +106,18 @@ def hooked_seat(seats: Seats, uid: str, **hooks: Any) -> tuple[seatkit.Seat, Hoo
 
 
 def register(
-    client: TestClient, game_id: str, uid: str, *scripts: dict[str, Any]
+    client: TestClient,
+    game_id: str,
+    uid: str,
+    *scripts: dict[str, Any],
+    inputs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    body = {"deck_slug": SLUG, "guides_revision": "rev0", "scripts": list(scripts)}
+    body = {
+        "deck_slug": SLUG,
+        "guides_revision": "rev0",
+        "scripts": list(scripts),
+        "inputs": inputs or [],
+    }
     response = client.put(
         f"/api/games/{game_id}/seats/{uid}/scripts", params={"uid": uid}, json=body
     )
@@ -323,6 +332,57 @@ def test_the_corpus_is_read_once_per_seats(
         if method == "GET" and path.endswith("/scripts")
     ]
     assert len(reads) == 1, reads
+
+
+def test_no_registered_corpus_is_cached_after_the_first_404(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 3: `GET .../scripts` 404s when nothing is
+    registered, and only the found-a-corpus branch cached its answer - every
+    later call for a scriptless seat paid the same HTTP GET again. The "not
+    registered" outcome is cached per game+uid too, same as a real corpus,
+    and still bypassed by `fresh=True`."""
+    alice = seat_uid(board, "alice")
+    seats = wired(monkeypatch, board)
+
+    first, first_hook = hooked_seat(seats, alice)
+    run_script(first, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+    second, second_hook = hooked_seat(seats, alice)
+    run_script(second, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    reads = [
+        path
+        for hook in (first_hook, second_hook)
+        for method, path, _ in hook.sent
+        if method == "GET" and path.endswith("/scripts")
+    ]
+    assert len(reads) == 1, reads
+
+
+def test_a_fresh_corpus_refresh_preserves_the_hints_own_bookkeeping(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 4d: `_corpus(fresh=True)` (every `resume`d run)
+    replaces the cached corpus dict wholesale - but `script_tools` stashes
+    its own bookkeeping (the archetype/inputs last asserted, recently-run
+    scripts) onto that same dict, under private keys nothing else writes. A
+    refresh must carry those forward rather than silently reset the hint to
+    `*` with no memory."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    seats = wired(monkeypatch, board)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    corpus = runtime._corpus(seat, seats.script_corpora, fresh=False)
+    corpus["_last_asserted_archetype"] = "dimir-frog"
+    corpus["_last_supplied_inputs"] = {"prefer_tempo": True}
+    corpus["_recent_runs"] = [["drop", 3, "precombat_main"]]
+
+    refreshed = runtime._corpus(seat, seats.script_corpora, fresh=True)
+
+    assert refreshed["_last_asserted_archetype"] == "dimir-frog"
+    assert refreshed["_last_supplied_inputs"] == {"prefer_tempo": True}
+    assert refreshed["_recent_runs"] == [["drop", 3, "precombat_main"]]
 
 
 def test_moves_re_arm_expected_seq_and_hold_priority_between_them(
@@ -819,6 +879,29 @@ def test_an_empty_reasoning_is_refused_before_any_call(
 
     assert result.script_exit.exit is Exit.REFUSED
     assert result.script_exit.refusal_source == "runner"
+    assert hook.sent == []
+
+
+def test_reasoning_left_as_the_call_templates_placeholder_is_refused(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 7: `script_tools._call_template` leaves `reasoning`
+    at `runtime.REASONING_PLACEHOLDER` for the seat to fill in - a run sent
+    with that placeholder still in it never wrote its own reasoning, and is
+    refused before any call, the same as an empty one."""
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, seat_uid(board, "alice"))
+
+    result = run_script(
+        seat,
+        script_id="anything",
+        reasoning=runtime.REASONING_PLACEHOLDER,
+        corpora=seats.script_corpora,
+    )
+
+    assert result.script_exit.exit is Exit.REFUSED
+    assert result.script_exit.refusal_source == "runner"
+    assert runtime.REASONING_PLACEHOLDER in (result.script_exit.refusal or "")
     assert hook.sent == []
 
 

@@ -88,15 +88,41 @@ OTHER_ARCHETYPES = "~any-other-matchup"
 #: answer's size.
 MAX_HINT_SCRIPTS = 5
 
+#: A hint entry's `name` is truncated to this many characters (S1 review
+#: finding 6) - a corpus is registered by the deck, and nothing bounds how
+#: long a play's own `name` is before this.
+MAX_HINT_NAME_CHARS = 80
+
+#: The whole `scripts` block's own byte budget, on top of `MAX_HINT_SCRIPTS`'
+#: cap on entry *count* - a `call` carrying a long `inputs=` dict can still
+#: blow a wake/action answer out even at 5 entries, so entries past this
+#: budget are dropped rather than counted (S1 review finding 6).
+MAX_HINT_BYTES = 4096
+
 #: Where `run`/`listing` stash the archetype this seat last asserted, onto
 #: the very corpus dict `Seats.script_corpora` caches - never a key the API
 #: itself writes, so it needs no schema entry and nothing else ever reads it
 #: but `applicable_hint`, below.
 _LAST_ASSERTED_KEY = "_last_asserted_archetype"
 
-#: The reasoning `applicable_hint`'s `call` template leaves for the seat to
-#: fill in - `run_script` itself always requires a real one.
-_REASONING_PLACEHOLDER = "<say why>"
+#: Where `run` stashes the non-archetype `inputs` a seat last supplied to
+#: `run_script`, next to `_LAST_ASSERTED_KEY` on the same corpus dict -
+#: `applicable_hint` judges with them too, and names them in the offered
+#: `call` when non-empty (S1 review finding 4b).
+_LAST_INPUTS_KEY = "_last_supplied_inputs"
+
+#: Where `run` records `[script_id, turn_number, step]` for every script this
+#: process has run (any exit) - `applicable_hint` never re-offers one of
+#: these at the same position, even when the board still satisfies its
+#: conditions (S1 review finding 4c).
+_RECENT_RUNS_KEY = "_recent_runs"
+
+#: Every registered play's normalised/validated `Play` dump, cached on the
+#: corpus dict the first time either `listing` or `applicable_hint` needs it
+#: - re-validating the same docs on every single wake/action answer is not
+#: free, and nothing about a registered corpus changes between two calls that
+#: both read it with `fresh=False` (S1 review finding 5).
+_PLAYS_CACHE_KEY = "_normalised_plays"
 
 
 def merged_inputs(opposing_archetype: str, inputs: dict[str, Any] | None) -> dict[str, Any] | str:
@@ -157,7 +183,7 @@ def run(
     supplied = merged_inputs(opposing_archetype, inputs)
     if isinstance(supplied, str):
         return supplied
-    _remember_asserted_archetype(seat, corpora, supplied[BUILTIN_INPUT])
+    _remember_run_inputs(seat, corpora, supplied)
     token = parse_resume(resume)
     if isinstance(token, str):
         return token
@@ -175,6 +201,7 @@ def run(
         invoked_via=invoked_via,
     )
     state = result.state if result.state is not None else seat.fetch_state()
+    _record_run(seat, corpora, script, state)
     return {"script_exit": script_exit(result, _registered_moves(seat, corpora)), "state": state}
 
 
@@ -230,7 +257,7 @@ def listing(
     declared = list(corpus.get("inputs") or [])
     catalog = input_catalog(declared, [asserted] if isinstance(asserted, str) else ())
     docs = [doc for doc in corpus.get("scripts") or [] if isinstance(doc, dict)]
-    plays = [(doc, runtime._normalised(doc)) for doc in docs]
+    plays = _plays(corpus, docs)
     wants_contents = any(
         isinstance(play, dict) and conditions.needs_contents(play) for _, play in plays
     )
@@ -346,15 +373,55 @@ def _registered_moves(seat: Seat, corpora: dict[tuple[str, str], dict[str, Any]]
     }
 
 
-def _remember_asserted_archetype(
-    seat: Seat, corpora: dict[tuple[str, str], dict[str, Any]], asserted: Any
+def _remember_run_inputs(
+    seat: Seat, corpora: dict[tuple[str, str], dict[str, Any]], supplied: dict[str, Any]
 ) -> None:
-    """Stash `asserted` onto this seat's cached corpus, for `applicable_hint`
-    to read back as "the archetype this seat last asserted" - `run`'s own
-    equivalent of `listing`'s inline write of the same key."""
+    """Stash the archetype and the rest of `supplied` onto this seat's cached
+    corpus, for `applicable_hint` to read back as "what this seat last told
+    `run_script`" - `run`'s own equivalent of `listing`'s inline write of
+    `_LAST_ASSERTED_KEY` (S1 review finding 4b)."""
     corpus = runtime._corpus(seat, corpora, fresh=False)
-    if not isinstance(corpus, runtime.ScriptExit):
-        corpus[_LAST_ASSERTED_KEY] = asserted
+    if isinstance(corpus, runtime.ScriptExit):
+        return
+    corpus[_LAST_ASSERTED_KEY] = supplied.get(BUILTIN_INPUT)
+    corpus[_LAST_INPUTS_KEY] = {
+        name: value for name, value in supplied.items() if name != BUILTIN_INPUT
+    }
+
+
+def _record_run(
+    seat: Seat,
+    corpora: dict[tuple[str, str], dict[str, Any]],
+    script_id: str,
+    state: dict[str, Any],
+) -> None:
+    """Record that this process ran `script_id` at `state`'s
+    `(turn_number, step)` - `applicable_hint` never re-offers it there again,
+    however it exited (S1 review finding 4c)."""
+    corpus = runtime._corpus(seat, corpora, fresh=False)
+    if isinstance(corpus, runtime.ScriptExit):
+        return
+    recent = list(corpus.get(_RECENT_RUNS_KEY) or [])
+    entry = [script_id, state.get("turn_number"), state.get("step")]
+    if entry not in recent:
+        recent.append(entry)
+    corpus[_RECENT_RUNS_KEY] = recent
+
+
+def _plays(
+    corpus: dict[str, Any], docs: list[dict[str, Any]]
+) -> list[tuple[dict[str, Any], dict[str, Any] | runtime.ScriptExit]]:
+    """Every doc in `docs`, paired with its normalised `Play` dump - computed
+    once per corpus and cached under `_PLAYS_CACHE_KEY` on that same dict, so
+    neither `listing` nor `applicable_hint` re-validates the same registered
+    scripts on every call (S1 review finding 5). A `fresh=True` read hands
+    back a brand-new corpus dict with no cache key yet, so this recomputes
+    exactly when the corpus genuinely changed."""
+    cached = corpus.get(_PLAYS_CACHE_KEY)
+    if cached is None:
+        cached = [(doc, runtime._normalised(doc)) for doc in docs]
+        corpus[_PLAYS_CACHE_KEY] = cached
+    return cached
 
 
 def _hint_judged(
@@ -366,13 +433,13 @@ def _hint_judged(
     catalog: dict[str, dict[str, Any]],
     warnings: list[lint.PlaysWarning],
 ) -> dict[str, Any]:
-    """`_judged`, except a play whose conditions need `include=contents` and
-    which `state` was not fetched with (never true for `listing`, which
-    fetches contents itself when any play needs them - but always possible
-    here, since the hint never fetches at all) is treated as not applying
-    rather than raising `conditions.ContentsRequired`. `applicable_hint`'s own
-    "no extra board fetch" promise means this is the one path that can meet a
-    play `listing` never would."""
+    """`_judged`, except a play whose conditions still need `include=contents`
+    and which `state` was not fetched with is treated as not applying rather
+    than raising `conditions.ContentsRequired` - `applicable_hint` calls this
+    only for its second pass, over the one extra `include=contents` fetch it
+    pays when a play's priority/archetype/when already matched (S1 review
+    finding 1); this is the defensive fallback for the case even that fetch
+    does not settle it."""
     try:
         return _judged(doc, play, state, me, supplied, catalog, warnings)
     except conditions.ContentsRequired:
@@ -391,16 +458,31 @@ def applicable_hint(
 ) -> dict[str, Any] | None:
     """`{"applicable": [...]}` for one seat's wake/action answer - the same
     applicability judgement `listing` makes, over `state` this answer already
-    carries rather than a fresh board fetch. `None` when this MCP process has
-    scripts switched off (`scripts_enabled_here`), when this seat has no
-    registered corpus, or when nothing registered applies right now.
+    carries rather than a fresh board fetch (plus, at most, one extra fetch
+    for a contents-needing play whose position already matches - see below).
+    `None` when this MCP process has scripts switched off
+    (`scripts_enabled_here`), when this seat is not the one holding priority
+    (`runtime._drive` requires that before it ever sends a script's first
+    move - S1 review finding 4a), when this seat has no registered corpus, or
+    when nothing registered applies right now.
+
+    Judged with the archetype and other inputs this seat last supplied to
+    `run_script` (`_LAST_ASSERTED_KEY`/`_LAST_INPUTS_KEY` - S1 review finding
+    4b), and never re-offering a script this process has already run at this
+    same `(turn_number, step)` (`_RECENT_RUNS_KEY` - finding 4c).
 
     Each entry is `{id, name, call}`, `call` a ready-to-use `run_script`
-    invocation - or, when two or more apply at once (`listing`'s own
+    invocation, `inputs` among its arguments only when the remembered inputs
+    are non-empty - or, when two or more apply at once (`listing`'s own
     `runtime_conflict`), `{id, name, conflict: true}` with `call` left out,
-    since a seat has to pick one itself before either can commit. Capped at
-    `MAX_HINT_SCRIPTS`, highest priority first."""
+    since a seat has to pick one itself before either can commit. `name` is
+    truncated to `MAX_HINT_NAME_CHARS`, and the whole block is dropped down to
+    `MAX_HINT_BYTES` before `MAX_HINT_SCRIPTS`'s own cap on entry count
+    (finding 6). Never `static_conflicts` here - its result is not read out of
+    this answer's own items, only `listing`'s (finding 5)."""
     if not scripts_enabled_here():
+        return None
+    if state.get("priority_holder") != seat.player:
         return None
     corpus = runtime._corpus(seat, corpora, fresh=False)
     if isinstance(corpus, runtime.ScriptExit):
@@ -410,44 +492,97 @@ def applicable_hint(
         return None
     asserted = corpus.get(_LAST_ASSERTED_KEY)
     asserted = asserted if isinstance(asserted, str) else WILDCARD
-    supplied = merged_inputs(asserted, None)
+    remembered_raw = corpus.get(_LAST_INPUTS_KEY)
+    remembered = dict(remembered_raw) if isinstance(remembered_raw, dict) else {}
+    supplied = merged_inputs(asserted, remembered)
     if isinstance(supplied, str):
         return None
     declared = list(corpus.get("inputs") or [])
     catalog = input_catalog(declared, [asserted])
-    plays = [(doc, runtime._normalised(doc)) for doc in docs]
-    warnings = static_conflicts(docs, declared, str(corpus.get("deck_slug") or ""))
-    entries = [
-        _hint_judged(doc, play, state, seat.player, supplied, catalog, warnings)
-        for doc, play in plays
-    ]
+    plays = _plays(corpus, docs)
+    entries: list[dict[str, Any]] = []
+    deferred: list[tuple[dict[str, Any], dict[str, Any] | runtime.ScriptExit]] = []
+    for doc, play in plays:
+        try:
+            entries.append(_judged(doc, play, state, seat.player, supplied, catalog, []))
+        except conditions.ContentsRequired:
+            deferred.append((doc, play))
+    if deferred:
+        # S1 review finding 1: a play whose priority/archetype/when already
+        # match `state` but whose conditions read the viewer's own library or
+        # sideboard contents (`conditions.needs_contents`) is worth exactly
+        # one extra `include=contents` fetch - paid once here, for every such
+        # play at once, rather than the old blanket "not applicable".
+        contents_state = seat.fetch_state(include_contents=True)
+        entries.extend(
+            _hint_judged(doc, play, contents_state, seat.player, supplied, catalog, [])
+            for doc, play in deferred
+        )
     entries.sort(key=lambda entry: (-_priority(entry), str(entry["id"])))
-    applying = [entry for entry in entries if entry["applies"]]
+    recent = {
+        (str(run[0]), run[1], run[2])
+        for run in corpus.get(_RECENT_RUNS_KEY) or []
+        if isinstance(run, list) and len(run) == 3
+    }
+    position = (state.get("turn_number"), state.get("step"))
+    applying = [
+        entry
+        for entry in entries
+        if entry["applies"] and (str(entry["id"]), *position) not in recent
+    ]
     if not applying:
         return None
     conflict = len(applying) > 1
     items: list[dict[str, Any]] = []
     for entry in applying[:MAX_HINT_SCRIPTS]:
-        item: dict[str, Any] = {"id": entry["id"], "name": entry.get("name")}
+        item: dict[str, Any] = {"id": entry["id"], "name": _truncated_name(entry.get("name"))}
         if conflict:
             item["conflict"] = True
         else:
-            item["call"] = _call_template(seat, str(entry["id"]), asserted)
+            item["call"] = _call_template(seat, str(entry["id"]), asserted, remembered)
         items.append(item)
-    return {"applicable": items}
+    bounded = _byte_bounded(items)
+    return {"applicable": bounded} if bounded else None
 
 
-def _call_template(seat: Seat, script_id: str, asserted: str) -> str:
+def _truncated_name(name: Any) -> Any:
+    """`name`, cut to `MAX_HINT_NAME_CHARS` - a registered corpus is the
+    deck's own, and nothing else bounds how long a play's `name` is before
+    this (S1 review finding 6)."""
+    if isinstance(name, str) and len(name) > MAX_HINT_NAME_CHARS:
+        return name[: MAX_HINT_NAME_CHARS - 3] + "..."
+    return name
+
+
+def _byte_bounded(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`items`, in order, up to `MAX_HINT_BYTES` of JSON - an entry that
+    would push the running total past the budget is dropped, along with
+    every entry after it (S1 review finding 6)."""
+    kept: list[dict[str, Any]] = []
+    for item in items:
+        candidate = [*kept, item]
+        if len(json.dumps(candidate).encode("utf-8")) > MAX_HINT_BYTES:
+            break
+        kept = candidate
+    return kept
+
+
+def _call_template(
+    seat: Seat, script_id: str, asserted: str, inputs: dict[str, Any] | None = None
+) -> str:
     """A ready-to-use `run_script(...)` invocation string for `script_id` -
     the exact argument names `mcp.run_script` accepts, with `reasoning` left
     for the seat to fill in (every run needs its own, in the seat's own
-    words) and `opposing_archetype` set to what this hint judged the script
-    against."""
-    args = {
+    words), `opposing_archetype` set to what this hint judged the script
+    against, and `inputs` named only when the seat's remembered inputs are
+    non-empty (S1 review finding 4b)."""
+    args: dict[str, Any] = {
         "player_uid": seat.uid,
         "script": script_id,
-        "reasoning": _REASONING_PLACEHOLDER,
+        "reasoning": runtime.REASONING_PLACEHOLDER,
         "opposing_archetype": asserted,
     }
+    if inputs:
+        args["inputs"] = inputs
     rendered = ", ".join(f"{name}={json.dumps(value)}" for name, value in args.items())
     return f"run_script({rendered})"
