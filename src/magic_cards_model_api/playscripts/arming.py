@@ -46,13 +46,14 @@ At most `MAX_ARMED_RUNS` scripts actually run in one `arm()` call.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
 from ..seatkit import Seat
 from . import conditions, script_tools
 from .inputs import BUILTIN_INPUT, input_catalog
-from .runtime import REASONING_PLACEHOLDER, Exit, ScriptExit, _corpus
+from .runtime import REASONING_PLACEHOLDER, RUN_CAP_SECONDS, Exit, ScriptExit, _corpus
 
 #: The most `arm()` actually runs in one call - the same ceiling
 #: `runtime.MAX_SCRIPTS_PER_RUN` puts on one script's own chain, applied here
@@ -114,8 +115,17 @@ def arm(
     conflict: list[str] | None = None
     state: dict[str, Any] | None = None
     runs = 0
+    # S2 review finding 3: one deadline for the whole batch, set once here -
+    # each run used to get the *whole* `max_seconds`/`RUN_CAP_SECONDS` again,
+    # so up to `MAX_ARMED_RUNS` runs could together take that many times the
+    # cap. Every run below gets only what is left of this deadline.
+    cap = max_seconds if max_seconds > 0 else RUN_CAP_SECONDS
+    deadline = time.monotonic() + cap
 
     while remaining and runs < MAX_ARMED_RUNS:
+        run_budget = deadline - time.monotonic()
+        if run_budget <= 0:
+            break
         judged, state = _judge_round(seat, corpora, remaining, supplied)
         applying = [
             script_id for script_id in remaining if judged.get(script_id, {}).get("applies")
@@ -144,7 +154,7 @@ def arm(
             opposing_archetype=opposing_archetype,
             inputs=inputs,
             wait=False,
-            max_seconds=max_seconds,
+            max_seconds=run_budget,
             should_stop=should_stop,
             invoked_via="armed",
         )

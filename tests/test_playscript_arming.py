@@ -191,6 +191,105 @@ def test_a_contents_needing_armed_script_costs_exactly_one_extra_fetch(
     assert calls["n"] == 2, calls
 
 
+# -- one shared deadline over the whole batch -----------------------------------
+
+
+class _FakeClock:
+    """A `time.monotonic` stand-in whose reading only moves when told to -
+    `arming.time.monotonic()` is looked up through this instance once
+    `arming`'s own `time` name is monkeypatched to it."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.now = start
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+def _judge_first_remaining(
+    seat: Any, corpora: Any, ids: list[str], supplied: Any
+) -> tuple[dict[str, Any], Any]:
+    """Only the first of `ids` (this round's `remaining`) applies - lets a
+    batch of several armed scripts fire one at a time, in order, across
+    several rounds, rather than three simultaneous appliers tripping the
+    conflict check."""
+    applies = ids[0] if ids else None
+    judged = {script_id: {"id": script_id, "applies": script_id == applies} for script_id in ids}
+    return judged, {"turn_number": 1, "step": "precombat_main"}
+
+
+def test_the_whole_armed_batch_shares_one_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S2 review finding 3: each armed run used to get the *whole*
+    `RUN_CAP_SECONDS` again, so three armed runs could together take up to
+    3x the cap. `arm()` now sets one deadline for the whole batch when it
+    starts, and each run gets only what is left of it."""
+    clock = _FakeClock()
+    monkeypatch.setattr(arming, "time", clock)
+    monkeypatch.setattr(arming, "_judge_round", _judge_first_remaining)
+    captured_max_seconds: list[float] = []
+
+    def run(seat: Any, corpora: Any, *, script: str, max_seconds: float, **kwargs: Any) -> Any:
+        captured_max_seconds.append(max_seconds)
+        clock.now += 8.0  # each run "takes" 8 seconds of wall time
+        return {
+            "script_exit": {"script": script, "exit": Exit.CHAIN_COMPLETE.value, "moves_done": 1},
+            "state": {"turn_number": 1, "step": "precombat_main"},
+        }
+
+    monkeypatch.setattr(script_tools, "run", run)
+    seat = object()
+
+    result = arming.arm(
+        seat,
+        {},
+        arm=["a", "b", "c"],
+        arm_reasoning=ARM_REASONING,  # type: ignore[arg-type]
+    )
+
+    assert isinstance(result, dict), result
+    assert len(result["armed"]) == 3, result
+    from magic_cards_model_api.playscripts.runtime import RUN_CAP_SECONDS
+
+    assert captured_max_seconds[0] == RUN_CAP_SECONDS
+    assert captured_max_seconds[1] == RUN_CAP_SECONDS - 8.0
+    assert captured_max_seconds[2] == RUN_CAP_SECONDS - 16.0
+    assert all(value <= RUN_CAP_SECONDS for value in captured_max_seconds)
+
+
+def test_the_batch_stops_rather_than_starting_a_run_with_no_budget_left(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch whose own deadline is exhausted mid-way stops there rather
+    than starting one more run with (effectively) no time left for it."""
+    clock = _FakeClock()
+    monkeypatch.setattr(arming, "time", clock)
+    monkeypatch.setattr(arming, "_judge_round", _judge_first_remaining)
+    calls = {"n": 0}
+
+    def run(seat: Any, corpora: Any, *, script: str, max_seconds: float, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        clock.now += 13.0  # each run "takes" 13 seconds; the third never starts
+        return {
+            "script_exit": {"script": script, "exit": Exit.CHAIN_COMPLETE.value, "moves_done": 1},
+            "state": {"turn_number": 1, "step": "precombat_main"},
+        }
+
+    monkeypatch.setattr(script_tools, "run", run)
+    seat = object()
+
+    result = arming.arm(
+        seat,
+        {},
+        arm=["a", "b", "c"],
+        arm_reasoning=ARM_REASONING,  # type: ignore[arg-type]
+        max_seconds=25.0,
+    )
+
+    assert isinstance(result, dict), result
+    assert len(result["armed"]) == 2, result
+    assert calls["n"] == 2, calls
+
+
 # -- the 3-run cap ---------------------------------------------------------------
 
 
