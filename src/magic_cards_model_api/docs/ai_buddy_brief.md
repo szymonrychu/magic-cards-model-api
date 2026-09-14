@@ -113,9 +113,11 @@ reads. When `runtime_conflict` is true, more than one script applies right
 now: do not pick between them by priority - say it is close and propose the
 line you would take.
 
-- `--opposing-archetype KEY` asserts the matchup you have read, spelled as the
-  matchup card spells it; leave it at `*`, the default, only while you
-  genuinely do not know.
+- `--opposing-archetype KEY` asserts the matchup you have read. Once you have
+  committed to a read on the opponent's archetype (see "What good advice is
+  here" below), pass it - spelled as the matchup card spells it - on every
+  `script run`, `script list` and armed `wait` from then on: some plays pick
+  a different line by archetype, and leaving it out means `*`.
 - `--input NAME=VALUE` is one input the deck's scripts read that the board
   cannot show - repeat the flag once per input. VALUE is read as JSON where it
   is JSON (`true`, `3`) and as text otherwise. It is the CLI spelling of the

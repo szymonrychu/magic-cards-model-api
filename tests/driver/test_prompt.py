@@ -1335,3 +1335,69 @@ def test_briefs_describe_the_script_cli_and_carry_the_doctrine(brief):
         assert sentence in section, f"{brief} is missing {sentence!r}"
     for needle in ("script run", "script list", "--input NAME=VALUE", "`inputs`"):
         assert needle in section, f"{brief}'s Scripts section never names {needle!r}"
+
+
+# ---- opposing_archetype on arming, not just run_script/list_scripts -------
+#
+# eldrazi-tron keys its Tron lane off `opposing_archetype` not being one of a
+# list of aggro archetypes: leave the arg at the default `*` and the Tron
+# lane fires even against an aggro opponent. `run_script`/`list_scripts`
+# already told a seat to assert its read; arming (`pass_until`/
+# `wait_for_priority(arm=...)`, CLI `--arm` on `wait`/`pass-until`) never
+# did, and the hint's own `call`/`arm_call` templates only carry the
+# archetype a seat has already asserted - so this clause has to say the same
+# thing applies there too, tied to the moment the archetype is actually
+# identified (`declare_plan` for a seat, a buddy's own read for a buddy).
+
+ARCHETYPE_ARM_DOCTRINE = (
+    "some plays pick a different line by archetype, and leaving it out means `*`"
+)
+
+
+def test_seat_prompt_scripts_section_ties_archetype_to_declare_plan_and_arming(tmp_path, guide):
+    section = _flat(_section(turn_zero(assignment(guide), tmp_path / "x.md"), "## Scripts"))
+    assert ARCHETYPE_ARM_DOCTRINE in section
+    assert "declare_plan" in section
+    assert "run_script" in section
+    assert "list_scripts" in section
+    assert "arm" in section
+
+
+def test_buddy_prompt_scripts_section_ties_archetype_to_its_own_read_and_arming(tmp_path, guide):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "x.md")
+    section = _flat(_section(text, "## Scripts"))
+    assert ARCHETYPE_ARM_DOCTRINE in section
+    assert "committed to a read" in section
+    assert "run_script" in section
+    assert "list_scripts" in section
+    assert "arm" in section
+    # the pointer names a section that actually exists, later in the same prompt
+    assert '"Identify the matchup yourself"' in section
+    assert "## Identify the matchup yourself" in text
+
+
+@pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
+def test_briefs_scripts_section_ties_archetype_to_arming(brief):
+    text = (BRIEFS / brief).read_text()
+    section = _flat(_section(text, "## Scripts"))
+    assert ARCHETYPE_ARM_DOCTRINE in section
+    assert "--opposing-archetype" in section
+    assert "script run" in section
+    assert "script list" in section
+    assert "--arm" in section or "arm" in section
+
+
+def test_seat_brief_scripts_section_ties_archetype_to_plan():
+    text = (BRIEFS / "ai_seat_brief.md").read_text()
+    section = _flat(_section(text, "## Scripts"))
+    assert "plan" in section
+    assert '"Declare your plan before you act"' in section
+    assert "## Declare your plan before you act" in text
+
+
+def test_buddy_brief_scripts_section_ties_archetype_to_its_own_read():
+    text = (BRIEFS / "ai_buddy_brief.md").read_text()
+    section = _flat(_section(text, "## Scripts"))
+    assert "committed to a read" in section
+    assert '"What good advice is here"' in section
+    assert "## What good advice is here" in text

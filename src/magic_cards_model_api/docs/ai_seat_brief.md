@@ -428,11 +428,14 @@ engine's own, and prints `script_exit` beside the state. `--reasoning` is
 required. `--no-wait` leaves a script that is off its step `not_applicable`,
 and `--max-seconds` caps the command.
 
-- `--opposing-archetype KEY` asserts the matchup you have read, spelled as
-  your matchup card spells it. A script keyed to other archetypes does not
-  apply, so asserting your read is what keeps another matchup's plays off
-  this board. Leave it at `*`, the default, only while you genuinely do not
-  know.
+- `--opposing-archetype KEY` asserts the matchup you have read. Once `plan
+  --for-turn ...` has named your read on the opponent's archetype (see
+  "Declare your plan before you act" below), pass it - spelled as your
+  matchup card spells it - on every `script run`, `script list` and armed
+  `wait`/`pass-until` from then on: some plays pick a different line by
+  archetype, and leaving it out means `*`. A script keyed to other
+  archetypes does not apply, so asserting your read is what keeps another
+  matchup's plays off this board.
 - `--input NAME=VALUE` is one input your deck's scripts read that the board
   cannot show - repeat the flag once per input. VALUE is read as JSON where it
   is JSON (`true`, `3`) and as text otherwise (`dimir-frog`). It is the CLI

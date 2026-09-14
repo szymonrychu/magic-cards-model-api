@@ -639,14 +639,17 @@ Each script says whether it `applies`, and when it does not, its
 `applicable`: do not pick between them by priority. Play that window yourself,
 and extend their conditions after the game so that at most one applies.
 
-**Assert `opposing_archetype`.** Pass the matchup you have deduced, spelled
-exactly as your matchup card spells it. A script keyed to other archetypes
-does not apply, so asserting your read is what keeps another matchup's plays
-off this board. Leave it at `*`, the default, only while you genuinely do not
-know. Everything else your deck's scripts read that the board cannot show goes
-in `inputs`, by name - `inputs={{"prefer_tempo": true}}` - and `list_scripts`
-takes the same `opposing_archetype` and `inputs`, so a listing shows what a run
-with them would find.
+**Assert `opposing_archetype`.** Once `declare_plan` has named your read on
+the opponent's archetype, pass it - spelled exactly as your matchup card
+spells it - as `opposing_archetype` on every `run_script`, `list_scripts` and
+armed `pass_until`/`wait_for_priority` call from then on: some plays pick a
+different line by archetype, and leaving it out means `*`. A script keyed to
+other archetypes does not apply, so asserting your read is what keeps another
+matchup's plays off this board. Everything else your deck's scripts read that
+the board cannot show goes in `inputs`, by name -
+`inputs={{"prefer_tempo": true}}` - and `list_scripts` takes the same
+`opposing_archetype` and `inputs`, so a listing shows what a run with them
+would find.
 
 **Run it with `run_script`**, by the script's id, with your reason:
 
@@ -1329,10 +1332,13 @@ right now, highest priority first, and runs nothing:
   list_scripts(player_uid=..., opposing_archetype="<your read>")
 
 Each script says whether it `applies`, and when it does not, its
-`failing_condition`. Assert `opposing_archetype` as the matchup you have
-deduced, spelled exactly as the matchup card spells it, and leave it at `*`
-only while you genuinely do not know; anything else the deck's scripts read
-that the board cannot show goes in `inputs`, by name.
+`failing_condition`. Once you have committed to a read on the opponent's
+archetype (see "Identify the matchup yourself" below), pass it - spelled
+exactly as the matchup card spells it - as `opposing_archetype` on every
+`run_script`, `list_scripts` and armed `wait_for_priority` call from then on:
+some plays pick a different line by archetype, and leaving it out means `*`.
+Anything else the deck's scripts read that the board cannot show goes in
+`inputs`, by name.
 
 ## When you think, and when you stay quiet
 
