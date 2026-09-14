@@ -452,6 +452,46 @@ def _turn_position(state: dict[str, Any]) -> Any:
     return taken if taken is not None else state.get("turn_number")
 
 
+def releases_slot(moves_done: int, exit_name: str | None, *, advise: bool, chained: bool) -> bool:
+    """Whether a run shaped like this touched nothing at all, and so must
+    not occupy the once-per-turn-and-step slot both `_record_run` (the
+    hint's own in-process cache, below) and `records._prior_script_run`
+    (the ledger's) gate on - the two must apply exactly the same rule, and
+    this is the one place either checks it, so they cannot drift apart the
+    way they once did (S2 arming re-review finding 4).
+
+    Released - "touched nothing" - when `moves_done == 0` and the exit is
+    not `unknown_outcome` (whose move may have landed uncounted) and not a
+    *successful* advise proposal (`exit == "advised"` with `advise=True`,
+    which always reports zero moves by design - it only ever proposes, and
+    still burns the slot so an armed advisor does not repeat the same
+    suggestion within one turn and step) and not `already_ran` (a
+    collision finish reporting that some OTHER run already holds this
+    slot - releasing it too would only retry into the same collision and
+    spend another round producing another one of these rows; leaving it
+    locked here does not hide the genuine blocking run underneath it,
+    since that row is scanned next).
+
+    `chained` (S2 arming re-review finding 3) overrides all of that to
+    `False` regardless of `moves_done`: a chained run's own trailing
+    `exit_block` carries only the LAST script in the chain's own
+    `moves_done` (a chained child's own run starts counting from zero -
+    `runtime.py`'s `_next`), so a parent that made a real move before
+    handing off to a child that made none reports the combined run as
+    zero-move even though real progress happened. `scripts_run` naming
+    more than one script id is chaining's own unambiguous signal of that,
+    independent of which segment's own count the trailing `moves_done`
+    happens to carry."""
+    if chained:
+        return False
+    return (
+        moves_done == 0
+        and exit_name is not None
+        and exit_name not in (runtime.Exit.UNKNOWN_OUTCOME.value, runtime.Exit.ALREADY_RAN.value)
+        and not (advise and exit_name == runtime.Exit.ADVISED.value)
+    )
+
+
 def _record_run(
     seat: Seat,
     corpora: dict[tuple[str, str], dict[str, Any]],
@@ -463,28 +503,19 @@ def _record_run(
 ) -> None:
     """Record that this process ran `script_id` at `state`'s
     `(_turn_position(state), step)` - `applicable_hint` never re-offers it
-    there again (S1 review finding 4c), UNLESS `exit_block` shows it touched
-    nothing: `moves_done == 0` and an exit other than `unknown_outcome`
-    (whose move may have landed uncounted) or `already_ran` (the ledger
-    already refused it, so re-offering it here would just repeat that
-    refusal) - the same release rule `records._prior_script_run` already
-    applies to the ledger's own already-ran slot, mirrored here for the
-    hint's own in-process cache (S2 review finding 4). A run blocked by
-    something outside the script's own control (a pending decision, most
-    often) takes exactly this shape, so it must not hide the script once
-    whatever blocked it clears. A successful advise proposal (`exit ==
-    "advised"`) always reports zero moves by design - it only ever proposes
-    - and still locks, so an armed advisor does not repeat the same
-    suggestion within one turn and step."""
+    there again (S1 review finding 4c), UNLESS `releases_slot` says this run
+    touched nothing - the same release rule `records._prior_script_run`
+    already applies to the ledger's own already-ran slot, mirrored here for
+    the hint's own in-process cache (S2 review finding 4, S2 arming
+    re-review finding 4). A run blocked by something outside the script's
+    own control (a pending decision, most often) takes exactly the released
+    shape, so it must not hide the script once whatever blocked it clears -
+    and a chained run whose trailing exit under-reports its own moves must
+    not be released either (S2 arming re-review finding 3)."""
     moves_done = exit_block.get("moves_done") or 0
     exit_name = exit_block.get("exit")
-    touched_nothing = (
-        moves_done == 0
-        and exit_name is not None
-        and exit_name not in (runtime.Exit.UNKNOWN_OUTCOME.value, runtime.Exit.ALREADY_RAN.value)
-        and not (advise and exit_name == runtime.Exit.ADVISED.value)
-    )
-    if touched_nothing:
+    chained = len(exit_block.get("scripts_run") or []) > 1
+    if releases_slot(moves_done, exit_name, advise=advise, chained=chained):
         return
     corpus = runtime._corpus(seat, corpora, fresh=False)
     if isinstance(corpus, runtime.ScriptExit):

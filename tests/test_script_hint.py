@@ -543,6 +543,36 @@ def test_record_run_still_locks_a_successful_advise_proposal() -> None:
     assert corpora[key][script_tools._RECENT_RUNS_KEY] == [["some-script", 1, "precombat_main"]]
 
 
+def test_record_run_locks_a_chained_run_even_when_the_last_segment_made_no_moves() -> None:
+    """S2 arming re-review finding 3: the overall `exit_block`'s own
+    `moves_done` reflects only the LAST chained script's own count (a
+    chained child's `_Run.moves_done` starts at 0 - `runtime.py`'s own
+    chain hand-off, `_next`) - a parent that made a real move (1) chaining
+    into a child that made none (0) reported the combined run's
+    `moves_done` as 0, so `_record_run`'s zero-move release rule wrongly
+    treated the whole run as untouched and left the PARENT's own id
+    unlocked in the hint cache - re-offered, and the ledger's own
+    already-ran gate then refused the re-run (a wasted round, B8-04's own
+    once-per-turn-and-step slot already correctly held by the parent's own
+    separately-posted ledger row). `scripts_run` names every script id the
+    chain actually ran through; a length greater than 1 is chaining's own
+    unambiguous signal that real progress happened, regardless of which
+    segment's count the trailing `moves_done` happens to carry."""
+    seat = _FakeSeatForRecordRun("seat-uid", "game-1")
+    corpora: dict[tuple[str, str], dict[str, Any]] = {(seat.game_id(), seat.uid): {}}
+    state = {"turns_taken": 1, "turn_number": 1, "step": "precombat_main"}
+    key = (seat.game_id(), seat.uid)
+
+    chained_zero_move_tail = {
+        "exit": "not_applicable",
+        "moves_done": 0,
+        "scripts_run": ["drop", "float"],
+    }
+    script_tools._record_run(seat, corpora, "drop", state, chained_zero_move_tail, advise=False)  # type: ignore[arg-type]
+
+    assert corpora[key][script_tools._RECENT_RUNS_KEY] == [["drop", 1, "precombat_main"]]
+
+
 def test_the_hint_never_computes_static_conflicts(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
