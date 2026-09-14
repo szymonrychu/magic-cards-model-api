@@ -1697,8 +1697,28 @@ class Seat:
             # was captured at (`AdviceIn.drafted_at_seq`, for the metrics task
             # to measure how long it sat staged) and is cheaper than a second
             # `fetch_state` just for that number.
+            #
+            # Review fix 5 (2026-09-14): the whole action dict, `opponent_
+            # signature` and `drafted_at_seq` are all built HERE, in a local
+            # dict, before `armed` itself is touched at all. The old code set
+            # `armed["action"]` first and only afterward made the `recent_log`
+            # HTTP call that fills in `opponent_signature`/`drafted_at_seq` -
+            # a window, however short, where a concurrent `resolve_advice_
+            # draft` on another thread (same `Seats`, same uid, a different
+            # `Seat` object sharing this very dict by reference) could see
+            # `armed.get("action")` already filled in - readable as "this
+            # draft is ready" - while `opponent_signature` was still absent
+            # (`None`), which never equals a freshly computed signature, so
+            # the draft would be read as stale on board grounds and dropped
+            # before it was ever whole. Installed under this uid's own
+            # per-uid lock (`resolve_advice_draft`'s own `_advice_draft_
+            # locks`) so a concurrent resolve either sees the whole thing at
+            # once or - `lock.acquire(blocking=False)` fails while this
+            # install is in flight - answers `{"status": "held"}` and tries
+            # again on its next poll, exactly as it would for any other
+            # draft already mid-flight.
             drafted_state = self.fetch_state()
-            armed["action"] = {
+            built_action: dict[str, Any] = {
                 "method": method.upper(),
                 "path": path,
                 "body": ready,
@@ -1714,14 +1734,19 @@ class Seat:
                 # still match the pending decision standing at the window,
                 # not merely that some decision is pending for this player.
                 drafted_pending = drafted_state.get("pending_decision")
-                armed["action"]["decision_kind"] = (
+                built_action["decision_kind"] = (
                     drafted_pending.get("kind") if isinstance(drafted_pending, dict) else None
                 )
-                armed["action"]["decision_generation"] = (
+                built_action["decision_generation"] = (
                     drafted_pending.get("generation") if isinstance(drafted_pending, dict) else None
                 )
-            armed["opponent_signature"] = opponent_board_signature(drafted_state, self.player)
-            armed["drafted_at_seq"] = self.recent_log().get("last_seq")
+            opponent_signature = opponent_board_signature(drafted_state, self.player)
+            drafted_at_seq = self.recent_log().get("last_seq")
+            lock = self._advice_draft_locks.setdefault(self.uid, threading.Lock())
+            with lock:
+                armed["action"] = built_action
+                armed["opponent_signature"] = opponent_signature
+                armed["drafted_at_seq"] = drafted_at_seq
             return 200, {
                 "drafted": True,
                 "window": {

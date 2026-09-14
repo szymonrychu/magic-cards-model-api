@@ -1378,3 +1378,59 @@ def test_a_none_turns_taken_stamp_can_still_go_stale() -> None:
     now_state = {"step": "cleanup", "active_player": "alice", "turns_taken": 2}
 
     assert seatkit.draft_window_status(window, now_state, "alice") == "after"
+
+
+# ---------------------------------------------------------------------------
+# 11. re-review, 2026-09-14, finding 5: a draft capture installs atomically,
+# under the per-uid lock, so a concurrent reader never sees it half-built
+# ---------------------------------------------------------------------------
+
+
+def test_a_concurrent_read_during_capture_never_sees_a_draft_without_drafted_at_seq(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old code set `armed["action"]` and only afterward made the
+    `recent_log` HTTP call that fills in `drafted_at_seq`/`opponent_
+    signature` - a window, however short, where a concurrent reader could
+    see a draft that LOOKS captured (`action` is not `None`) but is still
+    missing the fields `resolve_advice_draft` needs to post it. The fix
+    builds the whole thing first and installs it atomically under the
+    per-uid lock, so no reader can ever observe that half-state."""
+    wire(monkeypatch)
+    seat = buddy(game)
+    seat.stage_advice("declare_attackers", "mine")
+
+    release = threading.Event()
+    original_recent_log = seatkit.Seat.recent_log
+
+    def slow_recent_log(self: Seat, *a: Any, **k: Any) -> Any:
+        release.wait(2)
+        return original_recent_log(self, *a, **k)
+
+    monkeypatch.setattr(seatkit.Seat, "recent_log", slow_recent_log)
+
+    observed: list[dict[str, Any]] = []
+    stop = threading.Event()
+
+    def poll() -> None:
+        while not stop.is_set():
+            entry = seat._advice_drafts.get(ADVISOR_UID)
+            if entry is not None and entry.get("action") is not None:
+                observed.append(dict(entry))
+            time.sleep(0.001)
+
+    poller = threading.Thread(target=poll)
+    poller.start()
+
+    capturer = threading.Thread(target=lambda: capture_a_pass_draft(seat, game))
+    capturer.start()
+    time.sleep(0.1)  # let the capturer reach the slowed `recent_log` call
+    release.set()
+    capturer.join(5)
+    stop.set()
+    poller.join(5)
+
+    assert all(entry.get("drafted_at_seq") is not None for entry in observed), observed
+    final = seat._advice_drafts[ADVISOR_UID]
+    assert final["action"] is not None
+    assert final["drafted_at_seq"] is not None
