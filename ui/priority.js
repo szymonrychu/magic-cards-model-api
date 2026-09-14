@@ -74,8 +74,10 @@ export const VERB_LABELS = {
 //
 // `keepPriorityByDefault` sits beside it for the same structural reason
 // (not a step, fires regardless of which one you are in) but is not a
-// `stopReason`/`pass_until` concern at all - `fire()` (`app.js`) reads it
-// right after a cast, activation or crew goes on the stack. CR 117.3c
+// `stopReason`/`pass_until` concern at all - `app.js`'s `afterStackAction`
+// reads it right after a cast, activation, crew, equip or cycle goes on the
+// stack, and when one paused on a decision, `decide()` spends the pass once
+// that decision's answer completes it. CR 117.3c
 // already gives you priority back after you cast a spell or activate an
 // ability; this setting decides whether the harness keeps it for you or
 // spends it with one auto-pass. On by default: the owner found casting a

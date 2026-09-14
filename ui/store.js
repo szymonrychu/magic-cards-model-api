@@ -8,8 +8,8 @@
 // the notification back until the click has landed.
 //
 // The state shape: `{gameId, uid, aiUid, you, state, log: {entries,
-// lastSeq}, action, decisionDraft, combatDraft, run, stops, symbols,
-// aiStatus, connection}`.
+// lastSeq}, action, pendingRelease, decisionDraft, combatDraft, run, stops,
+// symbols, aiStatus, connection}`.
 
 export function createStore(initial) {
   let state = { ...initial };

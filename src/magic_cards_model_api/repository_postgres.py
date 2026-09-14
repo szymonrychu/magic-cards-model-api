@@ -63,27 +63,38 @@ separately calls `store_paused_command`).
 `Decision`/`PendingDecision` are plain dataclasses, not pydantic - unlike
 `Answer` (frozen pydantic, built precisely so the tape survives
 `Game.model_dump(mode="json")` round-tripping), `Decision` was never made to
-round-trip JSON on its own. `_decision_to_json`/`_decision_from_json` below
-are this module's hand-written codec for it, field by field, because a
-generic reflection-based one would have to guess the difference between a
-`tuple[UUID, ...]` and a `list[str]` on the way back in, and guessing wrong
-here means answering a resumed command's question with the wrong id.
+round-trip JSON on its own. `_encode_dataclass`/`_decode_dataclass` below are
+this module's codec for them, driven by `dataclasses.fields` and each field's
+resolved type annotation rather than by a hand-written key list: the
+annotation says exactly what to rebuild (`tuple[UUID, ...]` comes back as a
+tuple of `UUID`s, never a list of strings), and a field the engine adds is
+covered the moment it exists. A hand-written list was what broke production
+on 2026-09-14 (game 07c5f818): it predated `Decision.quality`,
+`mana_sources`, `lethal_damage`, `default_damage` and `trample`, so every
+as-enters choice read back unequal to its own replay and every `/decide`
+answered 409 "replay diverged". A field whose type has no encoding rule is a
+`TypeError` naming the field at write time, never a silent drop; a stored row
+that predates a field decodes with that field's dataclass default.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import functools
 import json
 import logging
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Any
+from enum import Enum
+from types import NoneType, UnionType
+from typing import Any, Union, get_args, get_origin, get_type_hints
 from uuid import UUID, uuid4
 
-from magic_cards_model.machines.decisions import Answer, Decision, DecisionKind, PendingDecision
+from magic_cards_model.machines.decisions import Answer, Decision, PendingDecision
 from magic_cards_model.models import Game
-from magic_cards_model.models.card_state import TargetRef
+from pydantic import BaseModel
 from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.engine import Engine
 
@@ -181,72 +192,131 @@ class VersionConflict(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Decision / PendingDecision <-> JSON. Hand-written, not generic - see the
-# module docstring for why.
+# Decision / PendingDecision <-> JSON, driven by each dataclass's own fields
+# and type annotations - see the module docstring for why.
 # ---------------------------------------------------------------------------
+
+_SCALARS = (str, int, bool)
+
+
+def _optional_inner(annotation: Any) -> Any | None:
+    """`X` for an `X | None` annotation, `None` for anything else. Any other
+    union is ambiguous to decode and refused by `_require_encodable`."""
+    if get_origin(annotation) not in (Union, UnionType):
+        return None
+    args = get_args(annotation)
+    inner = [arg for arg in args if arg is not NoneType]
+    return inner[0] if len(args) == 2 and len(inner) == 1 else None
+
+
+def _require_encodable(annotation: Any, where: str) -> None:
+    """Refuse, by name, a field type this codec has no exact JSON rule for.
+
+    Checked against the annotation, not the value, so an unencodable field
+    fails even while it holds `None` or its empty default."""
+    inner = _optional_inner(annotation)
+    if inner is not None:
+        _require_encodable(inner, where)
+        return
+    origin, args = get_origin(annotation), get_args(annotation)
+    if origin is tuple and len(args) == 2 and args[1] is Ellipsis:
+        _require_encodable(args[0], f"{where}[]")
+        return
+    if origin is tuple and args and Ellipsis not in args:
+        for index, arg in enumerate(args):
+            _require_encodable(arg, f"{where}[{index}]")
+        return
+    if origin is None and isinstance(annotation, type):
+        if annotation in _SCALARS or annotation is UUID:
+            return
+        if issubclass(annotation, (Enum, BaseModel)) or dataclasses.is_dataclass(annotation):
+            return
+    raise TypeError(f"{where}: no JSON encoding for field type {annotation!r}")
+
+
+@functools.cache
+def _codec_fields(cls: type) -> tuple[tuple[dataclasses.Field[Any], Any], ...]:
+    """Every field of dataclass `cls` with its resolved annotation, each one
+    already checked encodable."""
+    hints = get_type_hints(cls)
+    resolved = tuple((f, hints[f.name]) for f in dataclasses.fields(cls))
+    for f, annotation in resolved:
+        _require_encodable(annotation, f"{cls.__name__}.{f.name}")
+    return resolved
+
+
+def _encode_value(value: Any, annotation: Any) -> Any:
+    inner = _optional_inner(annotation)
+    if inner is not None:
+        return None if value is None else _encode_value(value, inner)
+    args = get_args(annotation)
+    if get_origin(annotation) is tuple:
+        if args[-1] is Ellipsis:
+            return [_encode_value(item, args[0]) for item in value]
+        return [_encode_value(item, arg) for item, arg in zip(value, args, strict=True)]
+    if annotation is UUID:
+        return str(value)
+    if issubclass(annotation, Enum):
+        return value.value
+    if issubclass(annotation, BaseModel):
+        return value.model_dump(mode="json")
+    if dataclasses.is_dataclass(annotation):
+        return _encode_dataclass(value)
+    return value
+
+
+def _decode_value(data: Any, annotation: Any) -> Any:
+    inner = _optional_inner(annotation)
+    if inner is not None:
+        return None if data is None else _decode_value(data, inner)
+    args = get_args(annotation)
+    if get_origin(annotation) is tuple:
+        if args[-1] is Ellipsis:
+            return tuple(_decode_value(item, args[0]) for item in data)
+        return tuple(_decode_value(item, arg) for item, arg in zip(data, args, strict=True))
+    if annotation is UUID or issubclass(annotation, Enum):
+        return annotation(data)
+    if issubclass(annotation, BaseModel):
+        return annotation.model_validate(data)
+    if dataclasses.is_dataclass(annotation):
+        return _decode_dataclass(annotation, data)
+    return data
+
+
+def _encode_dataclass(obj: Any) -> dict[str, Any]:
+    return {
+        f.name: _encode_value(getattr(obj, f.name), annotation)
+        for f, annotation in _codec_fields(type(obj))
+    }
+
+
+def _decode_dataclass[T](cls: type[T], data: dict[str, Any]) -> T:
+    """`cls` rebuilt from `_encode_dataclass`'s output. A key the row lacks
+    takes the field's dataclass default - rows written before the field
+    existed - and only a field with no default is an error."""
+    kwargs: dict[str, Any] = {}
+    for f, annotation in _codec_fields(cls):
+        if f.name in data:
+            kwargs[f.name] = _decode_value(data[f.name], annotation)
+        elif f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING:
+            raise KeyError(f"{cls.__name__}.{f.name} is missing from the stored row")
+    return cls(**kwargs)
 
 
 def _decision_to_json(decision: Decision) -> dict[str, Any]:
-    return {
-        "kind": decision.kind.value,
-        "player": decision.player,
-        "prompt": decision.prompt,
-        "source": decision.source,
-        "source_id": decision.source_id,
-        "card": str(decision.card) if decision.card is not None else None,
-        "amount": decision.amount,
-        "cards": [str(c) for c in decision.cards],
-        "card_labels": list(decision.card_labels),
-        "moved_label": decision.moved_label,
-        "kept_label": decision.kept_label,
-        "affirmative_is_legal": decision.affirmative_is_legal,
-        "targets": [t.model_dump(mode="json") for t in decision.targets],
-        "target_maximum": decision.target_maximum,
-        "target_minimum": decision.target_minimum,
-        "options": list(decision.options),
-        "exact": decision.exact,
-        "default_cards": (
-            [str(c) for c in decision.default_cards] if decision.default_cards is not None else None
-        ),
-    }
+    return _encode_dataclass(decision)
 
 
 def _decision_from_json(data: dict[str, Any]) -> Decision:
-    default_cards = data.get("default_cards")
-    return Decision(
-        kind=DecisionKind(data["kind"]),
-        player=data["player"],
-        prompt=data["prompt"],
-        source=data.get("source"),
-        source_id=data.get("source_id"),
-        card=UUID(data["card"]) if data.get("card") else None,
-        amount=data.get("amount", 0),
-        cards=tuple(UUID(c) for c in data.get("cards", ())),
-        card_labels=tuple(data.get("card_labels", ())),
-        moved_label=data.get("moved_label", ""),
-        kept_label=data.get("kept_label", ""),
-        affirmative_is_legal=data.get("affirmative_is_legal", True),
-        targets=tuple(TargetRef.model_validate(t) for t in data.get("targets", ())),
-        target_maximum=data.get("target_maximum"),
-        target_minimum=data.get("target_minimum", 0),
-        options=tuple(data.get("options", ())),
-        exact=data.get("exact", True),
-        default_cards=tuple(UUID(c) for c in default_cards) if default_cards is not None else None,
-    )
+    return _decode_dataclass(Decision, data)
 
 
 def _pending_to_json(pending: PendingDecision) -> dict[str, Any]:
-    return {
-        "seq": pending.seq,
-        "decision": _decision_to_json(pending.decision),
-        "rule": pending.rule,
-    }
+    return _encode_dataclass(pending)
 
 
 def _pending_from_json(data: dict[str, Any]) -> PendingDecision:
-    return PendingDecision(
-        seq=data["seq"], decision=_decision_from_json(data["decision"]), rule=data["rule"]
-    )
+    return _decode_dataclass(PendingDecision, data)
 
 
 class PostgresRepository:

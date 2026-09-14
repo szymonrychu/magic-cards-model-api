@@ -303,3 +303,72 @@ def test_exiling_is_refused_not_crashed_for_an_off_battlefield_activation(client
     body = response.json()
     assert body["allowed"] is False
     assert "exile" in body["reason"].lower()
+
+
+# -- a paused activation completes through /decide, then priority passes ---
+
+
+def test_a_paused_sacrifice_cost_activation_completes_through_decide_and_passes(client, game):
+    """The server half of the play UI's auto-pass fix. An activation that
+    names its sacrifice but no target is not refused: the engine asks for the
+    target (`Game.begin_activating` - `targets=None` asks), so the route
+    answers `paused: true` with a `pending_decision` for alice, and nothing is
+    on the stack yet. A `pass-priority` sent at that moment - what `fire()`
+    used to send straight away - is refused, because a decision is still
+    open. Once `/decide` names the target the ability is on the stack, and
+    only then does alice's pass go through.
+
+    (Naming no sacrifice at all is refused outright, not paused - see
+    `test_goblin_bombardment_refuses_with_the_engines_own_reason_when_none_is_named`
+    above.)"""
+    uids = seats_for(game)
+    rig = stock_bombardment_board(client, game)
+
+    paused = client.post(
+        f"/api/games/{game}/actions/activate",
+        json={
+            "player": "alice",
+            "card_id": rig["bombardment_id"],
+            "ability_index": 0,
+            "sacrificing": [rig["bears_id"]],
+        },
+    ).json()
+    assert paused.get("paused") is True, paused
+    assert paused["allowed"] is None, paused
+    pending = paused["pending_decision"]
+    assert pending["player"] == "alice", pending
+    assert pending["kind"] == "choose_targets", pending
+    assert state(client, game)["stack"] == [], "a paused activation is not on the stack yet"
+
+    premature = client.post(
+        f"/api/games/{game}/actions/pass-priority",
+        params={"uid": uids["alice"]},
+        json={"player": "alice"},
+    )
+    assert premature.status_code != 200 or premature.json().get("allowed") is not True, (
+        premature.text
+    )
+
+    answered = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "targets": ["bob"]},
+    )
+    assert answered.status_code == 200, answered.text
+    done = answered.json()
+    assert done["accepted"] is True, done
+    assert done.get("paused") is not True, done
+
+    mid = state(client, game)
+    assert mid["pending_decision"] is None, mid["pending_decision"]
+    assert mid["stack"][0]["kind"] == "ability"
+    assert mid["stack"][0]["name"] == "Goblin Bombardment"
+
+    passed = client.post(
+        f"/api/games/{game}/actions/pass-priority",
+        params={"uid": uids["alice"]},
+        json={"player": "alice"},
+    )
+    assert passed.status_code == 200, passed.text
+    assert passed.json().get("allowed") is not False, passed.json()
+    assert state(client, game)["priority_holder"] != "alice"
