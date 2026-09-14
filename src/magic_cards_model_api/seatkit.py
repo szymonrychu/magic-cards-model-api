@@ -1482,7 +1482,14 @@ class Seat:
         except httpx.HTTPError as exc:
             return f"could not reach the API: {exc}"
 
-    def call_json(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+    def call_json(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        capture_draft: bool = True,
+    ) -> Any:
         """Like `call`, but the parsed JSON body rather than text - what
         `run_action` needs to inspect whether an action was refused.
 
@@ -1509,8 +1516,19 @@ class Seat:
         `_advise_answer` - asked before `expected_seq` is folded in, so the
         body recorded in the proposal is the one the human's own client will
         post rather than one naming a board position somebody else read.
+
+        `capture_draft` (S2 A6 review fix 3, 2026-09-14): whether this call
+        may be captured into a `stage_advice`-armed empty window rather than
+        proposed right away. Defaults true - every ordinary caller (an MCP
+        action tool, a CLI action command) IS the "next committing call" a
+        staged window is waiting to be filled in by. `playscripts.runtime.
+        _advise` passes `False`: an armed script firing is a proposal for
+        *right now*, not the future window a draft is staged toward, and
+        capturing it there swallowed the script's own move - the runtime read
+        the resulting `{"drafted": True, ...}` shape as a refusal, since it
+        never carries the `proposed` key a real proposal answer does.
         """
-        advised = self._advise_answer(method, path, body)
+        advised = self._advise_answer(method, path, body, capture_draft=capture_draft)
         if advised is not None:
             return advised[1]
         body = self._with_expected_seq(method, body)
@@ -1551,7 +1569,7 @@ class Seat:
         return response.status_code, parsed
 
     def _advise_answer(
-        self, method: str, path: str, body: dict[str, Any] | None
+        self, method: str, path: str, body: dict[str, Any] | None, *, capture_draft: bool = True
     ) -> tuple[int | None, Any] | None:
         """`None` when this request may be sent as it is; `(status, answer)`
         when this is an advise `Seat` making a committing call, in which case
@@ -1586,16 +1604,20 @@ class Seat:
         **S2 A6: a call that reaches this far is captured as a draft instead
         of posted, when `stage_advice` has armed a window for this uid and no
         committing call has filled it in yet** (`self._advice_drafts[self.
-        uid]`, present with `"action"` still `None`). Everything above this -
-        the passthrough suffixes, the `dry_run` probe, the overlong-rationale
-        refusal - runs exactly as it does for an ordinary proposal, so a
-        refused probe or an overlong rationale still leaves the arm untouched
-        for the advisor to try again. Only the final step changes: instead of
-        `POST .../advice`, the ready-to-post body, the probe's own outcome and
-        a signature of the opponent's board right now are stored, and this
-        returns "staged", not "proposed" - see `resolve_advice_draft`, which
-        is what later decides whether that draft ever becomes a real
-        proposal.
+        uid]`, present with `"action"` still `None`) **and `capture_draft` is
+        true** (review fix 3, 2026-09-14: `playscripts.runtime._advise`
+        passes `False` - an armed script's own proposal is for right now, not
+        the later window a draft is staged toward, and capturing it there
+        would swallow the script's move instead of posting it). Everything
+        above this - the passthrough suffixes, the `dry_run` probe, the
+        overlong-rationale refusal - runs exactly as it does for an ordinary
+        proposal, so a refused probe or an overlong rationale still leaves
+        the arm untouched for the advisor to try again. Only the final step
+        changes: instead of `POST .../advice`, the ready-to-post body, the
+        probe's own outcome and a signature of the opponent's board right now
+        are stored, and this returns "staged", not "proposed" - see
+        `resolve_advice_draft`, which is what later decides whether that
+        draft ever becomes a real proposal.
 
         The `/advice` POST itself can be refused (a blank `reasoning`, most
         likely - the route requires the advisor's own words), and that
@@ -1637,7 +1659,7 @@ class Seat:
         ready = {key: value for key, value in sending.items() if key != "dry_run"}
         ready["player"] = self.player
         armed = self._advice_drafts.get(self.uid)
-        if armed is not None and armed.get("action") is None:
+        if capture_draft and armed is not None and armed.get("action") is None:
             # S2 A6: `stage_advice` armed a window and this is the next
             # committing call since - capture it as a draft rather than
             # posting. `recent_log` both names the ledger position this draft
