@@ -377,6 +377,7 @@
   "stack": [],
   "step": "mulligan",
   "turn_number": 0,
+  "turns_taken": 0,
   "winner": null,
   "you": "alice"
 }

@@ -215,6 +215,15 @@ PROTOCOL_VERSION = "seatkit-20"
 #: turn into a loud PROTOCOL MISMATCH rather than a seat quietly starved of a
 #: signal a newer build's own prose now tells it to expect.
 #:
+#: Also folded into `seatkit-20`, not a second bump (S1 review fix 3): the
+#: state view carries `turns_taken` beside `turn_number` - the engine's own
+#: count of every turn including extra ones (CR 500.7), which `turn_number`
+#: (rounds of the table) deliberately does not move for. `scripts`' own
+#: already-ran suppression now keys on it, so a script run once and reached
+#: again on an extra turn at the same step is correctly re-offered rather
+#: than wrongly treated as the same position. A stale process reads the new
+#: key as extra, harmless noise; no existing field moved.
+#:
 #: `seatkit-19` is the play-script DSL's version, with battle 8's cast-during-
 #: resolution funnel (z1) and the buddy rationale cap (bd1) folded in: a
 #: **response** shape change plus **additive requests** and two new tools,

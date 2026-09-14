@@ -1484,18 +1484,39 @@ def _post_run(ctx: _Context, body: dict[str, Any]) -> Any:
 #: `corpora[key]` like a real corpus (S1 review finding 3) so a scriptless
 #: seat's every later call skips the HTTP GET too, not just a registered
 #: one's. `_UNREGISTERED_REASON` is carried alongside it so a cache hit and a
-#: cache miss refuse in the same words.
+#: cache miss refuse in the same words. `_UNREGISTERED_AT_KEY` is the
+#: `time.monotonic()` reading taken when the marker was written; a cache hit
+#: is trusted only for `_UNREGISTERED_TTL_SECONDS` past that (S1 review
+#: fix 1) - see `_UNREGISTERED_TTL_SECONDS`'s own docstring for why this must
+#: expire at all.
 _UNREGISTERED_MARKER = "_unregistered"
 _UNREGISTERED_REASON = "_unregistered_reason"
+_UNREGISTERED_AT_KEY = "_unregistered_at"
 
-#: `script_tools`' own private bookkeeping keys, stashed onto the very corpus
-#: dict `_corpus` caches (never a key the registered corpus itself carries -
-#: none of its real fields start with `_`) - the archetype/inputs a seat last
-#: asserted to `run_script`/`list_scripts` and the scripts this process has
-#: already run. A `fresh=True` read (every `resume`d run) replaces the cached
-#: dict wholesale; without this, that refresh would silently drop the hint's
-#: memory back to "nothing asserted yet" (S1 review finding 4d).
-_PRIVATE_KEY_PREFIX = "_"
+#: How long a genuine 404 ("nothing registered under this uid") is trusted
+#: before the next call re-checks with a live GET, monotonic seconds (S1
+#: review fix 1). A seat Job can start before its own corpus PUT has landed,
+#: or race a retry of it; a permanent negative cache meant that seat never
+#: saw scripts for the rest of the game once the very first read lost that
+#: race. Only a genuine 404 sets `_UNREGISTERED_MARKER` at all (see below) -
+#: a 5xx or an ambiguous timeout is never cached, so this TTL only bounds how
+#: long a *real* "not registered" answer is trusted before asking again.
+_UNREGISTERED_TTL_SECONDS = 30.0
+
+#: Seat bookkeeping `_corpus`'s `fresh=True` refresh (every `resume`d run)
+#: carries forward from the corpus dict it is about to replace - an explicit
+#: allow-list, never every underscore-prefixed key (S1 review fix 2). The
+#: old blanket rule carried forward *any* private key, `script_tools.
+#: _PLAYS_CACHE_KEY` included - a derived cache of the scripts in the *old*
+#: corpus - so a seat that re-registered a different corpus and then resumed
+#: a run kept serving plays the server no longer had registered. These three
+#: names mirror `script_tools._LAST_ASSERTED_KEY`, `_LAST_INPUTS_KEY` and
+#: `_RECENT_RUNS_KEY` by hand: `script_tools` already imports this module, so
+#: importing the names themselves back here would be circular. Keep this set
+#: in sync with those three by hand if they ever change.
+_CARRIED_BOOKKEEPING_KEYS = frozenset(
+    {"_last_asserted_archetype", "_last_supplied_inputs", "_recent_runs"}
+)
 
 
 def _corpus(
@@ -1505,18 +1526,36 @@ def _corpus(
     if not fresh and key in corpora:
         cached = corpora[key]
         if cached.get(_UNREGISTERED_MARKER):
-            return _no_corpus_refusal(str(cached.get(_UNREGISTERED_REASON)))
-        return cached
+            cached_at = cached.get(_UNREGISTERED_AT_KEY)
+            age = time.monotonic() - cached_at if isinstance(cached_at, int | float) else None
+            if age is not None and age < _UNREGISTERED_TTL_SECONDS:
+                return _no_corpus_refusal(str(cached.get(_UNREGISTERED_REASON)))
+            # The TTL has passed: fall through to a live GET rather than
+            # trust a "not registered" answer that may be stale by now.
+        else:
+            return cached
     previous = corpora.get(key)
-    read = seat.call_json("GET", f"/api/games/{key[0]}/seats/{seat.uid}/scripts")
+    path = f"/api/games/{key[0]}/seats/{seat.uid}/scripts"
+    status, read = seat._request_json("GET", path, None)
     if not isinstance(read, dict) or not isinstance(read.get("scripts"), list):
         reason = read.get("reason") if isinstance(read, dict) else read
-        corpora[key] = {_UNREGISTERED_MARKER: True, _UNREGISTERED_REASON: str(reason)}
+        if status == 404:
+            # A genuine "nothing registered under this uid" - the only
+            # outcome worth caching at all. A 5xx or an ambiguous timeout
+            # (`status` is `None`) is not this seat's own fact about
+            # itself, it is the transport's, and caching it would starve
+            # every later call of a corpus that really is registered
+            # (S1 review fix 1).
+            corpora[key] = {
+                _UNREGISTERED_MARKER: True,
+                _UNREGISTERED_REASON: str(reason),
+                _UNREGISTERED_AT_KEY: time.monotonic(),
+            }
         return _no_corpus_refusal(str(reason))
     if isinstance(previous, dict) and not previous.get(_UNREGISTERED_MARKER):
-        for name, value in previous.items():
-            if name.startswith(_PRIVATE_KEY_PREFIX) and name not in read:
-                read[name] = value
+        for name in _CARRIED_BOOKKEEPING_KEYS:
+            if name in previous and name not in read:
+                read[name] = previous[name]
     corpora[key] = read
     return read
 

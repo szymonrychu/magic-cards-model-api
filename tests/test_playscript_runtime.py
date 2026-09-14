@@ -359,6 +359,95 @@ def test_no_registered_corpus_is_cached_after_the_first_404(
     assert len(reads) == 1, reads
 
 
+def test_a_5xx_reading_the_corpus_is_not_cached_and_the_next_call_succeeds(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review fix 1: a transient 5xx reading the corpus used to be cached
+    exactly like a genuine 404 - every later run for that seat read the
+    stale "not registered" refusal for the rest of the game, even once the
+    corpus GET itself recovered. A 5xx must never be cached; the very next
+    call re-checks and finds the real corpus."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+
+    hit = {"n": 0}
+
+    def answer(method: str, path: str, body: Any) -> Any:
+        if method == "GET" and path.endswith("/scripts") and hit["n"] == 0:
+            hit["n"] += 1
+            return FakeResponse(500, {"detail": "db hiccup"})
+        return None
+
+    first, first_hook = hooked_seat(seats, alice, answer=answer)
+    failed = run_script(first, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+    assert failed.script_exit is not None
+    assert failed.script_exit.exit is Exit.REFUSED, failed.to_dict()
+    assert failed.script_exit.refusal_source == "server"
+
+    second, second_hook = hooked_seat(seats, alice)
+    result = run_script(second, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert result.script_exit is not None
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    reads = [
+        path
+        for hook in (first_hook, second_hook)
+        for method, path, _ in hook.sent
+        if method == "GET" and path.endswith("/scripts")
+    ]
+    assert len(reads) == 2, reads
+
+
+def test_a_404_corpus_read_expires_after_the_ttl_and_sees_a_late_registration(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review fix 1: the "not registered" cache used to be permanent - a
+    seat Job started before its own corpus PUT landed, or racing a retry,
+    never saw a later registration for the rest of the game. The negative
+    cache now expires after `runtime._UNREGISTERED_TTL_SECONDS`: within the
+    TTL a 404 is still served from cache (one GET), but the call after the
+    TTL re-checks and sees the late registration."""
+    alice = seat_uid(board, "alice")
+    seats = wired(monkeypatch, board)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: clock["t"])
+
+    first, first_hook = hooked_seat(seats, alice)
+    first_result = run_script(
+        first, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora
+    )
+    assert first_result.script_exit is not None
+    assert first_result.script_exit.exit is Exit.REFUSED, first_result.to_dict()
+
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+
+    # Still within the TTL: the stale 404 is served from cache, no new GET.
+    second, second_hook = hooked_seat(seats, alice)
+    still_refused = run_script(
+        second, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora
+    )
+    assert still_refused.script_exit is not None
+    assert still_refused.script_exit.exit is Exit.REFUSED, still_refused.to_dict()
+
+    clock["t"] += runtime._UNREGISTERED_TTL_SECONDS + 1
+
+    third, third_hook = hooked_seat(seats, alice)
+    result = run_script(third, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert result.script_exit is not None
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    reads = [
+        path
+        for hook in (first_hook, second_hook, third_hook)
+        for method, path, _ in hook.sent
+        if method == "GET" and path.endswith("/scripts")
+    ]
+    assert len(reads) == 2, reads
+
+
 def test_a_fresh_corpus_refresh_preserves_the_hints_own_bookkeeping(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -383,6 +472,32 @@ def test_a_fresh_corpus_refresh_preserves_the_hints_own_bookkeeping(
     assert refreshed["_last_asserted_archetype"] == "dimir-frog"
     assert refreshed["_last_supplied_inputs"] == {"prefer_tempo": True}
     assert refreshed["_recent_runs"] == [["drop", 3, "precombat_main"]]
+
+
+def test_a_fresh_corpus_refresh_drops_the_stale_normalised_plays_cache(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review fix 2: `_corpus(fresh=True)` used to carry forward *every*
+    underscore-prefixed key from the previous cached dict, including
+    `script_tools._PLAYS_CACHE_KEY` - a derived cache of the *old* corpus's
+    scripts. After a re-registration, a fresh refresh must drop it (never
+    carry it forward) so `script_tools._plays` recomputes against the corpus
+    actually just read, rather than silently serving plays that are no
+    longer registered."""
+    from magic_cards_model_api.playscripts import script_tools
+
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("old-play"))
+    seats = wired(monkeypatch, board)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    corpus = runtime._corpus(seat, seats.script_corpora, fresh=False)
+    corpus[script_tools._PLAYS_CACHE_KEY] = "stale-cache-sentinel"
+
+    register(client, board, alice, land_script("new-play"))
+    refreshed = runtime._corpus(seat, seats.script_corpora, fresh=True)
+
+    assert script_tools._PLAYS_CACHE_KEY not in refreshed, refreshed
 
 
 def test_moves_re_arm_expected_seq_and_hold_priority_between_them(
