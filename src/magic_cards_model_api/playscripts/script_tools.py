@@ -552,10 +552,26 @@ def _record_run(
     process re-suggesting, to itself, a script that just collided at this
     exact position - it keeps that suggestion suppressed regardless of
     whether the ledger later frees the slot up once the run it collided
-    with is itself released. See `releases_slot`'s own docstring."""
+    with is itself released. See `releases_slot`'s own docstring.
+
+    A chain locks every segment that ran, not only `script_id` - the
+    originally-invoked parent (S2 arming re-review finding 4): a chain
+    A->B->C that this process ran must not leave B and C still offered as
+    `applicable`/`armable` (or still eligible for `arming._judge_round`'s
+    own conflict check, which reads this same key) merely because
+    `run_script` was only ever asked for A by name. `exit_block['scripts_run']`
+    (`runtime.py`'s own `_Run.scripts_run`, threaded onto every chain hop)
+    names every segment in order, A first; every id there EXCEPT THE LAST
+    made real moves by construction - `_next` only ever chains a completed
+    run into its next script once every one of ITS OWN moves has already
+    sent, so a segment's mere presence ahead of the trailing one is its own
+    proof of that. Only the trailing id's real move count is uncertain, and
+    `moves_done` (the whole `exit_block`'s own - always the trailing
+    segment's, per `releases_slot`'s own docstring) is exactly that count."""
     moves_done = exit_block.get("moves_done") or 0
     exit_name = exit_block.get("exit")
-    chained = len(exit_block.get("scripts_run") or []) > 1
+    scripts_run = list(exit_block.get("scripts_run") or [])
+    chained = len(scripts_run) > 1
     if releases_slot(
         moves_done, exit_name, advise=advise, chained=chained, already_ran_releases=False
     ):
@@ -563,10 +579,17 @@ def _record_run(
     corpus = runtime._corpus(seat, corpora, fresh=False)
     if isinstance(corpus, runtime.ScriptExit):
         return
+    ran_ids = [script_id]
+    if chained:
+        ran_ids += scripts_run[1:-1]
+        if moves_done > 0:
+            ran_ids.append(scripts_run[-1])
     recent = list(corpus.get(_RECENT_RUNS_KEY) or [])
-    entry = [script_id, _turn_position(state), state.get("step")]
-    if entry not in recent:
-        recent.append(entry)
+    position = (_turn_position(state), state.get("step"))
+    for ran_id in ran_ids:
+        entry = [ran_id, position[0], position[1]]
+        if entry not in recent:
+            recent.append(entry)
     corpus[_RECENT_RUNS_KEY] = recent
 
 

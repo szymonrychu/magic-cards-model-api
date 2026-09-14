@@ -573,6 +573,101 @@ def test_record_run_locks_a_chained_run_even_when_the_last_segment_made_no_moves
     assert corpora[key][script_tools._RECENT_RUNS_KEY] == [["drop", 1, "precombat_main"]]
 
 
+def test_record_run_locks_every_chain_segment_that_made_moves_not_only_the_parent(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 4: `_record_run` only ever locked
+    `script_id`, the originally-invoked script (`run_script`'s own `script`
+    argument, the chain's PARENT) - a chain A->B->C left B and C still
+    offered as `applicable`/`armable` (and still eligible for `arming.
+    _judge_round`'s own already-run conflict check, which reads this same
+    `_RECENT_RUNS_KEY`), even though this process had already run them once
+    at this exact position, purely because nobody had ever asked for B or C
+    by name.
+
+    A chain A->B->C: every id strictly before the trailing one made real
+    moves by construction - `_next` (runtime.py) only ever chains a
+    completed run into its next script once every one of THAT run's own
+    moves has already sent - so B, the middle segment, must be locked
+    unconditionally, together with the parent A the existing code already
+    locked. C, the trailing segment, is locked only when the whole
+    `exit_block`'s own `moves_done` (always the trailing segment's, per
+    `releases_slot`'s own docstring) is greater than zero."""
+    from magic_cards_model_api.playscripts import script_tools
+
+    seat = _FakeSeatForRecordRun("seat-uid", "game-1")
+    corpora: dict[tuple[str, str], dict[str, Any]] = {(seat.game_id(), seat.uid): {}}
+    state = {"turns_taken": 1, "turn_number": 1, "step": "precombat_main"}
+    key = (seat.game_id(), seat.uid)
+
+    c_made_a_move = {
+        "exit": "chain_complete",
+        "moves_done": 1,
+        "scripts_run": ["A", "B", "C"],
+    }
+    script_tools._record_run(seat, corpora, "A", state, c_made_a_move, advise=False)  # type: ignore[arg-type]
+
+    locked = {entry[0] for entry in corpora[key][script_tools._RECENT_RUNS_KEY]}
+    assert locked == {"A", "B", "C"}, "B - the middle segment - must lock even though C also did"
+
+
+def test_record_run_locks_the_middle_chain_segment_even_when_the_tail_made_no_moves(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The counterweight: C (the trailing segment) made no moves of its own
+    (refused immediately after the chain hand-off) and must stay unlocked -
+    but B, the middle segment, still made real moves reaching C at all, and
+    must still lock alongside the parent A."""
+    from magic_cards_model_api.playscripts import script_tools
+
+    seat = _FakeSeatForRecordRun("seat-uid", "game-1")
+    corpora: dict[tuple[str, str], dict[str, Any]] = {(seat.game_id(), seat.uid): {}}
+    state = {"turns_taken": 1, "turn_number": 1, "step": "precombat_main"}
+    key = (seat.game_id(), seat.uid)
+
+    c_made_no_move = {
+        "exit": "refused",
+        "moves_done": 0,
+        "scripts_run": ["A", "B", "C"],
+    }
+    script_tools._record_run(seat, corpora, "A", state, c_made_no_move, advise=False)  # type: ignore[arg-type]
+
+    locked = {entry[0] for entry in corpora[key][script_tools._RECENT_RUNS_KEY]}
+    assert locked == {"A", "B"}, "C never moved and must stay unlocked; B still must lock"
+
+
+def test_a_chain_child_this_process_already_ran_is_not_reoffered_or_arm_judged(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of the same fix, through the real hint and
+    `arming._judge_round`: once a chain has run B as part of A's own chain,
+    B - separately registered under its own id too - must neither be
+    offered again by `applicable_hint` nor count toward a conflict in
+    `_judge_round`'s own judging, at this exact position."""
+    from magic_cards_model_api.playscripts import arming, script_tools
+
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    state = {"turns_taken": 1, "turn_number": 1, "step": "precombat_main"}
+    seats = wired(monkeypatch, game)
+    seat = seats.seat_for(alice)
+    corpora = seats.script_corpora
+    register(client, game, alice, land_script("A"), land_script("B"))
+    add_card(client, game, "Island", "alice", "hand")
+
+    chained = {"exit": "chain_complete", "moves_done": 1, "scripts_run": ["A", "B"]}
+    script_tools._record_run(seat, corpora, "A", state, chained, advise=False)
+
+    judged, _ = arming._judge_round(seat, corpora, ["A", "B"], {script_tools.BUILTIN_INPUT: "*"})
+
+    assert judged["B"]["applies"] is False
+    assert judged["B"]["failing_condition"] == {
+        "list": "already_run_this_step",
+        "index": None,
+        "seen": (1, "precombat_main"),
+    }
+
+
 def test_the_hint_never_computes_static_conflicts(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
