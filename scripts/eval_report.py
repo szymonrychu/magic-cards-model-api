@@ -90,6 +90,7 @@ import statistics
 import sys
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -181,6 +182,11 @@ GAME_OVER_ACTION = "game_over"
 #: that says the whole chain ran.
 SCRIPT_RUN_ACTION = "script_run"
 CHAIN_COMPLETE_EXIT = "chain_complete"
+
+#: `audit.ADVICE_ACTION`, named locally like every other action constant
+#: above rather than imported - this module reads `audit`'s rows, never its
+#: code.
+ADVICE_ACTION = "advice"
 
 
 # -- the ledger --------------------------------------------------------------
@@ -322,6 +328,192 @@ def _players_from_rows(rows: Iterable[dict[str, Any]]) -> list[str]:
     return named
 
 
+# -- turn instances and latency (S2 A7) ---------------------------------------
+
+
+def _parse_ts(payload: Mapping[str, Any]) -> datetime | None:
+    """`payload["ts"]` as a `datetime`, or `None` for a row with no
+    parseable timestamp - never raised, since a ledger row with a malformed
+    or absent `ts` must drop out of a latency measurement rather than crash
+    the whole report."""
+    ts = payload.get("ts")
+    if not isinstance(ts, str):
+        return None
+    try:
+        return datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+
+
+@dataclass
+class _TurnInstance:
+    """One player-turn's rows, oldest first - see `_turn_instances`."""
+
+    active_player: str
+    rows: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _turn_instances(payloads: Sequence[dict[str, Any]]) -> list[_TurnInstance]:
+    """One game's rows split into turn instances - one per player-turn
+    actually begun (CR 500.1), oldest first - the unit `own_turn_first_
+    action_ms` measures over.
+
+    **Identity.** A row's own `active_player`/`turns_taken` - what `audit.
+    record` stamps at *write* time - is the primary identity: `turns_taken`
+    (`TurnMachine.turns_taken`) goes up once per turn that actually begins,
+    extra turns (CR 500.7) included, unlike `turn_number` (CR 500.1's count
+    of rounds of the table), which CR 500.7 leaves alone for one. So an
+    ordinary turn and an extra turn granted to the same seat right after it
+    share one `(turn_number, active_player)` pair but never one
+    `turns_taken`, and grouping on `(active_player, turns_taken)` is what
+    tells the two apart - the plain pair alone cannot, since it is
+    identical for both.
+
+    A `plan_declared` row planning ahead (`for_turn: "next"`,
+    `schemas.DeclarePlanIn`) is written *during the other seat's turn*, for
+    a turn that has not started yet. Its own `active_player`/`turns_taken`
+    are still the physical, write-time ones - the *target* turn instead
+    lives in `detail.turns_taken` (`app.py`'s `declare_plan` docstring
+    spells out the split) - so grouping on the write-time pair keeps a
+    plan-ahead row out of the seat's own future turn: it lands in the turn
+    it was actually written in, same as everything else.
+
+    **Old rows.** A row recorded before this stamp existed carries no
+    `turns_taken` at all, and falls back to the `(turn_number,
+    active_player)` pair - the grouping every row used before the stamp.
+    This is approximate for exactly the case above: an old ledger's own
+    extra turn, sharing its ordinary turn's pair, still collapses into it,
+    since the pair is all a row that old carries. A ledger with the stamp
+    resolves that case correctly; one without it reads as it always did.
+
+    **What is dropped.** The pregame (`turn_number` 0 - `audit.record`'s own
+    docstring on why pregame carries no phase applies equally here) is not
+    one of a seat's own turns and is never one of these instances; counting
+    it would attribute an opening-hand mulligan decision to "the seat's
+    first turn" latency, which it is not answering. A row that predates the
+    `active_player` stamp and carries neither signal cannot be placed in
+    any instance at all and is dropped rather than guessed at from
+    `detail.player` - a row an opponent's own pass or step also carries a
+    `player`-shaped detail on, so that field is not a safe stand-in for
+    whose turn it was.
+    """
+    groups: dict[Any, _TurnInstance] = {}
+    order: list[Any] = []
+    for payload in payloads:
+        turn_number, active = payload.get("turn"), payload.get("active_player")
+        if not isinstance(turn_number, int) or turn_number < 1 or not isinstance(active, str):
+            continue  # pregame, or a row with no turn-identity signal at all
+        turns_taken = payload.get("turns_taken")
+        key: Any = (
+            ("stamped", active, turns_taken)
+            if isinstance(turns_taken, int)
+            else ("pair", turn_number, active)
+        )
+        if key not in groups:
+            groups[key] = _TurnInstance(active_player=active)
+            order.append(key)
+        groups[key].rows.append(payload)
+    return [groups[key] for key in order]
+
+
+def _ms_summary(values: Sequence[float]) -> dict[str, Any]:
+    """`{p50, max, n}` over a list of millisecond durations - `None`/`None`/0
+    for an empty one, so an eval run with nothing to measure yet renders
+    cleanly instead of raising or printing a fabricated zero."""
+    if not values:
+        return {"p50": None, "max": None, "n": 0}
+    return {
+        "p50": round(statistics.median(values), 1),
+        "max": round(max(values), 1),
+        "n": len(values),
+    }
+
+
+def _own_turn_latencies(payloads: Sequence[dict[str, Any]]) -> dict[str, list[float]]:
+    """`{seat: [own_turn_first_action_ms, ...]}` for one game.
+
+    Per turn instance (`_turn_instances`) whose `active_player` is that
+    seat: the time from the instance's own first row (oldest first, so
+    `rows[0]`) to the first row in it where `detail.player` is that same
+    seat - any action, plan, or pass, exactly as the metric is specified,
+    which is deliberately wider than `PLAY_ACTIONS` (a `plan_declared` row
+    filed *in* the seat's own turn counts; one planning ahead from the
+    other seat's turn is never in this instance to begin with - see
+    `_turn_instances`). A turn instance with no parseable first-row
+    timestamp, or in which the seat never has a row of its own (the turn
+    ended before it acted at all - a concession, say), contributes nothing
+    rather than a fabricated latency.
+    """
+    out: dict[str, list[float]] = {}
+    for instance in _turn_instances(payloads):
+        first_ts = _parse_ts(instance.rows[0])
+        if first_ts is None:
+            continue
+        own_ts = next(
+            (
+                parsed
+                for r in instance.rows
+                if (r.get("detail") or {}).get("player") == instance.active_player
+                and (parsed := _parse_ts(r)) is not None
+            ),
+            None,
+        )
+        if own_ts is None:
+            continue
+        latency_ms = (own_ts - first_ts).total_seconds() * 1000.0
+        out.setdefault(instance.active_player, []).append(latency_ms)
+    return out
+
+
+def _advice_latencies(
+    payloads: Sequence[dict[str, Any]],
+) -> dict[str, tuple[list[float], list[float]]]:
+    """`{seat: (drafted_ms, undrafted_ms)}` for one game's `advice` rows.
+
+    Timed from the ledger row that gave the advised seat priority - the row
+    whose own `priority_holder` (stamped on every row, S2 A7) first reads as
+    that seat after a row where it did not, tracked in one forward pass
+    exactly the way `turn`/`active_player` already answer "whose turn" for
+    `_own_turn_latencies`. This is the sound signal `audit.py`'s own S2 A7
+    comment on `priority_holder` argues for over guessing a window from an
+    action's name and outcome: the row already carries the fact.
+
+    A ledger with no `priority_holder` on any row (recorded before S2 A7)
+    never sets `current_holder`, so every `advice` row in it is silently
+    excluded rather than timed against a guess - `_ms_summary`'s `n=0`
+    is the honest report of that.
+
+    `detail.drafted_at_seq` (a sibling S2 task's `AdviceIn.drafted_at_seq`)
+    splits the two buckets: not-`None` is drafted, `None` or absent is
+    undrafted.
+    """
+    drafted: dict[str, list[float]] = {}
+    undrafted: dict[str, list[float]] = {}
+    current_holder: str | None = None
+    holder_since: datetime | None = None
+    for payload in payloads:
+        holder = payload.get("priority_holder")
+        ts = _parse_ts(payload)
+        if isinstance(holder, str) and holder != current_holder:
+            current_holder = holder
+            holder_since = ts
+        if payload.get("action") != ADVICE_ACTION:
+            continue
+        detail = payload.get("detail") or {}
+        player = detail.get("player")
+        if not isinstance(player, str) or ts is None:
+            continue
+        if current_holder != player or holder_since is None:
+            continue
+        latency_ms = (ts - holder_since).total_seconds() * 1000.0
+        bucket = drafted if detail.get("drafted_at_seq") is not None else undrafted
+        bucket.setdefault(player, []).append(latency_ms)
+    return {
+        name: (drafted.get(name, []), undrafted.get(name, []))
+        for name in set(drafted) | set(undrafted)
+    }
+
+
 # -- intervals ---------------------------------------------------------------
 
 
@@ -401,6 +593,9 @@ class _SeatTally:
     unclassified: dict[str, int] = field(default_factory=dict)
     by_invoker: dict[str, int] = field(default_factory=dict)
     armed_fired: int = 0
+    own_turn_first_action_ms: list[float] = field(default_factory=list)
+    advice_drafted_ms: list[float] = field(default_factory=list)
+    advice_undrafted_ms: list[float] = field(default_factory=list)
 
 
 def ending_of(payloads: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
@@ -466,6 +661,14 @@ def build_report(
             unfinished_ids.append(game.game_id)
             edge = (edges or {}).get(game.game_id)
             unfinished_detail[game.game_id] = dict(edge) if edge else {"edge": "unknown"}
+
+        for name, latencies in _own_turn_latencies(payloads).items():
+            if name in seats:
+                seats[name].own_turn_first_action_ms.extend(latencies)
+        for name, (drafted_ms, undrafted_ms) in _advice_latencies(payloads).items():
+            if name in seats:
+                seats[name].advice_drafted_ms.extend(drafted_ms)
+                seats[name].advice_undrafted_ms.extend(undrafted_ms)
 
         for payload in payloads:
             action = str(payload.get("action") or "")
@@ -691,6 +894,19 @@ def _seat_report(tally: _SeatTally) -> dict[str, Any]:
             # moved the board (a seat) or proposed a move (an advisor).
             "armed_fired": tally.armed_fired,
         },
+        # S2 A7: how long the stall this task exists to catch actually took
+        # to happen again, or did not - see `_own_turn_latencies` for what a
+        # "turn" is here and why a plan-ahead row cannot inflate it.
+        "own_turn_first_action_ms": _ms_summary(tally.own_turn_first_action_ms),
+        # S2 A7: how long a human sat on an unactioned proposal, split by
+        # whether it was ever drafted into a real request
+        # (`detail.drafted_at_seq`) - see `_advice_latencies`.
+        "advice": {
+            "latency_ms": {
+                "drafted": _ms_summary(tally.advice_drafted_ms),
+                "undrafted": _ms_summary(tally.advice_undrafted_ms),
+            }
+        },
     }
 
 
@@ -733,6 +949,15 @@ def _rate(rate: Mapping[str, Any], *, unit: str = "") -> str:
         f"{rate['successes']:>4}/{rate['trials']:<4}{unit:<9} obs {point:5.1f}%  "
         f"95% [{low:4.1f}, {high:5.1f}]  +/-{half:4.1f}pp"
     )
+
+
+def _ms(summary: Mapping[str, Any]) -> str:
+    """One `_ms_summary` (`{p50, max, n}`), rendered - "no data" at `n=0`
+    rather than a fabricated 0ms, the same discipline `_rate` applies to a
+    rate with no trials."""
+    if not summary["n"]:
+        return "no data (n=0)"
+    return f"p50 {summary['p50']:.0f}ms  max {summary['max']:.0f}ms  (n={summary['n']})"
 
 
 def _unfinished_reason(edge: Mapping[str, Any] | None) -> str:
@@ -843,6 +1068,10 @@ def render(report: Mapping[str, Any]) -> str:
             lines.append(f"  scripts by invoker {rows}")
         if by_invoker.get("armed"):
             lines.append(f"  armed fired        {scripts_block.get('armed_fired', 0)}")
+        lines.append(f"  own turn 1st action {_ms(seat['own_turn_first_action_ms'])}")
+        advice_latency = seat["advice"]["latency_ms"]
+        lines.append(f"  advice latency (drafted)   {_ms(advice_latency['drafted'])}")
+        lines.append(f"  advice latency (undrafted) {_ms(advice_latency['undrafted'])}")
         lines.append("")
 
     lines.extend(_script_lines(report.get("scripts") or []))
