@@ -376,6 +376,29 @@ PROTOCOL_VERSION = "seatkit-20"
 #: that answer has to say. A pre-bump process reads both the same as any
 #: other extra key it does not recognise yet.
 #:
+#: Also this follow-up, naming four things the opening-plays DSL paragraph
+#: above left implicit rather than moving any shape: the live-together
+#: active cap `too-many-active-for-archetype` (O8, `lint.py`) caps at
+#: `MAX_ACTIVE_PER_ARCHETYPE` (6) how many `priority > 0` plays can be live
+#: together per (deck, archetype key) - the largest subset of that key's own
+#: applying plays no two of which are provably exclusive by `whose_turn`,
+#: `steps` or turn range, never the plain count of plays that apply. A
+#: card's `enters` fact is one of exactly three `EntersState` values:
+#: `"untapped"`, `"tapped"`, `"untapped_if_paid"` (a land that only enters
+#: untapped by paying a cost, e.g. a shock land). `prefer`/`ties` are not
+#: only a `pick`'s: `play_land.card` (`LandCard`) and both `cast.card` and
+#: `activate.source` (`ZonedCard`) carry the same two fields, picking among
+#: tied legal cards the same way a decision's own `pick` does. And
+#: `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search` require a legal target,
+#: not merely a payable cost: a hand card with a mandatory target
+#: and none legal right now (Fatal Push, no creature anywhere) does not
+#: unlock on the strength of the mana alone - at least one of its payable
+#: options must also have a legal candidate for every mandatory target slot.
+#: An X-cost hand card (CR 107.3) never counts as unlocked at all, by any of
+#: the three: `payability_matrix` only ever judges it at X=0, never a real
+#: unlock. A pre-bump process already read all four as ordinary board/answer
+#: content it does not further interpret - nothing here is new on the wire.
+#:
 #: `seatkit-19` is the play-script DSL's version, with battle 8's cast-during-
 #: resolution funnel (z1) and the buddy rationale cap (bd1) folded in: a
 #: **response** shape change plus **additive requests** and two new tools,

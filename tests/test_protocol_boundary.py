@@ -281,3 +281,28 @@ def test_seatkit_20_names_the_arming_facts_unavailable_surfacing() -> None:
     paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
     for term in ("armed_facts_unavailable", "scripts.note", "HypotheticalFactsUnavailable"):
         assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_the_int_agents_dsl_follow_up_gaps() -> None:
+    """int-agents-dsl follow-up (item 2): four things the opening-plays DSL
+    paragraph left implicit - the live-together active cap and its lint
+    code, the three `enters` values, that `prefer`/`ties` are not only a
+    `pick`'s, and that `unlocks*` require a legal target with X-cost cards
+    never counting as unlocked."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in (
+        "too-many-active-for-archetype",
+        "MAX_ACTIVE_PER_ARCHETYPE",
+        "live-together",
+        '"untapped"',
+        '"tapped"',
+        '"untapped_if_paid"',
+        "play_land.card",
+        "cast.card",
+        "activate.source",
+        "legal target",
+        "X-cost",
+    ):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
