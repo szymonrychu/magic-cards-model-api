@@ -626,7 +626,9 @@ def applicable_hint(
             if item["id"] in kept_ids
         ]
         result["armable"] = kept_armable
-        result["arm_call"] = _arm_call_template(seat, kept_ids, asserted, kept_steps)
+        result["arm_call"] = _arm_call_template(
+            seat, kept_ids, asserted, kept_steps, kept_armable[0]["when"], remembered
+        )
     return result
 
 
@@ -717,19 +719,38 @@ def _hint_bounded(
 
 
 def _arm_call_template(
-    seat: Seat, armable_ids: list[str], asserted: str, earliest_steps: list[str]
+    seat: Seat,
+    armable_ids: list[str],
+    asserted: str,
+    earliest_steps: list[str],
+    top_when: dict[str, Any],
+    remembered: dict[str, Any] | None = None,
 ) -> str:
     """A ready-to-use call arming every one of `armable_ids` at once -
     `pass_until(...)` for a seat, `wait_for_priority(...)` for an advisor
-    (advisors are refused `pass_until`)."""
+    (advisors are refused `pass_until`). `top_when` is the highest-priority
+    kept `armable` entry's own `when` - `pass_until`'s destination is one
+    `step`/`whose_turn` pair, so a batch of several armed ids is targeted at
+    the top one's own window, in its own vocabulary
+    (`runtime.WHOSE_TURN_FOR_AUTOPASS`: `when`'s `theirs`/`either` are
+    `pass_until`'s `opponent`/`any`) - never a hardcoded `"mine"`, which sent
+    a `theirs` script's own template straight past the opponent's window and
+    into this seat's own next turn, never matching (S2 review finding 1).
+    `remembered` is this seat's own non-archetype inputs last supplied to
+    `run_script` (S1 finding 4b) - named here too, exactly as `_call_template`
+    already names them for `applicable`, so an armed script whose condition
+    reads one of them does not come back `needs_input` merely because the
+    template left it out."""
     args: dict[str, Any] = {"player_uid": seat.uid}
     if not seat.advise:
         step = min(earliest_steps, key=runtime.AUTOPASS_STEPS.index) if earliest_steps else ""
         args["step"] = step
-        args["whose_turn"] = "mine"
+        args["whose_turn"] = runtime.WHOSE_TURN_FOR_AUTOPASS.get(top_when.get("whose_turn"), "mine")
     args["arm"] = armable_ids
     args["arm_reasoning"] = runtime.REASONING_PLACEHOLDER
     args["opposing_archetype"] = asserted
+    if remembered:
+        args["inputs"] = remembered
     rendered = ", ".join(f"{name}={json.dumps(value)}" for name, value in args.items())
     verb = "wait_for_priority" if seat.advise else "pass_until"
     return f"{verb}({rendered})"

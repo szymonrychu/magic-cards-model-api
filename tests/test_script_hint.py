@@ -792,6 +792,71 @@ def test_advisor_armable_template_uses_wait_for_priority(
     )
 
 
+def test_armable_templates_the_scripts_own_whose_turn_not_always_mine(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 review finding 1: the template used to hardcode `whose_turn="mine"`
+    regardless of the armed script's own `when.whose_turn` - a `theirs`
+    script offered as armable got a `pass_until` that ran straight past the
+    opponent's own window and into this seat's next turn, never matching.
+    Force bob's own upkeep (still his turn, priority elsewhere) so the
+    script's `end_step` `when` is armable - not applying yet - rather than
+    already true."""
+    force_turn_position(game, Step.UPKEEP, "bob")
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script(
+            "theirs-end", when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"}
+        ),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    [entry] = answer["scripts"]["armable"]
+    assert entry["id"] == "theirs-end"
+    assert answer["scripts"]["arm_call"] == (
+        f'pass_until(player_uid="{alice}", step="end_step", whose_turn="opponent", '
+        'arm=["theirs-end"], arm_reasoning="<say why>", opposing_archetype="*")'
+    ), answer["scripts"]["arm_call"]
+
+
+def test_armable_template_carries_the_seats_remembered_inputs(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 review finding 1: `applicable`'s own `call` names the seat's
+    remembered non-archetype inputs (S1 finding 4b) but `arm_call` used to
+    leave them out - an armed script whose condition reads one of them
+    would come back `needs_input` even though the seat had already supplied
+    it once this process."""
+    force_theirs_end_step(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    call_tool(
+        server,
+        "run_script",
+        {
+            "player_uid": alice,
+            "script": "unregistered-seed",
+            "reasoning": REASONING,
+            "inputs": {"prefer_tempo": True},
+        },
+    )
+
+    answer = wait(server, alice)
+
+    assert 'inputs={"prefer_tempo": true}' in answer["scripts"]["arm_call"], answer["scripts"][
+        "arm_call"
+    ]
+
+
 def test_no_extra_state_fetch_computing_armable(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
