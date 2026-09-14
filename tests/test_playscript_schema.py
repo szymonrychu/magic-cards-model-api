@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from magic_cards_model_api.playscripts.schema import (
     AMOUNT_DECISION_KINDS,
+    BASIC_LAND_TYPES,
     CAST_COSTS,
     CODES,
     CONDITION_KINDS,
@@ -345,8 +346,40 @@ def test_no_selector_field_takes_a_card_name():
         "counters",
         "ability_text_has",
         "oracle_has",
+        "searches_for_any",
         "missing_from",
     }
+
+
+# -- O3: searches_for_any -----------------------------------------------------
+
+
+def test_searches_for_any_is_the_five_basic_land_types():
+    assert BASIC_LAND_TYPES == ("Plains", "Island", "Swamp", "Mountain", "Forest")
+
+
+def test_searches_for_any_validates_with_basic_land_type_words():
+    doc = mutate("true.0.select", {"searches_for_any": ["Island", "Swamp"]})
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.true[0].select.searches_for_any == ["Island", "Swamp"]
+
+
+@pytest.mark.parametrize("word", ["Elf", "Wastes", "Eldrazi", "plains"])
+def test_a_word_outside_the_five_basic_land_types_is_malformed(word):
+    doc = mutate("true.0.select", {"searches_for_any": [word]})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_searches_for_any_is_bounded_at_the_five_basic_land_types():
+    doc = mutate("true.0.select", {"searches_for_any": list(BASIC_LAND_TYPES)})
+    assert play_errors(doc) == []
+    over = mutate("true.0.select", {"searches_for_any": [*BASIC_LAND_TYPES, "Plains"]})
+    assert codes(over) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(over)
 
 
 def test_an_input_condition_is_usable_in_true_and_false():

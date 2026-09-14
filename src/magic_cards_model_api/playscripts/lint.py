@@ -123,7 +123,10 @@ MAX_ACTIVE_PER_ARCHETYPE = 6
 PHRASE_MIN_CARDS = 3
 PROSE_KEYS = ("name", "intent")
 PHRASE_KEYS = ("ability_text_has", "oracle_has")
-TYPE_LINE_KEYS = ("types_all", "types_any", "subtypes_any", "supertypes_any")
+#: Fields whose values are drawn from a closed, type-line-like vocabulary
+#: (card names may coincide with a common word here without meaning the
+#: card): the type words and O3's `searches_for_any` land types.
+TYPE_LINE_KEYS = ("types_all", "types_any", "subtypes_any", "supertypes_any", "searches_for_any")
 NUMERIC_KINDS = ("count", "zone_size", "life", "untapped_mana", "turn")
 NEGATED = {
     "eq": "ne",

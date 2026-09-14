@@ -734,6 +734,22 @@
           "$ref": "#/$defs/Comparison",
           "default": null
         },
+        "searches_for_any": {
+          "default": null,
+          "items": {
+            "enum": [
+              "Plains",
+              "Island",
+              "Swamp",
+              "Mountain",
+              "Forest"
+            ],
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Searches For Any",
+          "type": "array"
+        },
         "subtypes_any": {
           "default": null,
           "items": {

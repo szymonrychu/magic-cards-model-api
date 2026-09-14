@@ -32,6 +32,7 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   `supertypes_any`, `colors_any`, `keywords_any` (each 0-15 words);
   `mana_value {op, n}`; `power {op, n}`; `toughness {op, n}`; `tapped`;
   `counters {name, op, n}`; `ability_text_has`; `oracle_has`;
+  `searches_for_any` (0-5 basic land type words);
   `missing_from {zones: [1-7 zone], side: me|opponent, by: subtype|name}`.
 - `colors_any` reads the card's `colors` by name or letter, any case, from a
   closed vocabulary: the five colors and `colorless`. `colorless` (or `C`)
@@ -87,6 +88,22 @@ the draw alike, and an extra turn (CR 500.7) is spliced in without moving it
 at all. A null `turn_number` (pregame) never holds, whatever `op` is. It is a
 `numeric_range` key for never-applicable lint and conflict exclusivity, on the
 same footing as `count`, `zone_size`, `life` and `untapped_mana`.
+
+### `searches_for_any`
+
+A selector field naming 0-5 of the five basic land types (`Plains`, `Island`,
+`Swamp`, `Mountain`, `Forest`; a word outside them is `malformed-play`).
+Parsed from a "search your library for a/an T (or T) card" template found in
+either the candidate's `ability_text_has`-style ability text or its
+`oracle_has`-style oracle text, matched case-insensitively; the candidate
+matches when the template names at least one of the listed types. A
+fetchland's printed oracle text ("Search your library for an Island or Swamp
+card") and a landcycling card's activated ability (CR 702.29e, synthesized by
+the engine even in hand - see `abilities` below) both carry the template. A
+word the template names that is not one of the five (Expedition Map's "a land
+card") contributes nothing, so a generic land search never matches.
+
+- Basic land types: `Plains`, `Island`, `Swamp`, `Mountain`, `Forest`
 
 ### `missing_from`
 

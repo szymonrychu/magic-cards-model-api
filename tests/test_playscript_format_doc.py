@@ -14,6 +14,7 @@ from pathlib import Path
 from magic_cards_model_api.playscripts.runtime import Exit
 from magic_cards_model_api.playscripts.schema import (
     AMOUNT_DECISION_KINDS,
+    BASIC_LAND_TYPES,
     CAST_COSTS,
     CONDITION_KINDS,
     DECISION_KINDS,
@@ -59,6 +60,19 @@ def test_doc_defines_the_turn_condition() -> None:
         "never holds",
     ):
         assert phrase in text
+
+
+def test_doc_defines_searches_for_any_and_names_the_basic_land_types() -> None:
+    text = DOC.read_text()
+    for word in BASIC_LAND_TYPES:
+        assert f"`{word}`" in text
+    assert "`searches_for_any`" in text
+    for phrase in (
+        "search your library for a/an T (or T) card",
+        "Expedition Map",
+        "malformed-play",
+    ):
+        assert phrase in text.split("### `searches_for_any`", 1)[1].split("\n## ", 1)[0]
 
 
 def test_doc_names_every_answerable_decision_kind() -> None:

@@ -19,6 +19,13 @@ card name (design D3):
 - `ability_text_has` reads each `AbilityView.text` (and a stack ability's own
   `text`), `oracle_has` reads `oracle_text` (a double-faced card's face
   text, as above), both as case-insensitive substrings;
+- `searches_for_any` (O3) is parsed from a "search your library for a/an T
+  (or T) card" template in either of those texts, narrowed to the five basic
+  land types (`BASIC_LAND_TYPES`): a fetchland's printed oracle text, or a
+  landcycling card's engine-synthesized ability text - carried on `abilities`
+  even in hand (`off_zone_abilities`). A word the template names outside the
+  five (Expedition Map's "a land card") contributes nothing, so a generic
+  land search never matches it;
 - `missing_from {zones, side, by}` compares the candidate with the cards
   already on that side in those zones, read through `present` (the board
   `conditions.presence` builds from the same redacted view). `by: subtype`
@@ -35,12 +42,23 @@ non-creature's power, a view with no `mana_value`) never matches.
 from __future__ import annotations
 
 import operator
+import re
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from pydantic import BaseModel
 
 SUPERTYPES = frozenset({"basic", "legendary", "ongoing", "snow", "world"})
+#: The five basic land types `searches_for_any` (O3) names.
+BASIC_LAND_TYPES = ("Plains", "Island", "Swamp", "Mountain", "Forest")
+_BASIC_LAND_TYPES_FOLDED = frozenset(word.casefold() for word in BASIC_LAND_TYPES)
+#: The "search your library for a/an T (or T) card" template (only one
+#: article, before the first type named): fetchlands ("an Island or Swamp
+#: card") and typecycling/landcycling's synthesized ability text ("a Forest
+#: card", CR 702.29e) both match it. A word this captures that is not one of
+#: the five basic land types (Expedition Map's "a land card") contributes
+#: nothing to the matched set.
+SEARCH_TEMPLATE = re.compile(r"search your library for an? (\w+)(?: or (\w+))? card", re.I)
 COLOR_LETTERS = {
     "white": "w",
     "blue": "u",
@@ -98,6 +116,22 @@ def _texts(card: dict[str, Any]) -> list[str]:
     if isinstance(card.get("text"), str):
         texts.append(card["text"])
     return texts
+
+
+def _searched_basic_types(card: dict[str, Any], oracle_text: str) -> set[str]:
+    """The basic land types (casefolded) a "search your library for a/an T
+    (or T) card" template in this card's ability or oracle text names -
+    O3's `searches_for_any`. Scanning `_texts` (ability text, which carries
+    the engine's synthesized Landcycling/typecycling text even in hand -
+    `off_zone_abilities`) as well as `oracle_text` (the printed template on a
+    fetchland) covers both shapes."""
+    found: set[str] = set()
+    for text in (*_texts(card), oracle_text):
+        for match in SEARCH_TEMPLATE.finditer(text):
+            for word in match.groups():
+                if word and word.casefold() in _BASIC_LAND_TYPES_FOLDED:
+                    found.add(word.casefold())
+    return found
 
 
 def _face(card: dict[str, Any]) -> dict[str, Any] | None:
@@ -180,5 +214,9 @@ def matches(
             return False
     oracle = str(printed.get("oracle_text") or "").casefold()
     if "oracle_has" in wanted and wanted["oracle_has"].casefold() not in oracle:
+        return False
+    if wanted.get("searches_for_any") and not _folded(wanted["searches_for_any"]) & (
+        _searched_basic_types(card, oracle)
+    ):
         return False
     return "missing_from" not in wanted or _missing(wanted, card, present)

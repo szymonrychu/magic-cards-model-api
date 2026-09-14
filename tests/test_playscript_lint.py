@@ -166,6 +166,27 @@ def test_a_card_name_in_a_type_field_is_refused_when_it_is_not_a_common_type_wor
     assert "card-name-in-field" in error_codes(root)
 
 
+def test_a_basic_land_type_word_on_three_cards_is_not_a_card_name_in_searches_for_any(root):
+    # "Mountain" is a type-line word on 4 cached cards (Mountain, Sacred
+    # Foundry, Blood Crypt, Stomping Ground), the same exemption O3's
+    # searches_for_any gets that types_any/subtypes_any already had.
+    doc = play()
+    doc["false"][1]["select"] = {"searches_for_any": ["Mountain"]}
+    put(root, doc)
+    assert check_report(root) == ([], [])
+
+
+def test_a_basic_land_type_word_in_searches_for_any_is_refused_when_not_a_common_type_word(
+    tmp_path,
+):
+    cards = {k: v for k, v in CARDS.items() if k not in ("Blood Crypt", "Stomping Ground")}
+    root = make_root(tmp_path, cards=cards)
+    doc = play()
+    doc["false"][1]["select"] = {"searches_for_any": ["Mountain"]}
+    put(root, doc)
+    assert "card-name-in-field" in error_codes(root)
+
+
 def test_phrase_too_narrow(root):
     doc = play()
     doc["false"][1]["select"] = {"oracle_has": "deals 3 damage to any target"}

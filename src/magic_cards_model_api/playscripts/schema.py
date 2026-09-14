@@ -47,6 +47,7 @@ from pydantic_core import PydanticCustomError
 
 from ..decisions import ANSWER_FIELD_FOR_KIND, ANSWERABLE_KINDS
 from ..seatkit import AUTOPASS_STEPS
+from .selectors import BASIC_LAND_TYPES
 
 SCHEMA_VERSION = 1
 WILDCARD = "*"
@@ -213,6 +214,12 @@ DecisionKind = Literal[DECISION_KINDS]
 CastCost = Literal[CAST_COSTS]
 SelectorWords = Annotated[list[NonBlank], Field(max_length=MAX_SELECTOR_WORDS)]
 Ties = Literal[TIES]
+#: `searches_for_any` (O3): the five basic land types alone, so a word
+#: outside them (a mechanic, not a land type) is `malformed-play` rather than
+#: silently matching nothing, the way `colors_any` does with an unknown word.
+SearchesForWords = Annotated[
+    list[Literal[BASIC_LAND_TYPES]], Field(max_length=len(BASIC_LAND_TYPES))
+]
 
 
 class _Strict(BaseModel):
@@ -283,6 +290,7 @@ class Selector(_Strict):
     counters: CounterComparison = None
     ability_text_has: NonBlank = None
     oracle_has: NonBlank = None
+    searches_for_any: SearchesForWords = None
     missing_from: MissingFrom = None
 
 
@@ -648,6 +656,7 @@ _ITEM_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "prefer": TypeAdapter(Selector),
     "opposing_archetypes": TypeAdapter(ArchetypeKey),
     "zones": TypeAdapter(Literal[MISSING_FROM_ZONES]),
+    "searches_for_any": TypeAdapter(Literal[BASIC_LAND_TYPES]),
     **{field: TypeAdapter(NonBlank) for field in SELECTOR_WORD_FIELDS},
 }
 _BOUND_TYPES = (

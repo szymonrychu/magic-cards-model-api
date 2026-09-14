@@ -274,6 +274,87 @@ def test_a_double_faced_permanent_reads_its_computed_type_line_and_up_face_text(
     assert matches({"oracle_has": "pay 3 life"}, meadow)
 
 
+# -- searches_for_any (O3) --------------------------------------------------------
+
+FETCH_TEMPLATE = "{T}, Pay 1 life, Sacrifice this land: Search your library for %s card, put it onto the battlefield, then shuffle."
+LANDCYCLING_TEMPLATE = (
+    "Landcycling {G} ({G}, Discard this card: Search your library for %s card, "
+    "reveal it, and put it into your hand. Then shuffle.)"
+)
+
+
+def strand() -> dict[str, Any]:
+    # Flooded Strand: search for a Plains or Island card.
+    return card(
+        "Flooded Strand", type_line="Land", oracle_text=FETCH_TEMPLATE % "a Plains or Island"
+    )
+
+
+def delta() -> dict[str, Any]:
+    # Polluted Delta: search for an Island or Swamp card.
+    return card(
+        "Polluted Delta", type_line="Land", oracle_text=FETCH_TEMPLATE % "an Island or Swamp"
+    )
+
+
+def tarn() -> dict[str, Any]:
+    # Scalding Tarn: search for an Island or Mountain card.
+    return card(
+        "Scalding Tarn", type_line="Land", oracle_text=FETCH_TEMPLATE % "an Island or Mountain"
+    )
+
+
+def generous_ent() -> dict[str, Any]:
+    # Generous Ent's landcycling ability searches for a Forest card, in
+    # hand - the engine synthesizes it off the printed Landcycling keyword
+    # (machines/keywords.py off_zone_abilities), so it is on `abilities`.
+    text = LANDCYCLING_TEMPLATE % "a Forest"
+    return card(
+        "Generous Ent",
+        type_line="Creature — Treefolk",
+        zone="hand",
+        oracle_text=f"Whenever Generous Ent attacks, create a 0/0 green Elemental creature token.\n{text}",
+        abilities=(text,),
+    )
+
+
+def expedition_map() -> dict[str, Any]:
+    # No basic land type is named at all - "a land card" is generic.
+    return card(
+        "Expedition Map",
+        type_line="Artifact",
+        oracle_text=(
+            "{2}, {T}, Sacrifice Expedition Map: Search your library for a land card, "
+            "reveal it, put it into your hand, then shuffle."
+        ),
+    )
+
+
+def test_searches_for_any_matches_dual_fetches():
+    assert matches({"searches_for_any": ["Plains", "Island"]}, strand())
+    assert matches({"searches_for_any": ["Island"]}, strand())
+    assert not matches({"searches_for_any": ["Forest"]}, strand())
+    assert matches({"searches_for_any": ["Swamp"]}, delta())
+    assert matches({"searches_for_any": ["Mountain"]}, tarn())
+
+
+def test_searches_for_any_matches_a_landcycling_ability_in_hand():
+    assert matches({"searches_for_any": ["Forest"]}, generous_ent())
+    assert not matches({"searches_for_any": ["Mountain"]}, generous_ent())
+
+
+def test_searches_for_any_does_not_match_a_generic_land_search():
+    ex_map = expedition_map()
+    for word in ("Plains", "Island", "Swamp", "Mountain", "Forest"):
+        assert not matches({"searches_for_any": [word]}, ex_map)
+
+
+def test_searches_for_any_combines_with_other_fields():
+    selector = {"types_all": ["Land"], "searches_for_any": ["Island"]}
+    assert matches(selector, strand())
+    assert not matches(selector, generous_ent()), "Generous Ent's front face is a Creature"
+
+
 # -- missing_from ----------------------------------------------------------------
 
 TRON = ["Tower", "Mine", "Power-Plant"]

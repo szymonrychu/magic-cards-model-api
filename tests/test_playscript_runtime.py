@@ -2103,6 +2103,62 @@ def test_play_land_ties_any_takes_the_first_by_sorted_name_instead_of_ambiguous(
     assert hook.posts("/actions/play-land")[0]["card_id"] == foundry[0]["id"]
 
 
+def test_an_off_zone_ability_activates_from_the_hand(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O3: "hand views carry that ability" was unverified - proved here
+    against the live serializer with a real card. `list_abilities` reads a
+    zone other than the battlefield through `off_zone_abilities`
+    (`machines/keywords.py`), which synthesizes a Cycling/Landcycling card's
+    activated ability whether or not it is printed - Angelsong's plain
+    Cycling {2} exercises the same code path a landcycling card's
+    `searches_for_any` selector would (O3's own selector-matching tests
+    cover the search-template parsing with fabricated fetch/landcycling
+    text; the live cache carries no landcycling card)."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Angelsong", "alice", "hand")
+    add_card(client, board, "Island", "alice", "battlefield")
+    add_card(client, board, "Island", "alice", "battlefield")
+    before = state(client, board)
+    angelsong = cards_named(before["hands"]["alice"], "Angelsong")[0]
+    cycling = next(a for a in angelsong["abilities"] if "Discard this card" in a["text"])
+    assert cycling["text"] == "{2}, Discard this card: Draw a card."
+
+    script = {
+        "schema_version": 1,
+        "id": "cycle",
+        "name": "Cycle Angelsong",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [
+            {
+                "kind": "activate",
+                "source": {"zone": "hand", "select": {}},
+                "ability_text_has": "Discard this card",
+            }
+        ],
+        "next": [],
+    }
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="cycle", reasoning=REASONING, corpora=seats.script_corpora
+        )
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    (activated,) = hook.posts("/actions/activate")
+    assert activated["player"] == "alice"
+    assert activated["card_id"] == angelsong["id"]
+    assert activated["ability_index"] == cycling["index"]
+    sha8 = runtime.script_sha(script)[:8]
+    assert activated["reasoning"] == f"{REASONING} | script cycle@{sha8} move 1/1 (activate)"
+
+
 def test_the_fetch_sacrifices_its_own_source(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
