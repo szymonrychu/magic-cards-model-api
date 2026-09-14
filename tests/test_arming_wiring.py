@@ -11,6 +11,7 @@ something the wait itself was built to avoid deciding.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
@@ -535,6 +536,94 @@ def test_pass_until_never_fires_on_a_refused_pass(
     assert "armed" not in result
     assert hook.posts("/actions/play-land") == []
     assert started(board) == []
+
+
+# -- finding 7c: an invalid arm request is refused before any wait or pass ----
+
+
+def test_wait_and_arm_refuses_a_blank_arm_reasoning_before_waiting(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 review finding 7: `arm_reasoning` used to be validated only once
+    `arm()` was finally reached, *after* the whole wait had already run -
+    so an invalid arm request still paid for the entire bound. Force bob's
+    turn (nothing here would wake alice on its own) and ask for a long
+    `max_seconds`: a call that actually waited for it would take seconds;
+    a call refused up front returns at once."""
+    alice = seat_uid(game, "alice")
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    started_at = time.monotonic()
+    woken = wait_and_arm(
+        seat,
+        before=None,
+        max_seconds=5.0,
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning="",
+    )
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 1.0, f"waited {elapsed:.2f}s despite the invalid arm_reasoning"
+    assert "armed" not in woken
+    assert woken.get("armed_refusal")
+    assert hook.posts("/actions/play-land") == []
+
+
+def test_pass_until_refuses_a_blank_arm_reasoning_before_any_pass(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="mine",
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning="",
+    )
+
+    assert result["finished"] is True
+    assert "armed" not in result
+    assert result.get("armed_refusal")
+    assert result["passes"] == 0
+    assert hook.posts("/actions/pass-priority") == []
+    assert hook.posts("/actions/play-land") == []
+
+
+def test_pass_until_refuses_disagreeing_opposing_archetype_and_inputs_before_any_pass(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="mine",
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+        opposing_archetype="dimir-frog",
+        inputs={"opposing_archetype": "boros-aggro"},
+    )
+
+    assert result["finished"] is True
+    assert "armed" not in result
+    assert result.get("armed_refusal")
+    assert hook.posts("/actions/pass-priority") == []
 
 
 # -- CLI ----------------------------------------------------------------------

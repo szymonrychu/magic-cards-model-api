@@ -79,6 +79,31 @@ _CONTINUES = frozenset(
 _SURFACE_FIRST = frozenset({Exit.NEEDS_INPUT.value, Exit.INVALID_INPUT.value})
 
 
+def validate_arm_request(
+    arm: list[str],
+    arm_reasoning: str,
+    opposing_archetype: str = "*",
+    inputs: dict[str, Any] | None = None,
+) -> str | None:
+    """The same up-front checks `arm()` itself makes before any fetch - a
+    blank/placeholder `arm_reasoning`, or `opposing_archetype` disagreeing
+    with `inputs` - factored out so a caller that wraps a wait or a pass
+    around arming (`seatkit.wait_and_arm`/`pass_until`) can refuse an
+    invalid arm request before that wait or pass ever runs, not only once
+    `arm()` is finally reached afterward (S2 review finding 7). `None` for
+    an empty `arm` (nothing to validate) or a request that passes."""
+    if not arm:
+        return None
+    if not arm_reasoning or not arm_reasoning.strip():
+        return EMPTY_ARM_REASONING
+    if arm_reasoning.strip() == REASONING_PLACEHOLDER:
+        return PLACEHOLDER_ARM_REASONING
+    supplied = script_tools.merged_inputs(opposing_archetype, inputs)
+    if isinstance(supplied, str):
+        return supplied
+    return None
+
+
 def arm(
     seat: Seat,
     corpora: dict[tuple[str, str], dict[str, Any]],
@@ -102,10 +127,9 @@ def arm(
     `exit`, `moves_done`, `moves_total`, plus whatever else that exit sets."""
     if not arm:
         return None
-    if not arm_reasoning or not arm_reasoning.strip():
-        return EMPTY_ARM_REASONING
-    if arm_reasoning.strip() == REASONING_PLACEHOLDER:
-        return PLACEHOLDER_ARM_REASONING
+    problem = validate_arm_request(arm, arm_reasoning, opposing_archetype, inputs)
+    if problem is not None:
+        return problem
     supplied = script_tools.merged_inputs(opposing_archetype, inputs)
     if isinstance(supplied, str):
         return supplied
@@ -114,6 +138,12 @@ def arm(
     armed_out: list[dict[str, Any]] = []
     conflict: list[str] | None = None
     state: dict[str, Any] | None = None
+    # S2 review finding 7: whether `state` is currently a run's own fresh
+    # read (legitimate to carry whatever it revealed, contents included, as
+    # part of what it actually did) or merely `_judge_round`'s own judging
+    # fetch (paid only to evaluate a hidden-zone condition, never to reveal
+    # one) - the latter must never become this call's own answer.
+    state_from_run = False
     runs = 0
     # S2 review finding 3: one deadline for the whole batch, set once here -
     # each run used to get the *whole* `max_seconds`/`RUN_CAP_SECONDS` again,
@@ -127,6 +157,7 @@ def arm(
         if run_budget <= 0:
             break
         judged, state = _judge_round(seat, corpora, remaining, supplied)
+        state_from_run = False
         applying = [
             script_id for script_id in remaining if judged.get(script_id, {}).get("applies")
         ]
@@ -171,6 +202,7 @@ def arm(
 
         exit_block = result["script_exit"]
         state = result["state"]
+        state_from_run = True
         exit_name = exit_block.get("exit")
         if exit_name in _SURFACE_FIRST:
             armed_out.insert(0, exit_block)
@@ -184,6 +216,12 @@ def arm(
     if conflict is not None:
         out["armed_conflict"] = conflict
     if state is not None:
+        if not state_from_run:
+            state = {
+                key: value
+                for key, value in state.items()
+                if key not in ("library_contents", "sideboard_contents")
+            }
         out["state"] = state
     return out
 
@@ -271,4 +309,5 @@ __all__ = [
     "MAX_ARMED_RUNS",
     "PLACEHOLDER_ARM_REASONING",
     "arm",
+    "validate_arm_request",
 ]

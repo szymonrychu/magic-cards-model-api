@@ -338,6 +338,8 @@ def _judged(
     supplied: dict[str, Any],
     catalog: dict[str, dict[str, Any]],
     warnings: list[lint.PlaysWarning],
+    *,
+    evaluate_conditions: bool = True,
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "id": doc.get("id"),
@@ -375,6 +377,17 @@ def _judged(
             "index": None,
             "seen": (state.get("pending_decision") or {}).get("kind"),
         }
+    elif not evaluate_conditions:
+        # S2 review finding 7: `armable`'s own criteria (priority, archetype,
+        # `when` recurrence, checked above) never need a condition's truth
+        # value - only `applicable` does, and that block is always empty
+        # when this seat does not hold priority (S1 finding 4a). Called
+        # with this off exactly then, so a play whose condition needs
+        # `include=contents` never pays that fetch merely to compute
+        # something nothing here will read; `applies` stays `False`
+        # (unknown, not "checked and failed" - `failing_condition` stays
+        # `None` rather than naming a list never evaluated).
+        pass
     else:
         result = conditions.evaluate(play, state, me, supplied, catalog)
         if result["invalid_input"] is not None:
@@ -509,6 +522,8 @@ def _hint_judged(
     supplied: dict[str, Any],
     catalog: dict[str, dict[str, Any]],
     warnings: list[lint.PlaysWarning],
+    *,
+    evaluate_conditions: bool = True,
 ) -> dict[str, Any]:
     """`_judged`, except a play whose conditions still need `include=contents`
     and which `state` was not fetched with is treated as not applying rather
@@ -518,7 +533,16 @@ def _hint_judged(
     finding 1); this is the defensive fallback for the case even that fetch
     does not settle it."""
     try:
-        return _judged(doc, play, state, me, supplied, catalog, warnings)
+        return _judged(
+            doc,
+            play,
+            state,
+            me,
+            supplied,
+            catalog,
+            warnings,
+            evaluate_conditions=evaluate_conditions,
+        )
     except conditions.ContentsRequired:
         return {
             "id": doc.get("id"),
@@ -604,7 +628,18 @@ def applicable_hint(
     deferred: list[tuple[dict[str, Any], dict[str, Any] | runtime.ScriptExit]] = []
     for doc, play in plays:
         try:
-            entries.append(_judged(doc, play, state, seat.player, supplied, catalog, []))
+            entries.append(
+                _judged(
+                    doc,
+                    play,
+                    state,
+                    seat.player,
+                    supplied,
+                    catalog,
+                    [],
+                    evaluate_conditions=holds_priority,
+                )
+            )
         except conditions.ContentsRequired:
             deferred.append((doc, play))
     if deferred:
@@ -612,10 +647,23 @@ def applicable_hint(
         # match `state` but whose conditions read the viewer's own library or
         # sideboard contents (`conditions.needs_contents`) is worth exactly
         # one extra `include=contents` fetch - paid once here, for every such
-        # play at once, rather than the old blanket "not applicable".
+        # play at once, rather than the old blanket "not applicable". Never
+        # reached at all when `not holds_priority` (S2 review finding 7):
+        # with conditions never evaluated above, `_judged` never raises
+        # `ContentsRequired` in the first place - `armable`'s own criteria
+        # never needed the fetch this would have paid for.
         contents_state = seat.fetch_state(include_contents=True)
         entries.extend(
-            _hint_judged(doc, play, contents_state, seat.player, supplied, catalog, [])
+            _hint_judged(
+                doc,
+                play,
+                contents_state,
+                seat.player,
+                supplied,
+                catalog,
+                [],
+                evaluate_conditions=holds_priority,
+            )
             for doc, play in deferred
         )
     entries.sort(key=lambda entry: (-_priority(entry), str(entry["id"])))

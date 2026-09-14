@@ -2406,6 +2406,21 @@ def wait_and_arm(
     `mcp.wait_for_priority`'s and `mcp-seat wait`'s own wrapper, not a
     replacement for `block_until_wake` itself (`run_action`'s own post-action
     wake check keeps calling that directly, and fires nothing)."""
+    if arm:
+        from .playscripts import arming as playscript_arming
+
+        problem = playscript_arming.validate_arm_request(
+            arm, arm_reasoning, opposing_archetype, inputs
+        )
+        if problem is not None:
+            # S2 review finding 7: refused before the wait itself ever
+            # runs - a single immediate check (`max_seconds=0.0`, never the
+            # caller's own bound), the same honest board `block_until_wake`
+            # always answers with, just never entering its own bounded
+            # poll loop for an arm request that cannot use it anyway.
+            woken = block_until_wake(seat, before=before, max_seconds=0.0, should_stop=should_stop)
+            woken["armed_refusal"] = problem
+            return woken
     woken = block_until_wake(seat, before=before, max_seconds=max_seconds, should_stop=should_stop)
     if woken["wake_reason"] in (NOTHING_NEW_YET, GAME_GONE, WAIT_INTERRUPTED):
         return woken
@@ -3471,6 +3486,29 @@ def pass_until(
             refused["available_actions"] = available_actions(seat, state)
         refused["recent_log"] = seat.recent_log()
         return refused
+    if arm:
+        from .playscripts import arming as playscript_arming
+
+        problem = playscript_arming.validate_arm_request(
+            arm, arm_reasoning, opposing_archetype, inputs
+        )
+        if problem is not None:
+            # S2 review finding 7: refused before a single priority is
+            # passed - the same shape the advise refusal above already
+            # uses, `armed_refusal` naming why.
+            state = seat.fetch_state()
+            refused_arm = {
+                "stopped_because": f"arm was refused before any pass: {problem}",
+                "passes": 0,
+                "finished": True,
+                "until": {"step": until_step, "whose_turn": whose_turn},
+                "state": state,
+                "armed_refusal": problem,
+            }
+            if include_actions:
+                refused_arm["available_actions"] = available_actions(seat, state)
+            refused_arm["recent_log"] = seat.recent_log()
+            return refused_arm
     max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
     deadline = time.monotonic() + max_seconds
     kwargs: dict[str, Any] = {

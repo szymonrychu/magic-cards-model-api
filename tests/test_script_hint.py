@@ -926,3 +926,46 @@ def test_no_extra_state_fetch_computing_armable(
     wait(server, alice)
 
     assert calls["n"] == 1, f"armable cost {calls['n']} state fetches, expected exactly 1"
+
+
+def test_no_extra_state_fetch_for_a_contents_needing_armable_play(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 review finding 7: `armable`'s own criteria (priority, archetype,
+    `when` recurrence) never need a play's *condition* truth - only
+    `applicable` does, and that block is empty whenever this seat does not
+    hold priority (S1 finding 4a). A play whose `when` already matches
+    right now but whose condition reads this seat's own hidden zones used
+    to still pay the one extra `include=contents` fetch on every such wake,
+    even though nothing here was ever going to read the result."""
+    force_theirs_end_step(game)
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script(
+            "needs-library-count",
+            true=[
+                {
+                    "kind": "count",
+                    "zone": "library",
+                    "side": "me",
+                    "op": ">=",
+                    "n": 1,
+                    "select": {},
+                },
+            ],
+            when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Forest", "alice", "library")
+    seats, server = server_for(monkeypatch, game)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    calls = counting_fetch_state(monkeypatch, seat)
+
+    answer = wait(server, alice)
+
+    assert calls["n"] == 1, f"armable cost {calls['n']} state fetches, expected exactly 1"
+    assert "scripts" not in answer or "applicable" not in answer.get("scripts", {}), answer

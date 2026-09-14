@@ -192,6 +192,46 @@ def test_a_contents_needing_armed_script_costs_exactly_one_extra_fetch(
     assert calls["n"] == 2, calls
 
 
+# -- finding 7b: the judge's own contents fetch never leaks into the answer ----
+
+
+def test_a_conflicting_round_never_leaks_library_contents_into_the_answer(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 review finding 7: `_judge_round`'s own `include=contents` fetch -
+    paid only to judge a condition that reads this seat's own hidden zones -
+    used to become the state `arm()` hands back whenever nothing actually
+    fired that round (a conflict, here), so the wait/pass answer built on
+    top of it leaked the seat's own library contents merely from judging,
+    never from anything that actually ran."""
+    alice = seat_uid(board, "alice")
+    needs_contents = land_script(
+        "needs-library-count",
+        priority=60,
+        true=[
+            {"kind": "count", "zone": "library", "side": "me", "op": ">=", "n": 1, "select": {}},
+        ],
+    )
+    register(client, board, alice, needs_contents, land_script("drop", priority=50))
+    add_card(client, board, "Island", "alice", "hand")
+    add_card(client, board, "Forest", "alice", "library")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = arming.arm(
+        seat,
+        seats.script_corpora,
+        arm=["needs-library-count", "drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert isinstance(result, dict), result
+    assert result.get("armed_conflict"), result
+    assert result["armed"] == [], result
+    assert "library_contents" not in result["state"], result["state"]
+    assert hook.posts("/actions/play-land") == []
+
+
 # -- pending decision: only a first-move-answer play applies -------------------
 
 
