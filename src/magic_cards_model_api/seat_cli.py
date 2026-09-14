@@ -306,6 +306,22 @@ def build_parser() -> argparse.ArgumentParser:
             "check-and-return it has always been"
         ),
     )
+    wait_cmd.add_argument(
+        "--wake-to-draft",
+        dest="wake_to_draft",
+        action="store_true",
+        help=(
+            "S2 A6, advisor only: also wake when the board changes while it "
+            "is not yet your human's priority, provided nothing is staged - "
+            "the cue to look ahead and run stage-advice for the window you "
+            "expect next, so a proposal is ready to post the instant "
+            "priority actually reaches your human rather than drafted from "
+            "scratch only once it does. Left off (the default), this is the "
+            "plain wait it has always been. Refused for a seat: a seat "
+            "already wakes for its own real moments, and there is no draft "
+            "for it to prepare"
+        ),
+    )
 
     def arm_flags(command: Any) -> None:
         """S2: `--arm`/`--arm-reasoning`/`--opposing-archetype`/`--input`,
@@ -1406,6 +1422,14 @@ def run(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(exc)
             return 1
+        if args.wake_to_draft and not seat.advise:
+            # Mirrors `mcp.wait_for_priority`'s own plain-string refusal for
+            # the same misuse - not a CLI failure (exit 0), just as `stage-
+            # advice` answers a seat with a refusal rather than an error.
+            print(seatkit.WAKE_TO_DRAFT_ADVISOR_ONLY)
+            return 0
+        staged = seat._advice_drafts.get(seat.uid)
+        draft_staged = staged is not None and staged.get("action") is not None
         woken = wait_and_arm(
             seat,
             before=None,
@@ -1415,6 +1439,8 @@ def run(argv: list[str] | None = None) -> int:
             arm_reasoning=args.arm_reasoning,
             opposing_archetype=args.opposing_archetype,
             inputs=arm_inputs,
+            wake_to_draft=args.wake_to_draft and seat.advise,
+            draft_staged=draft_staged,
         )
         woken["state"]["wake_reason"] = woken["wake_reason"]
         if "armed" in woken:

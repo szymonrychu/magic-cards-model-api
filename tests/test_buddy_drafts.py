@@ -1008,3 +1008,48 @@ def test_the_cli_persists_a_captured_draft_across_processes_holds_then_posts_it(
     rows = advice_rows(game)
     assert len(rows) == 1
     assert rows[0]["detail"]["path"].endswith("/actions/pass-priority")
+
+
+# ---------------------------------------------------------------------------
+# S2 A8: `wait --wake-to-draft` - CLI parity for the MCP `wake_to_draft` cue,
+# so a buddy following the CLI brief can wait ahead of time the same way an
+# MCP buddy does (`test_wake_to_draft_does_not_wake_while_staged_but_wakes_
+# once_stale` is the MCP-side version of this).
+# ---------------------------------------------------------------------------
+
+
+def test_the_cli_wait_command_supports_wake_to_draft(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    wire(monkeypatch)
+    uid = advisor_uid(game, player="bob")
+
+    # alice stays active throughout, so priority_holder is never bob's own -
+    # an ordinary bare `wait` sees nothing new even once the board moves.
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    assert seat_cli.run(["--uid", uid, "--game", game, "wait"]) == 0
+    idle = json.loads(capsys.readouterr().out)
+    assert idle["wake_reason"] == seatkit.NOTHING_NEW_YET
+
+    force_turn_position(game, Step.BEGINNING_OF_COMBAT, "alice")
+    assert seat_cli.run(["--uid", uid, "--game", game, "wait"]) == 0
+    still_idle = json.loads(capsys.readouterr().out)
+    assert still_idle["wake_reason"] == seatkit.NOTHING_NEW_YET, (
+        "a bare `wait` must not wake to draft on its own"
+    )
+
+    force_turn_position(game, Step.DECLARE_ATTACKERS, "alice")
+    assert seat_cli.run(["--uid", uid, "--game", game, "wait", "--wake-to-draft"]) == 0
+    woken = json.loads(capsys.readouterr().out)
+    assert woken["wake_reason"] == seatkit.DRAFT_TIME_WAKE_REASON
+
+
+def test_the_cli_wait_wake_to_draft_is_refused_for_a_seat(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    wire(monkeypatch)
+    uid = next(iter(store.seat_uids(game)))
+
+    assert seat_cli.run(["--uid", uid, "--game", game, "wait", "--wake-to-draft"]) == 0
+    printed = capsys.readouterr().out.strip()
+    assert printed == seatkit.WAKE_TO_DRAFT_ADVISOR_ONLY
