@@ -406,8 +406,30 @@ explicitly.
 Your deck's play scripts were registered with the game server when your seat
 was dispatched, and they do not change for the rest of the game: a new play,
 or a sharper condition on an old one, is written after the game, with the
-guide it belongs to. Two subcommands reach them, and like every seat command
-both take `--uid`:
+guide it belongs to.
+
+**Read the hint before you play a line by hand.** Every `wait` answer and
+every action answer (`cast`, `activate`, `play-land`, `decide`, `pass`, ...)
+carries `scripts.applicable` - `[{{id, name, call}}]` - when one of your
+registered scripts applies right now, `call` already an `mcp-seat script
+run ...` command line naming the exact flags to pass; run it verbatim rather
+than translating it into anything else. When an answer carries
+`scripts.applicable`, that entry's `call` is this turn's committing call -
+not the hand-played moves. After `play-land` of a fetch land, read that same
+answer's `scripts.applicable` before you `activate` it by hand. The hint
+already knows which script applies, with the archetype filled in; only
+`--reasoning` is left for you to write. Two or more entries at once carry
+`conflict: true` in place of `call`: do not pick between them by priority -
+play that window yourself, and extend their conditions after the game so
+that at most one applies.
+
+The same answer's `scripts.armable` and `arm_call` are for arming ahead of
+the window rather than playing it by hand once it arrives - `arm_call` is
+already an `mcp-seat pass-until ...` (or `mcp-seat wait ...`) command line,
+ready to run as printed.
+
+Two subcommands reach the scripts directly, and like every seat command both
+take `--uid`:
 
     ... script list --opposing-archetype KEY --input NAME=VALUE
     ... script run SCRIPT --reasoning "why now" --opposing-archetype KEY \

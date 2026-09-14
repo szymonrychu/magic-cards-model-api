@@ -743,7 +743,11 @@ def _hint_judged(
 
 
 def applicable_hint(
-    seat: Seat, corpora: dict[tuple[str, str], dict[str, Any]], state: dict[str, Any]
+    seat: Seat,
+    corpora: dict[tuple[str, str], dict[str, Any]],
+    state: dict[str, Any],
+    *,
+    cli: bool = False,
 ) -> dict[str, Any] | None:
     """`{"applicable": [...], "armable": [...], "arm_call": "..."}` for one
     seat's wake/action answer - the same applicability judgement `listing`
@@ -795,7 +799,14 @@ def applicable_hint(
     `MAX_HINT_BYTES`'s cap on the whole block's own JSON size - `applicable`
     entries always kept first (finding 6). Never `static_conflicts` here -
     its result is not read out of this answer's own items, only `listing`'s
-    (finding 5)."""
+    (finding 5).
+
+    `cli`: when true, `call`/`arm_call` render as `mcp-seat` command lines
+    (`seat_cli.py`'s own transport) instead of the MCP `run_script(...)`/
+    `pass_until(...)`/`wait_for_priority(...)` call syntax - the same
+    judgement, only the ready-to-use string differs. `mcp.py`'s own call
+    sites never pass this, so they keep the MCP-syntax rendering exactly as
+    before."""
     if not scripts_enabled_here():
         return None
     corpus = runtime._corpus(seat, corpora, fresh=False)
@@ -885,7 +896,7 @@ def applicable_hint(
             if conflict:
                 item["conflict"] = True
             else:
-                item["call"] = _call_template(seat, str(entry["id"]), asserted, remembered)
+                item["call"] = _call_template(seat, str(entry["id"]), asserted, remembered, cli=cli)
             applicable_items.append(item)
 
     armable_items: list[dict[str, Any]] = []
@@ -933,7 +944,7 @@ def applicable_hint(
     if kept_armable:
         result["armable"] = kept_armable
         result["arm_call"] = _arm_call_template(
-            seat, kept_armable, occurrences, asserted, remembered
+            seat, kept_armable, occurrences, asserted, remembered, cli=cli
         )
     if hyp_skips:
         result["note"] = hypothetical_skip_note(hyp_skips)
@@ -1119,12 +1130,41 @@ def _hint_bounded(
     return kept_applicable, kept_armable
 
 
+def _cli_quoted(text: str) -> str:
+    """`text` wrapped in double quotes for a `mcp-seat` command line - the
+    reasoning placeholder itself carries no quote of its own to escape, and
+    this is a hint string for an LLM to read and imitate, not something
+    literally `subprocess`-executed, so nothing more elaborate than a plain
+    wrap is worth doing here."""
+    return f'"{text}"'
+
+
+def _cli_input_value(value: Any) -> str:
+    """One `--input NAME=VALUE` value, in `parse_inputs`'s own vocabulary
+    (`seat_cli.py`'s `--input` help text): a string reads back as text
+    unchanged, everything else is rendered as the JSON `parse_inputs` would
+    read it back from."""
+    return value if isinstance(value, str) else json.dumps(value)
+
+
+def _cli_input_flags(inputs: dict[str, Any] | None) -> list[str]:
+    """`--input NAME=VALUE` for each of `inputs`, one flag per input,
+    repeated the way `seat_cli.py`'s `--input` is documented to repeat -
+    empty when `inputs` is empty or `None`."""
+    flags: list[str] = []
+    for name, value in (inputs or {}).items():
+        flags += ["--input", f"{name}={_cli_input_value(value)}"]
+    return flags
+
+
 def _arm_call_template(
     seat: Seat,
     kept_armable: list[dict[str, Any]],
     occurrences: dict[str, tuple[int, str, str]],
     asserted: str,
     remembered: dict[str, Any] | None = None,
+    *,
+    cli: bool = False,
 ) -> str:
     """A ready-to-use call arming the subset of `kept_armable` that shares
     the single nearest occurrence among them - `pass_until(...)` for a seat,
@@ -1167,7 +1207,12 @@ def _arm_call_template(
     `run_script` (S1 finding 4b) - named here too, exactly as `_call_template`
     already names them for `applicable`, so an armed script whose condition
     reads one of them does not come back `needs_input` merely because the
-    template left it out."""
+    template left it out.
+
+    `cli`: render the equivalent `mcp-seat pass-until`/`mcp-seat wait`
+    command line instead of the MCP `pass_until(...)`/`wait_for_priority(...)`
+    call syntax - same window, same armed ids, same arguments, only the
+    surface differs."""
 
     def rank(item: dict[str, Any]) -> tuple[int, int]:
         phase, step, _ = occurrences[str(item["id"])]
@@ -1178,6 +1223,24 @@ def _arm_call_template(
     top_rank = rank(ranked[0])
     window = occurrences[str(ranked[0]["id"])][1:]
     armed_ids = [str(item["id"]) for item in kept_armable if rank(item) == top_rank]
+    if cli:
+        if seat.advise:
+            parts = ["mcp-seat", "wait"]
+        else:
+            step, whose_turn = window
+            parts = ["mcp-seat", "pass-until", step, "--whose-turn", whose_turn]
+        for script_id in armed_ids:
+            parts += ["--arm", script_id]
+        parts += ["--arm-reasoning", _cli_quoted(runtime.REASONING_PLACEHOLDER)]
+        parts += ["--opposing-archetype", asserted]
+        if not seat.advise:
+            # Same reasoning as the MCP branch's own `max_seconds` below -
+            # `pass-until` needs a bounded wait to have any real chance of
+            # reaching this seat's own priority at the destination before
+            # giving up.
+            parts += ["--max-seconds", str(MAX_WAIT_SECONDS)]
+        parts += _cli_input_flags(remembered)
+        return " ".join(parts)
     args: dict[str, Any] = {"player_uid": seat.uid}
     if not seat.advise:
         args["step"], args["whose_turn"] = window
@@ -1228,14 +1291,29 @@ def _byte_bounded(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _call_template(
-    seat: Seat, script_id: str, asserted: str, inputs: dict[str, Any] | None = None
+    seat: Seat,
+    script_id: str,
+    asserted: str,
+    inputs: dict[str, Any] | None = None,
+    *,
+    cli: bool = False,
 ) -> str:
     """A ready-to-use `run_script(...)` invocation string for `script_id` -
     the exact argument names `mcp.run_script` accepts, with `reasoning` left
     for the seat to fill in (every run needs its own, in the seat's own
     words), `opposing_archetype` set to what this hint judged the script
     against, and `inputs` named only when the seat's remembered inputs are
-    non-empty (S1 review finding 4b)."""
+    non-empty (S1 review finding 4b).
+
+    `cli`: render the equivalent `mcp-seat script run` command line instead -
+    same script id, same reasoning placeholder, same archetype, same
+    inputs, only the surface differs."""
+    if cli:
+        parts = ["mcp-seat", "script", "run", script_id]
+        parts += ["--reasoning", _cli_quoted(runtime.REASONING_PLACEHOLDER)]
+        parts += ["--opposing-archetype", asserted]
+        parts += _cli_input_flags(inputs)
+        return " ".join(parts)
     args: dict[str, Any] = {
         "player_uid": seat.uid,
         "script": script_id,

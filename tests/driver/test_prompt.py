@@ -817,10 +817,13 @@ LOOP_HINT_DOCTRINE = (
 )
 
 #: The universal half of the same caution, for the two CLI briefs
-#: (`ai_seat_brief.md`, `ai_buddy_brief.md`) - no CLI hint field exists (S1
-#: is MCP-only), but the false belief this closes came from a CLI: root cause
-#: #3, staged `mcp-seat script run` calls during development that made a seat
-#: write "scripts auto-fire" into its own memory.
+#: (`ai_seat_brief.md`, `ai_buddy_brief.md`) - a CLI hint field exists too now
+#: (`mcp-seat` action and `wait` answers carry `scripts.applicable`/
+#: `scripts.armable`/`arm_call` just as an MCP answer does, `call`/`arm_call`
+#: rendered as `mcp-seat` command lines rather than MCP call syntax), but the
+#: false belief this closes came from a CLI: root cause #3, staged `mcp-seat
+#: script run` calls during development that made a seat write "scripts
+#: auto-fire" into its own memory.
 #:
 #: 2026-09-14 S2 A8: replaced, same as `NEW_NEVER_RUN_SENTENCE_MCP` above -
 #: `--arm` (S2) is now a second real way a run starts from the CLI too, and

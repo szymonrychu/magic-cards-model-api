@@ -94,8 +94,15 @@ When plays conflict, resolve it by extending conditions, never by priority
 alone. Pass inputs, such as the opposing archetype or your preferences,
 explicitly.
 
-Your human's deck's play scripts are registered for you too. Check them on
-every wake, before working a line out by hand - it judges every script
+Your human's deck's play scripts are registered for you too. Every `wait`
+answer already carries a hint: `scripts.applicable` - `[{{id, name, call}}]` -
+when one of them applies right now, `call` already an `mcp-seat script
+run ...` command line naming the exact flags to pass, ready to propose
+verbatim. `scripts.armable` and `arm_call` are for arming ahead of the window
+instead - `arm_call` is already an `mcp-seat wait ...` command line (you are
+refused `pass-until`), ready to run as printed. Read the hint before working
+a line out by hand; call `script list` yourself only to check further ahead
+of time, or when nothing in the hint applies - it judges every script
 against the board right now, highest priority first, and runs nothing:
 
     ... script list --opposing-archetype KEY --input NAME=VALUE

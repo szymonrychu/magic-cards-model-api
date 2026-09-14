@@ -71,6 +71,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import logging
 import os
 import sys
 import uuid
@@ -87,6 +88,7 @@ from .seatkit import (
     AUTOPASS_STEPS,
     AUTOPASS_WHOSE_TURN,
     DEFAULT_API,
+    Seat,
     Seats,
     _parse_ids,
     _parse_pairs,
@@ -99,6 +101,8 @@ from .seatkit import (
     run_action,
     wait_and_arm,
 )
+
+logger = logging.getLogger("mcm.seat_cli")
 
 #: `seat_cli.py`'s own root, for the dev-checkout fallback below - the same
 #: `Path(__file__).resolve().parents[N]` idiom `scryfall.cache_dir` uses for
@@ -422,6 +426,36 @@ def parse_inputs(values: list[str] | None) -> dict[str, Any] | None:
         except ValueError:
             parsed[name] = value
     return parsed
+
+
+def _attach_script_hint(
+    answer: dict[str, Any],
+    seat: Seat,
+    corpora: dict[tuple[str, str], dict[str, Any]],
+    state: dict[str, Any],
+) -> None:
+    """`mcp._attach_script_hint`'s own treatment, for the CLI transport:
+    bolt `scripts: {"applicable": [...]}`/`{"armable": [...], "arm_call":
+    ...}` onto `answer` when at least one of `seat`'s registered play
+    scripts applies right now or is worth arming for the wait ahead
+    (`script_tools.applicable_hint`, `cli=True` so `call`/`arm_call` render
+    as `mcp-seat` command lines rather than MCP call syntax).
+
+    Same failure discipline as `mcp.py`'s own version: an HTTP error, or
+    anything `conditions.evaluate`/`static_conflicts`/`lint` can raise, must
+    never replace or break an answer whose action or wait already landed -
+    it is caught here, logged once, and `scripts` is simply left off."""
+    try:
+        hint = script_tools.applicable_hint(seat, corpora, state, cli=True)
+    except Exception:
+        logger.warning(
+            "computing the script hint for %s raised - answer sent without `scripts`",
+            seat.uid,
+            exc_info=True,
+        )
+        return
+    if hint is not None:
+        answer["scripts"] = hint
 
 
 #: `cast`'s and `activate`'s `--sources`. Only the sources named are sent, so a
@@ -1688,6 +1722,14 @@ def run(argv: list[str] | None = None) -> int:
                 return
             hold = args.hold or args.command in SPECIAL_ACTIONS
             result = run_action(seat, perform, hold_priority=hold, reasoning=args.reasoning)
+            if isinstance(result, dict):
+                state_view = result.get("state")
+                _attach_script_hint(
+                    result,
+                    seat,
+                    seats.script_corpora,
+                    state_view if isinstance(state_view, dict) else {},
+                )
             emit(
                 result,
                 state_for_draft=result.get("state") if isinstance(result, dict) else None,
@@ -1744,6 +1786,7 @@ def run(argv: list[str] | None = None) -> int:
                 woken["state"]["armed_conflict"] = woken["armed_conflict"]
             if "armed_refusal" in woken:
                 woken["state"]["armed_refusal"] = woken["armed_refusal"]
+            _attach_script_hint(woken["state"], seat, seats.script_corpora, woken["state"])
             # `wait_and_arm` above already did every bit of waiting this
             # command will do, fully unlocked - `locked()` here only covers
             # resolving/persisting the draft against the board it woke to.
