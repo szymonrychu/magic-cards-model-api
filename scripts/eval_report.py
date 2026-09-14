@@ -400,6 +400,7 @@ class _SeatTally:
     unchecked: int = 0
     unclassified: dict[str, int] = field(default_factory=dict)
     by_invoker: dict[str, int] = field(default_factory=dict)
+    armed_fired: int = 0
 
 
 def ending_of(payloads: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
@@ -474,11 +475,22 @@ def build_report(
                 continue
             if action == SCRIPT_RUN_ACTION:
                 # `by_invoker`: who started each of this seat's finished
-                # script runs - `mcp` (its own `run_script` calls) or `cli`
-                # (`mcp-seat script run`, most often an operator staging one).
+                # script runs - `mcp` (its own `run_script` calls), `cli`
+                # (`mcp-seat script run`, most often an operator staging one),
+                # or (S2) `armed` (`playscripts.arming.arm`, fired on its own).
                 invoker = str(detail.get("invoked_via") or "unknown")
                 tally = seats[player]
                 tally.by_invoker[invoker] = tally.by_invoker.get(invoker, 0) + 1
+                # `armed_fired` (S2): an armed run that actually did something
+                # - moved the board (`moves_done > 0`) for a seat, or proposed
+                # a move (`exit == "advised"`) for an advisor, whose own
+                # `moves_done` is always 0 (advice never moves the board).
+                if invoker == "armed":
+                    moves_done = detail.get("moves_done")
+                    fired = (isinstance(moves_done, int) and moves_done > 0) or (
+                        bool(detail.get("advise")) and detail.get("exit") == "advised"
+                    )
+                    tally.armed_fired += int(fired)
                 continue
             if action in NOT_PLAY:
                 continue
@@ -673,7 +685,12 @@ def _seat_report(tally: _SeatTally) -> dict[str, Any]:
         # S1 T3: who started each of this seat's finished script runs -
         # `mcp` (`mcp.run_script`) or `cli` (`mcp-seat script run`, most
         # often an operator staging one rather than the seat itself).
-        "scripts": {"by_invoker": dict(sorted(tally.by_invoker.items()))},
+        "scripts": {
+            "by_invoker": dict(sorted(tally.by_invoker.items())),
+            # S2: how many of this seat's `armed` runs actually fired -
+            # moved the board (a seat) or proposed a move (an advisor).
+            "armed_fired": tally.armed_fired,
+        },
     }
 
 
@@ -819,10 +836,13 @@ def render(report: Mapping[str, Any]) -> str:
                 f"    unchecked       {split['unchecked']} refusal(s) carry no detail.offered - "
                 "not counted as either"
             )
-        by_invoker = seat.get("scripts", {}).get("by_invoker") or {}
+        scripts_block = seat.get("scripts") or {}
+        by_invoker = scripts_block.get("by_invoker") or {}
         if by_invoker:
             rows = ", ".join(f"{name}={count}" for name, count in sorted(by_invoker.items()))
             lines.append(f"  scripts by invoker {rows}")
+        if by_invoker.get("armed"):
+            lines.append(f"  armed fired        {scripts_block.get('armed_fired', 0)}")
         lines.append("")
 
     lines.extend(_script_lines(report.get("scripts") or []))

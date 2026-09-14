@@ -246,6 +246,29 @@ def test_a_row_with_no_invoked_via_recorded_falls_back_to_unknown():
     )
 
 
+def test_an_armed_run_names_no_operator_either():
+    """S2: an `armed` run is this seat's own too - `arming.arm` fired it
+    between its own moves, not an operator staging one from the CLI - so it
+    gets no `(not started by you)` flag, the same as a plain `mcp` run."""
+    records = [stored(1, audit.SCRIPT_RUN_ACTION, run_detail("s", invoked_via="armed"))]
+
+    assert row_for(report.script_run_table(records, "g1", "alice"), "s") == (
+        "s | 50 | 1 | chain_complete=1 | 0 | armed=1"
+    )
+
+
+def test_a_mix_of_armed_and_cli_runs_flags_only_cli():
+    records = [
+        stored(1, audit.SCRIPT_RUN_ACTION, run_detail("s", invoked_via="armed")),
+        stored(2, audit.SCRIPT_RUN_ACTION, run_detail("s", invoked_via="armed")),
+        stored(3, audit.SCRIPT_RUN_ACTION, run_detail("s", invoked_via="cli")),
+    ]
+
+    assert row_for(report.script_run_table(records, "g1", "alice"), "s") == (
+        "s | 50 | 3 | chain_complete=3 | 0 | armed=2 cli=1 (not started by you)"
+    )
+
+
 # -- truncation -----------------------------------------------------------------
 
 

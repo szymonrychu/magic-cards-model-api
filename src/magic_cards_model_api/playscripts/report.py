@@ -4,16 +4,19 @@ over.
 `script_run_table` reads the `script_run` rows `POST .../script-runs` writes
 (`records.record_script_run_finish`) and prints one line per script: how
 often it ran, how each run ended, how many runs ended with the script still
-applying, and who started each run - `invoked_via`, `"mcp"` or `"cli"`. A
-handover prompt carries it whole, so it is bounded at `TABLE_LIMIT_BYTES`;
-past that the lowest-priority rows are cut and a `TRUNCATION_MARKER` line
-says how many.
+applying, and who started each run - `invoked_via`, `"mcp"`, `"cli"` or (S2)
+`"armed"` (`playscripts.arming.arm`, firing a script on its own between this
+seat's own moves). A handover prompt carries it whole, so it is bounded at
+`TABLE_LIMIT_BYTES`; past that the lowest-priority rows are cut and a
+`TRUNCATION_MARKER` line says how many.
 
 A `"cli"` count in the `invoked_via` column is flagged `(not started by
-you)`: a seat's own runs are always `"mcp"` (`mcp.run_script`), so any `cli`
-count on its row is a run the ledger recorded that this seat did not make
-itself - an operator staging one from `mcp-seat script run` during
-development, most often.
+you)`: a seat's own runs are always `"mcp"` (`mcp.run_script`) or `"armed"`
+(fired for this seat, between its own moves), so any `cli` count on its row
+is a run the ledger recorded that this seat did not make itself - an
+operator staging one from `mcp-seat script run` during development, most
+often. `"armed"` never gets the flag: it is this seat's own arming, not an
+operator's.
 """
 
 from __future__ import annotations
