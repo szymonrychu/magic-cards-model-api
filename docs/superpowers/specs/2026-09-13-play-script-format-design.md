@@ -216,6 +216,14 @@ Four more selector fields the engine, not the view, answers:
   `unlocks` closed to `false` rather than trusting an answer the engine
   itself flagged incomplete. A lethal optional payment is judged as the
   declined (tapped) entry, so it never counts as unlocking anything either.
+  A hand card whose printed mana cost carries an unannounced `{X}` (CR
+  107.3) is excluded from this comparison entirely - `payability_matrix`
+  only ever judges an X spell at its cheapest legal announcement, X=0 (CR
+  107.1b), and a land that merely makes an X=0 cast payable (Kozilek's
+  Command for no modes worth taking) is not a real unlock. The same
+  exclusion applies transitively to `unlocks_by_search`/
+  `unlocks_by_basic_search` below, since both read this same `unlocks`
+  answer for the land a search could find.
 - `unlocks_by_search` (bool): this hand card's ability or oracle text matches
   O3's `searches_for_any` template, and at least one land its search could
   find, among the viewer's own library (by basic land type, read off the

@@ -170,6 +170,17 @@ def _land_subtypes(card: CardState) -> set[str]:
     return {subtype.casefold() for subtype in card.card.subtypes}
 
 
+def _has_x(card: CardState) -> bool:
+    """Item 2: does this card's printed mana cost carry an unannounced
+    `{X}` (CR 107.3)? `payability_matrix` only ever judges an X spell at
+    X=0 (CR 107.1b's cheapest legal announcement, engine c476102) - a real
+    "yes" there says nothing about whether the X a play actually wants is
+    payable, so a land that only makes an X-cost card payable at X=0 must
+    never read as `unlocks: True` on the strength of that alone. The same
+    `"{X}" in cost` idiom `affordances._needs_x` already uses."""
+    return "{X}" in (card.card.mana_cost or "")
+
+
 def _is_basic(card: CardState) -> bool:
     """CR 205.4a's `Basic` supertype, read off the card the same way
     `_land_subtypes` already reads its subtypes - never a name."""
@@ -254,6 +265,10 @@ def build_hypothetical_facts(
         )
     matrix = payability_matrix(matrix_game, player, hand, lands)
     now_payable = {payability.card_id: payability for payability in matrix.now}
+    #: Item 2: hand cards an X-cost mana cost - excluded from every
+    #: `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search` judgement, see
+    #: `_has_x`.
+    x_cost_ids = {card.id for card in hand if _has_x(card)}
 
     #: land id -> the life its own optional payment costs (0 for a land
     #: with none), for every land that unlocks something - D3 needs the
@@ -285,6 +300,11 @@ def build_hypothetical_facts(
         unlocks = False
         for payability in column.cards:
             if payability.card_id == column.land_id:
+                continue
+            if payability.card_id in x_cost_ids:
+                # Item 2: `payability_matrix` only ever judges an X spell at
+                # X=0 - a newly-payable X=0 announcement is not a real
+                # unlock, so it never flips `unlocks` to True.
                 continue
             now = now_payable.get(payability.card_id)
             if land_notices or payability.notices or (now is not None and now.notices):

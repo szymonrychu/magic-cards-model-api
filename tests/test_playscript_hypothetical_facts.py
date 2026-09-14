@@ -194,6 +194,32 @@ def test_eldrazi_temple_never_unlocks_basking_broodscale_for_lack_of_green(clien
     assert _facts(game)["cards"][temple_id]["unlocks"] is False
 
 
+def test_eldrazi_temple_never_unlocks_an_x_spell_payable_only_at_x_zero(client, game):
+    """Item 2: eldrazi-ramp T1, Temple + Mosswort Bridge in hand, Kozilek's
+    Command ({X}{C}{C}, a colorless Eldrazi Kindred Instant) + Fanatic of
+    Rhonas. With no other land, Temple's restricted `{C}{C}` alone pays
+    Command only at X=0 - a cast nobody wants (0 tokens, scry 0, exile
+    nothing). An X-cost card must never count as unlocked on the strength of
+    its X=0 announcement alone (CR 107.1b names X=0 the cheapest, not the
+    only, legal one)."""
+    add_card(client, game, "Eldrazi Temple", "alice", "hand")
+    add_card(client, game, "Mosswort Bridge", "alice", "hand")
+    add_card(client, game, "Kozilek's Command", "alice", "hand")
+    add_card(client, game, "Fanatic of Rhonas", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    temple = _by_name(alice.hand, "Eldrazi Temple")
+    command = _by_name(alice.hand, "Kozilek's Command")
+
+    matrix = payability_matrix(live, "alice", [command], [temple])
+    column = next(entry for entry in matrix.lands if entry.land_id == temple.id)
+    command_answer = next(row for row in column.cards if row.card_id == command.id)
+    assert command_answer.payable is True, "X=0 is genuinely payable under Temple alone"
+
+    facts = _facts(game)
+    assert facts["cards"][str(temple.id)]["unlocks"] is False
+
+
 def test_polluted_delta_unlocks_by_search_via_a_watery_grave_in_the_library(client, game):
     add_card(client, game, "Swamp", "alice", "battlefield")
     add_card(client, game, "Polluted Delta", "alice", "hand")
