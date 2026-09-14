@@ -786,6 +786,7 @@ CLI_COMMAND_TOOLS = {
     "opening-hand-done": "opening_hand_action",
     "log": "game_log",
     "report": "report_problem",
+    "plan": "declare_plan",
 }
 
 #: `seat_cli` commands whose subcommands each front one MCP tool: `script run`

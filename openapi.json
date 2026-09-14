@@ -5084,6 +5084,15 @@
             "title": "Board Read",
             "type": "string"
           },
+          "for_turn": {
+            "default": "current",
+            "enum": [
+              "current",
+              "next"
+            ],
+            "title": "For Turn",
+            "type": "string"
+          },
           "my_role": {
             "minLength": 1,
             "title": "My Role",
@@ -5125,6 +5134,15 @@
           "declared": {
             "title": "Declared",
             "type": "boolean"
+          },
+          "for_turn": {
+            "default": "current",
+            "enum": [
+              "current",
+              "next"
+            ],
+            "title": "For Turn",
+            "type": "string"
           },
           "log_seq": {
             "title": "Log Seq",
@@ -15361,7 +15379,7 @@
     },
     "/api/games/{game_id}/plan": {
       "post": {
-        "description": "Declare, before acting, how this seat reads the turn it is about to\ntake: what it sees, its own role in the matchup, what it intends to do,\nand what it expects the opponent to do and why (`schemas.DeclarePlanIn`).\n\n**This mutates no `Game`.** It calls `audit.record` and nothing else - no\n`store.replace`, no compare-and-swap, no version bump - because a\ndeclaration is a statement *about* the game rather than a move in it. A\nroute that quietly committed one would make every plan something the\nopponent's client has to notice, and would put a CAS conflict in the way\nof an agent that is only trying to think out loud.\n\n`audit.record` stamps the game's own turn and step from the live game\n(its own docstring), and that stamping is what makes the post-game\npairing in `review.py` possible: the declaration and the opponent's\nlater rows are ordered by the same `seq`, from the same ledger, with no\nsecond clock to reconcile. `turns_taken` is written into the detail\nbeside them because `turn_number` counts rounds of the table rather than\nplayer-turns - see `records.require_plan`.\n\nAuthorised on the seat's own uid, carried in the body: a plan is hidden\ninformation about how a seat means to play, so nobody may write one into\nanother seat's name. An unrecognised uid, or one that opens a different\nseat, is a 404 - the same answer every other seat-scoped route gives,\nand one that does not confirm which uids exist.\n\nNothing stops a human seat declaring a plan; the gate only *requires* one\nof an agent seat (`records.require_plan`).",
+        "description": "Declare, before acting, how this seat reads the turn it is about to\ntake: what it sees, its own role in the matchup, what it intends to do,\nand what it expects the opponent to do and why (`schemas.DeclarePlanIn`).\n\n**This mutates no `Game`.** It calls `audit.record` and nothing else - no\n`store.replace`, no compare-and-swap, no version bump - because a\ndeclaration is a statement *about* the game rather than a move in it. A\nroute that quietly committed one would make every plan something the\nopponent's client has to notice, and would put a CAS conflict in the way\nof an agent that is only trying to think out loud.\n\n`audit.record` stamps the game's own turn and step from the live game\n(its own docstring), and that stamping is what makes the post-game\npairing in `review.py` possible: the declaration and the opponent's\nlater rows are ordered by the same `seq`, from the same ledger, with no\nsecond clock to reconcile. `turns_taken` is written into the detail\nbeside them because `turn_number` counts rounds of the table rather than\nplayer-turns - see `records.require_plan`.\n\nAuthorised on the seat's own uid, carried in the body: a plan is hidden\ninformation about how a seat means to play, so nobody may write one into\nanother seat's name. An unrecognised uid, or one that opens a different\nseat, is a 404 - the same answer every other seat-scoped route gives,\nand one that does not confirm which uids exist.\n\nNothing stops a human seat declaring a plan; the gate only *requires* one\nof an agent seat (`records.require_plan`).\n\n**`for_turn: \"next\"` plans ahead** (`schemas.DeclarePlanIn.for_turn`):\ncalled while it is NOT this seat's own turn, the row is written against\nthe turn `records.next_own_turn` computes - this seat's own next turn,\nCR 500.7 extra turns skipped over exactly as a real game would skip\nthem - rather than the turn under way right now. `declared_turns_taken`\nrecords what `turns_taken` stood at the moment of declaring, beside the\n`turns_taken` the row is actually filed under, so the ledger shows both\nwithout ambiguity. `for_turn: \"next\"` while this seat's own turn is\nalready in progress is refused - `records.OwnTurnInProgress`, 409.",
         "operationId": "declare_plan_api_games__game_id__plan_post",
         "parameters": [
           {

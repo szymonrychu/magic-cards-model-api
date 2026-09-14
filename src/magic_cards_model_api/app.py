@@ -218,6 +218,19 @@ def _missing_plan(_: Request, exc: records.MissingPlan) -> JSONResponse:
     )
 
 
+@app.exception_handler(records.OwnTurnInProgress)
+def _own_turn_in_progress(_: Request, exc: records.OwnTurnInProgress) -> JSONResponse:
+    """409 with `code: own_turn_in_progress`: `for_turn: "next"` was given
+    while the declaring seat's own turn is already under way. The same
+    coded-409 shape `ScriptsDisabled` gets - `allowed`/`reason` are the
+    refusal shape `seatkit._normalise_non_2xx` hands on unchanged, and `code`
+    is what a runner branches on rather than this sentence."""
+    return JSONResponse(
+        status_code=409,
+        content={"detail": str(exc), "allowed": False, "reason": str(exc), "code": exc.code},
+    )
+
+
 @app.exception_handler(records.ScriptsDisabled)
 def _scripts_disabled(_: Request, exc: records.ScriptsDisabled) -> JSONResponse:
     """409 with `code: scripts_disabled`: the operator's `SCRIPTS_ENABLED`
@@ -2647,11 +2660,13 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
         game_id, "pass_priority", req.expected_seq, player=req.player, reasoning=req.reasoning
     )
     records.require_reasoning(game_id, req.player, req.reasoning, pass_shaped=True)
-    # Exempt from `reasoning`, NOT from the plan: passing can perfectly well
-    # be the first thing a seat does on its own turn, and "I had nothing to
-    # do this turn" is a claim a reviewer should be able to check against a
-    # plan that was declared before it.
-    records.require_plan(game_id, req.player)
+    # Exempt from `reasoning` always, and from the plan itself ONLY in the
+    # beginning phase (`pass_shaped=True` - upkeep and draw, see `records.
+    # require_plan`'s own docstring): passing in a main phase, combat, or
+    # the end step can perfectly well be the first thing a seat does on its
+    # own turn, and "I had nothing to do this turn" is a claim a reviewer
+    # should be able to check against a plan that was declared before it.
+    records.require_plan(game_id, req.player, pass_shaped=True)
     try:
         result, _, legal_before, seq_hint = _run_command(game_id, "pass_priority", req)
     except ValueError as exc:  # not this player's decision to make
@@ -3062,17 +3077,47 @@ def declare_plan(game_id: str, req: DeclarePlanIn) -> dict[str, Any]:
 
     Nothing stops a human seat declaring a plan; the gate only *requires* one
     of an agent seat (`records.require_plan`).
+
+    **`for_turn: "next"` plans ahead** (`schemas.DeclarePlanIn.for_turn`):
+    called while it is NOT this seat's own turn, the row is written against
+    the turn `records.next_own_turn` computes - this seat's own next turn,
+    CR 500.7 extra turns skipped over exactly as a real game would skip
+    them - rather than the turn under way right now. `declared_turns_taken`
+    records what `turns_taken` stood at the moment of declaring, beside the
+    `turns_taken` the row is actually filed under, so the ledger shows both
+    without ambiguity. `for_turn: "next"` while this seat's own turn is
+    already in progress is refused - `records.OwnTurnInProgress`, 409.
     """
     game = game_or_404(game_id)
     if store.player_for_uid(game_id, req.uid) != req.player:
         raise KeyError("that uid is not that seat in this game")
     game.player(req.player)  # 400 for a player who is not in this game at all
     turn = game.turn
+    declared_at = turn.turns_taken if turn is not None else None
+    if req.for_turn == "next":
+        target = records.next_own_turn(game, req.player)  # OwnTurnInProgress -> 409
+        plan_turns_taken: int | None = target.turns_taken
+        response_turn_number: int | None = target.turn_number
+    else:
+        plan_turns_taken = declared_at
+        response_turn_number = turn.turn_number if turn is not None else None
     seq = audit.record(
         game_id,
         audit.PLAN_ACTION,
         player=req.player,
-        turns_taken=turn.turns_taken if turn is not None else None,
+        turns_taken=plan_turns_taken,
+        # The turn this row is ABOUT, never the turn it was written in - the
+        # two diverge exactly for `for_turn: "next"`. `audit.record` still
+        # stamps the row's own top-level `turn`/`step`/`phase` from the live
+        # board, honestly recording when the declaration was made; this is
+        # the separate fact `review.py`'s `_declarations` and `ui/review_
+        # model.js`'s `reviewTurns` read to attribute the row to its target
+        # turn wherever it is displayed or grouped, in a 3+ player game where
+        # `turn_number` can otherwise land the row in a different player's
+        # turn entirely (a live-game repro, 2026-09-14).
+        turn_number=response_turn_number,
+        for_turn=req.for_turn,
+        declared_turns_taken=declared_at,
         board_read=req.board_read,
         my_role=req.my_role,
         plan=req.plan,
@@ -3082,7 +3127,8 @@ def declare_plan(game_id: str, req: DeclarePlanIn) -> dict[str, Any]:
         "declared": True,
         "log_seq": seq,
         "player": req.player,
-        "turn_number": turn.turn_number if turn is not None else None,
+        "turn_number": response_turn_number,
+        "for_turn": req.for_turn,
     }
 
 

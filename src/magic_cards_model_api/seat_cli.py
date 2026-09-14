@@ -922,6 +922,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="the report; omit it to read the report from stdin instead",
     )
 
+    plan = sub.add_parser(
+        "plan",
+        help=(
+            "declare, before you act, how you read the turn (POST .../plan) - "
+            "the same five fields and the same for-turn choice mcp.py's "
+            "declare_plan tool takes"
+        ),
+    )
+    plan.add_argument("--board-read", required=True, help="what you see on the board right now")
+    plan.add_argument(
+        "--my-role", required=True, help="your role in this matchup - beatdown, control, ..."
+    )
+    plan.add_argument(
+        "--plan", dest="plan_text", required=True, help="what you intend to do this turn, and why"
+    )
+    plan.add_argument("--expecting", required=True, help="what you expect the opponent to do")
+    plan.add_argument("--because", required=True, help="the read that supports that expectation")
+    plan.add_argument(
+        "--confidence",
+        choices=["low", "medium", "high"],
+        default="medium",
+        help="how strongly you hold that prediction; default medium",
+    )
+    plan.add_argument(
+        "--for-turn",
+        dest="for_turn",
+        choices=["current", "next"],
+        default="current",
+        help=(
+            "which turn this declares for - 'current' (default) is the turn "
+            "already under way; 'next', called on the opponent's turn, plans "
+            "ahead for your own next turn instead of waiting until your "
+            "upkeep to write one there"
+        ),
+    )
+
     script = sub.add_parser(
         "script",
         help="run one of your registered play scripts, or list them (mcp run_script/list_scripts)",
@@ -1563,6 +1599,20 @@ def run(argv: list[str] | None = None) -> int:
             print("refusing to file an empty report")
             return 1
         print(seat.call("POST", f"/api/games/{gid}/report", {"player": seat.player, "text": text}))
+    elif args.command == "plan":
+        # Mutates no `Game` and never blocks - `seat.declare_plan` goes
+        # straight through `call_json`, the same as `report` above, rather
+        # than `act()`'s release-and-wait flow.
+        result = seat.declare_plan(
+            board_read=args.board_read,
+            my_role=args.my_role,
+            plan=args.plan_text,
+            expecting=args.expecting,
+            because=args.because,
+            confidence=args.confidence,
+            for_turn=args.for_turn,
+        )
+        print(json.dumps(result, indent=1, sort_keys=True))
     return 0
 
 

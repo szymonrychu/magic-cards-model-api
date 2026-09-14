@@ -570,6 +570,13 @@
           "name": "confidence",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": "current",
+          "has_default": true,
+          "name": "for_turn",
+          "type": "str",
+          "type_error": null
         }
       ]
     },

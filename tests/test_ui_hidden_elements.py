@@ -43,7 +43,7 @@ INDEX_HTML = UI / "index.html"
 #: for. `#log-modal` used to be one of these (the game log, behind a topbar
 #: button); it is gone now, at the owner's request, and the log lives in
 #: `#log-box`, always visible in `#side-panel` rather than as an overlay.
-OVERLAYS = ("card-preview", "toast", "popover", "decision-window", "modal")
+OVERLAYS = ("card-zoom", "zone-viewer", "toast", "popover", "decision-window", "modal")
 
 #: Every module that can toggle `.hidden` - the still-classic `app.js` plus
 #: the buildless ES modules under `ui/` and `ui/render/` (`board.js` and

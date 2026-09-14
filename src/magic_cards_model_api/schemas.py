@@ -291,6 +291,19 @@ class DeclarePlanIn(RequestModel):
     above."""
     prediction: OpponentPrediction
     """What you expect the opponent to do in response, and why."""
+    for_turn: Literal["current", "next"] = "current"
+    """Which turn this declaration is about. `"current"` (the default) is
+    the turn already under way - the only shape this ever took before this
+    field existed. `"next"`, given while it is NOT this seat's own turn,
+    plans ahead: the row is written against this seat's own *next* turn
+    (`records.next_own_turn`, which asks the engine's own `TurnMachine.
+    begin_next_turn` rather than re-deriving turn order here), so an agent
+    can think during the opponent's turn instead of holding priority in its
+    own upkeep to do it - the failure this field exists to fix (live game
+    2026-09-14: a ~110s plan written in upkeep with the human waiting on
+    it). `"next"` while this seat's own turn is already in progress is
+    refused - `app.declare_plan` answers 409 `own_turn_in_progress`; one
+    plan per turn, and `"current"` is how that turn gets its own."""
 
 
 class DeclarePlanResponse(BaseModel):
@@ -304,7 +317,13 @@ class DeclarePlanResponse(BaseModel):
     every action response carries."""
     player: str
     turn_number: int | None = None
-    """The turn this plan is for, as the ledger stamped it."""
+    """The turn this plan covers, as the ledger stamped it - the current
+    turn's own `turn_number` for `for_turn: "current"`, or the computed
+    target turn's `turn_number` for `for_turn: "next"` (`records.
+    next_own_turn`'s own `TurnMachine.turn_number`, which is `None` only
+    when there is no turn under way at all to plan against)."""
+    for_turn: Literal["current", "next"] = "current"
+    """Which turn `turn_number` above names - see `DeclarePlanIn.for_turn`."""
 
 
 class ReflectionIn(RequestModel):

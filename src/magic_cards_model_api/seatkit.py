@@ -1693,6 +1693,7 @@ class Seat:
         expecting: str,
         because: str,
         confidence: str = "medium",
+        for_turn: str = "current",
     ) -> dict[str, Any]:
         """`POST .../plan` (`schemas.DeclarePlanIn`) - a thin passthrough,
         no rule of the engine's own re-implemented here. This mutates no
@@ -1708,12 +1709,19 @@ class Seat:
         actually *is* the seat it is declaring for before writing anything
         into that seat's name.
 
+        `for_turn` (`"current"`, the default, or `"next"`) is `DeclarePlanIn.
+        for_turn` unchanged - `"next"`, called on the opponent's turn, plans
+        ahead for this seat's own next turn instead of holding priority in
+        its own upkeep to write one there (live game 2026-09-14).
+
         Returns `call_json`'s normalised shape either way - `declared: True`
         with the ledger's own `log_seq` on success, or `{"allowed": False,
-        "reason": ...}` on a refusal (a blank field, or a uid that does not
-        open this seat) - the same shape every action tool's own outcome
-        already is, so a caller checks a refusal the one way it already
-        knows rather than learning a second one for this call alone.
+        "reason": ...}` on a refusal (a blank field, a uid that does not
+        open this seat, or - for `for_turn: "next"` - this seat's own turn
+        already under way, `code: own_turn_in_progress`) - the same shape
+        every action tool's own outcome already is, so a caller checks a
+        refusal the one way it already knows rather than learning a second
+        one for this call alone.
         """
         body = {
             "player": self.player,
@@ -1722,6 +1730,7 @@ class Seat:
             "my_role": my_role,
             "plan": plan,
             "prediction": {"expecting": expecting, "because": because, "confidence": confidence},
+            "for_turn": for_turn,
         }
         return self.call_json("POST", f"/api/games/{self.game_id()}/plan", body)
 

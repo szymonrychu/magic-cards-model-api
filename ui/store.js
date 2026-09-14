@@ -18,7 +18,10 @@ export function createStore(initial) {
   // the DOM wiring. `pressing` is true from the moment a pointer or key goes
   // down until the guard flushes; `dirty` records that at least one `set()`
   // landed in that window and still owes the listeners a fan-out.
+  // `holding` is the long-press preview's (`ui/preview.js`) hold: a press
+  // meant to outlast `PRESS_CAP_MS`, released only by `holdEnd`.
   let pressing = false;
+  let holding = false;
   let dirty = false;
   const notify = () => {
     for (const fn of listeners) fn(state);
@@ -40,7 +43,7 @@ export function createStore(initial) {
      */
     set(patch) {
       state = { ...state, ...(typeof patch === "function" ? patch(state) : patch) };
-      if (pressing) {
+      if (pressing || holding) {
         dirty = true;
         return;
       }
@@ -63,7 +66,23 @@ export function createStore(initial) {
     pressEnd() {
       if (!pressing) return;
       pressing = false;
-      if (!dirty) return;
+      if (holding || !dirty) return;
+      dirty = false;
+      notify();
+    },
+    /** A long-press preview has opened under the finger: hold the fan-out
+     * for as long as it stays open, past the press cap that bounds an
+     * ordinary press. Only `holdEnd` ends it. */
+    holdStart() {
+      holding = true;
+    },
+    /** The finger lifted: stop holding, and pay off anything that arrived
+     * meanwhile - unless an ordinary press is still in flight, whose own end
+     * settles it. */
+    holdEnd() {
+      if (!holding) return;
+      holding = false;
+      if (pressing || !dirty) return;
       dirty = false;
       notify();
     },

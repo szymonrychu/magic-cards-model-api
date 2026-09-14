@@ -220,6 +220,48 @@ def test_mcp_declare_plan_tool_round_trips(client, monkeypatch) -> None:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
+def test_seat_declare_plan_passes_for_turn_next_through(client, monkeypatch) -> None:
+    """`for_turn` is the plan-ahead field (`schemas.DeclarePlanIn.for_turn`) -
+    `Seat.declare_plan` must carry it through to the body rather than
+    silently defaulting every call to `"current"`."""
+    info = _agent_game(client, active="alice")
+    game_id = info["game_id"]
+    try:
+        seats = wired_seats(monkeypatch, game_id)
+        bob = seats.seat_for(info["seat_uids"]["bob"])
+        assert bob is not None
+        outcome = bob.declare_plan(for_turn="next", **PLAN)
+        assert outcome["declared"] is True
+        assert outcome["for_turn"] == "next"
+
+        log = client.get(f"/api/games/{game_id}/log", params={"uid": info["admin_key"]}).json()[
+            "log"
+        ]
+        [plan] = [e for e in log if e["action"] == "plan_declared"]
+        assert plan["detail"]["for_turn"] == "next"
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_mcp_declare_plan_tool_passes_for_turn_next_through(client, monkeypatch) -> None:
+    info = _agent_game(client, active="alice")
+    game_id = info["game_id"]
+    try:
+        seats = wired_seats(monkeypatch, game_id)
+        server = build_server(seats)
+
+        declared_text = call_tool_raw(
+            server,
+            "declare_plan",
+            {"player_uid": info["seat_uids"]["bob"], "for_turn": "next", **PLAN},
+        )
+        declared = json.loads(declared_text)
+        assert declared["declared"] is True
+        assert declared["for_turn"] == "next"
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
 def test_mcp_declare_plan_refuses_an_unknown_uid(client, monkeypatch) -> None:
     info = _agent_game(client)
     game_id = info["game_id"]

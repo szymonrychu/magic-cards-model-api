@@ -2669,6 +2669,7 @@ def build_server(seats: Seats) -> MCPServer:
         expecting: str,
         because: str,
         confidence: str = "medium",
+        for_turn: str = "current",
     ) -> str:
         """Declare, before you act, how you read the turn you are about to
         take (`POST .../plan`). Call this once at the top of every one of
@@ -2685,6 +2686,16 @@ def build_server(seats: Seats) -> MCPServer:
         your opponent to do in response, and the read that supports it - the
         part that makes this evidence rather than commentary.
 
+        `for_turn` (`"current"`, the default, or `"next"`): plan ahead.
+        Call this with `for_turn="next"` during your OPPONENT's turn to
+        declare for your own next turn, rather than waiting until your
+        upkeep and holding priority there to write one - your opponent is
+        not waiting on you while you do this, and should not have to. Called
+        with `for_turn="next"` while your own turn is already under way,
+        this is refused (409, `own_turn_in_progress`): declare once per
+        turn, and use the default `"current"` for the turn already in front
+        of you.
+
         This is written to an append-only ledger before your opponent's next
         move, and cannot be edited afterward to fit whatever they actually
         did. After the game, a human reads it next to what your opponent
@@ -2695,9 +2706,9 @@ def build_server(seats: Seats) -> MCPServer:
         cannot be wrong proves nothing either way; an honest wrong read is
         worth far more than a hedge.
 
-        Mutates no `Game` and never blocks. Every field is required and
-        stripped of surrounding whitespace - blank is refused the same as
-        missing."""
+        Mutates no `Game` and never blocks. Every field but `for_turn` is
+        required and stripped of surrounding whitespace - blank is refused
+        the same as missing."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -2708,6 +2719,7 @@ def build_server(seats: Seats) -> MCPServer:
             expecting=expecting,
             because=because,
             confidence=confidence,
+            for_turn=for_turn,
         )
         return json.dumps(result, indent=1, sort_keys=True)
 

@@ -35,7 +35,7 @@ const ANCHOR_SELECTOR = ".card[data-card-id], .stack-object[data-key]";
 
 /** Surfaces whose cards are never an anchor: overlays that paint over the
  * popover (`#modal` at z 60) or that are not the card itself. */
-const NOT_AN_ANCHOR = "#modal, #decision-window, #decision-popover, #popover, #card-preview";
+const NOT_AN_ANCHOR = "#modal, #decision-window, #decision-popover, #popover, #card-zoom";
 
 const FOCUSABLE = "input, button";
 

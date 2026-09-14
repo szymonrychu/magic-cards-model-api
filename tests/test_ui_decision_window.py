@@ -225,7 +225,6 @@ for (const id of ["prompt-box", "priority-box", "stops-box", "mtg-board", "modal
 }
 boxed("div", "casting-strip").hidden = true;
 boxed("div", "popover").hidden = true;
-boxed("div", "card-preview").hidden = true;
 
 // The same structure `ui/index.html` ships (`test_index_html_ships_the_window_structure`
 // below pins that the ids agree).
@@ -1316,40 +1315,6 @@ def test_a_confirm_button_survives_a_poll_that_lands_mid_press() -> None:
     assert result["posted"] == [{"moved": [], "top_order": ["a", "b", "c"]}]
 
 
-def test_cards_in_the_window_get_the_hover_preview() -> None:
-    result = run_module(
-        "render/panels.js",
-        FAKE_DOM
-        + """
-        (() => {
-          const store = makeStore(baseApp(baseState({ pending_decision: P })));
-          m.mountHoverPreview(document, store);
-          const preview = document.querySelector("#card-preview");
-          const card = document.createElement("div");
-          card.className = "card card-md";
-          card.dataset.cardId = "b";
-          BODY.appendChild(card);
-          fire(card, "mouseover", {});
-          const library = { hidden: preview.hidden, images: imagesIn(preview) };
-          poll(store, { pending_decision: T });
-          const trigger = document.createElement("div");
-          trigger.className = "card card-md";
-          trigger.dataset.cardId = "t3";
-          BODY.appendChild(trigger);
-          fire(trigger, "mouseover", {});
-          return { library, trigger: preview.textContent };
-        })()
-        """,
-        P=SCRY,
-        T=TRIGGERS,
-    )
-    assert result["library"] == {
-        "hidden": False,
-        "images": ["/api/card-art?name=Ponder&size=normal"],
-    }
-    assert "Bob" in result["trigger"]
-
-
 # ------------------------------------------------------ markup and wiring ---
 
 
@@ -1389,8 +1354,8 @@ def test_the_window_neither_dims_nor_blocks_the_board() -> None:
     assert "inset" not in body, "a full-screen window would block the board"
     z = int(re.search(r"z-index:\s*(\d+)", body).group(1))
     popover = int(re.search(r"^\.popover \{.*?z-index:\s*(\d+)", css, re.M | re.S).group(1))
-    preview = int(re.search(r"^\.card-preview \{.*?z-index:\s*(\d+)", css, re.M | re.S).group(1))
-    assert z < preview < popover, "the hover preview and the card menus must paint over the window"
+    preview = int(re.search(r"^\.card-zoom \{.*?z-index:\s*(\d+)", css, re.M | re.S).group(1))
+    assert z < popover < preview, "the card menus and the card preview must paint over the window"
     busy = re.findall(r"^(body\.busy[^{]*button[^{]*)\{(.*?)^\}", css, re.M | re.S)
     assert any("#decision-window button" in selector for selector, _ in busy), (
         "the window's confirm buttons must get the in-flight dimming the ribbon gets"

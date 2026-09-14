@@ -572,3 +572,68 @@ def test_install_press_guard_is_wired_from_app_main() -> None:
     assert result["during"] == 0, "a press did not hold the app store's fan-out"
     assert result["after"] == 1, "the press ended and the deferred fan-out never landed"
     assert result["last"] == "held"
+
+
+def test_a_hold_keeps_renders_back_past_the_press_cap_until_it_is_released() -> None:
+    """`ui/preview.js`'s long-press preview is a press that is meant to last:
+    the finger stays down for as long as the player is reading the card, and
+    the card under it must not be rebuilt meanwhile. `holdStart` keeps the
+    fan-out back past `PRESS_CAP_MS`; `holdEnd` pays it off at once. The cap
+    itself is untouched for a press nothing is holding. Fake timers, so the
+    cap passing is exact rather than slept."""
+    result = run_module(
+        "store.js",
+        PRESS_DOM
+        + """
+        (async () => {
+          const clock = { now: 0, seq: 0, timers: [] };
+          globalThis.setTimeout = (fn, ms) => {
+            const id = ++clock.seq;
+            clock.timers.push({ id, at: clock.now + (ms || 0), fn });
+            return id;
+          };
+          globalThis.clearTimeout = (id) => {
+            clock.timers = clock.timers.filter((t) => t.id !== id);
+          };
+          const advance = (ms) => {
+            const end = clock.now + ms;
+            for (;;) {
+              const due = clock.timers.filter((t) => t.at <= end).sort((a, b) => a.at - b.at)[0];
+              if (!due) break;
+              clock.timers = clock.timers.filter((t) => t !== due);
+              clock.now = due.at;
+              due.fn();
+            }
+            clock.now = end;
+          };
+
+          const { store, counter } = await mounted();
+          document.listeners.pointerdown({ pointerType: "touch", target: passButton() });
+          store.set(baseApp(baseState({ turn_number: 3 })));
+          advance(350);
+          store.holdStart();
+          advance(m.PRESS_CAP_MS * 3);
+          const held = counter.renders;
+          store.set(baseApp(baseState({ turn_number: 4 })));
+          const stillHeld = counter.renders;
+          store.holdEnd();
+          const released = counter.renders;
+          store.holdEnd();
+          const idempotent = counter.renders;
+
+          document.listeners.pointerdown({ pointerType: "mouse", target: passButton() });
+          store.set(baseApp(baseState({ turn_number: 5 })));
+          advance(m.PRESS_CAP_MS);
+          return { held, stillHeld, released, idempotent, capped: counter.renders,
+                   turnInfo: document.querySelector("#turn-info").textContent };
+        })()
+        """,
+        RIBBON_URL=RIBBON_URL,
+        PANELS_URL=PANELS_URL,
+    )
+    assert result["held"] == 0, "the press cap flushed a render the hold was keeping back"
+    assert result["stillHeld"] == 0
+    assert result["released"] == 1, "holdEnd did not pay off the held render"
+    assert result["idempotent"] == 1
+    assert result["capped"] == 2, "an ordinary press no longer flushes on the cap"
+    assert "turn 5" in result["turnInfo"]

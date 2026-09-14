@@ -50,7 +50,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from magic_cards_model.machines import Step
+from magic_cards_model.machines import Step, TurnMachine
 from magic_cards_model.machines.decisions import PendingDecision
 from magic_cards_model.models import CardState, Game
 
@@ -64,6 +64,16 @@ from .repository import RECENT_RECORDS_WINDOW
 #: passes straight through them, and the mulligan/opening-hand routes stay
 #: gated on `reasoning` alone.
 _PREGAME_STEPS = frozenset({Step.MULLIGAN, Step.PREGAME_ACTIONS})
+
+#: The two beginning-phase steps (CR 500.4) a bare pass needs no plan for -
+#: read only by `require_plan`'s `pass_shaped` exemption below. Untap grants
+#: no player priority at all (CR 502.3) so it never reaches this gate in the
+#: first place; upkeep and draw do, and are almost always a pass either way.
+#: Every other step - both main phases, every combat step, the end step -
+#: stays gated: a pass there is a real decision ("I am not casting anything,
+#: not attacking, not blocking"), not the top of a turn nobody has said
+#: anything about yet.
+_PASS_EXEMPT_STEPS = frozenset({Step.UPKEEP, Step.DRAW})
 
 
 class MissingReasoning(Exception):
@@ -135,14 +145,16 @@ class MissingPlan(Exception):
         self.turn_number = turn_number
 
 
-def require_plan(game_id: str, player: str | None, *, game: Game | None = None) -> None:
+def require_plan(
+    game_id: str, player: str | None, *, game: Game | None = None, pass_shaped: bool = False
+) -> None:
     """Refuse an agent seat's action on its own turn until a `plan_declared`
     record exists for that turn.
 
     A prediction is only evidence if it demonstrably preceded the outcome,
     and a facility nobody is obliged to use is a facility nobody uses - so
     the declaration is a precondition of acting rather than an invitation.
-    Four things narrow it, each for its own reason:
+    Five things narrow it, each for its own reason:
 
     - **Only an agent seat.** Same set `require_reasoning` reads,
       `store.ai_players(game_id)`; a human seat is never held to it.
@@ -157,6 +169,22 @@ def require_plan(game_id: str, player: str | None, *, game: Game | None = None) 
       gate that can refuse a concession can trap a seat in a game. That one
       is enforced at the call site - `app.py`'s `action_concede` simply does
       not call this.
+    - **Never a pass in the beginning phase, and only with an empty stack**
+      (`pass_shaped`, `_PASS_EXEMPT_STEPS` - upkeep and draw). `action_pass_
+      priority` is the only caller that ever passes `pass_shaped=True`, and
+      only for its own request - every other action shape, `decide` among
+      them (live game 2026-09-14: the seat that triggered this gate's
+      original complaint had a plan to declare, but the fix is that it
+      should never have had to hold priority in its own upkeep to write one
+      - see `DeclarePlanIn.for_turn`). A seat with nothing to do in the two
+      steps where almost nothing ever happens should be able to say so
+      without writing a plan first; a pass anywhere else, or any other kind
+      of action anywhere, stays gated exactly as before. A trigger sitting on
+      the stack in upkeep or draw (a landfall trigger, an upkeep cost) is a
+      real decision the same way a main-phase pass is - "I am letting this
+      resolve" - so the exemption only ever applies with `game.stack` empty;
+      a pass with an object on the stack stays gated even in these two
+      steps.
 
     **The lookup is bounded, and this is the part that had to be right.**
     This sits on the hot action path, so it reads at most
@@ -164,16 +192,25 @@ def require_plan(game_id: str, player: str | None, *, game: Game | None = None) 
     (`store.recent_records`) and scans them newest-first, rather than
     loading the whole ledger with `store.records()` - which would get slower
     with every turn played. The window is safe because the answer, when it
-    is yes, is always inside the current player-turn's own rows, and those
-    are by construction the newest ones. It is deliberately not an
-    in-process cache either: the api may run more than one replica, and a
-    memo of "who has declared" would answer differently per pod.
+    is yes, is always inside the current player-turn's own rows *or*, since
+    `DeclarePlanIn.for_turn: "next"` exists, the seat's immediately preceding
+    (the opponent's) turn - and both are, by construction, comfortably
+    inside 500 rows of the newest ones for any realistic turn (`RECENT_
+    RECORDS_WINDOW`'s own docstring: "a dozen steps, a priority round each,
+    both seats' actions among them" - a wide margin over one turn's worth,
+    and plan-ahead spans at most two). It is deliberately not an in-process
+    cache either: the api may run more than one replica, and a memo of "who
+    has declared" would answer differently per pod.
 
     The declaration is matched on `turns_taken`, not on the audit row's own
     `turn` stamp: `TurnMachine.turn_number` counts *rounds of the table*, so
     both seats' turns in one round share it, and an extra turn (CR 500.7)
     does not move it at all. `turns_taken` goes up exactly once per turn
-    that begins, which is the identity a per-turn plan needs.
+    that begins, which is the identity a per-turn plan needs - and the one a
+    plan declared ahead of time (`next_own_turn`) computes and writes in
+    advance, so this matching logic itself needs no knowledge of `for_turn`
+    at all: a plan-ahead row satisfies it the same way a same-turn one
+    always has, the moment that turn actually arrives.
     """
     if not player:
         return
@@ -186,6 +223,8 @@ def require_plan(game_id: str, player: str | None, *, game: Game | None = None) 
     turn = game.turn
     if turn.step in _PREGAME_STEPS or turn.active_player != player:
         return
+    if pass_shaped and turn.step in _PASS_EXEMPT_STEPS and not game.stack:
+        return
     if player not in store.ai_players(game_id):
         return
     marker = turn.turns_taken
@@ -197,6 +236,75 @@ def require_plan(game_id: str, player: str | None, *, game: Game | None = None) 
         if detail.get("player") == player and detail.get("turns_taken") == marker:
             return
     raise MissingPlan(player, turn.turn_number)
+
+
+class OwnTurnInProgress(Exception):
+    """Raised by `next_own_turn` when a seat asks to plan `for_turn: "next"`
+    while its own turn is the one already under way. `app.py` answers 409
+    with `code: own_turn_in_progress` - the same coded-409 shape `Scripts
+    Disabled` already gets, so a runner branches on `code` rather than on
+    this sentence.
+
+    A plan is one declaration per turn (`require_plan`'s own matching is
+    keyed on `turns_taken` alone, with no room for two rows to both claim
+    the same turn), and "next" only means something looking forward from
+    the opponent's turn - `"current"` (the default) is how a seat already in
+    its own turn declares for it."""
+
+    code = "own_turn_in_progress"
+
+    def __init__(self, player: str) -> None:
+        super().__init__(
+            f'{player}\'s own turn is already under way - `for_turn: "next"` is for '
+            'planning ahead, during the opponent\'s turn; use `for_turn: "current"` '
+            "(the default) to declare for the turn already in front of you"
+        )
+        self.player = player
+
+
+def next_own_turn(game: Game, player: str) -> TurnMachine:
+    """`player`'s next own turn, as a fully-formed `TurnMachine` - never
+    read, only computed, so `app.declare_plan` can stamp a plan-ahead row
+    with the `turns_taken` (and `turn_number`) that turn will actually carry
+    once it arrives.
+
+    Computed by deep-copying `game.turn` and calling its own `begin_next_
+    turn` (CR 500.1, 800.4) - the engine's real turn-order method, repeated
+    until `player` comes up active - rather than re-implementing seating
+    order, departed players, or CR 500.7's extra turns here. An extra turn
+    queued for someone else is simply another `begin_next_turn` call that
+    does not land on `player`, so it is skipped over exactly the way a real
+    game would skip it (`test_for_turn_next_skips_a_queued_extra_turn`).
+
+    Bounded at one full round of the table plus every extra turn presently
+    queued - the most `begin_next_turn` could ever need to reach every seat
+    at least once, extra turns included, starting from any seat's turn.
+    Raises `ValueError` if that bound is somehow not enough, which would
+    mean `player` is not seated in this game at all.
+
+    Raises `OwnTurnInProgress` when `player`'s own turn is the one under
+    way right now (outside the pregame): "next" is only sensible looking
+    forward from someone else's turn.
+    """
+    turn = game.turn
+    if turn is None:
+        raise ValueError("no turn is under way to plan ahead of")
+    if turn.step not in _PREGAME_STEPS and turn.active_player == player:
+        raise OwnTurnInProgress(player)
+    forecast = turn.model_copy(deep=True)
+    if forecast.step in _PREGAME_STEPS:
+        # No turn has begun yet at all (CR 103's mulligan/opening-hand
+        # windows) - CR 103.8's first turn is seat 0's, by construction the
+        # only turn `begin_next_turn` itself is not the right call for.
+        forecast.begin_first_turn()
+        if forecast.active_player == player:
+            return forecast
+    bound = len(forecast.players) + len(forecast.extra_turns) + 1
+    for _ in range(bound):
+        forecast.begin_next_turn()
+        if forecast.active_player == player:
+            return forecast
+    raise ValueError(f"{player} is not seated in this game - no next turn of theirs exists")
 
 
 #: Whether the request being served named a ledger position
