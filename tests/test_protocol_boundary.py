@@ -234,11 +234,37 @@ def test_seatkit_20_names_the_ledger_metrics_stamps() -> None:
         assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
 
 
-def test_seatkit_20_does_not_name_the_opening_dsl_branch_fields() -> None:
-    """`own_turns_taken` and `hypothetical-facts` ship on o-opening-dsl,
-    merged later - the seatkit-20 paragraph must not claim them yet."""
+def test_seatkit_20_names_the_opening_dsl_additions() -> None:
+    """o-opening-dsl's client-visible additions, merged into seatkit-20:
+    `own_turns_taken` on the player view, the hypothetical-facts route (hand,
+    candidate and battlefield facts, never library ids or order), the new
+    selector fields, the `turn` condition, `prefer`/`ties`,
+    `searches_for_any`, `land_face`, `Answer.choice`, and a MAY answered no
+    when its yes is illegal."""
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
     paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
-    for term in ("own_turns_taken", "hypothetical-facts", "hypothetical_facts"):
-        assert term not in paragraph, f"the seatkit-20 paragraph already names {term}"
+    for term in (
+        "own_turns_taken",
+        "/playscripts/hypothetical-facts",
+        "hand",
+        "candidate",
+        "battlefield",
+        "library ids",
+        "enters_any",
+        "unlocks",
+        "unlocks_by_search",
+        "unlocks_by_basic_search",
+        "unlocks_life_paid",
+        "affordable",
+        "castable_now",
+        '"turn"',
+        "prefer",
+        "ties",
+        "searches_for_any",
+        "land_face",
+        "Answer.choice",
+        "MAY",
+        "affirmative_is_legal",
+    ):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"

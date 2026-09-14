@@ -328,6 +328,38 @@ PROTOCOL_VERSION = "seatkit-20"
 #: pre-bump process reads them as three more keys on a log entry it
 #: already treats as free-form.
 #:
+#: Also `seatkit-20`, the opening-plays DSL (o-opening-dsl, merged into the
+#: same version rather than a second bump): each player entry in the state
+#: view carries `own_turns_taken`, how many of that player's own turns have
+#: begun, extra turns included, 0 before their first. A new read-only route,
+#: `GET .../playscripts/hypothetical-facts` (`Seat.hypothetical_facts`),
+#: answers `{cards, notices}`: engine-computed facts keyed by card id for the
+#: seat's own hand cards, for every candidate a `choose_cards` decision
+#: pending for that seat itself already offers (library lands included, and
+#: only those), and for its own battlefield permanents (their
+#: `unlocks_by_search`) - never library ids or order beyond those offered
+#: candidates. A card's entry carries only the facts it has: `enters`,
+#: `unlocks`, `unlocks_life_paid`, `unlocks_by_search`,
+#: `unlocks_by_basic_search` and `castable_now`. A play selector gains
+#: `enters_any`, `unlocks`, `unlocks_by_search`, `unlocks_by_basic_search`
+#: and `affordable` (read with `castable_now`), all judged off that route,
+#: plus `searches_for_any` (the basic land types a card's own search names)
+#: and `land_face` (a modal double-faced card with a land face), both read
+#: off the view. Conditions gain `{"kind": "turn", op, n}` over the viewer's
+#: `own_turns_taken`; a `pick` gains ordered `prefer` tie-breaker selectors
+#: and `ties: "any"` (take the first still-tied candidates by sorted name
+#: instead of exiting `ambiguous`); and `Answer.choice` answers a choice
+#: decision by name. A play's `accept: true` for a MAY (or pay life, pay
+#: energy, pay mana) decision whose pending view says
+#: `affirmative_is_legal: false` is sent as a no rather than the illegal yes.
+#: `list_scripts`, the S1 hint and the arming judge fetch those facts once per
+#: judgement, only for plays that need them; a failed fetch marks just those
+#: plays not applicable (`failing_condition.list: "hypothetical"`) and
+#: `armable` never fetches. A pre-bump process validates plays against its own
+#: older schema, so a play naming any of these fields is refused there as
+#: invalid rather than misjudged, and it reads `own_turns_taken` as one more
+#: extra key.
+#:
 #: `seatkit-19` is the play-script DSL's version, with battle 8's cast-during-
 #: resolution funnel (z1) and the buddy rationale cap (bd1) folded in: a
 #: **response** shape change plus **additive requests** and two new tools,
