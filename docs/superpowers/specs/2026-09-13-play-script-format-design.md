@@ -38,7 +38,9 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   `mana_value {op, n}`; `power {op, n}`; `toughness {op, n}`; `tapped`;
   `counters {name, op, n}`; `ability_text_has`; `oracle_has`;
   `searches_for_any` (0-5 basic land type words); `land_face`;
-  `missing_from {zones: [1-7 zone], side: me|opponent, by: subtype|name}`.
+  `missing_from {zones: [1-7 zone], side: me|opponent, by: subtype|name}`;
+  `enters_any` (0-3 of `untapped`/`tapped`/`untapped_if_paid`); `unlocks`;
+  `unlocks_by_search`; `affordable {extra: n}`.
 - `colors_any` reads the card's `colors` by name or letter, any case, from a
   closed vocabulary: the five colors and `colorless`. `colorless` (or `C`)
   matches a card whose color set is empty (CR 105.2c, "A colorless object has
@@ -164,6 +166,68 @@ characteristic with it:
 - Missing-from zones: `battlefield`, `graveyard`, `exile`, `hand`, `stack`, `library`, `sideboard`
 - Missing-from sides: `me`, `opponent`
 - Missing-from by: `subtype`, `name`
+
+### `enters_any` (O4)
+
+A selector field naming 0-3 of the three `EntersState` words (`untapped`,
+`tapped`, `untapped_if_paid`; a word outside them is `malformed-play`),
+answered by the engine's `machines.hypothetical.predict_enters` for the
+viewer's own hand or library land right now - never re-derived from the
+view's own text. The redacted view carries no `enters` field of its own:
+`selectors.matches` reads it off `hypo`, a mapping of engine-computed facts
+keyed by card id (`hypothetical_facts.build_hypothetical_facts`, served by
+`GET .../playscripts/hypothetical-facts`), fetched only when a play's
+selectors actually name `enters_any`, `unlocks` or `unlocks_by_search`
+(`conditions.needs_hypothetical`) and cached per board position rather than
+asked again for the same one. A land whose optional cost (a shockland's "you
+may pay 2 life") is legal but lethal (CR 704.5a) is read as `tapped`, never
+`untapped_if_paid`: that payment is not one a player can spend on anything,
+so a shockland at 2 life or less never matches `enters_any: [untapped_if_paid]`.
+A card with no computed fact (an opponent's card, a card not asked about at
+all) never matches, the same as any other absent characteristic; asking for
+`enters_any` with no `hypo` fetched at all is `HypotheticalRequired`, not a
+silent false.
+
+- Enters states: `untapped`, `tapped`, `untapped_if_paid`
+
+### `unlocks`, `unlocks_by_search`, `affordable` (O7)
+
+Three more selector fields the engine, not the view, answers:
+
+- `unlocks` (bool): with this land entering right now exactly as `enters_any`
+  above says it would (its optional cost paid only when doing so is not
+  lethal), some hand card other than the land itself becomes payable that was
+  not payable before it entered - a cast, or a hand-activated ability such as
+  cycling or channel. Judged by one `machines.hypothetical.payability_matrix`
+  call per evaluation (never one `payability` call per land/card pair): the
+  matrix's `now` answers are the baseline, its per-land column the answer
+  with that land assumed, and a pair is compared only when neither answer,
+  nor the land's own prediction, carries an engine notice (an unresolved
+  triggered ability, an unread enters-tapped line) - a noticed pair fails
+  `unlocks` closed to `false` rather than trusting an answer the engine
+  itself flagged incomplete. A lethal optional payment is judged as the
+  declined (tapped) entry, so it never counts as unlocking anything either.
+- `unlocks_by_search` (bool): this hand card's ability or oracle text matches
+  O3's `searches_for_any` template, and at least one land its search could
+  find, among the viewer's own library (by basic land type, read off the
+  library card's own subtypes, never a name), itself `unlocks` something in
+  that same matrix call. It needs the viewer's own library contents -
+  `conditions.needs_contents` fires for any selector naming it, exactly as it
+  does for a `count` over the viewer's own library, so a caller that walks a
+  play for what it needs to fetch never has to ask twice.
+- `affordable {extra: n}` (`n` >= 0): the card's own `mana_value` is at most
+  `untapped_mana + extra` - the same `untapped_mana` a `{kind: untapped_mana}`
+  condition reads (`conditions.untapped_mana`), a plain view computation with
+  no engine call, computed once per `evaluate`/move-build call and passed to
+  every selector that asks. `extra: 0` asks whether the card is affordable
+  from untapped mana alone; a card with no `mana_value` (a land), or a call
+  that never computed `untapped_mana` at all, never matches.
+
+`unlocks`/`unlocks_by_search` (and `enters_any`) need `hypo`; `affordable`
+never does, since `untapped_mana` costs nothing to compute from the view
+already in hand - a play mixing `affordable` with the other three still
+needs the `GET .../playscripts/hypothetical-facts` call for those, but never
+for `affordable` alone.
 
 ## Moves
 

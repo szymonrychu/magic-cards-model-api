@@ -95,6 +95,40 @@ def test_doc_defines_land_face() -> None:
         assert phrase in section
 
 
+def test_doc_names_every_enters_state_in_schema_order() -> None:
+    from magic_cards_model_api.playscripts.schema import ENTERS_STATES
+
+    assert _listed("- Enters states:") == list(ENTERS_STATES)
+
+
+def test_doc_defines_enters_any() -> None:
+    text = DOC.read_text()
+    assert "`enters_any`" in text
+    section = text.split("### `enters_any` (O4)", 1)[1].split("\n## ", 1)[0]
+    for phrase in (
+        "predict_enters",
+        "hypo",
+        "lethal",
+        "HypotheticalRequired",
+    ):
+        assert phrase in section
+
+
+def test_doc_defines_unlocks_unlocks_by_search_and_affordable() -> None:
+    text = DOC.read_text()
+    section = text.split("### `unlocks`, `unlocks_by_search`, `affordable` (O7)", 1)[1].split(
+        "\n## ", 1
+    )[0]
+    for phrase in (
+        "payability_matrix",
+        "notice",
+        "needs_contents",
+        "untapped_mana",
+        "mana_value",
+    ):
+        assert phrase in section
+
+
 def test_doc_names_every_answerable_decision_kind() -> None:
     assert _listed("- Decision kinds:") == list(DECISION_KINDS)
 

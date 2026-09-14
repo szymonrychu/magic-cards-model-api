@@ -1564,6 +1564,24 @@ class Seat:
         _trim_images(state)
         return state
 
+    def hypothetical_facts(self) -> dict[str, Any]:
+        """O4's `enters_any` and O7's `unlocks`/`unlocks_by_search`: this
+        seat's own engine-computed facts, one HTTP call
+        (`GET .../playscripts/hypothetical-facts`, `hypothetical_facts.
+        build_hypothetical_facts` server-side). This process holds no `Game`
+        of its own - `run_action`/`fetch_state` are its only way to reach
+        one - so these three selector fields cannot be answered any other
+        way from here. Call it only when `playscripts.conditions.
+        needs_hypothetical` says a play's selectors need it, and cache the
+        answer (`playscripts.runtime`'s own cache) rather than calling this
+        once per script judged against an unchanged board."""
+        response = self.http.get(
+            f"/api/games/{self.game_id()}/playscripts/hypothetical-facts",
+            params={"uid": self.uid},
+        )
+        self.last_state_status = response.status_code
+        return response.json()
+
     def recent_log(self, *, since: int = 0, limit: int = RECENT_LOG_ENTRIES) -> dict[str, Any]:
         """The tail of this seat's own view of the action log - what happened,
         in the game's words, since `since` (0 for "the whole history, tailed").

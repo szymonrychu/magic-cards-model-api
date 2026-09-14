@@ -30,7 +30,7 @@ from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG, state_view
 
 from magic_cards_model_api import audit, seatkit
 from magic_cards_model_api.main import app
-from magic_cards_model_api.playscripts import runtime
+from magic_cards_model_api.playscripts import runtime, script_tools
 from magic_cards_model_api.playscripts.runtime import Exit, run_script
 from magic_cards_model_api.repository import Advisor
 from magic_cards_model_api.seatkit import Seats
@@ -2595,3 +2595,128 @@ def test_the_active_opponent_passing_after_the_runs_resolution_does_not_interrup
     assert cards_named(after_state["battlefield"], "Undercity Sewers")
     assert cards_named(after_state["graveyards"]["alice"], "Island"), "the surveil was answered"
     assert passed_after, "bob never held priority after the resolution, so nothing was tested"
+
+
+# -- O4/O7: hypothetical facts, fetched only when needed, cached per position ----
+
+
+def _hypothetical_gets(hook: Hooked) -> list[str]:
+    return [
+        path
+        for method, path, _ in hook.sent
+        if method == "GET" and path.endswith("/playscripts/hypothetical-facts")
+    ]
+
+
+def test_a_play_with_no_o4_o7_selector_never_fetches_hypothetical_facts(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    script = land_script("drop")
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert _hypothetical_gets(hook) == []
+
+
+def _unlocks_land_script(script_id: str, **over: Any) -> dict[str, Any]:
+    """A land-drop play whose own condition needs O4/O7 facts: at least one
+    hand land the engine says `unlocks` something, entering untapped."""
+    doc = land_script(script_id)
+    doc["true"] = [
+        {
+            "kind": "count",
+            "zone": "hand",
+            "side": "me",
+            "op": ">=",
+            "n": 1,
+            "select": {"types_all": ["Land"], "unlocks": True, "enters_any": ["untapped"]},
+        }
+    ]
+    doc.update(over)
+    return doc
+
+
+def test_a_play_with_an_o4_o7_selector_fetches_hypothetical_facts_per_position(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two fetches here are both genuine: one before the land is played (is
+    the play's own condition true now?), one after (`reapplicable_after` -
+    does it still hold on the changed board?) - two different board
+    positions, never the same one asked twice."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    add_card(client, board, "Preordain", "alice", "hand")
+    script = _unlocks_land_script("drop-unlocks")
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert len(_hypothetical_gets(hook)) == 2
+
+
+def test_listing_fetches_hypothetical_facts_once_for_every_script_at_one_position(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`script_tools.listing` judges every registered script against the one
+    board it fetched - a single position, so one fetch must serve all of
+    them, however many scripts read `enters_any`/`unlocks`."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    add_card(client, board, "Preordain", "alice", "hand")
+    scripts = [_unlocks_land_script(f"drop-unlocks-{i}", priority=50 - i) for i in range(3)]
+    register(client, board, alice, *scripts)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = script_tools.listing(seat, seats.script_corpora)
+
+    assert isinstance(result, dict), result
+    assert len(_hypothetical_gets(hook)) == 1
+
+
+class _StubSeat:
+    """A bare stand-in for `hypothetical_facts()` call counting - the cache
+    under test (`runtime._HypotheticalCache`) reads nothing else off a seat."""
+
+    def __init__(self, cards: dict[str, Any]) -> None:
+        self.calls = 0
+        self._cards = cards
+
+    def hypothetical_facts(self) -> dict[str, Any]:
+        self.calls += 1
+        return {"cards": self._cards, "notices": []}
+
+
+def test_hypothetical_cache_reuses_the_answer_at_an_unchanged_position() -> None:
+    seat = _StubSeat({"x": {"enters": "untapped"}})
+    cache = runtime._HypotheticalCache()
+    state1 = {"turn_number": 1, "step": "precombat_main", "hands": {"alice": []}}
+
+    first = cache.get(seat, state1)
+    second = cache.get(seat, dict(state1))  # a fresh dict, same content
+    assert first == second == {"x": {"enters": "untapped"}}
+    assert seat.calls == 1, "the second call at the same position must not refetch"
+
+
+def test_hypothetical_cache_refetches_once_the_position_changes() -> None:
+    seat = _StubSeat({"x": {"enters": "untapped"}})
+    cache = runtime._HypotheticalCache()
+    state1 = {"turn_number": 1, "step": "precombat_main", "hands": {"alice": []}}
+    state2 = {"turn_number": 1, "step": "precombat_main", "hands": {"alice": [{"id": "y"}]}}
+
+    cache.get(seat, state1)
+    cache.get(seat, state2)
+    assert seat.calls == 2, "a changed board must be refetched, never served stale"

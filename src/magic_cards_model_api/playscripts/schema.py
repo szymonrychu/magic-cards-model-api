@@ -228,6 +228,14 @@ Ties = Literal[TIES]
 SearchesForWords = Annotated[
     list[Literal[BASIC_LAND_TYPES]], Field(max_length=len(BASIC_LAND_TYPES))
 ]
+#: `enters_any` (O4): `hypothetical.EntersState`'s three values, by name -
+#: spelled out here rather than imported so this schema stays free of the
+#: engine's `machines.hypothetical` module, which only the server-side
+#: evaluation path (`hypothetical_facts.py`) touches. A word outside the
+#: three is `malformed-play`, the same closed-vocabulary treatment
+#: `searches_for_any` gets.
+ENTERS_STATES = ("untapped", "tapped", "untapped_if_paid")
+EntersAnyWords = Annotated[list[Literal[ENTERS_STATES]], Field(max_length=len(ENTERS_STATES))]
 
 
 class _Strict(BaseModel):
@@ -269,6 +277,13 @@ class MissingFrom(_Strict):
     by: Literal[MISSING_FROM_BY]
 
 
+class Affordable(_Strict):
+    """`{extra: n}` (O7): mana value <= untapped mana + `extra`. `extra` 0
+    asks whether the card is affordable with untapped mana alone."""
+
+    extra: AtLeastZero
+
+
 SELECTOR_WORD_FIELDS = (
     "types_all",
     "types_any",
@@ -301,6 +316,17 @@ class Selector(_Strict):
     searches_for_any: SearchesForWords = None
     land_face: bool = None
     missing_from: MissingFrom = None
+    #: How this land would enter the battlefield right now (O4), judged
+    #: against the live game - see `hypothetical_facts.py`.
+    enters_any: EntersAnyWords = None
+    #: With this land hypothetically on the battlefield, some other hand
+    #: card becomes payable that is not payable now (O7).
+    unlocks: bool = None
+    #: This hand card searches the library, and some library land it could
+    #: find would `unlocks` (O7).
+    unlocks_by_search: bool = None
+    #: Mana value <= untapped mana + `extra` (O7).
+    affordable: Affordable = None
 
 
 # -- conditions --------------------------------------------------------------
@@ -673,6 +699,7 @@ _ITEM_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "opposing_archetypes": TypeAdapter(ArchetypeKey),
     "zones": TypeAdapter(Literal[MISSING_FROM_ZONES]),
     "searches_for_any": TypeAdapter(Literal[BASIC_LAND_TYPES]),
+    "enters_any": TypeAdapter(Literal[ENTERS_STATES]),
     **{field: TypeAdapter(NonBlank) for field in SELECTOR_WORD_FIELDS},
 }
 _BOUND_TYPES = (

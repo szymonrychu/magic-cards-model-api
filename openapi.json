@@ -6027,6 +6027,31 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "HypotheticalFactsResponse": {
+        "description": "`GET .../playscripts/hypothetical-facts`'s response\n(`hypothetical_facts.build_hypothetical_facts`) - O4/O7's engine-computed\nper-card facts, keyed by card id (a string: JSON has no UUID keys).\n`cards[id]` is `{\"enters\"?: str, \"unlocks\"?: bool,\n\"unlocks_by_search\"?: bool}` - only the facts that card actually has, the\nsame shape `selectors.Hypo` reads. `notices` is every notice the engine\nraised while working any of them out (an unread enters-tapped line, a\nlethal optional payment, an unresolved trigger); it is not tied to one\ncard, since `selectors.matches` already applies the \"any notice fails\n`unlocks` closed\" rule per pair before this response is built - it is\nhere for a caller that wants to see why.",
+        "properties": {
+          "cards": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Cards",
+            "type": "object"
+          },
+          "notices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cards"
+        ],
+        "title": "HypotheticalFactsResponse",
+        "type": "object"
+      },
       "ImproviseCostView": {
         "properties": {
           "candidates": {
@@ -15403,6 +15428,62 @@
           }
         },
         "summary": "Set Mana Pool"
+      }
+    },
+    "/api/games/{game_id}/playscripts/hypothetical-facts": {
+      "get": {
+        "description": "O4's `enters_any` and O7's `unlocks`/`unlocks_by_search`: everything a\nplay's selectors can ask about `uid`'s own hand and library lands and\ncards, computed once against the live game (`hypothetical_facts.\nbuild_hypothetical_facts`) rather than read off a polled view.\n\nOnly a real seat may ask - `uid` must resolve to one of this game's own\nplayers, never the admin key and never nobody, since a fact here is\nalways \"what would happen for this specific player\", and every engine\ncall this makes (`predict_enters`/`payability`/`payability_matrix`, in\n`hypothetical_facts.py`) already refuses a card outside that player's own\nhand or library, so nothing about an opponent's cards is ever computed\nor returned - not merely redacted after the fact, as `get_game`'s view\nis, but never asked about in the first place.\n\nMeant to be called sparingly: `conditions.needs_hypothetical` tells a\ncaller when a play's conditions need this at all, and the runtime caches\nthe answer until the board changes rather than calling this once per\njudgement of every script it checks.",
+        "operationId": "get_hypothetical_facts_api_games__game_id__playscripts_hypothetical_facts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HypotheticalFactsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Hypothetical Facts"
       }
     },
     "/api/games/{game_id}/pregame/mulligan": {

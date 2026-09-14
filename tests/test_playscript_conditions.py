@@ -28,9 +28,14 @@ from playscript_testkit import (
     state_view,
 )
 
-from magic_cards_model_api.playscripts.conditions import ContentsRequired, evaluate, needs_contents
+from magic_cards_model_api.playscripts.conditions import (
+    ContentsRequired,
+    evaluate,
+    needs_contents,
+    needs_hypothetical,
+)
 from magic_cards_model_api.playscripts.inputs import input_catalog
-from magic_cards_model_api.playscripts.selectors import matches
+from magic_cards_model_api.playscripts.selectors import HypotheticalRequired, matches
 from magic_cards_model_api.serialize import state_view as live_state_view
 from magic_cards_model_api.store import store
 from magic_cards_model_api.visibility import redact_view
@@ -820,3 +825,68 @@ def test_needs_contents_reads_only_what_the_caller_is_about_to_evaluate():
     assert needs_contents(move["answers"][0])
     assert not needs_contents(move)
     assert not needs_contents(play(moves=[move]))
+
+
+# -- O4/O7: needs_hypothetical, and evaluate() threading hypo/untapped_mana -------
+
+
+def test_needs_hypothetical_tells_the_caller_a_selector_reads_enters_or_unlocks():
+    assert not needs_hypothetical(FETCH_SHOCK)
+    assert needs_hypothetical(
+        play(true=[count("hand", "me", ">=", 1, {"enters_any": ["untapped"]})])
+    )
+    assert needs_hypothetical(play(true=[count("hand", "me", ">=", 1, {"unlocks": True})]))
+    assert needs_hypothetical(
+        play(true=[count("hand", "me", ">=", 1, {"unlocks_by_search": True})])
+    )
+    assert not needs_hypothetical(
+        play(true=[count("hand", "me", ">=", 1, {"affordable": {"extra": 0}})])
+    )
+    assert not needs_hypothetical(play(true=[count("hand", "me", ">=", 1, {"tapped": False})]))
+
+
+def test_needs_hypothetical_reads_a_stack_top_selector_too():
+    top = {
+        "kind": "stack_top",
+        "controller": "opponent",
+        "select": {"unlocks": True},
+    }
+    assert needs_hypothetical(play(true=[top]))
+
+
+def test_needs_hypothetical_reads_only_what_the_caller_is_about_to_evaluate():
+    move = copy.deepcopy(FETCH_SHOCK["moves"][0])
+    move["answers"][0]["pick"]["prefer"] = [{"unlocks": True}]
+    assert needs_hypothetical(move["answers"][0])
+    assert not needs_hypothetical(move)
+    assert not needs_hypothetical(play(moves=[move]))
+
+
+def test_needs_contents_is_also_true_for_unlocks_by_search():
+    assert needs_contents(play(true=[count("hand", "me", ">=", 1, {"unlocks_by_search": True})]))
+    assert not needs_contents(play(true=[count("hand", "me", ">=", 1, {"unlocks": True})]))
+
+
+def test_a_selector_reading_enters_or_unlocks_cannot_be_evaluated_without_hypothetical_facts():
+    view = state_view(hands={"alice": [mountain(zone="hand")]})
+    doc = play(true=[count("hand", "me", ">=", 1, {"enters_any": ["untapped"]})])
+    with pytest.raises(HypotheticalRequired):
+        evaluate(doc, view, "alice")
+
+
+def test_evaluate_passes_hypothetical_facts_through_to_matches():
+    land = mountain(zone="hand")
+    view = state_view(hands={"alice": [land]})
+    doc = play(true=[count("hand", "me", ">=", 1, {"enters_any": ["untapped"]})])
+    holding = evaluate(doc, view, "alice", hypothetical={land["id"]: {"enters": "untapped"}})
+    assert holding["applies"]
+    not_holding = evaluate(doc, view, "alice", hypothetical={land["id"]: {"enters": "tapped"}})
+    assert not not_holding["applies"]
+
+
+def test_evaluate_computes_untapped_mana_for_affordable_selectors():
+    spell = bolt(zone="hand")
+    source = mountain()
+    view = state_view(hands={"alice": [spell]}, battlefield=[source])
+    doc = play(true=[count("hand", "me", ">=", 1, {"affordable": {"extra": 0}})])
+    assert evaluate(doc, view, "alice")["applies"]

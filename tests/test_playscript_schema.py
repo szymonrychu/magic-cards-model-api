@@ -23,6 +23,7 @@ from magic_cards_model_api.playscripts.schema import (
     CODES,
     CONDITION_KINDS,
     DECISION_KINDS,
+    ENTERS_STATES,
     FORBIDDEN_DECISION_KINDS,
     MAX_ARCHETYPES,
     MAX_INPUT_VALUES,
@@ -349,6 +350,10 @@ def test_no_selector_field_takes_a_card_name():
         "searches_for_any",
         "land_face",
         "missing_from",
+        "enters_any",
+        "unlocks",
+        "unlocks_by_search",
+        "affordable",
     }
 
 
@@ -395,6 +400,94 @@ def test_land_face_validates_as_a_bool():
 def test_land_face_non_bool_is_malformed():
     doc = mutate("true.0.select", {"land_face": "yes"})
     assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+# -- O4: enters_any -------------------------------------------------------------
+
+
+def test_enters_any_is_the_three_enters_states():
+    assert ENTERS_STATES == ("untapped", "tapped", "untapped_if_paid")
+
+
+def test_enters_any_validates_with_enters_state_words():
+    doc = mutate("true.0.select", {"enters_any": ["untapped", "untapped_if_paid"]})
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.true[0].select.enters_any == ["untapped", "untapped_if_paid"]
+
+
+@pytest.mark.parametrize("word", ["tap", "Untapped", "sideways", ""])
+def test_a_word_outside_the_three_enters_states_is_malformed(word):
+    doc = mutate("true.0.select", {"enters_any": [word]})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_enters_any_is_bounded_at_the_three_enters_states():
+    doc = mutate("true.0.select", {"enters_any": list(ENTERS_STATES)})
+    assert play_errors(doc) == []
+    over = mutate("true.0.select", {"enters_any": [*ENTERS_STATES, "tapped"]})
+    assert codes(over) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(over)
+
+
+# -- O7: unlocks, unlocks_by_search, affordable ----------------------------------
+
+
+def test_unlocks_validates_as_a_bool():
+    doc = mutate("true.0.select", {"unlocks": True})
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).true[0].select.unlocks is True
+
+
+def test_unlocks_non_bool_is_malformed():
+    doc = mutate("true.0.select", {"unlocks": "yes"})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_unlocks_by_search_validates_as_a_bool():
+    doc = mutate("true.0.select", {"unlocks_by_search": True})
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).true[0].select.unlocks_by_search is True
+
+
+def test_unlocks_by_search_non_bool_is_malformed():
+    doc = mutate("true.0.select", {"unlocks_by_search": "yes"})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_affordable_validates_with_a_non_negative_extra():
+    doc = mutate("true.0.select", {"affordable": {"extra": 2}})
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).true[0].select.affordable.extra == 2
+
+
+def test_affordable_extra_zero_is_valid():
+    doc = mutate("true.0.select", {"affordable": {"extra": 0}})
+    assert play_errors(doc) == []
+
+
+def test_affordable_negative_extra_is_bounds_exceeded():
+    # `extra` is `AtLeastZero`, the same field type `Comparison.n` uses - a
+    # negative value is `bounds-exceeded`, not `malformed-play`, matching
+    # every other `AtLeastZero` field in this schema.
+    doc = mutate("true.0.select", {"affordable": {"extra": -1}})
+    assert codes(doc) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_affordable_unknown_field_is_refused():
+    doc = mutate("true.0.select", {"affordable": {"extra": 1, "bonus": 1}})
+    assert codes(doc) == ["unknown-field"]
     with pytest.raises(ValidationError):
         Play.model_validate(doc)
 

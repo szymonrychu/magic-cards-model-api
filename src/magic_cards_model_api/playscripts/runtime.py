@@ -74,7 +74,7 @@ from ..seatkit import (
 from . import conditions
 from .inputs import BUILTIN_INPUT, input_catalog
 from .schema import AMOUNT_DECISION_KINDS, CHOICE_DECISION_KINDS, WILDCARD, Play
-from .selectors import Present, matches
+from .selectors import Hypo, Present, matches
 
 #: The tool parameter each decision kind is answered on, by kind value - the
 #: fallback for a pending decision that does not name its `answer_field`.
@@ -271,6 +271,37 @@ class _Run:
         )
 
 
+class _HypotheticalCache:
+    """O4/O7's engine-computed facts (`Seat.hypothetical_facts`), fetched at
+    most once per distinct board - "call it once per judgement... cache per
+    (turns_taken, step, state seq)" (O7).
+
+    `turns_taken` (the engine's per-turn counter that moves on an extra turn
+    too, CR 500.7 - see `schema.TurnCondition`'s docstring for how it differs
+    from the view's own `turn_number`) is not a field `GameStateView` carries,
+    so there is no cheaper way to name "has the board moved" than reading the
+    view itself: this keys on `turn_number` and `step` for a readable cache
+    key, plus a hash of the whole fetched view standing in for "state seq" -
+    any mutation changes some field of it, so the hash changes with it, which
+    is the actual invalidation guarantee this cache needs. `turn_number`/
+    `step` are kept alongside the hash only because they make a hit or miss
+    legible in a debugger; the hash alone would already be correct.
+    """
+
+    def __init__(self) -> None:
+        self._fingerprint: tuple[Any, ...] | None = None
+        self._facts: dict[str, Any] = {}
+
+    def get(self, seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
+        digest = hashlib.sha256(json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()
+        fingerprint = (state.get("turn_number"), state.get("step"), digest)
+        if fingerprint != self._fingerprint:
+            fetched = seat.hypothetical_facts()
+            self._facts = dict(fetched.get("cards") or {}) if isinstance(fetched, dict) else {}
+            self._fingerprint = fingerprint
+        return self._facts
+
+
 @dataclass
 class _Context:
     seat: Seat
@@ -284,6 +315,10 @@ class _Context:
     #: The caller going away (an MCP call cancelled by an interrupt): read
     #: like the time cap, so a run waiting on the board stops at once.
     should_stop: Callable[[], bool] | None = None
+    #: O4/O7's per-run cache - see `_HypotheticalCache`. One per `_Context`,
+    #: so every condition check in one run (and its chained `next` plays)
+    #: shares it rather than re-fetching for an unmoved board.
+    hypothetical: _HypotheticalCache = field(default_factory=_HypotheticalCache)
 
     @property
     def me(self) -> str:
@@ -657,7 +692,9 @@ def _send_move(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | N
             )
         run.move_index, run.answer_index = index + 1, 0
         return None
-    built = _move_request(move, state, ctx.me, reasoning)
+    hypo = ctx.hypothetical.get(ctx.seat, state) if conditions.needs_hypothetical(move) else None
+    mana = conditions.untapped_mana(state, ctx.me)
+    built = _move_request(move, state, ctx.me, reasoning, hypo=hypo, mana=mana)
     if isinstance(built, ScriptExit):
         return built
     path, body = built
@@ -751,7 +788,13 @@ def _answer(
         card.get("type_line") is None for card in _decision_cards(pending, state, ctx.me)
     ):
         view = seat.fetch_state(include_contents=True)
-    body = decide_body(answers[found], pending, view, ctx.me, reasoning)
+    hypo = (
+        ctx.hypothetical.get(ctx.seat, view)
+        if conditions.needs_hypothetical(answers[found])
+        else None
+    )
+    mana = conditions.untapped_mana(view, ctx.me)
+    body = decide_body(answers[found], pending, view, ctx.me, reasoning, hypo=hypo, mana=mana)
     if isinstance(body, ScriptExit):
         return body
     run.answer_index = found + 1
@@ -878,13 +921,19 @@ def _missing_plan(outcome: Any) -> bool:
 
 
 def _move_request(
-    move: dict[str, Any], state: dict[str, Any], me: str, reasoning: str
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
 ) -> tuple[str, dict[str, Any]] | ScriptExit:
     kind = move["kind"]
     if kind == "activate":
-        return _activate_request(move, state, me, reasoning)
+        return _activate_request(move, state, me, reasoning, hypo=hypo, mana=mana)
     if kind == "cast":
-        body = cast_body(move, state, me, reasoning)
+        body = cast_body(move, state, me, reasoning, hypo=hypo, mana=mana)
         return body if isinstance(body, ScriptExit) else ("actions/cast", body)
     chosen = _pick(
         _zone_cards(state, "hand", me),
@@ -893,6 +942,8 @@ def _move_request(
         move["card"].get("prefer"),
         present=conditions.presence(state, me),
         ties=move["card"].get("ties"),
+        hypo=hypo,
+        mana=mana,
     )
     if isinstance(chosen, ScriptExit):
         return chosen
@@ -900,7 +951,13 @@ def _move_request(
 
 
 def _activate_request(
-    move: dict[str, Any], state: dict[str, Any], me: str, reasoning: str
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
 ) -> tuple[str, dict[str, Any]] | ScriptExit:
     phrase = move["ability_text_has"]
     candidates = [
@@ -916,6 +973,8 @@ def _activate_request(
         move["source"].get("prefer"),
         present=present,
         ties=move["source"].get("ties"),
+        hypo=hypo,
+        mana=mana,
     )
     if isinstance(chosen, ScriptExit):
         return chosen
@@ -927,7 +986,7 @@ def _activate_request(
         "ability_index": ability.get("index"),
         "reasoning": reasoning,
     }
-    targets = _targets(move, state, me)
+    targets = _targets(move, state, me, hypo=hypo, mana=mana)
     if isinstance(targets, ScriptExit):
         return targets
     if targets:
@@ -944,6 +1003,8 @@ def _activate_request(
             sacrifice.get("count") or sacrifice_count(ability),
             present=present,
             ties=sacrifice.get("ties"),
+            hypo=hypo,
+            mana=mana,
         )
         if isinstance(sacrificed, ScriptExit):
             return sacrificed
@@ -965,7 +1026,14 @@ def sacrifice_count(ability: dict[str, Any]) -> int:
     return int(word) if word.isdigit() else NUMBER_WORDS[word]
 
 
-def _targets(move: dict[str, Any], state: dict[str, Any], me: str) -> list[str] | ScriptExit:
+def _targets(
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> list[str] | ScriptExit:
     """The route's `targets` for a move, in order: a card target is the id
     its selector picks on its side of the battlefield and stack, a player
     target that player's name. Both use `_pick`'s rules."""
@@ -984,7 +1052,14 @@ def _targets(move: dict[str, Any], state: dict[str, Any], me: str) -> list[str] 
                 if _on_side(card.get("controller"), target["side"], me)
             ]
             select = target["select"]
-        picked = _pick(pool, select, f"target {index + 1}", present=conditions.presence(state, me))
+        picked = _pick(
+            pool,
+            select,
+            f"target {index + 1}",
+            present=conditions.presence(state, me),
+            hypo=hypo,
+            mana=mana,
+        )
         if isinstance(picked, ScriptExit):
             return picked
         chosen.append(picked[0]["id"])
@@ -992,7 +1067,13 @@ def _targets(move: dict[str, Any], state: dict[str, Any], me: str) -> list[str] 
 
 
 def cast_body(
-    move: dict[str, Any], state: dict[str, Any], me: str, reasoning: str
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
 ) -> dict[str, Any] | ScriptExit:
     """`POST .../actions/cast`'s body for a `cast` move, read off the view.
     A `cost` other than `normal` is the alternative cost it is announced
@@ -1006,10 +1087,12 @@ def cast_body(
         move["card"].get("prefer"),
         present=conditions.presence(state, me),
         ties=move["card"].get("ties"),
+        hypo=hypo,
+        mana=mana,
     )
     if isinstance(chosen, ScriptExit):
         return chosen
-    targets = _targets(move, state, me)
+    targets = _targets(move, state, me, hypo=hypo, mana=mana)
     if isinstance(targets, ScriptExit):
         return targets
     body: dict[str, Any] = {
@@ -1033,6 +1116,9 @@ def decide_body(
     state: dict[str, Any],
     me: str,
     reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
 ) -> dict[str, Any] | ScriptExit:
     """`POST .../decide`'s body for one answers item, carrying the pending
     decision's own `generation`."""
@@ -1085,6 +1171,8 @@ def decide_body(
             pick.get("count", 1),
             present=present,
             ties=pick.get("ties"),
+            hypo=hypo,
+            mana=mana,
         )
         if isinstance(chosen, ScriptExit):
             return chosen
@@ -1099,14 +1187,20 @@ def decide_body(
         # and means "keep everything on top": `moved` is empty, not absent -
         # B7-07, the shape `fetch-surveil-land-keep` uses.
         body["moved"] = (
-            [card["id"] for card in cards if matches(moving, card, present)]
+            [
+                card["id"]
+                for card in cards
+                if matches(moving, card, present, untapped_mana=mana, hypo=hypo)
+            ]
             if moving is not None
             else []
         )
         body["top_order"] = None
         return body
     if kind == "put_on_top_or_bottom" and item.get("to_bottom") is not None and cards:
-        body["top"] = not matches(item["to_bottom"], cards[0], present)
+        body["top"] = not matches(
+            item["to_bottom"], cards[0], present, untapped_mana=mana, hypo=hypo
+        )
         return body
     return ScriptExit(
         Exit.UNFORESEEN,
@@ -1164,17 +1258,29 @@ def _pick(
     count: int = 1,
     present: Present | None = None,
     ties: str | None = None,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
 ) -> list[dict[str, Any]] | ScriptExit:
     """`count` cards matching `select`, narrowed by each `prefer` that still
     leaves some. Same-named candidates are interchangeable; different names
     left tied are `ambiguous`, unless `ties == "any"` (O2), which instead
     takes the first `count` of them by sorted name. `present` is the board a
-    `missing_from` compares against."""
-    found = [card for card in cards if matches(select, card, present)]
+    `missing_from` compares against; `hypo`/`mana` are O4/O7's engine facts
+    and untapped-mana count, for a `select`/`prefer` naming `enters_any`,
+    `unlocks`, `unlocks_by_search` or `affordable` - the caller fetches
+    `hypo` only when the move actually needs it (`needs_hypothetical`)."""
+    found = [
+        card for card in cards if matches(select, card, present, untapped_mana=mana, hypo=hypo)
+    ]
     if not found:
         return ScriptExit(Exit.UNFORESEEN, stop_reason=f"nothing matched {what}")
     for preference in prefer or []:
-        narrowed = [card for card in found if matches(preference, card, present)]
+        narrowed = [
+            card
+            for card in found
+            if matches(preference, card, present, untapped_mana=mana, hypo=hypo)
+        ]
         if narrowed:
             found = narrowed
     names = sorted({str(card.get("name") or card.get("card_name")) for card in found})
@@ -1230,7 +1336,8 @@ def _on_side(controller: str | None, side: str, me: str) -> bool:
 
 def _evaluate(ctx: _Context, play: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     view = ctx.seat.fetch_state(include_contents=True) if conditions.needs_contents(play) else state
-    return conditions.evaluate(play, view, ctx.me, ctx.inputs, ctx.catalog)
+    hypo = ctx.hypothetical.get(ctx.seat, view) if conditions.needs_hypothetical(play) else None
+    return conditions.evaluate(play, view, ctx.me, ctx.inputs, ctx.catalog, hypothetical=hypo)
 
 
 def _condition_exit(result: dict[str, Any]) -> ScriptExit | None:
@@ -1324,14 +1431,22 @@ def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any
             )
         if conditions.needs_contents(item):
             state = seat.fetch_state(include_contents=True)
-        body = decide_body(item, pending, state, ctx.me, reasoning)
+        hypo = (
+            ctx.hypothetical.get(ctx.seat, state) if conditions.needs_hypothetical(item) else None
+        )
+        mana = conditions.untapped_mana(state, ctx.me)
+        body = decide_body(item, pending, state, ctx.me, reasoning, hypo=hypo, mana=mana)
         built: tuple[str, dict[str, Any]] | ScriptExit = (
             body if isinstance(body, ScriptExit) else ("decide", body)
         )
     else:
         if conditions.needs_contents(first):
             state = seat.fetch_state(include_contents=True)
-        built = _move_request(first, state, ctx.me, reasoning)
+        hypo = (
+            ctx.hypothetical.get(ctx.seat, state) if conditions.needs_hypothetical(first) else None
+        )
+        mana = conditions.untapped_mana(state, ctx.me)
+        built = _move_request(first, state, ctx.me, reasoning, hypo=hypo, mana=mana)
     if isinstance(built, ScriptExit):
         return built
     path, request = built

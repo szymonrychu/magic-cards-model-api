@@ -51,6 +51,7 @@ from . import (
     visibility,
 )
 from .action_rows import legal_action_rows
+from .playscripts.hypothetical_facts import build_hypothetical_facts
 from .repository import RECENT_RECORDS_WINDOW, ArchivedGame, GameUnloadable
 from .repository_postgres import VersionConflict
 from .schemas import (
@@ -85,6 +86,7 @@ from .schemas import (
     GameStateView,
     GameSummariesResponse,
     HealthResponse,
+    HypotheticalFactsResponse,
     LegalActionsResponse,
     ListGamesResponse,
     ManaPoolUpdate,
@@ -1328,6 +1330,37 @@ def get_game(game_id: str, uid: str | None = None, include: str | None = None) -
     viewer = visibility.resolve_viewer(game_id, uid)
     view = state_view(game, game_id, include_contents="contents" in included)
     return visibility.redact_view(view, viewer)
+
+
+@app.get(
+    "/api/games/{game_id}/playscripts/hypothetical-facts",
+    response_model=HypotheticalFactsResponse,
+    response_model_exclude_unset=True,
+)
+def get_hypothetical_facts(game_id: str, uid: str | None = None) -> dict[str, Any]:
+    """O4's `enters_any` and O7's `unlocks`/`unlocks_by_search`: everything a
+    play's selectors can ask about `uid`'s own hand and library lands and
+    cards, computed once against the live game (`hypothetical_facts.
+    build_hypothetical_facts`) rather than read off a polled view.
+
+    Only a real seat may ask - `uid` must resolve to one of this game's own
+    players, never the admin key and never nobody, since a fact here is
+    always "what would happen for this specific player", and every engine
+    call this makes (`predict_enters`/`payability`/`payability_matrix`, in
+    `hypothetical_facts.py`) already refuses a card outside that player's own
+    hand or library, so nothing about an opponent's cards is ever computed
+    or returned - not merely redacted after the fact, as `get_game`'s view
+    is, but never asked about in the first place.
+
+    Meant to be called sparingly: `conditions.needs_hypothetical` tells a
+    caller when a play's conditions need this at all, and the runtime caches
+    the answer until the board changes rather than calling this once per
+    judgement of every script it checks."""
+    game = game_or_404(game_id)
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if not isinstance(viewer, str):
+        raise KeyError("that uid is no seat in this game")
+    return build_hypothetical_facts(game, viewer)
 
 
 @app.get(

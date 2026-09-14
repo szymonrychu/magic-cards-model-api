@@ -516,3 +516,76 @@ def test_missing_from_over_my_own_library_reads_the_contents_and_needs_them():
 def test_a_selector_with_missing_from_cannot_be_matched_without_the_board():
     with pytest.raises(ValueError, match="missing_from"):
         matches(missing(), mountain())
+
+
+# -- enters_any (O4) --------------------------------------------------------------
+
+
+def test_enters_any_matches_the_hypothetical_facts_state():
+    land = mountain()
+    hypo = {land["id"]: {"enters": "untapped"}}
+    assert matches({"enters_any": ["untapped"]}, land, hypo=hypo)
+    assert not matches({"enters_any": ["tapped"]}, land, hypo=hypo)
+    assert matches({"enters_any": ["tapped", "untapped"]}, land, hypo=hypo)
+
+
+def test_enters_any_never_matches_a_card_absent_from_hypothetical_facts():
+    land = mountain()
+    assert not matches({"enters_any": ["untapped"]}, land, hypo={})
+
+
+def test_enters_any_without_hypothetical_facts_raises():
+    from magic_cards_model_api.playscripts.selectors import HypotheticalRequired
+
+    with pytest.raises(HypotheticalRequired):
+        matches({"enters_any": ["untapped"]}, mountain())
+
+
+# -- unlocks, unlocks_by_search (O7) -----------------------------------------------
+
+
+def test_unlocks_matches_the_hypothetical_facts_bool():
+    land = mountain()
+    assert matches({"unlocks": True}, land, hypo={land["id"]: {"unlocks": True}})
+    assert not matches({"unlocks": True}, land, hypo={land["id"]: {"unlocks": False}})
+    assert matches({"unlocks": False}, land, hypo={land["id"]: {"unlocks": False}})
+    assert not matches({"unlocks": True}, land, hypo={})
+
+
+def test_unlocks_by_search_matches_the_hypothetical_facts_bool():
+    spell = bolt()
+    hot = {spell["id"]: {"unlocks_by_search": True}}
+    cold = {spell["id"]: {"unlocks_by_search": False}}
+    assert matches({"unlocks_by_search": True}, spell, hypo=hot)
+    assert not matches({"unlocks_by_search": True}, spell, hypo=cold)
+    assert not matches({"unlocks_by_search": True}, spell, hypo={})
+
+
+def test_unlocks_without_hypothetical_facts_raises():
+    from magic_cards_model_api.playscripts.selectors import HypotheticalRequired
+
+    with pytest.raises(HypotheticalRequired):
+        matches({"unlocks": True}, mountain())
+    with pytest.raises(HypotheticalRequired):
+        matches({"unlocks_by_search": True}, bolt())
+
+
+# -- affordable (O7) ---------------------------------------------------------------
+
+
+def test_affordable_compares_mana_value_to_untapped_mana_plus_extra():
+    spell = bolt()  # mana_value 1.0
+    assert matches({"affordable": {"extra": 0}}, spell, untapped_mana=1)
+    assert not matches({"affordable": {"extra": 0}}, spell, untapped_mana=0)
+    assert matches({"affordable": {"extra": 1}}, spell, untapped_mana=0)
+
+
+def test_affordable_without_a_mana_value_never_matches():
+    land = mountain()  # mana_value 0.0 by the testkit default, but a land has none in play
+    no_mv = dict(land, mana_value=None)
+    assert not matches({"affordable": {"extra": 5}}, no_mv, untapped_mana=5)
+
+
+def test_affordable_with_no_untapped_mana_given_never_matches():
+    spell = bolt()
+    assert not matches({"affordable": {"extra": 5}}, spell)

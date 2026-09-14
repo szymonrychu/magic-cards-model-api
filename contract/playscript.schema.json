@@ -64,6 +64,22 @@
       "title": "ActivateMove",
       "type": "object"
     },
+    "Affordable": {
+      "additionalProperties": false,
+      "description": "`{extra: n}` (O7): mana value <= untapped mana + `extra`. `extra` 0\nasks whether the card is affordable with untapped mana alone.",
+      "properties": {
+        "extra": {
+          "minimum": 0,
+          "title": "Extra",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "extra"
+      ],
+      "title": "Affordable",
+      "type": "object"
+    },
     "Answer": {
       "additionalProperties": false,
       "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; `choice` (O6) is taken only by\n`CHOICE_DECISION_KINDS`; every other kind takes `pick`, `accept`,\n`to_graveyard` or `to_bottom`.",
@@ -698,6 +714,10 @@
           "title": "Ability Text Has",
           "type": "string"
         },
+        "affordable": {
+          "$ref": "#/$defs/Affordable",
+          "default": null
+        },
         "colors_any": {
           "default": null,
           "items": {
@@ -711,6 +731,20 @@
         "counters": {
           "$ref": "#/$defs/CounterComparison",
           "default": null
+        },
+        "enters_any": {
+          "default": null,
+          "items": {
+            "enum": [
+              "untapped",
+              "tapped",
+              "untapped_if_paid"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Enters Any",
+          "type": "array"
         },
         "keywords_any": {
           "default": null,
@@ -809,6 +843,16 @@
           "maxItems": 15,
           "title": "Types Any",
           "type": "array"
+        },
+        "unlocks": {
+          "default": null,
+          "title": "Unlocks",
+          "type": "boolean"
+        },
+        "unlocks_by_search": {
+          "default": null,
+          "title": "Unlocks By Search",
+          "type": "boolean"
         }
       },
       "title": "Selector",

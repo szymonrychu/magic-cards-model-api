@@ -212,10 +212,19 @@ def listing(
     wants_contents = any(
         isinstance(play, dict) and conditions.needs_contents(play) for _, play in plays
     )
+    wants_hypothetical = any(
+        isinstance(play, dict) and conditions.needs_hypothetical(play) for _, play in plays
+    )
     state = seat.fetch_state(include_contents=wants_contents)
+    # One fetch for the whole listing, not one per script (O7): every play
+    # judged here shares the same board, so `_judged` never re-asks.
+    hypothetical = seat.hypothetical_facts().get("cards") if wants_hypothetical else None
     warnings = static_conflicts(docs, declared, str(corpus.get("deck_slug") or ""))
     entries = [
-        _judged(doc, play, state, seat.player, supplied, catalog, warnings) for doc, play in plays
+        _judged(
+            doc, play, state, seat.player, supplied, catalog, warnings, hypothetical=hypothetical
+        )
+        for doc, play in plays
     ]
     entries.sort(key=lambda entry: (-_priority(entry), str(entry["id"])))
     applicable = [entry["id"] for entry in entries if entry["applies"]]
@@ -262,6 +271,8 @@ def _judged(
     supplied: dict[str, Any],
     catalog: dict[str, dict[str, Any]],
     warnings: list[lint.PlaysWarning],
+    *,
+    hypothetical: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "id": doc.get("id"),
@@ -288,7 +299,7 @@ def _judged(
             "seen": runtime._position(state),
         }
     else:
-        result = conditions.evaluate(play, state, me, supplied, catalog)
+        result = conditions.evaluate(play, state, me, supplied, catalog, hypothetical=hypothetical)
         if result["invalid_input"] is not None:
             entry["invalid_input"] = result["invalid_input"]
         elif result["applies"]:

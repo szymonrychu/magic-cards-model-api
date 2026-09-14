@@ -2156,6 +2156,23 @@ class GameLogResponse(BaseModel):
     last_seq: int
 
 
+class HypotheticalFactsResponse(BaseModel):
+    """`GET .../playscripts/hypothetical-facts`'s response
+    (`hypothetical_facts.build_hypothetical_facts`) - O4/O7's engine-computed
+    per-card facts, keyed by card id (a string: JSON has no UUID keys).
+    `cards[id]` is `{"enters"?: str, "unlocks"?: bool,
+    "unlocks_by_search"?: bool}` - only the facts that card actually has, the
+    same shape `selectors.Hypo` reads. `notices` is every notice the engine
+    raised while working any of them out (an unread enters-tapped line, a
+    lethal optional payment, an unresolved trigger); it is not tied to one
+    card, since `selectors.matches` already applies the "any notice fails
+    `unlocks` closed" rule per pair before this response is built - it is
+    here for a caller that wants to see why."""
+
+    cards: dict[str, dict[str, Any]]
+    notices: list[str] = Field(default_factory=list)
+
+
 class ReviewEntry(BaseModel):
     """One ledger row as a declaration's pairing carries it - no `snapshot`,
     which lives once in `GameReviewResponse.entries` (see `review.py`)."""

@@ -46,7 +46,7 @@ from pydantic import BaseModel
 
 from ..seatkit import untapped_mana_sources
 from .inputs import input_catalog, supplied_input_problem
-from .selectors import Present, compare, matches
+from .selectors import Hypo, Present, compare, matches
 
 HIDDEN_CONTENTS = {"library": "library_contents", "sideboard": "sideboard_contents"}
 
@@ -83,22 +83,63 @@ def _missing_froms(node: Any):
             yield from _missing_froms(value)
 
 
+#: The selector fields `needs_hypothetical` walks for: O4's `enters_any` and
+#: O7's `unlocks`/`unlocks_by_search`, all engine-computed rather than read
+#: off the view - see `selectors.py`'s module docstring.
+_HYPOTHETICAL_FIELDS = ("enters_any", "unlocks", "unlocks_by_search")
+
+
+def _selector_fields(node: Any):
+    """Every `(key, value)` a selector holds among `_HYPOTHETICAL_FIELDS`,
+    anywhere in a play, a move or an answer but not in what is built later
+    from a fresh fetch (a play's `moves` or a move's `answers`) - the same
+    walk `_missing_froms` does."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in _HYPOTHETICAL_FIELDS:
+                yield key, value
+            elif key not in ("moves", "answers"):
+                yield from _selector_fields(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _selector_fields(value)
+
+
 def needs_contents(script: BaseModel | dict[str, Any]) -> bool:
     """Must the caller fetch the view with `include=contents` to evaluate
     this play's conditions (or build this move, or this answer)? A count over
-    the viewer's own library or sideboard, or a `missing_from` reading either
-    on side `me`, needs it."""
+    the viewer's own library or sideboard, a `missing_from` reading either on
+    side `me`, or a selector naming `unlocks_by_search` (O7 - the library
+    lands it could unlock are read off the same viewer library the rest of a
+    play's own reasoning about that zone expects to have in hand), needs it."""
     doc = _as_dict(script)
-    return any(
-        condition.get("kind") == "count"
-        and condition.get("zone") in HIDDEN_CONTENTS
-        and condition.get("side") in ("me", "any")
-        and not condition.get("known_only")
-        for _, _, condition in _conditions(doc)
-    ) or any(
-        missing.get("side") == "me" and set(missing.get("zones") or []) & set(HIDDEN_CONTENTS)
-        for missing in _missing_froms(doc)
+    return (
+        any(
+            condition.get("kind") == "count"
+            and condition.get("zone") in HIDDEN_CONTENTS
+            and condition.get("side") in ("me", "any")
+            and not condition.get("known_only")
+            for _, _, condition in _conditions(doc)
+        )
+        or any(
+            missing.get("side") == "me" and set(missing.get("zones") or []) & set(HIDDEN_CONTENTS)
+            for missing in _missing_froms(doc)
+        )
+        or any(key == "unlocks_by_search" for key, _ in _selector_fields(doc))
     )
+
+
+def needs_hypothetical(script: BaseModel | dict[str, Any]) -> bool:
+    """Must the caller fetch engine-computed hypothetical facts
+    (`hypothetical_facts.py`, the server's `.../playscripts/hypothetical-
+    facts` endpoint) to evaluate this play's conditions (or build this move,
+    or this answer)? A selector naming `enters_any` (O4), `unlocks` or
+    `unlocks_by_search` (O7) needs them - `matches` cannot answer any of the
+    three from the view alone (see `selectors.py`'s module docstring), and
+    unlike `needs_contents` there is no cheaper local fallback: the caller
+    must ask the server, once, and only when this says so."""
+    doc = _as_dict(script)
+    return any(True for _ in _selector_fields(doc))
 
 
 def _names(view: dict[str, Any], viewer: str, side: str) -> list[str]:
@@ -153,7 +194,14 @@ def presence(view: dict[str, Any], viewer: str) -> Present:
     return present
 
 
-def _count(condition: dict[str, Any], view: dict[str, Any], viewer: str) -> int:
+def _count(
+    condition: dict[str, Any],
+    view: dict[str, Any],
+    viewer: str,
+    *,
+    hypo: Hypo | None = None,
+    untapped: int | None = None,
+) -> int:
     select, present = condition.get("select") or {}, presence(view, viewer)
     entries = _entries(
         view,
@@ -162,7 +210,11 @@ def _count(condition: dict[str, Any], view: dict[str, Any], viewer: str) -> int:
         condition["side"],
         known_only=bool(condition.get("known_only")),
     )
-    return sum(count for card, count in entries if matches(select, card, present))
+    return sum(
+        count
+        for card, count in entries
+        if matches(select, card, present, untapped_mana=untapped, hypo=hypo)
+    )
 
 
 def _known_zone_cards(view: dict[str, Any], viewer: str, zone: str) -> list[dict[str, Any]]:
@@ -298,11 +350,14 @@ def _check(
     viewer: str,
     inputs: dict[str, Any],
     catalog: dict[str, dict[str, Any]],
+    *,
+    hypo: Hypo | None = None,
+    untapped: int | None = None,
 ) -> tuple[bool, Any, str | None]:
     """(holds, seen, needs_input) for one condition."""
     kind = condition["kind"]
     if kind == "count":
-        seen = _count(condition, view, viewer)
+        seen = _count(condition, view, viewer, hypo=hypo, untapped=untapped)
         return compare(seen, condition["op"], condition["n"]), seen, None
     if kind == "zone_size":
         seen = _zone_size(condition, view, viewer)
@@ -325,7 +380,8 @@ def _check(
         whose = mine if condition["controller"] == "me" else (controller is not None and not mine)
         seen = {"name": top.get("name"), "controller": controller, "kind": top.get("kind")}
         select = condition.get("select") or {}
-        return whose and matches(select, top, presence(view, viewer)), seen, None
+        matched = matches(select, top, presence(view, viewer), untapped_mana=untapped, hypo=hypo)
+        return whose and matched, seen, None
     if kind == "land_drop_available":
         me = _player(view, viewer)
         available = (
@@ -376,6 +432,7 @@ def evaluate(
     viewer: str,
     inputs: dict[str, Any] | None = None,
     catalog: dict[str, dict[str, Any]] | None = None,
+    hypothetical: Hypo | None = None,
 ) -> dict[str, Any]:
     """Does `script` apply for `viewer` on this redacted `view`?
 
@@ -388,16 +445,29 @@ def evaluate(
     supplied input the catalog does not hold or whose value does not fit it;
     it is checked before any condition, and nothing is judged past it.
     Raises `ContentsRequired` when a condition needs `include=contents`.
+
+    `hypothetical` is the engine-computed per-card facts (O4's `enters_any`,
+    O7's `unlocks`/`unlocks_by_search`) a selector may read - see
+    `selectors.py`'s module docstring and `needs_hypothetical`. Left out
+    (the default), a selector naming any of the three raises
+    `HypotheticalRequired` rather than silently mismatching: this function
+    never computes them itself, since doing so needs the live game
+    (`hypothetical_facts.py`), which a caller with only a view does not have.
+    `affordable` needs no `hypothetical` - its `untapped_mana` count is
+    computed here, from `view` alone, once per call.
     """
     doc = _as_dict(script)
     supplied = inputs or {}
     known = catalog if catalog is not None else input_catalog([], ())
+    untapped = untapped_mana(view, viewer)
     for name, value in supplied.items():
         reason = supplied_input_problem(name, value, known)
         if reason is not None:
             return _result(invalid_input={"name": name, "value": value, "reason": reason})
     for polarity, index, condition in _conditions(doc):
-        holds, seen, needs_input = _check(condition, view, viewer, supplied, known)
+        holds, seen, needs_input = _check(
+            condition, view, viewer, supplied, known, hypo=hypothetical, untapped=untapped
+        )
         if needs_input is not None:
             return _result(polarity=polarity, index=index, needs_input=needs_input)
         if holds is not (polarity == "true"):
