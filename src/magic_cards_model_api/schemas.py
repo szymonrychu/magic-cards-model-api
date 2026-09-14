@@ -291,6 +291,19 @@ class DeclarePlanIn(RequestModel):
     above."""
     prediction: OpponentPrediction
     """What you expect the opponent to do in response, and why."""
+    for_turn: Literal["current", "next"] = "current"
+    """Which turn this declaration is about. `"current"` (the default) is
+    the turn already under way - the only shape this ever took before this
+    field existed. `"next"`, given while it is NOT this seat's own turn,
+    plans ahead: the row is written against this seat's own *next* turn
+    (`records.next_own_turn`, which asks the engine's own `TurnMachine.
+    begin_next_turn` rather than re-deriving turn order here), so an agent
+    can think during the opponent's turn instead of holding priority in its
+    own upkeep to do it - the failure this field exists to fix (live game
+    2026-09-14: a ~110s plan written in upkeep with the human waiting on
+    it). `"next"` while this seat's own turn is already in progress is
+    refused - `app.declare_plan` answers 409 `own_turn_in_progress`; one
+    plan per turn, and `"current"` is how that turn gets its own."""
 
 
 class DeclarePlanResponse(BaseModel):
@@ -304,7 +317,13 @@ class DeclarePlanResponse(BaseModel):
     every action response carries."""
     player: str
     turn_number: int | None = None
-    """The turn this plan is for, as the ledger stamped it."""
+    """The turn this plan covers, as the ledger stamped it - the current
+    turn's own `turn_number` for `for_turn: "current"`, or the computed
+    target turn's `turn_number` for `for_turn: "next"` (`records.
+    next_own_turn`'s own `TurnMachine.turn_number`, which is `None` only
+    when there is no turn under way at all to plan against)."""
+    for_turn: Literal["current", "next"] = "current"
+    """Which turn `turn_number` above names - see `DeclarePlanIn.for_turn`."""
 
 
 class ReflectionIn(RequestModel):
@@ -396,6 +415,14 @@ class AdviceIn(RequestModel):
     `False` says "nobody has checked this" - the honest answer for the other
     5, whose shapes have no way to ask, and which an advisor therefore must
     not send at all."""
+    drafted_at_seq: int | None = None
+    """S2 A6: the ledger position this proposal was drafted at
+    (`stage_advice`/`seatkit.resolve_advice_draft`), when it was staged ahead
+    of the human's own priority rather than proposed the moment it was
+    probed. `None` for an ordinary proposal, which was never staged at all.
+    Recorded verbatim into the `advice` row's `detail` so a metrics reader can
+    measure how long a draft sat staged before it posted - never read or
+    interpreted here, and never required."""
 
 
 class AdviceResponse(BaseModel):
@@ -560,6 +587,16 @@ class ScriptRunIn(RequestModel):
     wall_ms: int | None = Field(default=None, ge=0)
     reapplicable_after: str | None = None
     """When the runner may try this script again."""
+    invoked_via: Literal["mcp", "cli", "armed"]
+    """Which front end started this run: the MCP `run_script` tool,
+    `mcp-seat script run`, or `"armed"` for one `playscripts.arming.arm`
+    fired on its own between a seat's own moves (S2). Required on both
+    `start` and `finish` - S1: a live seat cracked every fetch land by hand
+    because nothing told it a script applied, and a stale memory line
+    claiming scripts "auto-fire" traced back to runs a human had staged from
+    the CLI during development. Recording who actually started a run is what
+    lets a seat (and `eval_report.py`) tell its own runs apart from one an
+    operator staged, or one arming fired for it."""
 
     @model_validator(mode="after")
     def _a_finish_names_its_exit(self) -> ScriptRunIn:
@@ -1939,6 +1976,10 @@ class GameStateView(BaseModel):
     game_id: str
     pending_decision: PendingDecisionView | None = None
     turn_number: int | None = None
+    turns_taken: int | None = None
+    """S1: counts every turn, extra ones (CR 500.7) included - unlike
+    `turn_number`, which counts rounds of the table and does not move for an
+    extra turn. The play-script already-ran filter keys on this instead."""
     step: str
     phase: str | None = None
     pregame: PregameView | None = None

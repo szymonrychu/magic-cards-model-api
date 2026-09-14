@@ -118,15 +118,40 @@ cast/activation/attack.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
 
+logger = logging.getLogger("mcm.seatkit")
+
 DEFAULT_API = "http://127.0.0.1:8000"
+
+#: Mirrors `records.SCRIPTS_ENABLED_ENV`/`records.scripts_enabled` - a
+#: duplicate, not an import, for the same reason `PROTOCOL_VERSION` below is:
+#: this module is moving to its own repo (`magic-cards-mcp`) where
+#: `magic_cards_model_api.records` will not exist to import. Read from this
+#: process's own environment - an operator flips the switch for a whole
+#: deployment, api pod and seat pod alike, so the MCP process's own view of it
+#: agrees with the server's.
+SCRIPTS_ENABLED_ENV = "SCRIPTS_ENABLED"
+_SCRIPTS_SWITCHED_OFF = frozenset({"false", "0", "no", "off"})
+
+
+def scripts_enabled_here(env: Mapping[str, str] | None = None) -> bool:
+    """Whether this MCP process's own environment has scripts switched on -
+    the local half of the kill switch a script-applicability hint checks
+    before ever offering `run_script` as a committing call (`playscripts.
+    script_tools.applicable_hint`). Read per call, not at import: a test sets
+    it for one call, and flipping it for real restarts the pod anyway."""
+    env = os.environ if env is None else env
+    return env.get(SCRIPTS_ENABLED_ENV, "true").strip().lower() not in _SCRIPTS_SWITCHED_OFF
+
 
 #: Bumped whenever an action tool's contract changes shape. Every tool call in
 #: `mcp.py` checks it against its own import of this constant (`api_trouble`,
@@ -161,7 +186,148 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-19"
+PROTOCOL_VERSION = "seatkit-20"
+#: `seatkit-20` (S1): every wait/wake answer (`wait_for_priority`) and every
+#: action answer (`cast`, `activate`, `play_land`, `pass_priority`,
+#: `pass_until`, `run_script`, ...) now carries `scripts: {"applicable":
+#: [...]}` when at least one of the seat's registered play scripts applies
+#: right now - `playscripts.script_tools.applicable_hint`, the same
+#: applicability judgement `list_scripts` makes, built from the state the
+#: answer already carries rather than a second board fetch. The measured
+#: problem this closes: a live seat cracked a fetch land by hand (`play_land`
+#: then `activate`) every single time, because finding out a script applied
+#: cost a separate `list_scripts` call no seat ever made on its own -
+#: `run_script` sat registered and unused for the whole session.
+#:
+#: Each `applicable` entry is `{id, name, call}`, `call` a ready-to-use
+#: `run_script(player_uid=..., script=..., reasoning="<say why>",
+#: opposing_archetype=...)` invocation string naming the exact arguments the
+#: tool accepts - or, when two or more registered scripts apply at once (the
+#: runtime's own `runtime_conflict`), `{id, name, conflict: true}` with `call`
+#: left out, since a seat has to pick one itself before either can commit.
+#: The archetype it names is whichever this seat last asserted to `run_script`
+#: or `list_scripts`, `*` when it never has. Capped at `MAX_HINT_SCRIPTS` (5)
+#: so a corpus registering many scripts cannot blow out every answer's size.
+#: `scripts` is absent outright - never an empty `applicable` - when nothing
+#: applies, when this seat has no registered corpus, or when this MCP
+#: process's own `SCRIPTS_ENABLED` is switched off (`scripts_enabled_here`).
+#:
+#: An MCP process built before this bump simply does not read or advertise
+#: `scripts` on any answer - a stale process, in other words, keeps exactly
+#: today's silent behaviour, which is precisely the case this bump exists to
+#: turn into a loud PROTOCOL MISMATCH rather than a seat quietly starved of a
+#: signal a newer build's own prose now tells it to expect.
+#:
+#: Also folded into `seatkit-20`, not a second bump (S1 review fix 3): the
+#: state view carries `turns_taken` beside `turn_number` - the engine's own
+#: count of every turn including extra ones (CR 500.7), which `turn_number`
+#: (rounds of the table) deliberately does not move for. `scripts`' own
+#: already-ran suppression now keys on it, so a script run once and reached
+#: again on an extra turn at the same step is correctly re-offered rather
+#: than wrongly treated as the same position. A stale process reads the new
+#: key as extra, harmless noise; no existing field moved.
+#:
+#: Also `seatkit-20`, plan-ahead scheduling (S2 A1): `DeclarePlanIn.for_turn`
+#: gains `"next"` beside its existing `"current"` default -
+#: `declare_plan(for_turn="next")`, called during the opponent's turn,
+#: writes the plan row against this seat's own next turn
+#: (`records.next_own_turn`) rather than the turn under way right now; the
+#: same call made while this seat's own turn is already in progress now
+#: answers 409 with `code: own_turn_in_progress` instead of writing a stray
+#: row. Also folded in, not a second bump: `pass_priority` is exempt from
+#: the standing require-a-plan gate outright in the upkeep and draw steps
+#: whenever the stack is empty - a bare pass through either needs no plan on
+#: record, planned ahead or not; a trigger or spell sitting on the stack in
+#: either step still gates the pass, since answering it is a real decision.
+#: A pre-bump process never sends `for_turn`, which reads as today's
+#: `"current"` default, and reads the new 409 as an ordinary typed refusal
+#: like any other.
+#:
+#: Also `seatkit-20`, arming (S2 A2-A5): `wait_for_priority` and
+#: `pass_until` both gain `arm` (a list of registered script ids, or a
+#: comma-separated string of them, in priority order), `arm_reasoning`
+#: (required and non-blank whenever `arm` is non-empty - an empty or
+#: still-placeholder one is refused before anything is judged),
+#: `opposing_archetype` and `inputs`, meaning what they mean for
+#: `run_script`. The wait judges every armed id against the board the
+#: moment it would otherwise wake for a real reason; two or more applying
+#: at once is a conflict and neither fires. The answer carries `armed`
+#: (the ids that actually fired, `[]` when none did), `armed_conflict`
+#: (the ids that would have conflicted, when arming stopped for that
+#: reason), `armed_error` (the judge itself raised, rather than a script's
+#: own refusal), and `armed_skipped` (the batch stopped before a run's own
+#: start, below `MIN_ARMED_RUN_SECONDS` of budget left in the call). Each
+#: fired run's own ledger row carries `invoked_via: "armed"`, a third value
+#: beside `"mcp"` and `"cli"` (`schemas.ScriptRunIn.invoked_via`).
+#:
+#: The S1 hint (`scripts.applicable` above) gains two siblings on the same
+#: `scripts` object: `armable` (the registered ids that would be worth
+#: arming for the wait or run ahead, matching priority and archetype but
+#: not yet applicable to the board sitting in front of this answer) and
+#: `arm_call`, one ready-to-use `pass_until(..., arm=[...])` or
+#: `wait_for_priority(..., arm=[...])` invocation string arming every
+#: surviving `armable` id at once.
+#:
+#: `pass_until` gains one more armed-only behaviour: reaching a
+#: `theirs`/`either` destination with something armed for it, but before
+#: this seat itself holds priority there (or has a decision pending for
+#: it) - a `theirs`/`either` step's first priority is usually the active
+#: opponent's own, CR 117.3a - now answers `finished: false` with a
+#: `resume` token instead of treating "the board reached the step" as the
+#: stop on its own, so a caller that hands the token straight back keeps
+#: waiting inside that same occurrence for its own priority to arm
+#: against, rather than the starting-step exemption silently carrying the
+#: run past the window to the NEXT occurrence of that step, a whole turn
+#: later.
+#:
+#: A pre-bump process sends no `arm`, so nothing here ever judges or fires
+#: anything on its behalf, and it reads `armed`, `armed_conflict`,
+#: `armed_error`, `armed_skipped`, `scripts.armable`, `scripts.arm_call`,
+#: and an `invoked_via: "armed"` row the same way it already reads any
+#: other extra key - untouched noise, never acted on.
+#:
+#: Also `seatkit-20`, buddy pre-drafts (S2 A6): `wait_for_priority` gains
+#: `wake_to_draft` (advisor uid only, refused outright for a seat), which
+#: also wakes when the board changes while it is not yet the human's own
+#: priority, provided nothing is staged right now - the cue to look ahead
+#: and stage a proposal before the window it is actually for opens.
+#: `stage_advice(player_uid, step, whose_turn)` is the new tool that arms
+#: the next committing call as the one to capture into that draft; every
+#: answer that can see a staged draft also carries `draft`:
+#: `{"status": "held"}` while it is not yet time, `{"status": "posted",
+#: "log_seq": ...}` the moment it posts on schedule, `{"status": "stale",
+#: "failed": "window"|"board"|"legality"|"refused"}` the moment the window
+#: has passed, the board moved underneath it, or the draft no longer
+#: validates, and `{"status": "superseded_by_script", "script": ...}` when
+#: an armed script already fired ahead of it. `AdviceIn.drafted_at_seq`
+#: carries the ledger position the draft was captured at, left null on an
+#: ordinary undrafted proposal. A pre-bump process has no `wake_to_draft`
+#: argument and no `stage_advice` tool to call, and reads a `draft` key on
+#: any other answer the same as any other extra one - untouched.
+#:
+#: `stage_advice` itself refuses outright, `{"staged": false, "reason":
+#: ...}`, before the game has left the pregame (mulligans, opening-hand
+#: actions have no turn or step for a window to mean) - `STAGE_ADVICE_
+#: PREGAME`, client-visible and distinct from a `stage`d draft later going
+#: `"stale"`. And the CLI transport (`mcp-seat`, `seat_cli.py`) alone can
+#: fold a `draft.note` string into any answer's `draft` block - a filesystem
+#: problem persisting or reloading its own on-disk staged draft, surfaced
+#: rather than raised past the command's own JSON, with no MCP equivalent
+#: (the MCP transport keeps its draft in memory, not on disk, and has
+#: nothing of the kind to report). A pre-bump process reads both the same as
+#: any other extra key or refusal shape it does not recognise yet.
+#:
+#: Also `seatkit-20`, response-only, no request shape moved (S2 A7): every
+#: ledger row now stamps `active_player`, `priority_holder` and
+#: `turns_taken` (this one on the row itself, at write time - distinct
+#: from the state view's own `turns_taken` above) at the moment
+#: `audit.record` writes it, so a reader no longer has to reconstruct
+#: whose window a row belonged to from its action name and outcome. `None`
+#: on every row recorded before this, the same "unknown, not invented"
+#: reading `stale`/`offered` already established for this ledger. A
+#: pre-bump process reads them as three more keys on a log entry it
+#: already treats as free-form.
+#:
 #: `seatkit-19` is the play-script DSL's version, with battle 8's cast-during-
 #: resolution funnel (z1) and the buddy rationale cap (bd1) folded in: a
 #: **response** shape change plus **additive requests** and two new tools,
@@ -1102,6 +1268,45 @@ ADVICE_REASONING_MAX_CHARS = 240
 #: The `type` of the refusal an overlong rationale gets, on both sides.
 REASONING_TOO_LONG = "reasoning_too_long"
 
+#: Why `Seat.stage_advice` refuses a non-advise seat (S2 A6). A seat already
+#: wakes for its own real moments (`compute_wake_reason`) and drives the game
+#: itself rather than proposing to it, so there is nothing here for it to
+#: stage a draft toward - the same "refused outright, clearly" shape
+#: `ADVISE_NO_PASS_UNTIL` gives the opposite misuse.
+STAGE_ADVICE_ADVISOR_ONLY = (
+    "stage_advice is for an advisor only: a seat drives the game directly and "
+    "has no proposal to hold back for later, so there is no draft for it to stage"
+)
+
+#: `mcp.wait_for_priority`'s refusal when a non-advisor uid passes
+#: `wake_to_draft=True` (S2 A6) - the mirror image of `STAGE_ADVICE_ADVISOR_ONLY`.
+WAKE_TO_DRAFT_ADVISOR_ONLY = (
+    "wake_to_draft is for an advisor only: a seat already wakes the moment it "
+    "holds priority, and there is no draft for a seat to prepare ahead of that - "
+    "leave wake_to_draft unset"
+)
+
+#: Why `Seat.stage_advice` refuses while the game is still in CR 103's
+#: pregame (review fix 4, 2026-09-14). `serialize.py` has no `Turn` to read a
+#: step or a `turns_taken` from before CR 103.8's first turn begins, so a
+#: window staged here stamps `stamped_turns_taken: None` - and `draft_window_
+#: status`'s "after" check, keyed on comparing that stamp to the board's
+#: current `turns_taken`, never fires for a `None` stamp (its own guard reads
+#: "stamped_turns_taken is not None"). A draft staged before the game starts
+#: therefore never goes stale on its own: it sits `"held"` forever, and
+#: `wake_to_draft` - which stands aside the moment a draft is staged at
+#: all - never wakes the advisor again either. There is nothing useful to
+#: stage yet regardless: CR 103.5's mulligans and CR 103.6's opening-hand
+#: actions have no step or active player for a window to even mean, so this
+#: is refused outright rather than left to produce a draft that could never
+#: expire.
+STAGE_ADVICE_PREGAME = (
+    "stage_advice cannot arm a window before the game has started: the pregame "
+    "(mulligans, opening-hand actions) has no turn or step for a window to mean, "
+    "and a draft staged here would never be able to go stale on its own - wait "
+    "for the first turn to begin"
+)
+
 
 def _overlong_rationale(reasoning: Any) -> dict[str, Any] | None:
     """The typed refusal for an advisor rationale over
@@ -1270,6 +1475,8 @@ class Seat:
         *,
         advise: bool = False,
         wake_signatures: dict[str, Any] | None = None,
+        advice_drafts: dict[str, Any] | None = None,
+        advice_draft_locks: dict[str, threading.Lock] | None = None,
     ) -> None:
         self.player = player
         self.uid = uid
@@ -1334,6 +1541,28 @@ class Seat:
         #: uid for it to share.
         self._wake_signatures: dict[str, Any] = (
             wake_signatures if wake_signatures is not None else {}
+        )
+        #: `uid` -> this advisor's staged draft (S2 A6), shared by reference
+        #: into every `Seat` this uid mints - the same reason `_wake_signatures`
+        #: is shared rather than owned: `Seats.seat_for` mints a brand new
+        #: `Seat` on every tool call, so a draft armed by `stage_advice` on one
+        #: call has to survive to be filled in by the next. Two shapes live at
+        #: this key: `{"window": ..., "action": None}` once `stage_advice` has
+        #: armed a window but no committing call has landed yet, and the same
+        #: dict with `"action"` filled in (plus `"opponent_signature"`/
+        #: `"drafted_at_seq"`) once one has - see `_advise_answer` and
+        #: `resolve_advice_draft`. A bare `Seat` built directly (tests,
+        #: `seat_cli`'s one-shot process) gets its own private dict, exactly
+        #: as `_wake_signatures` does.
+        self._advice_drafts: dict[str, Any] = advice_drafts if advice_drafts is not None else {}
+        #: `uid` -> the lock `resolve_advice_draft` claims before reading and
+        #: posting that uid's draft (review fix 5, 2026-09-14). Shared by
+        #: reference the same way `_advice_drafts` is - a lock owned by one
+        #: short-lived `Seat` would guard nothing, since sync MCP tools each
+        #: run in their own thread against a freshly minted `Seat` (`Seats.
+        #: seat_for`) and it is exactly two of THOSE racing this is for.
+        self._advice_draft_locks: dict[str, threading.Lock] = (
+            advice_draft_locks if advice_draft_locks is not None else {}
         )
         #: The HTTP status of the latest `fetch_state`, read by `game_gone`.
         self.last_state_status: int | None = None
@@ -1401,7 +1630,14 @@ class Seat:
         except httpx.HTTPError as exc:
             return f"could not reach the API: {exc}"
 
-    def call_json(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+    def call_json(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        capture_draft: bool = True,
+    ) -> Any:
         """Like `call`, but the parsed JSON body rather than text - what
         `run_action` needs to inspect whether an action was refused.
 
@@ -1428,8 +1664,19 @@ class Seat:
         `_advise_answer` - asked before `expected_seq` is folded in, so the
         body recorded in the proposal is the one the human's own client will
         post rather than one naming a board position somebody else read.
+
+        `capture_draft` (S2 A6 review fix 3, 2026-09-14): whether this call
+        may be captured into a `stage_advice`-armed empty window rather than
+        proposed right away. Defaults true - every ordinary caller (an MCP
+        action tool, a CLI action command) IS the "next committing call" a
+        staged window is waiting to be filled in by. `playscripts.runtime.
+        _advise` passes `False`: an armed script firing is a proposal for
+        *right now*, not the future window a draft is staged toward, and
+        capturing it there swallowed the script's own move - the runtime read
+        the resulting `{"drafted": True, ...}` shape as a refusal, since it
+        never carries the `proposed` key a real proposal answer does.
         """
-        advised = self._advise_answer(method, path, body)
+        advised = self._advise_answer(method, path, body, capture_draft=capture_draft)
         if advised is not None:
             return advised[1]
         body = self._with_expected_seq(method, body)
@@ -1470,7 +1717,7 @@ class Seat:
         return response.status_code, parsed
 
     def _advise_answer(
-        self, method: str, path: str, body: dict[str, Any] | None
+        self, method: str, path: str, body: dict[str, Any] | None, *, capture_draft: bool = True
     ) -> tuple[int | None, Any] | None:
         """`None` when this request may be sent as it is; `(status, answer)`
         when this is an advise `Seat` making a committing call, in which case
@@ -1502,6 +1749,24 @@ class Seat:
         Before guard 4, a `reasoning` over `ADVICE_REASONING_MAX_CHARS` is
         refused outright (`type: reasoning_too_long`) and nothing is sent.
 
+        **S2 A6: a call that reaches this far is captured as a draft instead
+        of posted, when `stage_advice` has armed a window for this uid and no
+        committing call has filled it in yet** (`self._advice_drafts[self.
+        uid]`, present with `"action"` still `None`) **and `capture_draft` is
+        true** (review fix 3, 2026-09-14: `playscripts.runtime._advise`
+        passes `False` - an armed script's own proposal is for right now, not
+        the later window a draft is staged toward, and capturing it there
+        would swallow the script's move instead of posting it). Everything
+        above this - the passthrough suffixes, the `dry_run` probe, the
+        overlong-rationale refusal - runs exactly as it does for an ordinary
+        proposal, so a refused probe or an overlong rationale still leaves
+        the arm untouched for the advisor to try again. Only the final step
+        changes: instead of `POST .../advice`, the ready-to-post body, the
+        probe's own outcome and a signature of the opponent's board right now
+        are stored, and this returns "staged", not "proposed" - see
+        `resolve_advice_draft`, which is what later decides whether that
+        draft ever becomes a real proposal.
+
         The `/advice` POST itself can be refused (a blank `reasoning`, most
         likely - the route requires the advisor's own words), and that
         refusal is returned rather than swallowed: a proposal nobody recorded
@@ -1520,7 +1785,8 @@ class Seat:
         overlong = _overlong_rationale(sending.get("reasoning"))
         if overlong is not None:
             return 422, overlong
-        shape = ACTION_REQUEST_SHAPES.get(_action_key(path) or "")
+        action_key = _action_key(path) or ""
+        shape = ACTION_REQUEST_SHAPES.get(action_key)
         validated = shape in DRY_RUN_SHAPES
         outcome: Any
         if validated:
@@ -1540,6 +1806,73 @@ class Seat:
         # the human's client names its own board when it finally acts.
         ready = {key: value for key, value in sending.items() if key != "dry_run"}
         ready["player"] = self.player
+        armed = self._advice_drafts.get(self.uid)
+        if capture_draft and armed is not None and armed.get("action") is None:
+            # S2 A6: `stage_advice` armed a window and this is the next
+            # committing call since - capture it as a draft rather than
+            # posting. `recent_log` both names the ledger position this draft
+            # was captured at (`AdviceIn.drafted_at_seq`, for the metrics task
+            # to measure how long it sat staged) and is cheaper than a second
+            # `fetch_state` just for that number.
+            #
+            # Review fix 5 (2026-09-14): the whole action dict, `opponent_
+            # signature` and `drafted_at_seq` are all built HERE, in a local
+            # dict, before `armed` itself is touched at all. The old code set
+            # `armed["action"]` first and only afterward made the `recent_log`
+            # HTTP call that fills in `opponent_signature`/`drafted_at_seq` -
+            # a window, however short, where a concurrent `resolve_advice_
+            # draft` on another thread (same `Seats`, same uid, a different
+            # `Seat` object sharing this very dict by reference) could see
+            # `armed.get("action")` already filled in - readable as "this
+            # draft is ready" - while `opponent_signature` was still absent
+            # (`None`), which never equals a freshly computed signature, so
+            # the draft would be read as stale on board grounds and dropped
+            # before it was ever whole. Installed under this uid's own
+            # per-uid lock (`resolve_advice_draft`'s own `_advice_draft_
+            # locks`) so a concurrent resolve either sees the whole thing at
+            # once or - `lock.acquire(blocking=False)` fails while this
+            # install is in flight - answers `{"status": "held"}` and tries
+            # again on its next poll, exactly as it would for any other
+            # draft already mid-flight.
+            drafted_state = self.fetch_state()
+            built_action: dict[str, Any] = {
+                "method": method.upper(),
+                "path": path,
+                "body": ready,
+                "reasoning": ready.get("reasoning") or "",
+                "validated": validated,
+                "action_key": action_key,
+                "outcome": outcome,
+            }
+            if action_key == "decide":
+                # Review fix 6 (2026-09-14): the identity of the pending
+                # decision this draft actually answers, from the board right
+                # now - `_unvalidated_action_still_legal` requires both to
+                # still match the pending decision standing at the window,
+                # not merely that some decision is pending for this player.
+                drafted_pending = drafted_state.get("pending_decision")
+                built_action["decision_kind"] = (
+                    drafted_pending.get("kind") if isinstance(drafted_pending, dict) else None
+                )
+                built_action["decision_generation"] = (
+                    drafted_pending.get("generation") if isinstance(drafted_pending, dict) else None
+                )
+            opponent_signature = opponent_board_signature(drafted_state, self.player)
+            drafted_at_seq = self.recent_log().get("last_seq")
+            lock = self._advice_draft_locks.setdefault(self.uid, threading.Lock())
+            with lock:
+                armed["action"] = built_action
+                armed["opponent_signature"] = opponent_signature
+                armed["drafted_at_seq"] = drafted_at_seq
+            return 200, {
+                "drafted": True,
+                "window": {
+                    "step": armed["window"].get("step"),
+                    "whose_turn": armed["window"].get("whose_turn"),
+                },
+                "validated": validated,
+                "outcome": outcome,
+            }
         status, advice = self._request_json(
             "POST",
             f"/api/games/{self.game_id()}/advice",
@@ -1561,6 +1894,60 @@ class Seat:
             "outcome": outcome,
             "state": self.fetch_state(),
         }
+
+    def stage_advice(self, step: str, whose_turn: str) -> dict[str, Any]:
+        """S2 A6: arm this advisor's *next* committing action call to be
+        captured as a draft for the window `(step, whose_turn)`, instead of
+        posted as a proposal right away.
+
+        Uses `start_autopass`'s own next-occurrence stamp - the same one
+        `pass_until` uses - so naming the step you are standing in right now
+        means its NEXT occurrence, never this one, exactly as it does there.
+        `resolve_advice_draft` is what later decides the staged draft is
+        actually at that window and still holds up before posting it.
+
+        Refused for a seat (`STAGE_ADVICE_ADVISOR_ONLY`), for an unrecognised
+        `(step, whose_turn)` (`autopass_target_error`, the same check `pass_
+        until` makes), and for the pregame (`STAGE_ADVICE_PREGAME`, review
+        fix 4, 2026-09-14 - see its own docstring for why a window staged
+        before the first turn begins could never go stale) - none of the
+        three sends a request or arms anything.
+
+        Only one window may be armed at a time: calling this again before the
+        armed slot has been filled in by a committing call replaces it - the
+        previous window is simply forgotten, never queued behind."""
+        if not self.advise:
+            return {"staged": False, "reason": STAGE_ADVICE_ADVISOR_ONLY}
+        problem = autopass_target_error(step, whose_turn)
+        if problem:
+            return {"staged": False, "reason": problem}
+        state = self.fetch_state()
+        # Review fix 4 (2026-09-14): two distinct ways there is no real turn
+        # position yet to stage a window against. `state["pregame"]` is a
+        # dict throughout CR 103's own mulligan/opening-hand phase (`opening.
+        # pregame_view`) - already a real `Turn` with `turns_taken == 0`, not
+        # the bug on its own, but there is no attackers step or end step
+        # happening yet either. `state["turns_taken"] is None` is the actual
+        # defect trigger: `game.turn` itself can be `None` even earlier than
+        # that (`serialize.py`'s own fallback), and a window stamped then
+        # could never go stale on its own - see `STAGE_ADVICE_PREGAME`'s own
+        # docstring.
+        if isinstance(state.get("pregame"), dict) or state.get("turns_taken") is None:
+            return {"staged": False, "reason": STAGE_ADVICE_PREGAME}
+        window = start_autopass(state, step, whose_turn)
+        # Review fix 1 (2026-09-14): persistent stamps `draft_window_status`
+        # reads for the "after" check - unlike `started_step`/`started_turn`
+        # (`start_autopass`'s own fields), these are never cleared by
+        # `forget_starting_occurrence`, so they still name the exact step and
+        # `turns_taken` this was staged at even once the board has long since
+        # left it. `turns_taken`, not `turn_number`: CR 500.7's extra turn
+        # bumps the former and not the latter (`seatkit-20`'s own `turns_
+        # taken` note), and the "after" check has to tell an extra turn apart
+        # from the turn it extended.
+        window["stamped_step"] = state.get("step")
+        window["stamped_turns_taken"] = state.get("turns_taken")
+        self._advice_drafts[self.uid] = {"window": window, "action": None}
+        return {"staged": True, "window": {"step": step, "whose_turn": whose_turn}}
 
     def fetch_state(self, *, include_contents: bool = False) -> dict[str, Any]:
         """This seat's filtered view of the game, right now (`battlefield_state`'s
@@ -1673,6 +2060,7 @@ class Seat:
         expecting: str,
         because: str,
         confidence: str = "medium",
+        for_turn: str = "current",
     ) -> dict[str, Any]:
         """`POST .../plan` (`schemas.DeclarePlanIn`) - a thin passthrough,
         no rule of the engine's own re-implemented here. This mutates no
@@ -1688,12 +2076,19 @@ class Seat:
         actually *is* the seat it is declaring for before writing anything
         into that seat's name.
 
+        `for_turn` (`"current"`, the default, or `"next"`) is `DeclarePlanIn.
+        for_turn` unchanged - `"next"`, called on the opponent's turn, plans
+        ahead for this seat's own next turn instead of holding priority in
+        its own upkeep to write one there (live game 2026-09-14).
+
         Returns `call_json`'s normalised shape either way - `declared: True`
         with the ledger's own `log_seq` on success, or `{"allowed": False,
-        "reason": ...}` on a refusal (a blank field, or a uid that does not
-        open this seat) - the same shape every action tool's own outcome
-        already is, so a caller checks a refusal the one way it already
-        knows rather than learning a second one for this call alone.
+        "reason": ...}` on a refusal (a blank field, a uid that does not
+        open this seat, or - for `for_turn: "next"` - this seat's own turn
+        already under way, `code: own_turn_in_progress`) - the same shape
+        every action tool's own outcome already is, so a caller checks a
+        refusal the one way it already knows rather than learning a second
+        one for this call alone.
         """
         body = {
             "player": self.player,
@@ -1702,6 +2097,7 @@ class Seat:
             "my_role": my_role,
             "plan": plan,
             "prediction": {"expecting": expecting, "because": because, "confidence": confidence},
+            "for_turn": for_turn,
         }
         return self.call_json("POST", f"/api/games/{self.game_id()}/plan", body)
 
@@ -1780,6 +2176,19 @@ class Seats:
         #: long as `_by_uid` does - the cross-call watermark `block_until_wake`
         #: needs, since a `Seat` itself is remade fresh on every call.
         self._wake_signatures: dict[str, Any] = {}
+        #: uid -> that advisor's staged draft (S2 A6) - see `Seat.
+        #: _advice_drafts` for the two shapes this holds. Lives here for the
+        #: same reason `_wake_signatures` does: `seat_for` mints a fresh `Seat`
+        #: on every call, so this is the only thing that survives between a
+        #: `stage_advice` call and the committing call it arms.
+        self.advice_drafts: dict[str, Any] = {}
+        #: uid -> the lock `resolve_advice_draft` claims for that uid (review
+        #: fix 5) - shared by reference the same way `advice_drafts` is, for
+        #: the same reason: two sync MCP tool calls for the same advisor each
+        #: mint their own `Seat` and run in their own thread, and this is
+        #: what serialises them onto one draft rather than a fresh, unlocked
+        #: dict per call that guards nothing.
+        self.advice_draft_locks: dict[str, threading.Lock] = {}
         #: `(game_id, uid)` -> the play-script corpus that uid registered
         #: (`GET /api/games/{id}/seats/{uid}/scripts`), read once by
         #: `playscripts.runtime` and handed to it by reference. It lives here
@@ -1871,6 +2280,8 @@ class Seats:
             timeout=self.http.timeout,
             advise=role == "advisor",
             wake_signatures=self._wake_signatures,
+            advice_drafts=self.advice_drafts,
+            advice_draft_locks=self.advice_draft_locks,
         )
 
     def _lookup(self, uid: str) -> tuple[str, str, str] | None:
@@ -1954,8 +2365,16 @@ def _strip_card_weight(entry: dict[str, Any]) -> None:
             entry.pop(field, None)
 
 
-def _parse_ids(value: str) -> list[str]:
-    """A comma-separated list of card ids, or a JSON list."""
+def _parse_ids(value: str | list[str]) -> list[str]:
+    """A comma-separated list of card ids, a JSON list, or a plain list
+    already (S2 review finding 1: `arm`'s own call template renders its ids
+    as a JSON array literal - `arm=["a", "b"]` - so an agent that reads that
+    template and calls the tool with those exact arguments hands this a real
+    list, not a string; `arm` accepts both so the template it hands back
+    actually works, while a comma-separated string keeps working for the
+    CLI and any other existing caller)."""
+    if isinstance(value, list):
+        return [str(entry) for entry in value]
     value = value.strip()
     if not value:
         return []
@@ -2053,13 +2472,29 @@ _NOT_THE_BOARD = frozenset({"wake_reason", "recent_log"})
 
 
 def compute_wake_reason(
-    state: dict[str, Any], before: dict[str, Any] | None, player: str
+    state: dict[str, Any],
+    before: dict[str, Any] | None,
+    player: str,
+    *,
+    wake_to_draft: bool = False,
+    draft_staged: bool = False,
 ) -> str | None:
     """Which wake condition holds for `player` in `state`, or `None`.
 
     `before` is this seat's filtered view captured when the call began (or
     `None` for a caller that never had one, e.g. a bare status poll) - see the
     module docstring for why "you have priority" alone is not enough.
+
+    `wake_to_draft` (S2 A6, advisor-only - `mcp.wait_for_priority` refuses it
+    outright for a seat) adds one more condition, checked last: the board
+    changed while `player` does *not* hold priority, provided `draft_staged`
+    is false. This is the buddy's own heads-up to start drafting - "the
+    opponent just did something, and you have nothing held back yet" - and it
+    steps aside the moment a draft *is* staged, because a buddy holding one
+    already has the one thing this condition exists to prompt for; it wakes
+    again on its own once that draft goes stale (`resolve_advice_draft` drops
+    it, and the very next poll's board is "changed" again relative to
+    whatever board this seat last saw).
     """
     pending = state.get("pending_decision")
     if state.get("winner") or state.get("drawn"):
@@ -2116,7 +2551,24 @@ def compute_wake_reason(
         before is None or board_signature(state) != board_signature(before)
     ):
         return "you have priority and the board has changed"
+    if (
+        wake_to_draft
+        and not draft_staged
+        and state.get("priority_holder") != player
+        and (before is None or board_signature(state) != board_signature(before))
+    ):
+        return DRAFT_TIME_WAKE_REASON
     return None
+
+
+#: `compute_wake_reason`'s `wake_to_draft` answer (S2 A6) - said out loud so
+#: `resolve_advice_draft`'s own stale-then-rewoken loop and any test asserting
+#: on it have one string to check rather than a substring guess.
+DRAFT_TIME_WAKE_REASON = (
+    "the board changed and nothing is staged yet: this is not your human's "
+    "priority, but it is a good moment to look and stage_advice for the "
+    "window you expect next, so a draft is ready the instant it is"
+)
 
 
 #: `block_until_wake`'s answer when it checked and no wake condition holds
@@ -2150,6 +2602,24 @@ def game_gone(seat: Any) -> bool:
     return getattr(seat, "last_state_status", None) in GAME_GONE_STATUSES
 
 
+def _arming_moment(state: dict[str, Any], me: str) -> bool:
+    """Whether `state` is genuinely `me`'s own moment to have armed scripts
+    fire on it (S2 review finding 6): never once the game is over (winner
+    or drawn); a decision pending for `me` (in which case `priority_holder`
+    cannot be trusted - a paused command rolls the committed game back to
+    before the attempt, so the value it carries is simply whoever held
+    priority *before* the freeze, not "nobody" - see `_pass_until_once`'s
+    own docstring); otherwise `me` genuinely holding priority right now,
+    fresh off this very `state`, never a stale reading from before a pause
+    that has since cleared."""
+    if state.get("winner") or state.get("drawn"):
+        return False
+    pending = state.get("pending_decision")
+    if pending is not None:
+        return pending.get("player") == me
+    return state.get("priority_holder") == me
+
+
 #: Ceiling for `max_seconds` on `block_until_wake`/`pass_until` - the bound
 #: that makes bringing a server-side wait back at all safe. MCP 2026-07-28
 #: removing resumability (SEP-2577) is why the old *unbounded* wait (up to
@@ -2163,6 +2633,22 @@ def game_gone(seat: Any) -> bool:
 #: risking the connection outliving it. A caller-requested `max_seconds`
 #: above this is silently capped, never honoured past it.
 MAX_WAIT_SECONDS = 25.0
+
+#: The whole MCP call's own bound - the wait (`MAX_WAIT_SECONDS`) plus
+#: whatever armed batch fires once it wakes - kept under the same
+#: `CLIENT_TIMEOUT_SECONDS`/transport-read-timeout rationale `MAX_WAIT_
+#: SECONDS`'s own comment gives, rather than a second `RUN_CAP_SECONDS`
+#: (also `MAX_WAIT_SECONDS`) restarting the clock from zero purely for
+#: arming - which is what `wait_and_arm`/`pass_until` used to hand
+#: `playscripts.arming.arm`, up to ~50s total for one call (S2 arming
+#: re-review finding 6). `_ARMING_ALLOWANCE_SECONDS` is the small top-up
+#: arming gets on top of the wait's own bound when the wait spends the whole
+#: of it; `wait_and_arm`/`pass_until` measure their own elapsed time from the
+#: call's own start against this total and hand arming whatever is left of
+#: it - which is *more* than the allowance whenever the wait wakes early,
+#: never less.
+_ARMING_ALLOWANCE_SECONDS = 4.0
+TOTAL_CALL_BUDGET_SECONDS = MAX_WAIT_SECONDS + _ARMING_ALLOWANCE_SECONDS
 
 #: How often a bounded wait re-checks the wake condition. Short enough that a
 #: wake condition is noticed promptly once it actually holds; long enough not
@@ -2181,6 +2667,9 @@ def block_until_wake(
     before: dict[str, Any] | None,
     max_seconds: float = 0.0,
     should_stop: Callable[[], bool] | None = None,
+    *,
+    wake_to_draft: bool = False,
+    draft_staged: bool = False,
 ) -> dict[str, Any]:
     """Check this seat's own state, right now - and, if nothing has changed
     yet, keep checking for up to `max_seconds` (capped at `MAX_WAIT_SECONDS`)
@@ -2235,6 +2724,10 @@ def block_until_wake(
     `before` wake refreshes it too, so a seat's next *bare* wait always diffs
     against the most recent board this seat has actually been shown, whoever
     last saw it.
+
+    `wake_to_draft`/`draft_staged` (S2 A6) thread straight into `compute_wake_
+    reason` - see its own docstring. Both default false, which is every
+    caller before this feature existed.
     """
     if before is None:
         cached = seat._wake_signatures.get(seat.uid, _NO_CACHED_WAKE_SIGNATURE)
@@ -2246,7 +2739,9 @@ def block_until_wake(
         state = seat.fetch_state()
         if game_gone(seat):
             return {"state": state, "wake_reason": GAME_GONE, "recent_log": seat.recent_log()}
-        reason = compute_wake_reason(state, before, seat.player)
+        reason = compute_wake_reason(
+            state, before, seat.player, wake_to_draft=wake_to_draft, draft_staged=draft_staged
+        )
         remaining = deadline - time.monotonic()
         if reason is not None or remaining <= 0:
             if reason is not None:
@@ -2268,6 +2763,195 @@ def block_until_wake(
                 "recent_log": seat.recent_log(),
             }
         time.sleep(min(WAIT_POLL_SECONDS, remaining))
+
+
+#: `wait_and_arm`/`pass_until`'s own note when arming is skipped entirely -
+#: never even attempted - because too little of `TOTAL_CALL_BUDGET_SECONDS`
+#: remained once the wait itself was done (S2 arming re-review finding 6).
+#: The hint's own `arm_call` named exactly the same `arm` ids and is still
+#: valid - a caller that reads this just calls it (or this same tool) again.
+ARMING_SKIPPED_LOW_BUDGET = (
+    "arming was skipped: fewer than MIN_ARMED_RUN_SECONDS of this call's own budget remained "
+    "once the wait was done, and starting a run that close to the deadline risks leaving a "
+    "start row with no matching finish, which would block the script for the rest of the step. "
+    "Call again - the hint's own `arm_call` is still valid."
+)
+
+
+def _arming_budget(call_start: float) -> float:
+    """What is left of `TOTAL_CALL_BUDGET_SECONDS`, measured from
+    `call_start` (this call's own entry, captured once by its caller) rather
+    than a fresh `RUN_CAP_SECONDS` starting the clock over purely for
+    arming - see `TOTAL_CALL_BUDGET_SECONDS`'s own comment. Never negative:
+    a wait that overran its own bound (should not happen, `block_until_wake`/
+    `_pass_until_once` are themselves bounded) still hands arming a number
+    its own `run_budget < MIN_ARMED_RUN_SECONDS` check can act on."""
+    return max(0.0, TOTAL_CALL_BUDGET_SECONDS - (time.monotonic() - call_start))
+
+
+def _fire_armed_scripts(
+    seat: Seat,
+    corpora: dict[tuple[str, str], dict[str, Any]] | None,
+    *,
+    arm: list[str] | None,
+    arm_reasoning: str,
+    opposing_archetype: str,
+    inputs: dict[str, Any] | None,
+    should_stop: Callable[[], bool] | None,
+    max_seconds: float,
+) -> dict[str, Any] | str | None:
+    """`playscripts.arming.arm`, imported lazily: `playscripts` imports this
+    module (`script_tools`/`runtime` both read `Seat`/`scripts_enabled_here`
+    off it), so importing it back here at module load time would cycle.
+    `None` when there is nothing to arm - an empty `arm`, or a caller (like
+    `run_action`'s own post-action wake) that never passed a `corpora` cache
+    to arm against at all.
+
+    `max_seconds` is the caller's own remaining share of
+    `TOTAL_CALL_BUDGET_SECONDS` (`_arming_budget`) - never a fresh
+    `RUN_CAP_SECONDS` restarting the clock at the hand-back, which is what
+    let one call's wait and its own arming together run up to ~50s (S2
+    arming re-review finding 6)."""
+    if not arm or corpora is None:
+        return None
+    from .playscripts import arming as playscript_arming
+
+    return playscript_arming.arm(
+        seat,
+        corpora,
+        arm=arm,
+        arm_reasoning=arm_reasoning,
+        opposing_archetype=opposing_archetype,
+        inputs=inputs,
+        max_seconds=max_seconds,
+        should_stop=should_stop,
+    )
+
+
+def _merge_armed(result: dict[str, Any], armed: dict[str, Any] | str | None, seat: Seat) -> None:
+    """Splice one `_fire_armed_scripts` answer into `result` (a
+    `block_until_wake`-shaped or `pass_until`-shaped dict, both of which
+    carry a `state` key) - `armed`/`armed_conflict` added, `state` (and, for
+    a caller that reads it, `recent_log`) replaced with the post-arming board
+    when arming actually ran something."""
+    if armed is None:
+        return
+    if isinstance(armed, str):
+        result["armed_refusal"] = armed
+        return
+    result["armed"] = armed["armed"]
+    if "armed_conflict" in armed:
+        result["armed_conflict"] = armed["armed_conflict"]
+    if armed.get("state") is not None:
+        result["state"] = armed["state"]
+        result["recent_log"] = seat.recent_log()
+
+
+def wait_and_arm(
+    seat: Seat,
+    before: dict[str, Any] | None,
+    max_seconds: float = 0.0,
+    should_stop: Callable[[], bool] | None = None,
+    *,
+    corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
+    arm: list[str] | None = None,
+    arm_reasoning: str = "",
+    opposing_archetype: str = "*",
+    inputs: dict[str, Any] | None = None,
+    wake_to_draft: bool = False,
+    draft_staged: bool = False,
+) -> dict[str, Any]:
+    """`block_until_wake`, then fire this seat's armed scripts
+    (`playscripts.arming.arm`, S2) once the wait actually wakes it for a real
+    reason - never on a bare `NOTHING_NEW_YET`, a game-gone answer, or an
+    interrupted wait, since none of those is "this seat holding priority or a
+    decision pending for it", the one moment arming is allowed to act.
+
+    Arming is preferred, never mandatory: `arm` left empty (the default)
+    makes this behave exactly like `block_until_wake` always has - this is
+    `mcp.wait_for_priority`'s and `mcp-seat wait`'s own wrapper, not a
+    replacement for `block_until_wake` itself (`run_action`'s own post-action
+    wake check keeps calling that directly, and fires nothing).
+
+    `wake_to_draft`/`draft_staged` (S2 A6) are threaded straight through to
+    `block_until_wake` and nowhere else in here - a draft-time wake is not one
+    of the "fire the armed scripts" reasons above, only `wake_reason` gains a
+    new possible value (`compute_wake_reason`'s own docstring)."""
+    if arm:
+        from .playscripts import arming as playscript_arming
+
+        problem = playscript_arming.validate_arm_request(
+            arm, arm_reasoning, opposing_archetype, inputs
+        )
+        if problem is not None:
+            # S2 review finding 7: refused before the wait itself ever
+            # runs - a single immediate check (`max_seconds=0.0`, never the
+            # caller's own bound), the same honest board `block_until_wake`
+            # always answers with, just never entering its own bounded
+            # poll loop for an arm request that cannot use it anyway.
+            woken = block_until_wake(
+                seat,
+                before=before,
+                max_seconds=0.0,
+                should_stop=should_stop,
+                wake_to_draft=wake_to_draft,
+                draft_staged=draft_staged,
+            )
+            woken["armed_refusal"] = problem
+            return woken
+    # S2 arming re-review finding 6: captured before the wait itself runs, so
+    # arming's own share below is measured against the WHOLE call, never a
+    # fresh `RUN_CAP_SECONDS` restarting the clock purely for it - see
+    # `TOTAL_CALL_BUDGET_SECONDS`.
+    call_start = time.monotonic()
+    woken = block_until_wake(
+        seat,
+        before=before,
+        max_seconds=max_seconds,
+        should_stop=should_stop,
+        wake_to_draft=wake_to_draft,
+        draft_staged=draft_staged,
+    )
+    if woken["wake_reason"] in (NOTHING_NEW_YET, GAME_GONE, WAIT_INTERRUPTED):
+        return woken
+    if not _arming_moment(woken["state"], seat.player):
+        # S2 review finding 6: `compute_wake_reason` answers a bare "game
+        # over" as a real wake once a winner or a draw is set, and none of
+        # the three reasons excluded above catch that - there is nothing
+        # left here for an armed script to do.
+        return woken
+    if not arm:
+        return woken
+    from .playscripts.arming import MIN_ARMED_RUN_SECONDS
+
+    arm_budget = _arming_budget(call_start)
+    if arm_budget < MIN_ARMED_RUN_SECONDS:
+        woken["armed_skipped"] = ARMING_SKIPPED_LOW_BUDGET
+        return woken
+    try:
+        armed = _fire_armed_scripts(
+            seat,
+            corpora,
+            arm=arm,
+            arm_reasoning=arm_reasoning,
+            opposing_archetype=opposing_archetype,
+            inputs=inputs,
+            should_stop=should_stop,
+            max_seconds=arm_budget,
+        )
+    except Exception as exc:  # noqa: BLE001 - arming must never cost the wait its own answer
+        # S2 review finding 2: nothing between here and `playscripts.arming.arm`
+        # caught an exception before this (`_guarded`, the MCP decorator, only
+        # catches `httpx.HTTPError`), so a bug in arming crashed the whole
+        # wait - losing the board it had already fetched - rather than just
+        # failing to arm. `woken` is already a complete, honest answer to the
+        # wait itself; arming failing must never take that away from the
+        # caller, so it is logged once and noted, not raised.
+        logger.exception("arming raised for %s while firing %r", seat.uid, arm)
+        woken["armed_error"] = f"arming raised {type(exc).__name__}: {exc}"
+        return woken
+    _merge_armed(woken, armed, seat)
+    return woken
 
 
 def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
@@ -3031,6 +3715,433 @@ def forget_starting_occurrence(run: dict[str, Any], state: dict[str, Any]) -> di
     return run
 
 
+# -- S2 A6: buddy drafts ------------------------------------------------------
+#
+# `stage_advice` arms an advisor's next committing call to be captured as a
+# draft rather than posted (`Seat._advise_answer`); the functions below decide,
+# on every later poll, whether that draft's window has arrived and whether it
+# still holds up. Everything here is a pure function of a state view, the same
+# discipline `compute_wake_reason`/`autopass_stop_reason` already keep, so
+# `resolve_advice_draft` (the one function with side effects - it can dry-run
+# probe the engine and post to `/advice`) stays a thin shell around them.
+
+#: Every step in turn order, `untap`/`cleanup` included - unlike
+#: `AUTOPASS_STEPS`, which excludes both because no player ever receives
+#: priority in either and a *pass_until run* could never stop there. A draft
+#: window is never staged for either step either (`autopass_target_error`
+#: refuses both, same as `pass_until`), but a poll can still land on one while
+#: watching for a window elsewhere, and this is what lets `draft_window_status`
+#: order that against the target step at all.
+_FULL_STEP_ORDER = (
+    "untap",
+    "upkeep",
+    "draw",
+    "precombat_main",
+    "beginning_of_combat",
+    "declare_attackers",
+    "declare_blockers",
+    "combat_damage",
+    "end_of_combat",
+    "postcombat_main",
+    "end_step",
+    "cleanup",
+)
+
+
+def _step_rank(step: Any) -> int | None:
+    """`step`'s position in `_FULL_STEP_ORDER`, or `None` for anything else
+    (a state with no live turn, a typo that slipped past `autopass_target_
+    error` some other way)."""
+    try:
+        return _FULL_STEP_ORDER.index(step)
+    except ValueError:
+        return None
+
+
+def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: str) -> str:
+    """Where `state` stands relative to a staged draft's `window`, one of:
+
+    - `"reached"` - `state.step` is the named step, `whose_turn` matches, and
+      this is not the occurrence the window was staged in (the same
+      next-occurrence exemption `autopass_stop_reason`'s condition 3 gives
+      `pass_until` - naming the step you are standing in means its next
+      occurrence, never this one). **Review fix 1**: "the occurrence staged
+      in" is decided against `window["stamped_turns_taken"]`/`["stamped_
+      step"]`, not `started_turn`'s `turn_number` - CR 500.7's extra turn
+      does not move `turn_number`, so a check keyed on it would wrongly read
+      an extra turn's own precombat_main as still the occurrence a normal
+      turn's precombat_main was staged in, and mask a real "reached" as
+      "before" instead.
+    - `"before"` - not there yet, whether because the exemption above still
+      holds or because the board simply has not reached it.
+    - `"after"` - the window's own next occurrence has come and gone.
+      **Review fix 1 (2026-09-14)**: this used to ask only whether the
+      current step's rank is later than the target's, which is wrong the
+      moment the target step's rank comes *before* the step the draft was
+      staged in (naming a step's next occurrence can mean next turn) - a
+      window staged in precombat_main for "precombat_main mine" read "after"
+      the instant the board reached beginning_of_combat *that same turn*,
+      when the real next occurrence was still a whole turn away. Fixed by
+      stamping the draft's own staging position (`window["stamped_step"]`/
+      `window["stamped_turns_taken"]`, set once by `Seat.stage_advice` and
+      never touched again - unlike `started_step`/`started_turn`, which
+      `forget_starting_occurrence` clears the moment the board leaves them)
+      and asking, on `whose_turn`'s own side only:
+
+      - a *later* `turns_taken` than the stamp, standing at or past the
+        target step's rank - the next occurrence, in a later turn, has
+        already been reached and left behind; or
+      - the *same* `turns_taken` as the stamp, but only when the stamp's own
+        step ranked *before* the target (so the next occurrence was always
+        going to be later this same turn) and the board now ranks past it.
+
+      `turns_taken`, not `turn_number`: CR 500.7's extra turn moves the
+      former and not the latter, so a rank check keyed on `turn_number` alone
+      cannot tell an extra turn from the turn it extended.
+    - `"before"` - not there yet, whether because the same-occurrence
+      exemption still holds or because neither `"reached"` nor `"after"`
+      condition above holds yet.
+
+    `resolve_advice_draft` treats `"reached"` as postable only once
+    `state["priority_holder"] == player` too (CR 117: a step's priority
+    windows come one after another, not all at once) - that check is the
+    caller's, not this function's, because it is not a question about *where*
+    the board is, which is all this answers.
+    """
+    wanted = window.get("step")
+    whose = window.get("whose_turn") or "mine"
+    is_yours = state.get("active_player") == player
+    whose_matches_now = whose == "any" or (whose == "mine") == is_yours
+    # Review fix 4 (2026-09-14): `turns_taken` is `None` throughout CR 103's
+    # pregame (`serialize.py` has no `Turn` yet to read one from) - normalised
+    # to 0 here rather than treated as "nothing to compare". `Seat.stage_
+    # advice` now refuses outright before the game starts (`STAGE_ADVICE_
+    # PREGAME`), so this is belt and braces: a window that somehow still
+    # carries a `None` stamp must never be the one comparison this whole
+    # function cannot make - the old "is not None" guards below turned that
+    # `None` into "skip the after check forever", which is exactly how a
+    # draft staged before the game started could sit `"held"` immortally,
+    # and `wake_to_draft` - which stands aside the moment ANY draft is
+    # staged - never woke the advisor again either.
+    stamped_turns_taken = window.get("stamped_turns_taken")
+    stamped_turns_taken = 0 if stamped_turns_taken is None else stamped_turns_taken
+    current_turns_taken = state.get("turns_taken")
+    current_turns_taken = 0 if current_turns_taken is None else current_turns_taken
+    same_occurrence_started_in = (
+        state.get("step") == window.get("stamped_step")
+        and current_turns_taken == stamped_turns_taken
+    )
+    if (
+        wanted
+        and state.get("step") == wanted
+        and whose_matches_now
+        and not same_occurrence_started_in
+    ):
+        return "reached"
+    if same_occurrence_started_in:
+        return "before"
+    target_rank = _step_rank(wanted)
+    current_rank = _step_rank(state.get("step"))
+    stamped_rank = _step_rank(window.get("stamped_step"))
+    if whose_matches_now and target_rank is not None and current_rank is not None:
+        later_turn_past_target = (
+            current_turns_taken > stamped_turns_taken and current_rank >= target_rank
+        )
+        same_turn_past_target = (
+            current_turns_taken == stamped_turns_taken
+            and stamped_rank is not None
+            and stamped_rank < target_rank
+            and current_rank > target_rank
+        )
+        if later_turn_past_target or same_turn_past_target:
+            return "after"
+    return "before"
+
+
+def opponent_board_signature(state: dict[str, Any], player: str) -> Any:
+    """A fingerprint of exactly the slice of the board a staged draft's
+    condition (b) is about: the opponent's permanents (id, tap state,
+    counters - never the printed card, which cannot change), the ids on the
+    stack, and both players' life totals. Deliberately narrower than
+    `board_signature`: `player`'s own draw, a card changing hands within
+    `player`'s own side, or a floating mana pool must never mark a draft
+    stale, and `board_signature` would catch every one of those."""
+    permanents = sorted(
+        (
+            str(card.get("id")),
+            bool(card.get("tapped")),
+            tuple(sorted((card.get("counters") or {}).items())),
+        )
+        for card in state.get("battlefield") or []
+        if card.get("controller") != player
+    )
+    stack_ids = tuple(str(obj.get("id")) for obj in state.get("stack") or [])
+    life = tuple(sorted((p.get("username"), p.get("life")) for p in state.get("players") or []))
+    return (tuple(permanents), stack_ids, life)
+
+
+def _unvalidated_action_still_legal(
+    action: dict[str, Any], state: dict[str, Any], player: str
+) -> bool:
+    """Condition (c) for the 5 `ACTION_REQUEST_SHAPES` with no `dry_run`
+    (`DRY_RUN_SHAPES`'s complement): there is no probe to re-ask, so this
+    reads the same board-truth fields `compute_wake_reason`/`autopass_stop_
+    reason` already read for exactly these questions, rather than guessing.
+    Never card/mechanic legality - only whether this seat could still open
+    the request at all, the same narrow question `ADVISE_UNVALIDATED_REASON`
+    already says a proposal of one of these was never more than.
+
+    `action` is the drafted `entry["action"]` dict, not merely its
+    `action_key` - **review fix 6 (2026-09-14)**: `decide`'s own branch used
+    to ask only whether *some* decision was pending for this player, legal
+    the moment any decision at all was addressed to them even when it was
+    not the one the draft actually answers (a first decision answered by the
+    human directly and a second, unrelated one arriving before the window is
+    reached, say). `action["decision_kind"]`/`["decision_generation"]`
+    (stamped by `_advise_answer` at capture time, from the pending decision
+    that was standing then) now have to match the pending decision standing
+    now - `generation` (`repository.GameRepository.pause_generation`) is
+    exactly the field that tells two decisions of the same `kind` apart."""
+    action_key = action.get("action_key") or ""
+    pending = state.get("pending_decision")
+    if action_key == "decide":
+        return (
+            pending is not None
+            and pending.get("player") == player
+            and pending.get("kind") == action.get("decision_kind")
+            and pending.get("generation") == action.get("decision_generation")
+        )
+    if action_key == "actions/declare-blockers":
+        return (
+            pending is not None
+            and pending.get("player") == player
+            and pending.get("kind") == "declare_blockers"
+        )
+    if action_key == "actions/pass-priority":
+        return state.get("priority_holder") == player
+    if action_key == "advance":
+        return (
+            not state.get("stack")
+            and state.get("step") in ("untap", "cleanup")
+            and state.get("active_player") == player
+        )
+    if action_key == "actions/concede":
+        return not state.get("winner") and not state.get("drawn")
+    return True
+
+
+def _script_already_advised(armed: Any, script_exit: Any = None) -> str | None:
+    """The id of the script that just proposed in this very answer (`Exit.
+    ADVISED`, `playscripts.runtime._advise`), or `None`.
+
+    Two shapes carry this - review fix 2 (2026-09-14) widened the original
+    single-shape check, which only ever looked at `armed` and so never
+    caught a MANUAL run colliding with a reached draft:
+
+    - `armed` is whatever `woken["state"]["armed"]` carries (`mcp.wait_for_
+      priority`'s own splice of `wait_and_arm`'s `armed` answer) - a list of
+      `script_exit`-shaped dicts, or absent/`None` for every answer that
+      never armed anything (every action tool, and a `wait_for_priority`/CLI
+      `wait` call with no `arm`). This is an armed script firing on its own,
+      inside a poll.
+    - `script_exit` is the single `script_exit` dict a MANUAL run produces -
+      `mcp.run_script`/CLI `script run`'s own answer, whose `script_exit.
+      exit` is `"advised"` exactly when that very call proposed. An armed
+      script and a manual run can never both fire in the same answer (only
+      one of `wait_for_priority`/`run_script` is ever called for it), so
+      checking both is never ambiguous about which one to report.
+
+    Reading the STRING `"advised"` rather than importing `playscripts.
+    runtime.Exit`: `playscripts` imports `seatkit` (`Seat`/`scripts_enabled_
+    here`), so importing back here would cycle - the same reason `_fire_
+    armed_scripts` imports `playscripts.arming` lazily instead."""
+    if isinstance(armed, list):
+        for entry in armed:
+            if isinstance(entry, dict) and entry.get("exit") == "advised":
+                script = entry.get("script")
+                return script if isinstance(script, str) else None
+    if isinstance(script_exit, dict) and script_exit.get("exit") == "advised":
+        script = script_exit.get("script")
+        return script if isinstance(script, str) else None
+    return None
+
+
+def _pop_draft_if_same(seat: Seat, entry: dict[str, Any]) -> None:
+    """Drop `seat`'s staged draft only if it is still the exact object
+    `entry` names - never a later one a restage since replaced it with. See
+    `resolve_advice_draft`'s own docstring (review fix 5, 2026-09-14) for why
+    an unconditional pop is wrong: a `stage_advice` call that lands while an
+    earlier draft's own `POST .../advice` is still in flight must survive
+    that in-flight call's own cleanup."""
+    if seat._advice_drafts.get(seat.uid) is entry:
+        seat._advice_drafts.pop(seat.uid, None)
+
+
+def draft_status_for_answer(
+    seat: Seat, state: dict[str, Any], *, script_exit: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """The `draft` value one answer for `seat` carries right now - shared by
+    `mcp._attach_draft` and `seat_cli`'s own per-command draft check
+    (2026-09-14 review fix 2) so the CLI and MCP transports report a staged
+    draft identically, exactly as they already share `resolve_advice_draft`
+    itself.
+
+    `script_exit` is this very answer's own manual script run result, when
+    the caller has one - `mcp.run_script`/CLI `script run` only. A thin
+    pass-through to `resolve_advice_draft`, which is where the actual
+    supersede-vs-hold decision is made: review fix 2's re-review (2026-09-14)
+    moved it there after finding the original check here superseded ANY
+    captured draft the moment a script advised anywhere in the same answer,
+    whether or not that draft's own window had even been reached yet - see
+    `resolve_advice_draft`'s own docstring for the fixed gate."""
+    return resolve_advice_draft(seat, state, script_exit=script_exit)
+
+
+def resolve_advice_draft(
+    seat: Seat, state: dict[str, Any], *, script_exit: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """`None` for a seat with nothing staged (a seat, an advisor who has
+    never called `stage_advice`, or one whose window is armed but not yet
+    filled in by a committing call) - `mcp._tool_result` leaves `draft` off
+    the answer entirely in that case, rather than inventing a status for
+    "there is nothing to report".
+
+    Otherwise, one poll's worth of the three-condition stale rule:
+
+    (a) **window** (`draft_window_status`): `"before"` answers `{"status":
+        "held"}` and changes nothing; `"after"` drops the draft and answers
+        `{"status": "stale", "failed": "window"}`; `"reached"` falls through
+        to (b)/(c) only once `state["priority_holder"] == seat.player` too -
+        the window being the right step is not yet the human's own priority
+        window inside it.
+    (b) **board** (`opponent_board_signature`): the opponent's board must be
+        exactly what it was when this was drafted. A mismatch drops the draft
+        and answers `{"status": "stale", "failed": "board"}`.
+    (c) **legality**: a validated draft re-runs the same `dry_run` probe
+        `_advise_answer` ran to draft it; an unvalidated one asks
+        `_unvalidated_action_still_legal`. Either failing drops the draft and
+        answers `{"status": "stale", "failed": "legality"}`.
+    (d) **a script that already advised in this very answer** (review fix 2,
+        2026-09-14, re-review): checked only once (a), (b) and (c) all hold
+        and this draft is genuinely about to post - `state.get("armed")`
+        (an armed script `wait_for_priority`/CLI `wait` fired inside its own
+        poll) or `script_exit` (a MANUAL `run_script`/CLI `script run` that
+        just proposed) both name it, via `_script_already_advised`. Posting
+        the draft too would put two `/advice` rows in the ledger for the one
+        answer, and `ui/advice_model.js`'s `currentAdvice` (newest-wins)
+        would hide whichever posted first without a trace - the draft loses,
+        dropped outright, answering `{"status": "superseded_by_script",
+        "script": ...}` instead of posting.
+
+        This check used to run FIRST, ahead of (a)/(b)/(c), and superseded
+        ANY captured draft the instant a script advised anywhere in the same
+        answer - a captured draft staged for a window nowhere near reached
+        yet lost to a script proposing for an entirely different, current
+        moment. Moved here so only a draft that would otherwise post right
+        now can ever be superseded; one still `"held"` on window, board or
+        legality is untouched by a script firing alongside it.
+
+    All three - now four - holding posts for real: `POST .../advice`, carrying
+    `drafted_at_seq` from when this was staged, and the draft is dropped
+    either way - a posted draft has become a real ledger row, and there is
+    nothing left here to hold. `{"status": "posted", "log_seq": ...}` on
+    success; a refusal from `/advice` itself (a blank reasoning would have
+    already been caught at draft time, so this is not expected in practice,
+    but nothing here assumes it cannot happen) drops the draft too and
+    answers `{"status": "stale", "failed": "refused"}` rather than leaving a
+    draft that will only ever fail the same way parked forever.
+
+    Raises nothing by construction other than what `Seat._request_json`
+    itself already contains (an HTTP error is caught there) - `mcp.py`'s own
+    caller still wraps this in `try`/`except` per this project's rule that a
+    seat's real answer must never be broken by a feature reading alongside
+    it, but there is no known way to reach it from here.
+
+    **Review fix 5 (2026-09-14): a per-uid lock around the whole read-check-
+    post-pop sequence.** Sync MCP tools each run in their own thread against
+    a freshly minted `Seat` (`Seats.seat_for`), so two advisor calls arriving
+    close together used to race: both could read the same staged, ready
+    draft, both probe it legal, and both `POST .../advice` - two ledger rows
+    for one proposal. `lock.acquire(blocking=False)` claims the draft before
+    doing any of that work; a second caller that finds the lock already held
+    does none of it either and answers `{"status": "held"}` at once, exactly
+    as it would have if the window simply were not reached yet - never a
+    second probe, never a second POST. The lock is released before this
+    returns either way, so it never outlives one call. The final cleanup
+    (`_pop_draft_if_same`) checks identity, not merely presence: a `stage_
+    advice` call that lands while this one's own `POST .../advice` is still
+    in flight replaces `seat._advice_drafts[seat.uid]` with a brand new dict,
+    and that restage must survive this call's own cleanup rather than being
+    swept away by an unconditional pop.
+    """
+    if not seat.advise:
+        return None
+    entry = seat._advice_drafts.get(seat.uid)
+    if entry is None or entry.get("action") is None:
+        return None
+    lock = seat._advice_draft_locks.setdefault(seat.uid, threading.Lock())
+    if not lock.acquire(blocking=False):
+        return {"status": "held"}
+    try:
+        # Re-read after claiming the lock: nothing above this point mutated
+        # anything, so `entry` itself is still whatever this call is about to
+        # act on, but reading it fresh here is what makes the identity check
+        # in `_pop_draft_if_same` below mean "the entry THIS call claimed",
+        # not "whatever was staged a moment before the lock was even asked
+        # for".
+        entry = seat._advice_drafts.get(seat.uid)
+        if entry is None or entry.get("action") is None:
+            return {"status": "held"}
+        window = forget_starting_occurrence(dict(entry["window"]), state)
+        entry["window"] = window
+        status = draft_window_status(window, state, seat.player)
+        if status == "before":
+            return {"status": "held"}
+        if status == "after":
+            _pop_draft_if_same(seat, entry)
+            return {"status": "stale", "failed": "window"}
+        if state.get("priority_holder") != seat.player:
+            return {"status": "held"}
+        action = entry["action"]
+        current_signature = opponent_board_signature(state, seat.player)
+        if current_signature != entry.get("opponent_signature"):
+            _pop_draft_if_same(seat, entry)
+            return {"status": "stale", "failed": "board"}
+        if action["validated"]:
+            _probe_status, probe_outcome = seat._request_json(
+                action["method"], action["path"], {**action["body"], "dry_run": True}
+            )
+            legal = isinstance(probe_outcome, dict) and probe_outcome.get("allowed") is True
+        else:
+            legal = _unvalidated_action_still_legal(action, state, seat.player)
+        if not legal:
+            _pop_draft_if_same(seat, entry)
+            return {"status": "stale", "failed": "legality"}
+        scripted = _script_already_advised(state.get("armed"), script_exit)
+        if scripted is not None:
+            _pop_draft_if_same(seat, entry)
+            return {"status": "superseded_by_script", "script": scripted}
+        _post_status, advice = seat._request_json(
+            "POST",
+            f"/api/games/{seat.game_id()}/advice",
+            {
+                "player": seat.player,
+                "method": action["method"],
+                "path": action["path"],
+                "body": action["body"],
+                "reasoning": action["reasoning"],
+                "validated": action["validated"],
+                "drafted_at_seq": entry.get("drafted_at_seq"),
+            },
+        )
+        _pop_draft_if_same(seat, entry)
+        if not (isinstance(advice, dict) and advice.get("proposed") is True):
+            return {"status": "stale", "failed": "refused"}
+        return {"status": "posted", "log_seq": advice["log_seq"]}
+    finally:
+        lock.release()
+
+
 def autopass_label(run: dict[str, Any]) -> str:
     """How a run names its own destination, for the stop reason it reports."""
     step = (run.get("step") or "").replace("_", " ")
@@ -3228,6 +4339,144 @@ def autopass_stop_reason(
 #: takes.
 MAX_PASSES_PER_CALL = 100
 
+#: `autopass_stop_reason`'s own "reached" message always starts with this -
+#: `pass_until`'s own arming wrapper (`_wait_for_own_priority_at_destination`,
+#: below) matches on it to tell "reached the named destination" apart from
+#: every other stop reason, without duplicating `autopass_label`'s own
+#: rendering.
+_REACHED_STOP_PREFIX = "reached "
+
+
+def _window_passed_note(stopped_because: str) -> str:
+    """`pass_until`'s own `stopped_because` when an armed `theirs`/`either`
+    destination came and went without this seat ever holding priority there
+    (S2 arming re-review finding 2)."""
+    return (
+        f"{stopped_because} - but the step moved on before you ever held priority there (or had "
+        "a decision pending for you), so nothing armed could fire this occurrence. Call again to "
+        "arm for its next one."
+    )
+
+
+def _restate(
+    result: dict[str, Any], seat: Seat, state: dict[str, Any], include_actions: bool
+) -> None:
+    result["state"] = state
+    if include_actions:
+        result["available_actions"] = available_actions(seat, state)
+    result["recent_log"] = seat.recent_log()
+
+
+def _own_priority_wait_note(until_step: str) -> str:
+    """`pass_until`'s own `stopped_because` when the bounded wait inside
+    `_wait_for_own_priority_at_destination` ends - or never even starts,
+    `max_seconds=0.0` being the same thing with the deadline already in the
+    past - without this seat ever holding priority at the destination (S2
+    arming re-review finding 1). Distinct from `_window_passed_note`: the
+    window itself is still open (the board is still sitting on `until_step`)
+    - only this one call's own wait ran out, and the `resume` this answer
+    carries is exactly what lets the next call keep arming in that same,
+    still-open window rather than being read as a fresh run that would
+    exempt it all over again."""
+    return (
+        f"waiting for your priority at {until_step} to fire armed scripts; call again with resume"
+    )
+
+
+def _wait_for_own_priority_at_destination(
+    seat: Seat,
+    result: dict[str, Any],
+    until_step: str,
+    deadline: float,
+    should_stop: Callable[[], bool] | None,
+    include_actions: bool,
+    run: dict[str, Any],
+    stop_on_stack: bool,
+) -> dict[str, Any]:
+    """`pass_until`'s own extra wait, entered only once `_pass_until_once`
+    has already answered "reached" a destination with something armed for it
+    and this seat does not yet hold priority there (S2 arming re-review
+    finding 2).
+
+    `autopass_stop_reason` stops a run the instant the named step begins,
+    board-wide, regardless of who holds priority there - which for a
+    `theirs`/`either` destination is usually still the active opponent's own
+    first priority in it (CR 117.3a): a step's active player gets priority
+    before anyone else does. Arming needs this seat to actually hold
+    priority (or have a decision pending for it) before anything it fires
+    can be legal (`runtime._drive` requires holding priority before a
+    script's first move - S1 review finding 4a), so firing on the raw
+    "reached" board would silently do nothing, and a caller that did not
+    retry would never learn the window had even opened.
+
+    This polls the board directly - never `_pass_until_once`'s own `resume`:
+    re-entering its state machine here would reset `started_step`/
+    `started_turn` to the step already reached and permanently exempt it
+    from ever "reaching" it again (`autopass_stop_reason`'s own
+    `same_occurrence_this_run_started_in` check). `run` is the ORIGINAL run
+    stamp `_pass_until_once` reached this destination with (`answer`'s own
+    `_reached_run`, popped by `pass_until` before calling this) - never
+    re-stamped from wherever the seat is standing now - so `give_up`'s own
+    `resume` keeps naming the occurrence this run actually started in, and a
+    caller that hands it straight back on the next call arms in this same
+    window rather than skipping to the next one (S2 arming re-review finding
+    1's own repro: "starting-step exemption skips the window to the NEXT end
+    step").
+
+    Every way out short of this seat actually getting priority (or a
+    decision pending for it) in this same occurrence keeps `finished: False`
+    with that same `resume`: the caller interrupting (`should_stop`), and
+    the bounded wait itself running out - which includes never running at
+    all, the immediate `max_seconds=0.0` case (the loop below never executes
+    when `deadline` is already in the past). Only the game going away, or
+    the board genuinely leaving `until_step` without this seat ever holding
+    priority there (`_window_passed_note` - there is no "this window" left
+    to resume into), stay `finished: True`.
+
+    A stack object that arrives while this waits (`stop_on_stack`) is never
+    swallowed silently: `_arming_moment` firing on a stack that grew past
+    `run`'s own `known_stack_ids` - the stack as it stood when this destination
+    was first reached - reports the same stop reason `autopass_stop_reason`'s
+    own stack check would have, rather than leaving the stale "reached ..."
+    text as if nothing had landed. Arming still runs on it: a script whose own
+    `when` needs an empty stack is judged and skipped on its own terms, never
+    hard-skipped here."""
+
+    def give_up(reason: str) -> dict[str, Any]:
+        result["finished"] = False
+        result["stopped_because"] = reason
+        result["resume"] = dict(run)
+        return result
+
+    while time.monotonic() < deadline:
+        if should_stop is not None and should_stop():
+            return give_up(WAIT_INTERRUPTED)
+        time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
+        state = seat.fetch_state()
+        if game_gone(seat):
+            _restate(result, seat, state, include_actions)
+            result["stopped_because"] = GAME_GONE
+            return result
+        if state.get("winner") or state.get("drawn") or state.get("step") != until_step:
+            _restate(result, seat, state, include_actions)
+            result["stopped_because"] = _window_passed_note(result["stopped_because"])
+            return result
+        if _arming_moment(state, seat.player):
+            _restate(result, seat, state, include_actions)
+            if stop_on_stack:
+                arrived = [
+                    obj
+                    for obj in (state.get("stack") or [])
+                    if obj.get("id") not in run.get("known_stack_ids", ())
+                ]
+                if arrived:
+                    result["stopped_because"] = (
+                        f"something new went on the stack: "
+                        f"{arrived[0].get('name') or arrived[0].get('id')}"
+                    )
+            return result
+    return give_up(_own_priority_wait_note(until_step))
+
 
 def pass_until(
     seat: Seat,
@@ -3242,10 +4491,23 @@ def pass_until(
     max_seconds: float = 0.0,
     include_actions: bool = True,
     should_stop: Callable[[], bool] | None = None,
+    corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
+    arm: list[str] | None = None,
+    arm_reasoning: str = "",
+    opposing_archetype: str = "*",
+    inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`_pass_until_once` (below), optionally ridden out across a bounded wait
     rather than handed straight back the first time it would otherwise have
     to wait for the opponent.
+
+    `arm` (S2) fires this seat's armed scripts (`playscripts.arming.arm`)
+    once this call is about to return with a real stop - `finished: True`,
+    or the `MAX_PASSES_PER_CALL` hand-back - never on a retryable hand-back
+    (the opponent still holds priority): that is not this seat's moment, and
+    arming judging the board there would be arming, not the wait, deciding
+    when to look. Arming is preferred, never mandatory: an empty `arm` (the
+    default) leaves this behaving exactly as it always has.
 
     Left at its default `max_seconds=0.0`, this is exactly one call to
     `_pass_until_once` and nothing else - the poll-and-return behaviour that
@@ -3288,6 +4550,34 @@ def pass_until(
             refused["available_actions"] = available_actions(seat, state)
         refused["recent_log"] = seat.recent_log()
         return refused
+    if arm:
+        from .playscripts import arming as playscript_arming
+
+        problem = playscript_arming.validate_arm_request(
+            arm, arm_reasoning, opposing_archetype, inputs
+        )
+        if problem is not None:
+            # S2 review finding 7: refused before a single priority is
+            # passed - the same shape the advise refusal above already
+            # uses, `armed_refusal` naming why.
+            state = seat.fetch_state()
+            refused_arm = {
+                "stopped_because": f"arm was refused before any pass: {problem}",
+                "passes": 0,
+                "finished": True,
+                "until": {"step": until_step, "whose_turn": whose_turn},
+                "state": state,
+                "armed_refusal": problem,
+            }
+            if include_actions:
+                refused_arm["available_actions"] = available_actions(seat, state)
+            refused_arm["recent_log"] = seat.recent_log()
+            return refused_arm
+    # S2 arming re-review finding 6: captured before the wait/pass loop
+    # below runs, so arming's own share (computed once the run stops) is
+    # measured against the WHOLE call, never a fresh `RUN_CAP_SECONDS`
+    # restarting the clock purely for it - see `TOTAL_CALL_BUDGET_SECONDS`.
+    call_start = time.monotonic()
     max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
     deadline = time.monotonic() + max_seconds
     kwargs: dict[str, Any] = {
@@ -3306,7 +4596,75 @@ def pass_until(
             break
         time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
         result = _pass_until_once(seat, resume=result.get("resume"), **kwargs)
+    retryable = result.get("retryable", False)
     result.pop("retryable", None)
+    inner_arm_eligible = result.pop("_arm_eligible", True)
+    # Never a real part of this answer's own shape (see `_pass_until_once`'s
+    # own `answer` closure) - popped here unconditionally so it never leaks
+    # to a caller, whether or not the branch below actually needs it.
+    reached_run = result.pop("_reached_run", None)
+    if (
+        arm
+        and result["finished"]
+        and inner_arm_eligible
+        and not retryable
+        and str(result.get("stopped_because") or "").startswith(_REACHED_STOP_PREFIX)
+        and not _arming_moment(result["state"], seat.player)
+        and reached_run is not None
+    ):
+        # S2 arming re-review finding 2: reached the destination without
+        # this seat holding priority there yet - see
+        # `_wait_for_own_priority_at_destination`'s own docstring.
+        result = _wait_for_own_priority_at_destination(
+            seat,
+            result,
+            until_step,
+            deadline,
+            should_stop,
+            include_actions,
+            reached_run,
+            stop_on_stack,
+        )
+    if (
+        arm
+        and not retryable
+        and inner_arm_eligible
+        and _arming_moment(result["state"], seat.player)
+    ):
+        from .playscripts.arming import MIN_ARMED_RUN_SECONDS
+
+        arm_budget = _arming_budget(call_start)
+        if arm_budget < MIN_ARMED_RUN_SECONDS:
+            # S2 arming re-review finding 6: too little of the call's own
+            # shared budget is left to safely start a run.
+            result["armed_skipped"] = ARMING_SKIPPED_LOW_BUDGET
+            return result
+        try:
+            armed = _fire_armed_scripts(
+                seat,
+                corpora,
+                arm=arm,
+                arm_reasoning=arm_reasoning,
+                opposing_archetype=opposing_archetype,
+                inputs=inputs,
+                should_stop=should_stop,
+                max_seconds=arm_budget,
+            )
+        except Exception as exc:  # noqa: BLE001 - see wait_and_arm's own guard
+            # S2 review finding 2: a raise here must not cost the run its own
+            # stopped_because/passes/state/resume - `result` is already a
+            # complete, honest answer to the run itself.
+            logger.exception("arming raised for %s while firing %r", seat.uid, arm)
+            result["armed_error"] = f"arming raised {type(exc).__name__}: {exc}"
+            return result
+        _merge_armed(result, armed, seat)
+        if (
+            include_actions
+            and armed is not None
+            and not isinstance(armed, str)
+            and armed.get("state") is not None
+        ):
+            result["available_actions"] = available_actions(seat, result["state"])
     return result
 
 
@@ -3406,7 +4764,9 @@ def _pass_until_once(
     run = resume_autopass(resume, before, until_step, whose_turn)
     passes = 0
 
-    def answer(state: dict[str, Any], reason: str, finished: bool = True) -> dict[str, Any]:
+    def answer(
+        state: dict[str, Any], reason: str, finished: bool = True, *, arm_eligible: bool = True
+    ) -> dict[str, Any]:
         result = {
             "stopped_because": reason,
             "passes": passes,
@@ -3414,6 +4774,15 @@ def _pass_until_once(
             "until": {"step": until_step, "whose_turn": whose_turn},
             "state": state,
         }
+        if not arm_eligible:
+            # S2 review finding 6: an ambiguous or refused attempt is not
+            # this seat's moment even when the board still looks like one -
+            # `_arming_moment` (`pass_until`'s own outer wrapper) reads the
+            # state's content, which an unchanged-because-refused board
+            # cannot tell apart from a genuine one; this flag is the
+            # explicit signal for exactly those two cases. Popped there
+            # before the answer ever reaches a caller.
+            result["_arm_eligible"] = False
         if include_actions:
             result["available_actions"] = available_actions(seat, state)
         result |= {
@@ -3429,6 +4798,17 @@ def _pass_until_once(
             # `start_autopass`), and this is the token `resume_autopass`
             # takes straight back on the next call.
             result["resume"] = dict(run)
+        if reason.startswith(_REACHED_STOP_PREFIX):
+            # `pass_until`'s own arming wrapper needs this run's starting
+            # stamp to build a `resume` of its own (S2 arming re-review
+            # finding 1, `_wait_for_own_priority_at_destination`) when it
+            # reached this destination without this seat holding priority
+            # there yet - re-stamping from the board it is standing on
+            # (`start_autopass`) would exempt this very occurrence as "the
+            # step the run started in" and skip it entirely on retry. A
+            # private key: never a real part of this answer's shape, and
+            # `pass_until` pops it before anything reaches a caller.
+            result["_reached_run"] = dict(run)
         return result
 
     def handed_back(
@@ -3516,11 +4896,12 @@ def _pass_until_once(
                     f"{self_decision.get('prompt')} - answer it with decide() now",
                 )
             if _unknown_outcome(outcome):
-                return answer(seat.fetch_state(), UNKNOWN_OUTCOME)
+                return answer(seat.fetch_state(), UNKNOWN_OUTCOME, arm_eligible=False)
             if _refused(outcome):
                 return answer(
                     seat.fetch_state(),
                     f"declaring nobody was refused, so the run stopped: {outcome.get('reason')}",
+                    arm_eligible=False,
                 )
             # Answering a declaration is a turn-based action (CR 508.1, CR
             # 509.1), not a priority pass, so `passes` deliberately does not
@@ -3627,11 +5008,12 @@ def _pass_until_once(
                     f"{self_decision.get('prompt')} - answer it with decide() now",
                 )
             if _unknown_outcome(outcome):
-                return answer(seat.fetch_state(), UNKNOWN_OUTCOME)
+                return answer(seat.fetch_state(), UNKNOWN_OUTCOME, arm_eligible=False)
             if _refused(outcome):
                 return answer(
                     seat.fetch_state(),
                     f"a pass was refused, so the run stopped: {outcome.get('reason')}",
+                    arm_eligible=False,
                 )
             passes += 1
             continue

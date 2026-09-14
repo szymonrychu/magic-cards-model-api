@@ -14,7 +14,7 @@ Every command is a fresh process. Always pass BOTH your uid and your game id
 
 Subcommands: state, wait, mulligan, opening-hand-action, opening-hand-done,
 cast, play-land, suspend, plot, foretell, cycle, activate, attackers,
-blockers, decide, pass, pass-until, log, report, script. Run
+blockers, decide, pass, pass-until, plan, log, report, script. Run
 `<subcommand> --help` when unsure of arguments.
 
 Priority has exactly two verbs, `pass` and `pass-until`, because the rules give
@@ -97,13 +97,27 @@ hand chosen for you by a timer. Declare, finish CR 103.6, and stay running.
 
 ## The loop
 
+**Plan ahead, and arm your wait.** Once you know how you mean to play your
+own next turn, run `plan --for-turn next ...` during your opponent's turn
+rather than waiting until your own upkeep to write one - see "Declare your
+plan before you act" below. Then wait to your own main phase with
+`pass-until <step>`, arming whatever registered scripts are worth firing on
+the way with `--arm SCRIPT_ID` (repeatable, one per script, priority order)
+and `--arm-reasoning "..."`. A named fetch land is the clearest case: arm the
+fetch play before your turn begins, rather than cracking it by hand once it
+resolves. Arming never adds a third command - it fires inside the wait
+itself, so it does not contradict "nothing in between" below. If the answer
+says it is still waiting for your own priority to fire something armed, run
+`pass-until` again with `--resume` passed back verbatim - never start a
+fresh run there.
+
 Your steady state is two commands, and **nothing in between**:
 
 1. **a wait** - `pass-until <step>`, or `pass` when you hold priority once and
    already know what you are doing with the very next window.
 2. **EXACTLY ONE committing command**, read straight off the JSON that wait
-   printed: `cast`, `decide`, `activate`, `play-land`, `attackers` or
-   `blockers`.
+   printed: `cast`, `decide`, `activate`, `play-land`, `attackers`,
+   `blockers` or `script run`.
 
 Then wait again. That is the default, not an optimisation for when you are in
 a hurry: every answer you are printed already carries what you need to
@@ -414,11 +428,14 @@ engine's own, and prints `script_exit` beside the state. `--reasoning` is
 required. `--no-wait` leaves a script that is off its step `not_applicable`,
 and `--max-seconds` caps the command.
 
-- `--opposing-archetype KEY` asserts the matchup you have read, spelled as
-  your matchup card spells it. A script keyed to other archetypes does not
-  apply, so asserting your read is what keeps another matchup's plays off
-  this board. Leave it at `*`, the default, only while you genuinely do not
-  know.
+- `--opposing-archetype KEY` asserts the matchup you have read. Once `plan
+  --for-turn ...` has named your read on the opponent's archetype (see
+  "Declare your plan before you act" below), pass it - spelled as your
+  matchup card spells it - on every `script run`, `script list` and armed
+  `wait`/`pass-until` from then on: some plays pick a different line by
+  archetype, and leaving it out means `*`. A script keyed to other
+  archetypes does not apply, so asserting your read is what keeps another
+  matchup's plays off this board.
 - `--input NAME=VALUE` is one input your deck's scripts read that the board
   cannot show - repeat the flag once per input. VALUE is read as JSON where it
   is JSON (`true`, `3`) and as text otherwise (`dimir-frog`). It is the CLI
@@ -433,13 +450,18 @@ loop: read `script_exit.exit` and do exactly one thing.
 - `not_applicable`: `failing_condition` says why. Play the window by hand.
 - `needs_input` or `invalid_input`: run it again with that input given, as a
   value the deck declares.
-- `needs_plan`: declare your plan, then run it again.
+- `needs_plan`: run `plan ...` (see "Declare your plan before you act"
+  below), then run it again.
 - `already_ran`: it already ran this turn and step. Do not run it again.
 - `refused`, `unforeseen`, `interrupted`, `ambiguous`, `stale` or
   `unknown_outcome`: read `refusal` or `stop_reason`, and take the next
   action by hand off the state it printed.
 - `exit` null: the time cap came first. Run it again with
   `--resume '<the script_exit.resume object>'`, handed back verbatim.
+
+Scripts only run when you start them with `script run` or arm them with
+`--arm` on `wait`/`pass-until`; a run you neither started nor armed was
+started by someone else.
 
 ## Win the game, do not merely make legal moves
 
@@ -582,15 +604,39 @@ and look up any card or rule you are not certain of. Spend that effort on the
 decisions that turn the game, not on every land drop - and spend an extra
 command only on what the answer in front of you does not already say.
 
-## Keep a plan, in writing
+## Declare your plan before you act
 
-If you have a scratch file or notes directory available, keep a handful of
-lines there and update them as the game moves: your read on their archetype and
-your confidence in it, your role and how you intend to win, what you are
-holding and what you are holding it for, and the next two or three turns as you
-currently intend to play them. Rewrite lines rather than appending - this is a
-working plan, not a diary, and it must cost seconds per turn, never an essay
-per priority.
+Plan ahead: run `plan --for-turn next ...` during your opponent's turn, once
+you know how you mean to play your own next turn, rather than waiting until
+your own upkeep to write one - your opponent is not waiting on you while you
+do this. Leaving `--for-turn` at its default `current` still works for the
+turn already in front of you, if you did not plan ahead for it:
+
+    ... plan --board-read "..." --my-role "..." --plan "..." \
+        --expecting "..." --because "..." --confidence medium --for-turn next
+
+- `--board-read`: what you actually see on the board right now, in your own
+  words.
+- `--my-role`: your role in this matchup - beatdown or control, what your
+  deck is trying to do, what losing looks like.
+- `--plan`: what you intend to do this turn, and why that follows from the
+  two above.
+- `--expecting` / `--because` / `--confidence` (`low`/`medium`/`high`): what
+  you expect your opponent to do in response, and the read that supports it.
+
+Called once per turn: `--for-turn next` while your own turn is already under
+way is refused. A second declaration for the same turn is not refused -
+there is nothing to gain from declaring twice, because the gate only needs
+one row for the turn. A bare pass through your own upkeep or draw step with
+an empty stack needs none on record at all.
+
+This is written to an append-only ledger before your opponent's next move -
+you cannot go back and edit it afterward to fit whatever they actually did.
+After the game, a human reads it next to what your opponent actually did. You
+are not scored on it, and there is no grade. The only thing that makes it
+worth reading at all is that it is honest: state the concrete call you
+actually expect and let it be checked. An honest wrong read is worth far more
+than a hedge.
 
 ## Rules of engagement, each learned the hard way
 

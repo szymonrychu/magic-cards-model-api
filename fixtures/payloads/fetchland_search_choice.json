@@ -208,6 +208,7 @@
   ],
   "step": "precombat_main",
   "turn_number": 1,
+  "turns_taken": 1,
   "winner": null,
   "you": "alice",
   "zone": null

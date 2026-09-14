@@ -1943,6 +1943,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -2039,6 +2050,17 @@
             "additionalProperties": true,
             "title": "Body",
             "type": "object"
+          },
+          "drafted_at_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drafted At Seq"
           },
           "method": {
             "minLength": 1,
@@ -5084,6 +5106,15 @@
             "title": "Board Read",
             "type": "string"
           },
+          "for_turn": {
+            "default": "current",
+            "enum": [
+              "current",
+              "next"
+            ],
+            "title": "For Turn",
+            "type": "string"
+          },
           "my_role": {
             "minLength": 1,
             "title": "My Role",
@@ -5125,6 +5156,15 @@
           "declared": {
             "title": "Declared",
             "type": "boolean"
+          },
+          "for_turn": {
+            "default": "current",
+            "enum": [
+              "current",
+              "next"
+            ],
+            "title": "For Turn",
+            "type": "string"
           },
           "log_seq": {
             "title": "Log Seq",
@@ -5836,6 +5876,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -7047,6 +7098,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -7485,6 +7547,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -8516,6 +8589,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -9424,6 +9508,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -9861,6 +9956,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -10363,6 +10469,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -10890,6 +11007,15 @@
             ],
             "title": "Guides Revision"
           },
+          "invoked_via": {
+            "enum": [
+              "mcp",
+              "cli",
+              "armed"
+            ],
+            "title": "Invoked Via",
+            "type": "string"
+          },
           "moves_done": {
             "anyOf": [
               {
@@ -11089,7 +11215,8 @@
           "role",
           "script_id",
           "turn",
-          "step"
+          "step",
+          "invoked_via"
         ],
         "title": "ScriptRunIn",
         "type": "object"
@@ -11618,6 +11745,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -12673,6 +12811,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -14595,7 +14744,7 @@
     },
     "/api/games/{game_id}/advice": {
       "post": {
-        "description": "Record one action an advisor thinks `req.player` should take\n(`schemas.AdviceIn`), and record nothing else.\n\n**This mutates no `Game`, exactly like `declare_plan`** - which is the\nprior art this is modelled on, down to the shape of this docstring. It\ncalls `audit.record` and nothing else: no `store.replace`, no\ncompare-and-swap, no version bump. A proposal is a statement *about* the\ngame, and the whole point of advise mode is that the advisor never moves\nit; a route that quietly committed one would hand a read-only credential\nthe authority its own gate exists to deny.\n\n**The summary is derived here, not taken from the caller.**\n`records.advice_summary` reads `req.body` against the live game - card\nids resolved to names, targets and cost spelled out - so what the human\nreads can never disagree with the request it describes. `schemas.AdviceIn`\nhas no `summary` field at all, so an advisor cannot try.\n\n**`based_on_seq` is read immediately before the row is written, under no\nlock.** A command landing in between makes this proposal born-stale, and\nthat is the safe direction: the human's own action carries its own\n`expected_seq` (`records.require_current_board`) and is refused against a\nboard that moved, so a stale proposal costs a refusal rather than a wrong\nmove. Taking the game's lock here would instead let a buddy pod's\nthinking block the seat it is advising.\n\n`legal_actions_before` is computed the same way every acting route\ncomputes it, for `req.player` - what *else* was legal at the moment the\nadvice was given, which is the comparison a retrospective needs and\ncannot reconstruct afterwards. It is hidden information (it names cards\nin that player's hand), which is why it rides in the row rather than the\nresponse, and `visibility.redact_log_entry` keeps it - and the whole\nproposal - out of the opponent's read of the same log.\n\nAuthorised on whoever may already *see* `req.player`'s hand: this game's\nadvisor for that seat (`visibility.resolve_viewer` resolves an advisor\nuid to its human's username), the seat itself, or the admin key. A\nproposal names hidden information, so nobody else may write one into that\nseat's name - the same rule, and the same 404, `declare_plan` enforces.",
+        "description": "Record one action an advisor thinks `req.player` should take\n(`schemas.AdviceIn`), and record nothing else.\n\n**This mutates no `Game`, exactly like `declare_plan`** - which is the\nprior art this is modelled on, down to the shape of this docstring. It\ncalls `audit.record` and nothing else: no `store.replace`, no\ncompare-and-swap, no version bump. A proposal is a statement *about* the\ngame, and the whole point of advise mode is that the advisor never moves\nit; a route that quietly committed one would hand a read-only credential\nthe authority its own gate exists to deny.\n\n**The summary is derived here, not taken from the caller.**\n`records.advice_summary` reads `req.body` against the live game - card\nids resolved to names, targets and cost spelled out - so what the human\nreads can never disagree with the request it describes. `schemas.AdviceIn`\nhas no `summary` field at all, so an advisor cannot try.\n\n**`based_on_seq` is read immediately before the row is written, under no\nlock.** A command landing in between makes this proposal born-stale, and\nthat is the safe direction: the human's own action carries its own\n`expected_seq` (`records.require_current_board`) and is refused against a\nboard that moved, so a stale proposal costs a refusal rather than a wrong\nmove. Taking the game's lock here would instead let a buddy pod's\nthinking block the seat it is advising.\n\n`legal_actions_before` is computed the same way every acting route\ncomputes it, for `req.player` - what *else* was legal at the moment the\nadvice was given, which is the comparison a retrospective needs and\ncannot reconstruct afterwards. It is hidden information (it names cards\nin that player's hand), which is why it rides in the row rather than the\nresponse, and `visibility.redact_log_entry` keeps it - and the whole\nproposal - out of the opponent's read of the same log.\n\nAuthorised on whoever may already *see* `req.player`'s hand: this game's\nadvisor for that seat (`visibility.resolve_viewer` resolves an advisor\nuid to its human's username), the seat itself, or the admin key. A\nproposal names hidden information, so nobody else may write one into that\nseat's name - the same rule, and the same 404, `declare_plan` enforces.\n\n`req.drafted_at_seq` (S2 A6) rides straight into `detail` unexamined - it\nis a metrics-only marker of when a staged draft was captured, and nothing\nhere reads it back.",
         "operationId": "record_advice_api_games__game_id__advice_post",
         "parameters": [
           {
@@ -15288,7 +15437,7 @@
     },
     "/api/games/{game_id}/plan": {
       "post": {
-        "description": "Declare, before acting, how this seat reads the turn it is about to\ntake: what it sees, its own role in the matchup, what it intends to do,\nand what it expects the opponent to do and why (`schemas.DeclarePlanIn`).\n\n**This mutates no `Game`.** It calls `audit.record` and nothing else - no\n`store.replace`, no compare-and-swap, no version bump - because a\ndeclaration is a statement *about* the game rather than a move in it. A\nroute that quietly committed one would make every plan something the\nopponent's client has to notice, and would put a CAS conflict in the way\nof an agent that is only trying to think out loud.\n\n`audit.record` stamps the game's own turn and step from the live game\n(its own docstring), and that stamping is what makes the post-game\npairing in `review.py` possible: the declaration and the opponent's\nlater rows are ordered by the same `seq`, from the same ledger, with no\nsecond clock to reconcile. `turns_taken` is written into the detail\nbeside them because `turn_number` counts rounds of the table rather than\nplayer-turns - see `records.require_plan`.\n\nAuthorised on the seat's own uid, carried in the body: a plan is hidden\ninformation about how a seat means to play, so nobody may write one into\nanother seat's name. An unrecognised uid, or one that opens a different\nseat, is a 404 - the same answer every other seat-scoped route gives,\nand one that does not confirm which uids exist.\n\nNothing stops a human seat declaring a plan; the gate only *requires* one\nof an agent seat (`records.require_plan`).",
+        "description": "Declare, before acting, how this seat reads the turn it is about to\ntake: what it sees, its own role in the matchup, what it intends to do,\nand what it expects the opponent to do and why (`schemas.DeclarePlanIn`).\n\n**This mutates no `Game`.** It calls `audit.record` and nothing else - no\n`store.replace`, no compare-and-swap, no version bump - because a\ndeclaration is a statement *about* the game rather than a move in it. A\nroute that quietly committed one would make every plan something the\nopponent's client has to notice, and would put a CAS conflict in the way\nof an agent that is only trying to think out loud.\n\n`audit.record` stamps the game's own turn and step from the live game\n(its own docstring), and that stamping is what makes the post-game\npairing in `review.py` possible: the declaration and the opponent's\nlater rows are ordered by the same `seq`, from the same ledger, with no\nsecond clock to reconcile. `turns_taken` is written into the detail\nbeside them because `turn_number` counts rounds of the table rather than\nplayer-turns - see `records.require_plan`.\n\nAuthorised on the seat's own uid, carried in the body: a plan is hidden\ninformation about how a seat means to play, so nobody may write one into\nanother seat's name. An unrecognised uid, or one that opens a different\nseat, is a 404 - the same answer every other seat-scoped route gives,\nand one that does not confirm which uids exist.\n\nNothing stops a human seat declaring a plan; the gate only *requires* one\nof an agent seat (`records.require_plan`).\n\n**`for_turn: \"next\"` plans ahead** (`schemas.DeclarePlanIn.for_turn`):\ncalled while it is NOT this seat's own turn, the row is written against\nthe turn `records.next_own_turn` computes - this seat's own next turn,\nCR 500.7 extra turns skipped over exactly as a real game would skip\nthem - rather than the turn under way right now. `declared_turns_taken`\nrecords what `turns_taken` stood at the moment of declaring, beside the\n`turns_taken` the row is actually filed under, so the ledger shows both\nwithout ambiguity. `for_turn: \"next\"` while this seat's own turn is\nalready in progress is refused - `records.OwnTurnInProgress`, 409.",
         "operationId": "declare_plan_api_games__game_id__plan_post",
         "parameters": [
           {

@@ -602,6 +602,21 @@ function approvalFrameOf(entry) {
  * advice - and for the identical reason. An `ADVICE_APPROVED_ACTION` row
  * *is* a frame, since it belongs to the ledger's own order of events rather
  * than to any one turn's header, just a low-weight one (`approvalFrameOf`).
+ *
+ * **A `plan_declared` row's own header lands on its TARGET turn, never the
+ * turn it happened to be written in.** `for_turn: "next"` writes the row
+ * while some other turn is still under way - `review.py`'s `pairingOf(d,
+ * players).turn` is already the target (`_declarations`'s own `detail.
+ * turn_number`) - so attaching it to `current`, the group open at the row's
+ * own chronological position, would put the header on the wrong player's
+ * turn in a 3+ player game, where `turn_number` can be shared by more than
+ * one player's turn (a live-game repro, 2026-09-14). Boundary detection
+ * itself is untouched: every entry's own `turn` - `plan_declared` rows
+ * included - is still the honest write-time value, so the pass above still
+ * sees the ledger's real order and splits groups on it exactly as before.
+ * Declarations are matched to their target group in a second pass, once
+ * every group exists, so a target group that has not been reached yet in
+ * this same scan can still be found.
  */
 export function reviewTurns(review) {
   const entries = [...((review && review.entries) || [])].sort((a, b) => a.seq - b.seq);
@@ -611,6 +626,7 @@ export function reviewTurns(review) {
   );
   const adviceBySeq = new Map(adviceOf(review).map((a) => [a.seq, a]));
   const groups = [];
+  const planEntries = [];
   let current = null;
   for (const entry of entries) {
     if (!current || current.turn !== entry.turn) {
@@ -624,7 +640,9 @@ export function reviewTurns(review) {
       groups.push(current);
     }
     if (entry.action === PLAN_ACTION) {
-      current.declarations.push(declaredBySeq.get(entry.seq) || pairingFromRow(entry, players));
+      // Deferred to the second pass below, which knows every group's turn -
+      // including one that has not been reached yet in this forward scan.
+      planEntries.push({ entry, fallback: current });
     } else if (entry.action === ADVICE_ACTION) {
       current.advice.push(adviceBySeq.get(entry.seq) || adviceFromRow(entry));
     } else if (entry.action === ADVICE_APPROVED_ACTION) {
@@ -632,6 +650,18 @@ export function reviewTurns(review) {
     } else {
       current.frames.push(frameOf(entry));
     }
+  }
+  for (const { entry, fallback } of planEntries) {
+    const pairing = declaredBySeq.get(entry.seq) || pairingFromRow(entry, players);
+    // The group whose `turn` is this declaration's own target turn - found
+    // anywhere in the ledger, not only ones already built when the row was
+    // encountered above. `fallback` (the group open when the row was
+    // written) covers the one case no group can match: the target turn has
+    // not happened yet anywhere in this ledger (an in-flight game's partial
+    // review), so the row still has somewhere honest to live rather than
+    // being silently dropped.
+    const target = groups.find((group) => group.turn === pairing.turn) || fallback;
+    target.declarations.push(pairing);
   }
   return groups;
 }

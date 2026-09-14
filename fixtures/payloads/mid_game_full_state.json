@@ -966,5 +966,6 @@
   "stack": [],
   "step": "precombat_main",
   "turn_number": 3,
+  "turns_taken": 5,
   "winner": null
 }

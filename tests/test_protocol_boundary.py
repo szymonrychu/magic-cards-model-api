@@ -64,10 +64,9 @@ def test_seatkit_19_names_the_known_cards_and_contents_blocks() -> None:
     """The bump that added `known_cards` to the state view and the
     own-only `library_contents`/`sideboard_contents` behind
     `?include=contents`: its changelog paragraph names all four."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-19"
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
-    paragraph = changelog.split("`seatkit-18`", 1)[0]
+    paragraph = changelog.split("`seatkit-19`", 1)[1].split("`seatkit-18`", 1)[0]
     for term in ("known_cards", "library_contents", "sideboard_contents", "include=contents"):
         assert term in paragraph, f"the seatkit-19 paragraph does not name {term}"
 
@@ -78,7 +77,7 @@ def test_seatkit_19_names_the_double_faced_views_and_known_cards_while_paused() 
     command already showed while its choice is pending."""
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
-    paragraph = changelog.split("`seatkit-18`", 1)[0]
+    paragraph = changelog.split("`seatkit-19`", 1)[1].split("`seatkit-18`", 1)[0]
     for term in ("faces", "oracle_text", "pending"):
         assert term in paragraph, f"the seatkit-19 paragraph does not name {term}"
 
@@ -112,12 +111,134 @@ def test_seatkit_19_names_the_script_tools_and_their_exit_block() -> None:
     """In the seatkit-19 paragraph: `run_script` and `list_scripts` are new
     tools over the play-script routes, and `script_exit` is the typed block
     `run_script` answers with."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-19"
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
-    paragraph = changelog.split("`seatkit-18`", 1)[0]
+    paragraph = changelog.split("`seatkit-19`", 1)[1].split("`seatkit-18`", 1)[0]
     for term in ("run_script", "list_scripts", "script_exit"):
         assert term in paragraph, f"the seatkit-19 paragraph does not name {term}"
     assert "No MCP tool calls any of them" not in paragraph, (
         "the play-script routes paragraph still says no tool calls them"
     )
+
+
+def test_seatkit_20_names_the_script_applicability_hint() -> None:
+    """The bump that put `scripts.applicable` on every wait/wake and action
+    answer: its changelog paragraph names the hint's shape and the kill
+    switch it checks."""
+    assert protocol.PROTOCOL_VERSION == "seatkit-20"
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in ("scripts", "applicable", "call", "conflict", "MAX_HINT_SCRIPTS", "run_script"):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_turns_taken_and_invoked_via() -> None:
+    """S1's own bundle: `turns_taken` on the state view, and `invoked_via`
+    on a script run - now including its S2 `"armed"` value."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in ("turns_taken", "invoked_via", "armed"):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_plan_ahead() -> None:
+    """S2 A1: `declare_plan(for_turn="next")`, the 409 `own_turn_in_progress`
+    it can now answer with, and the upkeep/draw empty-stack pass
+    exemption from the require-a-plan gate."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in (
+        'declare_plan(for_turn="next")',
+        "own_turn_in_progress",
+        "pass_priority",
+        "upkeep",
+        "draw",
+        "stack is empty",
+    ):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_arming() -> None:
+    """S2 A2-A5: `arm`/`arm_reasoning`/`opposing_archetype`/`inputs` on
+    `wait_for_priority` and `pass_until`; the `armed`/`armed_conflict`/
+    `armed_error`/`armed_skipped` answer keys; `scripts.armable` and
+    `arm_call`; and `pass_until`'s `finished: false` plus `resume` while it
+    waits for this seat's own priority at an armed destination."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in (
+        "arm",
+        "arm_reasoning",
+        "opposing_archetype",
+        "inputs",
+        "wait_for_priority",
+        "pass_until",
+        "armed",
+        "armed_conflict",
+        "armed_error",
+        "armed_skipped",
+        "armable",
+        "arm_call",
+        "finished: false",
+        "resume",
+    ):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_buddy_drafts() -> None:
+    """S2 A6: `wait_for_priority(wake_to_draft=...)`, the `stage_advice`
+    tool, `draft.status`'s values, and `AdviceIn.drafted_at_seq`."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in (
+        "wake_to_draft",
+        "stage_advice",
+        "draft",
+        "posted",
+        "held",
+        "stale",
+        "superseded_by_script",
+        "failed",
+        "drafted_at_seq",
+    ):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_the_stage_advice_pregame_refusal_and_cli_draft_note() -> None:
+    """S2 A6 re-review: `stage_advice` refuses outright, `{"staged": false,
+    "reason": ...}`, before the game has a turn (`STAGE_ADVICE_PREGAME`) -
+    client-visible and distinct from a draft going stale later. And the CLI
+    transport's own `draft.note` (folded into a printed answer's `draft`
+    block by `seat_cli.py`'s `emit`, never by the MCP transport) surfaces a
+    filesystem problem persisting or loading a staged draft rather than
+    raising past the command's own JSON answer."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in ("pregame", "staged", "draft.note", "CLI"):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_names_the_ledger_metrics_stamps() -> None:
+    """S2 A7: `active_player`, `priority_holder` and `turns_taken` are
+    stamped on every ledger row, not only the state view."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in ("active_player", "priority_holder", "turns_taken"):
+        assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_20_does_not_name_the_opening_dsl_branch_fields() -> None:
+    """`own_turns_taken` and `hypothetical-facts` ship on o-opening-dsl,
+    merged later - the seatkit-20 paragraph must not claim them yet."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
+    for term in ("own_turns_taken", "hypothetical-facts", "hypothetical_facts"):
+        assert term not in paragraph, f"the seatkit-20 paragraph already names {term}"

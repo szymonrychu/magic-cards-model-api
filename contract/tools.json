@@ -570,6 +570,13 @@
           "name": "confidence",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": "current",
+          "has_default": true,
+          "name": "for_turn",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -877,6 +884,34 @@
           "name": "max_seconds",
           "type": "float",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "arm",
+          "type": "str | list[str]",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "arm_reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "*",
+          "has_default": true,
+          "name": "opposing_archetype",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "inputs",
+          "type": "dict[str, Any] | None",
+          "type_error": null
         }
       ]
     },
@@ -1045,6 +1080,33 @@
       ]
     },
     {
+      "docstring_first_line": "S2 A6: arm your *next* committing action call to be captured as a",
+      "name": "stage_advice",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "step",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "mine",
+          "has_default": true,
+          "name": "whose_turn",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
       "docstring_first_line": "CR 116.2f/702.62a: exile a card with suspend from your hand, paying",
       "name": "suspend",
       "parameters": [
@@ -1108,6 +1170,41 @@
           "has_default": true,
           "name": "max_seconds",
           "type": "float",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "arm",
+          "type": "str | list[str]",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "arm_reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "*",
+          "has_default": true,
+          "name": "opposing_archetype",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "inputs",
+          "type": "dict[str, Any] | None",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "wake_to_draft",
+          "type": "bool",
           "type_error": null
         }
       ]

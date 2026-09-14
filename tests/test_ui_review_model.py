@@ -397,6 +397,36 @@ def test_turns_group_the_ledger_and_lift_each_declaration_out_of_it() -> None:
     assert groups[1]["declarations"][0]["plan"] == "land, Bears, hold the Bolt for her blocker"
 
 
+def test_a_plan_ahead_declarations_header_lands_on_its_target_turn_not_the_turn_written_in() -> (
+    None
+):
+    """Live-game repro, 2026-09-14 (3-player game): bob's `for_turn: "next"`
+    declaration is written while carol's turn (turn 1) is still under way -
+    the raw row's own `entry.turn` is honestly 1 - but `review.py`'s
+    `_declarations` already computed its TARGET as turn 2 (bob's own next
+    turn), which is what `declaration(...)` below stands in for. The header
+    must land in the turn-2 group (bob's own turn), never in turn-1's group
+    (carol's), where a naive "attach to whichever group is chronologically
+    open" would leave it."""
+    rows = [
+        entry(1, "pass_priority", turn=1, detail={"player": "carol"}),
+        plan_row(2, player="bob", turn=1),  # written during carol's turn
+        entry(3, "pass_priority", turn=1, detail={"player": "carol"}),
+        entry(4, "advance", turn=2, detail={"player": "alice"}),  # turn 2 begins (alice's)
+        entry(5, "play_land", turn=2, detail={"player": "bob", "card": "Forest"}),  # bob's turn
+    ]
+    declared = declaration(2, player="bob", turn=2, turns_taken=3)
+    groups = call("m.reviewTurns(rev)", rev=review(rows, [declared]))
+    assert [g["turn"] for g in groups] == [1, 2]
+    assert groups[0]["declarations"] == [], "never left behind on the turn it was written in"
+    assert len(groups[1]["declarations"]) == 1
+    assert groups[1]["declarations"][0]["turn"] == 2
+    # boundary detection is untouched - the plan row itself never appears as
+    # a frame or splits the turn-1 group it was chronologically written in
+    assert [f["seq"] for f in groups[0]["frames"]] == [1, 3]
+    assert [f["seq"] for f in groups[1]["frames"]] == [4, 5]
+
+
 def test_a_game_with_no_declarations_still_reads_back_as_turns_of_frames() -> None:
     """Every game played before the declaration seam existed. The page has
     no prediction to show for these and must still render the ledger."""

@@ -111,6 +111,17 @@ EMPTY_REASONING = (
     "and an agent seat's action without one is refused"
 )
 
+#: The reasoning `script_tools._call_template`'s `call` string leaves for the
+#: seat to fill in - a run sent with this exact text still in it never wrote
+#: its own reasoning, and is refused the same as an empty one (S1 review
+#: finding 7).
+REASONING_PLACEHOLDER = "<say why>"
+PLACEHOLDER_REASONING = (
+    f"run_script needs your own reasoning, not the call template's placeholder "
+    f"text: replace {REASONING_PLACEHOLDER!r} with why you are running this "
+    "script now"
+)
+
 
 class Exit(StrEnum):
     """How a run ended. Closed: a caller branches on this, never on prose."""
@@ -313,6 +324,11 @@ class _Context:
     deadline: float
     poll_seconds: float
     call_started: float
+    #: Who started this run - `"mcp"` (`mcp.run_script`) or `"cli"`
+    #: (`mcp-seat script run`) - carried onto both the start and the finish
+    #: row (`_run_fields`) so a seat, and `eval_report.py`, can tell its own
+    #: runs apart from one an operator staged from the CLI.
+    invoked_via: str = "mcp"
     #: The caller going away (an MCP call cancelled by an interrupt): read
     #: like the time cap, so a run waiting on the board stops at once.
     should_stop: Callable[[], bool] | None = None
@@ -354,11 +370,17 @@ def run_script(
     max_seconds: float = RUN_CAP_SECONDS,
     poll_seconds: float = POLL_SECONDS,
     should_stop: Callable[[], bool] | None = None,
+    invoked_via: str = "mcp",
 ) -> RunResult:
     """Run one registered script (and whatever single `next` play applies
     after it) for `seat`. `inputs` is passed to every condition check in the
     chain; `declared_inputs` is the deck's `inputs.json` list, which says
-    which inputs are required. Advise seats get `Exit.ADVISED`."""
+    which inputs are required. Advise seats get `Exit.ADVISED`.
+
+    `invoked_via` is who started this run - `"mcp"`, `"cli"` or `"armed"`
+    (`playscripts.arming.arm`, firing a script on its own between a seat's
+    own moves) - carried onto the start and finish rows this run posts
+    (`schemas.ScriptRunIn.invoked_via`, required there)."""
     if not reasoning or not reasoning.strip():
         return RunResult(
             True,
@@ -366,6 +388,16 @@ def run_script(
                 Exit.REFUSED,
                 script_id=script_id,
                 refusal=EMPTY_REASONING,
+                refusal_source="runner",
+            ),
+        )
+    if reasoning.strip() == REASONING_PLACEHOLDER:
+        return RunResult(
+            True,
+            ScriptExit(
+                Exit.REFUSED,
+                script_id=script_id,
+                refusal=PLACEHOLDER_REASONING,
                 refusal_source="runner",
             ),
         )
@@ -391,6 +423,7 @@ def run_script(
         poll_seconds=poll_seconds,
         call_started=now,
         should_stop=should_stop,
+        invoked_via=invoked_via,
     )
     if resume:
         return _resume(ctx, script_id, resume)
@@ -1439,7 +1472,15 @@ def _position(state: dict[str, Any]) -> dict[str, Any]:
 
 def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any]) -> ScriptExit:
     """Propose move 1 through `Seat._advise_answer` (a dry-run probe plus the
-    `/advice` record) and hand the rest back unvalidated."""
+    `/advice` record) and hand the rest back unvalidated.
+
+    `capture_draft=False` (S2 A6 review fix 3, 2026-09-14): an armed script
+    firing here is a proposal for right now, never the later window a
+    `stage_advice` call staged - capturing it into that empty slot would
+    swallow the script's own move (this function would read the resulting
+    `{"drafted": True, ...}` shape as `outcome.get("proposed")` missing, and
+    exit `REFUSED`) instead of posting it and leaving the staged window for
+    its own future moment."""
     seat = ctx.seat
     moves = play["moves"]
     first = moves[0]
@@ -1476,7 +1517,9 @@ def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any
     path, request = built
     answer = run_action(
         seat,
-        lambda: seat.call_json("POST", f"/api/games/{seat.game_id()}/{path}", request),
+        lambda: seat.call_json(
+            "POST", f"/api/games/{seat.game_id()}/{path}", request, capture_draft=False
+        ),
         hold_priority=True,
         include_actions=False,
         reasoning=reasoning,
@@ -1617,6 +1660,7 @@ def _run_fields(ctx: _Context, run: _Run, play: dict[str, Any] | None) -> dict[s
         "turn": run.turn if isinstance(run.turn, int) else 0,
         "step": run.step or "unknown",
         "seq_start": run.seq_start,
+        "invoked_via": ctx.invoked_via,
     }
 
 
@@ -1628,18 +1672,88 @@ def _post_run(ctx: _Context, body: dict[str, Any]) -> Any:
 # -- corpus --------------------------------------------------------------------
 
 
+#: `_corpus`'s marker for "nothing is registered under this uid" - stashed in
+#: `corpora[key]` like a real corpus (S1 review finding 3) so a scriptless
+#: seat's every later call skips the HTTP GET too, not just a registered
+#: one's. `_UNREGISTERED_REASON` is carried alongside it so a cache hit and a
+#: cache miss refuse in the same words. `_UNREGISTERED_AT_KEY` is the
+#: `time.monotonic()` reading taken when the marker was written; a cache hit
+#: is trusted only for `_UNREGISTERED_TTL_SECONDS` past that (S1 review
+#: fix 1) - see `_UNREGISTERED_TTL_SECONDS`'s own docstring for why this must
+#: expire at all.
+_UNREGISTERED_MARKER = "_unregistered"
+_UNREGISTERED_REASON = "_unregistered_reason"
+_UNREGISTERED_AT_KEY = "_unregistered_at"
+
+#: How long a genuine 404 ("nothing registered under this uid") is trusted
+#: before the next call re-checks with a live GET, monotonic seconds (S1
+#: review fix 1). A seat Job can start before its own corpus PUT has landed,
+#: or race a retry of it; a permanent negative cache meant that seat never
+#: saw scripts for the rest of the game once the very first read lost that
+#: race. Only a genuine 404 sets `_UNREGISTERED_MARKER` at all (see below) -
+#: a 5xx or an ambiguous timeout is never cached, so this TTL only bounds how
+#: long a *real* "not registered" answer is trusted before asking again.
+_UNREGISTERED_TTL_SECONDS = 30.0
+
+#: Seat bookkeeping `_corpus`'s `fresh=True` refresh (every `resume`d run)
+#: carries forward from the corpus dict it is about to replace - an explicit
+#: allow-list, never every underscore-prefixed key (S1 review fix 2). The
+#: old blanket rule carried forward *any* private key, `script_tools.
+#: _PLAYS_CACHE_KEY` included - a derived cache of the scripts in the *old*
+#: corpus - so a seat that re-registered a different corpus and then resumed
+#: a run kept serving plays the server no longer had registered. These three
+#: names mirror `script_tools._LAST_ASSERTED_KEY`, `_LAST_INPUTS_KEY` and
+#: `_RECENT_RUNS_KEY` by hand: `script_tools` already imports this module, so
+#: importing the names themselves back here would be circular. Keep this set
+#: in sync with those three by hand if they ever change.
+_CARRIED_BOOKKEEPING_KEYS = frozenset(
+    {"_last_asserted_archetype", "_last_supplied_inputs", "_recent_runs"}
+)
+
+
 def _corpus(
     seat: Seat, corpora: dict[tuple[str, str], dict[str, Any]], *, fresh: bool
 ) -> dict[str, Any] | ScriptExit:
     key = (seat.game_id(), seat.uid)
     if not fresh and key in corpora:
-        return corpora[key]
-    read = seat.call_json("GET", f"/api/games/{key[0]}/seats/{seat.uid}/scripts")
+        cached = corpora[key]
+        if cached.get(_UNREGISTERED_MARKER):
+            cached_at = cached.get(_UNREGISTERED_AT_KEY)
+            age = time.monotonic() - cached_at if isinstance(cached_at, int | float) else None
+            if age is not None and age < _UNREGISTERED_TTL_SECONDS:
+                return _no_corpus_refusal(str(cached.get(_UNREGISTERED_REASON)))
+            # The TTL has passed: fall through to a live GET rather than
+            # trust a "not registered" answer that may be stale by now.
+        else:
+            return cached
+    previous = corpora.get(key)
+    path = f"/api/games/{key[0]}/seats/{seat.uid}/scripts"
+    status, read = seat._request_json("GET", path, None)
     if not isinstance(read, dict) or not isinstance(read.get("scripts"), list):
         reason = read.get("reason") if isinstance(read, dict) else read
-        return ScriptExit(Exit.REFUSED, refusal=str(reason), refusal_source="server")
+        if status == 404:
+            # A genuine "nothing registered under this uid" - the only
+            # outcome worth caching at all. A 5xx or an ambiguous timeout
+            # (`status` is `None`) is not this seat's own fact about
+            # itself, it is the transport's, and caching it would starve
+            # every later call of a corpus that really is registered
+            # (S1 review fix 1).
+            corpora[key] = {
+                _UNREGISTERED_MARKER: True,
+                _UNREGISTERED_REASON: str(reason),
+                _UNREGISTERED_AT_KEY: time.monotonic(),
+            }
+        return _no_corpus_refusal(str(reason))
+    if isinstance(previous, dict) and not previous.get(_UNREGISTERED_MARKER):
+        for name in _CARRIED_BOOKKEEPING_KEYS:
+            if name in previous and name not in read:
+                read[name] = previous[name]
     corpora[key] = read
     return read
+
+
+def _no_corpus_refusal(reason: str) -> ScriptExit:
+    return ScriptExit(Exit.REFUSED, refusal=reason, refusal_source="server")
 
 
 def _registered(corpus: dict[str, Any], script_id: str) -> dict[str, Any] | None:

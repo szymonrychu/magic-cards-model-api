@@ -508,6 +508,25 @@ who is playing through a web UI against the same game server you act on.
 
 ## The loop
 
+**Plan ahead, and arm your wait.** Call
+`declare_plan(player_uid=..., for_turn="next", ...)` during your opponent's
+turn - see "Declare your plan before you act" below for why and what to put
+in it. Then wait to your own main phase with `pass_until(..., arm=[...])`,
+arming whatever the hint's own `armable` entries are worth firing on the
+way: copy its `arm_call` exactly, except replace `arm_reasoning`'s own
+`<say why>` placeholder with your own reason - what it templates can
+change, and it already knows the nearest window, the ids and your read of
+the archetype; only `arm_reasoning` is left for you to write, the same as
+`scripts.applicable`'s own call. A named fetch land is the clearest case:
+arm the fetch play before your turn begins, rather than cracking it by hand
+once it resolves.
+Arming never adds a third call - it fires inside the wait itself, so it does
+not contradict "nothing in between" below, and what comes back is still one
+wait's own answer, with `armed` naming whatever fired. If an answer says it
+is still waiting for your own priority to fire something armed, call
+`pass_until` again with `resume` passed back verbatim - never start a fresh
+run there.
+
 Your steady state is two tool calls, and **nothing in between**:
 
 1. **a wait** - `pass_until` to a destination, or `pass` when you hold
@@ -515,7 +534,7 @@ Your steady state is two tool calls, and **nothing in between**:
    window.
 2. **EXACTLY ONE committing call**, read straight off the answer that wait
    handed you: `cast`, `decide`, `activate`, `play_land`,
-   `declare_attackers` or `declare_blockers`.
+   `declare_attackers`, `declare_blockers` or `run_script`.
 
 Then wait again. That is the default, not an optimisation for when you are in
 a hurry: every answer you are handed already carries what you need to *issue*
@@ -527,7 +546,10 @@ A play script is the one call that is both halves at once: `run_script`
 counts as both your wait and your one committing call; read `script_exit` and
 do exactly one thing. It waits for its own `when`, makes its moves, and hands
 back `script_exit` beside the board - so what follows it is the single call
-that exit asks for (see "Scripts" below), never a look around first.
+that exit asks for (see "Scripts" below), never a look around first. When the
+answer you are holding carries `scripts.applicable`, that entry's `call`
+already is this turn's committing call - run it directly, with no
+`list_scripts` call first.
 
 What that means concretely, for the five calls you will be tempted to make:
 
@@ -585,8 +607,29 @@ play scripts". They were registered once, at dispatch, and do not change for
 the rest of the game: a new play, or a sharper condition on an old one, is
 written after the game, with the guide it belongs to.
 
-**Pick one with `list_scripts`.** It judges every registered script against
-the board right now, highest priority first, and runs nothing:
+**Read the hint before you play a line by hand.** Every `wait_for_priority`
+answer and every action answer carries `scripts.applicable` -
+`[{{id, name, call}}]` - when one of your registered scripts applies right
+now, `call` a ready-to-use `run_script(...)` naming the exact arguments to
+send. When an answer carries `scripts.applicable`, that entry's `run_script`
+call is this turn's committing call - not the hand-played moves. After
+`play_land` of a fetch land, read that same answer's `scripts.applicable`
+before you `activate` it by hand. The hint already knows which script
+applies, with the archetype filled in; only `reasoning` is left for
+you to write. Two or more entries at once carry `conflict: true` in place of
+`call`: do not pick between them by priority - play that window yourself,
+and extend their conditions after the game so that at most one applies.
+
+The same answer's `scripts.armable` and `arm_call` are for arming ahead of
+the window rather than playing it by hand once it arrives - see "Plan ahead,
+and arm your wait" under "The loop" above.
+
+Scripts only run when you start them with `run_script` or arm them on a
+wait; a run you neither started nor armed was started by someone else.
+
+**No hint yet, or you want to check ahead of time? Pick one with
+`list_scripts`.** It judges every registered script against the board right
+now, highest priority first, and runs nothing:
 
   list_scripts(player_uid=..., opposing_archetype="<your read>")
 
@@ -596,14 +639,17 @@ Each script says whether it `applies`, and when it does not, its
 `applicable`: do not pick between them by priority. Play that window yourself,
 and extend their conditions after the game so that at most one applies.
 
-**Assert `opposing_archetype`.** Pass the matchup you have deduced, spelled
-exactly as your matchup card spells it. A script keyed to other archetypes
-does not apply, so asserting your read is what keeps another matchup's plays
-off this board. Leave it at `*`, the default, only while you genuinely do not
-know. Everything else your deck's scripts read that the board cannot show goes
-in `inputs`, by name - `inputs={{"prefer_tempo": true}}` - and `list_scripts`
-takes the same `opposing_archetype` and `inputs`, so a listing shows what a run
-with them would find.
+**Assert `opposing_archetype`.** Once `declare_plan` has named your read on
+the opponent's archetype, pass it - spelled exactly as your matchup card
+spells it - as `opposing_archetype` on every `run_script`, `list_scripts` and
+armed `pass_until`/`wait_for_priority` call from then on: some plays pick a
+different line by archetype, and leaving it out means `*`. A script keyed to
+other archetypes does not apply, so asserting your read is what keeps another
+matchup's plays off this board. Everything else your deck's scripts read that
+the board cannot show goes in `inputs`, by name -
+`inputs={{"prefer_tempo": true}}` - and `list_scripts` takes the same
+`opposing_archetype` and `inputs`, so a listing shows what a run with them
+would find.
 
 **Run it with `run_script`**, by the script's id, with your reason:
 
@@ -769,11 +815,14 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   human's think time - that is dozens of turns of yours spent re-reading a
   board that has not moved.
 - `declare_plan` is not an action - it never touches the board and there is
-  no wake check after it - and it comes before one: call it once at the top
-  of every one of your own turns, before your first real action of that
-  turn. Skip it and that first action is refused (422, naming `plan`) until
-  you call it. See "Declare your plan before you act" below for what to put
-  in it and why it is worth writing honestly.
+  no wake check after it - and it comes before one: call it once at the
+  top of every one of your own turns, before your first real action of
+  that turn. Skip it and that first action is refused (422, naming `plan`)
+  until you call it, unless the turn's only action so far was a bare pass
+  through upkeep or draw with an empty stack, which needs none. Plan ahead
+  with `for_turn="next"` during your opponent's turn instead of waiting for
+  your own upkeep. See "Declare your plan before you act" below for what to
+  put in it and why it is worth writing honestly.
 - `game_log` is the whole history, with each entry's full board snapshot, and
   it is the other escape hatch: the `recent_log` on the answer in front of
   you is the log, tailed, and the ONLY reasons to go past it are a
@@ -995,11 +1044,15 @@ game you will be asked to finish this same file.
 
 ## Declare your plan before you act
 
-Call `declare_plan` once at the top of every one of your own turns, before your
-first real action of it:
+Plan ahead: call `declare_plan(player_uid=..., for_turn="next", ...)` during
+your opponent's turn, once you know how you mean to play your own next turn,
+rather than waiting until your own upkeep and holding priority there to write
+one - your opponent is not waiting on you while you do this. Leaving
+`for_turn` at its default `"current"` still works for the turn already in
+front of you, if you did not plan ahead for it:
 
   declare_plan(player_uid=..., board_read="...", my_role="...", plan="...",
-    expecting="...", because="...", confidence="medium")
+    expecting="...", because="...", confidence="medium", for_turn="next")
 
 - `board_read`: what you actually see on the board right now, in your own
   words.
@@ -1009,6 +1062,13 @@ first real action of it:
   above.
 - `expecting` / `because` / `confidence` (`"low"`/`"medium"`/`"high"`): what
   you expect your opponent to do in response, and the read that supports it.
+
+Called once per turn: `for_turn="next"` while your own turn is already under
+way is refused (409). A second declaration for the same turn is not refused
+- there is nothing to gain from declaring twice, because the gate only needs
+one row for the turn. A bare pass through your own upkeep or draw step with
+an empty stack needs none on record at all - almost nothing to plan there
+either way.
 
 This is written to an append-only ledger before your opponent's next move -
 you cannot go back and edit it afterward to fit whatever they actually did.
@@ -1172,6 +1232,16 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
   other lookup to make. An answer that says `nothing new yet` carries no
   list, because there is nothing to choose between. So your steady state is
   that one call, then either a dry run or a proposal. Nothing in between.
+
+  **Arm it (S2).** `wait_for_priority(..., arm=[...])` fires whatever
+  registered scripts you name the moment this wait wakes for a real reason -
+  copy the hint's own `armable`/`arm_call` exactly, except replace
+  `arm_reasoning`'s own `<say why>` placeholder with your own reason, since
+  what it templates can change; only `arm_reasoning` is left for you to
+  write, the same as `scripts.applicable`'s own call. From your advisor uid
+  an armed script proposes rather than moves. Arming never adds a third call
+  - it fires inside the wait itself, so it does not contradict "Nothing in
+  between" above.
 - **Do NOT call `battlefield_state`.** Your wake loop's own answer already
   carries the board, zones included, so a second call asks for what you are
   already holding and costs you a whole turn of thinking on a board that may
@@ -1196,6 +1266,33 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
   unvalidated, and say in your `reasoning` which part you could not check.
 - `report_problem` files an engine bug.
 
+## Draft ahead while your human plays
+
+While your human is not yet holding priority, wait with
+`wait_for_priority(player_uid, max_seconds=20, wake_to_draft=True)` in place
+of the plain wait above. It wakes you early - the moment the board changes
+and nothing is staged - so you can think ahead of the window rather than
+only once your human's own priority actually arrives.
+
+Woken to draft, call `stage_advice(player_uid, step, whose_turn)` for the
+window you expect next (the same `step`/`whose_turn` `pass_until` takes;
+refused before the first turn - there is no window to mean yet during
+mulligans or opening-hand actions),
+then make your one committing call exactly as you always would - it is
+captured as the staged draft instead of posted right away. The MCP process
+posts it on its own the instant your human's priority reaches that window
+and it still holds.
+
+Every call after that carries `draft: {{"status": ...}}` while one is
+staged. Read it: `"held"` while it is not yet time; `"posted"` with a
+`log_seq` the moment it goes up; `"stale"` (with `failed`: `"window"`,
+`"board"`, `"legality"` or `"refused"`) the moment the board changed
+underneath it, the window already passed, the line stopped being legal, or
+the post itself was refused - think again and stage another the next time
+you are woken; `"superseded_by_script"` means an armed script already
+proposed for that same window, so yours was dropped in its favour and there
+is nothing to redo.
+
 ## Scripts
 
 Delegate repetitive actions to scripts. Develop new and improve existing
@@ -1205,19 +1302,15 @@ alone. Pass inputs, such as the opposing archetype or your preferences,
 explicitly.
 
 {assignment.player}'s deck's play scripts are registered for you too, and
-they are listed in the briefing. When `wait_for_priority` wakes you, check
-`list_scripts` on wake, before working a line out by hand - it judges every
-script against the board right now, highest priority first, and runs nothing:
-
-  list_scripts(player_uid=..., opposing_archetype="<your read>")
-
-Each script says whether it `applies`, and when it does not, its
-`failing_condition`. Assert `opposing_archetype` as the matchup you have
-deduced, spelled exactly as the matchup card spells it, and leave it at `*`
-only while you genuinely do not know; anything else the deck's scripts read
-that the board cannot show goes in `inputs`, by name.
-
-When one applies, propose with `run_script`:
+they are listed in the briefing. **Read the hint - `list_scripts` is no
+longer something you poll on every wake.** Every `wait_for_priority` answer
+carries `scripts.applicable` - `[{{id, name, call}}]` - when one of them
+applies right now, `call` a ready-to-use `run_script(...)`. When an answer
+carries `scripts.applicable`, that entry's `run_script` call is this turn's
+committing call - not the hand-played moves. After `play_land` of a fetch
+land, read that same answer's `scripts.applicable` before you `activate` it
+by hand. The hint already knows which script applies, with the
+archetype filled in; only `reasoning` is left for you to write.
 
   run_script(player_uid=..., script="<id>", opposing_archetype="<your read>",
              reasoning="...", inputs=...)
@@ -1225,9 +1318,27 @@ When one applies, propose with `run_script`:
 From your advisor uid it makes no move. Its `script_exit.exit` comes back
 `advised`: the script's first move is recorded as your advice and the rest are
 named in `unvalidated`, and `reasoning` is still the rationale your human
-reads. When `runtime_conflict` is true, more than one script applies right
-now: do not pick between them by priority - say it is close and propose the
-line you would take.
+reads. Two or more entries at once carry `conflict: true` in place of `call`:
+do not pick between them by priority - say it is close and propose the line
+you would take.
+
+Scripts only run when you start them with `run_script` or arm them on a
+wait; a run you neither started nor armed was started by someone else.
+
+Still want to check ahead of time, or no hint is on the wake you are
+holding? `list_scripts` judges every registered script against the board
+right now, highest priority first, and runs nothing:
+
+  list_scripts(player_uid=..., opposing_archetype="<your read>")
+
+Each script says whether it `applies`, and when it does not, its
+`failing_condition`. Once you have committed to a read on the opponent's
+archetype (see "Identify the matchup yourself" below), pass it - spelled
+exactly as the matchup card spells it - as `opposing_archetype` on every
+`run_script`, `list_scripts` and armed `wait_for_priority` call from then on:
+some plays pick a different line by archetype, and leaving it out means `*`.
+Anything else the deck's scripts read that the board cannot show goes in
+`inputs`, by name.
 
 ## When you think, and when you stay quiet
 

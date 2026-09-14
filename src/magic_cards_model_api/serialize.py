@@ -1174,6 +1174,7 @@ def _paused_overlay(game_id: str, game: Game, paused: Any) -> dict[str, Any]:
                     if isinstance(card, CardState)
                 },
                 "turn_number": turn.turn_number if turn is not None else None,
+                "turns_taken": turn.turns_taken if turn is not None else None,
                 "step": turn.step if turn is not None else None,
                 "active_player": turn.players[turn.active_index] if turn is not None else None,
                 "priority_holder": board.priority.holder if board.priority is not None else None,
@@ -1270,11 +1271,13 @@ def _state_view_on(
     turn = game.turn
     step = turn.step if turn is not None else Step.UNTAP
     turn_number = turn.turn_number if turn is not None else None
+    turns_taken = turn.turns_taken if turn is not None else None
     active_player = turn.players[turn.active_index] if turn is not None else None
     priority_holder = game.priority.holder if game.priority is not None else None
     if overlay:
         step = overlay["step"] or step
         turn_number = overlay["turn_number"]
+        turns_taken = overlay["turns_taken"]
         active_player = overlay["active_player"]
         priority_holder = overlay["priority_holder"]
     # The pending decision a paused command is waiting to resume, if any -
@@ -1308,6 +1311,13 @@ def _state_view_on(
         "game_id": game_id,
         "pending_decision": pending.to_view() if pending is not None else None,
         "turn_number": turn_number,
+        # S1 review fix 3: `turn_number` counts rounds of the table and
+        # deliberately does not move for an extra turn (CR 500.7,
+        # `machines/turn.py`'s own `TurnMachine.turns_taken` docstring) - a
+        # client that needs "did the turn actually change, extra turns
+        # included" (the play-script already-ran filter, `script_tools.
+        # _record_run`/`applicable_hint`) must read this instead.
+        "turns_taken": turns_taken,
         "step": step.value,
         "phase": phase.value if phase is not None else None,
         # What CR 103.5/CR 103.6 are waiting for, or `None` once the game has

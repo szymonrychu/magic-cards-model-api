@@ -145,6 +145,12 @@ EXEMPT_TOOLS: dict[str, str] = {
         "the declaration IS the reasoning, and mutates no `Game` at all - see the "
         "matching note on `POST /api/games/{game_id}/plan` in EXEMPT_ROUTES."
     ),
+    "stage_advice": (
+        "arms this advisor's own next committing call to be captured rather than "
+        "posted - that captured call still carries its own `reasoning` (S2 A6), "
+        "and this one mutates no `Game` at all; it has no backend route to gate "
+        "either, so there is no matching EXEMPT_ROUTES entry."
+    ),
 }
 
 #: Helpers a route may delegate its gate to rather than calling it inline.
