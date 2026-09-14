@@ -88,6 +88,7 @@ from magic_cards_model.models import CardState, Game, Zone
 from pydantic import BaseModel
 
 from . import engine_api
+from .board_scope import read_on_one_board
 from .decisions import ANSWER_FIELD_FOR_KIND
 from .schemas import (
     ActivateRequest,
@@ -299,6 +300,19 @@ def _resolution_state(game: Game, *, resolving: object | None = None) -> dict[st
     def zone_fingerprint(cards: Any) -> dict[str, tuple[Any, ...]]:
         return {str(c.id): _card_fingerprint(c, game) for c in cards if isinstance(c, CardState)}
 
+    # Every card's fingerprint reads the layered board: one board for all of
+    # them (`board_scope`), taken between the engine's commands, never over one.
+    return read_on_one_board(
+        lambda: _resolution_fingerprint(game, resolving, zone_fingerprint), game
+    )
+
+
+def _resolution_fingerprint(
+    game: Game,
+    resolving: object | None,
+    zone_fingerprint: Callable[[Any], dict[str, tuple[Any, ...]]],
+) -> dict[str, Any]:
+    """`_resolution_state`'s body, on one layered board."""
     return {
         "life": {player.username: player.life for player in game.players},
         "pools": {player.username: dict(player.mana_pool.floating) for player in game.players},
@@ -1072,6 +1086,17 @@ def refuse_if_over(game: Game, attempted: str) -> None:
     """Raise `GameOverError` when `game` has ended (`Game.is_over`)."""
     if game.is_over:
         raise GameOverError(game, attempted)
+
+
+#: What a client is told when a stored pause no longer replays to its stored
+#: question (`CommandDivergenceError`): the pause has been cleared (`app._resume`)
+#: and the way on is to re-issue the action that paused. Stable text, pinned by
+#: `tests/test_decide_diverged_pause.py`.
+QUESTION_EXPIRED = (
+    "This question has expired: the game no longer asks it the way it was stored "
+    "(the server may have been updated since it was asked), so it has been cleared. "
+    "Re-issue the original action to be asked again."
+)
 
 
 class CommandDivergenceError(RuntimeError):

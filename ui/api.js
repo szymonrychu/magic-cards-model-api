@@ -81,6 +81,7 @@ export async function api(method, path, body) {
     const err = new Error(message);
     err.status = res.status;
     err.detail = !parseFailed ? json.detail : undefined;
+    err.body = !parseFailed ? json : undefined;
     throw err;
   }
   // A 2xx whose body is not JSON (a same-origin HTML page, most likely a

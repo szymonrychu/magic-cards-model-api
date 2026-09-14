@@ -26,6 +26,7 @@ from magic_cards_model.models import CardState, Color, Game, Layout, Zone
 from magic_cards_model.models.card_state import Counter, ExileMarker, counter_state_based_actions
 from pydantic import ValidationError
 
+from .board_scope import STALE_BOARD, announced_edit, read_on_one_board
 from .decisions import player_or_card
 from .schemas import (
     ActivateRequest,
@@ -105,9 +106,17 @@ def without_loyalty_mana_advice(game: Game, text: str | None) -> str | None:
     left as the engine wrote it."""
     if not text or "activate it manually" not in text:
         return text
+    # Every permanent's abilities read the layered board: one board for all.
+    return read_on_one_board(lambda: _without_loyalty_mana_advice(game, text), game)
+
+
+def _without_loyalty_mana_advice(game: Game, text: str) -> str:
+    """`without_loyalty_mana_advice`'s filtering, on one layered board."""
     for permanent in list(game.battlefield):
         try:
             abilities = game.activated_abilities(permanent)
+        except STALE_BOARD:
+            raise  # `read_on_one_board` reads it again on fresh boards
         except Exception:  # noqa: BLE001 - a read of refusal prose must not raise
             continue
         for ability in abilities:
@@ -179,6 +188,8 @@ def mana_ability_at(game: Game, source: CardState, ability_index: int) -> Any:
     """
     try:
         abilities = list(game.activated_abilities(source))
+    except STALE_BOARD:
+        raise  # a stale board is not a refusal: the read is taken again
     except Exception as exc:  # the engine's own refusal to read this object
         raise ValueError(f"{source.name} has no activated abilities to index into") from exc
     if not 0 <= ability_index < len(abilities):
@@ -329,6 +340,8 @@ def _sole_mana_ability(game: Game, source: CardState) -> Any | None:
     """
     try:
         abilities = list(game.activated_abilities(source))
+    except STALE_BOARD:
+        raise  # a stale board is not a refusal: the read is taken again
     except Exception:  # the engine's own refusal to read this object
         return None
     found = [ability.mana for ability in abilities if getattr(ability, "mana", None) is not None]
@@ -389,6 +402,8 @@ def _expanded_to_the_abilitys_own_count(
         return named
     try:
         produced = _resolve(source, game, mana, named[0])
+    except STALE_BOARD:
+        raise  # a stale board is not a refusal: the read is taken again
     except Exception:  # the engine's own refusal - `tap_for_mana` will repeat it
         return named
     return produced if len(produced) > 1 and set(produced) == {named[0]} else named
@@ -2115,6 +2130,8 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
 
     try:
         abilities = game.activated_abilities(state)
+    except STALE_BOARD:
+        raise  # a stale board is not "no abilities": the read is taken again
     except Exception:
         return []
 
@@ -2238,21 +2255,24 @@ def move_card(
     if refusal is not None:
         return refused(refusal)
 
-    lift_card(game, state)
-    if to_zone in SHARED_ZONES:
-        if controller:
-            state.controller = controller
-        state.move_to(to_zone)
-        game.shared_zones[to_zone].append(state)
-    else:
-        if not player_name:
-            return refused(f"the {to_zone.value} needs a player")
-        target = game.player(player_name)
-        target.add(state, to_zone)
-        if to_zone is Zone.LIBRARY and position != "bottom":
-            # index 0 is the top of the library: draws come off the front
-            target.library.remove(state)
-            target.library.insert(0, state)
+    # Zone lists edited in place outside any engine command: announced, so a
+    # read racing this route drops its board (`board_scope.announced_edit`).
+    with announced_edit(game):
+        lift_card(game, state)
+        if to_zone in SHARED_ZONES:
+            if controller:
+                state.controller = controller
+            state.move_to(to_zone)
+            game.shared_zones[to_zone].append(state)
+        else:
+            if not player_name:
+                return refused(f"the {to_zone.value} needs a player")
+            target = game.player(player_name)
+            target.add(state, to_zone)
+            if to_zone is Zone.LIBRARY and position != "bottom":
+                # index 0 is the top of the library: draws come off the front
+                target.library.remove(state)
+                target.library.insert(0, state)
 
     if tapped is not None:
         state.tapped = tapped
@@ -2262,14 +2282,16 @@ def move_card(
 
 
 def lift_card(game: Game, state: CardState) -> None:
-    """Take a card out of every zone it might be sitting in."""
-    for zone_cards in game.shared_zones.values():
-        if state in zone_cards:
-            zone_cards.remove(state)
-    for player in game.players:
-        for zone_cards in player.zones.values():
+    """Take a card out of every zone it might be sitting in - announced, like
+    every in-place zone edit here (`board_scope.announced_edit`)."""
+    with announced_edit(game):
+        for zone_cards in game.shared_zones.values():
             if state in zone_cards:
                 zone_cards.remove(state)
+        for player in game.players:
+            for zone_cards in player.zones.values():
+                if state in zone_cards:
+                    zone_cards.remove(state)
 
 
 def put_card_in_zone(
@@ -2279,16 +2301,19 @@ def put_card_in_zone(
     zone: Zone,
     position: str | None,
 ) -> None:
-    """Set a card into a zone, the way the harness stages a scenario."""
+    """Set a card into a zone, the way the harness stages a scenario - an
+    in-place edit of the zone lists, announced so a read racing it drops its
+    board (`board_scope.announced_edit`)."""
     card.bind_to_game(game)  # what `Game.put_onto_battlefield` does (CR 613.5)
-    if zone in SHARED_ZONES:
-        game.shared_zones[zone].append(card)
-        return
-    player = game.player(player_name)
-    player.add(card, zone)
-    if zone is Zone.LIBRARY and position != "bottom":
-        player.library.remove(card)
-        player.library.insert(0, card)
+    with announced_edit(game):
+        if zone in SHARED_ZONES:
+            game.shared_zones[zone].append(card)
+            return
+        player = game.player(player_name)
+        player.add(card, zone)
+        if zone is Zone.LIBRARY and position != "bottom":
+            player.library.remove(card)
+            player.library.insert(0, card)
 
 
 def parse_counter_kind(kind: str) -> Counter:

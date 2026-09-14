@@ -53,6 +53,7 @@ from . import (
     visibility,
 )
 from .action_rows import legal_action_rows
+from .board_scope import read_on_one_board
 from .repository import RECENT_RECORDS_WINDOW, ArchivedGame, GameUnloadable
 from .repository_postgres import VersionConflict
 from .schemas import (
@@ -434,8 +435,27 @@ def _command_divergence(_: Request, exc: commands.CommandDivergenceError) -> JSO
     again, the same shape of problem a 409 already means everywhere else in
     this api - `PregameOverruled` (below) is the same status for the same
     reason.
+
+    **The question expired, and the body says so in a stable shape.** By the
+    time this answers, `_resume` has cleared the stale pause, so the game is
+    never left stuck on a question nothing can answer (a deploy that changes
+    how a replay mints ids makes every stored pause diverge). `detail` and
+    `reason` are `commands.QUESTION_EXPIRED`, telling the client to re-issue
+    the original action; `expired: True` is the key a client branches on to
+    refresh rather than re-send; `allowed`/`accepted: False` make every seat
+    and browser caller read it as the refusal it is. The replay's own
+    comparison stays in the server log (`CommandDivergenceError` logs it).
     """
-    return JSONResponse(status_code=409, content={"detail": str(exc)})
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": commands.QUESTION_EXPIRED,
+            "reason": commands.QUESTION_EXPIRED,
+            "expired": True,
+            "allowed": False,
+            "accepted": False,
+        },
+    )
 
 
 @app.exception_handler(commands.DecisionInProgressError)
@@ -1043,16 +1063,26 @@ def _resume(
     command actually replays with it (the same propagation `run_command`
     already gives `_run_command`'s callers), and
     `commands.CommandDivergenceError` when the stored pause turns out to be
-    stale (`resume_command`'s own replay-divergence guard) - neither is
+    stale (`resume_command`'s own replay-divergence guard). The first is not
     caught here; `POST .../decide` and its `actions/attack`/
-    `actions/declare-blockers` aliases each turn the first into their own
-    synchronous `{"accepted": False, ...}` refusal, and the second reaches
-    this api's registered 409 handler unchanged.
+    `actions/declare-blockers` aliases each turn it into their own
+    synchronous `{"accepted": False, ...}` refusal. The second clears the
+    stale pause first - a question that no longer replays can never be
+    answered, and leaving it would 409 every answer forever - and then
+    reaches this api's registered 409 handler, which tells the client the
+    question expired and to re-issue the original action.
     """
     with store.locked(game_id) as game:
         commands.refuse_if_over(game, "decide")
         legal_before = records.legal_actions_before(game, player, pending)
-        result = commands.resume_command(game, command, tape, pending, answer)
+        try:
+            result = commands.resume_command(game, command, tape, pending, answer)
+        except commands.CommandDivergenceError:
+            # The stored question no longer replays, so no answer can ever be
+            # accepted for it: cleared here, under the lock, so the game is not
+            # stuck on it, and the 409 tells the client to re-issue the action.
+            store.clear_paused_command(game_id)
+            raise
         # The answer is taken on the board its question was asked on (B3-11).
         records.note_action_board(game_id, result.asked_on or game)
         seq: int | None = None
@@ -2050,6 +2080,20 @@ def get_affordances(
     except ValueError as exc:
         raise KeyError(str(exc)) from exc
     mode_numbers = [int(part) for part in modes.split(",") if part.strip()] if modes else None
+    return read_on_one_board(
+        lambda: _affordances_of(game, state, player, ability_index, mode_numbers, x_value), game
+    )
+
+
+def _affordances_of(
+    game: Game,
+    state: CardState,
+    player: str,
+    ability_index: int | None,
+    mode_numbers: list[int] | None,
+    x_value: int | None,
+) -> dict[str, Any]:
+    """`get_affordances`' answer, on one layered board."""
     result = affordances.candidates(
         game,
         state,
@@ -2156,20 +2200,15 @@ def get_legal_actions(
 
     **`candidates=true` folds each targeting action's legal targets into its
     own entry** (`_attach_target_candidates`), so a seat can choose AND issue
-    its next action out of one answer. Opt-in, and measured rather than
-    guessed: on a 28-permanent board with three targeting spells in hand the
-    enumeration costs ~106 ms on top of the ~350 ms the enumeration itself
-    already takes, because `TargetRequirement.rejects` reaches
-    `Game.characteristics_of` and `Game.computed_board` is deliberately
-    uncached in the engine (CR 613.5 - "continually and automatically
-    performed", so an anthem that left the battlefield a moment ago is
-    already not applying). That is a good trade for a seat, which pays it
-    once per action and saves a whole round trip - and so a whole inference
-    cycle, seconds rather than milliseconds - and a bad one for the browser,
-    which asks this on a 1.2s poll and already has the whole board on screen
-    to pick targets from. So `seatkit.available_actions` passes it and
-    `ui/app.js` does not, and the default is off: a caller that says nothing
-    pays nothing.
+    its next action out of one answer. Opt-in: the enumeration and its
+    candidates share one layered board (`board_scope.read_on_one_board`), so
+    the candidates no longer rebuild it per target check, but walking every
+    public object against every slot is still work the browser - which asks
+    this on a 1.2s poll and already has the whole board on screen to pick
+    targets from - has no use for. A seat pays it once per action and saves a
+    whole round trip, and so a whole inference cycle. So
+    `seatkit.available_actions` passes it and `ui/app.js` does not, and the
+    default is off: a caller that says nothing pays nothing.
 
     `get_affordances` needs no such guard and is not a precedent for
     skipping one: every candidate it names is an object in a public zone
@@ -2214,9 +2253,15 @@ def get_legal_actions(
         # board outside that step. The board the question was raised on is
         # what the rows describe (U1: a stolen, hasty creature's attack row).
         board = commands.board_at_pause(game, paused[0], paused[1]) or game
-    actions, views = legal_action_rows(board, player, pending)
-    if candidates:
-        _attach_target_candidates(board, actions, views)
+
+    def rows() -> list[dict[str, Any]]:
+        actions, views = legal_action_rows(board, player, pending)
+        if candidates:
+            _attach_target_candidates(board, actions, views)
+        return views
+
+    # One layered board for the enumeration and its target candidates both.
+    views = read_on_one_board(rows, board)
     # The ledger position this enumeration describes, handed back with it
     # (`LegalActionsResponse.last_seq`): a seat names it as `expected_seq` on
     # whatever it decides to do, and that is what makes its refusals
@@ -2533,7 +2578,11 @@ def _dry_run_declaration(
     the same replay of the paused command with the answer appended, on the
     board the question was raised on (CR 508.1). `commands.resume_command`
     works on a copy and nothing is committed or restashed, so the question
-    still stands afterwards and the dry run and the real call agree."""
+    still stands afterwards and the dry run and the real call agree.
+
+    Raises `commands.CommandDivergenceError` when the stored pause no longer
+    replays; the caller holds the game lock and clears that pause before the
+    409, exactly as the real declaration does."""
     command, tape, pending = paused
     decision = pending.decision
     try:
@@ -2579,12 +2628,19 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
         DeclaredPairRequest(creature=pair.card_id, defender=pair.defender) for pair in req.attackers
     ]
     if req.dry_run:
-        game = game_or_404(game_id)
-        paused = store.paused_command(game_id)
-        if paused is not None and paused[2].decision.kind is DecisionKind.DECLARE_ATTACKERS:
-            outcome = _dry_run_declaration(game, paused, pairs)
-        else:
-            outcome = engine_api.declare_attack(game, req)
+        with store.locked(game_id) as game:
+            paused = store.paused_command(game_id)
+            if paused is not None and paused[2].decision.kind is DecisionKind.DECLARE_ATTACKERS:
+                try:
+                    outcome = _dry_run_declaration(game, paused, pairs)
+                except commands.CommandDivergenceError:
+                    # Same as `_resume_paused`: a question that no longer
+                    # replays can never be answered, so it is cleared here,
+                    # under the lock that read it, and the 409 says so.
+                    store.clear_paused_command(game_id)
+                    raise
+            else:
+                outcome = engine_api.declare_attack(game, req)
         return audit_outcome(game_id, "attack", outcome, attackers=attackers_detail, dry_run=True)
     return _answer_declaration(
         game_id,

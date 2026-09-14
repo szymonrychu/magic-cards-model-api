@@ -85,6 +85,7 @@ from magic_cards_model.models import Action, CardState, Color, Game, Zone
 from magic_cards_model.models.action import ActionKind, Affordability
 from magic_cards_model.models.mana import ManaCost, ManaSpend, ManaSymbol, SymbolKind
 
+from .board_scope import on_one_board
 from .engine_api import (
     activate_ability,
     dry_run_copy,
@@ -155,6 +156,7 @@ def is_equip_row(action: Action) -> bool:
     )
 
 
+@on_one_board
 def legal_action_rows(
     game: Game, player: str, pending: PendingDecision | None
 ) -> tuple[list[Action], list[dict[str, Any]]]:
