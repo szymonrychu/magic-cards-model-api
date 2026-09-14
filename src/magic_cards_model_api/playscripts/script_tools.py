@@ -785,14 +785,33 @@ def _armable_window(state: dict[str, Any], me: str) -> bool:
     return state.get("step") in _ARMABLE_OWN_STEPS
 
 
-def _has_step_at_or_after(steps: list[str], current_step: Any) -> bool:
+def _step_order_key(current_step: Any) -> int:
+    """Where `current_step` sits for comparing against `runtime.
+    AUTOPASS_STEPS` order - `untap` (or any other step this list does not
+    name, defensively) sorts before every one of them, since the turn has
+    not reached any of them yet. `cleanup` is the one exception: CR 514 puts
+    it after every step this list names, so it has to sort AFTER all of
+    them, never before (S2 arming re-review finding 2) - treating it as
+    "before everything" made a `when` read from the opponent's own cleanup
+    come back with a step from earlier THIS turn as if it were still ahead,
+    when the turn is already over and nothing in it is."""
+    if current_step == "cleanup":
+        return len(runtime.AUTOPASS_STEPS)
     if current_step not in runtime.AUTOPASS_STEPS:
-        # untap/cleanup (or an unrecognised step): every named step is still
-        # ahead of it in turn order.
-        return True
-    here = runtime.AUTOPASS_STEPS.index(current_step)
+        return -1
+    return runtime.AUTOPASS_STEPS.index(current_step)
+
+
+def _has_step_strictly_after(steps: list[str], current_step: Any) -> bool:
+    """Whether any of `steps` is still strictly ahead of `current_step` this
+    same turn - never `current_step` itself (S2 arming re-review finding 2):
+    naming the step a run is already sitting in as its own destination means
+    the NEXT occurrence of it, never this one (`start_autopass`'s own
+    starting-occurrence exemption), so a `when` that only ever "recurs" on
+    the step already reached has nothing left this turn either."""
+    here = _step_order_key(current_step)
     return any(
-        runtime.AUTOPASS_STEPS.index(step) >= here
+        runtime.AUTOPASS_STEPS.index(step) > here
         for step in steps
         if step in runtime.AUTOPASS_STEPS
     )
@@ -814,7 +833,7 @@ def _when_recurs_before_next_own_turn_ends(
         # (opponent's) turn - only for `theirs`/`either`, and only if one of
         # its steps has not already gone by - or it can happen at all during
         # this seat's own following turn, which `mine`/`either` always does.
-        if whose in ("theirs", "either") and _has_step_at_or_after(steps, state.get("step")):
+        if whose in ("theirs", "either") and _has_step_strictly_after(steps, state.get("step")):
             return True
         return whose in ("mine", "either")
     # Already in this seat's own upkeep/draw: the window is the rest of THIS
@@ -822,7 +841,7 @@ def _when_recurs_before_next_own_turn_ends(
     # would cross into the opponent's next turn.
     if whose not in ("mine", "either"):
         return False
-    return _has_step_at_or_after(steps, state.get("step"))
+    return _has_step_strictly_after(steps, state.get("step"))
 
 
 def _earliest_step(steps: list[str]) -> str:
@@ -832,20 +851,23 @@ def _earliest_step(steps: list[str]) -> str:
     return min(ordered, key=runtime.AUTOPASS_STEPS.index)
 
 
-def _next_step_at_or_after(steps: list[str], current_step: Any) -> str | None:
-    """The earliest of `steps` still at or after `current_step`, in
+def _next_step_strictly_after(steps: list[str], current_step: Any) -> str | None:
+    """The earliest of `steps` still strictly ahead of `current_step`, in
     `runtime.AUTOPASS_STEPS` turn order - `None` when every one of them has
-    already gone by this occurrence. `current_step` outside
-    `AUTOPASS_STEPS` (untap/cleanup, or unrecognised) counts as "before
-    everything", the same as `_has_step_at_or_after` treats it: the
-    earliest of `steps` in turn order."""
+    already gone by this occurrence, `current_step` itself included (S2
+    arming re-review finding 2): a `pass_until` call templated from this
+    would be told to stop at `current_step`, which `start_autopass`'s own
+    starting-occurrence exemption reads as the NEXT occurrence of it, never
+    this one - so a step this run is already sitting in is never a valid
+    "still ahead this turn" answer, the same as one already behind it.
+    `current_step` outside `AUTOPASS_STEPS` is ordered by `_step_order_key`
+    - `untap` (or anything unrecognised) before everything, `cleanup` after
+    everything."""
     ordered = [step for step in steps if step in runtime.AUTOPASS_STEPS]
-    if current_step not in runtime.AUTOPASS_STEPS:
-        return min(ordered, key=runtime.AUTOPASS_STEPS.index) if ordered else None
     if not ordered:
         return None
-    here = runtime.AUTOPASS_STEPS.index(current_step)
-    candidates = [step for step in ordered if runtime.AUTOPASS_STEPS.index(step) >= here]
+    here = _step_order_key(current_step)
+    candidates = [step for step in ordered if runtime.AUTOPASS_STEPS.index(step) > here]
     return min(candidates, key=runtime.AUTOPASS_STEPS.index) if candidates else None
 
 
@@ -888,7 +910,7 @@ def _next_occurrence(
         # turn order (that turn has not started yet, so nothing is "already
         # behind" in it).
         if whose in ("theirs", "either"):
-            step = _next_step_at_or_after(steps, state.get("step"))
+            step = _next_step_strictly_after(steps, state.get("step"))
             if step is not None:
                 return 0, step, target
         if whose in ("mine", "either"):
@@ -899,7 +921,7 @@ def _next_occurrence(
     # `_when_recurs_before_next_own_turn_ends`), so this is always phase 0.
     if whose not in ("mine", "either"):
         return None
-    step = _next_step_at_or_after(steps, state.get("step"))
+    step = _next_step_strictly_after(steps, state.get("step"))
     return (0, step, target) if step is not None else None
 
 
@@ -951,10 +973,25 @@ def _arm_call_template(
     kept entries by their own nearest occurrence (`_next_occurrence`'s
     `(phase, step)` - ties broken by priority, since `kept_armable` is
     already in that order), take the single nearest one as the window, and
-    arm every entry whose own next occurrence is exactly that same
-    `(step, whose_turn)` pair - the rest stay listed under `armable` without
-    being in this call; a later `arm()` call, once the board has moved past
-    this window, judges them against their own next one instead.
+    arm every entry whose own next occurrence shares that same `(phase,
+    step)` - never the stricter `(step, whose_turn)` triple `occurrences`
+    itself carries (S2 arming re-review finding 2): `whose_turn` there is
+    each entry's own `when.whose_turn` mapped through `runtime.
+    WHOSE_TURN_FOR_AUTOPASS` (`theirs`->`opponent`, `mine`->`mine`,
+    `either`->`any`), so a `theirs` and an `either` entry landing on the
+    exact same step of the exact same occurrence - the opponent's one
+    upcoming end step, say - compared `"opponent" != "any"` and only the
+    first ever made it into `arm`, leaving the second armed for nothing this
+    window even though its own `when` matches the board `pass_until` was
+    about to reach. `(phase, step)` alone is exactly the occurrence itself:
+    within one call, every phase-0 entry already shares the one turn/side
+    now in progress (`_next_occurrence` only ever returns phase 0 for
+    `theirs`/`either` during the opponent's turn, or `mine`/`either` during
+    this seat's own upkeep/draw - never both at once), so nothing outside
+    `window`'s own occurrence can share its `(phase, step)` by accident. The
+    rest stay listed under `armable` without being in this call; a later
+    `arm()` call, once the board has moved past this window, judges them
+    against their own next one instead.
 
     `remembered` is this seat's own non-archetype inputs last supplied to
     `run_script` (S1 finding 4b) - named here too, exactly as `_call_template`
@@ -968,10 +1005,9 @@ def _arm_call_template(
         return phase, index
 
     ranked = sorted(kept_armable, key=rank)
+    top_rank = rank(ranked[0])
     window = occurrences[str(ranked[0]["id"])][1:]
-    armed_ids = [
-        str(item["id"]) for item in kept_armable if occurrences[str(item["id"])][1:] == window
-    ]
+    armed_ids = [str(item["id"]) for item in kept_armable if rank(item) == top_rank]
     args: dict[str, Any] = {"player_uid": seat.uid}
     if not seat.advise:
         args["step"], args["whose_turn"] = window

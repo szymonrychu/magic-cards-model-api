@@ -1078,3 +1078,162 @@ def test_arm_call_targets_the_next_occurrence_not_the_earliest_in_turn_order(
         f'pass_until(player_uid="{alice}", step="end_step", whose_turn="opponent", '
         'arm=["theirs-both"], arm_reasoning="<say why>", opposing_archetype="*", max_seconds=25.0)'
     ), answer["scripts"]["arm_call"]
+
+
+# -- S2 arming re-review finding 2: the current step is never a valid window --
+
+
+def test_arm_call_never_targets_the_current_step_itself(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 2: `_next_step_at_or_after` (now
+    `_next_step_strictly_after`) used `>=` against the board's current step,
+    so a `when` naming the step the board is ALREADY sitting in came back as
+    its own "next occurrence" too - bob's own upkeep, a `theirs` script
+    naming `[upkeep, end_step]`, templated `pass_until(step="upkeep", ...)`
+    while the board is already there. `start_autopass`'s own
+    starting-occurrence exemption reads that as the NEXT occurrence, never
+    this one (`pass_until`, called right now, would skip straight past THIS
+    end_step into next turn's upkeep instead) - the fix makes the window
+    strictly ahead of the current step, landing on this very turn's
+    end_step."""
+    force_turn_position(game, Step.UPKEEP, "bob")
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script(
+            "theirs-both",
+            when={"whose_turn": "theirs", "steps": ["upkeep", "end_step"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    [entry] = answer["scripts"]["armable"]
+    assert entry["id"] == "theirs-both"
+    assert answer["scripts"]["arm_call"] == (
+        f'pass_until(player_uid="{alice}", step="end_step", whose_turn="opponent", '
+        'arm=["theirs-both"], arm_reasoning="<say why>", opposing_archetype="*", max_seconds=25.0)'
+    ), answer["scripts"]["arm_call"]
+
+
+def test_arm_call_never_targets_the_current_step_itself_for_my_own_turn(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same fix, on the `mine`/`either` side of `_next_occurrence`
+    (already in this seat's own upkeep/draw): a script naming
+    `[upkeep, draw]`, read from this seat's own upkeep, must template
+    `draw` - the step still strictly ahead this turn - never `upkeep`
+    itself.
+
+    `tap_island_script`, not `land_script`: alice holds priority in her own
+    upkeep, so `applicable_hint` genuinely evaluates this script's own `true`
+    condition here (`evaluate_conditions=holds_priority`) - no Island on the
+    battlefield keeps it false (`applies=False`) so this stays in the
+    `armable` pool being tested, rather than `land_script`'s bare
+    `land_drop_available`, which is true from the very start of the turn and
+    would make the `when` match land it in `applicable` instead."""
+    force_my_upkeep(game)
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        tap_island_script(
+            "mine-both",
+            when={"whose_turn": "mine", "steps": ["upkeep", "draw"], "stack": "empty"},
+        ),
+    )
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    [entry] = answer["scripts"]["armable"]
+    assert entry["id"] == "mine-both"
+    assert answer["scripts"]["arm_call"] == (
+        f'pass_until(player_uid="{alice}", step="draw", whose_turn="mine", '
+        'arm=["mine-both"], arm_reasoning="<say why>", opposing_archetype="*", max_seconds=25.0)'
+    ), answer["scripts"]["arm_call"]
+
+
+def test_a_theirs_only_script_past_every_named_step_is_not_armable_at_cleanup(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 2's second bug: `cleanup` is not in
+    `runtime.AUTOPASS_STEPS` (CR 514.3: no player receives priority there),
+    and the old `_has_step_at_or_after`/`_next_step_at_or_after` treated any
+    step outside that list - `cleanup` included - as "before everything",
+    the same as `untap`. `cleanup` is the one step that is actually LAST,
+    not first: read from the opponent's own cleanup, a `theirs`-only script
+    naming `[upkeep, end_step]` has nothing left this turn (both steps are
+    long behind it) and, being `theirs` alone, never recurs during this
+    seat's own following turn either - so it must not be armable at all
+    here, not templated for a stale "still ahead" `upkeep` that has already
+    gone by."""
+    force_turn_position(game, Step.CLEANUP, "bob")
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script(
+            "theirs-only",
+            when={"whose_turn": "theirs", "steps": ["upkeep", "end_step"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    assert "scripts" not in answer or "armable" not in answer.get("scripts", {}), answer
+
+
+def test_arm_call_groups_theirs_and_either_on_the_same_occurrence(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 2's third bug: `armed_ids` used to require
+    an exact `(step, whose_turn)` match against the top-ranked entry's own
+    window - `whose_turn` there is each entry's own `when.whose_turn` mapped
+    through `runtime.WHOSE_TURN_FOR_AUTOPASS` (`theirs` -> `opponent`,
+    `either` -> `any`), so a `theirs` and an `either` script landing on the
+    exact same actual occurrence (the opponent's very next end_step) never
+    matched each other (`"opponent" != "any"`) and only the higher-priority
+    one ever made it into `arm` - the other was left out of this call
+    entirely, armed for nothing this window even though its own `when`
+    matches the board `pass_until` is about to reach. The fix groups by the
+    occurrence itself (`phase`, `step`), not by each entry's own literal
+    `whose_turn` target."""
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script(
+            "theirs-end",
+            priority=90,
+            when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+        ),
+        land_script(
+            "either-end",
+            priority=50,
+            when={"whose_turn": "either", "steps": ["end_step"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    ids = [entry["id"] for entry in answer["scripts"]["armable"]]
+    assert ids == ["theirs-end", "either-end"], "both still listed as armable"
+    assert answer["scripts"]["arm_call"] == (
+        f'pass_until(player_uid="{alice}", step="end_step", whose_turn="opponent", '
+        'arm=["theirs-end", "either-end"], arm_reasoning="<say why>", '
+        'opposing_archetype="*", max_seconds=25.0)'
+    ), answer["scripts"]["arm_call"]
