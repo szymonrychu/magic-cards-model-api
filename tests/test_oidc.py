@@ -209,3 +209,147 @@ def test_configured_audience_is_required_and_checked(
     with pytest.raises(Exception) as exc_info:
         oidc.current_user(_request({"Authorization": f"Bearer {no_aud_at_all}"}))
     assert getattr(exc_info.value, "status_code", None) == 401
+
+
+# ---------------------------------------------------------------------------
+# a browser page load with a dead token goes to login, never raw JSON 401
+# ---------------------------------------------------------------------------
+
+_HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+
+def _owned_game(client, private_key) -> str:
+    response = client.post(
+        "/api/games",
+        json={"players": [{"username": "alice"}, {"username": "bob"}]},
+        headers={"Authorization": f"Bearer {token(private_key, sub='alice')}"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["game_id"]
+
+
+def _login_rd(response) -> str:
+    from urllib.parse import parse_qs, urlsplit
+
+    location = urlsplit(response.headers["location"])
+    assert (location.scheme, location.netloc, location.path) == ("", "", "/oauth2/start")
+    (rd,) = parse_qs(location.query)["rd"]
+    return rd
+
+
+@pytest.mark.no_harness_credential
+def test_html_navigation_to_a_game_page_with_an_expired_token_redirects_to_login(
+    configured_env: None, private_key, client
+) -> None:
+    game_id = _owned_game(client, private_key)
+    expired = token(private_key, sub="alice", expired=True)
+
+    response = client.get(
+        f"/{game_id}/",
+        headers={"Authorization": f"Bearer {expired}", "Accept": _HTML_ACCEPT},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302, response.text
+    assert _login_rd(response) == f"/{game_id}/"
+
+
+@pytest.mark.no_harness_credential
+def test_the_login_redirect_carries_the_query_string_back(
+    configured_env: None, private_key, client
+) -> None:
+    game_id = _owned_game(client, private_key)
+    expired = token(private_key, sub="alice", expired=True)
+
+    response = client.get(
+        f"/{game_id}/?seat=abc&x=1",
+        headers={"Authorization": f"Bearer {expired}", "Accept": _HTML_ACCEPT},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert _login_rd(response) == f"/{game_id}/?seat=abc&x=1"
+
+
+@pytest.mark.no_harness_credential
+def test_html_navigation_to_the_old_g_address_with_a_garbage_token_redirects_to_login(
+    configured_env: None, private_key, client
+) -> None:
+    game_id = _owned_game(client, private_key)
+
+    response = client.get(
+        f"/g/{game_id}/",
+        headers={"Authorization": "Bearer not-a-jwt", "Accept": _HTML_ACCEPT},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert _login_rd(response) == f"/g/{game_id}/"
+
+
+@pytest.mark.no_harness_credential
+def test_a_json_request_to_a_game_page_with_an_expired_token_keeps_json_401(
+    configured_env: None, private_key, client
+) -> None:
+    game_id = _owned_game(client, private_key)
+    expired = token(private_key, sub="alice", expired=True)
+
+    response = client.get(
+        f"/{game_id}/",
+        headers={"Authorization": f"Bearer {expired}", "Accept": "application/json"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"].startswith("invalid bearer token: Signature has expired")
+
+
+@pytest.mark.no_harness_credential
+def test_api_routes_keep_json_401_even_for_an_html_accept(
+    configured_env: None, private_key, client
+) -> None:
+    game_id = _owned_game(client, private_key)
+    expired = token(private_key, sub="alice", expired=True)
+
+    for path in (f"/api/games/{game_id}", "/api/lobby/games"):
+        response = client.get(
+            path,
+            headers={"Authorization": f"Bearer {expired}", "Accept": _HTML_ACCEPT},
+            follow_redirects=False,
+        )
+        assert response.status_code == 401, (path, response.text)
+        assert response.headers["content-type"].startswith("application/json")
+        assert response.json() == {"detail": "invalid bearer token: Signature has expired"}
+
+
+@pytest.mark.no_harness_credential
+def test_html_navigation_with_a_valid_token_serves_the_page(
+    configured_env: None, private_key, client
+) -> None:
+    game_id = _owned_game(client, private_key)
+
+    response = client.get(
+        f"/{game_id}/",
+        headers={
+            "Authorization": f"Bearer {token(private_key, sub='alice')}",
+            "Accept": _HTML_ACCEPT,
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["//evil.example", "//evil.example/x", "/\\evil.example", "/\t/evil.example", "evil.example"],
+)
+def test_the_login_return_path_never_leaves_this_origin(path: str) -> None:
+    assert oidc.login_return_path(path, "") == "/"
+    assert oidc.login_return_path(path, "a=1") == "/"
+
+
+def test_the_login_return_path_keeps_a_same_origin_path_and_query() -> None:
+    assert oidc.login_return_path("/abc/", "") == "/abc/"
+    assert oidc.login_return_path("/abc/", "x=1&y=2") == "/abc/?x=1&y=2"

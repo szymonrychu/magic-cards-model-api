@@ -88,12 +88,67 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlencode
 
 import jwt
 from fastapi import HTTPException, Request
+from fastapi.responses import RedirectResponse
 from jwt import PyJWKClient
 
-__all__ = ["AuthenticatedUser", "OidcSettings", "oidc_settings", "current_user"]
+__all__ = [
+    "AuthenticatedUser",
+    "BearerTokenRejected",
+    "OidcSettings",
+    "current_user",
+    "is_page_navigation",
+    "login_redirect",
+    "login_return_path",
+    "oidc_settings",
+]
+
+#: oauth2-proxy's own login entry point, on the same host that fronts this
+#: api (`deploy/k8s/55-oauth2-proxy.yaml`); `rd` is where it returns after.
+LOGIN_START_PATH = "/oauth2/start"
+
+
+class BearerTokenRejected(HTTPException):
+    """A 401 for a presented identity that did not verify. Its own class so
+    `app.py` can send a browser page load to login instead of raw JSON, while
+    every other caller gets the same `{"detail": ...}` 401 as any
+    `HTTPException`."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(status_code=401, detail=detail)
+
+
+def is_page_navigation(request: Request) -> bool:
+    """Whether `request` is a browser loading a page: a GET outside `/api/`
+    (the proxy's `--api-route=^/api/`, whose 401s `ui/api.js` handles) that
+    accepts HTML."""
+    path = request.url.path
+    if request.method != "GET" or path == "/api" or path.startswith("/api/"):
+        return False
+    return "text/html" in request.headers.get("accept", "").lower()
+
+
+def login_return_path(path: str, query: str) -> str:
+    """`path?query` when `path` stays on this origin, `/` otherwise. Only a
+    path starting with a single `/` qualifies: `//host` and `/\\host` are
+    read by browsers as another host, and they drop tabs and newlines before
+    deciding, so any control character also falls back to `/`."""
+    if (
+        not path.startswith("/")
+        or path[1:2] in ("/", "\\")
+        or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in path)
+    ):
+        return "/"
+    return f"{path}?{query}" if query else path
+
+
+def login_redirect(request: Request) -> RedirectResponse:
+    """302 to oauth2-proxy's login, returning to this same page after."""
+    target = login_return_path(request.url.path, request.url.query)
+    return RedirectResponse(url=f"{LOGIN_START_PATH}?{urlencode({'rd': target})}", status_code=302)
 
 
 @dataclass(frozen=True)
@@ -217,10 +272,10 @@ def _validate_bearer_token(token: str, settings: OidcSettings) -> AuthenticatedU
             },
         )
     except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail=f"invalid bearer token: {exc}") from exc
+        raise BearerTokenRejected(f"invalid bearer token: {exc}") from exc
     sub = claims.get("sub")
     if not sub:  # pragma: no cover - "require": ["sub"] above already guards this
-        raise HTTPException(status_code=401, detail="bearer token carries no subject")
+        raise BearerTokenRejected("bearer token carries no subject")
     return AuthenticatedUser(sub=sub, email=claims.get("email"))
 
 
@@ -242,13 +297,10 @@ def current_user(request: Request) -> AuthenticatedUser | None:
         return None
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token:
-        raise HTTPException(status_code=401, detail="malformed Authorization header")
+        raise BearerTokenRejected("malformed Authorization header")
     settings = oidc_settings()
     if settings is None:
-        raise HTTPException(
-            status_code=401,
-            detail=(
-                "a bearer token was presented but this deployment has no OIDC issuer configured"
-            ),
+        raise BearerTokenRejected(
+            "a bearer token was presented but this deployment has no OIDC issuer configured"
         )
     return _validate_bearer_token(token, settings)

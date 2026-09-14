@@ -17,6 +17,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -149,6 +150,16 @@ app.include_router(assets.router)
 
 
 # -- error mapping ---------------------------------------------------------
+
+
+@app.exception_handler(oidc.BearerTokenRejected)
+async def _bearer_token_rejected(request: Request, exc: oidc.BearerTokenRejected) -> Response:
+    """A page load whose token expired or failed goes to login, not to a raw
+    JSON 401 in the browser: `/<game_id>/` is gated by `GameAccessRoute` like
+    any `{game_id}` route. `/api/*` and non-HTML callers keep the JSON 401."""
+    if oidc.is_page_navigation(request):
+        return oidc.login_redirect(request)
+    return await http_exception_handler(request, exc)
 
 
 @app.exception_handler(scryfall.CardNotFound)

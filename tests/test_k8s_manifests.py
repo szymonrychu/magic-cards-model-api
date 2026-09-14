@@ -394,3 +394,50 @@ def test_the_api_publishes_the_scripts_kill_switch_defaulting_to_on() -> None:
     deploy = by_name(docs, "Deployment", "mtg-stack")
     env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
     assert env["SCRIPTS_ENABLED"] == {"name": "SCRIPTS_ENABLED", "value": "true"}
+
+
+# ------------------------------------------------- the login stays alive mid-game --
+#
+# Production, 2026-09-14: oauth2-proxy logged `expiry:168h0m0s refresh:disabled`
+# and forwarded the Keycloak ID token (30-minute lifetime) until the api
+# refused it with 401 `invalid bearer token: Signature has expired`, which
+# bounced players to login about every 30 minutes. Cookie refresh redeems the
+# refresh token before that, and the refreshed ID token is what gets forwarded.
+
+_GO_DURATION_UNITS = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
+
+
+def _go_duration_seconds(text: str) -> float:
+    """A Go `time.Duration` string (`20m`, `168h0m0s`, `1h30m`) in seconds -
+    the format oauth2-proxy parses `--cookie-refresh`/`--cookie-expire` with."""
+    import re
+
+    parts = re.findall(r"(\d+(?:\.\d+)?)(ms|h|m|s)", text)
+    assert parts and "".join(n + u for n, u in parts) == text, f"not a Go duration: {text!r}"
+    return sum(float(n) * _GO_DURATION_UNITS[u] for n, u in parts)
+
+
+def test_go_duration_parser_reads_the_forms_oauth2_proxy_prints() -> None:
+    assert _go_duration_seconds("20m") == 1200
+    assert _go_duration_seconds("168h0m0s") == 168 * 3600
+    assert _go_duration_seconds("1h30m") == 5400
+
+
+def test_the_proxy_refreshes_the_session_before_the_forwarded_token_expires() -> None:
+    env = _proxy_env()
+    assert "OAUTH2_PROXY_COOKIE_REFRESH" in env, "refresh is disabled: tokens die after 30m"
+    refresh = _go_duration_seconds(env["OAUTH2_PROXY_COOKIE_REFRESH"]["value"])
+    assert 0 < refresh < 30 * 60, "must refresh before the 30-minute ID token expires"
+    expire = _go_duration_seconds(env.get("OAUTH2_PROXY_COOKIE_EXPIRE", {}).get("value", "168h"))
+    # oauth2-proxy v7.15.4 pkg/validation/cookie.go refuses refresh >= expire.
+    assert refresh < expire
+
+
+def test_cookie_refresh_is_not_combined_with_a_minimal_session_cookie() -> None:
+    # pkg/validation/sessions.go: "cookie_refresh > 0 requires oauth tokens in
+    # sessions. session_cookie_minimal cannot be set" - a minimal cookie drops
+    # the refresh token, and the proxy would refuse to start.
+    env = _proxy_env()
+    assert "OAUTH2_PROXY_COOKIE_REFRESH" in env
+    minimal = env.get("OAUTH2_PROXY_SESSION_COOKIE_MINIMAL", {}).get("value", "false")
+    assert minimal.lower() != "true"

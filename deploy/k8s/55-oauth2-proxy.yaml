@@ -106,8 +106,37 @@ spec:
               value: "true"
             - name: OAUTH2_PROXY_SKIP_PROVIDER_BUTTON
               value: "true"
+            # Must stay "false" while COOKIE_REFRESH is set (below): a minimal
+            # cookie strips the refresh token, and v7.15.4
+            # pkg/validation/sessions.go refuses "cookie_refresh > 0 requires
+            # oauth tokens in sessions. session_cookie_minimal cannot be set"
+            # (PASS_AUTHORIZATION_HEADER's id_token claim is refused the same
+            # way). It has always been "false" here, so the cookie already
+            # carries the ID, access and refresh tokens and refresh adds none;
+            # past 4000 bytes pkg/sessions/cookie/session_store.go splits it
+            # into `<name>_0`, `<name>_1`, ... and joins them on read.
             - name: OAUTH2_PROXY_SESSION_COOKIE_MINIMAL
               value: "false"
+            # KEEP THE LOGIN ALIVE. Production, 2026-09-14 (Loki): the proxy
+            # started with `expiry:168h0m0s refresh:disabled`, so the Keycloak
+            # ID token it forwards (30-minute lifetime) was never renewed, and
+            # after 30 minutes the api refused it with 401 `invalid bearer
+            # token: Signature has expired` - players bounced to login mid-game.
+            # With a refresh period, the session loader
+            # (pkg/middleware/stored_session.go) redeems the refresh token on
+            # the first request whose session is older than 20m, before that
+            # request is proxied, and providers/oidc.go `redeemRefreshToken`
+            # (which keycloak-oidc inherits; the v7.15.4 overview lists
+            # Keycloak as supporting --cookie-refresh) replaces the session's
+            # IDToken with the refreshed one - which is what
+            # PASS_AUTHORIZATION_HEADER forwards, so the api sees a fresh exp.
+            # 20m < 30m token lifetime, and < cookie_expire (default 168h, which
+            # validation requires). Keycloak's SSO Session Idle timeout still
+            # bounds an idle user: once it lapses the refresh fails with
+            # invalid_grant, the proxy clears the session, and the next page load
+            # goes to login.
+            - name: OAUTH2_PROXY_COOKIE_REFRESH
+              value: "20m"
             # SET_XAUTHREQUEST + PASS_ACCESS_TOKEN produce the
             # `X-Auth-Request-*` **response** headers, including
             # `X-Auth-Request-Access-Token` (which needs both flags - see
