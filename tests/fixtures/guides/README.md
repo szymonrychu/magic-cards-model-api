@@ -167,3 +167,18 @@ The play-script conflict corpus, `tests/fixtures/conflict_corpus.json`, is
 **not** part of this slice and is not refreshed with it: it is a copy of
 mtg-decks' `scripts/tests/fixtures/conflict_corpus.json`, pinned by its own
 hash in `tests/test_playscript_conflict_corpus.py`, and is synced separately.
+
+## Plays ahead of the pin
+
+`ahead-of-pin/decks/<slug>/plays/*.json` holds play scripts a test reads that
+are newer than `MTG_DECKS_SHA`, each copied verbatim from the mtg-decks commit
+named below with `git -C <mtg-decks> show <sha>:<path>`, never from a working
+checkout. They live outside `decks/` on purpose: the seed-play tests glob and
+register `decks/*/plays/*.json` as the pinned corpus, and a newer play there
+would change that corpus (and duplicate the id a test registers on top of it).
+No test reads a sibling mtg-decks checkout. At the next slice refresh, a play
+here that the new pin carries moves into `decks/` and leaves this directory.
+
+| file | mtg-decks commit | read by |
+|---|---|---|
+| `boros-aggro/plays/open-fetch-unlocks.json` | `f5b86bc` (`f5b86bceda52a29d18aeff7f55a49c1e15aa5af3`), unchanged at `1c1a69a` | `tests/test_playscript_end_to_end.py` |

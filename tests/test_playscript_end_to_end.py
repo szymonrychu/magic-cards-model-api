@@ -54,15 +54,14 @@ GUIDES_REVISION = re.search(
     (TESTS / "driver" / "test_guides.py").read_text(),
     re.MULTILINE,
 ).group(1)
-#: The live mtg-decks worktree, a sibling of this repo - not the vendored
-#: `GUIDES` slice, which is pinned behind `open-fetch-unlocks`'s own
-#: addition (M2, "a fetch's own choose_cards pick needs a library land's
-#: unlocks"). Read verbatim, straight off the real file, rather than copied
-#: into a fixture - the same "worktree carries the engine as a sibling"
-#: arithmetic `test_command_runner.py`'s `_ENGINE_PRINTINGS` already uses.
-MTG_DECKS_ROOT = TESTS.parent.parent / "mtg-decks"
+#: A play newer than the `GUIDES` slice's own pin (M2, "a fetch's own
+#: choose_cards pick needs a library land's unlocks"), vendored verbatim from
+#: mtg-decks under `ahead-of-pin/` rather than read off a sibling checkout -
+#: see `tests/fixtures/guides/README.md`. Kept outside `decks/` so the pinned
+#: corpus the seed-play tests glob and register stays exactly the pin.
+AHEAD_OF_PIN = GUIDES / "ahead-of-pin" / "decks"
 OPEN_FETCH_UNLOCKS = json.loads(
-    (MTG_DECKS_ROOT / "decks" / "boros-aggro" / "plays" / "open-fetch-unlocks.json").read_text()
+    (AHEAD_OF_PIN / "boros-aggro" / "plays" / "open-fetch-unlocks.json").read_text()
 )
 
 ME, OPPONENT = "alice", "bob"

@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "id": "open-fetch-unlocks",
+  "name": "Crack a fetch on turn 1-2 for a land that unlocks a hand card",
+  "intent": "On turn 1 or 2, once open-land-unlocks has had first refusal, play a fetch from hand and crack it for whatever land in the library would unlock some other hand card - Arid Mesa found for a library Mountain that lets Ragavan be cast. The fetch itself is chosen among whichever hand fetches can already reach an unlock (select's own unlocks_by_search: true already narrows to exactly that, regardless of prefer order - the prefer tiers below only break a genuine tie between two or more such fetches). Prefers a fetch that searches for Swamp (Marsh Flats) then one that searches for Island (Flooded Strand) ahead of Arid Mesa specifically: Arid Mesa's own Mountain-or-Plains search always overlaps every other fetch's own Plains half, so a review found it winning prefer by simply being listed Mountain-first even in a hand where the actual unlock needed nothing red at all - Arid Mesa is picked only when it is the only fetch select admits (see the invariant test below), never by default. searches_for_any reads the fetch's own template rather than the printed 'Search your library for' phrase, since that phrase also matches Urza's Saga elsewhere in the format and searches_for_any is what actually narrows to a basic land type. Its own choose_cards pick prefers a basic first (never spend life when a free basic unlocks the same thing), then a shockland, paying life only when the fetch's own find needs it. The source cracked is always the one whose own search can reach the unlock (unlocks_by_search: true, in select rather than merely preferred - this play only fires when some hand-or-library path unlocks something, so its own crack source is never legitimately one that cannot reach it; the DSL has no 'played this turn' condition to prefer instead, but unlocks_by_search is strictly the correct criterion regardless of when a battlefield fetch was played). Stands down once open-land-unlocks would already fire (U's own key), at 7 life or less, and once the library is down to 5 cards or fewer - thinning this early is not worth decking risk later. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 72,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_search": true
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": "<=",
+      "n": 7
+    },
+    {
+      "kind": "zone_size",
+      "zone": "library",
+      "side": "me",
+      "op": "<=",
+      "n": 5
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "unlocks_by_search": true
+        },
+        "prefer": [
+          {
+            "searches_for_any": [
+              "Swamp"
+            ]
+          },
+          {
+            "searches_for_any": [
+              "Island"
+            ]
+          }
+        ],
+        "ties": "any"
+      }
+    },
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "tapped": false,
+          "unlocks_by_search": true
+        },
+        "ties": "any"
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "unlocks": true
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "supertypes_any": [
+                  "Basic"
+                ]
+              },
+              {
+                "oracle_has": "you may pay 2 life"
+              }
+            ],
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "pay_life",
+          "accept": true
+        }
+      ]
+    }
+  ],
+  "next": []
+}
