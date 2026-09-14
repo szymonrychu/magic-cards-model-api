@@ -435,8 +435,27 @@ def _command_divergence(_: Request, exc: commands.CommandDivergenceError) -> JSO
     again, the same shape of problem a 409 already means everywhere else in
     this api - `PregameOverruled` (below) is the same status for the same
     reason.
+
+    **The question expired, and the body says so in a stable shape.** By the
+    time this answers, `_resume` has cleared the stale pause, so the game is
+    never left stuck on a question nothing can answer (a deploy that changes
+    how a replay mints ids makes every stored pause diverge). `detail` and
+    `reason` are `commands.QUESTION_EXPIRED`, telling the client to re-issue
+    the original action; `expired: True` is the key a client branches on to
+    refresh rather than re-send; `allowed`/`accepted: False` make every seat
+    and browser caller read it as the refusal it is. The replay's own
+    comparison stays in the server log (`CommandDivergenceError` logs it).
     """
-    return JSONResponse(status_code=409, content={"detail": str(exc)})
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": commands.QUESTION_EXPIRED,
+            "reason": commands.QUESTION_EXPIRED,
+            "expired": True,
+            "allowed": False,
+            "accepted": False,
+        },
+    )
 
 
 @app.exception_handler(commands.DecisionInProgressError)
@@ -1044,16 +1063,26 @@ def _resume(
     command actually replays with it (the same propagation `run_command`
     already gives `_run_command`'s callers), and
     `commands.CommandDivergenceError` when the stored pause turns out to be
-    stale (`resume_command`'s own replay-divergence guard) - neither is
+    stale (`resume_command`'s own replay-divergence guard). The first is not
     caught here; `POST .../decide` and its `actions/attack`/
-    `actions/declare-blockers` aliases each turn the first into their own
-    synchronous `{"accepted": False, ...}` refusal, and the second reaches
-    this api's registered 409 handler unchanged.
+    `actions/declare-blockers` aliases each turn it into their own
+    synchronous `{"accepted": False, ...}` refusal. The second clears the
+    stale pause first - a question that no longer replays can never be
+    answered, and leaving it would 409 every answer forever - and then
+    reaches this api's registered 409 handler, which tells the client the
+    question expired and to re-issue the original action.
     """
     with store.locked(game_id) as game:
         commands.refuse_if_over(game, "decide")
         legal_before = records.legal_actions_before(game, player, pending)
-        result = commands.resume_command(game, command, tape, pending, answer)
+        try:
+            result = commands.resume_command(game, command, tape, pending, answer)
+        except commands.CommandDivergenceError:
+            # The stored question no longer replays, so no answer can ever be
+            # accepted for it: cleared here, under the lock, so the game is not
+            # stuck on it, and the 409 tells the client to re-issue the action.
+            store.clear_paused_command(game_id)
+            raise
         # The answer is taken on the board its question was asked on (B3-11).
         records.note_action_board(game_id, result.asked_on or game)
         seq: int | None = None

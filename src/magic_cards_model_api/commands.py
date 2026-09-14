@@ -1088,6 +1088,17 @@ def refuse_if_over(game: Game, attempted: str) -> None:
         raise GameOverError(game, attempted)
 
 
+#: What a client is told when a stored pause no longer replays to its stored
+#: question (`CommandDivergenceError`): the pause has been cleared (`app._resume`)
+#: and the way on is to re-issue the action that paused. Stable text, pinned by
+#: `tests/test_decide_diverged_pause.py`.
+QUESTION_EXPIRED = (
+    "This question has expired: the game no longer asks it the way it was stored "
+    "(the server may have been updated since it was asked), so it has been cleared. "
+    "Re-issue the original action to be asked again."
+)
+
+
 class CommandDivergenceError(RuntimeError):
     """The replay-divergence guard tripped: re-running `command` from the
     committed snapshot with the tape as it stood *before* a new answer was

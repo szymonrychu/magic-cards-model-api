@@ -28,17 +28,26 @@ routes:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import logging
+import sys
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from types import CodeType, FrameType
 from typing import Any
 
 import httpx
 import pytest
-from conftest import _ADMIN_KEYS, force_turn_position
+from conftest import _ADMIN_KEYS, add_card, force_turn_position
 from magic_cards_model.machines import Step
-from magic_cards_model.snapshot import board_computations, uncached_boards
+from magic_cards_model.machines.layers import NotOnBoard
+from magic_cards_model.models import CardState, Color, Zone
+from magic_cards_model.models.game import Game
+from magic_cards_model.snapshot import BoardSnapshotStale, board_computations, uncached_boards
 from test_action_answer_size import BOARD, GRAVE, stage_card
 
-from magic_cards_model_api import commands
+from magic_cards_model_api import commands, engine_api, serialize
+from magic_cards_model_api.board_scope import one_board
 from magic_cards_model_api.main import app
 from magic_cards_model_api.store import store
 
@@ -318,6 +327,271 @@ def test_an_action_is_followed_by_the_board_it_left_not_a_stale_one(client, game
     after = client.get(f"/api/games/{game}", params={"uid": admin}).json()
     assert _power_of(after, "Grizzly Bears", "alice") == (3, 3)
     assert _power_of(after, "Angel of Jubilation", "alice") == (3, 3)
+
+
+def _make_the_board_stale(game: Game, kind: str) -> CardState | None:
+    """A real change the engine has to catch, made while a read holds a cached
+    board: `stale` edits the game in place without announcing it and then makes
+    an announced store, which is where the engine checks the cached board and
+    raises `BoardSnapshotStale`; `missing` puts a permanent onto the battlefield
+    in place and asks the cached board about it, which raises `NotOnBoard`
+    (and returns the permanent it put there, for a caller to take back)."""
+    printing = next(iter(game.battlefield)).card
+    if kind == "stale":
+        exiled = CardState(card=printing, zone=Zone.EXILE, controller="alice", owner="alice")
+        game.shared_zones.setdefault(Zone.EXILE, []).append(exiled)
+        bob = game.player("bob")
+        bob.life = bob.life
+        return None
+    else:
+        arrived = CardState(card=printing, zone=Zone.BATTLEFIELD, controller="alice", owner="alice")
+        arrived.bind_to_game(game)
+        game.shared_zones[Zone.BATTLEFIELD].append(arrived)
+        try:
+            game.characteristics_of(arrived)
+        finally:
+            _put_there.append(arrived)
+        return arrived
+
+
+#: Permanents `_make_the_board_stale` put onto a battlefield in place.
+_put_there: list[CardState] = []
+
+
+@contextmanager
+def _stale_on_first_call(
+    game: Game, callee: CodeType, kind: str, subject: CardState | None = None
+) -> Iterator[list[bool]]:
+    """For the extent of the block, the first call into `callee` in this thread
+    (on `subject`, when given) makes the board stale from inside that call."""
+    fired: list[bool] = []
+
+    def tracer(frame: FrameType, event: str, arg: Any) -> None:
+        if event != "call" or frame.f_code is not callee or fired:
+            return None
+        if subject is not None and frame.f_locals.get("permanent") is not subject:
+            return None
+        fired.append(True)
+        _make_the_board_stale(game, kind)
+        return None
+
+    previous = sys.gettrace()
+    sys.settrace(tracer)
+    try:
+        yield fired
+    finally:
+        sys.settrace(previous)
+
+
+STALE_KINDS = pytest.mark.parametrize(
+    ("kind", "raised"), [("stale", BoardSnapshotStale), ("missing", NotOnBoard)]
+)
+
+
+def _loyalty_clause(game: Game, permanent: CardState) -> str:
+    ability = next(
+        ability
+        for ability in game.activated_abilities(permanent)
+        if ability.mana is not None and ability.loyalty is not None
+    )
+    return (
+        f"{permanent.name} was not auto-tapped because its only mana ability costs "
+        f"more than {{T}} ({ability.cost}: {ability.effect}) - activate it manually to "
+        "include it"
+    )
+
+
+@STALE_KINDS
+def test_a_board_gone_stale_inside_the_loyalty_advice_filter_is_re_read_and_filtered(
+    client, game, caplog, kind, raised
+) -> None:
+    """Ugin, Eye of the Storms' `0: Add {C}{C}{C}` is a loyalty ability, so its
+    "activate it manually" clause is filtered. A board that goes stale while
+    Ugin's abilities are read must send the whole filter round again on fresh
+    boards, never skip Ugin and leave the clause in."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Ugin, Eye of the Storms", "alice", "battlefield")
+    live = store.get(game)
+    assert live is not None
+    ugin = next(card for card in live.battlefield if card.name == "Ugin, Eye of the Storms")
+    reason = f"cannot pay {{9}}: {_loyalty_clause(live, ugin)}"
+
+    with (
+        caplog.at_level(logging.WARNING, logger="mcm.board_scope"),
+        _stale_on_first_call(live, Game.activated_abilities.__code__, kind, ugin) as fired,
+    ):
+        filtered = engine_api.without_loyalty_mana_advice(live, reason)
+
+    _put_there.clear()
+    assert fired, "the board really went stale inside Ugin's read"
+    assert filtered == "cannot pay {9}"
+    assert any("afresh" in record.getMessage() for record in caplog.records), caplog.records
+
+
+def _sites(game: Game) -> dict[str, tuple[CodeType, CardState | None, Callable[[], Any]]]:
+    """Every broad `except` in the api that runs inside a board scope around an
+    engine read of the board: the engine call it guards, and a call reaching it."""
+    sol_ring = next(card for card in game.battlefield if card.name == "Sol Ring")
+    ugin = next(card for card in game.battlefield if card.name == "Ugin, Eye of the Storms")
+    abilities = Game.activated_abilities.__code__
+    clause = f"x: {_loyalty_clause(game, ugin)}"
+    return {
+        "loyalty-advice": (
+            abilities,
+            ugin,
+            lambda: engine_api._without_loyalty_mana_advice(game, clause),
+        ),
+        "mana-ability-at": (
+            abilities,
+            sol_ring,
+            lambda: engine_api.mana_ability_at(game, sol_ring, 0),
+        ),
+        "sole-mana-ability": (
+            abilities,
+            sol_ring,
+            lambda: engine_api._sole_mana_ability(game, sol_ring),
+        ),
+        "own-count": (
+            engine_api._resolve.__code__,
+            None,
+            lambda: engine_api._expanded_to_the_abilitys_own_count(sol_ring, game, [Color("C")]),
+        ),
+        "list-abilities": (abilities, sol_ring, lambda: engine_api.list_abilities(game, sol_ring)),
+    }
+
+
+SITES = ["loyalty-advice", "mana-ability-at", "sole-mana-ability", "own-count", "list-abilities"]
+
+
+@STALE_KINDS
+@pytest.mark.parametrize("site", SITES)
+def test_no_broad_except_inside_a_board_scope_swallows_a_stale_board(
+    client, game, kind, raised, site
+) -> None:
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Sol Ring", "alice", "battlefield")
+    add_card(client, game, "Ugin, Eye of the Storms", "alice", "battlefield")
+    live = store.get(game)
+    assert live is not None
+    callee, subject, call = _sites(live)[site]
+
+    with one_board(live):
+        live.computed_board()
+        with _stale_on_first_call(live, callee, kind, subject) as fired, pytest.raises(raised):
+            call()
+        # Taken back before this test's own scope ends, which would otherwise
+        # catch the unannounced append itself.
+        while _put_there:
+            live.shared_zones[Zone.BATTLEFIELD].remove(_put_there.pop())
+    assert fired
+
+
+def _race_a_state_view(
+    client, game: str, monkeypatch: pytest.MonkeyPatch, write: Callable[[Callable[[], None]], None]
+) -> httpx.Response:
+    """GET state parked right after its first battlefield card was read - the
+    board computed and cached - while `write` runs in this thread. `write` is
+    handed `carry_on`, which lets the view go on over the rest of the live
+    battlefield list and waits for its response, so a write can let the read
+    through at exactly the point of the edit it is racing."""
+    parked, resume, read_done = threading.Event(), threading.Event(), threading.Event()
+    armed = [True]
+    card_view = serialize._card_view
+
+    def parking_card_view(board: Game, card: CardState, images: Any) -> dict[str, Any]:
+        view = card_view(board, card, images)
+        if armed[0] and card.zone is Zone.BATTLEFIELD:
+            armed[0] = False
+            parked.set()
+            assert resume.wait(30)
+        return view
+
+    monkeypatch.setattr(serialize, "_card_view", parking_card_view)
+    outcome: dict[str, Any] = {}
+
+    def read() -> None:
+        try:
+            outcome["response"] = client.get(
+                f"/api/games/{game}", params={"uid": _ADMIN_KEYS[game]}
+            )
+        except BaseException as exc:  # noqa: BLE001 - handed to the test thread
+            outcome["error"] = exc
+        finally:
+            read_done.set()
+
+    def carry_on() -> None:
+        resume.set()
+        assert read_done.wait(30), "the state view never finished"
+
+    reader = threading.Thread(target=read)
+    reader.start()
+    try:
+        assert parked.wait(30), "the state view never reached the battlefield"
+        write(carry_on)
+    finally:
+        resume.set()
+        reader.join(30)
+    assert "error" not in outcome, outcome.get("error")
+    return outcome["response"]
+
+
+def _battlefield_names(response: httpx.Response) -> list[str]:
+    assert response.status_code == 200, response.text
+    return [card["name"] for card in response.json()["battlefield"]]
+
+
+def test_a_state_view_racing_the_setup_route_returns_the_card_it_put_on_the_battlefield(
+    client, game, monkeypatch, caplog
+) -> None:
+    """`POST .../cards` appends to the battlefield list in place, outside any
+    engine command and outside the lock the read does not take, and only then
+    stores the new card's own fields. The view is let through right after the
+    append: the route announces that edit, so the view recomputes its board
+    rather than asking the cached one about a card it was never computed
+    with, and needs no re-read."""
+    for _ in range(3):
+        add_card(client, game, "Forest", "alice", "battlefield")
+    put_card_in_zone = engine_api.put_card_in_zone
+
+    def write(carry_on: Callable[[], None]) -> None:
+        def put_then_let_the_view_through(*args: Any, **kwargs: Any) -> None:
+            put_card_in_zone(*args, **kwargs)
+            carry_on()
+
+        monkeypatch.setattr(engine_api, "put_card_in_zone", put_then_let_the_view_through)
+        add_card(client, game, "Memnite", "alice", "battlefield")
+
+    with caplog.at_level(logging.WARNING, logger="mcm.board_scope"):
+        response = _race_a_state_view(client, game, monkeypatch, write)
+
+    assert _battlefield_names(response).count("Memnite") == 1
+    assert not [r for r in caplog.records if "afresh" in r.getMessage()], "announced: no re-read"
+
+
+def test_a_state_view_racing_an_unannounced_battlefield_append_is_read_again(
+    client, game, monkeypatch, caplog
+) -> None:
+    """An in-place append nobody announced leaves the cached board without the
+    card; the lookup's `NotOnBoard` is a stale board, and the view is read
+    again with every board computed afresh."""
+    for _ in range(3):
+        add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Memnite", "alice", "hand")
+    live = store.get(game)
+    assert live is not None
+
+    def write(carry_on: Callable[[], None]) -> None:
+        printing = next(card for card in live.player("alice").hand if card.name == "Memnite").card
+        arrived = CardState(card=printing, zone=Zone.BATTLEFIELD, controller="alice", owner="alice")
+        arrived.bind_to_game(live)
+        live.shared_zones[Zone.BATTLEFIELD].append(arrived)
+        carry_on()
+
+    with caplog.at_level(logging.WARNING, logger="mcm.board_scope"):
+        response = _race_a_state_view(client, game, monkeypatch, write)
+
+    assert _battlefield_names(response).count("Memnite") == 1
+    assert [r for r in caplog.records if "afresh" in r.getMessage()], "the view was read again"
 
 
 def test_loyalty_mana_advice_reads_one_board_on_any_battlefield(client) -> None:

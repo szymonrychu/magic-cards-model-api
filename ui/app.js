@@ -283,6 +283,12 @@ export async function send(method, path, body) {
   try {
     return await api(method, path, body);
   } catch (err) {
+    // A question the server expired (409 with `expired: true`, `app.
+    // _command_divergence`: the stored pause no longer replays and has been
+    // cleared) is a refusal with its own reason, not a broken connection. It
+    // is handed back as one, so `decide()` toasts it and refreshes onto the
+    // board as it now stands instead of anything re-sending the answer.
+    if (err.status === 409 && err.body && err.body.expired === true) return err.body;
     store.set({ connection: `error: ${err.message}` });
     toast(err.message);
     return null;
