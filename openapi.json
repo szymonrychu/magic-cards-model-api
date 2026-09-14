@@ -2913,6 +2913,17 @@
       "CardFaceView": {
         "description": "One face of a double-faced card (`serialize._faces_view`), as printed.",
         "properties": {
+          "land_face": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Land Face"
+          },
           "mana_cost": {
             "anyOf": [
               {

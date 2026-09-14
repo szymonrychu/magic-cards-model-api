@@ -1595,6 +1595,12 @@ class CardFaceView(BaseModel):
     mana_cost: str | None = None
     type_line: str | None = None
     oracle_text: str | None = None
+    land_face: bool | None = None
+    """True on the one face a modal double-faced card plays as a land
+    (CR 712.12, `Card.land_face`) - never set on a transform or meld card's
+    faces, whichever of them types as a Land: that land is reached only by
+    transforming or melding (CR 712.2), never a land drop. Absent (not
+    False) on every other face."""
 
 
 class _CardViewFields(BaseModel):

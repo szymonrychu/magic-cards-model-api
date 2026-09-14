@@ -117,17 +117,23 @@ card") contributes nothing, so a generic land search never matches.
 
 ### `land_face`
 
-A boolean selector field: true when any face the view carries (`faces`,
-present for a modal double-faced card regardless of its current zone or
-chosen face - `serialize._faces_view`) types as a Land. A creature-fronted
-MDFC land (Witch Enchanter // Witch-Blessed Meadow, Sink into Stupor) matches
-it in hand even though its up face is a Creature or a Sorcery, so a plain
-`types_all: [Land]` still does not match it - that reads only the up face,
-CR 712.8a. A single-faced card has no `faces`, so its own type line is read
-instead: a plain land matches `land_face: true` too. `play_land` plays
-whichever face is a land by the card's own `card_id` - there is no separate
-face id in the request, because CR 712.12 is the same land drop either way
-and the engine resolves the face from the id (`Card.land_face`).
+A boolean selector field: true when a **modal double-faced card** (CR
+712.12) carries a face marked `land_face` (`faces`, present regardless of
+its current zone or chosen face - `serialize._faces_view`, which marks only
+the one face the engine's own `Card.land_face` names). A creature-fronted
+MDFC land (Witch Enchanter // Witch-Blessed Meadow, Jwari Disruption //
+Jwari Ruins) matches it in hand even though its up face is a Creature or an
+Instant, so a plain `types_all: [Land]` still does not match it - that reads
+only the up face, CR 712.8a. A transform or meld card also carries `faces`
+(the UI shows both) but never a `land_face` mark: its land back (Treasure
+Map // Treasure Cove) is reached only by transforming or melding (CR
+712.2), never a land drop, so it never matches even though one of its faces
+plainly types as a Land. A single-faced card has no `faces`, so its own
+type line is read instead: a plain land matches `land_face: true` too.
+`play_land` plays whichever face is a land by the card's own `card_id` -
+there is no separate face id in the request, because CR 712.12 is the same
+land drop either way and the engine resolves the face from the id
+(`Card.land_face`).
 
 ### `missing_from`
 

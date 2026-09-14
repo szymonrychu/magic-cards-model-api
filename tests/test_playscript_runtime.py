@@ -2185,6 +2185,7 @@ def test_play_land_plays_an_mdfcs_land_face_by_the_cards_own_id() -> None:
                 "mana_cost": "",
                 "type_line": "Land",
                 "oracle_text": "As this land enters, you may pay 3 life.",
+                "land_face": True,
             },
         ],
     }

@@ -236,6 +236,7 @@ WITCH_FACES = [
         "mana_cost": "",
         "type_line": "Land",
         "oracle_text": "As this land enters, you may pay 3 life.",
+        "land_face": True,
     },
 ]
 
@@ -276,31 +277,37 @@ def test_a_double_faced_permanent_reads_its_computed_type_line_and_up_face_text(
 
 # -- land_face (O5) ----------------------------------------------------------
 
-SINK_FACES = [
+#: Jwari Disruption // Jwari Ruins (ZNR modal double-faced card), real
+#: printed text (`magic-cards-model`'s `data/printings/jwari_disruption.
+#: json`) - O3/O5's selector tests take card text from the engine's real
+#: printings rather than invent it, so a fixture reads exactly what the
+#: engine would serialize.
+JWARI_FACES = [
     {
-        "name": "Sink into Stupor",
+        "name": "Jwari Disruption",
         "mana_cost": "{1}{U}",
-        "type_line": "Sorcery",
-        "oracle_text": "Return target creature to its owner's hand.",
+        "type_line": "Instant",
+        "oracle_text": "Counter target spell unless its controller pays {1}.",
     },
     {
-        "name": "Sink into Stupor's land back face",
+        "name": "Jwari Ruins",
         "mana_cost": "",
         "type_line": "Land",
-        "oracle_text": "This land enters tapped.",
+        "oracle_text": "This land enters tapped.\n{T}: Add {U}.",
+        "land_face": True,
     },
 ]
 
 
-def _sink(zone: str) -> dict:
-    view = card("Sink into Stupor", type_line="Sorcery // Land", zone=zone, oracle_text=None)
-    view["card_name"] = "Sink into Stupor // Sink into Stupor's land back face"
-    view["faces"] = [dict(face) for face in SINK_FACES]
+def _jwari(zone: str) -> dict:
+    view = card("Jwari Disruption", type_line="Instant // Land", zone=zone, oracle_text=None)
+    view["card_name"] = "Jwari Disruption // Jwari Ruins"
+    view["faces"] = [dict(face) for face in JWARI_FACES]
     return view
 
 
 def test_land_face_matches_an_mdfc_with_a_land_back_face_in_hand():
-    assert matches({"land_face": True}, _sink("hand"))
+    assert matches({"land_face": True}, _jwari("hand"))
     assert matches({"land_face": True}, _dfc("hand", "Witch Enchanter"))
 
 
@@ -310,15 +317,49 @@ def test_land_face_false_matches_a_card_with_no_land_face():
 
 
 def test_a_plain_types_all_land_does_not_match_an_mdfc_whose_front_face_is_not_a_land():
-    assert not matches({"types_all": ["Land"]}, _sink("hand"))
+    assert not matches({"types_all": ["Land"]}, _jwari("hand"))
     assert not matches({"types_all": ["Land"]}, _dfc("hand", "Witch Enchanter"))
     selector = {"land_face": True, "types_all": ["Land"]}
-    assert not matches(selector, _sink("hand")), "types_all still reads the up face"
+    assert not matches(selector, _jwari("hand")), "types_all still reads the up face"
 
 
 def test_land_face_matches_a_plain_land_too():
     assert matches({"land_face": True}, fetchland())
     assert matches({"land_face": True}, mountain())
+
+
+def test_land_face_does_not_match_a_transform_cards_land_back():
+    """O5's fix: only a modal double-faced card's face is marked `land_face`
+    - a transform card's land back (Treasure Map // Treasure Cove, real
+    printed text from `data/printings/treasure_map.json`) is reached only by
+    transforming (CR 712.2), never a land drop, so it must never match even
+    though its own face plainly types as a Land."""
+    view = card("Treasure Map", type_line="Artifact // Land", zone="hand", oracle_text=None)
+    view["card_name"] = "Treasure Map // Treasure Cove"
+    view["faces"] = [
+        {
+            "name": "Treasure Map",
+            "mana_cost": "{2}",
+            "type_line": "Artifact",
+            "oracle_text": (
+                "{1}, {T}: Scry 1. Put a landmark counter on this artifact. Then if there "
+                "are three or more landmark counters on it, remove those counters, "
+                "transform this artifact, and create three Treasure tokens. (They're "
+                'artifacts with "{T}, Sacrifice this token: Add one mana of any color.")'
+            ),
+        },
+        {
+            "name": "Treasure Cove",
+            "mana_cost": "",
+            "type_line": "Land",
+            "oracle_text": (
+                "(Transforms from Treasure Map.)\n{T}: Add {C}.\n"
+                "{T}, Sacrifice a Treasure: Draw a card."
+            ),
+        },
+    ]
+    assert not matches({"land_face": True}, view)
+    assert matches({"land_face": False}, view)
 
 
 # -- searches_for_any (O3) --------------------------------------------------------
@@ -327,10 +368,18 @@ FETCH_TEMPLATE = (
     "{T}, Pay 1 life, Sacrifice this land: Search your library for %s card, "
     "put it onto the battlefield, then shuffle."
 )
-LANDCYCLING_TEMPLATE = (
-    "Landcycling {G} ({G}, Discard this card: Search your library for %s card, "
-    "reveal it, and put it into your hand. Then shuffle.)"
-)
+
+
+#: The machine-readable ability text `machines/keywords.py`'s
+#: `off_zone_abilities`/`_synthetic_ability` actually synthesizes for a
+#: typecycling keyword - not the printed reminder text, the expansion CR
+#: 702.29e means: `<cost>, Discard this card: Search your library for a
+#: <type> card, reveal it, and put it into your hand. Then shuffle.`
+def typecycling_ability(cost: str, type_name: str) -> str:
+    return (
+        f"{cost}, Discard this card: Search your library for a {type_name} card, "
+        f"reveal it, and put it into your hand. Then shuffle."
+    )
 
 
 def strand() -> dict[str, Any]:
@@ -355,17 +404,28 @@ def tarn() -> dict[str, Any]:
 
 
 def generous_ent() -> dict[str, Any]:
-    # Generous Ent's landcycling ability searches for a Forest card, in
-    # hand - the engine synthesizes it off the printed Landcycling keyword
+    # Generous Ent's real printed text (magic-cards-model's data/printings/
+    # generous_ent.json): Reach, a Food-token ETB, and Forestcycling {1} -
+    # no attack trigger at all. The typecycling ability searches for a
+    # Forest card in hand; the engine synthesizes the machine-readable
+    # ability off the printed Forestcycling keyword
     # (machines/keywords.py off_zone_abilities), so it is on `abilities`.
-    text = LANDCYCLING_TEMPLATE % "a Forest"
-    attack_trigger = "Whenever Generous Ent attacks, create a 0/0 green Elemental creature token."
+    reach = "Reach"
+    food = (
+        "When this creature enters, create a Food token. (It's an artifact with "
+        '"{2}, {T}, Sacrifice this token: You gain 3 life.")'
+    )
+    reminder = (
+        "Forestcycling {1} ({1}, Discard this card: Search your library for a "
+        "Forest card, reveal it, put it into your hand, then shuffle.)"
+    )
+    ability = typecycling_ability("{1}", "Forest")
     return card(
         "Generous Ent",
         type_line="Creature — Treefolk",
         zone="hand",
-        oracle_text=f"{attack_trigger}\n{text}",
-        abilities=(text,),
+        oracle_text=f"{reach}\n{food}\n{reminder}",
+        abilities=(ability,),
     )
 
 

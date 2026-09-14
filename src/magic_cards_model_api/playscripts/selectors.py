@@ -26,12 +26,15 @@ card name (design D3):
   even in hand (`off_zone_abilities`). A word the template names outside the
   five (Expedition Map's "a land card") contributes nothing, so a generic
   land search never matches it;
-- `land_face` (O5) is true when any face the view carries (`faces`, present
-  regardless of zone for a modal double-faced card) types as a Land - a
+- `land_face` (O5) is true when a *modal* double-faced card's face is marked
+  `land_face` (`serialize._faces_view`, present regardless of zone) - a
   creature-fronted MDFC land matches it in hand even though a plain
   `types_all: [Land]` never does, since that reads only the up face. A
-  single-faced card is read on its own type line, so a plain land matches
-  too;
+  transform or meld card carries `faces` too but never a `land_face` mark:
+  its land back is reached only by transforming or melding (CR 712.2), never
+  a land drop, so it never matches even though one of its faces types as a
+  Land. A single-faced card is read on its own type line, so a plain land
+  matches too;
 - `missing_from {zones, side, by}` compares the candidate with the cards
   already on that side in those zones, read through `present` (the board
   `conditions.presence` builds from the same redacted view). `by: subtype`
@@ -167,18 +170,24 @@ def _searched_basic_types(card: dict[str, Any], oracle_text: str) -> set[str]:
 
 
 def _has_land_face(card: dict[str, Any]) -> bool:
-    """O5's `land_face`: does this card have a face that types as a Land? A
-    modal double-faced card carries `faces` (`serialize._faces_view`)
-    regardless of its current zone or chosen face, so a creature-fronted
-    MDFC whose back is a land (Witch Enchanter // Witch-Blessed Meadow)
-    matches this in hand even though its up face does not have the Land
-    type - `play_land` plays that face by the card's own id (`Game.
-    play_land`'s `Card.land_face` mirror read), never a separate id. A
-    single-faced card carries no `faces`, so its own type line is read
-    instead - a plain land is its own land face."""
+    """O5's `land_face`: does this card have a modal-double-faced land face
+    (CR 712.12)? A modal double-faced card carries `faces`
+    (`serialize._faces_view`) regardless of its current zone or chosen face,
+    each marked `land_face: True` only on the one engine's own `Card.
+    land_face` names - a creature-fronted MDFC whose back is a land (Witch
+    Enchanter // Witch-Blessed Meadow) matches this in hand even though its
+    up face does not have the Land type, and `play_land` plays that face by
+    the card's own id (`Game.play_land`'s `Card.land_face` mirror read),
+    never a separate id. A transform or meld card also carries `faces` (the
+    UI shows both), but never one marked `land_face`: its land back (Treasure
+    Map // Treasure Cove) is reached only by transforming or melding
+    (CR 712.2), never a land drop, so this never matches it even though a
+    face of it plainly types as a Land. A single-faced card carries no
+    `faces`, so its own type line is read instead - a plain land is its own
+    land face."""
     faces = [face for face in card.get("faces") or [] if isinstance(face, dict)]
     if faces:
-        return any("land" in parse_type_line(face.get("type_line"))[1] for face in faces)
+        return any(face.get("land_face") is True for face in faces)
     return "land" in parse_type_line(card.get("type_line"))[1]
 
 

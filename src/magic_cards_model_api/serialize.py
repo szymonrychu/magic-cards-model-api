@@ -521,16 +521,25 @@ def _faces_view(state: CardState) -> list[dict[str, Any]] | None:
     """Each face of a double-faced card, front first, or None for any other
     card. A play-script selector picks the face a card has in its zone from
     this list (CR 712.8a, 712.8f) - `type_line` off the battlefield is the
-    printing's combined `Front // Back` line, which is neither face."""
+    printing's combined `Front // Back` line, which is neither face.
+
+    One face may carry `land_face: True` (`playscripts.selectors._has_land_
+    face`, O5): the engine's own `Card.land_face` (CR 712.12), which reads
+    only a modal double-faced card - a transform or meld card's land back
+    (Treasure Map // Treasure Cove) is reached only by transforming or
+    melding (CR 712.2), never a land drop, so it is never marked here even
+    though it is one of the `faces` below like any other."""
     faces = state.card.card_faces or []
     if state.card.layout not in _DOUBLE_FACED_LAYOUTS or len(faces) < 2:
         return None
+    land_face = state.card.land_face
     return [
         {
             "name": face.name,
             "mana_cost": face.mana_cost,
             "type_line": face.type_line,
             "oracle_text": face.oracle_text,
+            **({"land_face": True} if face is land_face else {}),
         }
         for face in faces
     ]
