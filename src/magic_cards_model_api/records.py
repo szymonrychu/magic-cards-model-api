@@ -853,20 +853,31 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
     that same finish's own `reapplicable_after: true`. A bare `start` with no
     matching `finish` yet (still in flight, or a crash) still blocks: this
     check cannot tell whether it moved anything. The release covers that run's
-    own start row too (newest first, so its finish is always read before it),
-    and never an `unknown_outcome` finish, whose move may have landed uncounted.
+    own start row too (newest first, so its finish is always read before it).
 
-    An advise finish always reports zero moves by design (it only ever
-    proposes), so `moves_done == 0` alone cannot tell a genuine proposal
-    apart from an advise attempt that never got the chance to move at all -
-    refused, interrupted, or the like, for a reason that has nothing to do
-    with the script itself (the human's own pending decision, most often -
-    S2 arming review). Only a *successful* advise finish (`exit ==
-    "advised"`) still burns the slot, so an armed advisor does not repeat
-    the same suggestion within one turn and step; a failed attempt releases
-    it, the same as a seat's own zero-move finish, so the advisor is not
-    locked out of ever proposing that script again once whatever blocked it
-    clears."""
+    The release itself is `playscripts.script_tools.releases_slot` -
+    imported here, lazily like every other cross-module read this function
+    already does, rather than reimplemented: this ledger row and the hint's
+    own in-process cache (`script_tools._record_run`) must apply exactly the
+    same rule, or a run one calls "touched nothing" and the other calls
+    "ran" drifts them apart - which is exactly what happened here once
+    before (S2 arming re-review finding 4): this function's own inline copy
+    of the rule kept excluding `already_ran` from release long after
+    `script_tools._record_run`'s copy already did, so a finish whose own
+    `exit` was `already_ran` (a fresh start colliding with an existing lock)
+    released the slot here while staying locked in the hint - a caller that
+    trusted the hint's "still available" and retried got refused all over
+    again by this very function, on the very same board.
+
+    `chained=False` always: a chain's own moves-under-reported-by-the-
+    trailing-exit problem (`releases_slot`'s own `chained` parameter) is an
+    artifact of the SINGLE aggregated `exit_block` `script_tools.run()`
+    hands back for a whole chain - every ledger row here is one chain
+    SEGMENT's own finish, posted with that segment's own accurate
+    `moves_done` (`playscripts/runtime.py`'s `_end`, called once per
+    segment), so no row here is ever itself "a chain" the way the hint's
+    aggregate view can be."""
+    from .playscripts.script_tools import releases_slot
     from .store import store
 
     key = tuple(detail.get(name) for name in _SCRIPT_RUN_KEY)
@@ -882,11 +893,11 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
         run_id = prior.get("run_id")
         if run_id in released:
             continue
-        if (
-            action == SCRIPT_RUN_ACTION
-            and prior.get("moves_done") == 0
-            and prior.get("exit") != "unknown_outcome"
-            and not (prior.get("advise") is True and prior.get("exit") == "advised")
+        if action == SCRIPT_RUN_ACTION and releases_slot(
+            prior.get("moves_done") or 0,
+            prior.get("exit"),
+            advise=prior.get("advise") is True,
+            chained=False,
         ):
             released.add(run_id)
             continue

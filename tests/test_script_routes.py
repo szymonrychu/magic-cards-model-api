@@ -705,6 +705,79 @@ def test_a_finish_that_did_move_still_burns_the_slot(client: TestClient, game: s
     assert again.json()["exit"] == "already_ran"
 
 
+#: `(moves_done, exit, advise)` for every shape `_prior_script_run`/
+#: `script_tools.releases_slot` treats distinctly - a real move, each
+#: zero-move exit that IS released, and each zero-move exit that is NOT
+#: (`unknown_outcome`, `already_ran`, and a successful `advised` proposal).
+SHARED_RELEASE_SEQUENCE: tuple[tuple[int, str, bool], ...] = (
+    (1, "chain_complete", False),
+    (0, "refused", False),
+    (0, "needs_input", False),
+    (0, "unknown_outcome", False),
+    (0, "already_ran", False),
+    (0, "advised", True),
+    (0, "refused", True),
+)
+
+
+def test_the_hint_cache_and_the_ledger_apply_the_same_release_rule(
+    client: TestClient, game: str
+) -> None:
+    """S2 arming re-review finding 4: the ledger's own already-ran gate
+    (`records._prior_script_run`) and the hint's in-process cache
+    (`playscripts.script_tools._record_run`, via the shared
+    `script_tools.releases_slot`) must release the once-per-turn-and-step
+    slot on exactly the same shapes - walk `SHARED_RELEASE_SEQUENCE` through
+    both and check every one lands on the same verdict. A fresh `(turn,
+    step)` per case keeps them from interfering with each other."""
+    from magic_cards_model_api.playscripts import script_tools
+
+    alice = seat_uid(game, "alice")
+    advisor = advisor_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    assert register(client, game, advisor, uid=advisor).status_code == 200
+
+    for index, (moves_done, exit_name, advise) in enumerate(SHARED_RELEASE_SEQUENCE):
+        role = "advisor" if advise else "seat"
+        uid = advisor if advise else alice
+        run_id = f"case-{index}"
+        started = post_run(
+            client,
+            game,
+            run(run_id=run_id, turn=100 + index, role=role, advise=advise),
+            uid=uid,
+        )
+        assert started.status_code == 200, started.text
+        attempt = finish(
+            run_id=run_id,
+            turn=100 + index,
+            role=role,
+            advise=advise,
+            moves_done=moves_done,
+            moves_total=1,
+            exit=exit_name,
+        )
+        assert post_run(client, game, attempt, uid=uid).status_code == 200
+
+        retry = post_run(
+            client,
+            game,
+            run(run_id=f"{run_id}-retry", turn=100 + index, role=role, advise=advise),
+            uid=uid,
+        )
+        ledger_released = retry.status_code == 200
+
+        hint_released = script_tools.releases_slot(
+            moves_done, exit_name, advise=advise, chained=False
+        )
+
+        assert ledger_released == hint_released, (
+            f"case {index} (moves_done={moves_done}, exit={exit_name!r}, advise={advise}): "
+            f"ledger released={ledger_released} ({retry.status_code}), "
+            f"hint released={hint_released}"
+        )
+
+
 def test_a_start_or_finish_after_game_over_is_refused_with_no_record(
     client: TestClient, game: str
 ) -> None:
