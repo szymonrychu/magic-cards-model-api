@@ -224,6 +224,25 @@ Four more selector fields the engine, not the view, answers:
   exclusion applies transitively to `unlocks_by_search`/
   `unlocks_by_basic_search` below, since both read this same `unlocks`
   answer for the land a search could find.
+
+  **Item 4, `unlocks_life_paid` (int, present alongside `unlocks` for every
+  offered land):** the life the unlock costs through this land's own
+  "{T}, Pay N life" mana ability (CR 605.3a, e.g. Fiery Islet's "{T}, Pay 1
+  life: Add {U} or {R}."), 0 when the unlock needed no life at all. A
+  life-paid mana activation the engine judges payable always carries its own
+  notice on the `Payability` (`"...but they may (CR 605.3a)"`, from
+  `machines.hypothetical._with_life_payments`) - the general
+  any-notice-fails-closed rule above would otherwise mark every life-paid
+  unlock as unreadable, which is wrong: the engine already refuses to count
+  a life payment that would be lethal (CR 704.5a - that shape of notice
+  never carries the CR 605.3a citation, so it still fails closed as before),
+  so a notice carrying *only* the CR 605.3a citation is excepted from the
+  fail-closed rule instead of parsed into a fresh engine call, and its life
+  cost is read straight off `Payability.life_paid`. D1/D3's privacy and
+  fail-closed rules are otherwise unchanged: nothing new is exposed beyond a
+  plain integer already implied by `unlocks: true`, and any other notice on
+  the pair (an unresolved trigger, an untried CR 118.3c source) still fails
+  `unlocks`/`unlocks_life_paid` closed exactly as before.
 - `unlocks_by_search` (bool): this hand card's ability or oracle text matches
   O3's `searches_for_any` template, and at least one land its search could
   find, among the viewer's own library (by basic land type, read off the

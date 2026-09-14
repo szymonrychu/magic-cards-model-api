@@ -196,6 +196,26 @@ def _has_legal_targets(option: Action) -> bool:
     )
 
 
+#: Item 4: the engine's own CR citation (`machines.hypothetical.
+#: _with_life_payments`) for the one notice shape that documents a *payable*
+#: life-paid mana activation ("...which auto-tap never does for {player}
+#: (CR 118.3c) but they may (CR 605.3a)") - the only place that exact
+#: citation appears among the notices a `Payability` can carry. The lethal
+#: (CR 704.5a) and "not counted" shapes never carry it, so this is a safe,
+#: narrow signal to except from `unlocks`' general fail-closed-on-any-notice
+#: rule, without loosening it for anything else (an unresolved trigger, an
+#: untried CR 118.3c source, a lethal life payment the engine already
+#: refuses to count).
+_LIFE_PAID_SUCCESS_CITATION = "(CR 605.3a)"
+
+
+def _life_paid_notices_only(notices: tuple[str, ...]) -> bool:
+    """True when every one of `payability.notices` is the life-paid-success
+    citation above - false for an empty tuple (nothing to except) and false
+    the moment any notice is something else."""
+    return bool(notices) and all(_LIFE_PAID_SUCCESS_CITATION in notice for notice in notices)
+
+
 def _is_basic(card: CardState) -> bool:
     """CR 205.4a's `Basic` supertype, read off the card the same way
     `_land_subtypes` already reads its subtypes - never a name."""
@@ -334,6 +354,12 @@ def build_hypothetical_facts(
             entry["enters"] = state
 
         unlocks = False
+        #: Item 4: the life `payability.life_paid` says the unlocking card's
+        #: own cheapest payable option costs through this land's "{T}, Pay N
+        #: life" mana ability (CR 605.3a) - 0 when the unlock needed none.
+        #: Read off the very payability that flipped `unlocks` to True, so a
+        #: play can see the cost rather than treating every unlock as free.
+        life_paid = 0
         for payability in column.cards:
             if payability.card_id == column.land_id:
                 continue
@@ -343,14 +369,18 @@ def build_hypothetical_facts(
                 # unlock, so it never flips `unlocks` to True.
                 continue
             now = now_payable.get(payability.card_id)
-            if land_notices or payability.notices or (now is not None and now.notices):
+            if land_notices or (now is not None and now.notices):
+                continue
+            if payability.notices and not _life_paid_notices_only(payability.notices):
                 continue
             was_payable = now is not None and now.payable
             if payability.payable and not was_payable:
                 unlocks = True
+                life_paid = payability.life_paid
                 break
         if is_offered:
             entry["unlocks"] = unlocks
+            entry["unlocks_life_paid"] = life_paid
         if unlocks:
             unlocking_land_ids[land_id] = _optional_payment_life(prediction.optional_costs)
 

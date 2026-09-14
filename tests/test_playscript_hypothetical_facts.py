@@ -220,6 +220,32 @@ def test_eldrazi_temple_never_unlocks_an_x_spell_payable_only_at_x_zero(client, 
     assert facts["cards"][str(temple.id)]["unlocks"] is False
 
 
+def test_fiery_islet_unlocks_preordain_with_its_own_life_paid_noted(client, game):
+    """Item 4: Fiery Islet's only mana ability is a life-paid one ("{T}, Pay
+    1 life: Add {U} or {R}."), so unlocking Preordain ({U}) with it costs 1
+    life - `unlocks_life_paid` surfaces that so a play can see the cost
+    rather than treating every unlock as free."""
+    add_card(client, game, "Fiery Islet", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    islet_id = str(_by_name(alice.hand, "Fiery Islet").id)
+    facts = _facts(game)
+    assert facts["cards"][islet_id]["unlocks"] is True
+    assert facts["cards"][islet_id]["unlocks_life_paid"] == 1
+
+
+def test_a_land_with_no_life_paid_unlock_reads_zero(client, game):
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    island_id = str(_by_name(alice.hand, "Island").id)
+    facts = _facts(game)
+    assert facts["cards"][island_id]["unlocks"] is True
+    assert facts["cards"][island_id]["unlocks_life_paid"] == 0
+
+
 def test_polluted_delta_unlocks_by_search_via_a_watery_grave_in_the_library(client, game):
     add_card(client, game, "Swamp", "alice", "battlefield")
     add_card(client, game, "Polluted Delta", "alice", "hand")
