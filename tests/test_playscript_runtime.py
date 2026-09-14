@@ -462,6 +462,49 @@ def test_a_bare_scry_answer_keeps_everything_on_top(
     assert body["moved"] == [] and body["top_order"] is None
 
 
+def test_a_may_whose_yes_is_illegal_is_answered_no_even_when_the_play_says_yes(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ugin's Labyrinth (item 1): "you may exile a colorless card with mana
+    value 7 or greater from your hand" is a `MAY` the engine asks with
+    `affirmative_is_legal = bool(candidates)`. With no such card in hand,
+    saying yes is not a legal answer (CR 608.2d) and the engine refuses it -
+    but a play written before the deck always held a 7-drop still answers
+    `accept: True`. The runner must answer `accept: False` regardless of what
+    the play's own answer says, and the run must still reach
+    `chain_complete` rather than exit `REFUSED` with the land already down."""
+    alice = seat_uid(board, "alice")
+    script = land_script(
+        "labyrinth",
+        moves=[
+            {
+                "kind": "play_land",
+                "card": {"select": {"types_all": ["Land"], "oracle_has": "mana value 7"}},
+                "answers": [{"decision": "may", "accept": True}],
+            }
+        ],
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Ugin's Labyrinth", "alice", "hand")
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.finished is True, result.to_dict()
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    may_answers = [body for body in hook.posts("/decide") if "accept" in body]
+    assert may_answers and may_answers[-1]["accept"] is False, may_answers
+    after = state(client, board)
+    labyrinth = cards_named(after["battlefield"], "Ugin's Labyrinth")
+    assert labyrinth, "the land is still down"
+    assert after.get("exile") in (None, []), "nothing was exiled: there was no legal candidate"
+
+
 # -- conditions, archetypes, inputs -------------------------------------------
 
 

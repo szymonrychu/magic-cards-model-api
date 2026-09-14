@@ -1188,7 +1188,21 @@ def decide_body(
         body[field_name] = [card["id"] for card in chosen]
         return body
     if "accept" in item:
-        body["accept"] = item["accept"]
+        # Item 1: a play's own `accept: True` for a MAY/PAY_LIFE/PAY_ENERGY/
+        # PAY_MANA decision (CR 608.2d) is illegal when the engine's own view
+        # says the yes branch is not legal (`affirmative_is_legal: False`,
+        # e.g. Ugin's Labyrinth's imprint with no colorless mv >= 7 card in
+        # hand). The engine always accepts "no" for these kinds, so answering
+        # no rather than sending the illegal yes keeps the run going instead
+        # of exiting REFUSED with the land already down.
+        accept = bool(item["accept"])
+        if (
+            accept
+            and kind in ("may", "pay_life", "pay_energy", "pay_mana")
+            and not pending.get("affirmative_is_legal", True)
+        ):
+            accept = False
+        body["accept"] = accept
         return body
     if kind in ("surveil", "scry"):
         moving = item.get("to_graveyard") if kind == "surveil" else item.get("to_bottom")
