@@ -855,22 +855,29 @@ def check_deck(
             [n for n in nxt if isinstance(n, str)] if isinstance(nxt, list) else [],
         )
 
+    # `_max_live_together`'s own docstring assumes "a deck carries at most
+    # MAX_PLAYS plays, so the search space is always tiny" - true only once
+    # `too-many-plays` above has actually bounded `files`. Past that cap the
+    # pivotless Bron-Kerbosch search is exponential (measured ~7 minutes at
+    # 30 plays), and `too-many-plays` already reported the real problem, so
+    # this search is skipped rather than run redundantly and slowly.
     keys = {WILDCARD} | {k for archetypes, _ in active for k in archetypes}
-    for key in sorted(keys):
-        matching = [
-            doc for archetypes, doc in active if WILDCARD in archetypes or key in archetypes
-        ]
-        count = _max_live_together(matching)
-        if count > MAX_ACTIVE_PER_ARCHETYPE:
-            errors.append(
-                PlaysError(
-                    "too-many-active-for-archetype",
-                    plays_rel,
-                    f"{count} plays with priority > 0 can be live together against "
-                    f"{key!r} (not provably exclusive by whose_turn, steps or turn "
-                    f"range), at most {MAX_ACTIVE_PER_ARCHETYPE}",
+    if len(files) <= MAX_PLAYS:
+        for key in sorted(keys):
+            matching = [
+                doc for archetypes, doc in active if WILDCARD in archetypes or key in archetypes
+            ]
+            count = _max_live_together(matching)
+            if count > MAX_ACTIVE_PER_ARCHETYPE:
+                errors.append(
+                    PlaysError(
+                        "too-many-active-for-archetype",
+                        plays_rel,
+                        f"{count} plays with priority > 0 can be live together against "
+                        f"{key!r} (not provably exclusive by whose_turn, steps or turn "
+                        f"range), at most {MAX_ACTIVE_PER_ARCHETYPE}",
+                    )
                 )
-            )
 
     errors.extend(_graph_errors(graph))
     errored = {e.path for e in errors}

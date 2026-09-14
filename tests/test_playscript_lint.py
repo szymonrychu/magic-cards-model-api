@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -337,6 +338,31 @@ def test_7_overlapping_plays_at_the_same_turn_range_fail_the_cap(root):
     errors = [e for e in check_report(root)[0] if e.code == "too-many-active-for-archetype"]
     assert len(errors) == 1
     assert "7 " in errors[0].message
+
+
+def test_the_live_together_search_is_skipped_past_too_many_plays(root):
+    """`_max_live_together` is Bron-Kerbosch without a pivot (its own
+    docstring: "a deck carries at most MAX_PLAYS plays, so the search space
+    is always tiny") - an assumption `too-many-plays` alone does not enforce.
+    30 plays that are all live together at once (same `when`, no turn/step
+    exclusivity at all - the worst case for a pivotless search, empirically
+    ~7 minutes before this fix) must never reach that search once
+    `too-many-plays` has already fired for the deck."""
+    for i in range(30):
+        put(
+            root,
+            play(
+                id=f"p{i}",
+                priority=10,
+                when={"whose_turn": "mine", "steps": ["upkeep"], "stack": "empty"},
+            ),
+        )
+    start = time.monotonic()
+    codes = error_codes(root)
+    elapsed = time.monotonic() - start
+    assert "too-many-plays" in codes
+    assert "too-many-active-for-archetype" not in codes
+    assert elapsed < 3.0, f"took {elapsed}s - the live-together search must be skipped"
 
 
 def test_the_live_together_cap_is_also_proven_by_whose_turn_and_steps(root):
