@@ -989,6 +989,38 @@ def test_store_and_read_back_a_paused_command(repo: GameRepository) -> None:
     assert stored_pending == pending
 
 
+def test_a_choose_a_quality_pause_reads_back_with_its_quality_and_options(
+    repo: GameRepository,
+) -> None:
+    """CR 614.12a's as-enters choice pauses with `quality` and `options` set,
+    and `commands.resume_command` compares the replayed question with the
+    stored one by full equality - a store that drops either field turns every
+    answer into a diverged replay (production, 2026-09-14, game 07c5f818)."""
+    game_id = repo.create(_real_game())
+    command = Command(kind="play_land", payload={"player": "you", "card": "Cavern of Souls"})
+    decision = Decision(
+        kind=DecisionKind.CHOOSE_A_QUALITY,
+        player="you",
+        prompt="choose a creature type",
+        source="Cavern of Souls",
+        source_id="6f1c2d4e-7a8b-4c9d-8e0f-112233445566",
+        options=("Eldrazi", "Elf", "Human", "Merfolk"),
+        quality="creature_type",
+    )
+    pending = PendingDecision(
+        seq=0, decision=decision, rule="CR 608.2d (a choice made while the effect applies)"
+    )
+
+    repo.store_paused_command(game_id, command, (), pending)
+    stored = repo.paused_command(game_id)
+
+    assert stored is not None
+    _stored_command, _stored_tape, stored_pending = stored
+    assert stored_pending.decision.quality == "creature_type"
+    assert stored_pending.decision.options == ("Eldrazi", "Elf", "Human", "Merfolk")
+    assert stored_pending == pending
+
+
 def test_storing_a_paused_command_again_replaces_it(repo: GameRepository) -> None:
     """A game has at most one live pause at a time - the same invariant the
     old `DecisionMailbox` held for a single pending question - so a second
