@@ -225,7 +225,9 @@ def _cli_draft_lock_path(game_id: str, uid: str) -> Path:
 @contextlib.contextmanager
 def _cli_draft_lock(game_id: str, uid: str) -> Any:
     """Hold an OS-level exclusive lock (`fcntl.flock`) on `uid`'s draft file
-    for one whole `seat_cli` command - review fix 1 (2026-09-14).
+    for one draft read-modify-write critical section - review fix 1
+    (2026-09-14), narrowed by re-review round 2 fix 3 (2026-09-14) to stop
+    wrapping a whole command.
 
     Each CLI invocation is a separate OS process (`_cli_drafts_dir`'s own
     docstring), so the in-process `threading.Lock` `resolve_advice_draft`
@@ -241,16 +243,28 @@ def _cli_draft_lock(game_id: str, uid: str) -> Any:
     project runs on - see `mise.toml`) blocks a second process outright until
     the first releases; there is no cross-process equivalent of `Lock.
     acquire(blocking=False)`'s clean "already held" answer here, so this
-    simply waits. A CLI command is a handful of HTTP round trips, never a
-    long-held resource, and correctness - exactly one poster - matters far
-    more here than a second command's latency.
+    simply waits.
 
-    Held for the WHOLE command in `run()`, not only around one read and one
-    write: the committing HTTP call that can capture a fresh action into an
-    armed window, and the dry-run probe plus `POST .../advice` that can post
-    one, both happen while this lock is held, which is what makes holding it
-    *the* claim on this uid's draft - see `_save_cli_draft`'s own token check
-    for the belt-and-braces half of the same guarantee.
+    Round 2 fix 3 (2026-09-14): NEVER held across a genuine network wait.
+    This used to wrap one whole `seat_cli` command in `run()`, on the theory
+    that a CLI command is a handful of HTTP round trips, never a long-held
+    resource - true for every committing action (`run_action`'s advise
+    short-circuit returns before `block_until_wake` is ever reached, and
+    `pass_until`/a script's own `_wait` both refuse or no-op outright for an
+    advise seat), but false for `wait` itself: `wait_and_arm`/`block_until_
+    wake` genuinely sleep-polls for up to `--max-seconds` (capped at
+    `seatkit.MAX_WAIT_SECONDS`, 25s) when nothing wakes it early. A buddy's
+    background `mcp-seat wait --max-seconds 25` held this very lock the
+    whole time, so a human's foreground `stage-advice` or action command -
+    racing for the same uid's lock file - sat blocked behind it for up to 25
+    seconds, and two back-to-back background waits could starve the
+    foreground seat entirely. `_dispatch`'s own `locked()` helper now claims
+    this lock only around loading/re-reading the draft, installing a
+    captured one, and resolving (claim/post/token-guarded delete) plus
+    persisting it - never around `wait_and_arm`, `pass_until` or `script_
+    tools.run`'s own call, each of which runs unlocked and re-reads the
+    draft fresh, under a freshly claimed lock, only once it returns. See
+    `_dispatch`'s own docstring for the exact split.
 
     Review fix 3 (2026-09-14): a lock file this cannot even open (the same
     unwritable-directory case `_cli_drafts_dir` already tolerates) is caught
@@ -325,8 +339,8 @@ def _save_cli_draft(
       exist at all, so it never stamps one); a loaded entry already has
       whichever token it was written with.
 
-    Called only while `uid`'s `_cli_draft_lock` is held (`run()`'s own
-    wrapping in `_dispatch`), so there is no race between the read this
+    Called only while `uid`'s `_cli_draft_lock` is held (`_dispatch`'s own
+    `locked()` critical section), so there is no race between the read this
     compares against and the write or delete itself - the token is a second,
     explicit guard for exactly what the read stood for, not a substitute for
     holding the lock."""
@@ -1454,13 +1468,29 @@ def run(argv: list[str] | None = None) -> int:
     gid = seat.game_id()
 
     def _dispatch() -> int:
-        """Everything below runs with `uid`'s on-disk advisor draft (if any)
-        locked for the whole call, for an advise seat - `run()` itself
-        acquires `_cli_draft_lock` once, right below, and calls this. Review
-        fix 1 (2026-09-14): see that lock's own docstring for why holding it
-        across the whole command, not only around one read and one write, is
-        what stops two overlapping CLI processes from both posting the same
-        draft or one from deleting a draft the other just staged.
+        """Round 2 fix 3 (2026-09-14): NOT one lock held for the whole call
+        any more. `uid`'s on-disk advisor draft is locked (`_cli_draft_lock`)
+        only around the specific read-modify-write critical sections below -
+        loading or re-reading it, installing a draft an action command just
+        built (capture), and claiming/posting/token-deleting a ready one
+        (resolve), each immediately followed by writing it back out
+        (persist). `locked()`, right below, is that one claim, taken fresh
+        for each section rather than once for the whole command.
+
+        The one thing this must never wrap is a genuine network wait:
+        `wait_and_arm`/`block_until_wake` (the `wait` command), `pass_until`
+        (`pass-until`) and `script_tools.run` (`script run`) can each sit
+        polling for up to `seatkit.MAX_WAIT_SECONDS` (25s) when nothing wakes
+        them early - and did, under the old whole-command lock, holding a
+        human's foreground `stage-advice` or action command hostage to a
+        buddy's background `mcp-seat wait` for that whole time. Every command
+        below that can genuinely wait calls that wait UNLOCKED, then enters
+        `locked()` only once it returns, to resolve/persist against the
+        board the wait actually woke to - never against a snapshot taken
+        before it. (In practice `pass_until` and a script's own wait both
+        refuse or no-op outright for an advise seat, so only `wait` ever
+        really blocks here - but all three are written the same way, since
+        none of them promise not to wait.)
         """
         # S2 A6 review fix 2 / review fix 1 (2026-09-14): carry whatever a
         # PRIOR CLI invocation left staged into this process's own `Seat.
@@ -1468,22 +1498,48 @@ def run(argv: list[str] | None = None) -> int:
         # never do across separate processes. `seat.advise` guards it: a
         # seat's own dict never holds anything and there is nothing on disk
         # for one to load either (`stage_advice` itself already refuses a
-        # seat outright). Read HERE, under the lock `run()` already holds for
-        # an advise seat, never from a snapshot taken any earlier - `loaded_
-        # token` is this call's own record of exactly what it saw, so `persist_
-        # draft` below can tell "I am writing back what I actually claimed"
-        # from "something else changed this while I was not looking".
+        # seat outright).
         loaded_token: str | None = None
         draft_note: str | None = None
-        if seat.advise:
-            persisted_draft, draft_note = _load_cli_draft(gid, seat.uid)
+
+        def reload_draft() -> None:
+            """(Re-)read `uid`'s draft fresh off disk and mirror it into
+            `seat._advice_drafts`, updating `loaded_token`/`draft_note` to
+            match. Called only from inside `locked()`, immediately after the
+            lock is claimed - round 2 fix 3 (2026-09-14): never from a
+            snapshot taken before the lock was held, or, for `wait`/`pass-
+            until`/`script run`, from one taken before their own network wait
+            - a different process may have staged, captured, posted or
+            deleted in the meantime, and trusting an older read here is
+            exactly the lost-draft race the whole-command lock used to
+            prevent by brute force."""
+            nonlocal loaded_token, draft_note
+            if not seat.advise:
+                return
+            persisted_draft, note = _load_cli_draft(gid, seat.uid)
             if persisted_draft is not None:
                 seat._advice_drafts[seat.uid] = persisted_draft
                 loaded_token = persisted_draft.get("_cli_token")
             else:
                 seat._advice_drafts.pop(seat.uid, None)
-            if draft_note:
-                print(draft_note, file=sys.stderr)
+                loaded_token = None
+            if note:
+                draft_note = note
+                print(note, file=sys.stderr)
+
+        @contextlib.contextmanager
+        def locked() -> Any:
+            """One draft read-modify-write critical section: claim `uid`'s
+            cross-process flock, re-read the draft fresh under it, run the
+            caller's own body (a capture, a resolve, or both back to back -
+            none of which ever waits on the network for long), and release.
+            A no-op context for a seat, which never has a draft to guard."""
+            if seat.advise:
+                with _cli_draft_lock(gid, seat.uid):
+                    reload_draft()
+                    yield
+            else:
+                yield
 
         def persist_draft() -> str | None:
             """Write this uid's current draft back out for the next CLI
@@ -1651,7 +1707,11 @@ def run(argv: list[str] | None = None) -> int:
                 woken["state"]["armed_conflict"] = woken["armed_conflict"]
             if "armed_refusal" in woken:
                 woken["state"]["armed_refusal"] = woken["armed_refusal"]
-            emit(woken["state"], state_for_draft=woken["state"], indent=1, sort_keys=True)
+            # `wait_and_arm` above already did every bit of waiting this
+            # command will do, fully unlocked - `locked()` here only covers
+            # resolving/persisting the draft against the board it woke to.
+            with locked():
+                emit(woken["state"], state_for_draft=woken["state"], indent=1, sort_keys=True)
             note(woken["state"])
         elif args.command == "cast":
             body: dict[str, Any] = {"player": seat.player, "dry_run": args.dry_run}
@@ -1692,10 +1752,11 @@ def run(argv: list[str] | None = None) -> int:
                 body["optional_costs"] = parse_optional_costs(args.optional_costs)
             if args.reasoning:
                 body["reasoning"] = args.reasoning
-            act(
-                lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cast", body),
-                dry_run=args.dry_run,
-            )
+            with locked():
+                act(
+                    lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cast", body),
+                    dry_run=args.dry_run,
+                )
         elif args.command in ("suspend", "plot", "foretell"):
             body = {"player": seat.player, "dry_run": args.dry_run}
             body.update(card_reference(args.card))
@@ -1704,10 +1765,13 @@ def run(argv: list[str] | None = None) -> int:
                 body["mana_sources"] = sources
             if args.reasoning:
                 body["reasoning"] = args.reasoning
-            act(
-                lambda: seat.call_json("POST", f"/api/games/{gid}/actions/{args.command}", body),
-                dry_run=args.dry_run,
-            )
+            with locked():
+                act(
+                    lambda: seat.call_json(
+                        "POST", f"/api/games/{gid}/actions/{args.command}", body
+                    ),
+                    dry_run=args.dry_run,
+                )
         elif args.command == "cycle":
             body = {"player": seat.player, "ability_index": args.index, "dry_run": args.dry_run}
             body.update(card_reference(args.card))
@@ -1716,10 +1780,11 @@ def run(argv: list[str] | None = None) -> int:
                 body["mana_sources"] = sources
             if args.reasoning:
                 body["reasoning"] = args.reasoning
-            act(
-                lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cycle", body),
-                dry_run=args.dry_run,
-            )
+            with locked():
+                act(
+                    lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cycle", body),
+                    dry_run=args.dry_run,
+                )
         elif args.command == "equip":
             body = {
                 "player": seat.player,
@@ -1732,16 +1797,18 @@ def run(argv: list[str] | None = None) -> int:
                 body["mana_sources"] = sources
             if args.reasoning:
                 body["reasoning"] = args.reasoning
-            act(
-                lambda: seat.call_json("POST", f"/api/games/{gid}/actions/equip", body),
-                dry_run=args.dry_run,
-            )
+            with locked():
+                act(
+                    lambda: seat.call_json("POST", f"/api/games/{gid}/actions/equip", body),
+                    dry_run=args.dry_run,
+                )
         elif args.command == "play-land":
             body = {"player": seat.player}
             body.update(card_reference(args.card))
             if args.reasoning:
                 body["reasoning"] = args.reasoning
-            act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/play-land", body))
+            with locked():
+                act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/play-land", body))
         elif args.command == "activate":
             body = {
                 "player": seat.player,
@@ -1766,10 +1833,11 @@ def run(argv: list[str] | None = None) -> int:
                 body["color"] = args.color
             if args.reasoning:
                 body["reasoning"] = args.reasoning
-            act(
-                lambda: seat.call_json("POST", f"/api/games/{gid}/actions/activate", body),
-                dry_run=args.dry_run,
-            )
+            with locked():
+                act(
+                    lambda: seat.call_json("POST", f"/api/games/{gid}/actions/activate", body),
+                    dry_run=args.dry_run,
+                )
         elif args.command == "attackers":
             # No `player` - see `mcp.py`'s `declare_attackers`: the route
             # resolves the declaring seat from the uid and `AttackRequest` has no
@@ -1782,7 +1850,8 @@ def run(argv: list[str] | None = None) -> int:
             }
             if args.reasoning:
                 body["reasoning"] = args.reasoning
-            act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/attack", body))
+            with locked():
+                act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/attack", body))
         elif args.command == "blockers":
             body = {
                 "player": seat.player,
@@ -1793,7 +1862,12 @@ def run(argv: list[str] | None = None) -> int:
             }
             if args.reasoning:
                 body["reasoning"] = args.reasoning
-            act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/declare-blockers", body))
+            with locked():
+                act(
+                    lambda: seat.call_json(
+                        "POST", f"/api/games/{gid}/actions/declare-blockers", body
+                    )
+                )
         elif args.command == "pass-until":
             # The shared loop and the shared validator, not a second copy of
             # either: `mcp.pass_until` calls the same two functions with the same
@@ -1824,26 +1898,32 @@ def run(argv: list[str] | None = None) -> int:
                 opposing_archetype=args.opposing_archetype,
                 inputs=arm_inputs,
             )
-            emit(result, state_for_draft=result.get("state"), indent=1, sort_keys=True)
+            # `pass_until` above already did every bit of waiting this
+            # command will do, fully unlocked (and refuses outright for an
+            # advise seat before it would ever wait at all) - `locked()`
+            # here only covers resolving/persisting the draft afterward.
+            with locked():
+                emit(result, state_for_draft=result.get("state"), indent=1, sort_keys=True)
             note(result.get("state"))
         elif args.command == "pass":
             pass_body: dict[str, Any] = {"player": seat.player}
             if args.reasoning:
                 pass_body["reasoning"] = args.reasoning
-            result = run_action(
-                seat,
-                lambda: seat.call_json(
-                    "POST", f"/api/games/{gid}/actions/pass-priority", pass_body
-                ),
-                hold_priority=False,
-                release=False,
-            )
-            emit(
-                result,
-                state_for_draft=result.get("state") if isinstance(result, dict) else None,
-                indent=1,
-                sort_keys=True,
-            )
+            with locked():
+                result = run_action(
+                    seat,
+                    lambda: seat.call_json(
+                        "POST", f"/api/games/{gid}/actions/pass-priority", pass_body
+                    ),
+                    hold_priority=False,
+                    release=False,
+                )
+                emit(
+                    result,
+                    state_for_draft=result.get("state") if isinstance(result, dict) else None,
+                    indent=1,
+                    sort_keys=True,
+                )
         elif args.command == "decide":
             # `--decline` and an omitted `card_ids` post the identical request -
             # the empty answer, which for a CR 701.23b search ("that player isn't
@@ -1900,7 +1980,8 @@ def run(argv: list[str] | None = None) -> int:
                     return {"allowed": False, **answer}
                 return {"allowed": True, **answer} if isinstance(answer, dict) else answer
 
-            act(perform_decide)
+            with locked():
+                act(perform_decide)
         elif args.command == "mulligan":
             # Deliberately NOT through `act`: the pregame endpoints answer
             # immediately and block on nothing (see `opening.py`), so there is no
@@ -1918,46 +1999,49 @@ def run(argv: list[str] | None = None) -> int:
             # attach to add here that the MCP tool does not already give. The
             # committing call itself can still capture a staged, empty window
             # (`Seat._advise_answer`), so `persist_draft` still runs.
-            print(
-                json.dumps(
-                    seat.call_json("POST", f"/api/games/{gid}/pregame/mulligan", body),
-                    indent=1,
-                    sort_keys=True,
+            with locked():
+                print(
+                    json.dumps(
+                        seat.call_json("POST", f"/api/games/{gid}/pregame/mulligan", body),
+                        indent=1,
+                        sort_keys=True,
+                    )
                 )
-            )
-            persist_draft()
+                persist_draft()
         elif args.command == "opening-hand-action":
             oha_body: dict[str, Any] = {"player": seat.player, "card_id": args.card.strip()}
             if args.reasoning:
                 oha_body["reasoning"] = args.reasoning
-            print(
-                json.dumps(
-                    seat.call_json(
-                        "POST",
-                        f"/api/games/{gid}/pregame/opening-hand/action",
-                        oha_body,
-                    ),
-                    indent=1,
-                    sort_keys=True,
+            with locked():
+                print(
+                    json.dumps(
+                        seat.call_json(
+                            "POST",
+                            f"/api/games/{gid}/pregame/opening-hand/action",
+                            oha_body,
+                        ),
+                        indent=1,
+                        sort_keys=True,
+                    )
                 )
-            )
-            persist_draft()
+                persist_draft()
         elif args.command == "opening-hand-done":
             ohd_body: dict[str, Any] = {"player": seat.player}
             if args.reasoning:
                 ohd_body["reasoning"] = args.reasoning
-            print(
-                json.dumps(
-                    seat.call_json(
-                        "POST",
-                        f"/api/games/{gid}/pregame/opening-hand/finish",
-                        ohd_body,
-                    ),
-                    indent=1,
-                    sort_keys=True,
+            with locked():
+                print(
+                    json.dumps(
+                        seat.call_json(
+                            "POST",
+                            f"/api/games/{gid}/pregame/opening-hand/finish",
+                            ohd_body,
+                        ),
+                        indent=1,
+                        sort_keys=True,
+                    )
                 )
-            )
-            persist_draft()
+                persist_draft()
         elif args.command == "log":
             # `uid` here, not the bare debugger's-eye default: a real seat reading
             # its own log must not see the opponent's hidden-zone card names any
@@ -2004,20 +2088,25 @@ def run(argv: list[str] | None = None) -> int:
                 print(answer)
                 return 1
             if args.script_command == "run":
-                # Matches `mcp.run_script`, which routes through `_tool_result` -
-                # `list_scripts` does not (a listing judges scripts, it runs
-                # nothing, so there is never anything here for a draft to be
-                # captured by). `script_exit=answer.get("script_exit")` (review
-                # fix 2, 2026-09-14): this run's own proposal, so a reached
-                # staged draft is superseded rather than double-posted
-                # alongside it - see `emit`'s own docstring.
-                emit(
-                    answer,
-                    state_for_draft=answer.get("state"),
-                    script_exit=answer.get("script_exit"),
-                    indent=1,
-                    sort_keys=True,
-                )
+                # `script_tools.run` above already did every bit of waiting
+                # this command will do (`--wait`/`--max-seconds`), fully
+                # unlocked - `locked()` here only covers resolving/
+                # persisting the draft afterward. Matches `mcp.run_script`,
+                # which routes through `_tool_result` - `list_scripts` does
+                # not (a listing judges scripts, it runs nothing, so there is
+                # never anything here for a draft to be captured by).
+                # `script_exit=answer.get("script_exit")` (review fix 2,
+                # 2026-09-14): this run's own proposal, so a reached staged
+                # draft is superseded rather than double-posted alongside it -
+                # see `emit`'s own docstring.
+                with locked():
+                    emit(
+                        answer,
+                        state_for_draft=answer.get("state"),
+                        script_exit=answer.get("script_exit"),
+                        indent=1,
+                        sort_keys=True,
+                    )
             else:
                 print(json.dumps(answer, indent=1, sort_keys=False))
             note(answer.get("state"))
@@ -2051,19 +2140,23 @@ def run(argv: list[str] | None = None) -> int:
             # Mutates no `Game` and never blocks - `seat.stage_advice` only arms
             # this seat's own next committing call, the same shared function
             # `mcp.stage_advice` calls.
-            result = seat.stage_advice(args.step, args.whose_turn)
-            print(json.dumps(result, indent=1, sort_keys=True))
-            # S2 A6 review fix 2: persisted so the NEXT `seat_cli.run()` call -
-            # a fresh process with a fresh `Seats()` - can pick this armed window
-            # back up. `persist_draft` (not `emit`, which also attaches `draft`
-            # to the answer - `mcp.stage_advice` never does that on its own
-            # answer either) is exactly the save half of that.
-            persist_draft()
+            with locked():
+                result = seat.stage_advice(args.step, args.whose_turn)
+                print(json.dumps(result, indent=1, sort_keys=True))
+                # S2 A6 review fix 2: persisted so the NEXT `seat_cli.run()`
+                # call - a fresh process with a fresh `Seats()` - can pick this
+                # armed window back up. `persist_draft` (not `emit`, which also
+                # attaches `draft` to the answer - `mcp.stage_advice` never
+                # does that on its own answer either) is exactly the save half
+                # of that.
+                persist_draft()
         return 0
 
-    if seat.advise:
-        with _cli_draft_lock(gid, seat.uid):
-            return _dispatch()
+    # Round 2 fix 3 (2026-09-14): no lock wrapped around `_dispatch()` as a
+    # whole any more - `_dispatch`'s own `locked()` claims `_cli_draft_lock`
+    # only around each draft read-modify-write critical section, never
+    # around a command's own genuine network wait. See `_dispatch`'s and
+    # `_cli_draft_lock`'s own docstrings.
     return _dispatch()
 
 

@@ -1434,3 +1434,59 @@ def test_a_concurrent_read_during_capture_never_sees_a_draft_without_drafted_at_
     final = seat._advice_drafts[ADVISOR_UID]
     assert final["action"] is not None
     assert final["drafted_at_seq"] is not None
+
+
+# ---------------------------------------------------------------------------
+# 12. re-review round 2, 2026-09-14, finding 3: the draft lock scopes to the
+# read-modify-write sections, never a `wait`'s own poll
+# ---------------------------------------------------------------------------
+
+
+def test_a_background_wait_does_not_block_a_foreground_stage_advice(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old `_cli_draft_lock` was held around the whole `_dispatch()` call
+    in `run()`, `wait` included - and `wait --max-seconds N` genuinely sleeps
+    inside `block_until_wake`'s own poll loop for up to N seconds when
+    nothing on the board changes. A background buddy's `mcp-seat wait
+    --max-seconds 25` therefore held the same human's foreground `stage-
+    advice` (or any other action command) for up to 25 seconds too, since
+    both compete for the one lock file.
+
+    Nothing on this board changes here, so the background `wait` really does
+    poll for its whole `--max-seconds` window (no early wake) - and the
+    foreground `stage-advice`, started well inside that window, must still
+    return almost at once. Fails on the un-fixed code, where it takes close
+    to the wait's own bound.
+
+    `force_turn_position` puts bob, not alice, in precombat main holding
+    priority: `compute_wake_reason` wakes an advisor at once whenever its own
+    player already holds priority and `before` is `None` (a fresh CLI
+    process's own `wait`, every time), which alice's own priority would do
+    here regardless of whether the lock is scoped correctly - the whole
+    point of this setup is a `wait` with nothing to wake it early, so it
+    genuinely sits in `block_until_wake`'s poll for the full bound."""
+    wire(monkeypatch)
+    uid = advisor_uid(game)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
+
+    wait_entered = threading.Event()
+
+    def run_wait() -> None:
+        wait_entered.set()
+        seat_cli.run(["--uid", uid, "--game", game, "wait", "--max-seconds", "3"])
+
+    wait_thread = threading.Thread(target=run_wait, daemon=True)
+    wait_thread.start()
+    assert wait_entered.wait(5), "the background wait never started"
+    time.sleep(0.3)  # let it reach its own first poll, well inside the 3s bound
+
+    start = time.monotonic()
+    assert seat_cli.run(["--uid", uid, "--game", game, "stage-advice", "declare_attackers"]) == 0
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.0, (
+        f"a foreground stage-advice took {elapsed:.2f}s while a background wait was "
+        "still polling - the CLI draft lock is still held across the wait"
+    )
+    wait_thread.join(5)
