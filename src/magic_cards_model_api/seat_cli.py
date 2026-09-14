@@ -958,6 +958,29 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    stage_advice = sub.add_parser(
+        "stage-advice",
+        help=(
+            "arm your next committing call to be captured as a draft for a "
+            "window, instead of posted right away (mcp stage_advice)"
+        ),
+    )
+    stage_advice.add_argument(
+        "step",
+        metavar="STEP",
+        help=(
+            f"one of: {', '.join(AUTOPASS_STEPS)}. Naming the step your human "
+            "is standing in right now means its NEXT occurrence, never this "
+            "one - the same rule pass-until follows"
+        ),
+    )
+    stage_advice.add_argument(
+        "--whose-turn",
+        default="mine",
+        metavar="WHOSE",
+        help=f"one of: {', '.join(AUTOPASS_WHOSE_TURN)}; default 'mine'",
+    )
+
     script = sub.add_parser(
         "script",
         help="run one of your registered play scripts, or list them (mcp run_script/list_scripts)",
@@ -1612,6 +1635,12 @@ def run(argv: list[str] | None = None) -> int:
             confidence=args.confidence,
             for_turn=args.for_turn,
         )
+        print(json.dumps(result, indent=1, sort_keys=True))
+    elif args.command == "stage-advice":
+        # Mutates no `Game` and never blocks - `seat.stage_advice` only arms
+        # this seat's own next committing call, the same shared function
+        # `mcp.stage_advice` calls.
+        result = seat.stage_advice(args.step, args.whose_turn)
         print(json.dumps(result, indent=1, sort_keys=True))
     return 0
 

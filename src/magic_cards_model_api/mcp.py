@@ -700,6 +700,34 @@ def build_server(seats: Seats) -> MCPServer:
         if hint is not None:
             answer["scripts"] = hint
 
+    def _attach_draft(answer: dict[str, Any], seat: Seat, state: dict[str, Any]) -> None:
+        """S2 A6: bolt `draft: {"status": ...}` onto `answer` for an advisor
+        with a staged draft (`seatkit.resolve_advice_draft`) - checked on
+        every advisor answer that reaches `_tool_result`, action tools and
+        `wait_for_priority`/`pass_until` alike, which is what lets a draft get
+        posted the moment the human's own poll notices the window (within one
+        `wait_for_priority` call's own internal poll, not only on the next
+        separate one) rather than only when the buddy happens to call
+        something else afterward.
+
+        `None` for a seat, or an advisor with nothing staged - `draft` is left
+        off the answer entirely rather than invented as some idle status.
+
+        Same failure discipline as `_attach_script_hint`: an exception here
+        must never break the tool answer whose action already landed, so it
+        is caught, logged once, and `draft` is simply left off."""
+        try:
+            result = seatkit.resolve_advice_draft(seat, state)
+        except Exception:
+            logger.warning(
+                "resolving %s's staged advice draft raised - answer sent without `draft`",
+                seat.uid,
+                exc_info=True,
+            )
+            return
+        if result is not None:
+            answer["draft"] = result
+
     def _tool_result(
         seat: Seat, payload: dict[str, Any], protocol_version: str | None
     ) -> str | InputRequiredResult:
@@ -761,11 +789,14 @@ def build_server(seats: Seats) -> MCPServer:
             # very answer a stuck seat was trying to read the refusal out of.
             answer = _action_answer(payload)
             raw_state = payload.get("state")
-            _attach_script_hint(answer, seat, raw_state if isinstance(raw_state, dict) else {})
+            state_view = raw_state if isinstance(raw_state, dict) else {}
+            _attach_script_hint(answer, seat, state_view)
+            _attach_draft(answer, seat, state_view)
             pending = answer.get("pending_decision")
             text = json.dumps(answer, indent=1)
         else:
             _attach_script_hint(payload, seat, payload)
+            _attach_draft(payload, seat, payload)
             pending = payload.get("pending_decision")
             text = json.dumps(payload, indent=1, sort_keys=True)
         modern = protocol_version is None or protocol_version in MODERN_PROTOCOL_VERSIONS
@@ -796,6 +827,7 @@ def build_server(seats: Seats) -> MCPServer:
         arm_reasoning: str = "",
         opposing_archetype: str = "*",
         inputs: dict[str, Any] | None = None,
+        wake_to_draft: bool = False,
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Check whether it is your moment to act, then hand you the board.
@@ -875,10 +907,34 @@ def build_server(seats: Seats) -> MCPServer:
                 `inputs` mean what they mean for `run_script`. An advisor here
                 fires in advise mode: the first applicable armed script proposes
                 a move (`advised`) and the batch stops there.
+
+        **`wake_to_draft` (S2 A6, advisor only)**: also wake when the board
+                changes while it is not yet your human's priority, provided you
+                have no draft staged right now - the cue to look ahead and
+                `stage_advice` for the window you expect next, so a proposal is
+                ready to post the instant priority actually reaches them, rather
+                than drafted from scratch only once it does. Left false (the
+                default), this behaves exactly as it always has. Refused outright
+                for a seat: a seat already wakes for its own real moments, and
+                there is no draft for it to prepare.
+
+                Every answer here, and every action tool's, also carries `draft`
+                once you have one staged: `{"status": "held"}` while it is not yet
+                your human's turn at that window, `{"status": "posted", "log_seq":
+                ...}` the moment it is and everything still holds up, or
+                `{"status": "stale", "failed": "window"|"board"|"legality"}` the
+                moment any one of those three does not - the board changed
+                underneath it, or the window itself has already passed. A stale
+                draft is dropped; this wait wakes you to draft another the next
+                time the board moves and you asked for `wake_to_draft`.
         """
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
+        if wake_to_draft and not seat.advise:
+            return seatkit.WAKE_TO_DRAFT_ADVISOR_ONLY
+        staged = seats.advice_drafts.get(seat.uid)
+        draft_staged = staged is not None and staged.get("action") is not None
         woken = seatkit.wait_and_arm(
             seat,
             before=None,
@@ -889,6 +945,8 @@ def build_server(seats: Seats) -> MCPServer:
             arm_reasoning=arm_reasoning,
             opposing_archetype=opposing_archetype,
             inputs=inputs,
+            wake_to_draft=wake_to_draft and seat.advise,
+            draft_staged=draft_staged,
         )
         woken["state"]["wake_reason"] = woken["wake_reason"]
         woken["state"]["recent_log"] = woken["recent_log"]
@@ -2721,6 +2779,42 @@ def build_server(seats: Seats) -> MCPServer:
             confidence=confidence,
             for_turn=for_turn,
         )
+        return json.dumps(result, indent=1, sort_keys=True)
+
+    @server.tool()
+    @_guarded(seats)
+    def stage_advice(player_uid: str, step: str, whose_turn: str = "mine") -> str:
+        """S2 A6: arm your *next* committing action call to be captured as a
+        draft for the window `(step, whose_turn)`, instead of posted as a
+        proposal right away - so you can think and act now, while your human
+        does not yet hold priority, and have it posted for them the instant
+        they do, rather than starting from scratch only once they hold it.
+
+        `step`/`whose_turn` mean exactly what they mean for `pass_until`: one
+        of `upkeep, draw, precombat_main, beginning_of_combat,
+        declare_attackers, declare_blockers, combat_damage, end_of_combat,
+        postcombat_main, end_step`, and `"mine"` (default), `"opponent"`, or
+        `"any"`. Naming the step your human is standing in right now means its
+        NEXT occurrence, never this one - the same next-occurrence rule
+        `pass_until` follows.
+
+        The very next committing call you make (`cast`, `activate`, `pass`,
+        ...) after this is what gets captured - probed exactly as an ordinary
+        proposal is, just held back rather than posted. Every one of your
+        calls after that (this one included, and `wait_for_priority`'s own
+        wait) carries `draft: {"status": ...}` while one is staged, and it
+        posts on its own the moment your human's priority reaches that window
+        - see `wait_for_priority`'s own docstring for the three ways a stale
+        draft is dropped instead.
+
+        Staging again before the armed slot is filled in replaces it outright;
+        there is only ever one draft in flight. Refused outright for a seat
+        (there is no proposal for it to hold back) and for a step/whose_turn
+        `pass_until` would also refuse. Mutates no `Game` and never blocks."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        result = seat.stage_advice(step, whose_turn)
         return json.dumps(result, indent=1, sort_keys=True)
 
     @server.tool()
