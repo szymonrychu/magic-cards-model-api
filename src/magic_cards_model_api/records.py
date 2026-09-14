@@ -855,12 +855,19 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
     check cannot tell whether it moved anything. The release covers that run's
     own start row too (newest first, so its finish is always read before it).
 
-    The release itself is `playscripts.script_tools.releases_slot` -
-    imported here, lazily like every other cross-module read this function
-    already does, rather than reimplemented: this ledger row and the hint's
-    own in-process cache (`script_tools._record_run`) must apply exactly the
-    same rule, or a run one calls "touched nothing" and the other calls
-    "ran" drifts them apart - which is exactly what happened here once
+    A finish row whose own `moves_done` is missing entirely (never posted, or
+    stripped by an older writer) is never released either (S2 arming
+    re-review finding 3): read as `prior.get("moves_done")`, unclamped - a
+    bare `or 0` here once treated "the field was never posted" the same as
+    "confirmed zero moves", releasing a slot a genuine, still-untold run might
+    still be sitting on. `releases_slot`'s own `moves_done=None` handles it.
+
+    The common decisions here are `playscripts.script_tools.releases_slot` -
+    imported lazily, like every other cross-module read this function already
+    does, rather than reimplemented: this ledger row and the hint's own
+    in-process cache (`script_tools._record_run`) must apply the same rule on
+    everything they share, or a run one calls "touched nothing" and the other
+    calls "ran" drifts them apart - which is exactly what happened here once
     before (S2 arming re-review finding 4): this function's own inline copy
     of the rule kept excluding `already_ran` from release long after
     `script_tools._record_run`'s copy already did, so a finish whose own
@@ -868,6 +875,23 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
     released the slot here while staying locked in the hint - a caller that
     trusted the hint's "still available" and retried got refused all over
     again by this very function, on the very same board.
+
+    `already_ran_releases=True` here, and only here (S2 arming re-review
+    finding 3): once THAT fix landed, this function swung the other way and
+    stopped releasing `already_ran` rows at all, which is its own separate
+    bug - a `already_ran` row only ever records "some other run held this
+    slot when I tried", never a genuine attempt of its own, so once the run
+    it collided with is itself released, nothing here should still block a
+    fresh start on the strength of a row that never did anything either.
+    Concretely: start A, start B collides (`already_ran`), B's own finish
+    posts `exit: already_ran, moves_done: 0`, A's own finish posts zero
+    moves too (released on its own terms) - a fresh start C must succeed,
+    not collide with B's collision row all over again. The hint's own cache
+    (`_record_run`) keeps the narrower, still-locking rule
+    (`already_ran_releases`'s own default `False`): it exists only to avoid
+    re-suggesting, to this one process, a script that already collided at
+    this exact position, regardless of what the ledger does with other rows
+    later.
 
     `chained=False` always: a chain's own moves-under-reported-by-the-
     trailing-exit problem (`releases_slot`'s own `chained` parameter) is an
@@ -894,10 +918,11 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
         if run_id in released:
             continue
         if action == SCRIPT_RUN_ACTION and releases_slot(
-            prior.get("moves_done") or 0,
+            prior.get("moves_done"),
             prior.get("exit"),
             advise=prior.get("advise") is True,
             chained=False,
+            already_ran_releases=True,
         ):
             released.add(run_id)
             continue

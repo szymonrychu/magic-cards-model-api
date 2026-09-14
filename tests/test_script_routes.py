@@ -604,6 +604,74 @@ def test_a_zero_move_finish_does_not_burn_the_already_ran_slot(
     assert again.status_code == 200, again.text
 
 
+def test_a_finish_with_no_moves_done_at_all_still_burns_the_slot(
+    client: TestClient, game: str
+) -> None:
+    """S2 arming re-review finding 3: `moves_done` is optional at the schema
+    (`schemas.py`'s own `Field(default=None, ge=0)`) - a finish that omits it
+    entirely is not the same as one that confirms zero moves, and must not
+    be read as one. `prior.get("moves_done") or 0` used to conflate the two
+    (`None or 0` is `0`), releasing a slot a genuine, still-untold run might
+    still be sitting on; `releases_slot`'s own `moves_done=None` now blocks
+    it - the conservative read, since this function cannot tell whether it
+    moved anything."""
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    no_moves_done = finish(moves_done=None, moves_total=1, exit="refused")
+    assert post_run(client, game, no_moves_done, uid=alice).status_code == 200
+
+    again = post_run(client, game, run(run_id="run-2"), uid=alice)
+
+    assert again.status_code == 409, again.text
+    assert again.json()["exit"] == "already_ran"
+
+
+def test_a_freed_already_ran_collision_no_longer_blocks_a_later_start(
+    client: TestClient, game: str
+) -> None:
+    """S2 arming re-review finding 3: start A, start B collides with it
+    (`already_ran`, since A has not finished yet); B's own finish posts
+    `exit: already_ran, moves_done: 0` (it never got to run at all); A's own
+    finish then posts zero moves too, genuinely touching nothing, and is
+    released on its own terms (`test_a_zero_move_finish_...` above). A fresh
+    start C must now succeed - B's row only ever recorded "I collided with
+    A", never a genuine attempt of its own, and once A's own row is released
+    there is nothing real left on the ledger to block C. Before this fix,
+    `already_ran` was excluded from release outright (S2 arming re-review
+    finding 4, an earlier round), so B's collision row kept blocking C even
+    though the run underneath it, A, was already gone."""
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+
+    a = post_run(client, game, run(run_id="A", turn=300), uid=alice)
+    assert a.status_code == 200, a.text
+
+    b = post_run(client, game, run(run_id="B", turn=300), uid=alice)
+    assert b.status_code == 409, b.text
+    assert b.json()["exit"] == "already_ran"
+    assert (
+        post_run(
+            client, game, finish(run_id="B", turn=300, moves_done=0, exit="already_ran"), uid=alice
+        ).status_code
+        == 200
+    )
+
+    assert (
+        post_run(
+            client, game, finish(run_id="A", turn=300, moves_done=0, exit="refused"), uid=alice
+        ).status_code
+        == 200
+    )
+
+    c = post_run(client, game, run(run_id="C", turn=300), uid=alice)
+
+    assert c.status_code == 200, c.text
+
+    again = post_run(client, game, run(run_id="run-2"), uid=alice)
+
+    assert again.status_code == 200, again.text
+
+
 def test_a_started_run_that_finished_with_zero_moves_does_not_burn_the_slot(
     client: TestClient, game: str
 ) -> None:
@@ -706,15 +774,18 @@ def test_a_finish_that_did_move_still_burns_the_slot(client: TestClient, game: s
 
 
 #: `(moves_done, exit, advise)` for every shape `_prior_script_run`/
-#: `script_tools.releases_slot` treats distinctly - a real move, each
-#: zero-move exit that IS released, and each zero-move exit that is NOT
-#: (`unknown_outcome`, `already_ran`, and a successful `advised` proposal).
+#: `script_tools.releases_slot` treat the SAME way, regardless of
+#: `already_ran_releases` - a real move, each zero-move exit that IS
+#: released, and each zero-move exit that is NOT (`unknown_outcome` and a
+#: successful `advised` proposal). `already_ran` is deliberately not among
+#: these any more (S2 arming re-review finding 3) - see
+#: `test_the_ledger_and_the_hint_deliberately_differ_on_already_ran`, below,
+#: for that one intended difference.
 SHARED_RELEASE_SEQUENCE: tuple[tuple[int, str, bool], ...] = (
     (1, "chain_complete", False),
     (0, "refused", False),
     (0, "needs_input", False),
     (0, "unknown_outcome", False),
-    (0, "already_ran", False),
     (0, "advised", True),
     (0, "refused", True),
 )
@@ -727,9 +798,12 @@ def test_the_hint_cache_and_the_ledger_apply_the_same_release_rule(
     (`records._prior_script_run`) and the hint's in-process cache
     (`playscripts.script_tools._record_run`, via the shared
     `script_tools.releases_slot`) must release the once-per-turn-and-step
-    slot on exactly the same shapes - walk `SHARED_RELEASE_SEQUENCE` through
-    both and check every one lands on the same verdict. A fresh `(turn,
-    step)` per case keeps them from interfering with each other."""
+    slot on exactly the same shapes for every case `SHARED_RELEASE_SEQUENCE`
+    names - walk it through both and check every one lands on the same
+    verdict. A fresh `(turn, step)` per case keeps them from interfering
+    with each other. `already_ran` is excluded on purpose (S2 arming
+    re-review finding 3) - both calls pass `already_ran_releases=False`
+    here, the value neither of them ever disagrees on."""
     from magic_cards_model_api.playscripts import script_tools
 
     alice = seat_uid(game, "alice")
@@ -768,7 +842,7 @@ def test_the_hint_cache_and_the_ledger_apply_the_same_release_rule(
         ledger_released = retry.status_code == 200
 
         hint_released = script_tools.releases_slot(
-            moves_done, exit_name, advise=advise, chained=False
+            moves_done, exit_name, advise=advise, chained=False, already_ran_releases=False
         )
 
         assert ledger_released == hint_released, (
@@ -776,6 +850,44 @@ def test_the_hint_cache_and_the_ledger_apply_the_same_release_rule(
             f"ledger released={ledger_released} ({retry.status_code}), "
             f"hint released={hint_released}"
         )
+
+
+def test_the_ledger_and_the_hint_deliberately_differ_on_already_ran(
+    client: TestClient, game: str
+) -> None:
+    """S2 arming re-review finding 3: the one decision `releases_slot`'s two
+    callers make differently, on purpose. A finish whose own `exit` is
+    `already_ran` never recorded a genuine attempt - it only ever names some
+    OTHER run that already held the slot - so the ledger
+    (`records._prior_script_run`, `already_ran_releases=True`) releases it:
+    once the run it collided with is itself released, nothing real is left
+    to block a fresh start on. The hint's own in-process cache
+    (`script_tools._record_run`, `already_ran_releases=False`) keeps it
+    locked regardless - it exists only to stop this one process re-offering,
+    to itself, a script that just collided at this exact position."""
+    from magic_cards_model_api.playscripts import script_tools
+
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    assert post_run(client, game, run(), uid=alice).status_code == 200
+    collided = finish(moves_done=0, moves_total=1, exit="already_ran")
+    assert post_run(client, game, collided, uid=alice).status_code == 200
+
+    retry = post_run(client, game, run(run_id="run-2"), uid=alice)
+
+    assert retry.status_code == 200, (
+        "the ledger must release an already_ran row: it never recorded a genuine attempt"
+    )
+    hint_released = script_tools.releases_slot(0, "already_ran", advise=False, chained=False)
+    assert hint_released is False, (
+        "the hint's own default keeps locking it, to avoid re-suggesting a collided script"
+    )
+    assert (
+        script_tools.releases_slot(
+            0, "already_ran", advise=False, chained=False, already_ran_releases=True
+        )
+        is True
+    ), "already_ran_releases=True is exactly the ledger's own choice"
 
 
 def test_a_start_or_finish_after_game_over_is_refused_with_no_record(

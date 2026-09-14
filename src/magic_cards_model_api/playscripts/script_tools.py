@@ -452,29 +452,59 @@ def _turn_position(state: dict[str, Any]) -> Any:
     return taken if taken is not None else state.get("turn_number")
 
 
-def releases_slot(moves_done: int, exit_name: str | None, *, advise: bool, chained: bool) -> bool:
+def releases_slot(
+    moves_done: int | None,
+    exit_name: str | None,
+    *,
+    advise: bool,
+    chained: bool,
+    already_ran_releases: bool = False,
+) -> bool:
     """Whether a run shaped like this touched nothing at all, and so must
     not occupy the once-per-turn-and-step slot both `_record_run` (the
     hint's own in-process cache, below) and `records._prior_script_run`
-    (the ledger's) gate on - the two must apply exactly the same rule, and
-    this is the one place either checks it, so they cannot drift apart the
-    way they once did (S2 arming re-review finding 4).
+    (the ledger's) gate on - the two share every common decision here, so
+    they cannot drift apart on those the way they once did (S2 arming
+    re-review finding 4). `already_ran_releases` is the one decision they
+    now deliberately make differently (S2 arming re-review finding 3,
+    below) - every other parameter still means exactly the same thing to
+    both callers.
 
     Released - "touched nothing" - when `moves_done == 0` and the exit is
     not `unknown_outcome` (whose move may have landed uncounted) and not a
     *successful* advise proposal (`exit == "advised"` with `advise=True`,
     which always reports zero moves by design - it only ever proposes, and
     still burns the slot so an armed advisor does not repeat the same
-    suggestion within one turn and step) and not `already_ran` (a
-    collision finish reporting that some OTHER run already holds this
-    slot - releasing it too would only retry into the same collision and
-    spend another round producing another one of these rows; leaving it
-    locked here does not hide the genuine blocking run underneath it,
-    since that row is scanned next).
+    suggestion within one turn and step).
 
-    `chained` (S2 arming re-review finding 3) overrides all of that to
-    `False` regardless of `moves_done`: a chained run's own trailing
-    `exit_block` carries only the LAST script in the chain's own
+    `moves_done=None` (S2 arming re-review finding 3) is never released,
+    regardless of everything else: it means "unknown" - a raw ledger row
+    whose own payload omitted the field entirely - not "confirmed zero",
+    and treating the two the same let a malformed or incomplete finish row
+    free a slot a real one might still be sitting on. `records.
+    _prior_script_run` is the only caller that can ever see this: every
+    `script_exit` this module's own `_record_run` reads always carries a
+    real int (`script_exit`'s own `ALWAYS_WRITTEN` fields).
+
+    `already_ran` - a collision finish reporting that some OTHER run
+    already held this slot - is released for the LEDGER
+    (`already_ran_releases=True`, `records._prior_script_run`'s own call)
+    but never for the HINT's in-process cache (the default `False`,
+    `_record_run`'s own call): once the run that row collided with is
+    itself released (its own finish also touched nothing), nothing on the
+    ledger still blocks a fresh start, and continuing to block on a row
+    that only ever recorded "I collided" - never a genuine attempt - blocks
+    on a symptom rather than any real work (S2 arming re-review finding 3:
+    start A, start B collides -> finish B `already_ran`, finish A with zero
+    moves -> a fresh start C must succeed, not collide with B's own
+    collision all over again). The hint's cache exists for a narrower job -
+    not re-suggesting, to THIS process, a script that already collided at
+    this exact position - and keeps locking it regardless of what the
+    ledger later does with other rows.
+
+    `chained` (S2 arming re-review finding 3, an earlier round) overrides
+    all of that to `False` regardless of `moves_done`: a chained run's own
+    trailing `exit_block` carries only the LAST script in the chain's own
     `moves_done` (a chained child's own run starts counting from zero -
     `runtime.py`'s `_next`), so a parent that made a real move before
     handing off to a child that made none reports the combined run as
@@ -484,10 +514,14 @@ def releases_slot(moves_done: int, exit_name: str | None, *, advise: bool, chain
     happens to carry."""
     if chained:
         return False
+    if moves_done is None:
+        return False
+    if exit_name == runtime.Exit.ALREADY_RAN.value:
+        return already_ran_releases
     return (
         moves_done == 0
         and exit_name is not None
-        and exit_name not in (runtime.Exit.UNKNOWN_OUTCOME.value, runtime.Exit.ALREADY_RAN.value)
+        and exit_name != runtime.Exit.UNKNOWN_OUTCOME.value
         and not (advise and exit_name == runtime.Exit.ADVISED.value)
     )
 
@@ -511,11 +545,20 @@ def _record_run(
     own control (a pending decision, most often) takes exactly the released
     shape, so it must not hide the script once whatever blocked it clears -
     and a chained run whose trailing exit under-reports its own moves must
-    not be released either (S2 arming re-review finding 3)."""
+    not be released either (S2 arming re-review finding 3).
+
+    `already_ran_releases=False`, explicitly, unlike the ledger's own call
+    (S2 arming re-review finding 3): this cache exists only to stop this one
+    process re-suggesting, to itself, a script that just collided at this
+    exact position - it keeps that suggestion suppressed regardless of
+    whether the ledger later frees the slot up once the run it collided
+    with is itself released. See `releases_slot`'s own docstring."""
     moves_done = exit_block.get("moves_done") or 0
     exit_name = exit_block.get("exit")
     chained = len(exit_block.get("scripts_run") or []) > 1
-    if releases_slot(moves_done, exit_name, advise=advise, chained=chained):
+    if releases_slot(
+        moves_done, exit_name, advise=advise, chained=chained, already_ran_releases=False
+    ):
         return
     corpus = runtime._corpus(seat, corpora, fresh=False)
     if isinstance(corpus, runtime.ScriptExit):
