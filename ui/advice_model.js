@@ -28,8 +28,8 @@
 //   the post-match retrospective can pair an approval with its proposal.
 //
 // Both action names are mirrored here as literals, the way
-// `render/log.js` mirrors `audit.py`'s `PROBLEM_ACTION`: these modules are
-// served to the browser as-is and cannot import Python.
+// `review_model.js` mirrors `audit.py`'s own: these modules are served to
+// the browser as-is and cannot import Python.
 
 export const ADVICE_ACTION = "advice";
 export const ADVICE_APPROVED_ACTION = "advice_approved";

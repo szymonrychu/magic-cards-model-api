@@ -221,9 +221,7 @@ $("#concede-slot").innerHTML = "<button>Concede - click again to confirm</button
 $("#prompt-box").textContent = "You have priority in your precombat main phase.";
 $("#priority-box").innerHTML = "<button>Pass priority</button> <button>Resolve top</button>";
 $("#stops-box").textContent = "Stops: upkeep, draw, attackers, blockers, end";
-$("#advice-box").textContent = "Buddy proposes attacking with every untapped bear. ".repeat(30);
-const lines = Array.from({{ length: 80 }}, (_, i) => `<div>log line ${{i}}</div>`);
-$("#log-box").innerHTML = lines.join("");
+$("#advice-box").textContent = "Buddy proposes attacking with every untapped bear. ".repeat(90);
 if (location.search.includes("drawer=open")) {{
   // Measured at rest, not part way through the slide-in.
   const still = document.createElement("style");
@@ -295,6 +293,42 @@ function measure(frame, {{ size, open, permitted }}) {{
   w.scrollTo(100000, 100000);
   const scrolled = [w.scrollX, w.scrollY];
   const display = (sel) => ($(sel) ? w.getComputedStyle($(sel)).display : null);
+  // The side panel's own content box, its visible children in order, and the
+  // advisor panel that should fill what they leave - then the same again with
+  // the advisor panel hidden, as it is while there is no proposal.
+  const side = $("#side-panel");
+  const advice = $("#advice-box");
+  const sidePanel = () => {{
+    const style = w.getComputedStyle(side);
+    const outer = box(side);
+    return {{
+      box: outer,
+      inner: {{
+        top: outer.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop),
+        bottom:
+          outer.bottom - parseFloat(style.borderBottomWidth) - parseFloat(style.paddingBottom),
+      }},
+      scrollHeight: side.scrollHeight,
+      clientHeight: side.clientHeight,
+      children: [...side.children]
+        .filter((c) => w.getComputedStyle(c).display !== "none")
+        .map((c) => ({{ id: c.id, ...box(c) }})),
+    }};
+  }};
+  const sideShown = sidePanel();
+  const adviceShown = {{
+    box: box(advice),
+    overflowY: w.getComputedStyle(advice).overflowY,
+    scrollHeight: advice.scrollHeight,
+    clientHeight: advice.clientHeight,
+  }};
+  advice.hidden = true;
+  const sideHidden = sidePanel();
+  const pageHidden = [d.scrollingElement.scrollWidth, d.scrollingElement.scrollHeight];
+  w.scrollTo(100000, 100000);
+  const scrolledHidden = [w.scrollX, w.scrollY];
+  w.scrollTo(0, 0);
+  advice.hidden = false;
   return {{
     size,
     open,
@@ -310,6 +344,9 @@ function measure(frame, {{ size, open, permitted }}) {{
       classes: permittedCards.map((c) => c.className),
     }},
     mobile: w.matchMedia(MOBILE).matches,
+    sidePanel: sideShown,
+    advice: adviceShown,
+    adviceHidden: {{ sidePanel: sideHidden, page: pageHidden, scrolled: scrolledHidden }},
     scrolled,
     viewport: [w.innerWidth, w.innerHeight],
     page: [d.scrollingElement.scrollWidth, d.scrollingElement.scrollHeight],
@@ -808,3 +845,89 @@ def test_permitted_cards_are_as_wide_as_the_fitted_card_w(
     for card in row["cards"]:
         assert abs(card["width"] - card_w) <= 0.5, (size, card, row["cardW"])
         assert abs(card["width"] - 108) > 0.5, (size, card)
+
+
+#: The frames the advisor panel's fill is pinned at: the two desktop sizes
+#: named for it, and the 844x390 phone with the drawer open.
+ADVICE_FILL = [(1920, 1080), (1280, 720)]
+ADVICE_FILL_EACH = pytest.mark.parametrize(
+    "frame",
+    [*[f"{w}x{h}" for w, h in ADVICE_FILL], "drawer-open-844x390"],
+)
+
+
+def _advice_frame(measurements: list[dict], frame: str) -> dict:
+    if frame.startswith("drawer-open"):
+        return _open_frame(measurements)
+    size = next(s for s in ADVICE_FILL if f"{s[0]}x{s[1]}" == frame)
+    return measurements[VIEWPORTS.index(size)]
+
+
+def _stacked_inside(panel: dict) -> None:
+    """The side panel's visible children sit inside it, one under the next,
+    with no two overlapping."""
+    children = panel["children"]
+    for child in children:
+        assert child["top"] >= panel["box"]["top"] - 0.5, (child, panel["box"])
+        assert child["bottom"] <= panel["box"]["bottom"] + 0.5, (child, panel["box"])
+    for upper, lower in zip(children, children[1:], strict=False):
+        assert upper["bottom"] <= lower["top"] + 0.5, (upper, lower)
+
+
+@ADVICE_FILL_EACH
+def test_the_advice_panel_fills_the_rest_of_the_side_panel(
+    measurements: list[dict], frame: str
+) -> None:
+    """No game log panel under it any more: `#advice-box` is the side panel's
+    last child and reaches down to the side panel's own bottom edge, on a
+    desktop and inside the open mobile drawer alike. A long rationale scrolls
+    inside it, so the side panel itself never has to scroll."""
+    m = _advice_frame(measurements, frame)
+    width, height = m["size"]
+    panel, advice = m["sidePanel"], m["advice"]
+    ids = [child["id"] for child in panel["children"]]
+    assert "log-box" not in ids, ids
+    assert ids[-1] == "advice-box", ids
+    assert _inside(panel["box"], width, height), (panel["box"], m["size"])
+    assert advice["box"]["height"] >= 40, (advice["box"], m["size"])
+    assert abs(advice["box"]["bottom"] - panel["inner"]["bottom"]) <= 1, (
+        advice["box"],
+        panel["inner"],
+        m["size"],
+    )
+    assert advice["overflowY"] == "auto", advice
+    assert advice["scrollHeight"] > advice["clientHeight"], advice
+    assert panel["scrollHeight"] <= panel["clientHeight"] + 1, (panel, m["size"])
+    _stacked_inside(panel)
+    assert not _overlap(panel["box"], m["toolbar"]), (panel["box"], m["toolbar"])
+    assert not _overlap(panel["box"], m["regions"]["#mtg-board"]) or m["open"], panel["box"]
+
+
+@EACH
+def test_a_hidden_advice_panel_breaks_nothing(measurements: list[dict], index: int) -> None:
+    """With no proposal the advisor panel is `hidden`: the page still cannot
+    scroll, and the side panel keeps its place with its remaining children
+    stacked inside it."""
+    m = measurements[index]
+    width, height = m["size"]
+    hidden = m["adviceHidden"]
+    assert hidden["scrolled"] == [0, 0], m["size"]
+    assert hidden["page"][0] <= width and hidden["page"][1] <= height, (hidden["page"], m["size"])
+    ids = [child["id"] for child in hidden["sidePanel"]["children"]]
+    assert "advice-box" not in ids, ids
+    if m["mobile"]:
+        return
+    assert hidden["sidePanel"]["box"] == m["sidePanel"]["box"], (hidden["sidePanel"], m["size"])
+    _stacked_inside(hidden["sidePanel"])
+
+
+def test_a_hidden_advice_panel_breaks_nothing_in_the_open_drawer(
+    measurements: list[dict],
+) -> None:
+    m = _open_frame(measurements)
+    width, height = m["size"]
+    hidden = m["adviceHidden"]
+    assert hidden["scrolled"] == [0, 0]
+    assert hidden["page"] == [width, height], hidden["page"]
+    assert _inside(hidden["sidePanel"]["box"], width, height), hidden["sidePanel"]["box"]
+    _stacked_inside(hidden["sidePanel"])

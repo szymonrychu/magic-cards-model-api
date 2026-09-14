@@ -20,6 +20,9 @@ one failure this codebase guards against everywhere else (`poll()`'s
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from conftest import add_card, card_id
 from fastapi.testclient import TestClient
 from ui_node import requires_node, run_module
@@ -654,12 +657,11 @@ def test_only_one_proposal_is_ever_on_screen_and_a_newer_one_replaces_it() -> No
 
 
 def test_the_panel_rerenders_when_busy_changes_even_though_the_log_did_not() -> None:
-    """`log.js` guards on `log.lastSeq` alone and its own comment says that
-    guard must not become a general "did the state change" test. This panel
-    reads three independent inputs - the log, `busy`, and which seat you are
-    - so all three are in its guard: an Approve that stayed enabled while a
-    submission was outstanding is exactly the frozen control that comment
-    warns about."""
+    """A render guard keyed on `log.lastSeq` alone would miss every other
+    input this panel reads - the log, `busy`, and which seat you are - so
+    all three are in its guard: an Approve that stayed enabled while a
+    submission was outstanding is exactly the frozen control such a guard
+    would leave behind."""
     result = panel(
         """
         (() => {
@@ -831,3 +833,82 @@ def test_advice_status_names_each_state_distinctly() -> None:
     assert result["noBase"] == {"state": "stale", "text": STALE}
     assert result["none"] is None
     assert len({READY, BUSY, UNVERIFIED, STALE}) == 4
+
+
+# ------------------------------------------ the log poll feeds the panel ---
+
+UI = Path(__file__).resolve().parents[1] / "ui"
+
+
+def _side_panel_ids() -> list[str]:
+    side = re.search(r'<aside id="side-panel">(.*?)</aside>', (UI / "index.html").read_text(), re.S)
+    assert side, "could not find #side-panel in ui/index.html"
+    return re.findall(r'<div id="([\w-]+)"', side.group(1))
+
+
+def test_the_log_poll_still_feeds_the_advisor_panel_with_no_log_panel_on_the_page() -> None:
+    """The game log panel is gone, but the log POLL is not: a proposal is a
+    ledger row on `GET .../log?since=`, and `app.js`'s real `poll()` writing
+    it into `app.log` is the only way it reaches `#advice-box`. Built from
+    the real `#side-panel` children in `ui/index.html`, so there is no
+    `#log-box` anywhere in this DOM."""
+    ids = _side_panel_ids()
+    assert "log-box" not in ids, ids
+    result = panel(
+        """
+        (async () => {
+          globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+          document.body = new El("body");
+          const side = boxed("side-panel");
+          for (const id of SIDE_IDS) {
+            const el = document.createElement("div");
+            el.setAttribute("id", id);
+            side.appendChild(el);
+          }
+          const board = {
+            you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+            active_player: "bob", priority_holder: "bob", battlefield: [],
+            hands: { alice: [] }, stack: [], combat: { attacks: [] },
+            winner: null, drawn: false, pregame: null,
+          };
+          const reads = [];
+          globalThis.fetch = (path, opts) => {
+            reads.push(path);
+            if (path.includes("/log")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ log: [passEntry(10, "bob"), advice(11)], last_seq: 11 }),
+              });
+            }
+            return Promise.resolve({ ok: true, json: async () => board });
+          };
+          const A = await import(APP_URL);
+          m.mountAdvice(document, A.store, { onApprove: () => {} });
+          A.store.set({
+            gameId: "g1", uid: "u1", run: null, busy: 0,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: board, log: { entries: [], lastSeq: 0 },
+          });
+          const box = document.querySelector("#advice-box");
+          const hiddenBefore = box.hidden;
+          await A.poll();
+          return {
+            hiddenBefore,
+            hidden: box.hidden,
+            text: box.textContent,
+            logRead: reads.some((path) => path.includes("log?since=0")),
+            lastSeq: A.store.get().log.lastSeq,
+            logBox: document.querySelector("#log-box"),
+          };
+        })()
+        """,
+        SIDE_IDS=ids,
+        APP_URL=(UI / "app.js").as_uri(),
+    )
+    assert result["logBox"] is None
+    assert result["hiddenBefore"] is True, "the panel showed a proposal before any log was read"
+    assert result["logRead"] is True, "poll() no longer reads the log"
+    assert result["lastSeq"] == 11
+    assert result["hidden"] is False, "the proposal on the log read never reached the panel"
+    assert "Cast Lightning Bolt targeting Grizzly Bears" in result["text"]
+    assert "Approve" in result["text"]

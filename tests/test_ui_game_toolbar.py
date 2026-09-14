@@ -14,9 +14,9 @@ reachable:
   (graveyards, shared exile, the CR 406.4 marked exile piles) was already a
   subset of `state.exile`/`state.graveyards`, both already drawn in that same
   ribbon.
-- The "Log" button's overlay (`#log-modal`) is gone; the log (`#log-box`)
-  moved back into `#side-panel`, always visible, covered by
-  `tests/test_ui_menus.py` and `tests/test_ui_advice_layout.py`.
+- The "Log" button's overlay (`#log-modal`) is gone, and so is the game log
+  panel itself; the advisor panel takes its room in `#side-panel`, covered
+  by `tests/test_ui_menus.py` and `tests/test_ui_advice_layout.py`.
 
 This file covers what is left: the two buttons are actually gone (from the
 markup and from `mountTopbar`'s wiring), and the three that remain sit

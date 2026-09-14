@@ -18,9 +18,8 @@
 // `closeLogModal`/`logModalIsOpen` trio for a persistent log overlay, both
 // behind topbar buttons. The owner asked for both buttons gone: the command
 // zone (the one thing the popover showed that nothing else did) now draws in
-// the zone ribbon itself (`ui/board_layout.js`'s `zoneRibbon`), and the log
-// (`render/log.js`'s `mountLog`) moved back into `#side-panel`, always
-// visible, instead of behind an overlay.
+// the zone ribbon itself (`ui/board_layout.js`'s `zoneRibbon`). The game log
+// panel is removed from the play UI entirely.
 //
 // CR numbers here (verified with `knowledge_search(type="rules")` in the
 // session that wrote this file): 117.3d (passing priority for a silent AI
@@ -261,8 +260,7 @@ function renderPhaseTrack(el, state) {
  * `openZonesModal`, until this task) are removed, and `ui/board_layout.js`'s
  * `zoneRibbon` now also draws the command zone - the one thing that popover
  * showed that the always-visible ribbon did not already. The "Log" button
- * and `#log-modal` are removed too; `#log-box` moved back into `#side-panel`,
- * always visible, wired by `render/log.js`'s `mountLog` exactly as before. */
+ * and `#log-modal` are removed too, and so is the game log panel. */
 export function mountTopbar(root, store, handlers) {
   const leave = root.querySelector("#leave-game");
   if (leave) leave.onclick = () => handlers.onLeaveGame();

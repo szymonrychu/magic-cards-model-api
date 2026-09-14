@@ -7,7 +7,7 @@
 // place that says which is which.
 //
 // Built once in `ui/index.html` and only ever shown, hidden and patched,
-// never rebuilt on a poll - the lesson `#log-modal` already taught. The
+// never rebuilt on a poll. The
 // renderers in `#prompt-box` wipe and rebuild on every store update, and the
 // press guard (`ui/store.js`) stops holding those back after
 // `PRESS_CAP_MS`, so a card mid-drag or a half-made arrangement there would be

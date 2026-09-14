@@ -315,7 +315,7 @@ def test_the_ribbon_and_the_board_share_one_row_of_the_game_grid(
     client: TestClient,
 ) -> None:
     """Everything that is not the battlefield or the zones - the turn block,
-    the banners, the prompt/priority/stops/log panel - is one right-hand
+    the banners, the prompt/priority/stops/advice panel - is one right-hand
     column, and the board takes the whole of the far side. `#topbar` and
     `#banners` are still separate elements in `index.html`; only the grid puts
     them in the ribbon, so this is what says the three are actually in the

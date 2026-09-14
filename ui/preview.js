@@ -8,7 +8,7 @@
 //   the board moves and every click still lands on the real card underneath.
 //   It goes away when the mouse leaves the card, when the card leaves the
 //   DOM, when the page or anything holding the card scrolls (a scroll
-//   elsewhere - the log following its newest line, another row - leaves the
+//   elsewhere - the advisor panel's rationale, another row - leaves the
 //   card where it is, so the preview stays), and on a press (the click that press becomes opens an
 //   anchored confirm `#popover`, which the preview must not cover).
 //

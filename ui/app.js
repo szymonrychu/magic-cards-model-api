@@ -30,7 +30,6 @@ import {
   popoverIsOpenFor,
   updatePopoverItems,
 } from "./render/ribbon.js";
-import { mountLog } from "./render/log.js";
 import {
   mountDecisionWindow,
   minimizeDecisionWindow,
@@ -1900,7 +1899,6 @@ async function main() {
     onDecisionDraft,
     onDecide: decide,
   });
-  mountLog(document, store);
   mountAdvice(document, store, { onApprove: approveAdvice });
   mountTopbar(document, store, {
     onLeaveGame: leaveGame,

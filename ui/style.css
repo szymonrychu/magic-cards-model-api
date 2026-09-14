@@ -1293,16 +1293,10 @@ h3 { font-size: 14px; }
    (`#prompt-box`), the announcement in progress (`#casting-strip`), the
    priority controls (`#priority-box`), the stop conditions autopilot will
    halt for (`#stops-box`), the mtg-buddy advisor's current proposal
-   (`#advice-box` - which takes whatever height the rest leave, so the panel
-   is exactly one viewport tall whatever is in it), and the game log
-   (`#log-box`, last).
-
-   `#log-box` used to live here, then moved out behind a topbar Log button
-   (`#log-modal`) once the advisor took this corner. That button is gone at
-   the owner's request, so the log came back rather than being lost entirely
-   - but with a bounded height of its own (below) rather than sharing
-   `#advice-box`'s flexible space, so the advisor keeps the room it was
-   given and the log scrolls inside its own smaller box instead. */
+   (`#advice-box`, last - which takes whatever height the rest leave, so the
+   panel is exactly one viewport tall whatever is in it). The game log panel
+   that used to sit under it is removed from the play UI, so the advisor has
+   all of that room. */
 /* Careful with the next two rules: `#side-panel > div` above is an id *and*
    a type selector, so it outranks a bare `#prompt-box`/`#priority-box`, and
    it does - measured with `getComputedStyle` in a real browser, both of them
@@ -1315,10 +1309,10 @@ h3 { font-size: 14px; }
 #prompt-box { border-color: var(--warn); }
 #priority-box { border-color: var(--accent); }
 #side-panel > #casting-strip { border-color: var(--accent); }
-/* The advisor's panel, in the slot `#log-box` used to hold - so it carries
-   the same `flex: 1 1 auto; min-height: 0; overflow-y: auto`: it absorbs the
-   height the other three panels leave, and a long rationale scrolls inside
-   itself rather than pushing the ribbon past the window. It is still a
+/* The advisor's panel, the column's one flexible child - `flex: 1 1 auto;
+   min-height: 0; overflow-y: auto`: it absorbs the height the other panels
+   leave, and a long rationale scrolls inside itself rather than pushing the
+   ribbon past the window. `hidden` while there is no proposal. It is still a
    static panel, never a list - `render/advice.js` shows exactly one
    proposal. */
 #advice-box {
@@ -1332,22 +1326,10 @@ h3 { font-size: 14px; }
    `#prompt-box`'s and `#priority-box`'s did. */
 #side-panel > #advice-box { border-color: var(--accent); }
 
-/* The game log (`render/log.js`'s `mountLog`), always visible now rather
-   than behind the removed topbar Log button. `flex: 0 1 200px` - a fixed
-   basis it can shrink from but never grows past - so it takes a modest,
-   consistent slice of the column and leaves `#advice-box` the rest, with its
-   own scrollbar rather than pushing the ribbon taller than the viewport. */
-#log-box {
-  flex: 0 1 200px;
-  min-height: 60px;
-  overflow-y: auto;
-  font-size: 12px;
-}
-
 /* One advisor proposal (`render/advice.js`). The summary is the play, the
    `.advice-why` block is the agent's own words, and `.advice-where` says
    which ledger entry and which step it was proposed at so it can be placed
-   against the log.
+   against the audit log.
 
    `.advice-stale` wraps all three once the board has moved: dimmed, because
    the reasoning is still worth reading while deciding whether it still
@@ -1371,18 +1353,6 @@ h3 { font-size: 14px; }
 .advice-status { margin-top: 8px; color: var(--ink-dim); font-size: 12px; }
 .advice-status-stale, .advice-status-unverified { color: var(--warn); }
 #advice-box button { margin-top: 10px; }
-
-/* One `render/log.js` audit-log line. A refused action's engine-verbatim
-   reason (`.refusal`) reads in the same red as everywhere else refusals show
-   up; a `report_problem` entry (`.log-problem`) is bold, matching the loud
-   banner `audit.py` gives it in the server's own console log. */
-.log-line {
-  padding: 1px 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.log-line.log-problem { font-weight: 700; }
-.refusal { color: var(--bad); }
 
 /* A short-lived message that appears near an action and fades - a refusal
    or confirmation that does not need a whole `.notice` banner.

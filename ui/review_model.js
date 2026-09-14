@@ -36,7 +36,7 @@
 // imprinted card the same way it tucks a live one.
 
 //: `audit.py`'s own literals, mirrored here because a browser module cannot
-//: import Python. `log.js` mirrors `PROBLEM_ACTION` the same way.
+//: import Python.
 export const PLAN_ACTION = "plan_declared";
 export const GAME_OVER_ACTION = "game_over";
 

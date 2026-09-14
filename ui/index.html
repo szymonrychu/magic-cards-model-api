@@ -255,9 +255,9 @@
          what the zone ribbon beside the board already shows, and a "Log"
          button toggling `#log-modal`). Both are gone at the owner's request;
          see `ui/board_layout.js`'s `zoneRibbon` (now also drawing the command
-         zone, the one thing that popover showed that nothing else did) and
-         `#log-box` below (moved back into `#side-panel`, always visible,
-         rather than lost along with the button that used to reveal it). -->
+         zone, the one thing that popover showed that nothing else did). The
+         game log panel is gone too; the log is still read every poll, because
+         the advisor panel below builds its proposal from it. -->
     <header id="topbar">
       <div id="turn-info"></div>
       <ol id="phase-track"></ol>
@@ -296,26 +296,19 @@
          while you click other cards to fill its slots, and a menu closes on
          the first click-away.
 
-         `#advice-box` (`ui/render/advice.js`) absorbs whatever height the rest
-         of the column leaves: the mtg-buddy advisor's current proposal, with
-         its rationale and an Approve button - a static panel showing one
-         proposal, never a scrolling list, which is the corner the owner once
-         asked to reuse it for.
-
-         `#log-box` (`ui/render/log.js`'s `mountLog`) is the last child, always
-         visible rather than behind the removed topbar Log button: it used to
-         live here, then moved out to `#log-modal` behind that button, and now
-         the button is gone the log came back rather than being lost along
-         with it. It gets a bounded height of its own (`style.css`) and scrolls
-         inside itself, so it never competes with the advisor panel above it
-         for the column's remaining room. -->
+         `#advice-box` (`ui/render/advice.js`) is the last child and absorbs
+         whatever height the rest of the column leaves: the mtg-buddy
+         advisor's current proposal, with its rationale and an Approve button
+         - a static panel showing one proposal, never a scrolling list. The
+         game log panel that used to sit under it is removed from the play UI,
+         so the advisor has the whole of the room; it is `hidden` while there
+         is no proposal. -->
     <aside id="side-panel">
       <div id="prompt-box"></div>
       <div id="casting-strip" class="casting-strip" hidden></div>
       <div id="priority-box"></div>
       <div id="stops-box"></div>
       <div id="advice-box"></div>
-      <div id="log-box"></div>
     </aside>
   </div>
 
@@ -343,9 +336,7 @@
 
        Built once, here, and only ever shown, hidden and patched: `#prompt-
        box` is rebuilt on every poll, and a card mid-drag cannot live in a
-       panel that is torn down under it - the same reason `#log-box` above is
-       `mountLog`'s own permanent element rather than something rebuilt into
-       `#modal`. Not a `.modal`: it floats over the board without dimming or
+       panel that is torn down under it. Not a `.modal`: it floats over the board without dimming or
        blocking it, can be dragged by its title bar, and can be minimized but
        not closed while its decision is pending. -->
   <div id="decision-window" class="decision-window" role="dialog" aria-modal="false" aria-labelledby="decision-window-title" hidden>

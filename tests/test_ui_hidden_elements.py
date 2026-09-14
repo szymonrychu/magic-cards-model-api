@@ -41,8 +41,8 @@ INDEX_HTML = UI / "index.html"
 #: `.modal`'s own `position: fixed; inset: 0` then swallows every click on
 #: the board behind it - the greyed-out, dead-button outage this file exists
 #: for. `#log-modal` used to be one of these (the game log, behind a topbar
-#: button); it is gone now, at the owner's request, and the log lives in
-#: `#log-box`, always visible in `#side-panel` rather than as an overlay.
+#: button); it is gone now, at the owner's request, along with the game log
+#: panel itself.
 OVERLAYS = ("card-zoom", "zone-viewer", "toast", "popover", "decision-window", "modal")
 
 #: Every module that can toggle `.hidden` - the still-classic `app.js` plus
