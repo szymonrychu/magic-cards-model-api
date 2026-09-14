@@ -431,8 +431,23 @@
     "LandCard": {
       "additionalProperties": false,
       "properties": {
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         }
       },
       "required": [
@@ -572,6 +587,12 @@
         },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         }
       },
       "required": [
@@ -647,6 +668,12 @@
         },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         }
       },
       "required": [
@@ -966,8 +993,23 @@
     "ZonedCard": {
       "additionalProperties": false,
       "properties": {
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         },
         "zone": {
           "enum": [

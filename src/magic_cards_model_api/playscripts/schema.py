@@ -67,6 +67,9 @@ MAX_SELECTOR_WORDS = 15
 MAX_TARGETS = 6
 #: Ordered tie-breakers after `pick.select`, the same fan-out as `moves`.
 MAX_PREFER = 4
+#: `ties: "any"` takes the first `count` still-tied candidates by sorted
+#: name instead of exiting `ambiguous`; left out, behaviour is unchanged.
+TIES = ("any",)
 #: Named archetype keys of one play, or of one `in`/`not_in` input list. The
 #: widest enum a play names from is `opposing_archetype`, `*` plus the matchup
 #: stems of a deck's newest analysis run (19 in the largest run at the time of
@@ -209,6 +212,7 @@ StepName = Literal[STEPS]
 DecisionKind = Literal[DECISION_KINDS]
 CastCost = Literal[CAST_COSTS]
 SelectorWords = Annotated[list[NonBlank], Field(max_length=MAX_SELECTOR_WORDS)]
+Ties = Literal[TIES]
 
 
 class _Strict(BaseModel):
@@ -391,11 +395,16 @@ Condition = Annotated[
 
 # -- moves -------------------------------------------------------------------
 
+#: Ordered tie-breakers, shared by `Pick`, `SacrificeChoice`, `LandCard` and
+#: `ZonedCard`.
+Prefer = Annotated[list[Selector], Field(max_length=MAX_PREFER)]
+
 
 class Pick(_Strict):
     select: Selector
     count: Annotated[int, Field(ge=1)] = None
-    prefer: Annotated[list[Selector], Field(max_length=MAX_PREFER)] = None
+    prefer: Prefer = None
+    ties: Ties = None
 
 
 def _amount_tag(value: Any) -> str:
@@ -472,6 +481,8 @@ class Answer(_Strict):
 class ZonedCard(_Strict):
     zone: Literal[COUNT_ZONES]
     select: Selector
+    prefer: Prefer = None
+    ties: Ties = None
 
 
 class CardTarget(_Strict):
@@ -500,6 +511,8 @@ Target = Annotated[
 
 class LandCard(_Strict):
     select: Selector
+    prefer: Prefer = None
+    ties: Ties = None
 
 
 class SacrificeChoice(Pick):

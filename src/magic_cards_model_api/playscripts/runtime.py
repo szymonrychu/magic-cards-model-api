@@ -890,7 +890,9 @@ def _move_request(
         _zone_cards(state, "hand", me),
         move["card"]["select"],
         "the land to play",
+        move["card"].get("prefer"),
         present=conditions.presence(state, me),
+        ties=move["card"].get("ties"),
     )
     if isinstance(chosen, ScriptExit):
         return chosen
@@ -907,7 +909,14 @@ def _activate_request(
         if _ability(card, phrase) is not None
     ]
     present = conditions.presence(state, me)
-    chosen = _pick(candidates, move["source"]["select"], "the source to activate", present=present)
+    chosen = _pick(
+        candidates,
+        move["source"]["select"],
+        "the source to activate",
+        move["source"].get("prefer"),
+        present=present,
+        ties=move["source"].get("ties"),
+    )
     if isinstance(chosen, ScriptExit):
         return chosen
     source = chosen[0]
@@ -934,6 +943,7 @@ def _activate_request(
             sacrifice.get("prefer"),
             sacrifice.get("count") or sacrifice_count(ability),
             present=present,
+            ties=sacrifice.get("ties"),
         )
         if isinstance(sacrificed, ScriptExit):
             return sacrificed
@@ -993,7 +1003,9 @@ def cast_body(
         _zone_cards(state, zone, me),
         move["card"]["select"],
         "the card to cast",
+        move["card"].get("prefer"),
         present=conditions.presence(state, me),
+        ties=move["card"].get("ties"),
     )
     if isinstance(chosen, ScriptExit):
         return chosen
@@ -1056,6 +1068,7 @@ def decide_body(
             pick.get("prefer"),
             pick.get("count", 1),
             present=present,
+            ties=pick.get("ties"),
         )
         if isinstance(chosen, ScriptExit):
             return chosen
@@ -1134,11 +1147,13 @@ def _pick(
     prefer: list[dict[str, Any]] | None = None,
     count: int = 1,
     present: Present | None = None,
+    ties: str | None = None,
 ) -> list[dict[str, Any]] | ScriptExit:
     """`count` cards matching `select`, narrowed by each `prefer` that still
     leaves some. Same-named candidates are interchangeable; different names
-    left tied are `ambiguous`, and nothing matching is `unforeseen`. `present`
-    is the board a `missing_from` compares against."""
+    left tied are `ambiguous`, unless `ties == "any"` (O2), which instead
+    takes the first `count` of them by sorted name. `present` is the board a
+    `missing_from` compares against."""
     found = [card for card in cards if matches(select, card, present)]
     if not found:
         return ScriptExit(Exit.UNFORESEEN, stop_reason=f"nothing matched {what}")
@@ -1148,11 +1163,13 @@ def _pick(
             found = narrowed
     names = sorted({str(card.get("name") or card.get("card_name")) for card in found})
     if len(found) > count and len(names) > 1:
-        return ScriptExit(
-            Exit.AMBIGUOUS,
-            ambiguous_names=names,
-            stop_reason=f"different cards tie for {what}",
-        )
+        if ties != "any":
+            return ScriptExit(
+                Exit.AMBIGUOUS,
+                ambiguous_names=names,
+                stop_reason=f"different cards tie for {what}",
+            )
+        found = sorted(found, key=lambda card: str(card.get("name") or card.get("card_name")))
     return found[:count]
 
 

@@ -133,9 +133,9 @@ characteristic with it:
 
 Move kinds (4), each with `answers: [0-3]` (an `answer` move needs 1-3):
 
-- `activate {source: {zone, select}, ability_text_has, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, answers: [0-3]}`
-- `cast {card: {zone, select}, cost?: <cast cost>, targets: [0-6 <target>], mana?: auto, answers: [0-3]}`
-- `play_land {card: {select}, answers: [0-3]}`
+- `activate {source: {zone, select, prefer?: [0-4 select], ties?: any}, ability_text_has, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, answers: [0-3]}`
+- `cast {card: {zone, select, prefer?: [0-4 select], ties?: any}, cost?: <cast cost>, targets: [0-6 <target>], mana?: auto, answers: [0-3]}`
+- `play_land {card: {select, prefer?: [0-4 select], ties?: any}, answers: [0-3]}`
 - `answer {answers: [1-3]}`, for a decision already pending
 
 A target is `{select, side}` (a card or permanent matching `select`, on that
@@ -143,11 +143,22 @@ side) or `{player: me|opponent}`, one per target the spell or ability
 announces, in order. Anything else is `malformed-play`, and a key beside
 either shape is `unknown-field`.
 
-A sacrifice choice is `{select, count?: >=1, prefer?: [0-4 select]}`: the
+A sacrifice choice is `{select, count?: >=1, prefer?: [0-4 select], ties?: any}`: the
 permanents the activating player controls matching `select`, for an
 activation cost's own "Sacrifice a ..." piece (Goblin Bombardment's "Sacrifice
 a creature"). `count` left out is the cost's own number. `source` sacrifices
 the ability's own source, `none` nothing.
+
+### `prefer` and `ties` (O2)
+
+`play_land.card`, `cast.card`, `activate.source`, `Pick` (an answer's
+`pick`) and a sacrifice choice all take `prefer` (0-4 selectors, the same
+fan-out as `moves`) and `ties: "any"`. `prefer` narrows the match to the
+first selector in the list that still leaves at least one candidate, exactly
+as it already did; `ties: "any"` changes only what happens when candidates of
+different names are still tied after that: instead of exiting `ambiguous`, the
+runner takes the first `count` of them by sorted name. Left out, behaviour is
+unchanged.
 
 ### `cast.cost`
 
@@ -170,7 +181,7 @@ and then this doc's test until it is listed here.
 
 ### `answers[]`
 
-Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select]}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max}`.
+Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select], ties?: any}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max}`.
 
 An answer's fields must fit its decision kind, or it is
 `answer-shape-mismatch`. A pay-amount decision (Galvanic Discharge's

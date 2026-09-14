@@ -2064,6 +2064,45 @@ def test_a_sacrifice_choice_tied_between_different_cards_exits_ambiguous_unless_
     assert lions and hook.posts("/actions/activate")[0]["sacrificing"] == [lions[0]["id"]]
 
 
+def test_play_land_ties_any_takes_the_first_by_sorted_name_instead_of_ambiguous(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O2: `prefer` (up to 4) and `ties: "any"` on `play_land.card`. Two
+    differently-named lands tied under a plain `{types_all: [Land]}` selector
+    are `ambiguous` without `ties`; with `ties: "any"` the runner takes the
+    first by sorted name instead."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Sacred Foundry", "alice", "hand")
+    add_card(client, board, "Steam Vents", "alice", "hand")
+    register(client, board, alice, land_script("drop"))
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    tied = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+    assert tied.script_exit.exit is Exit.AMBIGUOUS, tied.to_dict()
+    assert tied.script_exit.ambiguous_names == ["Sacred Foundry", "Steam Vents"]
+    assert hook.posts("/actions/play-land") == []
+
+    any_land_move = {
+        "kind": "play_land",
+        "card": {"select": {}, "ties": "any"},
+        "answers": [{"decision": "pay_life", "accept": False}],
+    }
+    register(
+        client,
+        board,
+        alice,
+        land_script("drop", moves=[any_land_move]),
+        land_script("drop-any", moves=[any_land_move]),
+    )
+    seat, hook = hooked_seat(seats, alice)
+    chosen = run_script(seat, script_id="drop-any", reasoning=REASONING, corpora={})
+    assert chosen.script_exit.exit is Exit.CHAIN_COMPLETE, chosen.to_dict()
+    foundry = cards_named(state(client, board)["battlefield"], "Sacred Foundry")
+    assert foundry, "the alphabetically-first tied land was played"
+    assert hook.posts("/actions/play-land")[0]["card_id"] == foundry[0]["id"]
+
+
 def test_the_fetch_sacrifices_its_own_source(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -399,6 +399,119 @@ def test_every_move_kind_validates_in_its_documented_shape():
     assert play_errors(play(moves=moves)) == []
 
 
+# -- O2: prefer (up to 4) and ties: "any" on play_land.card, cast.card, -----------
+# -- activate.source, Pick and SacrificeChoice -------------------------------
+
+
+def test_play_land_card_takes_prefer_and_ties():
+    doc = play(
+        moves=[
+            {
+                "kind": "play_land",
+                "card": {
+                    "select": {"types_all": ["Land"]},
+                    "prefer": [{"subtypes_any": ["Mountain"]}],
+                    "ties": "any",
+                },
+            }
+        ]
+    )
+    assert play_errors(doc) == []
+    move = Play.model_validate(doc).moves[0]
+    assert move.card.ties == "any" and len(move.card.prefer) == 1
+
+
+def test_cast_card_takes_prefer_and_ties():
+    doc = play(
+        moves=[
+            cast_move(
+                card={
+                    "zone": "hand",
+                    "select": {"types_any": ["Creature"]},
+                    "prefer": [{"colors_any": ["R"]}],
+                    "ties": "any",
+                }
+            )
+        ]
+    )
+    assert play_errors(doc) == []
+    move = Play.model_validate(doc).moves[0]
+    assert move.card.ties == "any"
+
+
+def test_activate_source_takes_prefer_and_ties():
+    doc = play(
+        moves=[
+            {
+                "kind": "activate",
+                "source": {
+                    "zone": "battlefield",
+                    "select": {"types_all": ["Land"]},
+                    "prefer": [{"subtypes_any": ["Island"]}],
+                    "ties": "any",
+                },
+                "ability_text_has": "Search your library for",
+            }
+        ]
+    )
+    assert play_errors(doc) == []
+    move = Play.model_validate(doc).moves[0]
+    assert move.source.ties == "any"
+
+
+def test_pick_and_sacrifice_choice_take_ties():
+    doc = mutate("moves.0.answers.0.pick.ties", "any")
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).moves[0].answers[0].pick.ties == "any"
+    sac_doc = mutate("moves.0.sacrifice", {"select": {"types_all": ["Creature"]}, "ties": "any"})
+    assert play_errors(sac_doc) == []
+
+
+def test_ties_outside_any_is_malformed_on_play_land_card():
+    doc = play(moves=[{"kind": "play_land", "card": {"select": {}, "ties": "all"}}])
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_ties_outside_any_is_malformed_on_activate_source():
+    doc = play(
+        moves=[
+            {
+                "kind": "activate",
+                "source": {"zone": "battlefield", "select": {}, "ties": "all"},
+                "ability_text_has": "Search your library for",
+            }
+        ]
+    )
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_ties_outside_any_is_malformed_on_pick():
+    doc = mutate("moves.0.answers.0.pick.ties", "all")
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_land_card_and_zoned_card_prefer_are_bounded():
+    over = [{}] * (MAX_PREFER + 1)
+    play_land_doc = play(moves=[{"kind": "play_land", "card": {"select": {}, "prefer": over}}])
+    assert codes(play_land_doc) == ["bounds-exceeded"]
+    activate_doc = play(
+        moves=[
+            {
+                "kind": "activate",
+                "source": {"zone": "battlefield", "select": {}, "prefer": over},
+                "ability_text_has": "Search your library for",
+            }
+        ]
+    )
+    assert codes(activate_doc) == ["bounds-exceeded"]
+
+
 def test_items_beyond_a_too_long_list_are_still_judged():
     moves = [copy.deepcopy(MOVE)] * 4 + [{"kind": "attack"}]
     assert codes(play(moves=moves)) == ["bounds-exceeded", "forbidden-kind"]

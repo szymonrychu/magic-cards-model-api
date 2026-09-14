@@ -72,17 +72,28 @@ def test_doc_names_the_decision_kinds_a_script_never_answers() -> None:
 def test_cast_move_line_carries_the_optional_cost_and_bounds() -> None:
     text = DOC.read_text()
     assert (
-        f"`cast {{card: {{zone, select}}, cost?: <cast cost>, "
-        f"targets: [0-{MAX_TARGETS} <target>], mana?: auto, answers: [0-{MAX_ANSWERS}]}}`"
+        f"`cast {{card: {{zone, select, prefer?: [0-{MAX_PREFER} select], ties?: any}}, "
+        f"cost?: <cast cost>, targets: [0-{MAX_TARGETS} <target>], mana?: auto, "
+        f"answers: [0-{MAX_ANSWERS}]}}`"
     ) in text
     assert f"prefer?: [0-{MAX_PREFER} select]" in text
 
 
+def test_o2_prefer_and_ties_are_on_play_land_activate_source_and_pick() -> None:
+    text = DOC.read_text()
+    assert f"`play_land {{card: {{select, prefer?: [0-{MAX_PREFER} select], ties?: any}}" in text
+    assert (
+        f"`activate {{source: {{zone, select, prefer?: [0-{MAX_PREFER} select], ties?: any}}"
+    ) in text
+    assert (f"pick?: {{select, count?, prefer?: [0-{MAX_PREFER} select], ties?: any}}") in text
+    assert "ties?: any" in text
+
+
 def test_activate_move_line_carries_targets_and_the_sacrifice_choice() -> None:
     assert (
-        f"`activate {{source: {{zone, select}}, ability_text_has, "
-        f"targets: [0-{MAX_TARGETS} <target>], sacrifice?: source|none|<sacrifice choice>, "
-        f"answers: [0-{MAX_ANSWERS}]}}`"
+        f"`activate {{source: {{zone, select, prefer?: [0-{MAX_PREFER} select], ties?: any}}, "
+        f"ability_text_has, targets: [0-{MAX_TARGETS} <target>], "
+        f"sacrifice?: source|none|<sacrifice choice>, answers: [0-{MAX_ANSWERS}]}}`"
     ) in DOC.read_text()
 
 
