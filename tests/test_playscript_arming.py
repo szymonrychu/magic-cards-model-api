@@ -272,10 +272,11 @@ def test_a_pending_decision_only_lets_a_first_move_answer_play_apply(
     )
     seats = wired(monkeypatch, board)
     seat, _ = hooked_seat(seats, alice)
+    # A real view with the pending decision laid over it: condition
+    # evaluation reads the board (untapped mana for `affordable`), so a
+    # hand-built state missing `battlefield` is not a view the engine sends.
     pending_state = {
-        "turn_number": 1,
-        "step": "precombat_main",
-        "active_player": "alice",
+        **seat.fetch_state(),
         "priority_holder": "alice",
         "pending_decision": {"player": "alice", "kind": "pay_mana", "prompt": "pay {3}?"},
     }
