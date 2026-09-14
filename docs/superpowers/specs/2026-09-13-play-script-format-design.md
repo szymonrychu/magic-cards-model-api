@@ -225,6 +225,27 @@ Four more selector fields the engine, not the view, answers:
   `unlocks_by_basic_search` below, since both read this same `unlocks`
   answer for the land a search could find.
 
+  **Newly payable is not enough on its own: it must also be targetable.**
+  `legal_actions` still offers a cast row for a spell with a mandatory
+  target and none legal right now (Fatal Push, "target creature", with no
+  creature anywhere; Ephemerate, "target creature you control", with no
+  creature controlled) - it just leaves that row's `target_slots[i].
+  candidates`/`player_candidates` empty, so `Payability.payable` alone
+  cannot tell a real unlock from a merely mana-payable, untargetable one. A
+  card newly payable on a land's column counts toward `unlocks` only when at
+  least one of its payable (`Affordability.YES`) options also has a legal
+  candidate for every mandatory target slot (`TargetSlot.minimum >= 1`) - the
+  same read item 3's `castable_now` already applies to `affordable`, applied
+  here to the specific option that made the card payable. A payable option
+  with no target slot at all, or only optional ones, passes automatically,
+  so a targetless card (Preordain, Psychic Frog) still unlocks exactly as
+  before. This applies to `unlocks`, and transitively to `unlocks_by_search`/
+  `unlocks_by_basic_search` (both read the same `unlocks` answer for the land
+  a search could find) and to `unlocks_life_paid` (never set except alongside
+  a genuine `unlocks: true`), and to a `candidate_ids`-offered library land's
+  own `unlocks` entry - all of it computed off the one matrix pass, no second
+  engine call.
+
   **Item 4, `unlocks_life_paid` (int, present alongside `unlocks` for every
   offered land):** the life the unlock costs through this land's own
   "{T}, Pay N life" mana ability (CR 605.3a, e.g. Fiery Islet's "{T}, Pay 1

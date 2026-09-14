@@ -61,7 +61,17 @@ search finish and priority returns.
   land's own prediction, that card's assumed-land answer, or that card's
   `now` answer) is left out of the comparison entirely: `unlocks` fails
   closed to `False` for that pair rather than trusting an answer the engine
-  itself flagged as incomplete.
+  itself flagged as incomplete. D-fix: `payable` alone is not enough either -
+  `legal_actions` still offers a cast row for a spell with a mandatory
+  target and none legal right now (Fatal Push, "target creature", with no
+  creature anywhere), so a land that only made a spell mana-payable, never
+  target-legal, used to flip `unlocks` to True on the strength of the mana
+  alone. `_has_a_payable_targeted_option` closes that: the same target check
+  `castable_now`/item 3 already applies to `affordable`
+  (`_has_legal_targets`, every mandatory `target_slots` entry filled), now
+  also required of the newly-payable option before `unlocks` can flip. A
+  card whose payable option needs no target at all still unlocks, exactly as
+  before.
 - `unlocks_by_search` is true for a hand card, or one of `player`'s own
   battlefield permanents (M2, "choose among several already-in-play
   fetches" - a `source.select` naming `unlocks_by_search` on a *battlefield*
@@ -107,8 +117,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from magic_cards_model.machines.hypothetical import EntersState, payability_matrix
-from magic_cards_model.models import Action, CardState, Game, Zone
+from magic_cards_model.machines.hypothetical import EntersState, Payability, payability_matrix
+from magic_cards_model.models import Action, Affordability, CardState, Game, Zone
 
 from ..board_scope import on_one_board
 from ..serialize import _card_view
@@ -194,6 +204,28 @@ def _has_legal_targets(option: Action) -> bool:
         slot.candidates or slot.player_candidates
         for slot in option.target_slots
         if slot.minimum >= 1
+    )
+
+
+def _has_a_payable_targeted_option(payability: Payability) -> bool:
+    """D-fix: does at least one of `payability.options` that is itself
+    payable (`Affordability.YES`) also have a legal target for every
+    mandatory slot (`_has_legal_targets` again, item 3's own check)? Only
+    `affordable` used to read `castable_now` - `unlocks`/`unlocks_by_search`/
+    `unlocks_by_basic_search` compared `Payability.payable` alone, so a land
+    that only made a spell mana-payable, never target-legal, still flipped
+    `unlocks` to True (Polluted Delta reading `unlocks_by_basic_search: true`
+    to fetch a Swamp for a Fatal Push with no creature anywhere to target;
+    Godless Shrine reading `unlocks: true` for an Ephemerate with no creature
+    to target). `payable` can be True while every payable row's own target
+    slots are unfilled, so this re-checks the options directly rather than
+    trusting the flag alone. A card whose every payable option needs no
+    target at all (`target_slots` empty, or every slot optional) passes
+    automatically, exactly as `_has_legal_targets` already does for
+    `castable_now`."""
+    return any(
+        option.affordable == Affordability.YES and _has_legal_targets(option)
+        for option in payability.options
     )
 
 
@@ -376,7 +408,11 @@ def build_hypothetical_facts(
             if payability.notices and not _life_paid_notices_only(payability.notices):
                 continue
             was_payable = now is not None and now.payable
-            if payability.payable and not was_payable:
+            if (
+                payability.payable
+                and not was_payable
+                and _has_a_payable_targeted_option(payability)
+            ):
                 unlocks = True
                 life_paid = payability.life_paid
                 break

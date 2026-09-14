@@ -341,6 +341,82 @@ def test_dryad_arbor_never_unlocks(client, game):
     assert facts["cards"][arbor_id]["unlocks"] is False
 
 
+# -- unlocks/unlocks_by_search/unlocks_by_basic_search need a legal target too ----
+
+
+def test_polluted_delta_does_not_unlock_by_basic_search_for_a_pushless_push(client, game):
+    """The defect: dimir T1, Polluted Delta + Undercity Sewers + Fatal Push +
+    Psychic Frog in hand, empty opposing board, a library Swamp. Fetching the
+    Swamp pays Fatal Push's {B}, but Fatal Push ("target creature") has no
+    legal target with no creature anywhere - `unlocks`/`unlocks_by_search`/
+    `unlocks_by_basic_search` must read False, not count a merely payable,
+    untargetable cast as an unlock."""
+    add_card(client, game, "Polluted Delta", "alice", "hand")
+    add_card(client, game, "Undercity Sewers", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    add_card(client, game, "Swamp", "alice", "library")
+    live = _live(game)
+    alice = live.player("alice")
+    delta_id = str(_by_name(alice.hand, "Polluted Delta").id)
+
+    facts = _facts(game)
+    assert facts["cards"][delta_id]["unlocks_by_search"] is False
+    assert facts["cards"][delta_id]["unlocks_by_basic_search"] is False
+
+
+def test_godless_shrine_does_not_unlock_ephemerate_with_no_creature_to_target(client, game):
+    """The defect's second board: esper T1, Godless Shrine + Shadowy
+    Backstreet + Ephemerate + Emperor of Bones in hand, no creatures
+    anywhere. Shrine's own W pays Ephemerate's {W}, but Ephemerate ("target
+    creature you control") has no legal target with no creature controlled -
+    `unlocks` must read False."""
+    add_card(client, game, "Godless Shrine", "alice", "hand")
+    add_card(client, game, "Shadowy Backstreet", "alice", "hand")
+    add_card(client, game, "Ephemerate", "alice", "hand")
+    add_card(client, game, "Emperor of Bones", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    shrine_id = str(_by_name(alice.hand, "Godless Shrine").id)
+
+    facts = _facts(game)
+    assert facts["cards"][shrine_id]["unlocks"] is False
+
+
+def test_fatal_push_still_unlocks_by_search_with_an_opposing_creature_present(client, game):
+    """The same dimir board as the defect above, with one opposing creature
+    added: Fatal Push now has a legal target, so fetching the Swamp is a
+    real unlock again - the target-legality check must not fail closed on a
+    card that genuinely has a target available."""
+    add_card(client, game, "Polluted Delta", "alice", "hand")
+    add_card(client, game, "Undercity Sewers", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    add_card(client, game, "Swamp", "alice", "library")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    live = _live(game)
+    alice = live.player("alice")
+    delta_id = str(_by_name(alice.hand, "Polluted Delta").id)
+
+    facts = _facts(game)
+    assert facts["cards"][delta_id]["unlocks_by_search"] is True
+    assert facts["cards"][delta_id]["unlocks_by_basic_search"] is True
+
+
+def test_a_targetless_card_still_unlocks(client, game):
+    """A card with no target at all (Psychic Frog casts with no `target`
+    clause) must still unlock - the target-legality check must pass an
+    option automatically when it has no mandatory target slot, not only when
+    one is present and filled."""
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    island_id = str(_by_name(alice.hand, "Island").id)
+    assert _facts(game)["cards"][island_id]["unlocks"] is True
+
+
 # -- castable_now (item 3, affordable ignoring targets) -----------------------
 
 
