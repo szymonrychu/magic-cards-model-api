@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -1053,3 +1054,484 @@ def test_the_cli_wait_wake_to_draft_is_refused_for_a_seat(
     assert seat_cli.run(["--uid", uid, "--game", game, "wait", "--wake-to-draft"]) == 0
     printed = capsys.readouterr().out.strip()
     assert printed == seatkit.WAKE_TO_DRAFT_ADVISOR_ONLY
+
+
+# ---------------------------------------------------------------------------
+# 7. re-review, 2026-09-14, finding 1: an OS file lock and a token-guarded
+# delete, so overlapping CLI processes never lose or double-post a draft
+# ---------------------------------------------------------------------------
+
+
+def test_save_cli_draft_never_deletes_a_draft_it_never_saw(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unit-level: the mechanism review fix 1 adds to `_save_cli_draft` - a
+    `None` write (nothing staged from THIS call's own point of view) only
+    ever deletes the file when it still carries the token this call itself
+    read. A call that loaded nothing at all (`expected_token=None`, exactly
+    what a background `wait` starting from an empty drafts directory sees)
+    must never delete a draft a different call wrote in the meantime."""
+    monkeypatch.setenv(seat_cli.CLI_DRAFTS_DIR_ENV, str(tmp_path))
+    game_id, uid = "game-1", "uid-1"
+
+    # Nothing staged - a background `wait`'s own load sees exactly this.
+    loaded, note = seat_cli._load_cli_draft(game_id, uid)
+    assert loaded is None and note is None
+
+    # A foreground `stage-advice`, in a completely separate call, stages a
+    # window in the meantime.
+    trouble = seat_cli._save_cli_draft(
+        game_id, uid, {"window": {"step": "end_step"}, "action": None}
+    )
+    assert trouble is None
+
+    # The background `wait` finishes and persists "nothing changed" from ITS
+    # own point of view - `expected_token=None`, exactly what its own load
+    # above saw.
+    trouble = seat_cli._save_cli_draft(game_id, uid, None, expected_token=None)
+    assert trouble is None
+
+    survived, _note = seat_cli._load_cli_draft(game_id, uid)
+    assert survived is not None, "a call that loaded nothing must never delete a draft staged since"
+    assert survived["window"]["step"] == "end_step"
+
+
+def test_a_background_wait_racing_a_foreground_stage_advice_never_loses_the_stage(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end, two real `seat_cli.run()` calls (each its own `Seats()` -
+    the same simulated-process boundary every other CLI test in this file
+    uses) racing on the file lock. Whichever gets there first, the staged
+    window must survive both - review fix 1's own cross-process claim."""
+    wire(monkeypatch)
+    uid = advisor_uid(game)
+
+    entered = threading.Event()
+    release = threading.Event()
+    original_load = seat_cli._load_cli_draft
+
+    def slow_load(game_id: str, seat_uid: str) -> Any:
+        result = original_load(game_id, seat_uid)
+        if seat_uid == uid:
+            entered.set()
+            release.wait(5)
+        return result
+
+    monkeypatch.setattr(seat_cli, "_load_cli_draft", slow_load)
+
+    results: dict[str, int] = {}
+
+    def run_wait() -> None:
+        results["wait"] = seat_cli.run(["--uid", uid, "--game", game, "wait", "--max-seconds", "0"])
+
+    wait_thread = threading.Thread(target=run_wait)
+    wait_thread.start()
+    assert entered.wait(5), "the background wait never reached its own load"
+
+    # The background `wait` is now stuck holding the file lock, inside its
+    # own load. A foreground `stage-advice` racing it must simply wait its
+    # turn on the same lock rather than run concurrently against it.
+    def run_stage() -> None:
+        results["stage"] = seat_cli.run(
+            ["--uid", uid, "--game", game, "stage-advice", "declare_attackers"]
+        )
+
+    stage_thread = threading.Thread(target=run_stage)
+    stage_thread.start()
+    time.sleep(0.05)
+    release.set()
+    wait_thread.join(5)
+    stage_thread.join(5)
+
+    assert results["wait"] == 0
+    assert results["stage"] == 0
+    persisted, note = seat_cli._load_cli_draft(game, uid)
+    assert persisted is not None, "the foreground stage must survive the background wait"
+    assert persisted["window"]["step"] == "declare_attackers"
+
+
+def test_two_cli_processes_racing_to_resolve_the_same_ready_draft_post_exactly_once(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cross-process version of `test_two_concurrent_resolves_produce_exactly_
+    one_post`: two separate `seat_cli.run()` calls (their own `Seats()` each)
+    both finding the SAME ready, staged draft on disk. Without review fix 1's
+    file lock, both used to probe it legal and both `POST .../advice` - two
+    ledger rows for the one proposal a human approves once."""
+    wire(monkeypatch)
+    uid = advisor_uid(game)
+
+    assert seat_cli.run(["--uid", uid, "--game", game, "stage-advice", "declare_attackers"]) == 0
+    assert seat_cli.run(["--uid", uid, "--game", game, "--reasoning", "nothing yet", "pass"]) == 0
+    force_turn_position(game, Step.DECLARE_ATTACKERS, "alice")
+
+    results: list[int] = []
+    results_lock = threading.Lock()
+
+    def run_wait() -> None:
+        code = seat_cli.run(["--uid", uid, "--game", game, "wait", "--max-seconds", "0"])
+        with results_lock:
+            results.append(code)
+
+    threads = [threading.Thread(target=run_wait) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+
+    assert results == [0, 0]
+    assert len(advice_rows(game)) == 1
+
+
+# ---------------------------------------------------------------------------
+# 8. re-review, 2026-09-14, finding 3: a broken drafts directory never hides
+# a command's own answer
+# ---------------------------------------------------------------------------
+
+
+def test_an_unwritable_cli_drafts_dir_still_prints_the_state(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    """`CLI_DRAFTS_DIR_ENV` pointed at a plain file (not a directory at all)
+    used to crash `_cli_drafts_dir`'s own `mkdir` on the very first advisor
+    command - before the command's own action ever ran, on every single
+    advisor CLI command. `state` alone still exercises the load-at-`_
+    dispatch`-start and the lock-acquisition-at-`run` codepaths."""
+    wire(monkeypatch)
+    uid = advisor_uid(game)
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_text("nope")
+    monkeypatch.setenv(seat_cli.CLI_DRAFTS_DIR_ENV, str(blocked))
+
+    assert seat_cli.run(["--uid", uid, "--game", game, "state"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "players" in out
+
+
+def test_an_unwritable_cli_drafts_dir_reports_a_draft_note_in_the_answer(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    """A `_save_cli_draft` failure (here, a directory made read-only after a
+    window was staged in it) is caught, never raised, and the command still
+    prints its own action result - `emit()`'s old persist-before-print
+    ordering used to let this exception escape uncaught, losing the action's
+    own answer with it. The failure is also folded into the printed JSON's
+    own `draft.note`, never merely swallowed without a trace. A real WRITE
+    has to be attempted for this - a directory with nothing staged in it has
+    nothing to write and so nothing to fail on - so this stages a window
+    while the directory is still writable, then makes it read-only before
+    the committing call that has to persist the capture."""
+    wire(monkeypatch)
+    uid = advisor_uid(game)
+    drafts_dir = tmp_path / "drafts"
+    monkeypatch.setenv(seat_cli.CLI_DRAFTS_DIR_ENV, str(drafts_dir))
+    assert seat_cli.run(["--uid", uid, "--game", game, "stage-advice", "end_step"]) == 0
+    capsys.readouterr()
+    os.chmod(drafts_dir, 0o500)
+    try:
+        assert (
+            seat_cli.run(["--uid", uid, "--game", game, "--reasoning", "nothing to do", "pass"])
+            == 0
+        )
+    finally:
+        os.chmod(drafts_dir, 0o700)
+    out = json.loads(capsys.readouterr().out)
+    assert isinstance(out.get("draft"), dict)
+    assert isinstance(out["draft"].get("note"), str) and out["draft"]["note"]
+
+
+# ---------------------------------------------------------------------------
+# 9. re-review, 2026-09-14, finding 2: a script only supersedes a draft whose
+# own window is reached in this very answer
+# ---------------------------------------------------------------------------
+
+
+def test_a_draft_for_another_window_stays_held_when_a_script_advises_elsewhere(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The original review fix 4 superseded ANY captured draft the instant a
+    script advised anywhere in the same answer, even one staged for a window
+    nowhere near reached yet. A draft for a LATER window must simply stay
+    held while an armed script fires for its own, current moment."""
+    wire(monkeypatch)
+    uid = advisor_uid(game, player="alice")
+    register(client, game, uid, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+
+    seats = seats_for(game)
+    server = build_server(seats)
+    seat = seats.seat_for(uid)
+    assert seat is not None
+
+    # Stage a window well after the script's own precombat_main moment.
+    force_turn_position(game, Step.UPKEEP, "alice")
+    seat.stage_advice("declare_attackers", "mine")
+    capture_a_pass_draft(seat, game, reasoning="nothing to do until attackers")
+
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    answer = json.loads(
+        tool_text(
+            server,
+            "wait_for_priority",
+            {"player_uid": uid, "arm": "drop", "arm_reasoning": "make the land drop"},
+        )
+    )
+
+    assert answer.get("armed") and answer["armed"][0]["exit"] == "advised"
+    assert answer["draft"] == {"status": "held"}
+    rows = advice_rows(game)
+    assert len(rows) == 1, rows  # the script's own proposal, never the draft
+    assert rows[0]["detail"]["path"].endswith("/actions/play-land")
+    assert uid in seat._advice_drafts, "a draft for an unreached window must survive"
+
+
+def test_a_manual_run_script_proposal_supersedes_a_reached_staged_draft(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of review fix 2's re-review: the original fix only
+    ever checked `state["armed"]` - an ARMED script firing inside `wait_for_
+    priority`'s own poll. A MANUAL `run_script` call (MCP tool, or CLI
+    `script run`) that proposes in the very same answer a staged draft has
+    just reached collides exactly the same way, and used to double-post."""
+    wire(monkeypatch)
+    uid = advisor_uid(game, player="alice")
+    register(client, game, uid, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+
+    seats = seats_for(game)
+    server = build_server(seats)
+    seat = seats.seat_for(uid)
+    assert seat is not None
+
+    force_turn_position(game, Step.UPKEEP, "alice")
+    seat.stage_advice("precombat_main", "mine")
+    capture_a_pass_draft(seat, game, reasoning="nothing to do until my main phase")
+
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    answer = json.loads(
+        tool_text(
+            server,
+            "run_script",
+            {"player_uid": uid, "script": "drop", "reasoning": "make the land drop"},
+        )
+    )
+
+    assert answer["script_exit"]["exit"] == "advised"
+    assert answer["draft"] == {"status": "superseded_by_script", "script": "drop"}
+    rows = advice_rows(game)
+    assert len(rows) == 1, rows
+    assert rows[0]["detail"]["path"].endswith("/actions/play-land")
+    assert uid not in seat._advice_drafts
+
+
+def test_the_cli_script_run_supersedes_a_reached_staged_draft(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """CLI parity for the manual-run supersede fix: `seat_cli`'s own `script
+    run` command threads its own `script_exit` through to `draft_status_for_
+    answer` exactly as the MCP tool does."""
+    wire(monkeypatch)
+    uid = advisor_uid(game, player="alice")
+    register(client, game, uid, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+
+    force_turn_position(game, Step.UPKEEP, "alice")
+    assert (
+        seat_cli.run(
+            [
+                "--uid",
+                uid,
+                "--game",
+                game,
+                "stage-advice",
+                "precombat_main",
+                "--whose-turn",
+                "mine",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert seat_cli.run(["--uid", uid, "--game", game, "--reasoning", "nothing yet", "pass"]) == 0
+    drafted = json.loads(capsys.readouterr().out)
+    assert drafted["outcome"].get("drafted") is True
+
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    assert (
+        seat_cli.run(
+            [
+                "--uid",
+                uid,
+                "--game",
+                game,
+                "--reasoning",
+                "make the land drop",
+                "script",
+                "run",
+                "drop",
+            ]
+        )
+        == 0
+    )
+    ran = json.loads(capsys.readouterr().out)
+
+    assert ran["script_exit"]["exit"] == "advised"
+    assert ran["draft"] == {"status": "superseded_by_script", "script": "drop"}
+    rows = advice_rows(game)
+    assert len(rows) == 1, rows
+    assert rows[0]["detail"]["path"].endswith("/actions/play-land")
+
+
+# ---------------------------------------------------------------------------
+# 10. re-review, 2026-09-14, finding 4: a window staged before the game has
+# a turn must refuse, and a `None` stamp must never be immortal either way
+# ---------------------------------------------------------------------------
+
+
+def test_stage_advice_refuses_before_the_game_has_a_turn(
+    client: TestClient, game: str, wired: None
+) -> None:
+    """`state["turns_taken"]` is `None` whenever `game.turn` itself is `None`
+    (`serialize.py`'s own fallback) - genuinely reachable before CR 103.8's
+    first turn exists at all, earlier even than CR 103's own mulligan/
+    opening-hand phase (which already has a real `Turn` with `turns_taken ==
+    0`, not the bug on its own). A window staged then could never go stale
+    on its own - see `STAGE_ADVICE_PREGAME`'s own docstring - so this is
+    refused outright instead."""
+    seat = buddy(game)
+    live = store.get(game)
+    assert live is not None
+    live.turn = None
+
+    result = seat.stage_advice("end_step", "mine")
+
+    assert result == {"staged": False, "reason": seatkit.STAGE_ADVICE_PREGAME}
+    assert ADVISOR_UID not in seat._advice_drafts
+
+
+def test_a_none_turns_taken_stamp_can_still_go_stale() -> None:
+    """The defensive half: even if a window's own stamp somehow still
+    carries a `None` `turns_taken` (belt and braces - `stage_advice` itself
+    now refuses to ever produce one), `draft_window_status` must never treat
+    that as "nothing to compare" and hold the draft forever. `None` is
+    normalised to `0`, the same as a genuine turn 0."""
+    staged = {"step": "upkeep", "active_player": "alice", "turn_number": None, "turns_taken": None}
+    window = seatkit.start_autopass(staged, "end_step", "mine")
+    window["stamped_step"] = staged["step"]
+    window["stamped_turns_taken"] = None  # what the old code would have stamped
+
+    now_state = {"step": "cleanup", "active_player": "alice", "turns_taken": 2}
+
+    assert seatkit.draft_window_status(window, now_state, "alice") == "after"
+
+
+# ---------------------------------------------------------------------------
+# 11. re-review, 2026-09-14, finding 5: a draft capture installs atomically,
+# under the per-uid lock, so a concurrent reader never sees it half-built
+# ---------------------------------------------------------------------------
+
+
+def test_a_concurrent_read_during_capture_never_sees_a_draft_without_drafted_at_seq(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old code set `armed["action"]` and only afterward made the
+    `recent_log` HTTP call that fills in `drafted_at_seq`/`opponent_
+    signature` - a window, however short, where a concurrent reader could
+    see a draft that LOOKS captured (`action` is not `None`) but is still
+    missing the fields `resolve_advice_draft` needs to post it. The fix
+    builds the whole thing first and installs it atomically under the
+    per-uid lock, so no reader can ever observe that half-state."""
+    wire(monkeypatch)
+    seat = buddy(game)
+    seat.stage_advice("declare_attackers", "mine")
+
+    release = threading.Event()
+    original_recent_log = seatkit.Seat.recent_log
+
+    def slow_recent_log(self: Seat, *a: Any, **k: Any) -> Any:
+        release.wait(2)
+        return original_recent_log(self, *a, **k)
+
+    monkeypatch.setattr(seatkit.Seat, "recent_log", slow_recent_log)
+
+    observed: list[dict[str, Any]] = []
+    stop = threading.Event()
+
+    def poll() -> None:
+        while not stop.is_set():
+            entry = seat._advice_drafts.get(ADVISOR_UID)
+            if entry is not None and entry.get("action") is not None:
+                observed.append(dict(entry))
+            time.sleep(0.001)
+
+    poller = threading.Thread(target=poll)
+    poller.start()
+
+    capturer = threading.Thread(target=lambda: capture_a_pass_draft(seat, game))
+    capturer.start()
+    time.sleep(0.1)  # let the capturer reach the slowed `recent_log` call
+    release.set()
+    capturer.join(5)
+    stop.set()
+    poller.join(5)
+
+    assert all(entry.get("drafted_at_seq") is not None for entry in observed), observed
+    final = seat._advice_drafts[ADVISOR_UID]
+    assert final["action"] is not None
+    assert final["drafted_at_seq"] is not None
+
+
+# ---------------------------------------------------------------------------
+# 12. re-review round 2, 2026-09-14, finding 3: the draft lock scopes to the
+# read-modify-write sections, never a `wait`'s own poll
+# ---------------------------------------------------------------------------
+
+
+def test_a_background_wait_does_not_block_a_foreground_stage_advice(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old `_cli_draft_lock` was held around the whole `_dispatch()` call
+    in `run()`, `wait` included - and `wait --max-seconds N` genuinely sleeps
+    inside `block_until_wake`'s own poll loop for up to N seconds when
+    nothing on the board changes. A background buddy's `mcp-seat wait
+    --max-seconds 25` therefore held the same human's foreground `stage-
+    advice` (or any other action command) for up to 25 seconds too, since
+    both compete for the one lock file.
+
+    Nothing on this board changes here, so the background `wait` really does
+    poll for its whole `--max-seconds` window (no early wake) - and the
+    foreground `stage-advice`, started well inside that window, must still
+    return almost at once. Fails on the un-fixed code, where it takes close
+    to the wait's own bound.
+
+    `force_turn_position` puts bob, not alice, in precombat main holding
+    priority: `compute_wake_reason` wakes an advisor at once whenever its own
+    player already holds priority and `before` is `None` (a fresh CLI
+    process's own `wait`, every time), which alice's own priority would do
+    here regardless of whether the lock is scoped correctly - the whole
+    point of this setup is a `wait` with nothing to wake it early, so it
+    genuinely sits in `block_until_wake`'s poll for the full bound."""
+    wire(monkeypatch)
+    uid = advisor_uid(game)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
+
+    wait_entered = threading.Event()
+
+    def run_wait() -> None:
+        wait_entered.set()
+        seat_cli.run(["--uid", uid, "--game", game, "wait", "--max-seconds", "3"])
+
+    wait_thread = threading.Thread(target=run_wait, daemon=True)
+    wait_thread.start()
+    assert wait_entered.wait(5), "the background wait never started"
+    time.sleep(0.3)  # let it reach its own first poll, well inside the 3s bound
+
+    start = time.monotonic()
+    assert seat_cli.run(["--uid", uid, "--game", game, "stage-advice", "declare_attackers"]) == 0
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.0, (
+        f"a foreground stage-advice took {elapsed:.2f}s while a background wait was "
+        "still polling - the CLI draft lock is still held across the wait"
+    )
+    wait_thread.join(5)

@@ -717,11 +717,20 @@ def build_server(seats: Seats) -> MCPServer:
         `None` for a seat, or an advisor with nothing staged - `draft` is left
         off the answer entirely rather than invented as some idle status.
 
+        `answer.get("script_exit")` (review fix 2, 2026-09-14) is threaded
+        through too - a MANUAL `run_script` call's own `script_exit` is this
+        very answer's own proposal, exactly as `state["armed"]` is for an
+        armed script `wait_for_priority` fires inside its own poll. Every
+        other tool's `answer` simply has no `script_exit` key, so this is a
+        no-op for them.
+
         Same failure discipline as `_attach_script_hint`: an exception here
         must never break the tool answer whose action already landed, so it
         is caught, logged once, and `draft` is simply left off."""
         try:
-            result = seatkit.draft_status_for_answer(seat, state)
+            result = seatkit.draft_status_for_answer(
+                seat, state, script_exit=answer.get("script_exit")
+            )
         except Exception:
             logger.warning(
                 "resolving %s's staged advice draft raised - answer sent without `draft`",
