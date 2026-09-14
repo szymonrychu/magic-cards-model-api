@@ -141,6 +141,155 @@ def test_staging_again_before_capture_replaces_the_armed_window(
 
 
 # ---------------------------------------------------------------------------
+# 1b. draft_window_status: next-occurrence semantics (2026-09-14 review, 1)
+#
+# The pre-fix "after" check only asked whether the current step's rank was
+# later than the target's - wrong the moment the target step's own rank comes
+# BEFORE the step the draft was staged in, since naming that step's next
+# occurrence means next turn, not later this one. Every scenario below stages
+# in a step that ranks at-or-after the target, then proves moving later in
+# the SAME turn stays "before", and only the real next occurrence (a later
+# `turns_taken`) reads "reached".
+# ---------------------------------------------------------------------------
+
+
+def _staged_window(
+    staged_state: dict[str, Any], target_step: str, whose_turn: str
+) -> dict[str, Any]:
+    """A window exactly as `Seat.stage_advice` stamps one - `draft_window_
+    status` is a pure function of the `(window, state)` pair, so these
+    scenarios build both by hand rather than through a live game."""
+    window = seatkit.start_autopass(staged_state, target_step, whose_turn)
+    window["stamped_step"] = staged_state.get("step")
+    window["stamped_turns_taken"] = staged_state.get("turns_taken")
+    return window
+
+
+def _board(*, step: str, active_player: str, turn_number: int, turns_taken: int) -> dict[str, Any]:
+    return {
+        "step": step,
+        "active_player": active_player,
+        "turn_number": turn_number,
+        "turns_taken": turns_taken,
+    }
+
+
+def test_staged_at_the_target_step_itself_waits_a_full_turn(client, game, wired) -> None:
+    """Staged in the human's own precombat_main for `precombat_main mine`:
+    the next occurrence is NEXT turn's, so moving to beginning_of_combat
+    later the SAME turn must stay "before", not read "after" the moment the
+    step rank alone looks later."""
+    staged = _board(step="precombat_main", active_player="alice", turn_number=1, turns_taken=1)
+    window = _staged_window(staged, "precombat_main", "mine")
+
+    still_this_turn = _board(
+        step="beginning_of_combat", active_player="alice", turn_number=1, turns_taken=1
+    )
+    assert seatkit.draft_window_status(window, still_this_turn, "alice") == "before"
+
+    next_turns_precombat = _board(
+        step="precombat_main", active_player="alice", turn_number=2, turns_taken=3
+    )
+    assert seatkit.draft_window_status(window, next_turns_precombat, "alice") == "reached"
+
+
+def test_staged_after_the_target_step_waits_for_next_turn(client, game, wired) -> None:
+    """Staged in the human's main for `upkeep mine`: upkeep already passed
+    this turn, so the next occurrence is next turn's, and moving further
+    through THIS turn must never read "after"."""
+    staged = _board(step="precombat_main", active_player="alice", turn_number=1, turns_taken=1)
+    window = _staged_window(staged, "upkeep", "mine")
+
+    later_this_turn = _board(
+        step="postcombat_main", active_player="alice", turn_number=1, turns_taken=1
+    )
+    assert seatkit.draft_window_status(window, later_this_turn, "alice") == "before"
+
+    next_turns_upkeep = _board(step="upkeep", active_player="alice", turn_number=2, turns_taken=3)
+    assert seatkit.draft_window_status(window, next_turns_upkeep, "alice") == "reached"
+
+
+def test_staged_at_the_opponents_end_step_for_upkeep_any(client, game, wired) -> None:
+    """Staged at the opponent's end step for `upkeep any`: the next
+    occurrence is whichever side's untap/upkeep comes next, so cleanup - this
+    same turn, right after end_step - must not read "after"."""
+    staged = _board(step="end_step", active_player="bob", turn_number=1, turns_taken=2)
+    window = _staged_window(staged, "upkeep", "any")
+
+    cleanup = _board(step="cleanup", active_player="bob", turn_number=1, turns_taken=2)
+    assert seatkit.draft_window_status(window, cleanup, "alice") == "before"
+
+    next_upkeep = _board(step="upkeep", active_player="alice", turn_number=2, turns_taken=3)
+    assert seatkit.draft_window_status(window, next_upkeep, "alice") == "reached"
+
+
+def test_staged_in_the_opponents_combat_for_upkeep_opponent(client, game, wired) -> None:
+    """Staged in the opponent's combat for `upkeep opponent`: upkeep already
+    passed this opponent turn, so the very next step must not read "after"."""
+    staged = _board(step="declare_attackers", active_player="bob", turn_number=1, turns_taken=2)
+    window = _staged_window(staged, "upkeep", "opponent")
+
+    next_step = _board(step="declare_blockers", active_player="bob", turn_number=1, turns_taken=2)
+    assert seatkit.draft_window_status(window, next_step, "alice") == "before"
+
+    opponents_next_upkeep = _board(step="upkeep", active_player="bob", turn_number=2, turns_taken=4)
+    assert seatkit.draft_window_status(window, opponents_next_upkeep, "alice") == "reached"
+
+
+def test_an_extra_turn_does_not_falsely_mask_reached_as_before(client, game, wired) -> None:
+    """CR 500.7: an extra turn bumps `turns_taken` but leaves `turn_number`
+    alone (`seatkit.py`'s own `turns_taken` note). Staged in the human's
+    precombat_main for `precombat_main mine`, an immediately following extra
+    turn for the same player shares that same `turn_number` - a same-
+    occurrence check keyed on `turn_number` alone would misread the extra
+    turn's own precombat_main as still the occurrence staged in and mask a
+    real "reached" as "before" (`same_occurrence_started_in` now keys on
+    `turns_taken` instead, exactly to tell the two apart)."""
+    staged = _board(step="precombat_main", active_player="alice", turn_number=1, turns_taken=1)
+    window = _staged_window(staged, "precombat_main", "mine")
+
+    # The extra turn under way, not yet at its own precombat_main - still
+    # before the real next occurrence, whatever its shared turn_number.
+    extra_turns_upkeep = _board(step="upkeep", active_player="alice", turn_number=1, turns_taken=2)
+    assert seatkit.draft_window_status(window, extra_turns_upkeep, "alice") == "before"
+
+    # The extra turn's OWN precombat_main - a genuinely new occurrence, even
+    # though `turn_number` reads identical to the one staged in.
+    extra_turns_precombat = _board(
+        step="precombat_main", active_player="alice", turn_number=1, turns_taken=2
+    )
+    assert seatkit.draft_window_status(window, extra_turns_precombat, "alice") == "reached"
+
+
+def test_end_to_end_a_window_staged_at_its_own_target_step_survives_the_rest_of_the_turn(
+    client: TestClient, game: str, wired: None
+) -> None:
+    """The same scenario as `test_staged_at_the_target_step_itself_waits_a_
+    full_turn`, but through a real game and `resolve_advice_draft`, per the
+    review's own request for one end-to-end case alongside the pure ones."""
+    seat = buddy(game)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    baseline_turns_taken = seat.fetch_state()["turns_taken"]
+    seat.stage_advice("precombat_main", "mine")
+    capture_a_pass_draft(seat, game)
+
+    force_turn_position(game, Step.END_STEP, "alice")
+    held = seatkit.resolve_advice_draft(seat, seat.fetch_state())
+    assert held == {"status": "held"}
+    assert ADVISOR_UID in seat._advice_drafts
+
+    engine_game = store.get(game)
+    assert engine_game is not None and engine_game.turn is not None
+    engine_game.turn.turns_taken = baseline_turns_taken + 2
+    engine_game.turn.turn_number += 1
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    posted = seatkit.resolve_advice_draft(seat, seat.fetch_state())
+
+    assert posted["status"] == "posted"
+    assert len(advice_rows(game)) == 1
+
+
+# ---------------------------------------------------------------------------
 # 2. capturing the next committing call as a draft, instead of posting
 # ---------------------------------------------------------------------------
 

@@ -1710,7 +1710,19 @@ class Seat:
         problem = autopass_target_error(step, whose_turn)
         if problem:
             return {"staged": False, "reason": problem}
-        window = start_autopass(self.fetch_state(), step, whose_turn)
+        state = self.fetch_state()
+        window = start_autopass(state, step, whose_turn)
+        # Review fix 1 (2026-09-14): persistent stamps `draft_window_status`
+        # reads for the "after" check - unlike `started_step`/`started_turn`
+        # (`start_autopass`'s own fields), these are never cleared by
+        # `forget_starting_occurrence`, so they still name the exact step and
+        # `turns_taken` this was staged at even once the board has long since
+        # left it. `turns_taken`, not `turn_number`: CR 500.7's extra turn
+        # bumps the former and not the latter (`seatkit-20`'s own `turns_
+        # taken` note), and the "after" check has to tell an extra turn apart
+        # from the turn it extended.
+        window["stamped_step"] = state.get("step")
+        window["stamped_turns_taken"] = state.get("turns_taken")
         self._advice_drafts[self.uid] = {"window": window, "action": None}
         return {"staged": True, "window": {"step": step, "whose_turn": whose_turn}}
 
@@ -3370,18 +3382,42 @@ def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: s
       this is not the occurrence the window was staged in (the same
       next-occurrence exemption `autopass_stop_reason`'s condition 3 gives
       `pass_until` - naming the step you are standing in means its next
-      occurrence, never this one).
+      occurrence, never this one). **Review fix 1**: "the occurrence staged
+      in" is decided against `window["stamped_turns_taken"]`/`["stamped_
+      step"]`, not `started_turn`'s `turn_number` - CR 500.7's extra turn
+      does not move `turn_number`, so a check keyed on it would wrongly read
+      an extra turn's own precombat_main as still the occurrence a normal
+      turn's precombat_main was staged in, and mask a real "reached" as
+      "before" instead.
     - `"before"` - not there yet, whether because the exemption above still
       holds or because the board simply has not reached it.
-    - `"after"` - the window has come and gone: it is currently a turn on
-      `whose_turn`'s own side, and the live step is already later in turn
-      order (`_FULL_STEP_ORDER`) than the named one. Evaluated fresh every
-      poll rather than predicted ahead of time, so this is right across
-      however many turns actually pass without needing to guess whose turn a
-      future turn number will belong to - the moment the board is standing in
-      a matching-side turn whose own step has already passed the target, that
-      specific occurrence is gone, whether or not a later one might still
-      match some other day.
+    - `"after"` - the window's own next occurrence has come and gone.
+      **Review fix 1 (2026-09-14)**: this used to ask only whether the
+      current step's rank is later than the target's, which is wrong the
+      moment the target step's rank comes *before* the step the draft was
+      staged in (naming a step's next occurrence can mean next turn) - a
+      window staged in precombat_main for "precombat_main mine" read "after"
+      the instant the board reached beginning_of_combat *that same turn*,
+      when the real next occurrence was still a whole turn away. Fixed by
+      stamping the draft's own staging position (`window["stamped_step"]`/
+      `window["stamped_turns_taken"]`, set once by `Seat.stage_advice` and
+      never touched again - unlike `started_step`/`started_turn`, which
+      `forget_starting_occurrence` clears the moment the board leaves them)
+      and asking, on `whose_turn`'s own side only:
+
+      - a *later* `turns_taken` than the stamp, standing at or past the
+        target step's rank - the next occurrence, in a later turn, has
+        already been reached and left behind; or
+      - the *same* `turns_taken` as the stamp, but only when the stamp's own
+        step ranked *before* the target (so the next occurrence was always
+        going to be later this same turn) and the board now ranks past it.
+
+      `turns_taken`, not `turn_number`: CR 500.7's extra turn moves the
+      former and not the latter, so a rank check keyed on `turn_number` alone
+      cannot tell an extra turn from the turn it extended.
+    - `"before"` - not there yet, whether because the same-occurrence
+      exemption still holds or because neither `"reached"` nor `"after"`
+      condition above holds yet.
 
     `resolve_advice_draft` treats `"reached"` as postable only once
     `state["priority_holder"] == player` too (CR 117: a step's priority
@@ -3394,9 +3430,9 @@ def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: s
     is_yours = state.get("active_player") == player
     whose_matches_now = whose == "any" or (whose == "mine") == is_yours
     same_occurrence_started_in = (
-        window.get("started_step") is not None
-        and state.get("step") == window.get("started_step")
-        and state.get("turn_number") == window.get("started_turn")
+        window.get("stamped_turns_taken") is not None
+        and state.get("step") == window.get("stamped_step")
+        and state.get("turns_taken") == window.get("stamped_turns_taken")
     )
     if (
         wanted
@@ -3409,13 +3445,27 @@ def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: s
         return "before"
     target_rank = _step_rank(wanted)
     current_rank = _step_rank(state.get("step"))
+    stamped_rank = _step_rank(window.get("stamped_step"))
+    stamped_turns_taken = window.get("stamped_turns_taken")
+    current_turns_taken = state.get("turns_taken")
     if (
         whose_matches_now
         and target_rank is not None
         and current_rank is not None
-        and current_rank > target_rank
+        and stamped_turns_taken is not None
+        and current_turns_taken is not None
     ):
-        return "after"
+        later_turn_past_target = (
+            current_turns_taken > stamped_turns_taken and current_rank >= target_rank
+        )
+        same_turn_past_target = (
+            current_turns_taken == stamped_turns_taken
+            and stamped_rank is not None
+            and stamped_rank < target_rank
+            and current_rank > target_rank
+        )
+        if later_turn_past_target or same_turn_past_target:
+            return "after"
     return "before"
 
 
