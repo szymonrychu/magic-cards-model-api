@@ -32,7 +32,6 @@ from conftest import add_card
 from fastapi.testclient import TestClient
 from test_playscript_runtime import (
     REASONING,
-    Hooked,
     _unlocks_land_script,
     hooked_seat,
     land_script,
