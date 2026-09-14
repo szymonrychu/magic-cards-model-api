@@ -1308,7 +1308,15 @@ def _position(state: dict[str, Any]) -> dict[str, Any]:
 
 def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any]) -> ScriptExit:
     """Propose move 1 through `Seat._advise_answer` (a dry-run probe plus the
-    `/advice` record) and hand the rest back unvalidated."""
+    `/advice` record) and hand the rest back unvalidated.
+
+    `capture_draft=False` (S2 A6 review fix 3, 2026-09-14): an armed script
+    firing here is a proposal for right now, never the later window a
+    `stage_advice` call staged - capturing it into that empty slot would
+    swallow the script's own move (this function would read the resulting
+    `{"drafted": True, ...}` shape as `outcome.get("proposed")` missing, and
+    exit `REFUSED`) instead of posting it and leaving the staged window for
+    its own future moment."""
     seat = ctx.seat
     moves = play["moves"]
     first = moves[0]
@@ -1337,7 +1345,9 @@ def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any
     path, request = built
     answer = run_action(
         seat,
-        lambda: seat.call_json("POST", f"/api/games/{seat.game_id()}/{path}", request),
+        lambda: seat.call_json(
+            "POST", f"/api/games/{seat.game_id()}/{path}", request, capture_draft=False
+        ),
         hold_priority=True,
         include_actions=False,
         reasoning=reasoning,

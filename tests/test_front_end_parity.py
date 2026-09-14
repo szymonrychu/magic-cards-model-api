@@ -787,6 +787,7 @@ CLI_COMMAND_TOOLS = {
     "log": "game_log",
     "report": "report_problem",
     "plan": "declare_plan",
+    "stage-advice": "stage_advice",
 }
 
 #: `seat_cli` commands whose subcommands each front one MCP tool: `script run`

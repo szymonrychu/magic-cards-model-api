@@ -1905,6 +1905,40 @@ def test_advise_mode_proposes_move_one_and_returns_the_rest_unvalidated(
     assert hook.posts("/actions/pass-priority") == []
 
 
+def test_an_armed_scripts_proposal_is_not_swallowed_by_an_empty_staged_draft(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 A6 review fix 3 (2026-09-14): `stage_advice` arms an empty window
+    (`entry["action"] is None`) for the advisor's NEXT committing call - and
+    an armed script firing through `_advise` is itself a committing call
+    (`seat.call_json`), so before this fix it was captured into that empty
+    slot instead of posted: the script's own `run_action` outcome came back
+    `{"drafted": True, ...}`, never `{"proposed": True, ...}`, and the
+    runtime read that as a refusal (`REFUSED "None"`, `outcome.get("reason")`
+    on a dict with no `reason` key). The script's move for now must post now;
+    the staged window is for a later moment and stays staged, untouched."""
+    advisor = "advisor-uid"
+    store.register_advisors(board, {advisor: Advisor(player="alice")})
+    register(client, board, advisor, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, advisor)
+    assert seat.advise is True
+
+    staged = seat.stage_advice("end_step", "mine")
+    assert staged["staged"] is True
+
+    result = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    out = result.script_exit
+    assert out.exit is Exit.ADVISED, result.to_dict()
+    assert out.proposal is not None and out.proposal.get("proposed") is True
+    assert len(rows(board, "advice")) == 1
+    entry = seat._advice_drafts[advisor]
+    assert entry["action"] is None, "the staged window must still be empty, not swallowed"
+    assert entry["window"]["step"] == "end_step"
+
+
 def test_the_exit_vocabulary_is_closed() -> None:
     assert [exit.value for exit in Exit] == [
         "chain_complete",

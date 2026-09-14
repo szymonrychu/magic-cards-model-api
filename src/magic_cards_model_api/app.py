@@ -3174,6 +3174,10 @@ def record_advice(game_id: str, req: AdviceIn, uid: str | None = None) -> dict[s
     uid to its human's username), the seat itself, or the admin key. A
     proposal names hidden information, so nobody else may write one into that
     seat's name - the same rule, and the same 404, `declare_plan` enforces.
+
+    `req.drafted_at_seq` (S2 A6) rides straight into `detail` unexamined - it
+    is a metrics-only marker of when a staged draft was captured, and nothing
+    here reads it back.
     """
     game = game_or_404(game_id)
     viewer = visibility.resolve_viewer(game_id, uid)
@@ -3197,6 +3201,7 @@ def record_advice(game_id: str, req: AdviceIn, uid: str | None = None) -> dict[s
         based_on_seq=based_on_seq,
         validated=req.validated,
         legal_actions_before=legal_before,
+        drafted_at_seq=req.drafted_at_seq,
     )
     return {
         "proposed": True,
