@@ -7,6 +7,28 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- 2026-09-14 script-dsl O1/O2/O3/O5/O6/O8 (opening plays DSL groundwork, O4/O7
+  deferred - they need engine feasibility/enters-tapped helpers that do not
+  exist yet): `turn` reads `turn_number`, verified live against
+  `TurnMachine.begin_first_turn`/`advance`/`grant_extra_turn` - it counts
+  rounds of the table, so it is my Nth turn on the play and on the draw
+  alike, and an extra turn never advances it. `land_face` (O5) is true for a
+  plain land too, not just an MDFC's back face - deliberate, since a plain
+  land trivially has a land face and the DSL gains nothing from excluding
+  it. No live MDFC-land or landcycling card is cached in
+  `tests/fixtures/scryfall` (checked): O3's runtime "hand carries the
+  ability" proof uses Angelsong's plain Cycling instead (same
+  `off_zone_abilities` code path as landcycling), O5's "play_land plays that
+  face by card_id" proof is a hand-built-view unit test against
+  `_move_request` directly, and O6's `choose_a_quality` proof uses a real
+  Cavern of Souls. `CHOICE_DECISION_KINDS` is derived from the api's own
+  `decisions.TOOL_FIELD_FOR_KIND` (kinds answered on `choice`), the same
+  pattern `AMOUNT_DECISION_KINDS` already used, so the engine learning a new
+  choice-shaped decision extends it for free. mtg-decks' O3 test list drops
+  "Wastes" from the malformed-word parametrize (present in the API's small
+  fabricated card cache but absent from mtg-decks' fixture, which copies the
+  real `meta/card-data.json` where Wastes is a real card name, doubling the
+  error code).
 - **2026-09-13 - bd1: the buddy panel always said "(no rationale was
   recorded)" because `ui/advice_model.js`'s `viewOf` read `detail.reasoning`,
   while `audit.record` writes `reasoning` as the row's own TOP-LEVEL key
