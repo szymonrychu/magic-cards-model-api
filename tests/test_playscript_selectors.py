@@ -323,7 +323,10 @@ def test_land_face_matches_a_plain_land_too():
 
 # -- searches_for_any (O3) --------------------------------------------------------
 
-FETCH_TEMPLATE = "{T}, Pay 1 life, Sacrifice this land: Search your library for %s card, put it onto the battlefield, then shuffle."
+FETCH_TEMPLATE = (
+    "{T}, Pay 1 life, Sacrifice this land: Search your library for %s card, "
+    "put it onto the battlefield, then shuffle."
+)
 LANDCYCLING_TEMPLATE = (
     "Landcycling {G} ({G}, Discard this card: Search your library for %s card, "
     "reveal it, and put it into your hand. Then shuffle.)"
@@ -356,11 +359,12 @@ def generous_ent() -> dict[str, Any]:
     # hand - the engine synthesizes it off the printed Landcycling keyword
     # (machines/keywords.py off_zone_abilities), so it is on `abilities`.
     text = LANDCYCLING_TEMPLATE % "a Forest"
+    attack_trigger = "Whenever Generous Ent attacks, create a 0/0 green Elemental creature token."
     return card(
         "Generous Ent",
         type_line="Creature — Treefolk",
         zone="hand",
-        oracle_text=f"Whenever Generous Ent attacks, create a 0/0 green Elemental creature token.\n{text}",
+        oracle_text=f"{attack_trigger}\n{text}",
         abilities=(text,),
     )
 
