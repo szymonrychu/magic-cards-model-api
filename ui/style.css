@@ -252,40 +252,36 @@ h3 { font-size: 14px; }
   padding: 8px;
   /* A reserved strip along the very top of the viewport, exclusively for
      `.game-toolbar` below - nothing in the grid (the board, the zone ribbon,
-     `#topbar`'s own turn/phase/AI content) is ever laid out under it, at any
-     width, so the fixed toolbar can never cover something a player is trying
-     to read or click. In mobile mode (the media block at the end of this
-     file) the toolbar sits in a rail reserved on the right instead, so the
-     board there keeps the full height. */
+     `#topbar`'s turn/AI content) is ever laid out under it, at any width, so
+     the fixed row can never cover something a player is trying to read or
+     click. Mobile mode (the media block at the end of this file) reserves a
+     thinner strip for a thinner row. */
   padding-top: 52px;
 }
 
-/* Concede, Report and Lobby, pinned to the top-right corner of the viewport
-   at every width - `position: fixed` is what makes "every width" true for
-   free: it is placed against the viewport, not against `#game`'s own grid,
-   so it holds the same corner whether that grid is the three-column desktop
-   layout or mobile mode's single board column. `#game`'s own `padding-top`
-   above, or mobile mode's right rail, reserves the room this sits in.
+/* The top row: the phase track on the left, Concede, Report and Lobby on the
+   right, pinned across the top of the viewport at every width. `position:
+   fixed` places it against the viewport, not `#game`'s grid, so it is the
+   same row whether that grid is the three-column desktop layout or mobile
+   mode's single board column; `#game`'s `padding-top` reserves its room.
 
-   `flex-wrap: wrap` with `justify-content: flex-end` rather than a fixed
-   `nowrap` row: an armed Concede's "click again to confirm" label is the one
-   thing here that can grow past a phone-width viewport's remaining room, and
-   wrapping it onto its own line keeps every button fully on screen rather
-   than clipping one off the edge. */
+   One line, never two: the buttons keep their size and the track takes
+   what is left, scrolling sideways inside itself (`#phase-track`) when that
+   is less than it needs - an armed Concede's longer label included. */
 .game-toolbar {
   position: fixed;
   top: 8px;
+  left: 8px;
   right: 8px;
   z-index: 55;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 6px;
-  /* `--toolbar-max` is set by mobile mode, which reserves a narrow rail on
-     the right - there the toolbar wraps into a column inside that rail
-     rather than reaching over the board. */
-  max-width: var(--toolbar-max, calc(100vw - 16px));
+  height: 36px;
 }
+.game-toolbar > * { flex: 0 0 auto; }
+.game-toolbar button { white-space: nowrap; }
 
 /* Mobile mode's drawer (`ui/drawer.js`). On a desktop it is only a wrapper:
    `display: contents` takes it out of the box tree, so `#topbar`, `#banners`
@@ -320,8 +316,7 @@ h3 { font-size: 14px; }
 #rotate-overlay .hint { margin: 0; }
 
 /* The ribbon's top block. A column rather than a bar now that it is 340px
-   wide instead of the full window: turn line, phase track, then the seat's
-   own controls. */
+   wide instead of the full window: turn line, then the seat's own controls. */
 #topbar {
   grid-area: top;
   display: flex;
@@ -338,17 +333,35 @@ h3 { font-size: 14px; }
 .topbar-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* The turn structure as a track, so "which step am I in" is a glance, not a
-   line of text to read. CR 500.1's phases and steps, in order. */
-#phase-track { display: flex; gap: 2px; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; }
+   line of text to read. CR 500.1's phases and steps, in order. First in the
+   top row whatever order its siblings are in (`order: -1`), and it takes
+   the row's spare width (`flex: 1 1 auto`, `min-width: 0`), scrolling
+   sideways inside itself - scrollbar hidden, `render/panels.js` scrolls the
+   current step into view - rather than wrapping or pushing the buttons. */
+#phase-track {
+  order: -1;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
 #phase-track li {
+  flex: 0 0 auto;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.4px;
+  white-space: nowrap;
   color: var(--ink-faint);
   padding: 2px 6px;
   border-radius: 4px;
   border: 1px solid transparent;
-  cursor: pointer;
 }
 #phase-track li.current {
   color: var(--accent-ink);
@@ -356,7 +369,6 @@ h3 { font-size: 14px; }
   font-weight: 700;
 }
 #phase-track li.done { color: var(--ink-dim); }
-#phase-track li.target { border-color: var(--accent); color: var(--accent); }
 
 #banners { grid-area: banner; display: flex; flex-direction: column; gap: 6px; }
 #banners > div {
@@ -2009,9 +2021,8 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
   .deck-pickers { grid-template-columns: 1fr; }
 }
 
-/* Phone-sized buttons in the fixed toolbar, so an armed Concede's longer
-   label stays short enough to wrap tidily inside mobile mode's rail rather
-   than growing down toward the drawer toggle. */
+/* Smaller buttons in the top row on a short or narrow window, so the phase
+   track keeps more of the row. */
 @media (max-height: 560px), (max-width: 600px) {
   .game-toolbar button { padding: 2px 8px; font-size: 12px; }
 }
@@ -2021,7 +2032,6 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
    badges pack by their row's height instead (`@container badge-row`). */
 @media (max-height: 560px) {
   #game { gap: 4px; padding-inline: 4px; padding-bottom: 4px; }
-  #phase-track { flex-wrap: nowrap; overflow-x: auto; }
   #mtg-board { gap: 2px; padding: 3px; --row-pad: 2px; }
   #topbar { padding: 4px 8px; }
   #side-panel > div { padding: 6px 8px; }
@@ -2031,11 +2041,12 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
    or any window 1100px wide or less. There is no room beside the board for
    the zone ribbon or the control column, and the page still never scrolls.
 
-   The board takes the whole viewport but for a rail on the right. The rail
-   holds the fixed toolbar, which wraps into a column inside it
-   (`--toolbar-max`), `#drawer-toggle` at its foot, and `#rail-pass` (Pass and
-   Pass until) just above the toggle, so none of them ever sits over a card
-   and priority is passed without opening the drawer. The zone ribbon is hidden - the badges' zone counts open
+   The top row is a thin strip (`--strip-h`) across the whole viewport: the
+   phase track on the left, Concede, Report and Lobby on the right, compact.
+   The board takes the rest of the viewport but for a rail on the right,
+   below the strip, holding `#drawer-toggle` at its foot and `#rail-pass`
+   (Pass and Pass until) just above the toggle, so none of them ever sits
+   over a card and priority is passed without opening the drawer. The zone ribbon is hidden - the badges' zone counts open
    `#zone-viewer` instead - and `#drawer` (the turn block, the banners and the
    side panel) is a fixed panel beside the rail that slides in over the board
    when `ui/drawer.js` puts `drawer-open` on `#game`. Closed, it is off screen
@@ -2044,17 +2055,29 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
    After the short-window block above, so its `#game` padding wins there. */
 @media (max-width: 1100px), (pointer: coarse) and (orientation: landscape) {
   #game {
-    --rail-w: 64px;
-    --toolbar-max: var(--rail-w);
+    --rail-w: 56px;
+    --strip-h: 28px;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
     grid-template-areas: "board";
-    padding: 8px calc(var(--rail-w) + 16px) 8px 8px;
+    padding: calc(var(--strip-h) + 4px) calc(var(--rail-w) + 16px) 8px 8px;
   }
+  #game-toolbar {
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--strip-h);
+    gap: 4px;
+    padding: 0 8px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  #game-toolbar button { height: 22px; padding: 0 8px; font-size: 11px; line-height: 1; }
+  #phase-track li { padding: 1px 5px; font-size: 9px; }
   #zone-ribbon { display: none; }
   #drawer {
     position: fixed;
-    top: 0;
+    top: var(--strip-h);
     bottom: 0;
     right: calc(var(--rail-w) + 16px);
     z-index: 34;
@@ -2120,8 +2143,6 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
     font-weight: 600;
     line-height: 1.15;
   }
-  #game-toolbar > #concede-slot, #game-toolbar > button { flex: 1 0 100%; }
-  #concede-slot button { width: 100%; white-space: normal; }
 }
 
 /* A coarse pointer held upright: ask for landscape instead of drawing a board

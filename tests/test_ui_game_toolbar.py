@@ -44,6 +44,13 @@ def _css() -> str:
     return (UI / "style.css").read_text()
 
 
+def _rule(css: str, selector: str) -> str:
+    """The body of the first top-level `selector { ... }` rule."""
+    found = re.search(r"\n" + re.escape(selector) + r" \{([^}]*)\}", css)
+    assert found, f"no top-level `{selector}` rule in ui/style.css"
+    return found.group(1)
+
+
 # --------------------------------------------------------- the removal -----
 
 
@@ -99,6 +106,39 @@ def test_the_three_buttons_sit_together_in_the_game_toolbar() -> None:
     assert re.search(r'id="leave-game"[^>]*>Lobby', inner)
 
 
+def test_the_phase_track_sits_in_the_game_toolbar_left_of_the_buttons() -> None:
+    """The turn structure moved out of `#topbar` into the top row: the track
+    is inside `#game-toolbar`, ahead of Concede, Report and Lobby in the
+    markup, and `style.css` orders it first, so a button added as the row's
+    first child still lands to the right of the track."""
+    html = _index()
+    toolbar = re.search(r'<div id="game-toolbar"[^>]*>(.*?)\n  </div>', html, re.S)
+    assert toolbar, "could not find #game-toolbar in ui/index.html"
+    inner = toolbar.group(1)
+    assert '<ol id="phase-track"></ol>' in inner
+    assert inner.index('id="phase-track"') < inner.index('id="concede-slot"')
+    assert html.count('id="phase-track"') == 1
+    track = _rule(_css(), "#phase-track")
+    assert re.search(r"order:\s*-1", track), track
+
+
+def test_the_phase_track_stays_on_one_line_and_scrolls_inside_itself() -> None:
+    css = _css()
+    track = _rule(css, "#phase-track")
+    assert "flex-wrap: nowrap" in track, track
+    assert "overflow-x: auto" in track, track
+    assert "min-width: 0" in track, track
+    bar = re.search(r"\n\.game-toolbar \{(.*?)\}", css, re.S)
+    assert bar and "flex-wrap: nowrap" in bar.group(1), (
+        "the top row must never wrap into a second line"
+    )
+    # The track has no click behaviour, so nothing may look clickable on it.
+    items = _rule(css, "#phase-track li")
+    assert "cursor: pointer" not in items, items
+    assert "#phase-track li.target" not in css
+    assert "#phase-track { flex-wrap: wrap" not in css
+
+
 def test_none_of_the_three_are_still_in_the_topbar() -> None:
     """They used to live in `.topbar-right`, beside Zones and Log - now that
     whole button row is gone from the topbar, which keeps only the AI panel
@@ -106,7 +146,14 @@ def test_none_of_the_three_are_still_in_the_topbar() -> None:
     html = _index()
     topbar = re.search(r'<header id="topbar">(.*?)</header>', html, re.S)
     assert topbar, "could not find #topbar in ui/index.html"
-    for gone in ("concede-slot", "report-problem", "leave-game", "open-zones", "open-log"):
+    for gone in (
+        "concede-slot",
+        "report-problem",
+        "leave-game",
+        "open-zones",
+        "open-log",
+        "phase-track",
+    ):
         assert f'id="{gone}"' not in topbar.group(1), f"#{gone} should have moved out of #topbar"
 
 

@@ -137,14 +137,14 @@
 <!-- ================================= GAME ================================ -->
 <section id="game" hidden>
 
-  <!-- Concede, Report and Lobby, pinned to the top-right corner of the
-       viewport at every width (`style.css`'s `.game-toolbar`: `position:
-       fixed`, so it holds that corner whether `#game` is the three-column
-       desktop grid or mobile mode's board) rather than living inside
-       `#topbar`'s own in-flow column. `#game`'s own top padding - or, in
-       mobile mode, the rail it reserves on the right, where the toolbar wraps
-       into a column above `#drawer-toggle` - keeps the strip this sits in, so
-       nothing in the grid ever renders underneath it.
+  <!-- The top row: the phase track on the left, Concede, Report and Lobby on
+       the right, pinned across the top of the viewport at every width
+       (`style.css`'s `.game-toolbar`: `position: fixed`, one line that never
+       wraps; the track scrolls sideways inside itself when it cannot fit).
+       `#game`'s own top padding - a 52px strip on a desktop, a thin one in
+       mobile mode - keeps the room this sits in, so nothing in the grid ever
+       renders underneath it. The track used to be part of `#topbar`, which
+       keeps the turn line, the AI seat and the connection pill.
 
        Concede used to be the last button `ui/render/ribbon.js`'s
        `renderPriorityBox` appended to `#priority-box`; it is still rendered
@@ -154,18 +154,19 @@
        `ui/render/panels.js`'s `mountTopbar` wires them by id regardless of
        where in the page they physically sit. -->
   <div id="game-toolbar" class="game-toolbar">
+    <ol id="phase-track"></ol>
     <div id="concede-slot"></div>
     <button id="report-problem" class="ghost">Report</button>
     <button id="leave-game" class="ghost">Lobby</button>
   </div>
 
   <!-- Opens and closes `#drawer` in mobile mode; hidden on a desktop. It sits
-       in a rail `#game` reserves on the right, under the toolbar, so it never
-       covers a card. -->
+       in a rail `#game` reserves on the right, below the top strip, so it
+       never covers a card. -->
   <button id="drawer-toggle" class="drawer-toggle" type="button" aria-controls="drawer" aria-expanded="false" title="Show the side panel">Panel</button>
 
-  <!-- Mobile mode's Pass and Pass until, in the same rail between the toolbar
-       and `#drawer-toggle` (`ui/render/ribbon.js`'s `renderRailPass`, the
+  <!-- Mobile mode's Pass and Pass until, in the same rail above
+       `#drawer-toggle` (`ui/render/ribbon.js`'s `renderRailPass`, the
        same `onVerb` as `#priority-box`), so priority is passed with the
        drawer closed. Hidden while this seat has nothing to pass, and never
        shown on a desktop, where `#priority-box` is the control. -->
@@ -245,8 +246,8 @@
        the right over the board, toggled by `#drawer-toggle` and opened by
        itself when a question for this seat appears. -->
   <div id="drawer" class="drawer">
-    <!-- The right-hand ribbon's top block: turn, phase track, connection, AI
-         seat. Everything that is not the battlefield lives in that ribbon;
+    <!-- The right-hand ribbon's top block: turn, connection, AI seat (the
+         phase track moved to the top row, `#game-toolbar`). Everything that is not the battlefield lives in that ribbon;
          `#topbar`, `#banners` and `#side-panel` are placed into its column by
          `style.css`'s grid, so the board gets the whole left side.
 
@@ -260,7 +261,6 @@
          the advisor panel below builds its proposal from it. -->
     <header id="topbar">
       <div id="turn-info"></div>
-      <ol id="phase-track"></ol>
       <div class="topbar-right">
         <div id="ai-panel"></div>
         <div id="conn-status-game" class="pill"></div>

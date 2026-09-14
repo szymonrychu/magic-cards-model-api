@@ -157,6 +157,9 @@ def _crowded_state() -> dict:
         player["hand_count"] = 7
     state["pending_decision"] = None
     state["play_permissions"] = {}
+    # Late in the turn, so on a window whose track has to scroll the current
+    # step starts out past its right edge.
+    state["step"] = "end_step"
     return state
 
 
@@ -191,6 +194,7 @@ def _game_page() -> str:
 {markup}
 <script type="module">
 import {{ mountBoard }} from "/render/board.js";
+import {{ mountTopbar }} from "/render/panels.js";
 import * as ribbon from "/render/ribbon.js";
 const state = {json.dumps(_crowded_state())};
 if (location.search.includes("permitted=1")) state.play_permissions = {json.dumps(_permissions())};
@@ -209,14 +213,8 @@ mountBoard(document, store, {{
   onHandCard: noop, onPermanent: noop, onPlayer: noop,
   onStackObject: noop, onPermission: noop, onLand: noop,
 }});
-$("#turn-info").textContent = "Turn 7 - alice, precombat main - priority: alice";
-const track = $("#phase-track");
-const steps = ["untap", "upkeep", "draw", "main 1", "begin combat", "attackers", "blockers",
-  "damage", "end combat", "main 2", "end", "cleanup"];
-for (const step of steps) {{
-  const li = document.createElement("li"); li.textContent = step; track.appendChild(li);
-}}
-$("#conn-status-game").textContent = "connected";
+// The real turn line, phase track and connection pill, as `app.js` mounts them.
+mountTopbar(document, store, {{ onLeaveGame: noop, onPassForAiSeat: noop, onReportProblem: noop }});
 $("#concede-slot").innerHTML = "<button>Concede - click again to confirm</button>";
 $("#prompt-box").textContent = "You have priority in your precombat main phase.";
 $("#priority-box").innerHTML = "<button>Pass priority</button> <button>Resolve top</button>";
@@ -356,6 +354,19 @@ function measure(frame, {{ size, open, permitted }}) {{
     rows,
     regions: Object.fromEntries(REGIONS.map((s) => [s, box($(s))])),
     toolbar: box($("#game-toolbar")),
+    phaseTrack: (() => {{
+      const track = $("#phase-track");
+      return {{
+        box: box(track),
+        display: w.getComputedStyle(track).display,
+        inToolbar: $("#game-toolbar").contains(track),
+        inTopbar: $("#topbar").contains(track),
+        items: [...track.children].map(box),
+        current: box(track.querySelector("li.current")),
+        scrollWidth: track.scrollWidth,
+        clientWidth: track.clientWidth,
+      }};
+    }})(),
     toolbarButtons: [...$("#game-toolbar").querySelectorAll("button")].map(box),
     zoneRibbonDisplay: display("#zone-ribbon"),
     rotateDisplay: display("#rotate-overlay"),
@@ -606,8 +617,99 @@ def test_nothing_in_the_grid_sits_under_the_toolbar(measurements: list[dict], in
         if m["mobile"] and name != "#mtg-board":
             continue
         assert not _overlap(bar, rect), (name, rect, bar, m["size"])
+    assert bar["bottom"] <= m["regions"]["#mtg-board"]["top"] + 0.5, (bar, m["size"])
+    for card in m["boardCards"]:
+        assert not _overlap(bar, card), (bar, card, m["size"])
     if m["mobile"]:
         assert not _overlap(bar, m["toggle"]), (bar, m["toggle"], m["size"])
+        assert not _overlap(bar, m["railPass"]), (bar, m["railPass"], m["size"])
+
+
+@EACH
+def test_the_phase_track_sits_in_the_top_row_and_not_in_the_topbar(
+    measurements: list[dict], index: int
+) -> None:
+    m = measurements[index]
+    track, bar = m["phaseTrack"], m["toolbar"]
+    assert track["display"] != "none", m["size"]
+    assert track["inToolbar"] is True and track["inTopbar"] is False, m["size"]
+    assert len(track["items"]) == 12, track["items"]
+    assert track["box"]["width"] > 0, (track["box"], m["size"])
+    assert track["box"]["left"] >= bar["left"] - 0.5 and track["box"]["right"] <= bar["right"] + 0.5
+    assert track["box"]["top"] >= bar["top"] - 0.5 and track["box"]["bottom"] <= bar["bottom"] + 0.5
+    # On the left of the row, the buttons on the right.
+    for button in m["toolbarButtons"]:
+        assert track["box"]["right"] <= button["left"] + 0.5, (track["box"], button, m["size"])
+
+
+@EACH
+def test_the_phase_track_stays_on_one_line(measurements: list[dict], index: int) -> None:
+    m = measurements[index]
+    track, bar = m["phaseTrack"], m["toolbar"]
+    assert track["box"]["height"] <= bar["height"] + 0.5, (track["box"], bar, m["size"])
+    tops = {round(item["top"]) for item in track["items"]}
+    assert len(tops) == 1, (tops, m["size"])
+    for item in track["items"]:
+        assert item["bottom"] <= track["box"]["bottom"] + 0.5, (item, track["box"], m["size"])
+    for button in m["toolbarButtons"]:
+        assert button["top"] >= bar["top"] - 0.5 and button["bottom"] <= bar["bottom"] + 0.5, (
+            button,
+            bar,
+            m["size"],
+        )
+
+
+@EACH
+def test_the_phase_track_covers_no_button_card_toggle_or_rail_pass(
+    measurements: list[dict], index: int
+) -> None:
+    m = measurements[index]
+    track = m["phaseTrack"]["box"]
+    for button in m["toolbarButtons"]:
+        assert not _overlap(track, button), (track, button, m["size"])
+    for card in m["boardCards"]:
+        assert not _overlap(track, card), (track, card, m["size"])
+    assert not _overlap(track, m["regions"]["#mtg-board"]), (track, m["size"])
+    assert not _overlap(track, m["toggle"]), (track, m["toggle"], m["size"])
+    assert not _overlap(track, m["railPass"]), (track, m["railPass"], m["size"])
+    for button in m["railButtons"]:
+        assert not _overlap(track, button), (track, button, m["size"])
+
+
+@EACH
+def test_the_current_step_is_highlighted_and_scrolled_into_view(
+    measurements: list[dict], index: int
+) -> None:
+    m = measurements[index]
+    track = m["phaseTrack"]
+    current = track["current"]
+    assert current is not None and current["width"] > 0, m["size"]
+    assert current["left"] >= track["box"]["left"] - 0.5, (current, track["box"], m["size"])
+    assert current["right"] <= track["box"]["right"] + 0.5, (current, track["box"], m["size"])
+
+
+def test_on_a_phone_the_track_scrolls_inside_itself_rather_than_wrapping(
+    measurements: list[dict],
+) -> None:
+    m = measurements[VIEWPORTS.index((667, 375))]
+    track = m["phaseTrack"]
+    assert track["scrollWidth"] > track["clientWidth"], track
+
+
+@EACH
+def test_the_top_row_spans_the_page(measurements: list[dict], index: int) -> None:
+    m = measurements[index]
+    width, _ = m["size"]
+    bar = m["toolbar"]
+    if m["mobile"]:
+        # A thin strip across the whole viewport.
+        assert bar["height"] <= 32, (bar, m["size"])
+        assert bar["top"] <= 0.5 and bar["left"] <= 0.5 and bar["right"] >= width - 0.5, (
+            bar,
+            m["size"],
+        )
+        return
+    assert bar["left"] <= 16 and bar["right"] >= width - 16, (bar, m["size"])
 
 
 @EACH
@@ -763,6 +865,8 @@ def test_an_open_drawer_is_on_screen_and_keeps_the_toggle_and_toolbar_reachable(
     for button in m["toolbarButtons"] + m["railButtons"]:
         assert _inside(button, width, height), button
         assert not _overlap(button, m["drawer"]), (button, m["drawer"])
+    assert not _overlap(m["phaseTrack"]["box"], m["drawer"]), (m["phaseTrack"], m["drawer"])
+    assert m["phaseTrack"]["inToolbar"] is True and m["phaseTrack"]["inTopbar"] is False
 
 
 @EACH
