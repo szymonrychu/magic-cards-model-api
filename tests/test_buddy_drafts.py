@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -1008,3 +1009,187 @@ def test_the_cli_persists_a_captured_draft_across_processes_holds_then_posts_it(
     rows = advice_rows(game)
     assert len(rows) == 1
     assert rows[0]["detail"]["path"].endswith("/actions/pass-priority")
+
+
+# ---------------------------------------------------------------------------
+# 7. re-review, 2026-09-14, finding 1: an OS file lock and a token-guarded
+# delete, so overlapping CLI processes never lose or double-post a draft
+# ---------------------------------------------------------------------------
+
+
+def test_save_cli_draft_never_deletes_a_draft_it_never_saw(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unit-level: the mechanism review fix 1 adds to `_save_cli_draft` - a
+    `None` write (nothing staged from THIS call's own point of view) only
+    ever deletes the file when it still carries the token this call itself
+    read. A call that loaded nothing at all (`expected_token=None`, exactly
+    what a background `wait` starting from an empty drafts directory sees)
+    must never delete a draft a different call wrote in the meantime."""
+    monkeypatch.setenv(seat_cli.CLI_DRAFTS_DIR_ENV, str(tmp_path))
+    game_id, uid = "game-1", "uid-1"
+
+    # Nothing staged - a background `wait`'s own load sees exactly this.
+    loaded, note = seat_cli._load_cli_draft(game_id, uid)
+    assert loaded is None and note is None
+
+    # A foreground `stage-advice`, in a completely separate call, stages a
+    # window in the meantime.
+    trouble = seat_cli._save_cli_draft(
+        game_id, uid, {"window": {"step": "end_step"}, "action": None}
+    )
+    assert trouble is None
+
+    # The background `wait` finishes and persists "nothing changed" from ITS
+    # own point of view - `expected_token=None`, exactly what its own load
+    # above saw.
+    trouble = seat_cli._save_cli_draft(game_id, uid, None, expected_token=None)
+    assert trouble is None
+
+    survived, _note = seat_cli._load_cli_draft(game_id, uid)
+    assert survived is not None, "a call that loaded nothing must never delete a draft staged since"
+    assert survived["window"]["step"] == "end_step"
+
+
+def test_a_background_wait_racing_a_foreground_stage_advice_never_loses_the_stage(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end, two real `seat_cli.run()` calls (each its own `Seats()` -
+    the same simulated-process boundary every other CLI test in this file
+    uses) racing on the file lock. Whichever gets there first, the staged
+    window must survive both - review fix 1's own cross-process claim."""
+    wire(monkeypatch)
+    uid = advisor_uid(game)
+
+    entered = threading.Event()
+    release = threading.Event()
+    original_load = seat_cli._load_cli_draft
+
+    def slow_load(game_id: str, seat_uid: str) -> Any:
+        result = original_load(game_id, seat_uid)
+        if seat_uid == uid:
+            entered.set()
+            release.wait(5)
+        return result
+
+    monkeypatch.setattr(seat_cli, "_load_cli_draft", slow_load)
+
+    results: dict[str, int] = {}
+
+    def run_wait() -> None:
+        results["wait"] = seat_cli.run(["--uid", uid, "--game", game, "wait", "--max-seconds", "0"])
+
+    wait_thread = threading.Thread(target=run_wait)
+    wait_thread.start()
+    assert entered.wait(5), "the background wait never reached its own load"
+
+    # The background `wait` is now stuck holding the file lock, inside its
+    # own load. A foreground `stage-advice` racing it must simply wait its
+    # turn on the same lock rather than run concurrently against it.
+    def run_stage() -> None:
+        results["stage"] = seat_cli.run(
+            ["--uid", uid, "--game", game, "stage-advice", "declare_attackers"]
+        )
+
+    stage_thread = threading.Thread(target=run_stage)
+    stage_thread.start()
+    time.sleep(0.05)
+    release.set()
+    wait_thread.join(5)
+    stage_thread.join(5)
+
+    assert results["wait"] == 0
+    assert results["stage"] == 0
+    persisted, note = seat_cli._load_cli_draft(game, uid)
+    assert persisted is not None, "the foreground stage must survive the background wait"
+    assert persisted["window"]["step"] == "declare_attackers"
+
+
+def test_two_cli_processes_racing_to_resolve_the_same_ready_draft_post_exactly_once(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cross-process version of `test_two_concurrent_resolves_produce_exactly_
+    one_post`: two separate `seat_cli.run()` calls (their own `Seats()` each)
+    both finding the SAME ready, staged draft on disk. Without review fix 1's
+    file lock, both used to probe it legal and both `POST .../advice` - two
+    ledger rows for the one proposal a human approves once."""
+    wire(monkeypatch)
+    uid = advisor_uid(game)
+
+    assert seat_cli.run(["--uid", uid, "--game", game, "stage-advice", "declare_attackers"]) == 0
+    assert seat_cli.run(["--uid", uid, "--game", game, "--reasoning", "nothing yet", "pass"]) == 0
+    force_turn_position(game, Step.DECLARE_ATTACKERS, "alice")
+
+    results: list[int] = []
+    results_lock = threading.Lock()
+
+    def run_wait() -> None:
+        code = seat_cli.run(["--uid", uid, "--game", game, "wait", "--max-seconds", "0"])
+        with results_lock:
+            results.append(code)
+
+    threads = [threading.Thread(target=run_wait) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+
+    assert results == [0, 0]
+    assert len(advice_rows(game)) == 1
+
+
+# ---------------------------------------------------------------------------
+# 8. re-review, 2026-09-14, finding 3: a broken drafts directory never hides
+# a command's own answer
+# ---------------------------------------------------------------------------
+
+
+def test_an_unwritable_cli_drafts_dir_still_prints_the_state(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    """`CLI_DRAFTS_DIR_ENV` pointed at a plain file (not a directory at all)
+    used to crash `_cli_drafts_dir`'s own `mkdir` on the very first advisor
+    command - before the command's own action ever ran, on every single
+    advisor CLI command. `state` alone still exercises the load-at-`_
+    dispatch`-start and the lock-acquisition-at-`run` codepaths."""
+    wire(monkeypatch)
+    uid = advisor_uid(game)
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_text("nope")
+    monkeypatch.setenv(seat_cli.CLI_DRAFTS_DIR_ENV, str(blocked))
+
+    assert seat_cli.run(["--uid", uid, "--game", game, "state"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "players" in out
+
+
+def test_an_unwritable_cli_drafts_dir_reports_a_draft_note_in_the_answer(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    """A `_save_cli_draft` failure (here, a directory made read-only after a
+    window was staged in it) is caught, never raised, and the command still
+    prints its own action result - `emit()`'s old persist-before-print
+    ordering used to let this exception escape uncaught, losing the action's
+    own answer with it. The failure is also folded into the printed JSON's
+    own `draft.note`, never merely swallowed without a trace. A real WRITE
+    has to be attempted for this - a directory with nothing staged in it has
+    nothing to write and so nothing to fail on - so this stages a window
+    while the directory is still writable, then makes it read-only before
+    the committing call that has to persist the capture."""
+    wire(monkeypatch)
+    uid = advisor_uid(game)
+    drafts_dir = tmp_path / "drafts"
+    monkeypatch.setenv(seat_cli.CLI_DRAFTS_DIR_ENV, str(drafts_dir))
+    assert seat_cli.run(["--uid", uid, "--game", game, "stage-advice", "end_step"]) == 0
+    capsys.readouterr()
+    os.chmod(drafts_dir, 0o500)
+    try:
+        assert (
+            seat_cli.run(["--uid", uid, "--game", game, "--reasoning", "nothing to do", "pass"])
+            == 0
+        )
+    finally:
+        os.chmod(drafts_dir, 0o700)
+    out = json.loads(capsys.readouterr().out)
+    assert isinstance(out.get("draft"), dict)
+    assert isinstance(out["draft"].get("note"), str) and out["draft"]["note"]
