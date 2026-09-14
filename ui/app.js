@@ -482,6 +482,38 @@ function boardIsNewest(seq) {
  * `tickRun`/`declareNoAttackers` are: the defect lives in the ordering
  * between a poll's reads and this seat's own action, so a test of it has to
  * drive the real poll rather than a restatement of it. */
+
+const UNMODELED_TRIGGER_NOTICE_KIND = "unmodeled_trigger_effect_notices";
+
+/** A human-readable line for one `unmodeled_trigger_effect_notices` entry -
+ * the notice `Game.resolve` files when a spell's whole printed text had no
+ * reader and it resolved as a silent no-op (Stock Up, in the live game this
+ * exists for). */
+function engineGapMessage(notice) {
+  const name = notice.source_name || "A card";
+  return `${name}: the engine could not read this card's text, so it did nothing. Reported as an engine gap.`;
+}
+
+/** Toasts one message per newly-polled log entry carrying an
+ * `unmodeled_trigger_effect_notices` notice - the human otherwise has no way
+ * to know a spell resolved as a silent no-op: the game log panel is gone
+ * (`ui/render/panels.js`), `app.log` is read only by `advice_model.js`'s
+ * staleness check, and the resolving pass is routinely the OPPONENT's, not
+ * this seat's own - the notice rides `outcome.detail["notices"]` on
+ * whoever's request resolved the stack (`commands._attach_notices`), so a
+ * human polling only her own command responses never sees it. `GET .../log`
+ * carries it too, already redacted for this viewer server-side
+ * (`visibility.redact_log_entry`), and both `poll()` and `refresh()` already
+ * read it every tick - so that is the path this toasts from instead. */
+function toastEngineGapNotices(entries) {
+  for (const entry of entries || []) {
+    const notices = (entry.detail && entry.detail.notices) || [];
+    for (const notice of notices) {
+      if (notice.kind === UNMODELED_TRIGGER_NOTICE_KIND) toast(engineGapMessage(notice));
+    }
+  }
+}
+
 export async function poll() {
   const app = store.get();
   if (!app.gameId || app.polling) return;
@@ -503,9 +535,7 @@ export async function poll() {
     // already published its own (`boardIsNewest`); the log half has its own
     // guard, below, and the two are independent.
     const newest = boardIsNewest(reads.seq);
-    store.set((s) => ({
-      ...(newest ? { state } : {}),
-      connection: "ok",
+    store.set((s) => {
       // The log half is written only if nothing has advanced it since this
       // cycle asked for `since` - the same guard `refresh()` carries, and now
       // needed on both sides of the pair. `refresh()` sets no `polling` flag,
@@ -517,12 +547,18 @@ export async function poll() {
       // repeated inside one items list becomes a second node the next patch
       // cannot see - the duplicated lines never go away. Dropping this half
       // costs at most one tick of log, and the next cycle asks from the
-      // `lastSeq` the other read published.
-      log:
-        s.log.lastSeq === since
+      // `lastSeq` the other read published. The same guard keeps the toast
+      // below from firing twice on a dropped cycle.
+      const writesLog = s.log.lastSeq === since;
+      if (writesLog) toastEngineGapNotices(log.log);
+      return {
+        ...(newest ? { state } : {}),
+        connection: "ok",
+        log: writesLog
           ? { entries: [...s.log.entries, ...log.log].slice(-500), lastSeq: log.last_seq }
           : s.log,
-    }));
+      };
+    });
     if (newest) settleRelease(reads.seq);
     refreshDecisionTargets();
     await tickOnce();
@@ -600,6 +636,7 @@ async function refresh() {
       // when something else has already advanced the log past `since`, since
       // appending the same entries twice would double them on the screen.
       if (now.mutations !== mutationsBefore || now.log.lastSeq !== since) return;
+      toastEngineGapNotices(log.log);
       store.set((s) => ({
         log: { entries: [...s.log.entries, ...log.log].slice(-500), lastSeq: log.last_seq },
       }));
