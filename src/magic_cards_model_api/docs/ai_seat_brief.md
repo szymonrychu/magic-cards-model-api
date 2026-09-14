@@ -622,9 +622,10 @@ turn already in front of you, if you did not plan ahead for it:
   you expect your opponent to do in response, and the read that supports it.
 
 Called once per turn: `--for-turn next` while your own turn is already under
-way is refused, and so is a second declaration for the same turn. A bare
-pass through your own upkeep or draw step with an empty stack needs none on
-record at all.
+way is refused. A second declaration for the same turn is not refused -
+there is nothing to gain from declaring twice, because the gate only needs
+one row for the turn. A bare pass through your own upkeep or draw step with
+an empty stack needs none on record at all.
 
 This is written to an append-only ledger before your opponent's next move -
 you cannot go back and edit it afterward to fit whatever they actually did.

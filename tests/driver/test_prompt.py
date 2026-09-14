@@ -963,7 +963,7 @@ def test_seat_loop_names_arming_and_the_hints_own_fields(tmp_path, guide):
     assert "arm=[...]" in section
     assert "`armable`" in section
     assert "`arm_call`" in section
-    assert "copy its `arm_call` verbatim" in section
+    assert "copy its `arm_call` exactly" in section
 
 
 def test_seat_loop_says_arming_does_not_contradict_nothing_in_between(tmp_path, guide):
@@ -1057,6 +1057,90 @@ def test_briefs_name_repeatable_arm_and_arm_reasoning(brief):
     flat = _flat(text)
     assert "--arm" in flat
     assert "--arm-reasoning" in flat
+
+
+# ---- S2 A8 re-review: arm_call's own placeholder, the duplicate-plan claim,
+# and the turn_zero lead-in restated three times ----
+#
+# Finding 1 (CRITICAL): `arm_call` carries `arm_reasoning` filled in with
+# `runtime.REASONING_PLACEHOLDER` ("<say why>"), and
+# `arming.validate_arm_request` refuses that placeholder verbatim
+# (`PLACEHOLDER_ARM_REASONING`). "Copy `arm_call` verbatim" sends a call
+# `arm()` always refuses - both prompts must instead say to keep `arm_call`
+# except for replacing that placeholder with a real reason, mirroring
+# `scripts.applicable`'s own "only `reasoning` is left for you to write".
+
+
+def test_seat_loop_says_to_replace_the_arm_reasoning_placeholder(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The loop"))
+    assert "<say why>" in section
+    assert "only `arm_reasoning` is left for you to write" in section
+
+
+def test_buddy_tools_section_says_to_replace_the_arm_reasoning_placeholder(tmp_path, guide):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The tools you read the game with"))
+    assert "<say why>" in section
+    assert "only `arm_reasoning` is left for you to write" in section
+
+
+def test_seat_loop_still_keeps_the_resume_on_armed_wait_guidance(tmp_path, guide):
+    """The placeholder fix must not clobber the neighbouring resume-on-armed
+    -wait sentence it sits beside."""
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The loop")).lower()
+    assert "waiting for your own priority to fire" in section
+    assert "resume" in section
+    assert "never start a fresh run there" in section
+
+
+# Finding 2: only `for_turn="next"` during a seat's own turn is refused
+# (409, `records.OwnTurnInProgress`); `app.declare_plan` merely calls
+# `audit.record` for every other case, including a second declaration for a
+# turn already declared - it just writes another row to the ledger. Both the
+# MCP prompt and the CLI brief falsely claimed a duplicate is refused too.
+
+FALSE_DUPLICATE_REFUSAL_CLAIM = "so is a second declaration for the same turn"
+CORRECTED_DUPLICATE_SENTENCE = (
+    "nothing to gain from declaring twice, because the gate only needs one row for the turn"
+)
+
+
+def test_seat_prompt_plan_section_drops_the_false_duplicate_refusal_claim(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert FALSE_DUPLICATE_REFUSAL_CLAIM not in text
+    assert CORRECTED_DUPLICATE_SENTENCE in _flat(text)
+
+
+def test_seat_brief_plan_section_drops_the_false_duplicate_refusal_claim():
+    text = (BRIEFS / "ai_seat_brief.md").read_text()
+    assert FALSE_DUPLICATE_REFUSAL_CLAIM not in text
+    assert CORRECTED_DUPLICATE_SENTENCE in _flat(text)
+
+
+# Finding 3 (minor): the plan-ahead rationale ("call `declare_plan` during
+# your opponent's turn rather than at your own upkeep") is spelled out in
+# full three times in turn_zero - the "## The loop" lead-in, the
+# `declare_plan` bullet, and the "## Declare your plan before you act"
+# section, which is the canonical home for it. The lead-in should shrink to
+# a one-line pointer at that section rather than repeating the rationale.
+
+PLAN_AHEAD_LEADIN_OLD_RATIONALE = (
+    "Once you know how you mean to play your own next turn, call "
+    '`declare_plan(player_uid=..., for_turn="next", ...)` during your '
+    "opponent's turn rather than waiting for your own upkeep to write one"
+)
+
+
+def test_seat_loop_plan_ahead_leadin_no_longer_repeats_the_full_rationale(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The loop"))
+    assert PLAN_AHEAD_LEADIN_OLD_RATIONALE not in section
+    # still points at the one canonical place that spells it out
+    assert 'see "Declare your plan before you act"' in section
+    # and still names the call itself, so the pointer loses no information
+    assert '`declare_plan(player_uid=..., for_turn="next", ...)`' in section
 
 
 def test_seat_brief_names_plan_for_turn_next():

@@ -508,16 +508,18 @@ who is playing through a web UI against the same game server you act on.
 
 ## The loop
 
-**Plan ahead, and arm your wait.** Once you know how you mean to play your
-own next turn, call `declare_plan(player_uid=..., for_turn="next", ...)`
-during your opponent's turn rather than waiting for your own upkeep to write
-one - see "Declare your plan before you act" below. Then wait to your own
-main phase with `pass_until(..., arm=[...])`, arming whatever the hint's own
-`armable` entries are worth firing on the way: copy its `arm_call` verbatim
-rather than composing the arm arguments yourself - what it templates can
+**Plan ahead, and arm your wait.** Call
+`declare_plan(player_uid=..., for_turn="next", ...)` during your opponent's
+turn - see "Declare your plan before you act" below for why and what to put
+in it. Then wait to your own main phase with `pass_until(..., arm=[...])`,
+arming whatever the hint's own `armable` entries are worth firing on the
+way: copy its `arm_call` exactly, except replace `arm_reasoning`'s own
+`<say why>` placeholder with your own reason - what it templates can
 change, and it already knows the nearest window, the ids and your read of
-the archetype. A named fetch land is the clearest case: arm the fetch play
-before your turn begins, rather than cracking it by hand once it resolves.
+the archetype; only `arm_reasoning` is left for you to write, the same as
+`scripts.applicable`'s own call. A named fetch land is the clearest case:
+arm the fetch play before your turn begins, rather than cracking it by hand
+once it resolves.
 Arming never adds a third call - it fires inside the wait itself, so it does
 not contradict "nothing in between" below, and what comes back is still one
 wait's own answer, with `armed` naming whatever fired. If an answer says it
@@ -1059,9 +1061,11 @@ front of you, if you did not plan ahead for it:
   you expect your opponent to do in response, and the read that supports it.
 
 Called once per turn: `for_turn="next"` while your own turn is already under
-way is refused (409), and so is a second declaration for the same turn. A
-bare pass through your own upkeep or draw step with an empty stack needs none
-on record at all - almost nothing to plan there either way.
+way is refused (409). A second declaration for the same turn is not refused
+- there is nothing to gain from declaring twice, because the gate only needs
+one row for the turn. A bare pass through your own upkeep or draw step with
+an empty stack needs none on record at all - almost nothing to plan there
+either way.
 
 This is written to an append-only ledger before your opponent's next move -
 you cannot go back and edit it afterward to fit whatever they actually did.
@@ -1228,11 +1232,13 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
 
   **Arm it (S2).** `wait_for_priority(..., arm=[...])` fires whatever
   registered scripts you name the moment this wait wakes for a real reason -
-  copy the hint's own `armable`/`arm_call` verbatim rather than composing the
-  arm arguments yourself, since what it templates can change. From your
-  advisor uid an armed script proposes rather than moves. Arming never adds a
-  third call - it fires inside the wait itself, so it does not contradict
-  "Nothing in between" above.
+  copy the hint's own `armable`/`arm_call` exactly, except replace
+  `arm_reasoning`'s own `<say why>` placeholder with your own reason, since
+  what it templates can change; only `arm_reasoning` is left for you to
+  write, the same as `scripts.applicable`'s own call. From your advisor uid
+  an armed script proposes rather than moves. Arming never adds a third call
+  - it fires inside the wait itself, so it does not contradict "Nothing in
+  between" above.
 - **Do NOT call `battlefield_state`.** Your wake loop's own answer already
   carries the board, zones included, so a second call asks for what you are
   already holding and costs you a whole turn of thinking on a board that may
