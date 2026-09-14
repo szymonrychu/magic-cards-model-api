@@ -367,6 +367,74 @@ def test_untapped_mana_counts_untapped_mana_sources_i_control():
     assert seen({"kind": "untapped_mana", "op": ">=", "n": 99}, view) == 1
 
 
+# -- turn ---------------------------------------------------------------------
+
+
+def turn(op: str, n: int) -> dict[str, Any]:
+    return {"kind": "turn", "op": op, "n": n}
+
+
+def test_turn_reads_turn_number():
+    assert holds(turn("==", 1), state_view(turn_number=1))
+    assert not holds(turn("==", 2), state_view(turn_number=1))
+    assert seen(turn("<=", 2), state_view(turn_number=5)) == 5
+
+
+def test_turn_holds_for_my_nth_turn_on_the_play_and_on_the_draw():
+    # TurnMachine.turn_number counts rounds of the table (magic_cards_model.
+    # machines.turn.TurnMachine.begin_next_turn), so it does not advance until
+    # the rotation wraps back to seat 0 - meaning both the starting player's
+    # first turn (on the play) and the second player's first turn (on the
+    # draw) share turn_number 1. See test_turn_number_matches_the_engines_
+    # turnmachine_semantics below for the live engine proof.
+    on_the_play = state_view(viewer="alice", active="alice", turn_number=1)
+    on_the_draw = state_view(viewer="bob", active="bob", turn_number=1)
+    assert holds(turn("==", 1), on_the_play)
+    assert holds(turn("==", 1), on_the_draw)
+
+
+def test_turn_condition_does_not_advance_for_an_extra_turn():
+    # CR 500.7's extra turn is inserted without incrementing turn_number
+    # (TurnMachine.begin_next_turn), so a second consecutive turn for one
+    # player still reads the same turn number.
+    assert holds(turn("==", 2), state_view(turn_number=2))
+
+
+def test_a_null_turn_number_never_holds():
+    view = state_view(turn_number=None)
+    for op in ("<", "<=", "==", "!=", ">", ">="):
+        assert not holds(turn(op, 0), view)
+    assert seen(turn(">=", 0), view) is None
+
+
+def test_turn_number_matches_the_engines_turnmachine_semantics(game):
+    """Verifies the view's turn_number against the live engine's own
+    TurnMachine (not just the condition's reading of it): turn_number counts
+    rounds of the table, so it stays 1 for both seats' first turns and only
+    becomes 2 once the rotation wraps back to the starting seat; an extra
+    turn (CR 500.7) is spliced in without moving it at all."""
+    live = store.get(game)
+    turn_machine = live.turn
+    turn_machine.begin_first_turn()
+    assert (turn_machine.active_player, turn_machine.turn_number) == ("alice", 1)
+    while turn_machine.active_player == "alice":
+        turn_machine.advance()
+    assert (turn_machine.active_player, turn_machine.turn_number) == ("bob", 1), (
+        "bob's first turn, on the draw, is turn_number 1 too"
+    )
+    while turn_machine.active_player == "bob":
+        turn_machine.advance()
+    assert (turn_machine.active_player, turn_machine.turn_number) == ("alice", 2)
+
+    turn_machine.grant_extra_turn("alice")
+    turns_taken = turn_machine.turns_taken
+    while turn_machine.turns_taken == turns_taken:
+        turn_machine.advance()
+    assert (turn_machine.active_player, turn_machine.turn_number) == ("alice", 2), (
+        "the extra turn does not advance turn_number"
+    )
+
+
 # -- input conditions -------------------------------------------------------------
 
 CATALOG = input_catalog(

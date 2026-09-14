@@ -5,7 +5,7 @@ seatkit runner. `Play` is its model: every object forbids unknown keys, every
 union is discriminated on `kind`, every list is bounded (`maxItems` in the
 exported JSON Schema, an explicit bound on every list field below), and no
 field or kind can iterate, attack, block, mulligan, concede or pass. The
-vocabulary is closed at seven condition kinds and four move kinds; a `cast`
+vocabulary is closed at eight condition kinds and four move kinds; a `cast`
 names its cost from `CAST_COSTS` (the engine's own cast option kinds), and an
 answer names its decision from `DECISION_KINDS` (the api's pending decision
 kinds, less the combat declarations and the mulligan a script never makes).
@@ -85,6 +85,7 @@ CONDITION_KINDS = (
     "stack_top",
     "land_drop_available",
     "untapped_mana",
+    "turn",
     "input",
 )
 MOVE_KINDS = ("activate", "cast", "play_land", "answer")
@@ -343,6 +344,18 @@ class UntappedManaCondition(_Strict):
     n: AtLeastZero
 
 
+class TurnCondition(_Strict):
+    """The view's `turn_number` op `n`: rounds of the table
+    (`TurnMachine.turn_number`), so on my own turn it is my Nth turn, on the
+    play and on the draw alike - it does not advance until the rotation
+    wraps back to the starting seat, so an extra turn (CR 500.7) never moves
+    it. A null `turn_number` (pregame) never holds, whatever `op` is."""
+
+    kind: Literal["turn"]
+    op: Op
+    n: AtLeastZero
+
+
 class InputCondition(_Strict):
     """A fact only the agent knows: a declared input or `opposing_archetype`."""
 
@@ -370,6 +383,7 @@ Condition = Annotated[
     | StackTopCondition
     | LandDropCondition
     | UntappedManaCondition
+    | TurnCondition
     | InputCondition,
     Field(discriminator="kind"),
 ]

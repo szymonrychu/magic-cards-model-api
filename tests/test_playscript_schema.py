@@ -50,7 +50,7 @@ def test_both_worked_examples_validate():
         assert model.id == example["id"]
 
 
-def test_the_vocabulary_is_closed_at_seven_conditions_and_four_moves():
+def test_the_vocabulary_is_closed_at_eight_conditions_and_four_moves():
     assert CONDITION_KINDS == (
         "count",
         "zone_size",
@@ -58,6 +58,7 @@ def test_the_vocabulary_is_closed_at_seven_conditions_and_four_moves():
         "stack_top",
         "land_drop_available",
         "untapped_mana",
+        "turn",
         "input",
     )
     assert MOVE_KINDS == ("activate", "cast", "play_land", "answer")
@@ -211,8 +212,23 @@ def test_a_move_outside_the_closed_four_is_forbidden(kind):
 
 
 @pytest.mark.parametrize("kind", ["graveyard_order", "library_top", "turn_number"])
-def test_a_condition_outside_the_closed_seven_is_forbidden(kind):
+def test_a_condition_outside_the_closed_eight_is_forbidden(kind):
     assert codes(mutate("true", [{"kind": kind}])) == ["forbidden-kind"]
+
+
+def test_a_turn_condition_validates():
+    condition = {"kind": "turn", "op": "<=", "n": 2}
+    doc = play(true=[condition], false=[])
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.true[0].op == "<=" and model.true[0].n == 2
+
+
+def test_a_turn_condition_negative_n_is_bounds_exceeded():
+    doc = mutate("true", [{"kind": "turn", "op": ">=", "n": -1}])
+    assert codes(doc) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
 
 
 @pytest.mark.parametrize("zone", ["hand", "library", "sideboard"])

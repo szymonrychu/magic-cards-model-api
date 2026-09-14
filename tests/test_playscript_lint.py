@@ -680,6 +680,10 @@ def mana(op: str, n: int) -> dict[str, Any]:
     return {"kind": "untapped_mana", "op": op, "n": n}
 
 
+def turn(op: str, n: int) -> dict[str, Any]:
+    return {"kind": "turn", "op": op, "n": n}
+
+
 def clock(op: str, value: Any) -> dict[str, Any]:
     return {"kind": "input", "name": "clock", "op": op, "value": value}
 
@@ -712,6 +716,7 @@ def lands(op: str, n: int, *, reordered: bool = False) -> dict[str, Any]:
         ([lands(">=", 3)], [lands(">", 1, reordered=True)], "true[0]", "false[0]"),
         ([clock("in", [1, 2])], [clock("<", 4)], "true[0]", "false[0]"),
         ([], [mana("<", 4), mana(">=", 2)], "false[0]", "false[1]"),
+        ([turn("<=", 2), turn(">=", 3)], [], "true[0]", "true[1]"),
     ],
     ids=[
         "life-ge-and-le",
@@ -721,6 +726,7 @@ def lands(op: str, n: int, *, reordered: bool = False) -> dict[str, Any]:
         "count-same-selector-reordered",
         "int-input-in-and-negated-lt",
         "two-false-conditions",
+        "turn-le-2-and-ge-3",
     ],
 )
 def test_never_applicable_for_numeric_ranges_that_cannot_overlap(root, true, false, first, second):
@@ -746,6 +752,7 @@ def test_never_applicable_for_numeric_ranges_that_cannot_overlap(root, true, fal
         ([clock(">=", 3), clock("<=", 5)], []),
         ([lands(">=", 3)], [{**lands(">", 1), "select": {"types_all": ["Creature"]}}]),
         ([life("me", ">=", 5), life("me", "<=", 5)], []),
+        ([turn("<=", 2)], [turn(">=", 2)]),
     ],
     ids=[
         "life-5-to-10",
@@ -754,6 +761,7 @@ def test_never_applicable_for_numeric_ranges_that_cannot_overlap(root, true, fal
         "int-input-3-to-5",
         "different-selectors",
         "one-point-range",
+        "turn-touching",
     ],
 )
 def test_numeric_ranges_that_overlap_can_apply(root, true, false):

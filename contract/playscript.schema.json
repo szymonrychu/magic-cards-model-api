@@ -789,6 +789,41 @@
       "title": "StackTopCondition",
       "type": "object"
     },
+    "TurnCondition": {
+      "additionalProperties": false,
+      "description": "The view's `turn_number` op `n`: rounds of the table\n(`TurnMachine.turn_number`), so on my own turn it is my Nth turn, on the\nplay and on the draw alike - it does not advance until the rotation\nwraps back to the starting seat, so an extra turn (CR 500.7) never moves\nit. A null `turn_number` (pregame) never holds, whatever `op` is.",
+      "properties": {
+        "kind": {
+          "const": "turn",
+          "title": "Kind",
+          "type": "string"
+        },
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "op": {
+          "enum": [
+            ">=",
+            "<=",
+            "==",
+            "!=",
+            ">",
+            "<"
+          ],
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "op",
+        "n"
+      ],
+      "title": "TurnCondition",
+      "type": "object"
+    },
     "UntappedManaCondition": {
       "additionalProperties": false,
       "properties": {
@@ -969,6 +1004,7 @@
             "land_drop_available": "#/$defs/LandDropCondition",
             "life": "#/$defs/LifeCondition",
             "stack_top": "#/$defs/StackTopCondition",
+            "turn": "#/$defs/TurnCondition",
             "untapped_mana": "#/$defs/UntappedManaCondition",
             "zone_size": "#/$defs/ZoneSizeCondition"
           },
@@ -992,6 +1028,9 @@
           },
           {
             "$ref": "#/$defs/UntappedManaCondition"
+          },
+          {
+            "$ref": "#/$defs/TurnCondition"
           },
           {
             "$ref": "#/$defs/InputCondition"
@@ -1088,6 +1127,7 @@
             "land_drop_available": "#/$defs/LandDropCondition",
             "life": "#/$defs/LifeCondition",
             "stack_top": "#/$defs/StackTopCondition",
+            "turn": "#/$defs/TurnCondition",
             "untapped_mana": "#/$defs/UntappedManaCondition",
             "zone_size": "#/$defs/ZoneSizeCondition"
           },
@@ -1111,6 +1151,9 @@
           },
           {
             "$ref": "#/$defs/UntappedManaCondition"
+          },
+          {
+            "$ref": "#/$defs/TurnCondition"
           },
           {
             "$ref": "#/$defs/InputCondition"

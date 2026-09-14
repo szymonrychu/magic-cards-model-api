@@ -15,8 +15,10 @@ information by construction:
   only the viewer's known records of that player's zone. Neither the multiset
   nor a known record's position is order, and nothing here reads one.
 - `zone_size` reads the public `*_count`; `life`, `stack_top`,
-  `land_drop_available` (the viewer's turn, a land play left) and
-  `untapped_mana` (`untapped_mana` below) read the public board.
+  `land_drop_available` (the viewer's turn, a land play left),
+  `untapped_mana` (`untapped_mana` below) and `turn` (the view's
+  `turn_number`, rounds of the table - null pregame never holds) read the
+  public board.
 - `input` reads the caller's `inputs`. A missing required input makes the
   script unevaluable (`needs_input`); a missing optional one does not hold.
   Every supplied input is first checked against the catalog: a name it does
@@ -336,6 +338,10 @@ def _check(
     if kind == "untapped_mana":
         seen = untapped_mana(view, viewer)
         return compare(seen, condition["op"], condition["n"]), seen, None
+    if kind == "turn":
+        seen = view.get("turn_number")
+        holds = seen is not None and compare(seen, condition["op"], condition["n"])
+        return holds, seen, None
     if kind == "input":
         name = condition["name"]
         if name not in inputs:

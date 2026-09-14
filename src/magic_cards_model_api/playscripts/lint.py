@@ -39,7 +39,7 @@ Corpus rules (a deck's plays together), by code:
   `true[i]`), or one normalized condition must both hold and not hold (named:
   the first two places, `true[i]`/`false[j]` or two indexes of one list after
   the `land_drop_available` flip), or two numeric conditions on one key (the
-  `numeric_range` key: count, zone_size, life or untapped_mana with the same
+  `numeric_range` key: count, zone_size, life, untapped_mana or turn with the same
   other fields, or one int input) have ranges that cannot overlap, a false
   condition negated first (named: the first such pair, one error per key;
   a pair that is one normalized condition is left to the rule before).
@@ -57,7 +57,7 @@ its conditions on the built-in `opposing_archetype`), `stack` (one empty, the
 other needs a `stack_top` in `true`), `input` (same input, value sets that
 cannot both hold), `true_false` (one normalized condition in one play's
 `true` and the other's `false`), `numeric_range` (count, zone_size, life,
-untapped_mana or int-input ranges on one key that cannot overlap). A `false`
+untapped_mana, turn or int-input ranges on one key that cannot overlap). A `false`
 condition is negated before the input and numeric checks. A selector's `missing_from` is
 never a dimension of its own: it is part of the normalized condition, its
 `zones` a set like every scalar list, so selectors that differ only in it are
@@ -124,7 +124,7 @@ PHRASE_MIN_CARDS = 3
 PROSE_KEYS = ("name", "intent")
 PHRASE_KEYS = ("ability_text_has", "oracle_has")
 TYPE_LINE_KEYS = ("types_all", "types_any", "subtypes_any", "supertypes_any")
-NUMERIC_KINDS = ("count", "zone_size", "life", "untapped_mana")
+NUMERIC_KINDS = ("count", "zone_size", "life", "untapped_mana", "turn")
 NEGATED = {
     "eq": "ne",
     "ne": "eq",

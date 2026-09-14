@@ -326,6 +326,7 @@ def state_view(
     active: str = "alice",
     lands_played: dict[str, int] | None = None,
     land_allowance: dict[str, int] | None = None,
+    turn_number: int | None = 3,
 ) -> dict[str, Any]:
     """A redacted `GameStateView` as `viewer` receives it."""
     names = (viewer, opponent)
@@ -343,7 +344,7 @@ def state_view(
     view: dict[str, Any] = {
         "game_id": "g",
         "pending_decision": None,
-        "turn_number": 3,
+        "turn_number": turn_number,
         "step": "precombat_main",
         "phase": "precombat_main",
         "active_player": active,

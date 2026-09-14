@@ -2544,6 +2544,108 @@
       }
     },
     {
+      "name": "numeric-turn-le-2-vs-ge-3",
+      "verdict": "exclusive",
+      "dimension": "numeric_range",
+      "proven_by": [
+        "numeric_range"
+      ],
+      "note": "..2 and 3.. (the O1 turn condition, rounds of the table)",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "turn",
+            "op": "<=",
+            "n": 2
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "turn",
+            "op": ">=",
+            "n": 3
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "numeric-turn-le-2-vs-ge-2",
+      "verdict": "conflicting",
+      "dimension": "numeric_range",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "numeric_range"
+      ],
+      "note": "turn 2 satisfies both",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "turn",
+            "op": "<=",
+            "n": 2
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "turn",
+            "op": ">=",
+            "n": 2
+          }
+        ],
+        "false": []
+      }
+    },
+    {
       "name": "missing-from-count-at-least-one-vs-none-same-selector",
       "verdict": "exclusive",
       "dimension": "numeric_range",

@@ -15,6 +15,7 @@ from magic_cards_model_api.playscripts.runtime import Exit
 from magic_cards_model_api.playscripts.schema import (
     AMOUNT_DECISION_KINDS,
     CAST_COSTS,
+    CONDITION_KINDS,
     DECISION_KINDS,
     FORBIDDEN_DECISION_KINDS,
     MAX_ANSWERS,
@@ -42,6 +43,22 @@ def _listed(marker: str) -> list[str]:
 
 def test_doc_names_every_cast_cost_in_schema_order() -> None:
     assert _listed("- Cast costs:") == list(CAST_COSTS)
+
+
+def test_doc_names_every_condition_kind_in_schema_order() -> None:
+    assert _listed("- Condition kinds") == list(CONDITION_KINDS)
+
+
+def test_doc_defines_the_turn_condition() -> None:
+    text = DOC.read_text()
+    for phrase in (
+        "`{kind: turn, op, n}`",
+        "`turn_number`",
+        "rounds of the table",
+        "extra turn",
+        "never holds",
+    ):
+        assert phrase in text
 
 
 def test_doc_names_every_answerable_decision_kind() -> None:

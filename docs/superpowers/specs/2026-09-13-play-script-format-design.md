@@ -38,9 +38,8 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   matches a card whose color set is empty (CR 105.2c, "A colorless object has
   no color"), a devoid Eldrazi included, and never a colored card.
 - Colors: `white`, `blue`, `black`, `red`, `green`, `colorless`
-- Condition kinds (7): `count`, `zone_size`, `life`, `stack_top`,
-  `land_drop_available`, `untapped_mana`, `input` (an `in`/`not_in` value list
-  holds 0-32 values).
+- Condition kinds (8): `count`, `zone_size`, `life`, `stack_top`, `land_drop_available`, `untapped_mana`, `turn`, `input`
+  (an `in`/`not_in` value list holds 0-32 values).
 
 ### `untapped_mana`
 
@@ -77,6 +76,17 @@ make right now from untapped sources, not the number of sources:
   source. Tron assembled is 7; with Eldrazi Temple 8; Eldrazi Temple and an
   Island are 2; an Island and Mystic Gate
   are 2; Captivating Cave and an Island are 2.
+
+### `turn`
+
+`{kind: turn, op, n}` compares `n` with the view's `turn_number`. The engine's
+`TurnMachine.turn_number` counts rounds of the table (`machines/turn.py`), not
+player-turns, so it does not advance until the rotation wraps back to the
+starting seat: on my own turn `turn_number` is my Nth turn, on the play and on
+the draw alike, and an extra turn (CR 500.7) is spliced in without moving it
+at all. A null `turn_number` (pregame) never holds, whatever `op` is. It is a
+`numeric_range` key for never-applicable lint and conflict exclusivity, on the
+same footing as `count`, `zone_size`, `life` and `untapped_mana`.
 
 ### `missing_from`
 
