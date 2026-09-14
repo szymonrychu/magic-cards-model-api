@@ -854,8 +854,19 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
     matching `finish` yet (still in flight, or a crash) still blocks: this
     check cannot tell whether it moved anything. The release covers that run's
     own start row too (newest first, so its finish is always read before it),
-    and never an `unknown_outcome` finish, whose move may have landed uncounted,
-    nor an advise finish, which always reports zero moves by design."""
+    and never an `unknown_outcome` finish, whose move may have landed uncounted.
+
+    An advise finish always reports zero moves by design (it only ever
+    proposes), so `moves_done == 0` alone cannot tell a genuine proposal
+    apart from an advise attempt that never got the chance to move at all -
+    refused, interrupted, or the like, for a reason that has nothing to do
+    with the script itself (the human's own pending decision, most often -
+    S2 arming review). Only a *successful* advise finish (`exit ==
+    "advised"`) still burns the slot, so an armed advisor does not repeat
+    the same suggestion within one turn and step; a failed attempt releases
+    it, the same as a seat's own zero-move finish, so the advisor is not
+    locked out of ever proposing that script again once whatever blocked it
+    clears."""
     from .store import store
 
     key = tuple(detail.get(name) for name in _SCRIPT_RUN_KEY)
@@ -875,7 +886,7 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
             action == SCRIPT_RUN_ACTION
             and prior.get("moves_done") == 0
             and prior.get("exit") != "unknown_outcome"
-            and prior.get("advise") is not True
+            and not (prior.get("advise") is True and prior.get("exit") == "advised")
         ):
             released.add(run_id)
             continue

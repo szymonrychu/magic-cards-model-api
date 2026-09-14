@@ -638,6 +638,60 @@ def test_a_zero_move_finish_with_an_unknown_outcome_still_burns_the_slot(
     assert again.json()["exit"] == "already_ran"
 
 
+def test_a_failed_advise_finish_does_not_burn_the_already_ran_slot(
+    client: TestClient, game: str
+) -> None:
+    """S2 arming review: `_prior_script_run`'s release rule excludes every
+    advise finish because a *successful* one always reports zero moves by
+    design (it only ever proposes) - but that same exclusion also caught a
+    FAILED advise attempt (refused, interrupted, or the like - also always
+    zero moves, for an entirely different reason: it never got the chance to
+    move at all). An armed advisor whose first attempt is blocked by
+    something outside its own script - the human's own pending decision, an
+    unrelated refusal - must not be locked out of ever proposing that same
+    script again at this turn and step. Only a genuinely successful
+    `advised` finish should still burn the slot."""
+    advisor = advisor_uid(game, "alice")
+    assert register(client, game, advisor, uid=advisor).status_code == 200
+    assert post_run(client, game, run(role="advisor", advise=True), uid=advisor).status_code == 200
+    failed = finish(
+        role="advisor",
+        advise=True,
+        moves_done=0,
+        moves_total=1,
+        exit="refused",
+        reapplicable_after="true",
+    )
+    assert post_run(client, game, failed, uid=advisor).status_code == 200
+
+    again = post_run(client, game, run(run_id="run-2", role="advisor", advise=True), uid=advisor)
+
+    assert again.status_code == 200, again.text
+
+
+def test_a_successful_advise_finish_still_burns_the_slot(client: TestClient, game: str) -> None:
+    """The other half: a real `advised` proposal still locks the slot, so an
+    armed advisor does not repeat the same suggestion within one turn and
+    step."""
+    advisor = advisor_uid(game, "alice")
+    assert register(client, game, advisor, uid=advisor).status_code == 200
+    assert post_run(client, game, run(role="advisor", advise=True), uid=advisor).status_code == 200
+    advised = finish(
+        role="advisor",
+        advise=True,
+        moves_done=0,
+        moves_total=1,
+        exit="advised",
+        reapplicable_after="true",
+    )
+    assert post_run(client, game, advised, uid=advisor).status_code == 200
+
+    again = post_run(client, game, run(run_id="run-2", role="advisor", advise=True), uid=advisor)
+
+    assert again.status_code == 409, again.text
+    assert again.json()["exit"] == "already_ran"
+
+
 def test_a_finish_that_did_move_still_burns_the_slot(client: TestClient, game: str) -> None:
     """The other half of B8-04's fix: a finish naming at least one move done
     still blocks a retry, exactly as before."""
