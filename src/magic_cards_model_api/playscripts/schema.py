@@ -45,7 +45,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
-from ..decisions import ANSWER_FIELD_FOR_KIND, ANSWERABLE_KINDS
+from ..decisions import ANSWER_FIELD_FOR_KIND, ANSWERABLE_KINDS, TOOL_FIELD_FOR_KIND
 from ..seatkit import AUTOPASS_STEPS
 from .selectors import BASIC_LAND_TYPES
 
@@ -160,7 +160,15 @@ AMOUNT_DECISION_KINDS = tuple(
 #: `amount: "max"` pays the most the decision allows (its own `amount`).
 AMOUNT_POLICIES = ("max",)
 #: The answer fields an amount decision never takes.
-NON_AMOUNT_ANSWER_FIELDS = ("pick", "accept", "to_graveyard", "to_bottom")
+NON_AMOUNT_ANSWER_FIELDS = ("pick", "accept", "to_graveyard", "to_bottom", "choice")
+#: The decision kinds answered by naming a string from an offered (or, for
+#: `choose_a_quality`, sometimes open) list: the kinds the api's
+#: `decisions.TOOL_FIELD_FOR_KIND` answers on `choice` (Cavern of Souls' and
+#: Utopia Sprawl's "as this enters, choose a ..." CR 614.12a, and CR 700.2a's
+#: "choose ... mode" abilities). O6.
+CHOICE_DECISION_KINDS = tuple(
+    sorted(kind.value for kind, field in TOOL_FIELD_FOR_KIND.items() if field == "choice")
+)
 
 CODES = (
     "malformed-play",
@@ -436,7 +444,10 @@ def answer_shape_problem(answer: Any) -> str | None:
     """Why this answer item's fields do not fit its decision kind, or None.
 
     A pay-amount decision (`AMOUNT_DECISION_KINDS`) is answered with `amount`
-    and nothing else; no other decision kind takes an `amount`. A decision
+    and nothing else; no other decision kind takes an `amount`. `choice`
+    (O6) is answered only by `CHOICE_DECISION_KINDS`
+    (`choose_a_mode`/`choose_a_quality`); everywhere else it is
+    `answer-shape-mismatch`, the same footing `amount` is on. A decision
     outside `DECISION_KINDS` is judged by `unknown-decision-kind` instead."""
     if not isinstance(answer, dict) or answer.get("decision") not in DECISION_KINDS:
         return None
@@ -450,12 +461,15 @@ def answer_shape_problem(answer: Any) -> str | None:
         return None
     if "amount" in answer:
         return f"only {', '.join(AMOUNT_DECISION_KINDS)} take an amount, not '{decision}'"
+    if "choice" in answer and decision not in CHOICE_DECISION_KINDS:
+        return f"only {', '.join(CHOICE_DECISION_KINDS)} take a choice, not '{decision}'"
     return None
 
 
 class Answer(_Strict):
     """How to answer one pending decision of kind `decision`. A pay-amount
-    decision takes `amount` alone; every other kind takes `pick`, `accept`,
+    decision takes `amount` alone; `choice` (O6) is taken only by
+    `CHOICE_DECISION_KINDS`; every other kind takes `pick`, `accept`,
     `to_graveyard` or `to_bottom`."""
 
     decision: DecisionKind
@@ -464,6 +478,7 @@ class Answer(_Strict):
     to_graveyard: Selector = None
     to_bottom: Selector = None
     amount: Amount = None
+    choice: NonBlank = None
 
     @model_validator(mode="after")
     def _fields_fit_the_decision(self) -> Answer:

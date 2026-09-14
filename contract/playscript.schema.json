@@ -66,7 +66,7 @@
     },
     "Answer": {
       "additionalProperties": false,
-      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; every other kind takes `pick`, `accept`,\n`to_graveyard` or `to_bottom`.",
+      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; `choice` (O6) is taken only by\n`CHOICE_DECISION_KINDS`; every other kind takes `pick`, `accept`,\n`to_graveyard` or `to_bottom`.",
       "properties": {
         "accept": {
           "default": null,
@@ -86,6 +86,12 @@
             }
           ],
           "title": "Amount"
+        },
+        "choice": {
+          "default": null,
+          "pattern": "\\S",
+          "title": "Choice",
+          "type": "string"
         },
         "decision": {
           "enum": [

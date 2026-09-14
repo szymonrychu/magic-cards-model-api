@@ -2064,6 +2064,38 @@ def test_a_sacrifice_choice_tied_between_different_cards_exits_ambiguous_unless_
     assert lions and hook.posts("/actions/activate")[0]["sacrificing"] == [lions[0]["id"]]
 
 
+def test_cavern_of_souls_played_with_eldrazi_answers_choose_a_quality_with_choice(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O6: `Answer.choice`, "for choose_a_quality and choose_a_mode only",
+    proved against the real "As this land enters, choose a creature type"
+    replacement (CR 614.12a) on a real Cavern of Souls, played from hand
+    through play_land."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Cavern of Souls", "alice", "hand")
+    script = land_script(
+        "cavern",
+        moves=[
+            {
+                "kind": "play_land",
+                "card": {"select": {}},
+                "answers": [{"decision": "choose_a_quality", "choice": "Eldrazi"}],
+            }
+        ],
+    )
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(seat, script_id="cavern", reasoning=REASONING, corpora=seats.script_corpora)
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    (decided,) = hook.posts("/decide")
+    assert decided["choice"] == "Eldrazi"
+
+    cavern = cards_named(state(client, board)["battlefield"], "Cavern of Souls")[0]
+    assert cavern["choice"] == {"kind": "creature_type", "value": "Eldrazi"}
+
+
 def test_play_land_ties_any_takes_the_first_by_sorted_name_instead_of_ambiguous(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2101,6 +2133,24 @@ def test_play_land_ties_any_takes_the_first_by_sorted_name_instead_of_ambiguous(
     foundry = cards_named(state(client, board)["battlefield"], "Sacred Foundry")
     assert foundry, "the alphabetically-first tied land was played"
     assert hook.posts("/actions/play-land")[0]["card_id"] == foundry[0]["id"]
+
+
+def test_a_choice_not_among_the_offered_options_exits_unforeseen() -> None:
+    """O6: choose_a_mode is always fully enumerated (`pending.options`), so
+    a `choice` naming something else can never be sent to the engine - it
+    is `unforeseen`, the same as `_pick` finding nothing to match."""
+    pending = {
+        "player": "alice",
+        "kind": "choose_a_mode",
+        "prompt": "choose one",
+        "generation": 1,
+        "options": ["Create a 3/3 green Beast creature token.", "You gain 3 life.", "Draw a card."],
+    }
+    item = {"decision": "choose_a_mode", "choice": "Destroy target creature."}
+    built = runtime.decide_body(item, pending, {}, "alice", "reasoning")
+    assert isinstance(built, runtime.ScriptExit)
+    assert built.exit is Exit.UNFORESEEN
+    assert "Destroy target creature." in built.stop_reason
 
 
 def test_play_land_plays_an_mdfcs_land_face_by_the_cards_own_id() -> None:

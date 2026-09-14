@@ -212,17 +212,31 @@ and then this doc's test until it is listed here.
 
 ### `answers[]`
 
-Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select], ties?: any}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max}`.
+Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select], ties?: any}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max, choice?: string}`.
 
 An answer's fields must fit its decision kind, or it is
 `answer-shape-mismatch`. A pay-amount decision (Galvanic Discharge's
 `pay_energy_amount`, Necrodominance's `pay_life_amount`) is answered with
 `amount` alone: an integer from 0, or `max` for the most the decision allows.
-`accept`, `pick`, `to_graveyard` or `to_bottom` on it, or no `amount`, is
-`answer-shape-mismatch`, and so is an `amount` on any other kind. A negative
-`amount` is `bounds-exceeded`; any other value is `malformed-play`.
+`accept`, `pick`, `to_graveyard`, `to_bottom` or `choice` on it, or no
+`amount`, is `answer-shape-mismatch`, and so is an `amount` on any other kind.
+A negative `amount` is `bounds-exceeded`; any other value is `malformed-play`.
 
 - Amount decision kinds: `pay_energy_amount`, `pay_life_amount`
+
+`choice` (O6) is a non-blank string, taken only by `CHOICE_DECISION_KINDS`
+(`choose_a_mode`, `choose_a_quality` - CR 614.12a's and CR 700.2a's "as this
+enters, choose ..." and "choose ... mode" questions, the api's own
+`TOOL_FIELD_FOR_KIND` mapping both to `choice`); elsewhere it is
+`answer-shape-mismatch`. Card names are still refused there, with the same
+type-line-word exemption other selector fields get, so a creature type such
+as `Eldrazi` is allowed. `choose_a_mode` is always fully enumerated
+(`pending.options`); `choose_a_quality` is sometimes open (a creature type, a
+card name), and an empty `options` there means any value is accepted, left to
+the engine to judge. A `choice` naming something outside a non-empty
+`options` exits `unforeseen`, the same as `pick` finding nothing to match.
+
+- Choice decision kinds: `choose_a_mode`, `choose_a_quality`
 
 `decision` is a closed set equal to the api's pending decision kinds: the
 values of `decisions.ANSWERABLE_KINDS`, which are the engine `DecisionKind`s
@@ -258,7 +272,14 @@ read off the redacted state view:
   rest kept on top in the order they were looked at. An answer naming neither
   moves nothing, so every card stays on top.
 - Every selection follows one pick rule: nothing matching is `unforeseen`, and
-  different cards still tied after `prefer` are `ambiguous`.
+  different cards still tied after `prefer` are `ambiguous` - unless `ties:
+  "any"` (O2), which takes the first `count` of them by sorted name instead.
+- A `choice` answer (O6) goes to `/decide` as `choice` outright. A
+  `choose_a_mode` decision's `options` is always fully enumerated; a
+  `choose_a_quality` decision's is sometimes empty (an open question, a
+  creature type or a card name), and an empty `options` there means any
+  value is sent through unjudged, left to the engine. A `choice` naming
+  something outside a non-empty `options` is `unforeseen`.
 - A `surveil`/`scry` answer with no `to_graveyard`/`to_bottom` at all is a bare
   answer and means "keep everything on top": the request sends `moved: []`,
   never leaves the decision unanswered. One naming a selector still sends only

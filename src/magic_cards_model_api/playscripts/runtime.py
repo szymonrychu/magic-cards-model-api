@@ -73,7 +73,7 @@ from ..seatkit import (
 )
 from . import conditions
 from .inputs import BUILTIN_INPUT, input_catalog
-from .schema import AMOUNT_DECISION_KINDS, WILDCARD, Play
+from .schema import AMOUNT_DECISION_KINDS, CHOICE_DECISION_KINDS, WILDCARD, Play
 from .selectors import Present, matches
 
 #: The tool parameter each decision kind is answered on, by kind value - the
@@ -1043,6 +1043,22 @@ def decide_body(
     if kind in AMOUNT_DECISION_KINDS and "amount" in item:
         answer_field = pending.get("answer_field") or ANSWER_FIELDS[kind]
         body[answer_field] = pending.get("amount") if item["amount"] == "max" else item["amount"]
+        return body
+    if kind in CHOICE_DECISION_KINDS and "choice" in item:
+        # O6: choose_a_mode is always fully enumerated (`pending.options`);
+        # choose_a_quality sometimes is not (a creature type, a card name -
+        # CR 614.12a's open questions), and an empty `options` there means
+        # any legal value is accepted, left to the engine to judge.
+        options = pending.get("options") or []
+        if options and item["choice"] not in options:
+            return ScriptExit(
+                Exit.UNFORESEEN,
+                stop_reason=(
+                    f"{item['choice']!r} is not among the offered options for the "
+                    f"{kind} decision ({', '.join(options)})"
+                ),
+            )
+        body["choice"] = item["choice"]
         return body
     cards = _decision_cards(pending, state, me)
     present = conditions.presence(state, me)

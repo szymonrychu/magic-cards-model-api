@@ -75,6 +75,13 @@ def test_doc_defines_searches_for_any_and_names_the_basic_land_types() -> None:
         assert phrase in text.split("### `searches_for_any`", 1)[1].split("\n## ", 1)[0]
 
 
+def test_doc_names_the_choice_decision_kinds() -> None:
+    from magic_cards_model_api.playscripts.schema import CHOICE_DECISION_KINDS
+
+    assert _listed("- Choice decision kinds:") == list(CHOICE_DECISION_KINDS)
+    assert "choice?: string" in DOC.read_text()
+
+
 def test_doc_defines_land_face() -> None:
     text = DOC.read_text()
     assert "`land_face`" in text
@@ -126,7 +133,7 @@ def test_activate_move_line_carries_targets_and_the_sacrifice_choice() -> None:
 
 def test_doc_names_the_amount_decision_kinds_and_the_amount_field() -> None:
     assert _listed("- Amount decision kinds:") == list(AMOUNT_DECISION_KINDS)
-    assert "amount?: >=0|max}`" in DOC.read_text()
+    assert "amount?: >=0|max, choice?: string}`" in DOC.read_text()
 
 
 def test_doc_names_every_runner_exit_in_enum_order() -> None:

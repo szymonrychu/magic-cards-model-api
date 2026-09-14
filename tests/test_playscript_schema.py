@@ -414,6 +414,40 @@ def test_an_input_condition_is_usable_in_true_and_false():
         assert play_errors(play(true=[condition], false=[condition])) == [], op
 
 
+# -- O6: Answer.choice ---------------------------------------------------------
+
+
+def test_choice_validates_for_choose_a_mode_and_choose_a_quality():
+    from magic_cards_model_api.playscripts.schema import CHOICE_DECISION_KINDS
+
+    assert set(CHOICE_DECISION_KINDS) == {"choose_a_mode", "choose_a_quality"}
+    for decision in CHOICE_DECISION_KINDS:
+        doc = mutate(
+            "moves", [{"kind": "answer", "answers": [{"decision": decision, "choice": "Eldrazi"}]}]
+        )
+        assert play_errors(doc) == []
+        model = Play.model_validate(doc)
+        assert model.moves[0].answers[0].choice == "Eldrazi"
+
+
+@pytest.mark.parametrize("decision", ["may", "pay_life", "choose_cards", "surveil"])
+def test_choice_elsewhere_is_answer_shape_mismatch(decision):
+    doc = mutate(
+        "moves", [{"kind": "answer", "answers": [{"decision": decision, "choice": "Eldrazi"}]}]
+    )
+    assert codes(doc) == ["answer-shape-mismatch"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_an_amount_decision_never_takes_a_choice():
+    doc = mutate(
+        "moves",
+        [{"kind": "answer", "answers": [{"decision": "pay_life_amount", "choice": "Eldrazi"}]}],
+    )
+    assert codes(doc) == ["answer-shape-mismatch"]
+
+
 def test_the_answer_item_takes_to_bottom_for_scry():
     doc = mutate(
         "moves",

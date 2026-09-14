@@ -125,8 +125,16 @@ PROSE_KEYS = ("name", "intent")
 PHRASE_KEYS = ("ability_text_has", "oracle_has")
 #: Fields whose values are drawn from a closed, type-line-like vocabulary
 #: (card names may coincide with a common word here without meaning the
-#: card): the type words and O3's `searches_for_any` land types.
-TYPE_LINE_KEYS = ("types_all", "types_any", "subtypes_any", "supertypes_any", "searches_for_any")
+#: card): the type words, O3's `searches_for_any` land types, and O6's
+#: `choice` (a creature type such as Eldrazi is also a type-line word).
+TYPE_LINE_KEYS = (
+    "types_all",
+    "types_any",
+    "subtypes_any",
+    "supertypes_any",
+    "searches_for_any",
+    "choice",
+)
 NUMERIC_KINDS = ("count", "zone_size", "life", "untapped_mana", "turn")
 NEGATED = {
     "eq": "ne",

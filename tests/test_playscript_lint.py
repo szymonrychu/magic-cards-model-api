@@ -187,6 +187,46 @@ def test_a_basic_land_type_word_in_searches_for_any_is_refused_when_not_a_common
     assert "card-name-in-field" in error_codes(root)
 
 
+# -- O6: Answer.choice --------------------------------------------------------
+
+
+def test_a_type_line_word_in_choice_is_not_a_card_name(tmp_path):
+    # A creature type such as Eldrazi (a type-line word on >= 3 cached cards)
+    # is allowed in an answer's choice, the same type-line-word exemption
+    # types_any/subtypes_any/searches_for_any already get.
+    cards = dict(CARDS)
+    cards["Thought-Knot Seer"] = {
+        "type_line": "Creature — Eldrazi",
+        "oracle_text": "When Thought-Knot Seer enters, target opponent reveals their hand.",
+    }
+    cards["Reality Smasher"] = {
+        "type_line": "Creature — Eldrazi",
+        "oracle_text": "Reality Smasher can't be blocked by more than one creature.",
+    }
+    cards["Endless One"] = {
+        "type_line": "Creature — Eldrazi",
+        "oracle_text": "Endless One enters with X +1/+1 counters on it.",
+    }
+    root = make_root(tmp_path, cards=cards)
+    doc = play(
+        moves=[
+            {"kind": "answer", "answers": [{"decision": "choose_a_quality", "choice": "Eldrazi"}]}
+        ]
+    )
+    put(root, doc)
+    assert check_report(root) == ([], [])
+
+
+def test_a_choice_that_is_a_card_name_and_not_a_common_type_word_is_card_name_in_field(root):
+    doc = play(
+        moves=[
+            {"kind": "answer", "answers": [{"decision": "choose_a_quality", "choice": "Arid Mesa"}]}
+        ]
+    )
+    put(root, doc)
+    assert "card-name-in-field" in error_codes(root)
+
+
 def test_phrase_too_narrow(root):
     doc = play()
     doc["false"][1]["select"] = {"oracle_has": "deals 3 damage to any target"}
