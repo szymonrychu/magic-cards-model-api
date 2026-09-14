@@ -74,6 +74,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from . import seatkit
 from .playscripts import admit as playscripts_admit
 from .playscripts import guides_propose as playscripts_guides
 from .playscripts import lint as playscripts_lint
@@ -95,6 +96,100 @@ from .seatkit import (
     run_action,
     wait_and_arm,
 )
+
+#: `seat_cli.py`'s own root, for the dev-checkout fallback below - the same
+#: `Path(__file__).resolve().parents[N]` idiom `scryfall.cache_dir` uses for
+#: its own default.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: S2 A6 review fix 2 (2026-09-14): env override for where the CLI persists a
+#: staged advisor draft between separate CLI invocations - see `_cli_drafts_
+#: dir`'s own docstring for why this exists at all.
+CLI_DRAFTS_DIR_ENV = "MCM_CLI_DRAFTS_DIR"
+
+
+def _cli_drafts_dir() -> Path:
+    """Where a staged advisor draft is persisted between CLI invocations.
+
+    Each `run()` call is a fresh process with a fresh `Seats()`, so `Seat.
+    _advice_drafts` (an in-process dict, shared only by reference within one
+    `Seats` instance - see its own docstring) never survives past the one
+    command that populated it: `stage-advice` printed "staged" and the next
+    CLI `cast` posted immediately, and CLI `wait` never resolved a draft at
+    all, because there was nowhere for one to have been carried from.
+
+    `CLI_DRAFTS_DIR_ENV` names the directory outright. Otherwise: the
+    continuous PTY-wrapped agent's own per-seat workspace - `WORKSPACE`
+    (`Dockerfile.agent`, `docker-compose.yml` and `deploy/seat-job.yaml` all
+    set it to `/workspace`, the same directory `/workspace/memory` already
+    lives under) is this seat's own container's place for exactly this kind
+    of cross-call state. A dev checkout with neither set falls back to a
+    repo-relative directory, the same fallback `scryfall.cache_dir` uses for
+    its own cache."""
+    env = os.environ.get(CLI_DRAFTS_DIR_ENV)
+    if env:
+        base = Path(env)
+    else:
+        workspace = os.environ.get("WORKSPACE")
+        base = Path(workspace) / "cli-drafts" if workspace else _REPO_ROOT / ".cli-drafts"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _cli_draft_path(game_id: str, uid: str) -> Path:
+    """The file one uid's staged draft for one game lives at - keyed by both,
+    same as `Seats.advice_drafts` is keyed by uid alone within one game's own
+    process (a CLI process only ever pins one game at a time, but the file
+    system is shared across every game this seat's workspace has ever
+    touched)."""
+    return _cli_drafts_dir() / f"{game_id}__{uid}.json"
+
+
+def _tuplify(value: Any) -> Any:
+    """Reverse a JSON round trip's list-ification of every tuple, recursively.
+
+    `opponent_board_signature` builds its answer out of nested tuples, and
+    `resolve_advice_draft`'s board check compares one against a freshly
+    computed one with plain `==` - `[1, 2] != (1, 2)` in Python, so a draft
+    read back from a JSON file would fail that comparison on shape alone
+    (every list, not on what it actually holds), reading every draft as
+    stale on its very first poll after a restart. Only `entry["opponent_
+    signature"]` needs this - every other JSON-round-tripped field
+    (`window`, `action`) is compared field by field or not compared at all."""
+    if isinstance(value, list):
+        return tuple(_tuplify(item) for item in value)
+    return value
+
+
+def _load_cli_draft(game_id: str, uid: str) -> dict[str, Any] | None:
+    """The draft a previous CLI invocation left staged for `uid`, or `None`
+    for no file, an unreadable one, or one that is not a JSON object - all
+    three read the same as "nothing staged", never an error a command run
+    fails on."""
+    path = _cli_draft_path(game_id, uid)
+    if not path.is_file():
+        return None
+    try:
+        loaded = json.loads(path.read_text())
+    except (ValueError, OSError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    if "opponent_signature" in loaded:
+        loaded["opponent_signature"] = _tuplify(loaded["opponent_signature"])
+    return loaded
+
+
+def _save_cli_draft(game_id: str, uid: str, entry: dict[str, Any] | None) -> None:
+    """Write `uid`'s current draft for the next CLI invocation to pick up, or
+    remove the file outright when `entry` is `None` (nothing staged any
+    more - `resolve_advice_draft` posted or dropped it, or this uid never
+    staged one to begin with)."""
+    path = _cli_draft_path(game_id, uid)
+    if entry is None:
+        path.unlink(missing_ok=True)
+        return
+    path.write_text(json.dumps(entry))
 
 
 def split_destinations(state: dict[str, Any] | None) -> str:
@@ -1200,6 +1295,55 @@ def run(argv: list[str] | None = None) -> int:
         return 1
     gid = seat.game_id()
 
+    # S2 A6 review fix 2: carry whatever a PRIOR CLI invocation left staged
+    # for this uid into this process's own `Seat._advice_drafts` - the one
+    # thing an in-process dict alone could never do across separate
+    # processes. `seat.advise` guards it: a seat's own dict never holds
+    # anything and there is nothing on disk for one to load either
+    # (`stage_advice` itself already refuses a seat outright).
+    if seat.advise:
+        persisted_draft = _load_cli_draft(gid, seat.uid)
+        if persisted_draft is not None:
+            seat._advice_drafts[seat.uid] = persisted_draft
+
+    def persist_draft() -> None:
+        """Write this uid's current draft back out for the next CLI
+        invocation - called after every command that could have mutated it
+        (staged one, captured one, or had `resolve_advice_draft` post or drop
+        one). A no-op for a seat, and cheap enough for a read-only command to
+        call unconditionally rather than have to know which commands need
+        it."""
+        if seat.advise:
+            _save_cli_draft(gid, seat.uid, seat._advice_drafts.get(seat.uid))
+
+    def emit(result: dict[str, Any], *, state_for_draft: Any = None, **json_kwargs: Any) -> None:
+        """Print `result` as JSON, after folding in this seat's own staged-
+        draft status exactly as `mcp._tool_result`'s `_attach_draft` does for
+        the matching MCP tool (`cast`/`activate`/.../`decide`/`pass` via
+        `act()`, `wait`, `pass-until`, `script run`) - CLI parity with the
+        MCP transport, not a CLI-only feature. Every other CLI command skips
+        this the same way its own MCP tool does (`mulligan`, `opening-hand-
+        *`, `report`, `plan`, `log`, `script list`, `state`, `stage-advice`
+        itself - none of those route through `_tool_result` on the MCP side
+        either), though `persist_draft()` still runs for the ones among them
+        that can mutate a draft (a committing call can still be captured into
+        one - `mulligan`/`opening-hand-action`/`opening-hand-done` call it
+        directly rather than through `emit`).
+
+        Same failure discipline as `mcp._attach_draft`: an exception reading
+        the draft must never break the command's own answer, which already
+        landed by the time this runs."""
+        if seat.advise:
+            view = state_for_draft if isinstance(state_for_draft, dict) else {}
+            try:
+                draft = seatkit.draft_status_for_answer(seat, view)
+            except Exception:
+                draft = None
+            if draft is not None:
+                result["draft"] = draft
+            persist_draft()
+        print(json.dumps(result, **json_kwargs))
+
     # "no --sources given means offer every untapped source" is one rule, and
     # it lives in `seatkit` so this file and `mcp.py` cannot drift on it - they
     # already had: this used to branch on the raw string, so `--sources ","`
@@ -1240,11 +1384,16 @@ def run(argv: list[str] | None = None) -> int:
         `--hold` forces holding; a special action holds by default under
         CR 116.3 whether it was asked for or not."""
         if dry_run:
-            print(json.dumps(perform(), indent=1, sort_keys=True))
+            emit(perform(), indent=1, sort_keys=True)
             return
         hold = args.hold or args.command in SPECIAL_ACTIONS
         result = run_action(seat, perform, hold_priority=hold, reasoning=args.reasoning)
-        print(json.dumps(result, indent=1, sort_keys=True))
+        emit(
+            result,
+            state_for_draft=result.get("state") if isinstance(result, dict) else None,
+            indent=1,
+            sort_keys=True,
+        )
         note(result.get("state") if isinstance(result, dict) else None)
 
     if args.command == "state":
@@ -1274,7 +1423,7 @@ def run(argv: list[str] | None = None) -> int:
             woken["state"]["armed_conflict"] = woken["armed_conflict"]
         if "armed_refusal" in woken:
             woken["state"]["armed_refusal"] = woken["armed_refusal"]
-        print(json.dumps(woken["state"], indent=1, sort_keys=True))
+        emit(woken["state"], state_for_draft=woken["state"], indent=1, sort_keys=True)
         note(woken["state"])
     elif args.command == "cast":
         body: dict[str, Any] = {"player": seat.player, "dry_run": args.dry_run}
@@ -1447,7 +1596,7 @@ def run(argv: list[str] | None = None) -> int:
             opposing_archetype=args.opposing_archetype,
             inputs=arm_inputs,
         )
-        print(json.dumps(result, indent=1, sort_keys=True))
+        emit(result, state_for_draft=result.get("state"), indent=1, sort_keys=True)
         note(result.get("state"))
     elif args.command == "pass":
         pass_body: dict[str, Any] = {"player": seat.player}
@@ -1459,7 +1608,12 @@ def run(argv: list[str] | None = None) -> int:
             hold_priority=False,
             release=False,
         )
-        print(json.dumps(result, indent=1, sort_keys=True))
+        emit(
+            result,
+            state_for_draft=result.get("state") if isinstance(result, dict) else None,
+            indent=1,
+            sort_keys=True,
+        )
     elif args.command == "decide":
         # `--decline` and an omitted `card_ids` post the identical request -
         # the empty answer, which for a CR 701.23b search ("that player isn't
@@ -1528,6 +1682,12 @@ def run(argv: list[str] | None = None) -> int:
             body["bottom"] = _parse_ids(args.bottom)
         if args.reasoning:
             body["reasoning"] = args.reasoning
+        # No `draft` on this answer - `mcp.mulligan` does not route through
+        # `_tool_result` either (pregame endpoints answer immediately, never
+        # `wait_for_priority`'s own poll), so there is nothing for a CLI-only
+        # attach to add here that the MCP tool does not already give. The
+        # committing call itself can still capture a staged, empty window
+        # (`Seat._advise_answer`), so `persist_draft` still runs.
         print(
             json.dumps(
                 seat.call_json("POST", f"/api/games/{gid}/pregame/mulligan", body),
@@ -1535,6 +1695,7 @@ def run(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
+        persist_draft()
     elif args.command == "opening-hand-action":
         oha_body: dict[str, Any] = {"player": seat.player, "card_id": args.card.strip()}
         if args.reasoning:
@@ -1550,6 +1711,7 @@ def run(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
+        persist_draft()
     elif args.command == "opening-hand-done":
         ohd_body: dict[str, Any] = {"player": seat.player}
         if args.reasoning:
@@ -1565,6 +1727,7 @@ def run(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
+        persist_draft()
     elif args.command == "log":
         # `uid` here, not the bare debugger's-eye default: a real seat reading
         # its own log must not see the opponent's hidden-zone card names any
@@ -1610,7 +1773,14 @@ def run(argv: list[str] | None = None) -> int:
         if isinstance(answer, str):
             print(answer)
             return 1
-        print(json.dumps(answer, indent=1, sort_keys=args.script_command == "run"))
+        if args.script_command == "run":
+            # Matches `mcp.run_script`, which routes through `_tool_result` -
+            # `list_scripts` does not (a listing judges scripts, it runs
+            # nothing, so there is never anything here for a draft to be
+            # captured by).
+            emit(answer, state_for_draft=answer.get("state"), indent=1, sort_keys=True)
+        else:
+            print(json.dumps(answer, indent=1, sort_keys=False))
         note(answer.get("state"))
     elif args.command == "report":
         # A report is long prose full of quotes, braces and backticks. Passing
@@ -1642,6 +1812,12 @@ def run(argv: list[str] | None = None) -> int:
         # `mcp.stage_advice` calls.
         result = seat.stage_advice(args.step, args.whose_turn)
         print(json.dumps(result, indent=1, sort_keys=True))
+        # S2 A6 review fix 2: persisted so the NEXT `seat_cli.run()` call -
+        # a fresh process with a fresh `Seats()` - can pick this armed window
+        # back up. `persist_draft` (not `emit`, which also attaches `draft`
+        # to the answer - `mcp.stage_advice` never does that on its own
+        # answer either) is exactly the save half of that.
+        persist_draft()
     return 0
 
 

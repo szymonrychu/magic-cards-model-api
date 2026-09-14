@@ -29,6 +29,7 @@ import json
 import logging
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -67,6 +68,17 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> None:
     rather than imported so this file does not also have to import that
     fixture's own `sent` dependency just to use it."""
     wire(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cli_drafts_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Every `seat_cli stage-advice` command in this file persists its draft
+    to disk (S2 A6 review fix 2) - point it at a throwaway directory rather
+    than the real default (a dev checkout's repo-relative `.cli-drafts`, or a
+    live seat pod's `$WORKSPACE/cli-drafts`), so no test run leaves a file
+    behind. Autouse: every test in this file gets this for free, whether or
+    not it happens to touch the CLI."""
+    monkeypatch.setenv(seat_cli.CLI_DRAFTS_DIR_ENV, str(tmp_path / "cli-drafts"))
 
 
 def stock_a_bolt(client: TestClient, game_id: str, *, player: str = "alice") -> tuple[str, str]:
@@ -954,3 +966,45 @@ def test_the_cli_stage_advice_command_is_refused_for_a_seat(
     printed = json.loads(capsys.readouterr().out)
 
     assert printed == {"staged": False, "reason": seatkit.STAGE_ADVICE_ADVISOR_ONLY}
+
+
+def test_the_cli_persists_a_captured_draft_across_processes_holds_then_posts_it(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """S2 A6 review fix 2: each `seat_cli.run()` call is a fresh process with
+    a fresh `Seats()`, so a window `stage-advice` armed in one process used
+    to vanish the instant that process exited - the next CLI committing call
+    posted immediately instead of holding, and CLI `wait` never resolved a
+    draft at all. Four separate `seat_cli.run()` calls below, each its own
+    `Seats()` instance - a real subprocess boundary in production, exercised
+    in-process here the same way `test_the_cli_stage_advice_command_matches_
+    the_mcp_tool` already does."""
+    wire(monkeypatch)
+    uid = advisor_uid(game)
+
+    # Process 1: stage the window.
+    assert seat_cli.run(["--uid", uid, "--game", game, "stage-advice", "declare_attackers"]) == 0
+    staged = json.loads(capsys.readouterr().out)
+    assert staged["staged"] is True
+
+    # Process 2 (a fresh Seats()): the next committing call is CAPTURED, not
+    # posted - proof the staged window survived the first process exiting.
+    assert seat_cli.run(["--uid", uid, "--game", game, "--reasoning", "nothing yet", "pass"]) == 0
+    drafted = json.loads(capsys.readouterr().out)
+    assert drafted["outcome"].get("drafted") is True
+    assert advice_rows(game) == []
+
+    # Process 3: still well before the window - held, still staged on disk.
+    assert seat_cli.run(["--uid", uid, "--game", game, "wait"]) == 0
+    held = json.loads(capsys.readouterr().out)
+    assert held["draft"] == {"status": "held"}
+    assert advice_rows(game) == []
+
+    # Process 4: the board is at the window now - `wait` resolves it and posts.
+    force_turn_position(game, Step.DECLARE_ATTACKERS, "alice")
+    assert seat_cli.run(["--uid", uid, "--game", game, "wait"]) == 0
+    posted = json.loads(capsys.readouterr().out)
+    assert posted["draft"]["status"] == "posted"
+    rows = advice_rows(game)
+    assert len(rows) == 1
+    assert rows[0]["detail"]["path"].endswith("/actions/pass-priority")
