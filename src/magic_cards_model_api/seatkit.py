@@ -3594,24 +3594,39 @@ def _unvalidated_action_still_legal(
     return True
 
 
-def _script_already_advised(armed: Any) -> str | None:
-    """The id of the armed script that just proposed in this very answer
-    (`Exit.ADVISED`, `playscripts.runtime._advise`), or `None`.
+def _script_already_advised(armed: Any, script_exit: Any = None) -> str | None:
+    """The id of the script that just proposed in this very answer (`Exit.
+    ADVISED`, `playscripts.runtime._advise`), or `None`.
 
-    `armed` is whatever `woken["state"]["armed"]` carries (`mcp.wait_for_
-    priority`'s own splice of `wait_and_arm`'s `armed` answer) - a list of
-    `script_exit`-shaped dicts, or absent/`None` for every answer that never
-    armed anything (every action tool, and a `wait_for_priority` call with no
-    `arm`). Reading the STRING `"advised"` rather than importing `playscripts.
+    Two shapes carry this - review fix 2 (2026-09-14) widened the original
+    single-shape check, which only ever looked at `armed` and so never
+    caught a MANUAL run colliding with a reached draft:
+
+    - `armed` is whatever `woken["state"]["armed"]` carries (`mcp.wait_for_
+      priority`'s own splice of `wait_and_arm`'s `armed` answer) - a list of
+      `script_exit`-shaped dicts, or absent/`None` for every answer that
+      never armed anything (every action tool, and a `wait_for_priority`/CLI
+      `wait` call with no `arm`). This is an armed script firing on its own,
+      inside a poll.
+    - `script_exit` is the single `script_exit` dict a MANUAL run produces -
+      `mcp.run_script`/CLI `script run`'s own answer, whose `script_exit.
+      exit` is `"advised"` exactly when that very call proposed. An armed
+      script and a manual run can never both fire in the same answer (only
+      one of `wait_for_priority`/`run_script` is ever called for it), so
+      checking both is never ambiguous about which one to report.
+
+    Reading the STRING `"advised"` rather than importing `playscripts.
     runtime.Exit`: `playscripts` imports `seatkit` (`Seat`/`scripts_enabled_
     here`), so importing back here would cycle - the same reason `_fire_
     armed_scripts` imports `playscripts.arming` lazily instead."""
-    if not isinstance(armed, list):
-        return None
-    for entry in armed:
-        if isinstance(entry, dict) and entry.get("exit") == "advised":
-            script = entry.get("script")
-            return script if isinstance(script, str) else None
+    if isinstance(armed, list):
+        for entry in armed:
+            if isinstance(entry, dict) and entry.get("exit") == "advised":
+                script = entry.get("script")
+                return script if isinstance(script, str) else None
+    if isinstance(script_exit, dict) and script_exit.get("exit") == "advised":
+        script = script_exit.get("script")
+        return script if isinstance(script, str) else None
     return None
 
 
@@ -3626,41 +3641,29 @@ def _pop_draft_if_same(seat: Seat, entry: dict[str, Any]) -> None:
         seat._advice_drafts.pop(seat.uid, None)
 
 
-def draft_status_for_answer(seat: Seat, state: dict[str, Any]) -> dict[str, Any] | None:
+def draft_status_for_answer(
+    seat: Seat, state: dict[str, Any], *, script_exit: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """The `draft` value one answer for `seat` carries right now - shared by
     `mcp._attach_draft` and `seat_cli`'s own per-command draft check
     (2026-09-14 review fix 2) so the CLI and MCP transports report a staged
     draft identically, exactly as they already share `resolve_advice_draft`
     itself.
 
-    `None` when nothing is staged (see `resolve_advice_draft`'s own
-    docstring). Otherwise, review fix 4's own supersede check runs FIRST:
-    when a captured draft (`entry["action"]` filled in) stands staged and an
-    armed script already proposed in this very answer (`state["armed"]`,
-    present only on a `wait_for_priority`/CLI `wait` call that armed
-    something), posting the draft too would put two `/advice` rows in the
-    ledger for the one answer - the script's real proposal for right now, and
-    the draft meant for its own later window. The draft loses: it is dropped
-    outright and this answers `{"status": "superseded_by_script", "script":
-    ...}` rather than ever reaching `resolve_advice_draft`, which would
-    otherwise see a perfectly good window/board/legality and post it right
-    alongside the script's own row. `ui/advice_model.js`'s `currentAdvice`
-    (newest-wins) would have hidden whichever posted first without a trace -
-    this is what stops the second post from ever happening instead.
-
-    A window still empty (`entry["action"]` is `None`) is not a draft to
-    supersede at all - there is nothing here yet for a script to collide
-    with, and `resolve_advice_draft` itself already returns `None` for it."""
-    entry = seat._advice_drafts.get(seat.uid)
-    if entry is not None and entry.get("action") is not None:
-        scripted = _script_already_advised(state.get("armed"))
-        if scripted is not None:
-            _pop_draft_if_same(seat, entry)
-            return {"status": "superseded_by_script", "script": scripted}
-    return resolve_advice_draft(seat, state)
+    `script_exit` is this very answer's own manual script run result, when
+    the caller has one - `mcp.run_script`/CLI `script run` only. A thin
+    pass-through to `resolve_advice_draft`, which is where the actual
+    supersede-vs-hold decision is made: review fix 2's re-review (2026-09-14)
+    moved it there after finding the original check here superseded ANY
+    captured draft the moment a script advised anywhere in the same answer,
+    whether or not that draft's own window had even been reached yet - see
+    `resolve_advice_draft`'s own docstring for the fixed gate."""
+    return resolve_advice_draft(seat, state, script_exit=script_exit)
 
 
-def resolve_advice_draft(seat: Seat, state: dict[str, Any]) -> dict[str, Any] | None:
+def resolve_advice_draft(
+    seat: Seat, state: dict[str, Any], *, script_exit: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """`None` for a seat with nothing staged (a seat, an advisor who has
     never called `stage_advice`, or one whose window is armed but not yet
     filled in by a committing call) - `mcp._tool_result` leaves `draft` off
@@ -3682,8 +3685,27 @@ def resolve_advice_draft(seat: Seat, state: dict[str, Any]) -> dict[str, Any] | 
         `_advise_answer` ran to draft it; an unvalidated one asks
         `_unvalidated_action_still_legal`. Either failing drops the draft and
         answers `{"status": "stale", "failed": "legality"}`.
+    (d) **a script that already advised in this very answer** (review fix 2,
+        2026-09-14, re-review): checked only once (a), (b) and (c) all hold
+        and this draft is genuinely about to post - `state.get("armed")`
+        (an armed script `wait_for_priority`/CLI `wait` fired inside its own
+        poll) or `script_exit` (a MANUAL `run_script`/CLI `script run` that
+        just proposed) both name it, via `_script_already_advised`. Posting
+        the draft too would put two `/advice` rows in the ledger for the one
+        answer, and `ui/advice_model.js`'s `currentAdvice` (newest-wins)
+        would hide whichever posted first without a trace - the draft loses,
+        dropped outright, answering `{"status": "superseded_by_script",
+        "script": ...}` instead of posting.
 
-    All three holding posts for real: `POST .../advice`, carrying
+        This check used to run FIRST, ahead of (a)/(b)/(c), and superseded
+        ANY captured draft the instant a script advised anywhere in the same
+        answer - a captured draft staged for a window nowhere near reached
+        yet lost to a script proposing for an entirely different, current
+        moment. Moved here so only a draft that would otherwise post right
+        now can ever be superseded; one still `"held"` on window, board or
+        legality is untouched by a script firing alongside it.
+
+    All three - now four - holding posts for real: `POST .../advice`, carrying
     `drafted_at_seq` from when this was staged, and the draft is dropped
     either way - a posted draft has become a real ledger row, and there is
     nothing left here to hold. `{"status": "posted", "log_seq": ...}` on
@@ -3759,6 +3781,10 @@ def resolve_advice_draft(seat: Seat, state: dict[str, Any]) -> dict[str, Any] | 
         if not legal:
             _pop_draft_if_same(seat, entry)
             return {"status": "stale", "failed": "legality"}
+        scripted = _script_already_advised(state.get("armed"), script_exit)
+        if scripted is not None:
+            _pop_draft_if_same(seat, entry)
+            return {"status": "superseded_by_script", "script": scripted}
         _post_status, advice = seat._request_json(
             "POST",
             f"/api/games/{seat.game_id()}/advice",

@@ -1522,7 +1522,11 @@ def run(argv: list[str] | None = None) -> int:
             return trouble
 
         def emit(
-            result: dict[str, Any], *, state_for_draft: Any = None, **json_kwargs: Any
+            result: dict[str, Any],
+            *,
+            state_for_draft: Any = None,
+            script_exit: dict[str, Any] | None = None,
+            **json_kwargs: Any,
         ) -> None:
             """Print `result` as JSON, after folding in this seat's own staged-
             draft status exactly as `mcp._tool_result`'s `_attach_draft` does for
@@ -1537,6 +1541,13 @@ def run(argv: list[str] | None = None) -> int:
             one - `mulligan`/`opening-hand-action`/`opening-hand-done` call it
             directly rather than through `emit`).
 
+            `script_exit` (review fix 2, 2026-09-14) is the CLI `script run`
+            command's own `script_exit`, threaded through to `seatkit.draft_
+            status_for_answer` exactly as `mcp._attach_draft` threads `answer.
+            get("script_exit")` - see `seatkit._script_already_advised` for
+            why a manual run's own proposal has to be checked alongside an
+            armed one, not only the latter.
+
             Same failure discipline as `mcp._attach_draft`: an exception reading
             the draft must never break the command's own answer, which already
             landed by the time this runs. Review fix 3 (2026-09-14): neither
@@ -1548,7 +1559,7 @@ def run(argv: list[str] | None = None) -> int:
             if seat.advise:
                 view = state_for_draft if isinstance(state_for_draft, dict) else {}
                 try:
-                    draft = seatkit.draft_status_for_answer(seat, view)
+                    draft = seatkit.draft_status_for_answer(seat, view, script_exit=script_exit)
                 except Exception:
                     draft = None
                 if draft is not None:
@@ -1996,10 +2007,14 @@ def run(argv: list[str] | None = None) -> int:
                 # Matches `mcp.run_script`, which routes through `_tool_result` -
                 # `list_scripts` does not (a listing judges scripts, it runs
                 # nothing, so there is never anything here for a draft to be
-                # captured by).
+                # captured by). `script_exit=answer.get("script_exit")` (review
+                # fix 2, 2026-09-14): this run's own proposal, so a reached
+                # staged draft is superseded rather than double-posted
+                # alongside it - see `emit`'s own docstring.
                 emit(
                     answer,
                     state_for_draft=answer.get("state"),
+                    script_exit=answer.get("script_exit"),
                     indent=1,
                     sort_keys=True,
                 )

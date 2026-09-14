@@ -1193,3 +1193,145 @@ def test_an_unwritable_cli_drafts_dir_reports_a_draft_note_in_the_answer(
     out = json.loads(capsys.readouterr().out)
     assert isinstance(out.get("draft"), dict)
     assert isinstance(out["draft"].get("note"), str) and out["draft"]["note"]
+
+
+# ---------------------------------------------------------------------------
+# 9. re-review, 2026-09-14, finding 2: a script only supersedes a draft whose
+# own window is reached in this very answer
+# ---------------------------------------------------------------------------
+
+
+def test_a_draft_for_another_window_stays_held_when_a_script_advises_elsewhere(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The original review fix 4 superseded ANY captured draft the instant a
+    script advised anywhere in the same answer, even one staged for a window
+    nowhere near reached yet. A draft for a LATER window must simply stay
+    held while an armed script fires for its own, current moment."""
+    wire(monkeypatch)
+    uid = advisor_uid(game, player="alice")
+    register(client, game, uid, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+
+    seats = seats_for(game)
+    server = build_server(seats)
+    seat = seats.seat_for(uid)
+    assert seat is not None
+
+    # Stage a window well after the script's own precombat_main moment.
+    force_turn_position(game, Step.UPKEEP, "alice")
+    seat.stage_advice("declare_attackers", "mine")
+    capture_a_pass_draft(seat, game, reasoning="nothing to do until attackers")
+
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    answer = json.loads(
+        tool_text(
+            server,
+            "wait_for_priority",
+            {"player_uid": uid, "arm": "drop", "arm_reasoning": "make the land drop"},
+        )
+    )
+
+    assert answer.get("armed") and answer["armed"][0]["exit"] == "advised"
+    assert answer["draft"] == {"status": "held"}
+    rows = advice_rows(game)
+    assert len(rows) == 1, rows  # the script's own proposal, never the draft
+    assert rows[0]["detail"]["path"].endswith("/actions/play-land")
+    assert uid in seat._advice_drafts, "a draft for an unreached window must survive"
+
+
+def test_a_manual_run_script_proposal_supersedes_a_reached_staged_draft(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of review fix 2's re-review: the original fix only
+    ever checked `state["armed"]` - an ARMED script firing inside `wait_for_
+    priority`'s own poll. A MANUAL `run_script` call (MCP tool, or CLI
+    `script run`) that proposes in the very same answer a staged draft has
+    just reached collides exactly the same way, and used to double-post."""
+    wire(monkeypatch)
+    uid = advisor_uid(game, player="alice")
+    register(client, game, uid, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+
+    seats = seats_for(game)
+    server = build_server(seats)
+    seat = seats.seat_for(uid)
+    assert seat is not None
+
+    force_turn_position(game, Step.UPKEEP, "alice")
+    seat.stage_advice("precombat_main", "mine")
+    capture_a_pass_draft(seat, game, reasoning="nothing to do until my main phase")
+
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    answer = json.loads(
+        tool_text(
+            server,
+            "run_script",
+            {"player_uid": uid, "script": "drop", "reasoning": "make the land drop"},
+        )
+    )
+
+    assert answer["script_exit"]["exit"] == "advised"
+    assert answer["draft"] == {"status": "superseded_by_script", "script": "drop"}
+    rows = advice_rows(game)
+    assert len(rows) == 1, rows
+    assert rows[0]["detail"]["path"].endswith("/actions/play-land")
+    assert uid not in seat._advice_drafts
+
+
+def test_the_cli_script_run_supersedes_a_reached_staged_draft(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """CLI parity for the manual-run supersede fix: `seat_cli`'s own `script
+    run` command threads its own `script_exit` through to `draft_status_for_
+    answer` exactly as the MCP tool does."""
+    wire(monkeypatch)
+    uid = advisor_uid(game, player="alice")
+    register(client, game, uid, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+
+    force_turn_position(game, Step.UPKEEP, "alice")
+    assert (
+        seat_cli.run(
+            [
+                "--uid",
+                uid,
+                "--game",
+                game,
+                "stage-advice",
+                "precombat_main",
+                "--whose-turn",
+                "mine",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert seat_cli.run(["--uid", uid, "--game", game, "--reasoning", "nothing yet", "pass"]) == 0
+    drafted = json.loads(capsys.readouterr().out)
+    assert drafted["outcome"].get("drafted") is True
+
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    assert (
+        seat_cli.run(
+            [
+                "--uid",
+                uid,
+                "--game",
+                game,
+                "--reasoning",
+                "make the land drop",
+                "script",
+                "run",
+                "drop",
+            ]
+        )
+        == 0
+    )
+    ran = json.loads(capsys.readouterr().out)
+
+    assert ran["script_exit"]["exit"] == "advised"
+    assert ran["draft"] == {"status": "superseded_by_script", "script": "drop"}
+    rows = advice_rows(game)
+    assert len(rows) == 1, rows
+    assert rows[0]["detail"]["path"].endswith("/actions/play-land")
