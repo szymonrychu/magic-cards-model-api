@@ -1595,6 +1595,12 @@ class CardFaceView(BaseModel):
     mana_cost: str | None = None
     type_line: str | None = None
     oracle_text: str | None = None
+    land_face: bool | None = None
+    """True on the one face a modal double-faced card plays as a land
+    (CR 712.12, `Card.land_face`) - never set on a transform or meld card's
+    faces, whichever of them types as a Land: that land is reached only by
+    transforming or melding (CR 712.2), never a land drop. Absent (not
+    False) on every other face."""
 
 
 class _CardViewFields(BaseModel):
@@ -1783,6 +1789,11 @@ class PlayerView(BaseModel):
     only so a snapshot recorded before the field existed still reads."""
     land_allowance: int | None = None
     """How many lands this player may play this turn (`Game.land_allowance`)."""
+    own_turns_taken: int | None = None
+    """How many of this player's own turns have begun, extra turns included
+    (CR 500.7, `TurnMachine.own_turns_taken`) - 0 before their first turn,
+    pregame included. Optional only so a snapshot recorded before this field
+    existed (schema < 17) still reads; a live view always carries it."""
 
 
 class PlayPermissionView(BaseModel):
@@ -2154,6 +2165,24 @@ class GameLogResponse(BaseModel):
 
     log: list[dict[str, Any]]
     last_seq: int
+
+
+class HypotheticalFactsResponse(BaseModel):
+    """`GET .../playscripts/hypothetical-facts`'s response
+    (`hypothetical_facts.build_hypothetical_facts`) - O4/O7's engine-computed
+    per-card facts, keyed by card id (a string: JSON has no UUID keys).
+    `cards[id]` is `{"enters"?: str, "unlocks"?: bool,
+    "unlocks_by_search"?: bool, "unlocks_by_basic_search"?: bool}` - only the
+    facts that card actually has, the same shape `selectors.Hypo` reads.
+    `notices` is every notice the engine
+    raised while working any of them out (an unread enters-tapped line, a
+    lethal optional payment, an unresolved trigger); it is not tied to one
+    card, since `selectors.matches` already applies the "any notice fails
+    `unlocks` closed" rule per pair before this response is built - it is
+    here for a caller that wants to see why."""
+
+    cards: dict[str, dict[str, Any]]
+    notices: list[str] = Field(default_factory=list)
 
 
 class ReviewEntry(BaseModel):

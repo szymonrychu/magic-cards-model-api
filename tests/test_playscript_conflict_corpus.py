@@ -36,7 +36,7 @@ from magic_cards_model_api.playscripts.lint import (
 )
 
 CORPUS_PATH = Path(__file__).resolve().parent / "fixtures" / "conflict_corpus.json"
-CORPUS_SHA256 = "f196d44c8c0f09d25f9b552160ef5af3a11c92220baa788ece2ad77eab8f3e66"
+CORPUS_SHA256 = "41145a11202a9ccc4ebc172e8c15fe4409a1de5d9ffe705ab1c9dbd2c1bad31a"
 CORPUS = json.loads(CORPUS_PATH.read_text(encoding="utf-8"))
 CATALOG = input_catalog(CORPUS["inputs"], CORPUS["matchup_keys"])
 CASES = CORPUS["cases"]

@@ -193,6 +193,7 @@
         "spend_effects": []
       },
       "maximum_hand_size": 7,
+      "own_turns_taken": 1,
       "sideboard_count": 0,
       "username": "alice"
     },
@@ -211,6 +212,7 @@
         "spend_effects": []
       },
       "maximum_hand_size": 7,
+      "own_turns_taken": 0,
       "sideboard_count": 0,
       "username": "bob"
     }

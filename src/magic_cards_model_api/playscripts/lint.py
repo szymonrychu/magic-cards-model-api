@@ -24,8 +24,14 @@ Corpus rules (a deck's plays together), by code:
   every play that can reach itself left out, so a cycle is reported once as
   `next-cycle` and never masks the depth of the rest of the graph.
 - `too-many-plays`: at most 12 plays per deck.
-- `too-many-active-for-archetype`: at most 6 plays with priority > 0 per
-  (deck, archetype key), a `*` play counting toward every key.
+- `too-many-active-for-archetype` (O8): at most 6 plays that can be *live
+  together* per (deck, archetype key) - the largest subset of the priority
+  > 0 plays applying to that key no two of which are provably exclusive by
+  `whose_turn`, `steps` or turn range (`_max_live_together`), not the plain
+  count of plays that apply. A `*` play counts toward every key. Two groups
+  a deck's own turn-range guards already prove disjoint (an opening's `turn
+  <= 2` against a later play's `turn >= 3`) are never summed together, only
+  the larger of the two compared against the cap.
 - `unknown-archetype-key`: every archetype key is `*` or a matchup stem of the
   deck's newest analysis run. A non-blank key the schema's key pattern refuses
   (`esper_blink`) is this code alone, never also `malformed-play`.
@@ -39,7 +45,7 @@ Corpus rules (a deck's plays together), by code:
   `true[i]`), or one normalized condition must both hold and not hold (named:
   the first two places, `true[i]`/`false[j]` or two indexes of one list after
   the `land_drop_available` flip), or two numeric conditions on one key (the
-  `numeric_range` key: count, zone_size, life or untapped_mana with the same
+  `numeric_range` key: count, zone_size, life, untapped_mana or turn with the same
   other fields, or one int input) have ranges that cannot overlap, a false
   condition negated first (named: the first such pair, one error per key;
   a pair that is one normalized condition is left to the rule before).
@@ -57,7 +63,7 @@ its conditions on the built-in `opposing_archetype`), `stack` (one empty, the
 other needs a `stack_top` in `true`), `input` (same input, value sets that
 cannot both hold), `true_false` (one normalized condition in one play's
 `true` and the other's `false`), `numeric_range` (count, zone_size, life,
-untapped_mana or int-input ranges on one key that cannot overlap). A `false`
+untapped_mana, turn or int-input ranges on one key that cannot overlap). A `false`
 condition is negated before the input and numeric checks. A selector's `missing_from` is
 never a dimension of its own: it is part of the normalized condition, its
 `zones` a set like every scalar list, so selectors that differ only in it are
@@ -123,8 +129,19 @@ MAX_ACTIVE_PER_ARCHETYPE = 6
 PHRASE_MIN_CARDS = 3
 PROSE_KEYS = ("name", "intent")
 PHRASE_KEYS = ("ability_text_has", "oracle_has")
-TYPE_LINE_KEYS = ("types_all", "types_any", "subtypes_any", "supertypes_any")
-NUMERIC_KINDS = ("count", "zone_size", "life", "untapped_mana")
+#: Fields whose values are drawn from a closed, type-line-like vocabulary
+#: (card names may coincide with a common word here without meaning the
+#: card): the type words, O3's `searches_for_any` land types, and O6's
+#: `choice` (a creature type such as Eldrazi is also a type-line word).
+TYPE_LINE_KEYS = (
+    "types_all",
+    "types_any",
+    "subtypes_any",
+    "supertypes_any",
+    "searches_for_any",
+    "choice",
+)
+NUMERIC_KINDS = ("count", "zone_size", "life", "untapped_mana", "turn")
 NEGATED = {
     "eq": "ne",
     "ne": "eq",
@@ -584,6 +601,75 @@ def exclusivity(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -
     return proven
 
 
+def _turn_range(condition: dict[str, Any], polarity: bool) -> tuple[Any, ...] | None:
+    """The numeric constraint of one `turn` condition alone, a false one
+    negated first - O8's live-together count reads only this, narrower than
+    the general `numeric_range` dimension (`_constraint`), which also covers
+    count/zone_size/life/untapped_mana and int inputs."""
+    if (
+        condition.get("kind") != "turn"
+        or condition.get("op") not in OPS
+        or not _is_int(condition.get("n"))
+    ):
+        return None
+    op = condition["op"] if polarity else NEGATED[condition["op"]]
+    return _ints(op, condition["n"], 0, None)
+
+
+def _turn_ranges(doc: dict[str, Any]) -> list[tuple[Any, ...]]:
+    ranges = []
+    for _, polarity, condition in _placed(doc):
+        found = _turn_range(condition, polarity)
+        if found is not None:
+            ranges.append(found)
+    return ranges
+
+
+def _live_together_exclusive(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Provably exclusive by `whose_turn`, `steps` or turn range alone - the
+    three dimensions O8's too-many-active-for-archetype live-together count
+    uses, so plays whose turn windows or steps cannot overlap are never both
+    counted toward the cap. A narrower question than full `exclusivity`:
+    `opposing_archetypes`, `stack`, `input`, `true_false` and the other
+    `numeric_range` keys prove nothing here."""
+    if {_when(a).get("whose_turn"), _when(b).get("whose_turn")} == {"mine", "theirs"}:
+        return True
+    steps_a, steps_b = _string_set(_when(a).get("steps")), _string_set(_when(b).get("steps"))
+    if steps_a and steps_b and not steps_a & steps_b:
+        return True
+    return any(_ints_disjoint(x, y) for x in _turn_ranges(a) for y in _turn_ranges(b))
+
+
+def _max_live_together(plays: list[dict[str, Any]]) -> int:
+    """The largest subset of `plays` no two of which are
+    `_live_together_exclusive`: the count too-many-active-for-archetype
+    compares against the cap, since turn-disjoint or step-disjoint plays can
+    never both be live at one decision point - counting every play that
+    merely applies against a key, the way a plain sum would, over-counts a
+    deck whose openings and their later-turn plays are already provably
+    exclusive. Bron-Kerbosch without a pivot: a deck carries at most
+    `MAX_PLAYS` plays, so the search space is always tiny."""
+    n = len(plays)
+    compatible = [
+        {j for j in range(n) if j != i and not _live_together_exclusive(plays[i], plays[j])}
+        for i in range(n)
+    ]
+    best = 0
+
+    def bronk(size: int, candidates: set[int], excluded: set[int]) -> None:
+        nonlocal best
+        if not candidates and not excluded:
+            best = max(best, size)
+            return
+        for v in list(candidates):
+            bronk(size + 1, candidates & compatible[v], excluded & compatible[v])
+            candidates = candidates - {v}
+            excluded = excluded | {v}
+
+    bronk(0, set(range(n)), set())
+    return best
+
+
 def conflict_dimensions(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -> list[str]:
     """The dimensions two conflicting plays overlap on, for the warning."""
     dimensions = ["whose_turn", "steps", "opposing_archetypes", "stack"]
@@ -731,7 +817,7 @@ def check_deck(
     known_keys = newest_matchup_keys(deck)
     catalog = input_catalog(declared or [], known_keys)
     graph: dict[str, tuple[str, list[str]]] = {}
-    active: list[list[str]] = []
+    active: list[tuple[list[str], dict[str, Any]]] = []
     docs: list[tuple[str, str, dict[str, Any]]] = []
     for path in files:
         rel = _rel(path, root)
@@ -762,25 +848,36 @@ def check_deck(
                 )
         priority = doc.get("priority")
         if _is_int(priority) and priority > 0:
-            active.append(archetypes)
+            active.append((archetypes, doc))
         nxt = doc.get("next", [])
         graph[path.stem] = (
             rel,
             [n for n in nxt if isinstance(n, str)] if isinstance(nxt, list) else [],
         )
 
-    keys = {WILDCARD} | {k for archetypes in active for k in archetypes}
-    for key in sorted(keys):
-        count = sum(1 for archetypes in active if WILDCARD in archetypes or key in archetypes)
-        if count > MAX_ACTIVE_PER_ARCHETYPE:
-            errors.append(
-                PlaysError(
-                    "too-many-active-for-archetype",
-                    plays_rel,
-                    f"{count} plays with priority > 0 apply against {key!r}, "
-                    f"at most {MAX_ACTIVE_PER_ARCHETYPE}",
+    # `_max_live_together`'s own docstring assumes "a deck carries at most
+    # MAX_PLAYS plays, so the search space is always tiny" - true only once
+    # `too-many-plays` above has actually bounded `files`. Past that cap the
+    # pivotless Bron-Kerbosch search is exponential (measured ~7 minutes at
+    # 30 plays), and `too-many-plays` already reported the real problem, so
+    # this search is skipped rather than run redundantly and slowly.
+    keys = {WILDCARD} | {k for archetypes, _ in active for k in archetypes}
+    if len(files) <= MAX_PLAYS:
+        for key in sorted(keys):
+            matching = [
+                doc for archetypes, doc in active if WILDCARD in archetypes or key in archetypes
+            ]
+            count = _max_live_together(matching)
+            if count > MAX_ACTIVE_PER_ARCHETYPE:
+                errors.append(
+                    PlaysError(
+                        "too-many-active-for-archetype",
+                        plays_rel,
+                        f"{count} plays with priority > 0 can be live together against "
+                        f"{key!r} (not provably exclusive by whose_turn, steps or turn "
+                        f"range), at most {MAX_ACTIVE_PER_ARCHETYPE}",
+                    )
                 )
-            )
 
     errors.extend(_graph_errors(graph))
     errored = {e.path for e in errors}

@@ -14,7 +14,12 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   discriminated on `kind`. An optional field is left out, never `null`.
 - Top level: `schema_version` (1), `id` (equals the file stem), `name`,
   `intent?` (prose, ignored by machines), `priority` (0-100, higher tried
-  first, 0 = disabled), `opposing_archetypes` (1-32: `["*"]` alone, or matchup
+  first, 0 = disabled - at most 6 plays with priority > 0 may be *live
+  together* per archetype key, O8: the largest subset of the plays applying
+  to that key no two of which are provably exclusive by `whose_turn`,
+  `steps` or turn range, not the plain count that apply, so two groups a
+  deck's own turn guards already prove disjoint are never summed),
+  `opposing_archetypes` (1-32: `["*"]` alone, or matchup
   label slugs; `*` beside a key is `wildcard-with-keys`),
   `when {whose_turn: mine|theirs|either, steps: [1-4 distinct autopass steps,
   not declare_attackers/declare_blockers], stack: empty|any}` (a repeated step
@@ -32,15 +37,17 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   `supertypes_any`, `colors_any`, `keywords_any` (each 0-15 words);
   `mana_value {op, n}`; `power {op, n}`; `toughness {op, n}`; `tapped`;
   `counters {name, op, n}`; `ability_text_has`; `oracle_has`;
-  `missing_from {zones: [1-7 zone], side: me|opponent, by: subtype|name}`.
+  `searches_for_any` (0-5 basic land type words); `land_face`;
+  `missing_from {zones: [1-7 zone], side: me|opponent, by: subtype|name}`;
+  `enters_any` (0-3 of `untapped`/`tapped`/`untapped_if_paid`); `unlocks`;
+  `unlocks_by_search`; `affordable {extra: n}`.
 - `colors_any` reads the card's `colors` by name or letter, any case, from a
   closed vocabulary: the five colors and `colorless`. `colorless` (or `C`)
   matches a card whose color set is empty (CR 105.2c, "A colorless object has
   no color"), a devoid Eldrazi included, and never a colored card.
 - Colors: `white`, `blue`, `black`, `red`, `green`, `colorless`
-- Condition kinds (7): `count`, `zone_size`, `life`, `stack_top`,
-  `land_drop_available`, `untapped_mana`, `input` (an `in`/`not_in` value list
-  holds 0-32 values).
+- Condition kinds (8): `count`, `zone_size`, `life`, `stack_top`, `land_drop_available`, `untapped_mana`, `turn`, `input`
+  (an `in`/`not_in` value list holds 0-32 values).
 
 ### `untapped_mana`
 
@@ -77,6 +84,56 @@ make right now from untapped sources, not the number of sources:
   source. Tron assembled is 7; with Eldrazi Temple 8; Eldrazi Temple and an
   Island are 2; an Island and Mystic Gate
   are 2; Captivating Cave and an Island are 2.
+
+### `turn`
+
+`{kind: turn, op, n}` compares `n` with the viewer's own `own_turns_taken` -
+the engine's own count of how many of their own turns they have begun
+(`TurnMachine.own_turns_taken`, CR 500.7 extra turns included). It is my Nth
+turn on the play and on the draw alike, and an extra turn is its own turn
+and moves this - unlike `TurnMachine.turn_number` (rounds of the table,
+`machines/turn.py`), which does not advance until the rotation wraps back to
+the starting seat and so cannot tell a normal turn from an extra one spliced
+into it. `own_turns_taken` is 0 before the viewer's first turn, pregame
+included - never null. It is a `numeric_range` key for never-applicable lint
+and conflict exclusivity, on the same footing as `count`, `zone_size`, `life`
+and `untapped_mana`.
+
+### `searches_for_any`
+
+A selector field naming 0-5 of the five basic land types (`Plains`, `Island`,
+`Swamp`, `Mountain`, `Forest`; a word outside them is `malformed-play`).
+Parsed from a "search your library for a/an T (or T) card" template found in
+either the candidate's `ability_text_has`-style ability text or its
+`oracle_has`-style oracle text, matched case-insensitively; the candidate
+matches when the template names at least one of the listed types. A
+fetchland's printed oracle text ("Search your library for an Island or Swamp
+card") and a landcycling card's activated ability (CR 702.29e, synthesized by
+the engine even in hand - see `abilities` below) both carry the template. A
+word the template names that is not one of the five (Expedition Map's "a land
+card") contributes nothing, so a generic land search never matches.
+
+- Basic land types: `Plains`, `Island`, `Swamp`, `Mountain`, `Forest`
+
+### `land_face`
+
+A boolean selector field: true when a **modal double-faced card** (CR
+712.12) carries a face marked `land_face` (`faces`, present regardless of
+its current zone or chosen face - `serialize._faces_view`, which marks only
+the one face the engine's own `Card.land_face` names). A creature-fronted
+MDFC land (Witch Enchanter // Witch-Blessed Meadow, Jwari Disruption //
+Jwari Ruins) matches it in hand even though its up face is a Creature or an
+Instant, so a plain `types_all: [Land]` still does not match it - that reads
+only the up face, CR 712.8a. A transform or meld card also carries `faces`
+(the UI shows both) but never a `land_face` mark: its land back (Treasure
+Map // Treasure Cove) is reached only by transforming or melding (CR
+712.2), never a land drop, so it never matches even though one of its faces
+plainly types as a Land. A single-faced card has no `faces`, so its own
+type line is read instead: a plain land matches `land_face: true` too.
+`play_land` plays whichever face is a land by the card's own `card_id` -
+there is no separate face id in the request, because CR 712.12 is the same
+land drop either way and the engine resolves the face from the id
+(`Card.land_face`).
 
 ### `missing_from`
 
@@ -119,13 +176,132 @@ characteristic with it:
 - Missing-from sides: `me`, `opponent`
 - Missing-from by: `subtype`, `name`
 
+### `enters_any` (O4)
+
+A selector field naming 0-3 of the three `EntersState` words (`untapped`,
+`tapped`, `untapped_if_paid`; a word outside them is `malformed-play`),
+answered by the engine's `machines.hypothetical.predict_enters` for the
+viewer's own hand or library land right now - never re-derived from the
+view's own text. The redacted view carries no `enters` field of its own:
+`selectors.matches` reads it off `hypo`, a mapping of engine-computed facts
+keyed by card id (`hypothetical_facts.build_hypothetical_facts`, served by
+`GET .../playscripts/hypothetical-facts`), fetched only when a play's
+selectors actually name `enters_any`, `unlocks` or `unlocks_by_search`
+(`conditions.needs_hypothetical`) and cached per board position rather than
+asked again for the same one. A land whose optional cost (a shockland's "you
+may pay 2 life") is legal but lethal (CR 704.5a) is read as `tapped`, never
+`untapped_if_paid`: that payment is not one a player can spend on anything,
+so a shockland at 2 life or less never matches `enters_any: [untapped_if_paid]`.
+A card with no computed fact (an opponent's card, a card not asked about at
+all) never matches, the same as any other absent characteristic; asking for
+`enters_any` with no `hypo` fetched at all is `HypotheticalRequired`, not a
+silent false.
+
+- Enters states: `untapped`, `tapped`, `untapped_if_paid`
+
+### `unlocks`, `unlocks_by_search`, `unlocks_by_basic_search`, `affordable` (O7)
+
+Four more selector fields the engine, not the view, answers:
+
+- `unlocks` (bool): with this land entering right now exactly as `enters_any`
+  above says it would (its optional cost paid only when doing so is not
+  lethal), some hand card other than the land itself becomes payable that was
+  not payable before it entered - a cast, or a hand-activated ability such as
+  cycling or channel. Judged by one `machines.hypothetical.payability_matrix`
+  call per evaluation (never one `payability` call per land/card pair): the
+  matrix's `now` answers are the baseline, its per-land column the answer
+  with that land assumed, and a pair is compared only when neither answer,
+  nor the land's own prediction, carries an engine notice (an unresolved
+  triggered ability, an unread enters-tapped line) - a noticed pair fails
+  `unlocks` closed to `false` rather than trusting an answer the engine
+  itself flagged incomplete. A lethal optional payment is judged as the
+  declined (tapped) entry, so it never counts as unlocking anything either.
+  A hand card whose printed mana cost carries an unannounced `{X}` (CR
+  107.3) is excluded from this comparison entirely - `payability_matrix`
+  only ever judges an X spell at its cheapest legal announcement, X=0 (CR
+  107.1b), and a land that merely makes an X=0 cast payable (Kozilek's
+  Command for no modes worth taking) is not a real unlock. The same
+  exclusion applies transitively to `unlocks_by_search`/
+  `unlocks_by_basic_search` below, since both read this same `unlocks`
+  answer for the land a search could find.
+
+  **Item 4, `unlocks_life_paid` (int, present alongside `unlocks` for every
+  offered land):** the life the unlock costs through this land's own
+  "{T}, Pay N life" mana ability (CR 605.3a, e.g. Fiery Islet's "{T}, Pay 1
+  life: Add {U} or {R}."), 0 when the unlock needed no life at all. A
+  life-paid mana activation the engine judges payable always carries its own
+  notice on the `Payability` (`"...but they may (CR 605.3a)"`, from
+  `machines.hypothetical._with_life_payments`) - the general
+  any-notice-fails-closed rule above would otherwise mark every life-paid
+  unlock as unreadable, which is wrong: the engine already refuses to count
+  a life payment that would be lethal (CR 704.5a - that shape of notice
+  never carries the CR 605.3a citation, so it still fails closed as before),
+  so a notice carrying *only* the CR 605.3a citation is excepted from the
+  fail-closed rule instead of parsed into a fresh engine call, and its life
+  cost is read straight off `Payability.life_paid`. D1/D3's privacy and
+  fail-closed rules are otherwise unchanged: nothing new is exposed beyond a
+  plain integer already implied by `unlocks: true`, and any other notice on
+  the pair (an unresolved trigger, an untried CR 118.3c source) still fails
+  `unlocks`/`unlocks_life_paid` closed exactly as before.
+- `unlocks_by_search` (bool): this hand card's ability or oracle text matches
+  O3's `searches_for_any` template, and at least one land its search could
+  find, among the viewer's own library (by basic land type, read off the
+  library card's own subtypes, never a name), itself `unlocks` something in
+  that same matrix call. It needs the viewer's own library contents -
+  `conditions.needs_contents` fires for any selector naming it, exactly as it
+  does for a `count` over the viewer's own library, so a caller that walks a
+  play for what it needs to fetch never has to ask twice.
+- `unlocks_by_basic_search` (bool): the same question as `unlocks_by_search`,
+  narrowed to a library land its search could find that is also a *basic*
+  land (supertype `Basic`, read off the library card the same way
+  `unlocks_by_search` already reads its subtypes) - a fetch-conservation play
+  that only wants a "free" find (never a shockland or other non-basic land
+  that also unlocks something) names this instead. It needs the viewer's own
+  library contents exactly as `unlocks_by_search` does, for the same reason.
+- `affordable {extra: n}` (`n` >= 0): the card's own `mana_value` is at most
+  `untapped_mana + extra` - the same `untapped_mana` a `{kind: untapped_mana}`
+  condition reads (`conditions.untapped_mana`), a plain view computation with
+  no engine call, computed once per `evaluate`/move-build call and passed to
+  every selector that asks - *and* the card also reads `true` off
+  `hypothetical_facts.py`'s `castable_now` for its id (item 3). `extra: 0`
+  asks whether the card is affordable from untapped mana alone; a card with
+  no `mana_value` (a land), or a call that never computed `untapped_mana` at
+  all, never matches, mana_value aside.
+
+  **Item 3, why `castable_now` and not a mana_value comparison alone:**
+  `mana_value <= untapped_mana + extra` alone was blind to targets -
+  `legal_actions` still offers a cast row for a spell with a mandatory
+  target and none legal right now (Fatal Push, "target creature", with no
+  creature anywhere: a real row, just with an empty `target_slots[0].
+  candidates`), so a 1-drop with no legal target used to read as affordable
+  and suppress an idle play meant to hold up mana for it. The chosen fix:
+  the engine has no "assume n extra untapped mana" hypothetical to ask for
+  directly (`machines.hypothetical.payability`'s only hypothetical is
+  `assuming_land`, one additional land - not a bare mana bump), so this
+  never tries to simulate `extra` against the engine. Instead it takes the
+  fallback the item itself named: `mana_value <= untapped_mana + extra` AND
+  the card has a legal cast row *now*, targets ignored for mana ("a legal
+  cast row now, ignoring mana"). `castable_now` is that second half,
+  computed once per `build_hypothetical_facts` call for every hand card from
+  the same real-board `payability_matrix(..., hand, lands).now` answer
+  `unlocks` already computes (no second engine call): true when at least one
+  of that card's `Payability.options` has every mandatory target slot
+  (`TargetSlot.minimum >= 1`) filled with a candidate
+  (`slot.candidates`/`slot.player_candidates`), false otherwise (including
+  when the card was not judged at all - `hand`/`lands` empty).
+
+`unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`/`enters_any`/
+`affordable` all need `hypo` now: a play using any of the five needs the
+`GET .../playscripts/hypothetical-facts` call - `needs_hypothetical` reads
+the same five-field list.
+
 ## Moves
 
 Move kinds (4), each with `answers: [0-3]` (an `answer` move needs 1-3):
 
-- `activate {source: {zone, select}, ability_text_has, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, answers: [0-3]}`
-- `cast {card: {zone, select}, cost?: <cast cost>, targets: [0-6 <target>], mana?: auto, answers: [0-3]}`
-- `play_land {card: {select}, answers: [0-3]}`
+- `activate {source: {zone, select, prefer?: [0-4 select], ties?: any}, ability_text_has, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, answers: [0-3]}`
+- `cast {card: {zone, select, prefer?: [0-4 select], ties?: any}, cost?: <cast cost>, targets: [0-6 <target>], mana?: auto, answers: [0-3]}`
+- `play_land {card: {select, prefer?: [0-4 select], ties?: any}, answers: [0-3]}`
 - `answer {answers: [1-3]}`, for a decision already pending
 
 A target is `{select, side}` (a card or permanent matching `select`, on that
@@ -133,11 +309,24 @@ side) or `{player: me|opponent}`, one per target the spell or ability
 announces, in order. Anything else is `malformed-play`, and a key beside
 either shape is `unknown-field`.
 
-A sacrifice choice is `{select, count?: >=1, prefer?: [0-4 select]}`: the
+A sacrifice choice is `{select, count?: >=1, prefer?: [0-4 select], ties?: any}`: the
 permanents the activating player controls matching `select`, for an
 activation cost's own "Sacrifice a ..." piece (Goblin Bombardment's "Sacrifice
 a creature"). `count` left out is the cost's own number. `source` sacrifices
 the ability's own source, `none` nothing.
+
+### `prefer` and `ties` (O2)
+
+`play_land.card`, `cast.card`, `activate.source`, `Pick` (an answer's
+`pick`) and a sacrifice choice all take `prefer` (0-4 selectors, the same
+fan-out as `moves`) and `ties: "any"`. `prefer` narrows the match through
+every selector in the list in turn, each one applied against whatever the
+previous one left - a selector that would leave nothing is skipped rather
+than emptying the match, so the runner never discards a narrower tier for a
+looser one that comes after it; `ties: "any"` changes only what happens when
+candidates of different names are still tied after all of them: instead of
+exiting `ambiguous`, the runner takes the first `count` of them by sorted
+name. Left out, behaviour is unchanged.
 
 ### `cast.cost`
 
@@ -160,17 +349,31 @@ and then this doc's test until it is listed here.
 
 ### `answers[]`
 
-Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select]}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max}`.
+Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select], ties?: any}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max, choice?: string}`.
 
 An answer's fields must fit its decision kind, or it is
 `answer-shape-mismatch`. A pay-amount decision (Galvanic Discharge's
 `pay_energy_amount`, Necrodominance's `pay_life_amount`) is answered with
 `amount` alone: an integer from 0, or `max` for the most the decision allows.
-`accept`, `pick`, `to_graveyard` or `to_bottom` on it, or no `amount`, is
-`answer-shape-mismatch`, and so is an `amount` on any other kind. A negative
-`amount` is `bounds-exceeded`; any other value is `malformed-play`.
+`accept`, `pick`, `to_graveyard`, `to_bottom` or `choice` on it, or no
+`amount`, is `answer-shape-mismatch`, and so is an `amount` on any other kind.
+A negative `amount` is `bounds-exceeded`; any other value is `malformed-play`.
 
 - Amount decision kinds: `pay_energy_amount`, `pay_life_amount`
+
+`choice` (O6) is a non-blank string, taken only by `CHOICE_DECISION_KINDS`
+(`choose_a_mode`, `choose_a_quality` - CR 614.12a's and CR 700.2a's "as this
+enters, choose ..." and "choose ... mode" questions, the api's own
+`TOOL_FIELD_FOR_KIND` mapping both to `choice`); elsewhere it is
+`answer-shape-mismatch`. Card names are still refused there, with the same
+type-line-word exemption other selector fields get, so a creature type such
+as `Eldrazi` is allowed. `choose_a_mode` is always fully enumerated
+(`pending.options`); `choose_a_quality` is sometimes open (a creature type, a
+card name), and an empty `options` there means any value is accepted, left to
+the engine to judge. A `choice` naming something outside a non-empty
+`options` exits `unforeseen`, the same as `pick` finding nothing to match.
+
+- Choice decision kinds: `choose_a_mode`, `choose_a_quality`
 
 `decision` is a closed set equal to the api's pending decision kinds: the
 values of `decisions.ANSWERABLE_KINDS`, which are the engine `DecisionKind`s
@@ -206,7 +409,14 @@ read off the redacted state view:
   rest kept on top in the order they were looked at. An answer naming neither
   moves nothing, so every card stays on top.
 - Every selection follows one pick rule: nothing matching is `unforeseen`, and
-  different cards still tied after `prefer` are `ambiguous`.
+  different cards still tied after `prefer` are `ambiguous` - unless `ties:
+  "any"` (O2), which takes the first `count` of them by sorted name instead.
+- A `choice` answer (O6) goes to `/decide` as `choice` outright. A
+  `choose_a_mode` decision's `options` is always fully enumerated; a
+  `choose_a_quality` decision's is sometimes empty (an open question, a
+  creature type or a card name), and an empty `options` there means any
+  value is sent through unjudged, left to the engine. A `choice` naming
+  something outside a non-empty `options` is `unforeseen`.
 - A `surveil`/`scry` answer with no `to_graveyard`/`to_bottom` at all is a bare
   answer and means "keep everything on top": the request sends `moved: []`,
   never leaves the decision unanswered. One naming a selector still sends only

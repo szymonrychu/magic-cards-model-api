@@ -14,7 +14,9 @@ from pathlib import Path
 from magic_cards_model_api.playscripts.runtime import Exit
 from magic_cards_model_api.playscripts.schema import (
     AMOUNT_DECISION_KINDS,
+    BASIC_LAND_TYPES,
     CAST_COSTS,
+    CONDITION_KINDS,
     DECISION_KINDS,
     FORBIDDEN_DECISION_KINDS,
     MAX_ANSWERS,
@@ -44,6 +46,93 @@ def test_doc_names_every_cast_cost_in_schema_order() -> None:
     assert _listed("- Cast costs:") == list(CAST_COSTS)
 
 
+def test_doc_names_every_condition_kind_in_schema_order() -> None:
+    assert _listed("- Condition kinds") == list(CONDITION_KINDS)
+
+
+def test_doc_defines_the_turn_condition() -> None:
+    text = DOC.read_text()
+    for phrase in (
+        "`{kind: turn, op, n}`",
+        "`own_turns_taken`",
+        "`TurnMachine.turn_number`",
+        "rounds of the table",
+        "CR 500.7",
+        "never null",
+    ):
+        assert phrase in text
+
+
+def test_doc_defines_searches_for_any_and_names_the_basic_land_types() -> None:
+    text = DOC.read_text()
+    for word in BASIC_LAND_TYPES:
+        assert f"`{word}`" in text
+    assert "`searches_for_any`" in text
+    for phrase in (
+        "search your library for a/an T (or T) card",
+        "Expedition Map",
+        "malformed-play",
+    ):
+        assert phrase in text.split("### `searches_for_any`", 1)[1].split("\n## ", 1)[0]
+
+
+def test_doc_names_the_choice_decision_kinds() -> None:
+    from magic_cards_model_api.playscripts.schema import CHOICE_DECISION_KINDS
+
+    assert _listed("- Choice decision kinds:") == list(CHOICE_DECISION_KINDS)
+    assert "choice?: string" in DOC.read_text()
+
+
+def test_doc_defines_land_face() -> None:
+    text = DOC.read_text()
+    assert "`land_face`" in text
+    section = text.split("### `land_face`", 1)[1].split("\n## ", 1)[0]
+    for phrase in (
+        "`faces`",
+        "types_all: [Land]",
+        "own `card_id`",
+        "Card.land_face",
+    ):
+        assert phrase in section
+
+
+def test_doc_names_every_enters_state_in_schema_order() -> None:
+    from magic_cards_model_api.playscripts.schema import ENTERS_STATES
+
+    assert _listed("- Enters states:") == list(ENTERS_STATES)
+
+
+def test_doc_defines_enters_any() -> None:
+    text = DOC.read_text()
+    assert "`enters_any`" in text
+    section = text.split("### `enters_any` (O4)", 1)[1].split("\n## ", 1)[0]
+    for phrase in (
+        "predict_enters",
+        "hypo",
+        "lethal",
+        "HypotheticalRequired",
+    ):
+        assert phrase in section
+
+
+def test_doc_defines_unlocks_unlocks_by_search_and_affordable() -> None:
+    text = DOC.read_text()
+    section = text.split(
+        "### `unlocks`, `unlocks_by_search`, `unlocks_by_basic_search`, `affordable` (O7)", 1
+    )[1].split("\n## ", 1)[0]
+    for phrase in (
+        "payability_matrix",
+        "notice",
+        "needs_contents",
+        "untapped_mana",
+        "mana_value",
+        "unlocks_by_basic_search",
+        "supertype",
+        "Basic",
+    ):
+        assert phrase in section
+
+
 def test_doc_names_every_answerable_decision_kind() -> None:
     assert _listed("- Decision kinds:") == list(DECISION_KINDS)
 
@@ -55,23 +144,34 @@ def test_doc_names_the_decision_kinds_a_script_never_answers() -> None:
 def test_cast_move_line_carries_the_optional_cost_and_bounds() -> None:
     text = DOC.read_text()
     assert (
-        f"`cast {{card: {{zone, select}}, cost?: <cast cost>, "
-        f"targets: [0-{MAX_TARGETS} <target>], mana?: auto, answers: [0-{MAX_ANSWERS}]}}`"
+        f"`cast {{card: {{zone, select, prefer?: [0-{MAX_PREFER} select], ties?: any}}, "
+        f"cost?: <cast cost>, targets: [0-{MAX_TARGETS} <target>], mana?: auto, "
+        f"answers: [0-{MAX_ANSWERS}]}}`"
     ) in text
     assert f"prefer?: [0-{MAX_PREFER} select]" in text
 
 
+def test_o2_prefer_and_ties_are_on_play_land_activate_source_and_pick() -> None:
+    text = DOC.read_text()
+    assert f"`play_land {{card: {{select, prefer?: [0-{MAX_PREFER} select], ties?: any}}" in text
+    assert (
+        f"`activate {{source: {{zone, select, prefer?: [0-{MAX_PREFER} select], ties?: any}}"
+    ) in text
+    assert (f"pick?: {{select, count?, prefer?: [0-{MAX_PREFER} select], ties?: any}}") in text
+    assert "ties?: any" in text
+
+
 def test_activate_move_line_carries_targets_and_the_sacrifice_choice() -> None:
     assert (
-        f"`activate {{source: {{zone, select}}, ability_text_has, "
-        f"targets: [0-{MAX_TARGETS} <target>], sacrifice?: source|none|<sacrifice choice>, "
-        f"answers: [0-{MAX_ANSWERS}]}}`"
+        f"`activate {{source: {{zone, select, prefer?: [0-{MAX_PREFER} select], ties?: any}}, "
+        f"ability_text_has, targets: [0-{MAX_TARGETS} <target>], "
+        f"sacrifice?: source|none|<sacrifice choice>, answers: [0-{MAX_ANSWERS}]}}`"
     ) in DOC.read_text()
 
 
 def test_doc_names_the_amount_decision_kinds_and_the_amount_field() -> None:
     assert _listed("- Amount decision kinds:") == list(AMOUNT_DECISION_KINDS)
-    assert "amount?: >=0|max}`" in DOC.read_text()
+    assert "amount?: >=0|max, choice?: string}`" in DOC.read_text()
 
 
 def test_doc_names_every_runner_exit_in_enum_order() -> None:

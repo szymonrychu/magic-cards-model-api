@@ -106,20 +106,24 @@ def test_an_unpayable_cast_is_reported_not_affordable_with_the_engines_own_reaso
     assert cast["unaffordable_reason"]
 
 
-def test_an_x_spell_before_x_is_announced_is_reported_unknown_not_flattened_to_no(client, game):
-    """CR 107.3a: X is not announced until the spell is actually cast, so an
-    enumeration asked before that point cannot say yes or no - it has to say
-    it does not know yet. The old dry-run probe had no way to represent this
-    at all (a dry run either succeeds or it does not); this is the case T11
-    exists to stop hiding."""
+def test_an_x_spell_is_judged_at_x_equal_zero_with_the_printed_x_kept_in_the_cost(client, game):
+    """CR 107.3a: X is not announced until the spell is actually cast, so
+    the row is judged at the cheapest legal announcement (CR 107.1b makes 0
+    legal) rather than left unknown - a cost unpayable at X=0 is unpayable
+    at every X (engine 2e3fedc). Kozilek's Command is {X}{C}{C}; at X=0 that
+    is {C}{C}, which 3 Wastes pays, so the row is a real `yes` - and the
+    displayed cost still keeps the printed X, never the X=0 stand-in it was
+    judged by."""
     for _ in range(3):
         add_card(client, game, "Wastes", "alice", "battlefield")
     add_card(client, game, "Kozilek's Command", "alice", "hand")
     koz = find(state(client, game)["hands"]["alice"], "Kozilek's Command")
 
     (cast,) = [a for a in by_kind(legal_actions(client, game), "cast") if a["card_id"] == koz["id"]]
-    assert cast["affordable"] == "unknown"
-    assert "X" in cast["unaffordable_reason"]
+    assert cast["affordable"] == "yes"
+    assert cast["unaffordable_reason"] is None
+    assert cast["cost"] == "{X}{C}{C}"
+    assert cast["mana_cost"] == "{X}{C}{C}"
 
 
 def test_a_pending_decision_narrows_the_pool_to_its_own_answers_for_the_player_it_addresses(
@@ -157,17 +161,27 @@ def test_unknown_affordability_reaches_the_seat_through_available_actions(
     through it, because a dry run either succeeds or it does not. This
     confirms it now does, unflattened, all the way to `Seat.available_actions`."""
     monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    # Meltdown ({X}{R}) under Ruby Medallion's {1} reduction: the {1} comes
+    # out of the generic mana X itself adds (CR 118.7a), which no single
+    # mana cost with an X in it can say - {R} at X=0/1, {1}{R} at X=2 - so
+    # unlike a plain X spell (now judged at X=0, see test_an_x_spell_is_
+    # judged_at_x_equal_zero above) this row genuinely stays UNKNOWN
+    # (action_rows.with_charged_cost, test_battle3_action_rows.py's
+    # test_an_x_spell_whose_reduction_eats_into_x_says_so).
     for _ in range(3):
-        add_card(client, game, "Wastes", "alice", "battlefield")
-    add_card(client, game, "Kozilek's Command", "alice", "hand")
-    koz = find(state(client, game)["hands"]["alice"], "Kozilek's Command")
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Meltdown", "alice", "hand")
+    add_card(client, game, "Ruby Medallion", "alice", "battlefield")
+    meltdown = find(state(client, game)["hands"]["alice"], "Meltdown")
 
     uids = {name: uid for uid, name in store.seat_uids(game).items()}
     seats = Seats(api="http://testserver", game_id=game)
     alice = seats.seat_for(uids["alice"])
 
     result = available_actions(alice, alice.fetch_state())
-    (cast,) = [a for a in result["actions"] if a["kind"] == "cast" and a["card_id"] == koz["id"]]
+    (cast,) = [
+        a for a in result["actions"] if a["kind"] == "cast" and a["card_id"] == meltdown["id"]
+    ]
     assert cast["affordable"] == "unknown"
     assert cast["affordable"] not in ("yes", "no"), (
         "UNKNOWN must reach the seat as its own verdict, not collapsed into a boolean"

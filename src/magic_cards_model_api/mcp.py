@@ -2489,8 +2489,10 @@ def build_server(seats: Seats) -> MCPServer:
 
         Each script says whether it `applies`, and when it does not, its
         `failing_condition`: the `list` that stopped it (`priority` for a
-        disabled script, `opposing_archetypes`, `when`, `true` or `false`),
-        the `index` within it, and what it `seen`. `needs_input` names a
+        disabled script, `opposing_archetypes`, `when`, `true`, `false`, or
+        `hypothetical` for a script whose selectors need engine-computed
+        facts this listing could not fetch - `seen` then says why), the
+        `index` within it, and what it `seen`. `needs_input` names a
         required input you did not supply. `conflicts` are the
         `play-conflict`/`next-conflict` warnings `plays check` raises that
         involve it - scripts that could both apply at one decision point.

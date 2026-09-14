@@ -64,9 +64,25 @@
       "title": "ActivateMove",
       "type": "object"
     },
+    "Affordable": {
+      "additionalProperties": false,
+      "description": "`{extra: n}` (O7): mana value <= untapped mana + `extra`. `extra` 0\nasks whether the card is affordable with untapped mana alone.",
+      "properties": {
+        "extra": {
+          "minimum": 0,
+          "title": "Extra",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "extra"
+      ],
+      "title": "Affordable",
+      "type": "object"
+    },
     "Answer": {
       "additionalProperties": false,
-      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; every other kind takes `pick`, `accept`,\n`to_graveyard` or `to_bottom`.",
+      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; `choice` (O6) is taken only by\n`CHOICE_DECISION_KINDS`; every other kind takes `pick`, `accept`,\n`to_graveyard` or `to_bottom`.",
       "properties": {
         "accept": {
           "default": null,
@@ -86,6 +102,12 @@
             }
           ],
           "title": "Amount"
+        },
+        "choice": {
+          "default": null,
+          "pattern": "\\S",
+          "title": "Choice",
+          "type": "string"
         },
         "decision": {
           "enum": [
@@ -431,8 +453,23 @@
     "LandCard": {
       "additionalProperties": false,
       "properties": {
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         }
       },
       "required": [
@@ -572,6 +609,12 @@
         },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         }
       },
       "required": [
@@ -647,6 +690,12 @@
         },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         }
       },
       "required": [
@@ -665,6 +714,10 @@
           "title": "Ability Text Has",
           "type": "string"
         },
+        "affordable": {
+          "$ref": "#/$defs/Affordable",
+          "default": null
+        },
         "colors_any": {
           "default": null,
           "items": {
@@ -679,6 +732,20 @@
           "$ref": "#/$defs/CounterComparison",
           "default": null
         },
+        "enters_any": {
+          "default": null,
+          "items": {
+            "enum": [
+              "untapped",
+              "tapped",
+              "untapped_if_paid"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Enters Any",
+          "type": "array"
+        },
         "keywords_any": {
           "default": null,
           "items": {
@@ -688,6 +755,11 @@
           "maxItems": 15,
           "title": "Keywords Any",
           "type": "array"
+        },
+        "land_face": {
+          "default": null,
+          "title": "Land Face",
+          "type": "boolean"
         },
         "mana_value": {
           "$ref": "#/$defs/Comparison",
@@ -706,6 +778,22 @@
         "power": {
           "$ref": "#/$defs/Comparison",
           "default": null
+        },
+        "searches_for_any": {
+          "default": null,
+          "items": {
+            "enum": [
+              "Plains",
+              "Island",
+              "Swamp",
+              "Mountain",
+              "Forest"
+            ],
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Searches For Any",
+          "type": "array"
         },
         "subtypes_any": {
           "default": null,
@@ -755,6 +843,21 @@
           "maxItems": 15,
           "title": "Types Any",
           "type": "array"
+        },
+        "unlocks": {
+          "default": null,
+          "title": "Unlocks",
+          "type": "boolean"
+        },
+        "unlocks_by_basic_search": {
+          "default": null,
+          "title": "Unlocks By Basic Search",
+          "type": "boolean"
+        },
+        "unlocks_by_search": {
+          "default": null,
+          "title": "Unlocks By Search",
+          "type": "boolean"
         }
       },
       "title": "Selector",
@@ -787,6 +890,41 @@
         "select"
       ],
       "title": "StackTopCondition",
+      "type": "object"
+    },
+    "TurnCondition": {
+      "additionalProperties": false,
+      "description": "The viewer's own `own_turns_taken` op `n`: how many of their own\nturns they have begun (`TurnMachine.own_turns_taken`, CR 500.7 extra\nturns included), so it reads my Nth turn on the play and on the draw\nalike, and an extra turn is its own turn - unlike `turn_number` (rounds\nof the table), it moves for one. 0 before the viewer's first turn,\npregame included - never null.",
+      "properties": {
+        "kind": {
+          "const": "turn",
+          "title": "Kind",
+          "type": "string"
+        },
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "op": {
+          "enum": [
+            ">=",
+            "<=",
+            "==",
+            "!=",
+            ">",
+            "<"
+          ],
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "op",
+        "n"
+      ],
+      "title": "TurnCondition",
       "type": "object"
     },
     "UntappedManaCondition": {
@@ -931,8 +1069,23 @@
     "ZonedCard": {
       "additionalProperties": false,
       "properties": {
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         },
         "zone": {
           "enum": [
@@ -969,6 +1122,7 @@
             "land_drop_available": "#/$defs/LandDropCondition",
             "life": "#/$defs/LifeCondition",
             "stack_top": "#/$defs/StackTopCondition",
+            "turn": "#/$defs/TurnCondition",
             "untapped_mana": "#/$defs/UntappedManaCondition",
             "zone_size": "#/$defs/ZoneSizeCondition"
           },
@@ -992,6 +1146,9 @@
           },
           {
             "$ref": "#/$defs/UntappedManaCondition"
+          },
+          {
+            "$ref": "#/$defs/TurnCondition"
           },
           {
             "$ref": "#/$defs/InputCondition"
@@ -1088,6 +1245,7 @@
             "land_drop_available": "#/$defs/LandDropCondition",
             "life": "#/$defs/LifeCondition",
             "stack_top": "#/$defs/StackTopCondition",
+            "turn": "#/$defs/TurnCondition",
             "untapped_mana": "#/$defs/UntappedManaCondition",
             "zone_size": "#/$defs/ZoneSizeCondition"
           },
@@ -1111,6 +1269,9 @@
           },
           {
             "$ref": "#/$defs/UntappedManaCondition"
+          },
+          {
+            "$ref": "#/$defs/TurnCondition"
           },
           {
             "$ref": "#/$defs/InputCondition"

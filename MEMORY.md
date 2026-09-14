@@ -7,6 +7,76 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- 2026-09-14 script-dsl O1/O2/O3/O5/O6/O8 (opening plays DSL groundwork, O4/O7
+  deferred - they need engine feasibility/enters-tapped helpers that do not
+  exist yet): `turn` reads `turn_number`, verified live against
+  `TurnMachine.begin_first_turn`/`advance`/`grant_extra_turn` - it counts
+  rounds of the table, so it is my Nth turn on the play and on the draw
+  alike, and an extra turn never advances it. `land_face` (O5) is true for a
+  plain land too, not just an MDFC's back face - deliberate, since a plain
+  land trivially has a land face and the DSL gains nothing from excluding
+  it. No live MDFC-land or landcycling card is cached in
+  `tests/fixtures/scryfall` (checked): O3's runtime "hand carries the
+  ability" proof uses Angelsong's plain Cycling instead (same
+  `off_zone_abilities` code path as landcycling), O5's "play_land plays that
+  face by card_id" proof is a hand-built-view unit test against
+  `_move_request` directly, and O6's `choose_a_quality` proof uses a real
+  Cavern of Souls. `CHOICE_DECISION_KINDS` is derived from the api's own
+  `decisions.TOOL_FIELD_FOR_KIND` (kinds answered on `choice`), the same
+  pattern `AMOUNT_DECISION_KINDS` already used, so the engine learning a new
+  choice-shaped decision extends it for free. mtg-decks' O3 test list drops
+  "Wastes" from the malformed-word parametrize (present in the API's small
+  fabricated card cache but absent from mtg-decks' fixture, which copies the
+  real `meta/card-data.json` where Wastes is a real card name, doubling the
+  error code).
+- 2026-09-14 script-dsl O4/O7 (`enters_any`, `unlocks`, `unlocks_by_search`,
+  `affordable`, on top of the engine's `machines.hypothetical` land helpers):
+  `selectors.matches` cannot answer any of the first three from a redacted
+  view alone - they read what a land would do if it entered, which only a
+  live `Game` can say, and `evaluate()`/`matches()` run in the MCP seat
+  process, which holds no `Game` (`Seat.fetch_state` is HTTP-only; confirmed
+  by tracing `mcp.py` -> `script_tools.run/listing` -> `runtime._evaluate`).
+  So the view carries no `enters`/`unlocks` field of its own: a new module,
+  `playscripts/hypothetical_facts.py`, runs one `payability_matrix` call
+  server-side (never one `payability` call per land/card pair) and returns a
+  plain `{card_id: {enters?, unlocks?, unlocks_by_search?}}` mapping, served
+  by a new dedicated route (`GET .../playscripts/hypothetical-facts`, seat-
+  uid-scoped only - never the admin key, since a fact is always "for this
+  player") rather than a new `include=` value on the state route, because the
+  fields only ever matter to a handful of plays and a shared `include`
+  mechanism would tempt computing them on every poll. `selectors.matches`
+  takes this mapping as `hypo` (a new kwarg, mirroring `present` for
+  `missing_from`) and raises `HypotheticalRequired` (mirroring
+  `ContentsRequired`) when a selector needs it and none was fetched at all -
+  never a silent false, unlike a `hypo` that was fetched but has no entry for
+  this card, which is the ordinary "absent characteristic" case. `affordable`
+  needs no engine call at all (`mana_value <= untapped_mana + extra`,
+  `conditions.untapped_mana`, already used for `{kind: untapped_mana}`), so
+  it never raises for a missing context, just never matches - the one
+  deliberate asymmetry with the other three. `unlocks_by_search` also extends
+  `needs_contents` (it reads the viewer's own library to find what a fetch
+  could search for), mirrored by a generic `_selector_fields`/`_uses_any`
+  walk that (like `_missing_froms`) skips a play's `moves` and a move's
+  `answers`, since those get their own gate at their own call sites.
+  `runtime._HypotheticalCache` (one per `_Context`, so one per run and its
+  chained `next` plays) fetches at most once per distinct board: `turns_taken`
+  is not a field `GameStateView` carries (only `turn_number`, "my Nth turn",
+  which is not the same counter), so there is no cheaper fingerprint than the
+  fetched state itself - keyed on `(turn_number, step, sha256(state))` for a
+  hit/miss legible in a debugger, though the hash alone is what actually
+  guarantees correctness. `unlocks`/`enters_any` are computed and exposed only
+  for the viewer's own hand (and library lands that flow into
+  `unlocks_by_search`'s aggregation): a library card's redacted view has no
+  stable id (`_contents_view` strips it and groups by signature), so there is
+  no way to key a per-card fact onto one - a `count` over `zone: library` with
+  `enters_any`/`unlocks` in its `select` is schema-legal but can never
+  usefully match, since `hypo` is never populated by card id for a hidden
+  zone. A lethal optional payment (a shockland at low life, CR 704.5a) reads
+  `enters_any: [tapped]`, never `untapped_if_paid`, both in the fact itself
+  and already inside `payability_matrix`'s own math (a lethal-if-paid land is
+  judged on its declined, tapped board). Timing on a realistic board (7-card
+  hand, ~19 candidate lands) is well under the ~0.3s the engine's own
+  equivalent test measures.
 - **2026-09-13 - bd1: the buddy panel always said "(no rationale was
   recorded)" because `ui/advice_model.js`'s `viewOf` read `detail.reasoning`,
   while `audit.record` writes `reasoning` as the row's own TOP-LEVEL key

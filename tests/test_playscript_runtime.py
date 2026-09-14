@@ -26,11 +26,11 @@ import pytest
 from conftest import add_card, force_turn_position, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
-from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG
+from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG, state_view
 
 from magic_cards_model_api import audit, seatkit
 from magic_cards_model_api.main import app
-from magic_cards_model_api.playscripts import runtime
+from magic_cards_model_api.playscripts import runtime, script_tools
 from magic_cards_model_api.playscripts.runtime import Exit, run_script
 from magic_cards_model_api.repository import Advisor
 from magic_cards_model_api.seatkit import Seats
@@ -80,6 +80,9 @@ class Hooked:
 
     def get(self, path: str, **kwargs: Any) -> Any:
         self.sent.append(("GET", path, None))
+        replaced = self._answer("GET", path, None) if self._answer else None
+        if replaced is not None:
+            return replaced
         return self._inner.get(path, **kwargs)
 
     def posts(self, suffix: str) -> list[Any]:
@@ -457,6 +460,49 @@ def test_a_bare_scry_answer_keeps_everything_on_top(
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
     body = hook.posts("/decide")[-1]
     assert body["moved"] == [] and body["top_order"] is None
+
+
+def test_a_may_whose_yes_is_illegal_is_answered_no_even_when_the_play_says_yes(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ugin's Labyrinth (item 1): "you may exile a colorless card with mana
+    value 7 or greater from your hand" is a `MAY` the engine asks with
+    `affirmative_is_legal = bool(candidates)`. With no such card in hand,
+    saying yes is not a legal answer (CR 608.2d) and the engine refuses it -
+    but a play written before the deck always held a 7-drop still answers
+    `accept: True`. The runner must answer `accept: False` regardless of what
+    the play's own answer says, and the run must still reach
+    `chain_complete` rather than exit `REFUSED` with the land already down."""
+    alice = seat_uid(board, "alice")
+    script = land_script(
+        "labyrinth",
+        moves=[
+            {
+                "kind": "play_land",
+                "card": {"select": {"types_all": ["Land"], "oracle_has": "mana value 7"}},
+                "answers": [{"decision": "may", "accept": True}],
+            }
+        ],
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Ugin's Labyrinth", "alice", "hand")
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.finished is True, result.to_dict()
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    may_answers = [body for body in hook.posts("/decide") if "accept" in body]
+    assert may_answers and may_answers[-1]["accept"] is False, may_answers
+    after = state(client, board)
+    labyrinth = cards_named(after["battlefield"], "Ugin's Labyrinth")
+    assert labyrinth, "the land is still down"
+    assert after.get("exile") in (None, []), "nothing was exiled: there was no legal candidate"
 
 
 # -- conditions, archetypes, inputs -------------------------------------------
@@ -2064,6 +2110,196 @@ def test_a_sacrifice_choice_tied_between_different_cards_exits_ambiguous_unless_
     assert lions and hook.posts("/actions/activate")[0]["sacrificing"] == [lions[0]["id"]]
 
 
+def test_cavern_of_souls_played_with_eldrazi_answers_choose_a_quality_with_choice(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O6: `Answer.choice`, "for choose_a_quality and choose_a_mode only",
+    proved against the real "As this land enters, choose a creature type"
+    replacement (CR 614.12a) on a real Cavern of Souls, played from hand
+    through play_land."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Cavern of Souls", "alice", "hand")
+    script = land_script(
+        "cavern",
+        moves=[
+            {
+                "kind": "play_land",
+                "card": {"select": {}},
+                "answers": [{"decision": "choose_a_quality", "choice": "Eldrazi"}],
+            }
+        ],
+    )
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(seat, script_id="cavern", reasoning=REASONING, corpora=seats.script_corpora)
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    (decided,) = hook.posts("/decide")
+    assert decided["choice"] == "Eldrazi"
+
+    cavern = cards_named(state(client, board)["battlefield"], "Cavern of Souls")[0]
+    assert cavern["choice"] == {"kind": "creature_type", "value": "Eldrazi"}
+
+
+def test_play_land_ties_any_takes_the_first_by_sorted_name_instead_of_ambiguous(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O2: `prefer` (up to 4) and `ties: "any"` on `play_land.card`. Two
+    differently-named lands tied under a plain `{types_all: [Land]}` selector
+    are `ambiguous` without `ties`; with `ties: "any"` the runner takes the
+    first by sorted name instead."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Sacred Foundry", "alice", "hand")
+    add_card(client, board, "Steam Vents", "alice", "hand")
+    register(client, board, alice, land_script("drop"))
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    tied = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+    assert tied.script_exit.exit is Exit.AMBIGUOUS, tied.to_dict()
+    assert tied.script_exit.ambiguous_names == ["Sacred Foundry", "Steam Vents"]
+    assert hook.posts("/actions/play-land") == []
+
+    any_land_move = {
+        "kind": "play_land",
+        "card": {"select": {}, "ties": "any"},
+        "answers": [{"decision": "pay_life", "accept": False}],
+    }
+    register(
+        client,
+        board,
+        alice,
+        land_script("drop", moves=[any_land_move]),
+        land_script("drop-any", moves=[any_land_move]),
+    )
+    seat, hook = hooked_seat(seats, alice)
+    chosen = run_script(seat, script_id="drop-any", reasoning=REASONING, corpora={})
+    assert chosen.script_exit.exit is Exit.CHAIN_COMPLETE, chosen.to_dict()
+    foundry = cards_named(state(client, board)["battlefield"], "Sacred Foundry")
+    assert foundry, "the alphabetically-first tied land was played"
+    assert hook.posts("/actions/play-land")[0]["card_id"] == foundry[0]["id"]
+
+
+def test_a_choice_not_among_the_offered_options_exits_unforeseen() -> None:
+    """O6: choose_a_mode is always fully enumerated (`pending.options`), so
+    a `choice` naming something else can never be sent to the engine - it
+    is `unforeseen`, the same as `_pick` finding nothing to match."""
+    pending = {
+        "player": "alice",
+        "kind": "choose_a_mode",
+        "prompt": "choose one",
+        "generation": 1,
+        "options": ["Create a 3/3 green Beast creature token.", "You gain 3 life.", "Draw a card."],
+    }
+    item = {"decision": "choose_a_mode", "choice": "Destroy target creature."}
+    built = runtime.decide_body(item, pending, {}, "alice", "reasoning")
+    assert isinstance(built, runtime.ScriptExit)
+    assert built.exit is Exit.UNFORESEEN
+    assert "Destroy target creature." in built.stop_reason
+
+
+def test_play_land_plays_an_mdfcs_land_face_by_the_cards_own_id() -> None:
+    """O5: "play_land plays that face by card_id; confirm the route does
+    this." Confirmed by reading, not assumed: `_move_request`'s play_land
+    branch (below) sends only `card_id`, no separate face id, for every
+    land pick alike; the engine's own `Game.play_land` (magic_cards_model/
+    models/game.py) already resolves an MDFC's back face from that one id
+    via `Card.land_face` - "There is no separate 'playing an MDFC's land
+    face' special action in the rules - it is the same CR 305.1 land drop."
+    No live MDFC-land card is cached in tests/fixtures/scryfall (checked),
+    so this proves the runner's half directly against a hand-built view in
+    the same shape `serialize.state_view` emits, the way most of
+    `test_playscript_selectors.py`'s double-faced-card tests already do."""
+    witch = {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "name": "Witch Enchanter",
+        "card_name": "Witch Enchanter // Witch-Blessed Meadow",
+        "zone": "hand",
+        "controller": "alice",
+        "type_line": "Creature — Human Warlock",
+        "oracle_text": None,
+        "faces": [
+            {
+                "name": "Witch Enchanter",
+                "mana_cost": "{3}{W}",
+                "type_line": "Creature — Human Warlock",
+                "oracle_text": "When this creature enters, destroy target artifact or enchantment.",
+            },
+            {
+                "name": "Witch-Blessed Meadow",
+                "mana_cost": "",
+                "type_line": "Land",
+                "oracle_text": "As this land enters, you may pay 3 life.",
+                "land_face": True,
+            },
+        ],
+    }
+    state = state_view(hands={"alice": [witch]})
+    move = {"kind": "play_land", "card": {"select": {"land_face": True}}}
+    built = runtime._move_request(move, state, "alice", "reasoning")
+    assert built == (
+        "actions/play-land",
+        {"player": "alice", "card_id": witch["id"], "reasoning": "reasoning"},
+    )
+
+
+def test_an_off_zone_ability_activates_from_the_hand(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O3: "hand views carry that ability" was unverified - proved here
+    against the live serializer with a real card. `list_abilities` reads a
+    zone other than the battlefield through `off_zone_abilities`
+    (`machines/keywords.py`), which synthesizes a Cycling/Landcycling card's
+    activated ability whether or not it is printed - Angelsong's plain
+    Cycling {2} exercises the same code path a landcycling card's
+    `searches_for_any` selector would (O3's own selector-matching tests
+    cover the search-template parsing with fabricated fetch/landcycling
+    text; the live cache carries no landcycling card)."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Angelsong", "alice", "hand")
+    add_card(client, board, "Island", "alice", "battlefield")
+    add_card(client, board, "Island", "alice", "battlefield")
+    before = state(client, board)
+    angelsong = cards_named(before["hands"]["alice"], "Angelsong")[0]
+    cycling = next(a for a in angelsong["abilities"] if "Discard this card" in a["text"])
+    assert cycling["text"] == "{2}, Discard this card: Draw a card."
+
+    script = {
+        "schema_version": 1,
+        "id": "cycle",
+        "name": "Cycle Angelsong",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [
+            {
+                "kind": "activate",
+                "source": {"zone": "hand", "select": {}},
+                "ability_text_has": "Discard this card",
+            }
+        ],
+        "next": [],
+    }
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="cycle", reasoning=REASONING, corpora=seats.script_corpora
+        )
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    (activated,) = hook.posts("/actions/activate")
+    assert activated["player"] == "alice"
+    assert activated["card_id"] == angelsong["id"]
+    assert activated["ability_index"] == cycling["index"]
+    sha8 = runtime.script_sha(script)[:8]
+    assert activated["reasoning"] == f"{REASONING} | script cycle@{sha8} move 1/1 (activate)"
+
+
 def test_the_fetch_sacrifices_its_own_source(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2406,3 +2642,128 @@ def test_the_active_opponent_passing_after_the_runs_resolution_does_not_interrup
     assert cards_named(after_state["battlefield"], "Undercity Sewers")
     assert cards_named(after_state["graveyards"]["alice"], "Island"), "the surveil was answered"
     assert passed_after, "bob never held priority after the resolution, so nothing was tested"
+
+
+# -- O4/O7: hypothetical facts, fetched only when needed, cached per position ----
+
+
+def _hypothetical_gets(hook: Hooked) -> list[str]:
+    return [
+        path
+        for method, path, _ in hook.sent
+        if method == "GET" and path.endswith("/playscripts/hypothetical-facts")
+    ]
+
+
+def test_a_play_with_no_o4_o7_selector_never_fetches_hypothetical_facts(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    script = land_script("drop")
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert _hypothetical_gets(hook) == []
+
+
+def _unlocks_land_script(script_id: str, **over: Any) -> dict[str, Any]:
+    """A land-drop play whose own condition needs O4/O7 facts: at least one
+    hand land the engine says `unlocks` something, entering untapped."""
+    doc = land_script(script_id)
+    doc["true"] = [
+        {
+            "kind": "count",
+            "zone": "hand",
+            "side": "me",
+            "op": ">=",
+            "n": 1,
+            "select": {"types_all": ["Land"], "unlocks": True, "enters_any": ["untapped"]},
+        }
+    ]
+    doc.update(over)
+    return doc
+
+
+def test_a_play_with_an_o4_o7_selector_fetches_hypothetical_facts_per_position(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two fetches here are both genuine: one before the land is played (is
+    the play's own condition true now?), one after (`reapplicable_after` -
+    does it still hold on the changed board?) - two different board
+    positions, never the same one asked twice."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    add_card(client, board, "Preordain", "alice", "hand")
+    script = _unlocks_land_script("drop-unlocks")
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert len(_hypothetical_gets(hook)) == 2
+
+
+def test_listing_fetches_hypothetical_facts_once_for_every_script_at_one_position(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`script_tools.listing` judges every registered script against the one
+    board it fetched - a single position, so one fetch must serve all of
+    them, however many scripts read `enters_any`/`unlocks`."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    add_card(client, board, "Preordain", "alice", "hand")
+    scripts = [_unlocks_land_script(f"drop-unlocks-{i}", priority=50 - i) for i in range(3)]
+    register(client, board, alice, *scripts)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = script_tools.listing(seat, seats.script_corpora)
+
+    assert isinstance(result, dict), result
+    assert len(_hypothetical_gets(hook)) == 1
+
+
+class _StubSeat:
+    """A bare stand-in for `hypothetical_facts()` call counting - the cache
+    under test (`runtime._HypotheticalCache`) reads nothing else off a seat."""
+
+    def __init__(self, cards: dict[str, Any]) -> None:
+        self.calls = 0
+        self._cards = cards
+
+    def hypothetical_facts(self) -> dict[str, Any]:
+        self.calls += 1
+        return {"cards": self._cards, "notices": []}
+
+
+def test_hypothetical_cache_reuses_the_answer_at_an_unchanged_position() -> None:
+    seat = _StubSeat({"x": {"enters": "untapped"}})
+    cache = runtime._HypotheticalCache()
+    state1 = {"turn_number": 1, "step": "precombat_main", "hands": {"alice": []}}
+
+    first = cache.get(seat, state1)
+    second = cache.get(seat, dict(state1))  # a fresh dict, same content
+    assert first == second == {"x": {"enters": "untapped"}}
+    assert seat.calls == 1, "the second call at the same position must not refetch"
+
+
+def test_hypothetical_cache_refetches_once_the_position_changes() -> None:
+    seat = _StubSeat({"x": {"enters": "untapped"}})
+    cache = runtime._HypotheticalCache()
+    state1 = {"turn_number": 1, "step": "precombat_main", "hands": {"alice": []}}
+    state2 = {"turn_number": 1, "step": "precombat_main", "hands": {"alice": [{"id": "y"}]}}
+
+    cache.get(seat, state1)
+    cache.get(seat, state2)
+    assert seat.calls == 2, "a changed board must be refetched, never served stale"
