@@ -80,6 +80,9 @@ class Hooked:
 
     def get(self, path: str, **kwargs: Any) -> Any:
         self.sent.append(("GET", path, None))
+        replaced = self._answer("GET", path, None) if self._answer else None
+        if replaced is not None:
+            return replaced
         return self._inner.get(path, **kwargs)
 
     def posts(self, suffix: str) -> list[Any]:

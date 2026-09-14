@@ -64,6 +64,7 @@ from ..seatkit import (
     AUTOPASS_STEPS,
     MAX_WAIT_SECONDS,
     POLL_SECONDS,
+    HypotheticalFactsUnavailable,
     Seat,
     _refused,
     _unknown_outcome,
@@ -446,6 +447,14 @@ def _guarded(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> R
         if not run.started:
             run.turn, run.step = state.get("turn_number"), state.get("step")
         return RunResult(False, None, resume=run.token(ctx.elapsed_ms()), state=state)
+    except HypotheticalFactsUnavailable as exc:
+        # D2: wherever inside `_drive` a hypothetical-facts fetch failed
+        # (`_evaluate`, a move's own `ctx.hypothetical.get`, an answer's),
+        # the run ends here rather than an uncaught exception escaping past
+        # this point - `_end` posts the run's finish (and its start, if it
+        # never got one), so a run `_start` already recorded is never left
+        # open just because facts it needed later were unavailable.
+        return _end(ctx, run, play, ScriptExit(Exit.UNFORESEEN, stop_reason=str(exc)))
 
 
 # -- the lifecycle -------------------------------------------------------------
@@ -1547,7 +1556,17 @@ def _end(
         return RunResult(True, out, state=state)
     reapplicable = None
     if play is not None:
-        reapplicable = "true" if _evaluate(ctx, play, state)["applies"] else "false"
+        # D2: this re-check itself needs hypothetical facts exactly when
+        # the run that is ending did - if they were unavailable then, they
+        # still are now, so the same failure must not raise a second time
+        # out of `_end` (which every path, including the one already
+        # handling that failure, calls to close the run out); treated as
+        # not reapplicable, the same "not applicable" verdict `_judged`
+        # gives a listing entry it cannot judge for the same reason.
+        try:
+            reapplicable = "true" if _evaluate(ctx, play, state)["applies"] else "false"
+        except HypotheticalFactsUnavailable:
+            reapplicable = "false"
     seat.recent_log()
     finish = {
         **_run_fields(ctx, run, play),

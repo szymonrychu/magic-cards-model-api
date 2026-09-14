@@ -1244,6 +1244,19 @@ def api_trouble(http: httpx.Client, api: str) -> str | None:
     return None
 
 
+class HypotheticalFactsUnavailable(RuntimeError):
+    """`Seat.hypothetical_facts()` could not read a real answer: a non-200
+    status, or a 200 whose body is not JSON (D2). Carries `status`, the HTTP
+    status code the response actually carried, so a caller can say which -
+    never `{}`, which a `count {unlocks: true} == 0` condition (or any
+    other selector reading these facts) would read as a real, empty answer
+    rather than as this call having failed."""
+
+    def __init__(self, status: int) -> None:
+        self.status = status
+        super().__init__(f"hypothetical facts unavailable (HTTP {status})")
+
+
 class Seat:
     """One player's proxy onto the running game."""
 
@@ -1574,13 +1587,25 @@ class Seat:
         way from here. Call it only when `playscripts.conditions.
         needs_hypothetical` says a play's selectors need it, and cache the
         answer (`playscripts.runtime`'s own cache) rather than calling this
-        once per script judged against an unchanged board."""
+        once per script judged against an unchanged board.
+
+        once per script judged against an unchanged board.
+
+        Raises `HypotheticalFactsUnavailable` (D2) on a non-200 status or a
+        body that is not JSON, rather than handing a caller a 404's error
+        body or letting a bare `JSONDecodeError` escape - either one, read
+        silently, is indistinguishable from a real, empty answer."""
         response = self.http.get(
             f"/api/games/{self.game_id()}/playscripts/hypothetical-facts",
             params={"uid": self.uid},
         )
         self.last_state_status = response.status_code
-        return response.json()
+        if response.status_code != 200:
+            raise HypotheticalFactsUnavailable(response.status_code)
+        try:
+            return response.json()
+        except ValueError:
+            raise HypotheticalFactsUnavailable(response.status_code) from None
 
     def recent_log(self, *, since: int = 0, limit: int = RECENT_LOG_ENTRIES) -> dict[str, Any]:
         """The tail of this seat's own view of the action log - what happened,

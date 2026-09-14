@@ -28,7 +28,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from ..seatkit import Seat
+from ..seatkit import HypotheticalFactsUnavailable, Seat
 from . import conditions, lint, runtime
 from .inputs import BUILTIN_INPUT, input_catalog
 from .schema import WILDCARD
@@ -218,11 +218,32 @@ def listing(
     state = seat.fetch_state(include_contents=wants_contents)
     # One fetch for the whole listing, not one per script (O7): every play
     # judged here shares the same board, so `_judged` never re-asks.
-    hypothetical = seat.hypothetical_facts().get("cards") if wants_hypothetical else None
+    #
+    # D2: a failed fetch must mark only the entries that actually needed it
+    # `not applicable`, with why - never fail the whole listing (the old
+    # behaviour: `HypotheticalRequired` raised out of `conditions.evaluate`,
+    # uncaught here, and `_guarded`'s own httpx-only catch in mcp.py let it
+    # through), and never stand in a bare `{}` for the fetch either (a
+    # `count {unlocks: true} == 0` reading that as a real, empty answer).
+    hypothetical = None
+    hypothetical_unavailable: str | None = None
+    if wants_hypothetical:
+        try:
+            hypothetical = seat.hypothetical_facts().get("cards")
+        except HypotheticalFactsUnavailable as exc:
+            hypothetical_unavailable = str(exc)
     warnings = static_conflicts(docs, declared, str(corpus.get("deck_slug") or ""))
     entries = [
         _judged(
-            doc, play, state, seat.player, supplied, catalog, warnings, hypothetical=hypothetical
+            doc,
+            play,
+            state,
+            seat.player,
+            supplied,
+            catalog,
+            warnings,
+            hypothetical=hypothetical,
+            hypothetical_unavailable=hypothetical_unavailable,
         )
         for doc, play in plays
     ]
@@ -273,6 +294,7 @@ def _judged(
     warnings: list[lint.PlaysWarning],
     *,
     hypothetical: dict[str, Any] | None = None,
+    hypothetical_unavailable: str | None = None,
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "id": doc.get("id"),
@@ -297,6 +319,17 @@ def _judged(
             "list": "when",
             "index": None,
             "seen": runtime._position(state),
+        }
+    elif hypothetical_unavailable is not None and conditions.needs_hypothetical(play):
+        # D2: this play's own selectors need the facts the fetch above
+        # could not read - marked not applicable, with why, rather than
+        # `conditions.evaluate` raising `HypotheticalRequired` uncaught (the
+        # old failure: the whole listing crashed for every script on the
+        # board, not only the ones that actually needed the missing facts).
+        entry["failing_condition"] = {
+            "list": "hypothetical",
+            "index": None,
+            "seen": hypothetical_unavailable,
         }
     else:
         result = conditions.evaluate(play, state, me, supplied, catalog, hypothetical=hypothetical)
