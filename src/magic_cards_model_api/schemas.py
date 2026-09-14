@@ -1936,6 +1936,10 @@ class GameStateView(BaseModel):
     game_id: str
     pending_decision: PendingDecisionView | None = None
     turn_number: int | None = None
+    turns_taken: int | None = None
+    """S1: counts every turn, extra ones (CR 500.7) included - unlike
+    `turn_number`, which counts rounds of the table and does not move for an
+    extra turn. The play-script already-ran filter keys on this instead."""
     step: str
     phase: str | None = None
     pregame: PregameView | None = None

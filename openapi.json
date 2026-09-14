@@ -1943,6 +1943,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -5826,6 +5837,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -7011,6 +7033,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -7449,6 +7482,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -8480,6 +8524,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -9377,6 +9432,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -9814,6 +9880,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -10316,6 +10393,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -11581,6 +11669,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -12635,6 +12734,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [

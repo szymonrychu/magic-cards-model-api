@@ -111,10 +111,14 @@ _LAST_ASSERTED_KEY = "_last_asserted_archetype"
 #: `call` when non-empty (S1 review finding 4b).
 _LAST_INPUTS_KEY = "_last_supplied_inputs"
 
-#: Where `run` records `[script_id, turn_number, step]` for every script this
+#: Where `run` records `[script_id, position, step]` for every script this
 #: process has run (any exit) - `applicable_hint` never re-offers one of
 #: these at the same position, even when the board still satisfies its
-#: conditions (S1 review finding 4c).
+#: conditions (S1 review finding 4c). `position` is `_turn_position`'s
+#: reading (`turns_taken`, falling back to `turn_number`), never `turn_number`
+#: alone: an extra turn (CR 500.7) reaching the same step must count as a new
+#: position, and `turn_number` deliberately does not move for one (S1 review
+#: fix 3).
 _RECENT_RUNS_KEY = "_recent_runs"
 
 #: Every registered play's normalised/validated `Play` dump, cached on the
@@ -389,6 +393,17 @@ def _remember_run_inputs(
     }
 
 
+def _turn_position(state: dict[str, Any]) -> Any:
+    """The already-ran filter's own position reading: `turns_taken` when
+    `state` carries it, `turn_number` otherwise (a state view built before
+    S1 review fix 3, or a caller that trimmed the key). `turns_taken` counts
+    every turn including extra ones (CR 500.7); `turn_number` counts rounds
+    of the table and does not move for one, so keying on it wrongly
+    suppressed a script reached again on an extra turn at the same step."""
+    taken = state.get("turns_taken")
+    return taken if taken is not None else state.get("turn_number")
+
+
 def _record_run(
     seat: Seat,
     corpora: dict[tuple[str, str], dict[str, Any]],
@@ -396,13 +411,13 @@ def _record_run(
     state: dict[str, Any],
 ) -> None:
     """Record that this process ran `script_id` at `state`'s
-    `(turn_number, step)` - `applicable_hint` never re-offers it there again,
-    however it exited (S1 review finding 4c)."""
+    `(_turn_position(state), step)` - `applicable_hint` never re-offers it
+    there again, however it exited (S1 review finding 4c)."""
     corpus = runtime._corpus(seat, corpora, fresh=False)
     if isinstance(corpus, runtime.ScriptExit):
         return
     recent = list(corpus.get(_RECENT_RUNS_KEY) or [])
-    entry = [script_id, state.get("turn_number"), state.get("step")]
+    entry = [script_id, _turn_position(state), state.get("step")]
     if entry not in recent:
         recent.append(entry)
     corpus[_RECENT_RUNS_KEY] = recent
@@ -414,9 +429,11 @@ def _plays(
     """Every doc in `docs`, paired with its normalised `Play` dump - computed
     once per corpus and cached under `_PLAYS_CACHE_KEY` on that same dict, so
     neither `listing` nor `applicable_hint` re-validates the same registered
-    scripts on every call (S1 review finding 5). A `fresh=True` read hands
-    back a brand-new corpus dict with no cache key yet, so this recomputes
-    exactly when the corpus genuinely changed."""
+    scripts on every call (S1 review finding 5). A `fresh=True` read replaces
+    the corpus dict wholesale and carries forward only an explicit allow-list
+    of seat bookkeeping (`runtime._CARRIED_BOOKKEEPING_KEYS`) - this cache
+    key is deliberately not among them, so a refresh always drops it and this
+    recomputes exactly when the corpus genuinely changed (S1 review fix 2)."""
     cached = corpus.get(_PLAYS_CACHE_KEY)
     if cached is None:
         cached = [(doc, runtime._normalised(doc)) for doc in docs]
@@ -469,7 +486,8 @@ def applicable_hint(
     Judged with the archetype and other inputs this seat last supplied to
     `run_script` (`_LAST_ASSERTED_KEY`/`_LAST_INPUTS_KEY` - S1 review finding
     4b), and never re-offering a script this process has already run at this
-    same `(turn_number, step)` (`_RECENT_RUNS_KEY` - finding 4c).
+    same `(_turn_position(state), step)` (`_RECENT_RUNS_KEY` - finding 4c;
+    `_turn_position` reads `turns_taken`, not `turn_number` - fix 3).
 
     Each entry is `{id, name, call}`, `call` a ready-to-use `run_script`
     invocation, `inputs` among its arguments only when the remembered inputs
@@ -524,7 +542,7 @@ def applicable_hint(
         for run in corpus.get(_RECENT_RUNS_KEY) or []
         if isinstance(run, list) and len(run) == 3
     }
-    position = (state.get("turn_number"), state.get("step"))
+    position = (_turn_position(state), state.get("step"))
     applying = [
         entry
         for entry in entries

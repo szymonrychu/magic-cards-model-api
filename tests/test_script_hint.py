@@ -38,6 +38,7 @@ from test_playscript_runtime import (
 from magic_cards_model_api import seatkit
 from magic_cards_model_api.mcp import build_server
 from magic_cards_model_api.playscripts import runtime, script_tools
+from magic_cards_model_api.store import store
 
 
 @pytest.fixture(autouse=True)
@@ -427,6 +428,54 @@ def test_a_script_this_process_already_ran_is_not_reoffered_at_the_same_position
     after = wait(server, alice)
 
     assert "scripts" not in after, after
+
+
+def test_an_extra_turn_at_the_same_step_re_offers_the_hint(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review fix 3: the already-ran suppression used to key on
+    `turn_number`, which counts rounds of the table and deliberately does
+    not move for an extra turn (CR 500.7, `machines/turn.py`'s own
+    `begin_next_turn`). A script run once, then reached again on an extra
+    turn at the very same step, was wrongly suppressed as "already ran here"
+    even though the position is genuinely new. `turns_taken` counts every
+    turn, extra ones included, so it must be the key instead - and a second
+    wait at the *same* turn and step must still suppress the hint."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, tap_island_script("float"))
+    add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Island", "alice", "battlefield")
+    _, server = server_for(monkeypatch, game)
+
+    before = wait(server, alice)
+    assert [entry["id"] for entry in before["scripts"]["applicable"]] == ["float"]
+
+    ran = answer(
+        call_tool(
+            server,
+            "run_script",
+            {"player_uid": alice, "script": "float", "reasoning": REASONING},
+        )
+    )
+    assert ran["script_exit"]["exit"] == "chain_complete", ran["script_exit"]
+
+    # Same turn, same step: still suppressed.
+    same_turn = wait(server, alice)
+    assert "scripts" not in same_turn, same_turn
+
+    # An extra turn (CR 500.7): `turns_taken` moves, `turn_number` does not -
+    # reached the same way `conftest.force_turn_position` reaches past the
+    # API into the live engine object for test setup.
+    engine_game = store.get(game)
+    assert engine_game is not None and engine_game.turn is not None
+    before_turn_number = engine_game.turn.turn_number
+    engine_game.turn.turns_taken += 1
+    force_precombat_main(game)
+    assert engine_game.turn.turn_number == before_turn_number
+
+    extra_turn = wait(server, alice)
+    assert [entry["id"] for entry in extra_turn["scripts"]["applicable"]] == ["float"]
 
 
 def test_the_hint_never_computes_static_conflicts(
