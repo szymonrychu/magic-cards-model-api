@@ -7,6 +7,7 @@ Every scenario here mirrors one named in the openings-plays research spec.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from conftest import add_card
@@ -251,6 +252,36 @@ def test_dryad_arbor_never_unlocks(client, game):
 
 
 # -- visibility, and no-op scoping -------------------------------------------------
+
+
+def test_the_response_never_names_a_library_card_or_depends_on_library_order(client, game):
+    """D1: `cards` used to key an entry for every library land too (by its
+    own card id), and `notices` followed the same matrix order - library
+    order for the library lands - so the response leaked a hidden zone's
+    order and identities (CR 401.2) exactly where `serialize._contents_
+    view` is deliberately built not to. Only the per-hand-card results
+    (`unlocks_by_search` included) ever reach the wire; library facts are
+    used to compute those and never returned themselves. Shuffling the
+    library must not change the response's bytes at all, and no library
+    card's id may appear in it."""
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Polluted Delta", "alice", "hand")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    add_card(client, game, "Watery Grave", "alice", "library")
+    add_card(client, game, "Sacred Foundry", "alice", "library")
+    add_card(client, game, "Mountain", "alice", "library")
+    live = _live(game)
+    alice = live.player("alice")
+    library_ids = {str(card.id) for card in alice.library}
+
+    before = json.dumps(_facts(game))
+    for card_id in library_ids:
+        assert card_id not in before
+
+    live.shuffle_library("alice")
+    after = json.dumps(_facts(game))
+
+    assert before == after
 
 
 def test_facts_are_scoped_to_the_players_own_hand_and_library(client, game):

@@ -82,11 +82,24 @@ def _land_subtypes(card: CardState) -> set[str]:
 
 def build_hypothetical_facts(game: Game, player: str) -> dict[str, Any]:
     """`{"cards": {card_id: {"enters"?, "unlocks"?, "unlocks_by_search"?}},
-    "notices": [...]}` for every hand and library land, and every hand card,
-    of `player` - see the module docstring. `game` is read, never mutated
-    (the same guarantee `payability_matrix` itself carries)."""
+    "notices": [...]}` for every hand land and every hand card, of `player`
+    - see the module docstring. `game` is read, never mutated (the same
+    guarantee `payability_matrix` itself carries).
+
+    Library lands are read (`_land_candidates`) and judged (`matrix.lands`)
+    exactly as hand lands are - `unlocks_by_search` needs their own
+    `unlocks` answer - but neither a library land's id nor its own
+    `enters`/`unlocks` entry, nor a notice naming it, ever reaches the
+    return value: `serialize._contents_view` deliberately drops a hidden
+    zone's order and identities (CR 401.2), and a library land keyed by its
+    own id in matrix (library) order would leak exactly that. Only the
+    per-hand-card results - a hand land's own facts, and `unlocks_by_search`
+    on the hand card whose search reads them - are ever returned, and both
+    `cards` and `notices` are sorted so the bytes returned do not depend on
+    hand order either."""
     me = game.player(player)
     hand = list(me.hand)
+    hand_ids = {str(card.id) for card in hand}
     library = list(me.library)
     lands = _land_candidates(hand, library)
     cards: dict[str, dict[str, Any]] = {}
@@ -108,9 +121,12 @@ def build_hypothetical_facts(game: Game, player: str) -> dict[str, Any]:
                 f"{prediction.name}: the optional payment is lethal (CR 704.5a), so "
                 "enters_any reads this land as tapped rather than untapped_if_paid"
             )
-        notices.extend(land_notices)
-        entry = cards.setdefault(str(column.land_id), {})
-        entry["enters"] = state
+        land_id = str(column.land_id)
+        is_hand_land = land_id in hand_ids
+        if is_hand_land:
+            notices.extend(land_notices)
+            entry = cards.setdefault(land_id, {})
+            entry["enters"] = state
 
         unlocks = False
         for payability in column.cards:
@@ -123,9 +139,10 @@ def build_hypothetical_facts(game: Game, player: str) -> dict[str, Any]:
             if payability.payable and not was_payable:
                 unlocks = True
                 break
-        entry["unlocks"] = unlocks
+        if is_hand_land:
+            entry["unlocks"] = unlocks
         if unlocks:
-            unlocking_land_ids.add(str(column.land_id))
+            unlocking_land_ids.add(land_id)
 
     library_land_types: dict[str, set[str]] = {
         str(card.id): _land_subtypes(card) for card in library if card.card.is_land
@@ -142,7 +159,7 @@ def build_hypothetical_facts(game: Game, player: str) -> dict[str, Any]:
         )
         cards.setdefault(str(card.id), {})["unlocks_by_search"] = by_search
 
-    return {"cards": cards, "notices": notices}
+    return {"cards": dict(sorted(cards.items())), "notices": sorted(notices)}
 
 
 __all__ = ["build_hypothetical_facts"]
