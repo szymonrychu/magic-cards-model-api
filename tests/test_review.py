@@ -258,6 +258,123 @@ def test_a_seat_may_read_the_finished_games_review(client: TestClient) -> None:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
+# ---------------------------------------------------------------------------
+# a plan-ahead row is attributed to its TARGET turn, not the turn it was
+# written in (live game 2026-09-14: a 3-player game landed bob's plan-ahead
+# declaration on carol's turn instead of his own)
+# ---------------------------------------------------------------------------
+
+
+def _agent_game_3p(client: TestClient, active: str = "carol") -> dict[str, Any]:
+    response = client.post(
+        "/api/games",
+        json={
+            "players": [
+                {"username": "alice", "is_agent": False},
+                {"username": "bob", "is_agent": True},
+                {"username": "carol", "is_agent": False},
+            ],
+            "active_player": active,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_plan_ahead_declaration_is_attributed_to_its_target_turn_not_the_turn_it_was_declared_in(
+    client: TestClient,
+) -> None:
+    """The exact repro: 3 players (alice, bob[agent], carol), carol active at
+    `turn_number` 1. Bob declares `for_turn: "next"` while carol's turn is
+    still under way - his own next turn is `turn_number` 2 (alice's turn,
+    seated between carol's and bob's, shares it: `TurnMachine.turn_number`
+    counts rounds of the table, not player-turns, so more than one player's
+    turn can carry the same number). The ledger row's own top-level `turn`
+    stays 1 - the turn it was honestly written in - but `_declarations` must
+    report `turn: 2`, the turn the declaration is ABOUT, or the review page
+    hangs bob's plan on carol's turn instead of his own."""
+    info = _agent_game_3p(client, active="carol")
+    game_id = info["game_id"]
+    try:
+        game = store.get(game_id)
+        assert game is not None and game.turn is not None
+        assert game.turn.active_player == "carol"
+        assert game.turn.turn_number == 1
+
+        declared = client.post(
+            f"/api/games/{game_id}/plan",
+            json={"player": "bob", "uid": info["seat_uids"]["bob"], "for_turn": "next", **PLAN},
+        )
+        assert declared.status_code == 200, declared.text
+        assert declared.json()["turn_number"] == 2
+
+        entries = audit.entries(game_id)
+        plan_rows = [e for e in entries if e["action"] == audit.PLAN_ACTION]
+        assert len(plan_rows) == 1
+        row = plan_rows[0]
+        assert row["turn"] == 1, "the row is honestly stamped with when it was written"
+        assert row["detail"]["turns_taken"] == 3
+
+        declarations = review._declarations(entries)
+        assert len(declarations) == 1
+        assert declarations[0]["turn"] == 2, "attributed to bob's own target turn, not carol's"
+        assert declarations[0]["turns_taken"] == 3
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_two_player_plan_ahead_declaration_still_groups_correctly(client: TestClient) -> None:
+    """The divergence is not a 3+ player-only thing: `_agent_game`'s bob is
+    seat 0, and `TurnMachine.turn_number` only increments when the wrap
+    lands back on seat 0 (`begin_next_turn`) - so while alice (seat 1) is
+    active at `turn_number` 1, bob's own next turn already crosses that wrap
+    and is `turn_number` 2. The row is still written during alice's turn
+    (chronological `turn` 1); `_declarations` must report the target, 2."""
+    info = _agent_game(client, active="alice")
+    game_id = info["game_id"]
+    try:
+        game = store.get(game_id)
+        assert game is not None and game.turn is not None
+        assert game.turn.turn_number == 1
+
+        declared = _declare(client, info, player="bob", for_turn="next")
+        assert declared.status_code == 200, declared.text
+        assert declared.json()["turn_number"] == 2
+
+        entries = audit.entries(game_id)
+        plan_rows = [e for e in entries if e["action"] == audit.PLAN_ACTION]
+        assert plan_rows[0]["turn"] == 1, "still honestly stamped with when it was written"
+
+        declarations = review._declarations(entries)
+        assert len(declarations) == 1
+        assert declarations[0]["turn"] == 2, "attributed to bob's own target turn"
+        assert declarations[0]["turns_taken"] == 2
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_current_turn_declaration_still_reports_its_own_turn(client: TestClient) -> None:
+    """`for_turn: "current"` (the default) is unaffected by the fix - the
+    row's target IS the turn it was written in, so `_declarations` reports
+    exactly what it always has."""
+    info = _agent_game(client, active="bob")
+    game_id = info["game_id"]
+    try:
+        game = store.get(game_id)
+        assert game is not None and game.turn is not None
+        assert game.turn.turn_number == 1
+
+        assert _declare(client, info, player="bob").status_code == 200
+
+        entries = audit.entries(game_id)
+        declarations = review._declarations(entries)
+        assert len(declarations) == 1
+        assert declarations[0]["turn"] == 1
+        assert declarations[0]["turns_taken"] == 1
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
 def test_a_finished_games_review_is_still_refused_to_a_stranger(client: TestClient) -> None:
     info = _played_out(client)
     game_id = info["game_id"]

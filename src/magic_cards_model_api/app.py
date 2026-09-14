@@ -3106,6 +3106,16 @@ def declare_plan(game_id: str, req: DeclarePlanIn) -> dict[str, Any]:
         audit.PLAN_ACTION,
         player=req.player,
         turns_taken=plan_turns_taken,
+        # The turn this row is ABOUT, never the turn it was written in - the
+        # two diverge exactly for `for_turn: "next"`. `audit.record` still
+        # stamps the row's own top-level `turn`/`step`/`phase` from the live
+        # board, honestly recording when the declaration was made; this is
+        # the separate fact `review.py`'s `_declarations` and `ui/review_
+        # model.js`'s `reviewTurns` read to attribute the row to its target
+        # turn wherever it is displayed or grouped, in a 3+ player game where
+        # `turn_number` can otherwise land the row in a different player's
+        # turn entirely (a live-game repro, 2026-09-14).
+        turn_number=response_turn_number,
         for_turn=req.for_turn,
         declared_turns_taken=declared_at,
         board_read=req.board_read,

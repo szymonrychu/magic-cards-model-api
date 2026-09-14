@@ -169,17 +169,22 @@ def require_plan(
       gate that can refuse a concession can trap a seat in a game. That one
       is enforced at the call site - `app.py`'s `action_concede` simply does
       not call this.
-    - **Never a pass in the beginning phase** (`pass_shaped`, `_PASS_EXEMPT_
-      STEPS` - upkeep and draw). `action_pass_priority` is the only caller
-      that ever passes `pass_shaped=True`, and only for its own request -
-      every other action shape, `decide` among them (live game 2026-09-14:
-      the seat that triggered this gate's original complaint had a plan to
-      declare, but the fix is that it should never have had to hold
-      priority in its own upkeep to write one - see `DeclarePlanIn.
-      for_turn`). A seat with nothing to do in the two steps where almost
-      nothing ever happens should be able to say so without writing a plan
-      first; a pass anywhere else, or any other kind of action anywhere,
-      stays gated exactly as before.
+    - **Never a pass in the beginning phase, and only with an empty stack**
+      (`pass_shaped`, `_PASS_EXEMPT_STEPS` - upkeep and draw). `action_pass_
+      priority` is the only caller that ever passes `pass_shaped=True`, and
+      only for its own request - every other action shape, `decide` among
+      them (live game 2026-09-14: the seat that triggered this gate's
+      original complaint had a plan to declare, but the fix is that it
+      should never have had to hold priority in its own upkeep to write one
+      - see `DeclarePlanIn.for_turn`). A seat with nothing to do in the two
+      steps where almost nothing ever happens should be able to say so
+      without writing a plan first; a pass anywhere else, or any other kind
+      of action anywhere, stays gated exactly as before. A trigger sitting on
+      the stack in upkeep or draw (a landfall trigger, an upkeep cost) is a
+      real decision the same way a main-phase pass is - "I am letting this
+      resolve" - so the exemption only ever applies with `game.stack` empty;
+      a pass with an object on the stack stays gated even in these two
+      steps.
 
     **The lookup is bounded, and this is the part that had to be right.**
     This sits on the hot action path, so it reads at most
@@ -218,7 +223,7 @@ def require_plan(
     turn = game.turn
     if turn.step in _PREGAME_STEPS or turn.active_player != player:
         return
-    if pass_shaped and turn.step in _PASS_EXEMPT_STEPS:
+    if pass_shaped and turn.step in _PASS_EXEMPT_STEPS and not game.stack:
         return
     if player not in store.ai_players(game_id):
         return

@@ -286,6 +286,49 @@ def test_for_turn_next_during_its_own_turn_is_refused(client: TestClient) -> Non
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
+def test_for_turn_next_during_the_pregame_is_not_refused_and_targets_the_seats_first_own_turn(
+    client: TestClient,
+) -> None:
+    """CR 103's mulligan/opening-hand windows: no turn has begun yet, so
+    `next_own_turn`'s "already under way" check (`turn.step not in
+    _PREGAME_STEPS and turn.active_player == player`) must never fire there,
+    whatever the pregame's own nominal active seat is - `begin_first_turn`
+    stands in for it instead, and bob (seat 0, so the one whose mulligan-
+    active seat will become CR 103.8's first turn) declaring `for_turn:
+    "next"` while the game still rests in `mulligan` is answered 200, not
+    409, with that first turn as the target."""
+    response = client.post(
+        "/api/games",
+        json={
+            "players": [
+                {"username": "bob", "is_agent": True},
+                {"username": "alice", "is_agent": False},
+            ],
+            "active_player": "bob",
+            "step": "mulligan",
+        },
+    )
+    assert response.status_code == 200, response.text
+    info = response.json()
+    game_id = info["game_id"]
+    try:
+        game = store.get(game_id)
+        assert game is not None and game.turn is not None
+        assert game.turn.step is Step.MULLIGAN
+
+        declared = _declare(client, info, player="bob", for_turn="next")
+        assert declared.status_code == 200, declared.text
+        body = declared.json()
+        assert body["for_turn"] == "next"
+        assert body["turn_number"] == 1
+
+        detail = _plan_rows(client, info)[0]["detail"]
+        assert detail["for_turn"] == "next"
+        assert detail["turns_taken"] == 1
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
 # ---------------------------------------------------------------------------
 # a plan-ahead row actually clears the gate, on a real turn
 # ---------------------------------------------------------------------------
@@ -355,6 +398,26 @@ def test_pass_priority_in_the_beginning_phase_is_exempt(client: TestClient, step
         assert passed.status_code == 200, passed.text
         assert passed.json()["allowed"] is True
         assert _plan_rows(client, info) == []
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+@pytest.mark.parametrize("step", [Step.UPKEEP, Step.DRAW])
+def test_pass_priority_in_the_beginning_phase_with_a_stack_object_still_needs_a_plan(
+    client: TestClient, step: Step
+) -> None:
+    """The exemption is for "I have nothing to do" - a trigger or spell
+    sitting on the stack in upkeep or draw (a landfall trigger, an upkeep
+    cost) is a real decision the same way a main-phase pass is, and stays
+    gated even in the two otherwise-exempt steps."""
+    info = _agent_game(client, active="bob")
+    game_id = info["game_id"]
+    try:
+        force_turn_position(game_id, step, "bob")
+        add_card(client, game_id, "Lightning Bolt", "bob", "stack")
+        refused = _pass(client, info, "bob")
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["detail"][0]["loc"] == ["body", "plan"]
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 

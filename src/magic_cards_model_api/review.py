@@ -192,11 +192,21 @@ def _declarations(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         player = detail.get("player")
         end = marks[position + 1] if position + 1 < len(marks) else len(entries)
         window = entries[index + 1 : end]
+        # `detail["turn_number"]` is the turn this declaration is ABOUT
+        # (`app.declare_plan` writes it for every row, `for_turn: "current"`
+        # included, where it is simply the same value `entry["turn"]` already
+        # is) - the row's own top-level `entry["turn"]` is only ever the turn
+        # it was WRITTEN in, which for `for_turn: "next"` is a different
+        # turn, and in a 3+ player game can even be a different *player's*
+        # turn under the same `turn_number` (a live-game repro, 2026-09-14).
+        # A row written before this field existed carries no `turn_number`
+        # key at all - `entry["turn"]` is the fallback for those.
+        target_turn = detail.get("turn_number")
         declared.append(
             {
                 "seq": entry["seq"],
                 "ts": entry["ts"],
-                "turn": entry["turn"],
+                "turn": target_turn if target_turn is not None else entry["turn"],
                 "turns_taken": detail.get("turns_taken"),
                 "step": entry["step"],
                 "phase": entry["phase"],
