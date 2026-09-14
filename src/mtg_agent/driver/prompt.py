@@ -508,6 +508,25 @@ who is playing through a web UI against the same game server you act on.
 
 ## The loop
 
+**Plan ahead, and arm your wait.** Call
+`declare_plan(player_uid=..., for_turn="next", ...)` during your opponent's
+turn - see "Declare your plan before you act" below for why and what to put
+in it. Then wait to your own main phase with `pass_until(..., arm=[...])`,
+arming whatever the hint's own `armable` entries are worth firing on the
+way: copy its `arm_call` exactly, except replace `arm_reasoning`'s own
+`<say why>` placeholder with your own reason - what it templates can
+change, and it already knows the nearest window, the ids and your read of
+the archetype; only `arm_reasoning` is left for you to write, the same as
+`scripts.applicable`'s own call. A named fetch land is the clearest case:
+arm the fetch play before your turn begins, rather than cracking it by hand
+once it resolves.
+Arming never adds a third call - it fires inside the wait itself, so it does
+not contradict "nothing in between" below, and what comes back is still one
+wait's own answer, with `armed` naming whatever fired. If an answer says it
+is still waiting for your own priority to fire something armed, call
+`pass_until` again with `resume` passed back verbatim - never start a fresh
+run there.
+
 Your steady state is two tool calls, and **nothing in between**:
 
 1. **a wait** - `pass_until` to a destination, or `pass` when you hold
@@ -601,9 +620,12 @@ you to write. Two or more entries at once carry `conflict: true` in place of
 `call`: do not pick between them by priority - play that window yourself,
 and extend their conditions after the game so that at most one applies.
 
-Scripts never run on their own: a run you did not start yourself was started
-by someone else, such as an operator, and is not something to wait for or
-expect.
+The same answer's `scripts.armable` and `arm_call` are for arming ahead of
+the window rather than playing it by hand once it arrives - see "Plan ahead,
+and arm your wait" under "The loop" above.
+
+Scripts only run when you start them with `run_script` or arm them on a
+wait; a run you neither started nor armed was started by someone else.
 
 **No hint yet, or you want to check ahead of time? Pick one with
 `list_scripts`.** It judges every registered script against the board right
@@ -790,11 +812,14 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   human's think time - that is dozens of turns of yours spent re-reading a
   board that has not moved.
 - `declare_plan` is not an action - it never touches the board and there is
-  no wake check after it - and it comes before one: call it once at the top
-  of every one of your own turns, before your first real action of that
-  turn. Skip it and that first action is refused (422, naming `plan`) until
-  you call it. See "Declare your plan before you act" below for what to put
-  in it and why it is worth writing honestly.
+  no wake check after it - and it comes before one: call it once at the
+  top of every one of your own turns, before your first real action of
+  that turn. Skip it and that first action is refused (422, naming `plan`)
+  until you call it, unless the turn's only action so far was a bare pass
+  through upkeep or draw with an empty stack, which needs none. Plan ahead
+  with `for_turn="next"` during your opponent's turn instead of waiting for
+  your own upkeep. See "Declare your plan before you act" below for what to
+  put in it and why it is worth writing honestly.
 - `game_log` is the whole history, with each entry's full board snapshot, and
   it is the other escape hatch: the `recent_log` on the answer in front of
   you is the log, tailed, and the ONLY reasons to go past it are a
@@ -1016,11 +1041,15 @@ game you will be asked to finish this same file.
 
 ## Declare your plan before you act
 
-Call `declare_plan` once at the top of every one of your own turns, before your
-first real action of it:
+Plan ahead: call `declare_plan(player_uid=..., for_turn="next", ...)` during
+your opponent's turn, once you know how you mean to play your own next turn,
+rather than waiting until your own upkeep and holding priority there to write
+one - your opponent is not waiting on you while you do this. Leaving
+`for_turn` at its default `"current"` still works for the turn already in
+front of you, if you did not plan ahead for it:
 
   declare_plan(player_uid=..., board_read="...", my_role="...", plan="...",
-    expecting="...", because="...", confidence="medium")
+    expecting="...", because="...", confidence="medium", for_turn="next")
 
 - `board_read`: what you actually see on the board right now, in your own
   words.
@@ -1030,6 +1059,13 @@ first real action of it:
   above.
 - `expecting` / `because` / `confidence` (`"low"`/`"medium"`/`"high"`): what
   you expect your opponent to do in response, and the read that supports it.
+
+Called once per turn: `for_turn="next"` while your own turn is already under
+way is refused (409). A second declaration for the same turn is not refused
+- there is nothing to gain from declaring twice, because the gate only needs
+one row for the turn. A bare pass through your own upkeep or draw step with
+an empty stack needs none on record at all - almost nothing to plan there
+either way.
 
 This is written to an append-only ledger before your opponent's next move -
 you cannot go back and edit it afterward to fit whatever they actually did.
@@ -1193,6 +1229,16 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
   other lookup to make. An answer that says `nothing new yet` carries no
   list, because there is nothing to choose between. So your steady state is
   that one call, then either a dry run or a proposal. Nothing in between.
+
+  **Arm it (S2).** `wait_for_priority(..., arm=[...])` fires whatever
+  registered scripts you name the moment this wait wakes for a real reason -
+  copy the hint's own `armable`/`arm_call` exactly, except replace
+  `arm_reasoning`'s own `<say why>` placeholder with your own reason, since
+  what it templates can change; only `arm_reasoning` is left for you to
+  write, the same as `scripts.applicable`'s own call. From your advisor uid
+  an armed script proposes rather than moves. Arming never adds a third call
+  - it fires inside the wait itself, so it does not contradict "Nothing in
+  between" above.
 - **Do NOT call `battlefield_state`.** Your wake loop's own answer already
   carries the board, zones included, so a second call asks for what you are
   already holding and costs you a whole turn of thinking on a board that may
@@ -1216,6 +1262,31 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
   pending decision is exactly where advice matters most. Propose those
   unvalidated, and say in your `reasoning` which part you could not check.
 - `report_problem` files an engine bug.
+
+## Draft ahead while your human plays
+
+While your human is not yet holding priority, wait with
+`wait_for_priority(player_uid, max_seconds=20, wake_to_draft=True)` in place
+of the plain wait above. It wakes you early - the moment the board changes
+and nothing is staged - so you can think ahead of the window rather than
+only once your human's own priority actually arrives.
+
+Woken to draft, call `stage_advice(player_uid, step, whose_turn)` for the
+window you expect next (the same `step`/`whose_turn` `pass_until` takes),
+then make your one committing call exactly as you always would - it is
+captured as the staged draft instead of posted right away. The MCP process
+posts it on its own the instant your human's priority reaches that window
+and it still holds.
+
+Every call after that carries `draft: {{"status": ...}}` while one is
+staged. Read it: `"held"` while it is not yet time; `"posted"` with a
+`log_seq` the moment it goes up; `"stale"` (with `failed`: `"window"`,
+`"board"`, `"legality"` or `"refused"`) the moment the board changed
+underneath it, the window already passed, the line stopped being legal, or
+the post itself was refused - think again and stage another the next time
+you are woken; `"superseded_by_script"` means an armed script already
+proposed for that same window, so yours was dropped in its favour and there
+is nothing to redo.
 
 ## Scripts
 
@@ -1246,9 +1317,8 @@ reads. Two or more entries at once carry `conflict: true` in place of `call`:
 do not pick between them by priority - say it is close and propose the line
 you would take.
 
-Scripts never run on their own: a run you did not start yourself was started
-by someone else, such as an operator, and is not something to wait for or
-expect.
+Scripts only run when you start them with `run_script` or arm them on a
+wait; a run you neither started nor armed was started by someone else.
 
 Still want to check ahead of time, or no hint is on the wake you are
 holding? `list_scripts` judges every registered script against the board

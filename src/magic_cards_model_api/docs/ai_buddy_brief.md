@@ -38,6 +38,35 @@ arguments.
   reading it is right rather than wasteful. Read it once when you arrive, and
   again when you need history a `wait` answer cannot give you - not on every
   wake, because nothing before your last look has changed.
+- **Arm it (S2).** `wait --arm SCRIPT_ID` (repeatable, priority order) plus
+  `--arm-reasoning "..."` fires a registered script the moment this `wait`
+  wakes for a real reason. From your advisor uid it proposes rather than
+  moves. Arming never adds a command of its own - it fires inside `wait`
+  itself.
+
+## Draft ahead while your human plays
+
+While your human is not yet holding priority, run `wait --wake-to-draft` in
+place of the plain `wait` above. It wakes you early - the moment the board
+changes and nothing is staged - so you can think ahead of the window rather
+than only once your human's own priority actually arrives.
+
+Woken to draft, run `stage-advice STEP --whose-turn WHOSE` for the window
+you expect next (the same `STEP`/`--whose-turn` `pass-until` takes), then
+make your one committing command exactly as you always would - it is
+captured as the staged draft instead of posted right away. The next `wait`
+(or any other command) posts it on its own the instant your human's priority
+reaches that window and it still holds.
+
+Every command after that prints `"draft": {{"status": ...}}` while one is
+staged. Read it: `"held"` while it is not yet time; `"posted"` with a
+`log_seq` the moment it goes up; `"stale"` (with `failed`: `"window"`,
+`"board"`, `"legality"` or `"refused"`) the moment the board changed
+underneath it, the window already passed, the line stopped being legal, or
+the post itself was refused - think again and `stage-advice` another the
+next time you are woken; `"superseded_by_script"` means an armed script
+already proposed for that same window, so yours was dropped in its favour
+and there is nothing to redo.
 
 Seven subcommands take `--dry-run`, which asks "could this be done?" and
 changes nothing: `cast`, `cycle`, `activate`, `equip` and the three special
@@ -90,10 +119,9 @@ line you would take.
   is JSON (`true`, `3`) and as text otherwise. It is the CLI spelling of the
   `inputs` parameter `run_script` and `list_scripts` take over MCP.
 
-Scripts never run on their own: a run you did not start yourself - through
-`script run` or the MCP `run_script` tool - was started by someone else,
-such as an operator staging a run from the CLI, and is not something to wait
-for or expect.
+Scripts only run when you start them with `script run` or arm them with
+`--arm` on `wait`; a run you neither started nor armed was started by
+someone else.
 
 ## When you think, and when you stay quiet
 

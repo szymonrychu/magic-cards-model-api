@@ -415,6 +415,14 @@ class AdviceIn(RequestModel):
     `False` says "nobody has checked this" - the honest answer for the other
     5, whose shapes have no way to ask, and which an advisor therefore must
     not send at all."""
+    drafted_at_seq: int | None = None
+    """S2 A6: the ledger position this proposal was drafted at
+    (`stage_advice`/`seatkit.resolve_advice_draft`), when it was staged ahead
+    of the human's own priority rather than proposed the moment it was
+    probed. `None` for an ordinary proposal, which was never staged at all.
+    Recorded verbatim into the `advice` row's `detail` so a metrics reader can
+    measure how long a draft sat staged before it posted - never read or
+    interpreted here, and never required."""
 
 
 class AdviceResponse(BaseModel):
