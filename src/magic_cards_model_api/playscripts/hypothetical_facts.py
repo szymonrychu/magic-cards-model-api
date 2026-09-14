@@ -110,6 +110,7 @@ from typing import Any
 from magic_cards_model.machines.hypothetical import EntersState, payability_matrix
 from magic_cards_model.models import Action, CardState, Game, Zone
 
+from ..board_scope import on_one_board
 from ..serialize import _card_view
 from .selectors import BASIC_LAND_TYPES, SEARCH_TEMPLATE, _searched_basic_types, _texts
 
@@ -241,6 +242,7 @@ def _reaches_an_unlocking_land(
     )
 
 
+@on_one_board
 def build_hypothetical_facts(
     game: Game, player: str, candidate_ids: frozenset[str] | None = None
 ) -> dict[str, Any]:
