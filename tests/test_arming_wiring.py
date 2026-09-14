@@ -19,10 +19,12 @@ from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
 from test_autopass import Opponent, stock_libraries
 from test_playscript_runtime import (
+    FakeResponse,
     hooked_seat,
     land_script,
     register,
     seat_uid,
+    started,
     wired,
 )
 
@@ -389,6 +391,150 @@ def test_bare_block_until_wake_is_unaffected(
     woken = block_until_wake(seat, before=None)
 
     assert "armed" not in woken
+
+
+# -- finding 6: never arms on a stop without priority or a real decision ------
+
+
+def test_wait_and_arm_never_fires_on_a_game_over_wake(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 review finding 6: `compute_wake_reason` answers a bare `"game
+    over"` once a winner or a draw is set - a real wake, not `NOTHING_NEW_
+    YET`/`GAME_GONE`/`WAIT_INTERRUPTED` - so arming used to fire on it too,
+    even though there is nothing left to play. No armed row is written."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    engine_game = store.get(board)
+    assert engine_game is not None
+    engine_game.winner = "alice"
+
+    woken = wait_and_arm(
+        seat,
+        before=None,
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert woken["wake_reason"] == "game over"
+    assert "armed" not in woken
+    assert hook.posts("/actions/play-land") == []
+    assert started(board) == []
+
+
+def test_wait_and_arm_never_fires_on_game_gone(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    client.delete(f"/api/games/{board}", params={"uid": alice})
+
+    woken = wait_and_arm(
+        seat,
+        before=None,
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert woken["wake_reason"] == seatkit.GAME_GONE
+    assert "armed" not in woken
+    assert hook.posts("/actions/play-land") == []
+
+
+def test_pass_until_never_fires_on_game_gone(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    client.delete(f"/api/games/{board}", params={"uid": alice})
+
+    result = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="mine",
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert result["finished"] is True
+    assert result["stopped_because"] == seatkit.GAME_GONE
+    assert "armed" not in result
+    assert hook.posts("/actions/play-land") == []
+    assert started(board) == []
+
+
+def test_pass_until_never_fires_on_an_unknown_outcome(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+
+    def unknown_outcome(method: str, path: str, body: Any) -> Any:
+        if method == "POST" and path.endswith("/pass-priority"):
+            return FakeResponse(200, {"allowed": False, "unknown_outcome": True, "reason": "?"})
+        return None
+
+    seat, hook = hooked_seat(seats, alice, answer=unknown_outcome)
+
+    result = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="mine",
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert result["finished"] is True
+    assert result["stopped_because"] == seatkit.UNKNOWN_OUTCOME
+    assert "armed" not in result
+    assert hook.posts("/actions/play-land") == []
+    assert started(board) == []
+
+
+def test_pass_until_never_fires_on_a_refused_pass(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+
+    def refused(method: str, path: str, body: Any) -> Any:
+        if method == "POST" and path.endswith("/pass-priority"):
+            return FakeResponse(200, {"allowed": False, "reason": "test refusal"})
+        return None
+
+    seat, hook = hooked_seat(seats, alice, answer=refused)
+
+    result = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="mine",
+        corpora=seats.script_corpora,
+        arm=["drop"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert result["finished"] is True
+    assert "a pass was refused" in result["stopped_because"]
+    assert "armed" not in result
+    assert hook.posts("/actions/play-land") == []
+    assert started(board) == []
 
 
 # -- CLI ----------------------------------------------------------------------

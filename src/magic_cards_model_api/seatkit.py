@@ -2190,6 +2190,24 @@ def game_gone(seat: Any) -> bool:
     return getattr(seat, "last_state_status", None) in GAME_GONE_STATUSES
 
 
+def _arming_moment(state: dict[str, Any], me: str) -> bool:
+    """Whether `state` is genuinely `me`'s own moment to have armed scripts
+    fire on it (S2 review finding 6): never once the game is over (winner
+    or drawn); a decision pending for `me` (in which case `priority_holder`
+    cannot be trusted - a paused command rolls the committed game back to
+    before the attempt, so the value it carries is simply whoever held
+    priority *before* the freeze, not "nobody" - see `_pass_until_once`'s
+    own docstring); otherwise `me` genuinely holding priority right now,
+    fresh off this very `state`, never a stale reading from before a pause
+    that has since cleared."""
+    if state.get("winner") or state.get("drawn"):
+        return False
+    pending = state.get("pending_decision")
+    if pending is not None:
+        return pending.get("player") == me
+    return state.get("priority_holder") == me
+
+
 #: Ceiling for `max_seconds` on `block_until_wake`/`pass_until` - the bound
 #: that makes bringing a server-side wait back at all safe. MCP 2026-07-28
 #: removing resumability (SEP-2577) is why the old *unbounded* wait (up to
@@ -2390,6 +2408,12 @@ def wait_and_arm(
     wake check keeps calling that directly, and fires nothing)."""
     woken = block_until_wake(seat, before=before, max_seconds=max_seconds, should_stop=should_stop)
     if woken["wake_reason"] in (NOTHING_NEW_YET, GAME_GONE, WAIT_INTERRUPTED):
+        return woken
+    if not _arming_moment(woken["state"], seat.player):
+        # S2 review finding 6: `compute_wake_reason` answers a bare "game
+        # over" as a real wake once a winner or a draw is set, and none of
+        # the three reasons excluded above catch that - there is nothing
+        # left here for an armed script to do.
         return woken
     try:
         armed = _fire_armed_scripts(
@@ -3467,7 +3491,13 @@ def pass_until(
         result = _pass_until_once(seat, resume=result.get("resume"), **kwargs)
     retryable = result.get("retryable", False)
     result.pop("retryable", None)
-    if arm and not retryable:
+    inner_arm_eligible = result.pop("_arm_eligible", True)
+    if (
+        arm
+        and not retryable
+        and inner_arm_eligible
+        and _arming_moment(result["state"], seat.player)
+    ):
         try:
             armed = _fire_armed_scripts(
                 seat,
@@ -3592,7 +3622,9 @@ def _pass_until_once(
     run = resume_autopass(resume, before, until_step, whose_turn)
     passes = 0
 
-    def answer(state: dict[str, Any], reason: str, finished: bool = True) -> dict[str, Any]:
+    def answer(
+        state: dict[str, Any], reason: str, finished: bool = True, *, arm_eligible: bool = True
+    ) -> dict[str, Any]:
         result = {
             "stopped_because": reason,
             "passes": passes,
@@ -3600,6 +3632,15 @@ def _pass_until_once(
             "until": {"step": until_step, "whose_turn": whose_turn},
             "state": state,
         }
+        if not arm_eligible:
+            # S2 review finding 6: an ambiguous or refused attempt is not
+            # this seat's moment even when the board still looks like one -
+            # `_arming_moment` (`pass_until`'s own outer wrapper) reads the
+            # state's content, which an unchanged-because-refused board
+            # cannot tell apart from a genuine one; this flag is the
+            # explicit signal for exactly those two cases. Popped there
+            # before the answer ever reaches a caller.
+            result["_arm_eligible"] = False
         if include_actions:
             result["available_actions"] = available_actions(seat, state)
         result |= {
@@ -3702,11 +3743,12 @@ def _pass_until_once(
                     f"{self_decision.get('prompt')} - answer it with decide() now",
                 )
             if _unknown_outcome(outcome):
-                return answer(seat.fetch_state(), UNKNOWN_OUTCOME)
+                return answer(seat.fetch_state(), UNKNOWN_OUTCOME, arm_eligible=False)
             if _refused(outcome):
                 return answer(
                     seat.fetch_state(),
                     f"declaring nobody was refused, so the run stopped: {outcome.get('reason')}",
+                    arm_eligible=False,
                 )
             # Answering a declaration is a turn-based action (CR 508.1, CR
             # 509.1), not a priority pass, so `passes` deliberately does not
@@ -3813,11 +3855,12 @@ def _pass_until_once(
                     f"{self_decision.get('prompt')} - answer it with decide() now",
                 )
             if _unknown_outcome(outcome):
-                return answer(seat.fetch_state(), UNKNOWN_OUTCOME)
+                return answer(seat.fetch_state(), UNKNOWN_OUTCOME, arm_eligible=False)
             if _refused(outcome):
                 return answer(
                     seat.fetch_state(),
                     f"a pass was refused, so the run stopped: {outcome.get('reason')}",
+                    arm_eligible=False,
                 )
             passes += 1
             continue
