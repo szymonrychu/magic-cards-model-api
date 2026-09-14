@@ -205,8 +205,9 @@ def run(
         invoked_via=invoked_via,
     )
     state = result.state if result.state is not None else seat.fetch_state()
-    _record_run(seat, corpora, script, state)
-    return {"script_exit": script_exit(result, _registered_moves(seat, corpora)), "state": state}
+    exit_block = script_exit(result, _registered_moves(seat, corpora))
+    _record_run(seat, corpora, script, state, exit_block, advise=seat.advise)
+    return {"script_exit": exit_block, "state": state}
 
 
 def script_exit(result: runtime.RunResult, moves: dict[str, int]) -> dict[str, Any]:
@@ -307,6 +308,28 @@ def static_conflicts(
     return lint._conflict_warnings(plays, catalog)
 
 
+def _first_move_allowed(play: dict[str, Any], state: dict[str, Any], me: str) -> bool:
+    """Whether `play`'s own first move could even be attempted right now -
+    CR 608.2d freezes every action but answering the one pending decision
+    until it is answered, so a play whose first move is not an `answer` to
+    exactly that decision cannot legally run, whoever it is addressed to
+    (S2 review finding 4). No pending decision at all: always allowed."""
+    pending = state.get("pending_decision")
+    if pending is None:
+        return True
+    moves = play.get("moves") or []
+    first = moves[0] if moves else None
+    if not isinstance(first, dict) or first.get("kind") != "answer":
+        return False
+    if pending.get("player") != me:
+        return False
+    answers = first.get("answers") or []
+    return any(
+        isinstance(answer, dict) and answer.get("decision") == pending.get("kind")
+        for answer in answers
+    )
+
+
 def _judged(
     doc: dict[str, Any],
     play: dict[str, Any] | runtime.ScriptExit,
@@ -339,6 +362,18 @@ def _judged(
             "list": "when",
             "index": None,
             "seen": runtime._position(state),
+        }
+    elif not _first_move_allowed(play, state, me):
+        # S2 review finding 4: a decision pending anywhere (CR 608.2d) freezes
+        # every other action until it is answered - a play whose own first
+        # move answers exactly that decision is still the one legal thing to
+        # do, but any other play must be judged not-applying here rather than
+        # fired and refused by the engine. `_judge_round` (`arming.py`) calls
+        # this same function, so an armed script gets the identical gate.
+        entry["failing_condition"] = {
+            "list": "pending_decision",
+            "index": None,
+            "seen": (state.get("pending_decision") or {}).get("kind"),
         }
     else:
         result = conditions.evaluate(play, state, me, supplied, catalog)
@@ -409,10 +444,35 @@ def _record_run(
     corpora: dict[tuple[str, str], dict[str, Any]],
     script_id: str,
     state: dict[str, Any],
+    exit_block: dict[str, Any],
+    *,
+    advise: bool,
 ) -> None:
     """Record that this process ran `script_id` at `state`'s
     `(_turn_position(state), step)` - `applicable_hint` never re-offers it
-    there again, however it exited (S1 review finding 4c)."""
+    there again (S1 review finding 4c), UNLESS `exit_block` shows it touched
+    nothing: `moves_done == 0` and an exit other than `unknown_outcome`
+    (whose move may have landed uncounted) or `already_ran` (the ledger
+    already refused it, so re-offering it here would just repeat that
+    refusal) - the same release rule `records._prior_script_run` already
+    applies to the ledger's own already-ran slot, mirrored here for the
+    hint's own in-process cache (S2 review finding 4). A run blocked by
+    something outside the script's own control (a pending decision, most
+    often) takes exactly this shape, so it must not hide the script once
+    whatever blocked it clears. A successful advise proposal (`exit ==
+    "advised"`) always reports zero moves by design - it only ever proposes
+    - and still locks, so an armed advisor does not repeat the same
+    suggestion within one turn and step."""
+    moves_done = exit_block.get("moves_done") or 0
+    exit_name = exit_block.get("exit")
+    touched_nothing = (
+        moves_done == 0
+        and exit_name is not None
+        and exit_name not in (runtime.Exit.UNKNOWN_OUTCOME.value, runtime.Exit.ALREADY_RAN.value)
+        and not (advise and exit_name == runtime.Exit.ADVISED.value)
+    )
+    if touched_nothing:
+        return
     corpus = runtime._corpus(seat, corpora, fresh=False)
     if isinstance(corpus, runtime.ScriptExit):
         return

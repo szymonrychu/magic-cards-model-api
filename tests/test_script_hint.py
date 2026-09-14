@@ -489,6 +489,60 @@ def test_an_extra_turn_at_the_same_step_re_offers_the_hint(
     assert [entry["id"] for entry in extra_turn["scripts"]["applicable"]] == ["float"]
 
 
+class _FakeSeatForRecordRun:
+    """Just enough of `Seat` for `runtime._corpus`'s `fresh=False` cache hit
+    (`seat.game_id()`, `seat.uid`) - no HTTP client needed, matching this
+    repo's own "ordinary practice: fakes are legitimate tools" convention."""
+
+    def __init__(self, uid: str, game_id: str) -> None:
+        self.uid = uid
+        self._game_id = game_id
+
+    def game_id(self) -> str:
+        return self._game_id
+
+
+def test_record_run_does_not_lock_the_hint_on_a_zero_move_exit() -> None:
+    """S2 review finding 4: `_record_run` used to lock the hint's own
+    already-ran cache on *any* exit, including one that touched nothing -
+    refused, `needs_input`, and the like (`moves_done: 0`). That is exactly
+    the shape a run blocked by something outside the script's own control
+    takes (a pending decision, most often - the seat half of finding 4), so
+    the script vanished from the hint even though nothing had actually run -
+    mirroring the same `moves_done == 0` release rule
+    `records._prior_script_run` already uses for the ledger's own
+    already-ran slot. A run that made zero moves must not lock the hint's
+    cache; a real, moves-having run still does."""
+    seat = _FakeSeatForRecordRun("seat-uid", "game-1")
+    corpora: dict[tuple[str, str], dict[str, Any]] = {(seat.game_id(), seat.uid): {}}
+    state = {"turns_taken": 1, "turn_number": 1, "step": "precombat_main"}
+    key = (seat.game_id(), seat.uid)
+
+    zero_move_refused = {"exit": "refused", "moves_done": 0}
+    script_tools._record_run(seat, corpora, "some-script", state, zero_move_refused, advise=False)  # type: ignore[arg-type]
+    assert corpora[key].get(script_tools._RECENT_RUNS_KEY, []) == []
+
+    real_run = {"exit": "chain_complete", "moves_done": 1}
+    script_tools._record_run(seat, corpora, "some-script", state, real_run, advise=False)  # type: ignore[arg-type]
+    assert corpora[key][script_tools._RECENT_RUNS_KEY] == [["some-script", 1, "precombat_main"]]
+
+
+def test_record_run_still_locks_a_successful_advise_proposal() -> None:
+    """The other half: a genuinely successful advise proposal (`exit ==
+    "advised"`) always reports zero moves by design - it only ever proposes
+    - so it must still lock, or an armed advisor would repeat the same
+    suggestion within one turn and step."""
+    seat = _FakeSeatForRecordRun("advisor-uid", "game-1")
+    corpora: dict[tuple[str, str], dict[str, Any]] = {(seat.game_id(), seat.uid): {}}
+    state = {"turns_taken": 1, "turn_number": 1, "step": "precombat_main"}
+    key = (seat.game_id(), seat.uid)
+
+    advised = {"exit": "advised", "moves_done": 0}
+    script_tools._record_run(seat, corpora, "some-script", state, advised, advise=True)  # type: ignore[arg-type]
+
+    assert corpora[key][script_tools._RECENT_RUNS_KEY] == [["some-script", 1, "precombat_main"]]
+
+
 def test_the_hint_never_computes_static_conflicts(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

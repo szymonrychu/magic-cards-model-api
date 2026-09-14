@@ -191,6 +191,119 @@ def test_a_contents_needing_armed_script_costs_exactly_one_extra_fetch(
     assert calls["n"] == 2, calls
 
 
+# -- pending decision: only a first-move-answer play applies -------------------
+
+
+def answer_pay_mana_script(script_id: str = "pay-it") -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "id": script_id,
+        "name": "Pay the mana",
+        "priority": 60,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "either", "steps": ["precombat_main"], "stack": "any"},
+        "true": [],
+        "false": [],
+        "moves": [{"kind": "answer", "answers": [{"decision": "pay_mana", "accept": True}]}],
+        "next": [],
+    }
+
+
+def test_a_pending_decision_only_lets_a_first_move_answer_play_apply(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 review finding 4 (seat half): while a decision is pending for this
+    seat, CR 608.2d freezes every other action until it is answered - a play
+    whose first move answers exactly that decision still applies (it is the
+    one legal thing to do), but a play that would send any other move does
+    not, judged not-applying rather than being fired and refused by the
+    engine (`_judge_round`/`_judged` used to ignore `pending_decision`
+    entirely)."""
+    alice = seat_uid(board, "alice")
+    register(
+        client,
+        board,
+        alice,
+        answer_pay_mana_script("pay-it"),
+        land_script(
+            "drop", when={"whose_turn": "either", "steps": ["precombat_main"], "stack": "any"}
+        ),
+    )
+    seats = wired(monkeypatch, board)
+    seat, _ = hooked_seat(seats, alice)
+    pending_state = {
+        "turn_number": 1,
+        "step": "precombat_main",
+        "active_player": "alice",
+        "priority_holder": "alice",
+        "pending_decision": {"player": "alice", "kind": "pay_mana", "prompt": "pay {3}?"},
+    }
+    monkeypatch.setattr(seat.__class__, "fetch_state", lambda self, **kw: pending_state)
+
+    judged, _ = arming._judge_round(
+        seat, seats.script_corpora, ["pay-it", "drop"], {"opposing_archetype": "*"}
+    )
+
+    assert judged["pay-it"]["applies"] is True, judged["pay-it"]
+    assert judged["drop"]["applies"] is False, judged["drop"]
+    assert judged["drop"]["failing_condition"]["list"] == "pending_decision", judged["drop"]
+
+
+def test_advisor_armed_run_blocked_by_a_pending_decision_is_not_locked_out(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 review finding 4 (advisor half): an advisor's armed script whose
+    first move is a regular action, watching a human with a pending
+    `pay_mana` decision, must not be attempted at all - it is judged
+    not-applying (the seat half's own fix) rather than fired and refused -
+    so nothing is ever recorded against it and it is still proposed once
+    the human's decision is answered, in this same turn and step. Before the
+    fix this attempt was fired anyway, refused 409, and (an advise finish's
+    zero moves never released) locked out for the rest of the step."""
+    from test_decision_kinds import resolve_top, stage_mystical_dispute_targeting_bears
+
+    from magic_cards_model_api.repository import Advisor
+    from magic_cards_model_api.store import store
+
+    advisor = "pending-decision-advisor-uid"
+    store.register_advisors(game, {advisor: Advisor(player="alice")})
+    register(
+        client,
+        game,
+        advisor,
+        land_script(
+            "drop", when={"whose_turn": "either", "steps": ["precombat_main"], "stack": "any"}
+        ),
+    )
+    stage_mystical_dispute_targeting_bears(client, game, {"R": 4})
+    add_card(client, game, "Island", "alice", "hand")
+    resolved = resolve_top(game)
+    assert resolved["paused"] is True, resolved
+
+    seats = wired(monkeypatch, game)
+    seat, _ = hooked_seat(seats, advisor)
+
+    blocked = arming.arm(seat, seats.script_corpora, arm=["drop"], arm_reasoning=ARM_REASONING)
+    assert isinstance(blocked, dict), blocked
+    assert blocked["armed"] == [], blocked
+    assert started(game) == [], "nothing was ever attempted while the decision was pending"
+
+    alice = seat_uid(game, "alice")
+    paid = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": alice},
+        json={"player": "alice", "accept": True},
+    )
+    assert paid.status_code == 200, paid.text
+    resolve_top(game)  # Mystical Dispute leaves the stack; Grizzly Bears resolves
+
+    proposed = arming.arm(seat, seats.script_corpora, arm=["drop"], arm_reasoning=ARM_REASONING)
+    assert isinstance(proposed, dict), proposed
+    [entry] = proposed["armed"]
+    assert entry["exit"] == "advised", entry
+    assert entry.get("refusal") is None, entry
+
+
 # -- one shared deadline over the whole batch -----------------------------------
 
 
