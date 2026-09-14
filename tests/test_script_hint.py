@@ -696,7 +696,7 @@ def test_armable_during_the_opponents_turn(
     }
     assert answer["scripts"]["arm_call"] == (
         f'pass_until(player_uid="{alice}", step="precombat_main", whose_turn="mine", '
-        'arm=["drop"], arm_reasoning="<say why>", opposing_archetype="*")'
+        'arm=["drop"], arm_reasoning="<say why>", opposing_archetype="*", max_seconds=25.0)'
     )
 
 
@@ -905,7 +905,7 @@ def test_armable_templates_the_scripts_own_whose_turn_not_always_mine(
     assert entry["id"] == "theirs-end"
     assert answer["scripts"]["arm_call"] == (
         f'pass_until(player_uid="{alice}", step="end_step", whose_turn="opponent", '
-        'arm=["theirs-end"], arm_reasoning="<say why>", opposing_archetype="*")'
+        'arm=["theirs-end"], arm_reasoning="<say why>", opposing_archetype="*", max_seconds=25.0)'
     ), answer["scripts"]["arm_call"]
 
 
@@ -1043,7 +1043,7 @@ def test_arm_call_never_mixes_step_and_whose_turn_from_different_scripts(
     assert ids == ["theirs-end", "mine-main"], "both still listed as armable"
     assert answer["scripts"]["arm_call"] == (
         f'pass_until(player_uid="{alice}", step="end_step", whose_turn="opponent", '
-        'arm=["theirs-end"], arm_reasoning="<say why>", opposing_archetype="*")'
+        'arm=["theirs-end"], arm_reasoning="<say why>", opposing_archetype="*", max_seconds=25.0)'
     ), answer["scripts"]["arm_call"]
 
 
@@ -1076,5 +1076,5 @@ def test_arm_call_targets_the_next_occurrence_not_the_earliest_in_turn_order(
     assert entry["id"] == "theirs-both"
     assert answer["scripts"]["arm_call"] == (
         f'pass_until(player_uid="{alice}", step="end_step", whose_turn="opponent", '
-        'arm=["theirs-both"], arm_reasoning="<say why>", opposing_archetype="*")'
+        'arm=["theirs-both"], arm_reasoning="<say why>", opposing_archetype="*", max_seconds=25.0)'
     ), answer["scripts"]["arm_call"]

@@ -11,11 +11,12 @@ something the wait itself was built to avoid deciding.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
 import pytest
-from conftest import add_card, force_turn_position
+from conftest import add_card, find, force_turn_position, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
 from test_autopass import Opponent, stock_libraries
@@ -31,6 +32,7 @@ from test_playscript_runtime import (
 )
 
 from magic_cards_model_api import seat_cli, seatkit
+from magic_cards_model_api.main import app
 from magic_cards_model_api.repository import Advisor
 from magic_cards_model_api.seatkit import block_until_wake, pass_until, wait_and_arm
 from magic_cards_model_api.store import store
@@ -1073,14 +1075,20 @@ def test_the_armable_hints_own_call_template_actually_invokes(
     arm_call = hint_answer["scripts"]["arm_call"]
     assert arm_call == (
         f'pass_until(player_uid="{alice}", step="precombat_main", whose_turn="mine", '
-        'arm=["drop"], arm_reasoning="<say why>", opposing_archetype="*")'
+        'arm=["drop"], arm_reasoning="<say why>", opposing_archetype="*", max_seconds=25.0)'
     )
 
     verb, kwargs = _parse_call(arm_call)
     assert isinstance(kwargs["arm"], list)
+    assert kwargs["max_seconds"] == 25.0, (
+        "S2 arming re-review finding 1: the template's own max_seconds - without it, "
+        "the default 0.0 would never even run _wait_for_own_priority_at_destination's "
+        "own wait loop once"
+    )
     kwargs["arm_reasoning"] = ARM_REASONING
-    # The template names only the arming arguments; a real caller still adds
-    # its own `max_seconds` on top, same as any other `pass_until` call.
+    # This test's own Opponent thread answers promptly; a much shorter bound
+    # than the template's own 25.0 keeps the test fast without changing what
+    # it proves.
     kwargs["max_seconds"] = 10.0
 
     with Opponent(game, "bob"):
@@ -1136,3 +1144,308 @@ def test_mcp_pass_until_never_fires_on_a_retryable_hand_back(
 
     answer = json.loads(result.content[0].text)
     assert "armed" not in answer, answer
+
+
+# -- S2 arming re-review finding 1: waiting for OWN priority at a theirs/either
+# -- destination must never silently drop the window --------------------------
+
+
+def _pass_bob(client: TestClient, game_id: str, bob: str) -> None:
+    """One real, synchronous pass-priority for bob - not a background
+    thread: every test below drives bob's side by hand, exactly once at a
+    time, so each step is reached deterministically rather than raced
+    against a thread's own poll interval."""
+    passed = client.post(
+        f"/api/games/{game_id}/actions/pass-priority",
+        params={"uid": bob},
+        json={"player": "bob"},
+    )
+    assert passed.status_code == 200 and passed.json()["allowed"] is True, passed.text
+
+
+def test_default_max_seconds_returns_resume_that_fires_in_the_same_end_step(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 1: reaching a `theirs`/`either`
+    destination without this seat holding priority there yet used to answer
+    `finished: true` outright whenever `max_seconds` was left at its default
+    `0.0` - `_wait_for_own_priority_at_destination`'s own wait never even
+    ran, so the answer carried no `armed`, no note, and critically no
+    `resume`. A caller that took that at face value and called `pass_until`
+    again with no `resume` would get a fresh run stamped from the board it
+    is standing on (`start_autopass`), which exempts THIS very occurrence of
+    the destination as "the step the run started in" and skips straight to
+    the NEXT one - a whole turn later. The fix: `finished: false` with a
+    `resume` carrying the run's ORIGINAL starting stamp, so a follow-up call
+    that hands it straight back still arms in this same end step, the
+    moment this seat actually gets priority there.
+
+    `force_turn_position` positions the board at bob's postcombat_main
+    (still holding priority there) rather than his end_step directly: naming
+    the step a run is already sitting in as its own destination is exempted
+    as "the step the run started in" (`start_autopass`) and would never
+    "reach" it at all - one step earlier, and one real (synchronous, not
+    threaded) pass for bob, is what makes both calls below deterministic
+    rather than raced against a background driver."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    bob = seat_uid(game, "bob")
+    force_turn_position(game, Step.POSTCOMBAT_MAIN, "bob")
+    register(
+        client,
+        game,
+        alice,
+        tap_island_script(
+            "theirs-end",
+            when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Island", "alice", "battlefield")
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    _pass_bob(client, game, bob)  # bob's own postcombat_main priority
+
+    result = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="opponent",
+        corpora=seats.script_corpora,
+        arm=["theirs-end"],
+        arm_reasoning=ARM_REASONING,
+        # max_seconds left at its default 0.0 on purpose.
+    )
+    assert result["finished"] is False, result
+    assert "armed" not in result, result
+    assert result.get("resume") is not None, result
+    assert result["state"]["step"] == "end_step"
+    assert "call again with resume" in result["stopped_because"], result
+    starting_turn = result["state"]["turn_number"]
+
+    _pass_bob(client, game, bob)  # bob's own end_step priority - alice's window
+
+    result2 = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="opponent",
+        corpora=seats.script_corpora,
+        arm=["theirs-end"],
+        arm_reasoning=ARM_REASONING,
+        resume=result["resume"],
+    )
+
+    assert result2["finished"] is True, result2
+    [entry] = result2["armed"]
+    assert entry["script"] == "theirs-end"
+    assert hook.posts("/actions/activate"), "fired in the SAME end step, not a later one"
+    assert result2["state"]["step"] == "end_step"
+    assert result2["state"]["turn_number"] == starting_turn, (
+        "must not have skipped to the next occurrence"
+    )
+
+
+def test_pass_until_hands_back_resume_when_the_human_thinks_longer_than_the_wait(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 1: a bounded wait that genuinely runs out
+    without this seat ever getting priority at the destination - the human
+    thinking longer than even a real, positive `max_seconds` - must still
+    keep `finished: false` with a `resume`, not silently fall back to the
+    old `finished: true` behaviour once the deadline (rather than the
+    default `0.0`) is what ends the wait. Nobody ever passes bob's own
+    end_step priority here - the human who never finishes thinking within
+    the call's own bound."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    bob = seat_uid(game, "bob")
+    force_turn_position(game, Step.POSTCOMBAT_MAIN, "bob")
+    register(
+        client,
+        game,
+        alice,
+        tap_island_script(
+            "theirs-end",
+            when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Island", "alice", "battlefield")
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    _pass_bob(client, game, bob)
+
+    result = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="opponent",
+        corpora=seats.script_corpora,
+        arm=["theirs-end"],
+        arm_reasoning=ARM_REASONING,
+        max_seconds=0.3,
+    )
+
+    assert result["finished"] is False, result
+    assert "armed" not in result, result
+    assert result.get("resume") is not None, result
+    assert result["state"]["step"] == "end_step"
+    assert "waiting for your priority at end_step" in result["stopped_because"], result
+    assert "call again with resume" in result["stopped_because"], result
+    assert not hook.posts("/actions/activate")
+
+
+def test_pass_until_interrupted_waiting_for_own_priority_keeps_resume(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 1: `should_stop` firing while this call
+    is inside `_wait_for_own_priority_at_destination` used to keep the
+    `finished: true` this result already carried from `_pass_until_once`'s
+    own "reached" answer, only overwriting `stopped_because` with
+    `WAIT_INTERRUPTED` - which drops `resume` (only ever attached to a
+    `finished: false` answer), unlike the outer retry loop's own interrupt
+    handling, which already kept both. The fix makes the two agree."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    bob = seat_uid(game, "bob")
+    force_turn_position(game, Step.POSTCOMBAT_MAIN, "bob")
+    register(
+        client,
+        game,
+        alice,
+        tap_island_script(
+            "theirs-end",
+            when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Island", "alice", "battlefield")
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    _pass_bob(client, game, bob)
+
+    calls = {"n": 0}
+
+    def should_stop() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    result = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="opponent",
+        corpora=seats.script_corpora,
+        arm=["theirs-end"],
+        arm_reasoning=ARM_REASONING,
+        max_seconds=5.0,
+        should_stop=should_stop,
+    )
+
+    assert result["finished"] is False, result
+    assert "armed" not in result, result
+    assert result.get("resume") is not None, result
+    assert result["stopped_because"] == seatkit.WAIT_INTERRUPTED, result
+    assert not hook.posts("/actions/activate")
+
+
+def test_a_stack_arrival_while_waiting_for_own_priority_is_reported(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 arming re-review finding 1's third bug: bob casting something and
+    passing, while this seat waits for its own priority at the destination,
+    used to hand the board straight back with the STALE "reached ..."
+    `stopped_because` from before the wait even began - the new stack object
+    silently unreported, even though `stop_on_stack` (the default) asks for
+    exactly that. The fix reports the same stop reason `autopass_stop_reason`
+    itself would have; arming still runs on the resulting board, and a
+    script whose own `when` needs an empty stack is judged and skipped on
+    its own terms, never hard-skipped here."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    bob = seat_uid(game, "bob")
+    force_turn_position(game, Step.POSTCOMBAT_MAIN, "bob")
+    register(
+        client,
+        game,
+        alice,
+        tap_island_script(
+            "theirs-end",
+            when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Mountain", "bob", "battlefield")
+    add_card(client, game, "Lightning Bolt", "bob", "hand")
+    board = state(client, game)
+    mountain = find(board["battlefield"], "Mountain")["id"]
+    bolt = find(board["hands"]["bob"], "Lightning Bolt")["id"]
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    _pass_bob(client, game, bob)
+
+    first = pass_until(
+        seat,
+        until_step="end_step",
+        whose_turn="opponent",
+        corpora=seats.script_corpora,
+        arm=["theirs-end"],
+        arm_reasoning=ARM_REASONING,
+    )
+    assert first["finished"] is False, first
+    assert first.get("resume") is not None, first
+    assert first["state"]["step"] == "end_step"
+
+    cast = threading.Event()
+
+    def bob_bolts_then_passes() -> None:
+        bob_client = TestClient(app)
+        bolted = False
+        for _ in range(4000):
+            b = bob_client.get(f"/api/games/{game}").json()
+            if b.get("priority_holder") != "bob":
+                time.sleep(0.01)
+                continue
+            if not bolted:
+                bob_client.post(
+                    f"/api/games/{game}/actions/cast",
+                    json={
+                        "player": "bob",
+                        "card_id": bolt,
+                        "targets": ["alice"],
+                        "mana_sources": [mountain],
+                    },
+                )
+                bolted = True
+                cast.set()
+                continue
+            bob_client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+            return
+
+    thread = threading.Thread(target=bob_bolts_then_passes, daemon=True)
+    thread.start()
+    try:
+        result = pass_until(
+            seat,
+            until_step="end_step",
+            whose_turn="opponent",
+            corpora=seats.script_corpora,
+            arm=["theirs-end"],
+            arm_reasoning=ARM_REASONING,
+            max_seconds=5.0,
+            resume=first["resume"],
+        )
+    finally:
+        thread.join(timeout=10)
+
+    assert cast.is_set(), "bob never got the chance to cast, so nothing was tested"
+    assert result["finished"] is True, result
+    assert result["stopped_because"] == "something new went on the stack: Lightning Bolt", result
+    assert [obj["name"] for obj in result["state"]["stack"]] == ["Lightning Bolt"]
+    assert result["armed"] == [], (
+        "the script's own `when` needs an empty stack, judged and skipped on its own "
+        "terms rather than hard-skipped by the wait"
+    )
+    assert not hook.posts("/actions/activate")

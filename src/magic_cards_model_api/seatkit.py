@@ -3498,6 +3498,22 @@ def _restate(
     result["recent_log"] = seat.recent_log()
 
 
+def _own_priority_wait_note(until_step: str) -> str:
+    """`pass_until`'s own `stopped_because` when the bounded wait inside
+    `_wait_for_own_priority_at_destination` ends - or never even starts,
+    `max_seconds=0.0` being the same thing with the deadline already in the
+    past - without this seat ever holding priority at the destination (S2
+    arming re-review finding 1). Distinct from `_window_passed_note`: the
+    window itself is still open (the board is still sitting on `until_step`)
+    - only this one call's own wait ran out, and the `resume` this answer
+    carries is exactly what lets the next call keep arming in that same,
+    still-open window rather than being read as a fresh run that would
+    exempt it all over again."""
+    return (
+        f"waiting for your priority at {until_step} to fire armed scripts; call again with resume"
+    )
+
+
 def _wait_for_own_priority_at_destination(
     seat: Seat,
     result: dict[str, Any],
@@ -3505,6 +3521,8 @@ def _wait_for_own_priority_at_destination(
     deadline: float,
     should_stop: Callable[[], bool] | None,
     include_actions: bool,
+    run: dict[str, Any],
+    stop_on_stack: bool,
 ) -> dict[str, Any]:
     """`pass_until`'s own extra wait, entered only once `_pass_until_once`
     has already answered "reached" a destination with something armed for it
@@ -3526,17 +3544,44 @@ def _wait_for_own_priority_at_destination(
     re-entering its state machine here would reset `started_step`/
     `started_turn` to the step already reached and permanently exempt it
     from ever "reaching" it again (`autopass_stop_reason`'s own
-    `same_occurrence_this_run_started_in` check) - until either this seat
-    gets priority in the SAME occurrence, the step (or the game) moves on
-    without that ever happening, the caller interrupts, or the call's own
-    bounded wait runs out - the last of which returns `result` completely
-    unchanged, exactly the immediate `max_seconds=0.0` behaviour this had
-    before the fix (the loop below never executes when `deadline` is already
-    in the past)."""
+    `same_occurrence_this_run_started_in` check). `run` is the ORIGINAL run
+    stamp `_pass_until_once` reached this destination with (`answer`'s own
+    `_reached_run`, popped by `pass_until` before calling this) - never
+    re-stamped from wherever the seat is standing now - so `give_up`'s own
+    `resume` keeps naming the occurrence this run actually started in, and a
+    caller that hands it straight back on the next call arms in this same
+    window rather than skipping to the next one (S2 arming re-review finding
+    1's own repro: "starting-step exemption skips the window to the NEXT end
+    step").
+
+    Every way out short of this seat actually getting priority (or a
+    decision pending for it) in this same occurrence keeps `finished: False`
+    with that same `resume`: the caller interrupting (`should_stop`), and
+    the bounded wait itself running out - which includes never running at
+    all, the immediate `max_seconds=0.0` case (the loop below never executes
+    when `deadline` is already in the past). Only the game going away, or
+    the board genuinely leaving `until_step` without this seat ever holding
+    priority there (`_window_passed_note` - there is no "this window" left
+    to resume into), stay `finished: True`.
+
+    A stack object that arrives while this waits (`stop_on_stack`) is never
+    swallowed silently: `_arming_moment` firing on a stack that grew past
+    `run`'s own `known_stack_ids` - the stack as it stood when this destination
+    was first reached - reports the same stop reason `autopass_stop_reason`'s
+    own stack check would have, rather than leaving the stale "reached ..."
+    text as if nothing had landed. Arming still runs on it: a script whose own
+    `when` needs an empty stack is judged and skipped on its own terms, never
+    hard-skipped here."""
+
+    def give_up(reason: str) -> dict[str, Any]:
+        result["finished"] = False
+        result["stopped_because"] = reason
+        result["resume"] = dict(run)
+        return result
+
     while time.monotonic() < deadline:
         if should_stop is not None and should_stop():
-            result["stopped_because"] = WAIT_INTERRUPTED
-            return result
+            return give_up(WAIT_INTERRUPTED)
         time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
         state = seat.fetch_state()
         if game_gone(seat):
@@ -3549,8 +3594,19 @@ def _wait_for_own_priority_at_destination(
             return result
         if _arming_moment(state, seat.player):
             _restate(result, seat, state, include_actions)
+            if stop_on_stack:
+                arrived = [
+                    obj
+                    for obj in (state.get("stack") or [])
+                    if obj.get("id") not in run.get("known_stack_ids", ())
+                ]
+                if arrived:
+                    result["stopped_because"] = (
+                        f"something new went on the stack: "
+                        f"{arrived[0].get('name') or arrived[0].get('id')}"
+                    )
             return result
-    return result
+    return give_up(_own_priority_wait_note(until_step))
 
 
 def pass_until(
@@ -3674,6 +3730,10 @@ def pass_until(
     retryable = result.get("retryable", False)
     result.pop("retryable", None)
     inner_arm_eligible = result.pop("_arm_eligible", True)
+    # Never a real part of this answer's own shape (see `_pass_until_once`'s
+    # own `answer` closure) - popped here unconditionally so it never leaks
+    # to a caller, whether or not the branch below actually needs it.
+    reached_run = result.pop("_reached_run", None)
     if (
         arm
         and result["finished"]
@@ -3681,12 +3741,20 @@ def pass_until(
         and not retryable
         and str(result.get("stopped_because") or "").startswith(_REACHED_STOP_PREFIX)
         and not _arming_moment(result["state"], seat.player)
+        and reached_run is not None
     ):
         # S2 arming re-review finding 2: reached the destination without
         # this seat holding priority there yet - see
         # `_wait_for_own_priority_at_destination`'s own docstring.
         result = _wait_for_own_priority_at_destination(
-            seat, result, until_step, deadline, should_stop, include_actions
+            seat,
+            result,
+            until_step,
+            deadline,
+            should_stop,
+            include_actions,
+            reached_run,
+            stop_on_stack,
         )
     if (
         arm
@@ -3861,6 +3929,17 @@ def _pass_until_once(
             # `start_autopass`), and this is the token `resume_autopass`
             # takes straight back on the next call.
             result["resume"] = dict(run)
+        if reason.startswith(_REACHED_STOP_PREFIX):
+            # `pass_until`'s own arming wrapper needs this run's starting
+            # stamp to build a `resume` of its own (S2 arming re-review
+            # finding 1, `_wait_for_own_priority_at_destination`) when it
+            # reached this destination without this seat holding priority
+            # there yet - re-stamping from the board it is standing on
+            # (`start_autopass`) would exempt this very occurrence as "the
+            # step the run started in" and skip it entirely on retry. A
+            # private key: never a real part of this answer's shape, and
+            # `pass_until` pops it before anything reaches a caller.
+            result["_reached_run"] = dict(run)
         return result
 
     def handed_back(

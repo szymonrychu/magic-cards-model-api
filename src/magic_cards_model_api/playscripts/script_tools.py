@@ -28,7 +28,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from ..seatkit import Seat, scripts_enabled_here
+from ..seatkit import MAX_WAIT_SECONDS, Seat, scripts_enabled_here
 from . import conditions, lint, runtime
 from .inputs import BUILTIN_INPUT, input_catalog
 from .schema import WILDCARD
@@ -978,6 +978,20 @@ def _arm_call_template(
     args["arm"] = armed_ids
     args["arm_reasoning"] = runtime.REASONING_PLACEHOLDER
     args["opposing_archetype"] = asserted
+    if not seat.advise:
+        # S2 arming re-review finding 1: a `theirs`/`either` destination is
+        # usually still the active opponent's own first priority in it (CR
+        # 117.3a), so `pass_until` needs its own bounded wait
+        # (`max_seconds`) to have any real chance of reaching THIS seat's
+        # own priority there before giving up - left at the tool's own
+        # default (`0.0`), `_wait_for_own_priority_at_destination` never
+        # even runs once and this call would give straight back up on the
+        # very first "reached" it sees. `seatkit.MAX_WAIT_SECONDS` is the
+        # same ceiling every other bounded wait in this codebase is already
+        # capped to. Never for an advisor's `wait_for_priority`: that is a
+        # single check-and-return, not a `pass_until`-style multi-call run,
+        # so it has no matching wait to bound.
+        args["max_seconds"] = MAX_WAIT_SECONDS
     if remembered:
         args["inputs"] = remembered
     rendered = ", ".join(f"{name}={json.dumps(value)}" for name, value in args.items())
