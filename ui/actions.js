@@ -370,7 +370,9 @@ export function endpointFor(action) {
   return "actions/cast";
 }
 
-function isManaAbility(action) {
+/** Whether `action` activates a mana ability - exported for `app.js`'s
+ * `fire()`, which never auto-passes after one, paused or not. */
+export function isManaAbility(action) {
   if (action.kind !== "activate") return false;
   const ability = abilityOf(action.card, action.abilityIndex);
   return Boolean(ability && ability.is_mana_ability);

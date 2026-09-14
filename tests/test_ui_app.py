@@ -688,6 +688,468 @@ def test_the_per_action_tick_still_holds_with_the_standing_default_off() -> None
     assert not any("actions/pass-priority" in p for p in paths), paths
 
 
+# -- auto-pass after a stack action that pauses on a decision ----------------
+#
+# The owner's report: with "Keep priority by default" off, activating an
+# ability should put it on the stack and then pass priority, like casting -
+# and it did not. An activation (or a cast) that pauses on a decision - a
+# target nobody named yet, a search - answers `{allowed: null, paused: true,
+# pending_decision}`. `fire()` read that as done and passed straight away: the
+# pass was refused (a decision is still open) with a toast, and when the
+# player then answered through `decide()` the action completed and nothing
+# passed at all. The pass now waits for the decide that completes the action,
+# through `store.pendingRelease`. `cycle()` never passed at all, though
+# cycling puts an activated ability on the stack. These drive the real
+# `app.js` against a scripted `fetch`: every POST is answered from a
+# per-route queue, and every board read answers `globalThis.__state`, which a
+# test moves the way the server would.
+
+TARGETING_ABILITY_CARD = {
+    "id": "c1",
+    "name": "Goblin Bombardment",
+    "abilities": [
+        {"index": 0, "text": "Sacrifice a creature: deal 1 damage", "is_mana_ability": False}
+    ],
+}
+
+MANA_ABILITY_CARD = {
+    "id": "m1",
+    "name": "Llanowar Elves",
+    "abilities": [{"index": 0, "text": "{T}: Add {G}.", "is_mana_ability": True}],
+}
+
+
+def _pending(generation: int, player: str = "alice") -> dict[str, Any]:
+    return {"player": player, "kind": "choose_targets", "generation": generation}
+
+
+def _paused(generation: int, player: str = "alice") -> dict[str, Any]:
+    return {
+        "allowed": None,
+        "reason": None,
+        "paused": True,
+        "pending_decision": _pending(generation, player),
+    }
+
+
+def _release_flow(script: str, keep_by_default: bool, **bindings: Any) -> Any:
+    """Run `script` (the body of an async function) against `app.js` with a
+    scripted fetch. `respond(route, ...bodies)` queues answers for one POST
+    route (`"actions/activate"`, `"decide"`, ...); an unqueued POST is a plain
+    `{allowed: true}`. `passes()` counts the pass-priority POSTs so far.
+    `board(pending)` sets what the next board read returns."""
+    stops = {"mine": [], "theirs": [], "onStack": True, "keepPriorityByDefault": keep_by_default}
+    return run_app(
+        """
+        globalThis.__calls = [];
+        globalThis.__queues = {};
+        globalThis.__state = {
+          you: "alice", pending_decision: null, step: "precombat_main",
+          active_player: "alice", priority_holder: "alice", battlefield: [],
+          hands: { alice: [] }, stack: [], combat: { attacks: [] },
+          winner: null, drawn: false, pregame: null,
+        };
+        const toastEl = { hidden: true, textContent: "" };
+        globalThis.document = { querySelector: (sel) => (sel === "#toast" ? toastEl : null) };
+        globalThis.fetch = (path, opts) => {
+          const method = opts ? opts.method : "GET";
+          const body = opts && opts.body ? JSON.parse(opts.body) : undefined;
+          globalThis.__calls.push({ method, path, body });
+          if (method === "POST") {
+            const route = path.split("/api/games/g1/")[1].split("?")[0];
+            const queue = globalThis.__queues[route] || [];
+            const answer = queue.length ? queue.shift() : { allowed: true };
+            return Promise.resolve({ ok: true, json: async () => answer });
+          }
+          if (path.includes("/log")) {
+            return Promise.resolve({ ok: true, json: async () => ({ log: [], last_seq: 0 }) });
+          }
+          const snapshot = JSON.parse(JSON.stringify(globalThis.__state));
+          return Promise.resolve({ ok: true, json: async () => snapshot });
+        };
+        const respond = (route, ...bodies) => {
+          globalThis.__queues[route] = [...(globalThis.__queues[route] || []), ...bodies];
+        };
+        const board = (pending) => { globalThis.__state.pending_decision = pending; };
+        const passes = () =>
+          globalThis.__calls.filter(
+            (c) => c.method === "POST" && c.path.includes("actions/pass-priority")
+          ).length;
+        (async () => {
+          const A = await import(pathToFileURL(actionsPath).href);
+          m.store.set({
+            gameId: "g1", uid: "u1",
+            state: JSON.parse(JSON.stringify(globalThis.__state)),
+            stops,
+          });
+          const out = {};
+          const toastSeen = () => !toastEl.hidden;
+          """
+        + script
+        + """
+          out.posts = globalThis.__calls.filter((c) => c.method === "POST").map((c) => c.path);
+          return out;
+        })()
+        """,
+        actionsPath=str(ACTIONS_JS),
+        stops=stops,
+        **bindings,
+    )
+
+
+_BEGIN_ACTIVATE = """
+          m.store.set({ action: A.begin("activate", card, { abilityIndex: 0 }) });
+"""
+
+_PAUSED_ACTIVATE = (
+    _BEGIN_ACTIVATE
+    + """
+          respond("actions/activate", paused1);
+          board(pending1);
+          await m.fire();
+          out.afterFire = passes();
+          out.toastAfterFire = toastSeen();
+          out.armed = m.store.get().pendingRelease ?? null;
+"""
+)
+
+_COMPLETING_DECIDE = """
+          respond("decide", { accepted: true, log_seq: 9 });
+          board(null);
+          await m.decide({ targets: ["bob"] });
+          out.afterDecide = passes();
+          out.releaseAfterDecide = m.store.get().pendingRelease ?? null;
+"""
+
+
+def _paused_bindings() -> dict[str, Any]:
+    return {"card": TARGETING_ABILITY_CARD, "paused1": _paused(1), "pending1": _pending(1)}
+
+
+def test_the_store_starts_with_no_pending_release() -> None:
+    assert run_app("(async () => m.store.get().pendingRelease)()") is None
+
+
+def test_a_paused_activation_with_the_default_off_passes_once_the_decide_completes() -> None:
+    out = _release_flow(_PAUSED_ACTIVATE + _COMPLETING_DECIDE, False, **_paused_bindings())
+    assert out["afterFire"] == 0, "a paused activation must not pass yet - " + str(out["posts"])
+    assert out["toastAfterFire"] is False, "no refused premature pass, so no toast"
+    assert out["armed"] is not None
+    assert out["afterDecide"] == 1, out["posts"]
+    assert out["releaseAfterDecide"] is None
+
+
+def test_a_paused_activation_with_the_default_on_never_passes() -> None:
+    out = _release_flow(_PAUSED_ACTIVATE + _COMPLETING_DECIDE, True, **_paused_bindings())
+    assert out["afterFire"] == 0
+    assert out["armed"] is None
+    assert out["afterDecide"] == 0, out["posts"]
+
+
+def test_the_per_action_hold_tick_holds_a_paused_activation_with_the_default_off() -> None:
+    script = (
+        """
+          const begun = A.begin("activate", card, { abilityIndex: 0 });
+          m.store.set({ action: { ...begun, holdPriority: true } });
+          respond("actions/activate", paused1);
+          board(pending1);
+          await m.fire();
+          out.afterFire = passes();
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, False, **_paused_bindings())
+    assert out["afterFire"] == 0
+    assert out["afterDecide"] == 0, out["posts"]
+
+
+def test_a_decide_that_pauses_again_waits_for_the_final_completing_decide() -> None:
+    script = (
+        _PAUSED_ACTIVATE
+        + """
+          respond("decide", {
+            accepted: true, paused: true, pending_decision: pending2, log_seq: 8,
+          });
+          board(pending2);
+          await m.decide({ targets: ["bob"] });
+          out.afterFirstDecide = passes();
+          out.stillArmed = m.store.get().pendingRelease ?? null;
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, False, pending2=_pending(2), **_paused_bindings())
+    assert out["afterFire"] == 0
+    assert out["afterFirstDecide"] == 0, out["posts"]
+    assert out["stillArmed"] is not None, "a decide that pauses again keeps the release armed"
+    assert out["afterDecide"] == 1, out["posts"]
+
+
+def test_a_refused_decide_after_a_pause_passes_nothing_and_clears_the_release() -> None:
+    script = (
+        _PAUSED_ACTIVATE
+        + """
+          respond("decide", { accepted: false, reason: "not a legal target" });
+          await m.decide({ targets: ["nobody"] });
+          out.afterRefused = passes();
+          out.releaseAfterRefused = m.store.get().pendingRelease ?? null;
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, False, **_paused_bindings())
+    assert out["afterRefused"] == 0, out["posts"]
+    assert out["releaseAfterRefused"] is None
+    assert out["afterDecide"] == 0, "a cleared release never fires later - " + str(out["posts"])
+
+
+def test_cancel_clears_a_pending_release() -> None:
+    script = (
+        _PAUSED_ACTIVATE
+        + """
+          m.cancel();
+          out.afterCancel = m.store.get().pendingRelease ?? null;
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, False, **_paused_bindings())
+    assert out["armed"] is not None
+    assert out["afterCancel"] is None
+    assert out["afterDecide"] == 0, out["posts"]
+
+
+def test_a_new_action_clears_a_pending_release() -> None:
+    script = (
+        _PAUSED_ACTIVATE
+        + """
+          respond("actions/play-land", { allowed: false, reason: "a decision is pending" });
+          await m.playLand({ id: "land1", name: "Mountain" });
+          out.afterNewAction = m.store.get().pendingRelease ?? null;
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, False, **_paused_bindings())
+    assert out["armed"] is not None
+    assert out["afterNewAction"] is None
+    assert out["afterDecide"] == 0, out["posts"]
+
+
+def test_a_release_clears_when_the_decision_goes_away_and_never_fires_on_a_later_decide() -> None:
+    """The pause ended without this seat's decide (the game moved on), then a
+    decision this seat did not start by its own action - an opponent's
+    trigger asking alice - is answered: nothing passes."""
+    script = (
+        _PAUSED_ACTIVATE
+        + """
+          board(null);
+          await m.poll();
+          out.afterMovedOn = m.store.get().pendingRelease ?? null;
+          board(pending5);
+          await m.poll();
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, False, pending5=_pending(5), **_paused_bindings())
+    assert out["armed"] is not None
+    assert out["afterMovedOn"] is None
+    assert out["afterDecide"] == 0, out["posts"]
+
+
+def test_a_decide_for_a_different_decision_does_not_fire_a_release() -> None:
+    """Armed on generation 1, but the question on the board is a different one
+    (generation 5, raised by something else): answering it passes nothing."""
+    script = (
+        _PAUSED_ACTIVATE
+        + """
+          board(pending5);
+          await m.poll();
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, False, pending5=_pending(5), **_paused_bindings())
+    assert out["afterDecide"] == 0, out["posts"]
+
+
+def test_a_decide_with_nothing_armed_never_passes() -> None:
+    """An opponent-triggered decision, a mulligan-era prompt, anything this
+    seat's own action did not start: `decide()` is just an answer."""
+    script = (
+        """
+          board(pending1);
+          await m.poll();
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, False, pending1=_pending(1))
+    assert out["afterDecide"] == 0, out["posts"]
+
+
+def test_a_paused_cast_behaves_like_a_paused_activation() -> None:
+    script = (
+        """
+          m.store.set({ action: A.begin("cast", card, {}) });
+          respond("actions/cast", paused1);
+          board(pending1);
+          await m.fire();
+          out.afterFire = passes();
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, False, **_paused_bindings())
+    assert any("actions/cast" in p for p in out["posts"]), out["posts"]
+    assert out["afterFire"] == 0, out["posts"]
+    assert out["afterDecide"] == 1, out["posts"]
+
+
+def test_a_paused_equip_behaves_like_a_paused_activation() -> None:
+    script = (
+        """
+          respond("actions/equip", paused1);
+          board(pending1);
+          await m.fireEquip({ id: "eq1", name: "Bonesplitter" }, "bear1", 4);
+          out.afterFire = passes();
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, False, **_paused_bindings())
+    assert any("actions/equip" in p for p in out["posts"]), out["posts"]
+    assert out["afterFire"] == 0, out["posts"]
+    assert out["afterDecide"] == 1, out["posts"]
+
+
+def test_a_paused_equip_with_the_default_on_never_passes() -> None:
+    script = (
+        """
+          respond("actions/equip", paused1);
+          board(pending1);
+          await m.fireEquip({ id: "eq1", name: "Bonesplitter" }, "bear1", 4);
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, True, **_paused_bindings())
+    assert out["afterDecide"] == 0, out["posts"]
+
+
+def test_cycling_with_the_default_off_passes_once() -> None:
+    out = _release_flow(
+        """
+          await m.cycle({ id: "cy1", name: "Lorien Revealed" });
+          out.after = passes();
+""",
+        False,
+    )
+    assert any("actions/cycle" in p for p in out["posts"]), out["posts"]
+    assert out["after"] == 1, out["posts"]
+
+
+def test_cycling_with_the_default_on_passes_nothing() -> None:
+    out = _release_flow(
+        """
+          await m.cycle({ id: "cy1", name: "Lorien Revealed" });
+          out.after = passes();
+""",
+        True,
+    )
+    assert out["after"] == 0, out["posts"]
+
+
+def test_a_paused_cycle_passes_once_the_decide_completes() -> None:
+    script = (
+        """
+          respond("actions/cycle", paused1);
+          board(pending1);
+          await m.cycle({ id: "cy1", name: "Lorien Revealed" });
+          out.afterFire = passes();
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(script, False, **_paused_bindings())
+    assert out["afterFire"] == 0, out["posts"]
+    assert out["afterDecide"] == 1, out["posts"]
+
+
+def test_a_refused_cycle_passes_nothing() -> None:
+    out = _release_flow(
+        """
+          respond("actions/cycle", { allowed: false, reason: "cannot cycle now" });
+          await m.cycle({ id: "cy1", name: "Lorien Revealed" });
+          out.after = passes();
+""",
+        False,
+    )
+    assert out["after"] == 0, out["posts"]
+
+
+def test_a_mana_ability_never_passes_even_with_the_default_off_and_the_tick_off() -> None:
+    out = _release_flow(
+        """
+          const begun = A.begin("activate", card, { abilityIndex: 0 });
+          m.store.set({ action: { ...begun, holdPriority: false } });
+          respond("actions/activate", { allowed: true, mana_ability: true });
+          await m.fire();
+          out.after = passes();
+""",
+        False,
+        card=MANA_ABILITY_CARD,
+    )
+    assert out["after"] == 0, out["posts"]
+
+
+def test_a_paused_mana_ability_arms_nothing() -> None:
+    script = (
+        """
+          m.store.set({ action: A.begin("activate", card, { abilityIndex: 0 }) });
+          respond("actions/activate", paused1);
+          board(pending1);
+          await m.fire();
+          out.armed = m.store.get().pendingRelease ?? null;
+"""
+        + _COMPLETING_DECIDE
+    )
+    out = _release_flow(
+        script, False, card=MANA_ABILITY_CARD, paused1=_paused(1), pending1=_pending(1)
+    )
+    assert out["armed"] is None
+    assert out["afterDecide"] == 0, out["posts"]
+
+
+def test_playing_a_land_never_passes() -> None:
+    out = _release_flow(
+        """
+          await m.playLand({ id: "land1", name: "Mountain" });
+          out.after = passes();
+""",
+        False,
+    )
+    assert any("actions/play-land" in p for p in out["posts"]), out["posts"]
+    assert out["after"] == 0, out["posts"]
+
+
+def test_a_refused_activation_neither_passes_nor_arms() -> None:
+    script = (
+        _BEGIN_ACTIVATE
+        + """
+          respond("actions/activate", { allowed: false, reason: "not now" });
+          await m.fire();
+          out.after = passes();
+          out.armed = m.store.get().pendingRelease ?? null;
+"""
+    )
+    out = _release_flow(script, False, card=TARGETING_ABILITY_CARD)
+    assert out["after"] == 0, out["posts"]
+    assert out["armed"] is None
+
+
+def test_a_completed_plain_activation_still_passes_exactly_once() -> None:
+    script = (
+        _BEGIN_ACTIVATE
+        + """
+          await m.fire();
+          out.after = passes();
+"""
+    )
+    out = _release_flow(script, False, card=TARGETING_ABILITY_CARD)
+    assert out["after"] == 1, out["posts"]
+
+
 # -- fixtures ----------------------------------------------------------------
 
 MOUNTAIN = {

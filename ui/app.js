@@ -78,6 +78,12 @@ export const store = createStore({
   aiUid: null,
   state: null,
   action: null,
+  // The pass this seat still owes after its own cast, activation, equip or
+  // cycle paused on a decision (`afterStackAction`): `{seat, generation,
+  // readSeq}` - the seat that acted, the `pending_decision.generation` the
+  // pause raised, and the board-read ordinal it was armed at - or `null`.
+  // Never persisted: a reload starts with nothing owed.
+  pendingRelease: null,
   decisionDraft: {},
   decisionTargets: null,
   combatDraft: {},
@@ -511,6 +517,7 @@ export async function poll() {
           ? { entries: [...s.log.entries, ...log.log].slice(-500), lastSeq: log.last_seq }
           : s.log,
     }));
+    if (newest) settleRelease(reads.seq);
     refreshDecisionTargets();
     await tickOnce();
   } catch (err) {
@@ -611,6 +618,7 @@ async function refresh() {
       return;
     }
     store.set({ state, connection: "ok" });
+    settleRelease(reads.seq);
     refreshDecisionTargets();
   } catch (err) {
     store.set({ connection: `error: ${err.message}` });
@@ -731,22 +739,75 @@ export async function fire() {
   const body = A.bodyFor(action, you(), untappedSources(app.state));
   const res = await send("POST", gamePath(A.endpointFor(action)), body);
   if (res === null) return;
-  if (res.allowed === false) {
+  if (refused(res)) {
     store.set({ action: { ...action, error: res.reason } });
     toast(res.reason);
     return;
   }
   store.set({ action: null, preview: null });
-  const onStack = !(res.mana_ability || action.kind === "special");
-  // CR 117.3c already gives you priority back after casting or activating.
-  // `action.holdPriority` is this one action's tick; untouched (`null`) it
-  // follows the stops panel's standing `keepPriorityByDefault`, read fresh
-  // here and on unless explicitly `false`.
-  const hold = action.holdPriority ?? store.get().stops.keepPriorityByDefault !== false;
-  if (onStack && !hold) {
-    await passOnce();
-  }
+  const onStack = !(res.mana_ability || A.isManaAbility(action) || action.kind === "special");
+  await afterStackAction(res, !onStack || holdsPriority(action.holdPriority));
   await refresh();
+}
+
+/** A refusal, in either shape an acting route answers one with: `allowed:
+ * false` from `actions/*`, `accepted: false` from `/decide`. */
+function refused(res) {
+  return res.allowed === false || res.accepted === false;
+}
+
+/** Which question a `pending_decision` is - `generation`, the same key
+ * `render/decision_window.js` reads, falling back to `seq`. */
+function generationOf(pending) {
+  if (!pending) return null;
+  return pending.generation ?? pending.seq ?? null;
+}
+
+/** Whether this seat keeps priority after one of its own stack actions.
+ * CR 117.3c already gives you priority back after casting or activating;
+ * `tick` is that one action's keep-priority tick, and untouched (`null` or
+ * absent) it follows the stops panel's standing `keepPriorityByDefault`,
+ * read fresh here and on unless explicitly `false`. */
+function holdsPriority(tick) {
+  return tick ?? store.get().stops.keepPriorityByDefault !== false;
+}
+
+/** What follows this seat's own cast, activation, equip or cycle once the
+ * server has answered it - shared by `fire`, `fireEquip` and `cycle` so the
+ * three cannot drift apart again. `hold` is true for anything that must never
+ * pass (a mana ability, a special action) as well as for a kept priority.
+ *
+ * A refusal changes nothing. A pause (`paused: true`, `allowed: null`) has
+ * not finished the action yet: the engine is waiting on a decision, and a
+ * pass sent now is refused because of it. So the pass is owed instead of
+ * sent - `pendingRelease`, keyed on the question the pause raised - and
+ * `decide()` pays it when its answer completes the action. Anything else is
+ * complete, and passes once unless held. */
+async function afterStackAction(res, hold) {
+  if (refused(res)) return;
+  if (res.paused === true) {
+    store.set({
+      pendingRelease: hold
+        ? null
+        : { seat: you(), generation: generationOf(res.pending_decision), readSeq: boardReads },
+    });
+    return;
+  }
+  store.set({ pendingRelease: null });
+  if (!hold) await passOnce();
+}
+
+/** Drop an owed pass once a board read issued after it was armed shows its
+ * question gone - answered some other way, or replaced by another - so it
+ * can never fire for a decision this seat's own action did not start. Reads
+ * issued before the arming are skipped: they can describe the board from
+ * before the pause itself. */
+function settleRelease(readSeq) {
+  const { pendingRelease, state } = store.get();
+  if (!pendingRelease || readSeq <= pendingRelease.readSeq) return;
+  const pending = state && state.pending_decision;
+  if (pending && generationOf(pending) === pendingRelease.generation) return;
+  store.set({ pendingRelease: null });
 }
 
 /** The element a card-scoped menu anchors itself over: the card node that
@@ -902,14 +963,14 @@ export async function onHandCard(card, event) {
 
 async function beginCast(card) {
   hidePopover();
-  store.set({ action: A.begin("cast", card, {}), preview: null });
+  store.set({ action: A.begin("cast", card, {}), preview: null, pendingRelease: null });
   if (!A.needsChoices(card, null)) return previewAndMaybeFire();
   return refreshAffordance();
 }
 
 function beginCrew(card) {
   hidePopover();
-  store.set({ action: A.begin("crew", card, {}), preview: null });
+  store.set({ action: A.begin("crew", card, {}), preview: null, pendingRelease: null });
   return refreshAffordance();
 }
 
@@ -921,7 +982,7 @@ function beginCrew(card) {
  * cast is unaffected. */
 function beginCastFromPermission(card, fromZone) {
   hidePopover();
-  store.set({ action: A.begin("cast", card, { fromZone }), preview: null });
+  store.set({ action: A.begin("cast", card, { fromZone }), preview: null, pendingRelease: null });
   if (!A.needsChoices(card, null)) return previewAndMaybeFire();
   return refreshAffordance();
 }
@@ -941,7 +1002,8 @@ export function onPermission(permission, event) {
   });
 }
 
-async function playLand(card) {
+export async function playLand(card) {
+  store.set({ pendingRelease: null });
   const res = await send("POST", gamePath("actions/play-land"), { player: you(), card_id: card.id });
   if (res === null) return;
   if (res.allowed === false) toast(res.reason);
@@ -950,17 +1012,23 @@ async function playLand(card) {
 
 async function fireSpecial(card, keyword) {
   hidePopover();
+  store.set({ pendingRelease: null });
   const res = await send("POST", gamePath(`actions/${keyword}`), { player: you(), card_id: card.id });
   if (res === null) return;
   if (res.allowed === false) toast(res.reason);
   await refresh();
 }
 
-async function cycle(card) {
+export async function cycle(card) {
   hidePopover();
+  store.set({ pendingRelease: null });
   const res = await send("POST", gamePath("actions/cycle"), { player: you(), card_id: card.id });
   if (res === null) return;
-  if (res.allowed === false) toast(res.reason);
+  if (refused(res)) toast(res.reason);
+  // Cycling is an activated ability (`engine_api.py`'s `cycle`), so it goes
+  // on the stack and passes like any activation. The hand menu's Cycle item
+  // carries no keep-priority tick of its own, so the standing default decides.
+  await afterStackAction(res, holdsPriority(null));
   await refresh();
 }
 
@@ -1069,21 +1137,21 @@ function beginEquip(anchor, card, row, lastSeq) {
  * refusal (`records.require_current_board`) rather than a stale action fired
  * blind. No `mana_sources`: the engine's own `payment.pay()` auto-taps the
  * rest, exactly as `playLand`/`fireSpecial`/`cycle` already leave it to. */
-async function fireEquip(card, targetId, expectedSeq) {
+export async function fireEquip(card, targetId, expectedSeq) {
   hidePopover();
+  store.set({ pendingRelease: null });
   const body = { player: you(), card_id: card.id, target: targetId };
   if (expectedSeq !== undefined && expectedSeq !== null) body.expected_seq = expectedSeq;
   const res = await send("POST", gamePath("actions/equip"), body);
   if (res === null) return;
-  if (res.allowed === false) {
+  if (refused(res)) {
     toast(res.reason);
     return;
   }
-  // CR 117.3c already gives priority back; equip has no ribbon panel of its
-  // own to carry a per-action hold tick, so this follows the stops panel's
-  // standing default exactly as `fire()` does when nothing overrides it.
-  const hold = store.get().stops.keepPriorityByDefault !== false;
-  if (!hold) await passOnce();
+  // Equip has no ribbon panel of its own to carry a per-action hold tick, so
+  // this follows the stops panel's standing default, as `fire()` does when
+  // nothing overrides it.
+  await afterStackAction(res, holdsPriority(null));
   await refresh();
 }
 
@@ -1092,7 +1160,7 @@ async function beginActivate(card, index) {
   let action = A.begin("activate", card, { abilityIndex: index });
   const colors = colorOptions(card, index);
   if (colors.length === 1) action = A.chooseColor(action, colors[0]);
-  store.set({ action, preview: null });
+  store.set({ action, preview: null, pendingRelease: null });
   if (!A.needsChoices(card, index) || (colors.length <= 1 && !(card.abilities[index].targeting || {}).targets_anything && !card.abilities[index].needs_x)) {
     return previewAndMaybeFire();
   }
@@ -1253,9 +1321,9 @@ function onFocusSlot(i) {
   }));
 }
 
-function cancel() {
+export function cancel() {
   hidePopover();
-  store.set({ action: null, preview: null });
+  store.set({ action: null, preview: null, pendingRelease: null });
 }
 
 // ---- combat --------------------------------------------------------------
@@ -1490,11 +1558,36 @@ export async function tickRun() {
 
 // ---- decisions -----------------------------------------------------------
 
-async function decide(answer) {
-  const res = await send("POST", withUid(gamePath("decide"), store.get().uid), { player: you(), ...answer });
+export async function decide(answer) {
+  // The owed pass is read BEFORE the request, and only when it is owed for
+  // the very question on the board: a poll landing while this answer is in
+  // flight can already show the question gone and settle the release.
+  const app = store.get();
+  const owed = app.pendingRelease;
+  const release =
+    owed &&
+    owed.seat === you() &&
+    app.state &&
+    app.state.pending_decision &&
+    generationOf(app.state.pending_decision) === owed.generation
+      ? owed
+      : null;
+  const res = await send("POST", withUid(gamePath("decide"), app.uid), { player: you(), ...answer });
   if (res === null) return;
-  if (res.allowed === false) toast(res.reason);
+  if (refused(res)) toast(res.reason);
   store.set({ decisionDraft: {} });
+  if (release) {
+    if (refused(res)) {
+      store.set({ pendingRelease: null });
+    } else if (res.paused === true) {
+      store.set({
+        pendingRelease: { ...release, generation: generationOf(res.pending_decision), readSeq: boardReads },
+      });
+    } else {
+      store.set({ pendingRelease: null });
+      await passOnce();
+    }
+  }
   await refresh();
 }
 
@@ -1616,6 +1709,7 @@ export function leaveGame() {
     aiUid: null,
     state: null,
     action: null,
+    pendingRelease: null,
     combatDraft: {},
     run: null,
     decisionDraft: {},
