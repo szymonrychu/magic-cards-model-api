@@ -634,6 +634,28 @@ def test_resolve_top_reports_changed_when_only_the_stack_changed(client, game, m
     assert resolved["changed"] is True
 
 
+def test_entries_carry_active_player_and_priority_holder(client, game):
+    """S2 A7: every row is stamped with whose turn it was written in and who
+    held priority the moment after - both read straight off the live game,
+    so `alice`/`bob` here are what `game` fixture's own seating (alice seat
+    0) and CR 103.3's starting priority already say."""
+    add_card(client, game, "Mountain", "alice", "hand")
+    log = log_of(client, game)
+    create = entry_of(log, "create_game")
+    assert create["active_player"] == "alice"
+    added = entry_of(log, "add_card")
+    assert added["active_player"] == "alice"
+    assert added["priority_holder"] == "alice"
+
+    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    assert passed.json()["allowed"] is True
+
+    log = log_of(client, game)
+    pass_entry = entry_of(log, "pass_priority")
+    assert pass_entry["active_player"] == "alice", "the turn has not changed hands"
+    assert pass_entry["priority_holder"] == "bob", "alice's pass handed bob priority"
+
+
 def test_dry_run_cast_is_not_audited(client, game):
     """A `dry_run` cast probe - what `seatkit.available_actions` used to
     issue per hand card, before T11 pointed it at the engine's own
