@@ -261,3 +261,62 @@ def test_the_browser_decide_refreshes_on_the_expired_question_and_never_re_sends
     assert out["release"] is None, out
     assert not str(out["connection"] or "").startswith("error"), out
     assert out["pending"] is None, out
+
+
+def stale_attack_pause(client: TestClient, repo: Any) -> tuple[str, dict[str, str], str]:
+    """A real paused `advance` into the declare attackers step (CR 508.1)
+    whose stored question is written back one `seq` off, the same stale shape
+    as `stale_pause` but on the declaration a dry-run attack is answered
+    against."""
+    game_id = new_game(client)
+    uids = seats_of(repo, game_id)
+    add_card(client, game_id, "Grizzly Bears", "alice", "battlefield")
+    bears = find(state(client, game_id)["battlefield"], "Grizzly Bears")["id"]
+    patched = client.patch(f"/api/games/{game_id}/cards/{bears}", json={"summoning_sick": False})
+    assert patched.status_code == 200, patched.text
+    force_turn_position(game_id, Step.BEGINNING_OF_COMBAT, "alice")
+    advanced = client.post(f"/api/games/{game_id}/advance", json={"player": "alice"}).json()
+    assert advanced["pending_decision"]["kind"] == "declare_attackers", advanced
+    stored = repo.paused_command(game_id)
+    assert stored is not None
+    command, tape, pending = stored
+    repo.store_paused_command(
+        game_id, command, tape, dataclasses.replace(pending, seq=pending.seq + 1)
+    )
+    return game_id, uids, bears
+
+
+def test_a_dry_run_attack_on_a_diverged_declaration_expires_it_as_the_409_says(
+    repo: Any, client: TestClient
+) -> None:
+    """`POST .../actions/attack` with `dry_run` resumes the standing
+    declaration too (`_dry_run_declaration`), so it meets the same divergence
+    and answers the same 409 - which says the question has been cleared, so
+    it must actually be cleared, or the next real answer 409s again."""
+    game_id, uids, bears = stale_attack_pause(client, repo)
+    alice = uids["alice"]
+    attackers = [{"card_id": bears, "defender": "bob"}]
+    try:
+        probed = client.post(
+            f"/api/games/{game_id}/actions/attack",
+            params={"uid": alice},
+            json={"attackers": attackers, "dry_run": True, "reasoning": "test"},
+        )
+
+        assert probed.status_code == 409, probed.text
+        assert probed.json()["detail"] == EXPIRED_DETAIL
+        assert probed.json()["expired"] is True
+        assert repo.paused_command(game_id) is None, "the 409 said cleared, so it is"
+
+        advanced = client.post(f"/api/games/{game_id}/advance", json={"player": "alice"}).json()
+        assert advanced["pending_decision"]["kind"] == "declare_attackers", advanced
+        declared = client.post(
+            f"/api/games/{game_id}/actions/attack",
+            params={"uid": alice},
+            json={"attackers": attackers, "reasoning": "test"},
+        )
+        assert declared.status_code == 200, declared.text
+        assert declared.json()["allowed"] is True, declared.json()
+        assert len(state(client, game_id, uid=alice)["combat"]["attacks"]) == 1
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": _ADMIN_KEYS.pop(game_id)})

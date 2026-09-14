@@ -2578,7 +2578,11 @@ def _dry_run_declaration(
     the same replay of the paused command with the answer appended, on the
     board the question was raised on (CR 508.1). `commands.resume_command`
     works on a copy and nothing is committed or restashed, so the question
-    still stands afterwards and the dry run and the real call agree."""
+    still stands afterwards and the dry run and the real call agree.
+
+    Raises `commands.CommandDivergenceError` when the stored pause no longer
+    replays; the caller holds the game lock and clears that pause before the
+    409, exactly as the real declaration does."""
     command, tape, pending = paused
     decision = pending.decision
     try:
@@ -2624,12 +2628,19 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
         DeclaredPairRequest(creature=pair.card_id, defender=pair.defender) for pair in req.attackers
     ]
     if req.dry_run:
-        game = game_or_404(game_id)
-        paused = store.paused_command(game_id)
-        if paused is not None and paused[2].decision.kind is DecisionKind.DECLARE_ATTACKERS:
-            outcome = _dry_run_declaration(game, paused, pairs)
-        else:
-            outcome = engine_api.declare_attack(game, req)
+        with store.locked(game_id) as game:
+            paused = store.paused_command(game_id)
+            if paused is not None and paused[2].decision.kind is DecisionKind.DECLARE_ATTACKERS:
+                try:
+                    outcome = _dry_run_declaration(game, paused, pairs)
+                except commands.CommandDivergenceError:
+                    # Same as `_resume_paused`: a question that no longer
+                    # replays can never be answered, so it is cleared here,
+                    # under the lock that read it, and the 409 says so.
+                    store.clear_paused_command(game_id)
+                    raise
+            else:
+                outcome = engine_api.declare_attack(game, req)
         return audit_outcome(game_id, "attack", outcome, attackers=attackers_detail, dry_run=True)
     return _answer_declaration(
         game_id,
