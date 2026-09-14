@@ -315,6 +315,37 @@ def test_dryad_arbor_never_unlocks(client, game):
     assert facts["cards"][arbor_id]["unlocks"] is False
 
 
+# -- castable_now (item 3, affordable ignoring targets) -----------------------
+
+
+def test_fatal_push_is_not_castable_now_with_no_creature_anywhere(client, game):
+    """Item 3: dimir T1, Undercity Sewers + Polluted Delta + Fatal Push +
+    Psychic Frog in hand, empty board both sides. Fatal Push ({B}, "target
+    creature") has no legal target at all with no creature anywhere, so
+    `legal_actions` never offers a cast row for it regardless of mana -
+    `castable_now` reads that (`Payability.options` for the real board, no
+    assumed land), the same "now" answer `unlocks` already computes for
+    every hand card."""
+    add_card(client, game, "Undercity Sewers", "alice", "hand")
+    add_card(client, game, "Polluted Delta", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    push_id = str(_by_name(alice.hand, "Fatal Push").id)
+    assert _facts(game)["cards"][push_id]["castable_now"] is False
+
+
+def test_fatal_push_is_castable_now_with_a_creature_on_the_board(client, game):
+    add_card(client, game, "Swamp", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    live = _live(game)
+    alice = live.player("alice")
+    push_id = str(_by_name(alice.hand, "Fatal Push").id)
+    assert _facts(game)["cards"][push_id]["castable_now"] is True
+
+
 # -- visibility, and no-op scoping -------------------------------------------------
 
 

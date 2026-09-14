@@ -641,22 +641,48 @@ def test_unlocks_without_hypothetical_facts_raises():
         matches({"unlocks_by_basic_search": True}, bolt())
 
 
-# -- affordable (O7) ---------------------------------------------------------------
+# -- affordable (O7, item 3: castable_now too) ------------------------------------
 
 
 def test_affordable_compares_mana_value_to_untapped_mana_plus_extra():
     spell = bolt()  # mana_value 1.0
-    assert matches({"affordable": {"extra": 0}}, spell, untapped_mana=1)
-    assert not matches({"affordable": {"extra": 0}}, spell, untapped_mana=0)
-    assert matches({"affordable": {"extra": 1}}, spell, untapped_mana=0)
+    hypo = {spell["id"]: {"castable_now": True}}
+    assert matches({"affordable": {"extra": 0}}, spell, untapped_mana=1, hypo=hypo)
+    assert not matches({"affordable": {"extra": 0}}, spell, untapped_mana=0, hypo=hypo)
+    assert matches({"affordable": {"extra": 1}}, spell, untapped_mana=0, hypo=hypo)
 
 
 def test_affordable_without_a_mana_value_never_matches():
     land = mountain()  # mana_value 0.0 by the testkit default, but a land has none in play
     no_mv = dict(land, mana_value=None)
-    assert not matches({"affordable": {"extra": 5}}, no_mv, untapped_mana=5)
+    hypo = {no_mv["id"]: {"castable_now": True}}
+    assert not matches({"affordable": {"extra": 5}}, no_mv, untapped_mana=5, hypo=hypo)
 
 
 def test_affordable_with_no_untapped_mana_given_never_matches():
     spell = bolt()
-    assert not matches({"affordable": {"extra": 5}}, spell)
+    hypo = {spell["id"]: {"castable_now": True}}
+    assert not matches({"affordable": {"extra": 5}}, spell, hypo=hypo)
+
+
+def test_affordable_with_no_legal_target_never_matches():
+    """Item 3: a 1-drop with no legal target (Fatal Push with no opposing
+    creature) must not count as affordable even though its mana value fits -
+    `castable_now` (from `hypothetical_facts.py`, `legal_actions`'s own
+    target candidates) is read alongside the mana comparison."""
+    spell = bolt()
+    assert not matches(
+        {"affordable": {"extra": 0}},
+        spell,
+        untapped_mana=1,
+        hypo={spell["id"]: {"castable_now": False}},
+    )
+    assert not matches({"affordable": {"extra": 0}}, spell, untapped_mana=1, hypo={})
+
+
+def test_affordable_without_hypothetical_facts_raises():
+    from magic_cards_model_api.playscripts.selectors import HypotheticalRequired
+
+    spell = bolt()
+    with pytest.raises(HypotheticalRequired):
+        matches({"affordable": {"extra": 0}}, spell, untapped_mana=1)

@@ -243,15 +243,38 @@ Four more selector fields the engine, not the view, answers:
   `untapped_mana + extra` - the same `untapped_mana` a `{kind: untapped_mana}`
   condition reads (`conditions.untapped_mana`), a plain view computation with
   no engine call, computed once per `evaluate`/move-build call and passed to
-  every selector that asks. `extra: 0` asks whether the card is affordable
-  from untapped mana alone; a card with no `mana_value` (a land), or a call
-  that never computed `untapped_mana` at all, never matches.
+  every selector that asks - *and* the card also reads `true` off
+  `hypothetical_facts.py`'s `castable_now` for its id (item 3). `extra: 0`
+  asks whether the card is affordable from untapped mana alone; a card with
+  no `mana_value` (a land), or a call that never computed `untapped_mana` at
+  all, never matches, mana_value aside.
 
-`unlocks`/`unlocks_by_search`/`unlocks_by_basic_search` (and `enters_any`)
-need `hypo`; `affordable` never does, since `untapped_mana` costs nothing to
-compute from the view already in hand - a play mixing `affordable` with the
-other four still needs the `GET .../playscripts/hypothetical-facts` call for
-those, but never for `affordable` alone.
+  **Item 3, why `castable_now` and not a mana_value comparison alone:**
+  `mana_value <= untapped_mana + extra` alone was blind to targets -
+  `legal_actions` still offers a cast row for a spell with a mandatory
+  target and none legal right now (Fatal Push, "target creature", with no
+  creature anywhere: a real row, just with an empty `target_slots[0].
+  candidates`), so a 1-drop with no legal target used to read as affordable
+  and suppress an idle play meant to hold up mana for it. The chosen fix:
+  the engine has no "assume n extra untapped mana" hypothetical to ask for
+  directly (`machines.hypothetical.payability`'s only hypothetical is
+  `assuming_land`, one additional land - not a bare mana bump), so this
+  never tries to simulate `extra` against the engine. Instead it takes the
+  fallback the item itself named: `mana_value <= untapped_mana + extra` AND
+  the card has a legal cast row *now*, targets ignored for mana ("a legal
+  cast row now, ignoring mana"). `castable_now` is that second half,
+  computed once per `build_hypothetical_facts` call for every hand card from
+  the same real-board `payability_matrix(..., hand, lands).now` answer
+  `unlocks` already computes (no second engine call): true when at least one
+  of that card's `Payability.options` has every mandatory target slot
+  (`TargetSlot.minimum >= 1`) filled with a candidate
+  (`slot.candidates`/`slot.player_candidates`), false otherwise (including
+  when the card was not judged at all - `hand`/`lands` empty).
+
+`unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`/`enters_any`/
+`affordable` all need `hypo` now: a play using any of the five needs the
+`GET .../playscripts/hypothetical-facts` call - `needs_hypothetical` reads
+the same five-field list.
 
 ## Moves
 

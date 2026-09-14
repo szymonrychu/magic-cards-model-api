@@ -108,7 +108,7 @@ import re
 from typing import Any
 
 from magic_cards_model.machines.hypothetical import EntersState, payability_matrix
-from magic_cards_model.models import CardState, Game, Zone
+from magic_cards_model.models import Action, CardState, Game, Zone
 
 from ..serialize import _card_view
 from .selectors import BASIC_LAND_TYPES, SEARCH_TEMPLATE, _searched_basic_types, _texts
@@ -179,6 +179,21 @@ def _has_x(card: CardState) -> bool:
     never read as `unlocks: True` on the strength of that alone. The same
     `"{X}" in cost` idiom `affordances._needs_x` already uses."""
     return "{X}" in (card.card.mana_cost or "")
+
+
+def _has_legal_targets(option: Action) -> bool:
+    """Item 3: does every mandatory target slot (CR 601.2c/602.2b, `minimum
+    >= 1`) of this `legal_actions` option have at least one legal candidate
+    right now? `legal_actions` still offers a cast row for a spell with a
+    mandatory target and none available (Fatal Push, `target creature`, with
+    no creature anywhere) - it just leaves that slot's `candidates`/
+    `player_candidates` empty - so this is the read that actually says
+    whether the option is castable, not merely priced."""
+    return all(
+        slot.candidates or slot.player_candidates
+        for slot in option.target_slots
+        if slot.minimum >= 1
+    )
 
 
 def _is_basic(card: CardState) -> bool:
@@ -269,6 +284,27 @@ def build_hypothetical_facts(
     #: `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search` judgement, see
     #: `_has_x`.
     x_cost_ids = {card.id for card in hand if _has_x(card)}
+
+    # Item 3: `castable_now` for every hand card - whether `legal_actions`
+    # offers a cast row (or hand-activated ability) right now, ignoring mana,
+    # whose every mandatory target slot (CR 601.2c/602.2b, `minimum >= 1`)
+    # has at least one legal candidate. `legal_actions` itself does *not*
+    # withhold a row for a target-less spell - a Fatal Push with no creature
+    # anywhere still comes back as a real option, just with an empty
+    # `target_slots[i].candidates`/`player_candidates` - so `Payability.
+    # options` being non-empty alone is not enough; this is the check that
+    # actually reads target availability. `affordable` reads this alongside
+    # its own mana_value comparison so a 1-drop with no legal target never
+    # counts as affordable - the engine has no "assume n extra mana"
+    # hypothetical to ask for directly (only `assuming_land`), so this reads
+    # the same real-board `now` answer `unlocks` above already computed,
+    # rather than a second `payability` call per card.
+    for card in hand:
+        payable_now = now_payable.get(card.id)
+        options = payable_now.options if payable_now is not None else ()
+        cards.setdefault(str(card.id), {})["castable_now"] = any(
+            _has_legal_targets(option) for option in options
+        )
 
     #: land id -> the life its own optional payment costs (0 for a land
     #: with none), for every land that unlocks something - D3 needs the

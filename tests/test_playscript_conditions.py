@@ -899,9 +899,9 @@ def test_needs_hypothetical_tells_the_caller_a_selector_reads_enters_or_unlocks(
     assert needs_hypothetical(
         play(true=[count("hand", "me", ">=", 1, {"unlocks_by_basic_search": True})])
     )
-    assert not needs_hypothetical(
+    assert needs_hypothetical(
         play(true=[count("hand", "me", ">=", 1, {"affordable": {"extra": 0}})])
-    )
+    ), "item 3: affordable now reads castable_now too"
     assert not needs_hypothetical(play(true=[count("hand", "me", ">=", 1, {"tapped": False})]))
 
 
@@ -955,4 +955,5 @@ def test_evaluate_computes_untapped_mana_for_affordable_selectors():
     source = mountain()
     view = state_view(hands={"alice": [spell]}, battlefield=[source])
     doc = play(true=[count("hand", "me", ">=", 1, {"affordable": {"extra": 0}})])
-    assert evaluate(doc, view, "alice")["applies"]
+    hypo = {spell["id"]: {"castable_now": True}}
+    assert evaluate(doc, view, "alice", hypothetical=hypo)["applies"]

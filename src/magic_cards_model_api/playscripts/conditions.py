@@ -84,11 +84,18 @@ def _missing_froms(node: Any):
             yield from _missing_froms(value)
 
 
-#: The selector fields `needs_hypothetical` walks for: O4's `enters_any` and
-#: O7's `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`, all
-#: engine-computed rather than read off the view - see `selectors.py`'s
-#: module docstring.
-_HYPOTHETICAL_FIELDS = ("enters_any", "unlocks", "unlocks_by_search", "unlocks_by_basic_search")
+#: The selector fields `needs_hypothetical` walks for: O4's `enters_any`,
+#: O7's `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`, and item
+#: 3's `affordable` (it now reads `castable_now` alongside its own
+#: mana_value comparison), all engine-computed rather than read off the view
+#: - see `selectors.py`'s module docstring.
+_HYPOTHETICAL_FIELDS = (
+    "enters_any",
+    "unlocks",
+    "unlocks_by_search",
+    "unlocks_by_basic_search",
+    "affordable",
+)
 
 
 def _selector_fields(node: Any):
@@ -140,10 +147,10 @@ def needs_hypothetical(script: BaseModel | dict[str, Any]) -> bool:
     (`hypothetical_facts.py`, the server's `.../playscripts/hypothetical-
     facts` endpoint) to evaluate this play's conditions (or build this move,
     or this answer)? A selector naming `enters_any` (O4), `unlocks`,
-    `unlocks_by_search` or `unlocks_by_basic_search` (O7) needs them -
-    `matches` cannot answer any of the four from the view alone (see
-    `selectors.py`'s module docstring), and unlike `needs_contents` there is
-    no cheaper local fallback: the caller
+    `unlocks_by_search`, `unlocks_by_basic_search` (O7) or `affordable`
+    (item 3) needs them - `matches` cannot answer any of the five from the
+    view alone (see `selectors.py`'s module docstring), and unlike
+    `needs_contents` there is no cheaper local fallback: the caller
     must ask the server, once, and only when this says so."""
     doc = _as_dict(script)
     return any(True for _ in _selector_fields(doc))
@@ -454,13 +461,14 @@ def evaluate(
     Raises `ContentsRequired` when a condition needs `include=contents`.
 
     `hypothetical` is the engine-computed per-card facts (O4's `enters_any`,
-    O7's `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`) a selector
-    may read - see `selectors.py`'s module docstring and `needs_hypothetical`.
-    Left out (the default), a selector naming any of the four raises
+    O7's `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`, item 3's
+    `affordable` via `castable_now`) a selector may read - see
+    `selectors.py`'s module docstring and `needs_hypothetical`. Left out
+    (the default), a selector naming any of the five raises
     `HypotheticalRequired` rather than silently mismatching: this function
     never computes them itself, since doing so needs the live game
     (`hypothetical_facts.py`), which a caller with only a view does not have.
-    `affordable` needs no `hypothetical` - its `untapped_mana` count is
+    `affordable`'s own `untapped_mana` count, unlike `castable_now`, is
     computed here, from `view` alone, once per call.
     """
     doc = _as_dict(script)

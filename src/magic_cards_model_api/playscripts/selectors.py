@@ -43,18 +43,21 @@ card name (design D3):
   view's `name`; the candidate matches only when no card there shares any of
   them. A candidate with nothing to compare (no such subtype, no name) never
   matches. The candidate itself counts when it sits in one of the zones.
-- `enters_any` (O4), `unlocks`, `unlocks_by_search` and
-  `unlocks_by_basic_search` (O7) read `hypo`, the engine-computed facts keyed
+- `enters_any` (O4), `unlocks`, `unlocks_by_search`, `unlocks_by_basic_search`
+  (O7) and `affordable` (item 3) read `hypo`, the engine-computed facts keyed
   by card id (`hypothetical_facts.py`), never the card view itself - the view
-  carries no `enters`/`unlocks` field of its own. `hypo=None` (the default,
-  no facts fetched at all) raises
-  `HypotheticalRequired`; a `hypo` given but with no entry for this card's id
-  means the same as any other absent characteristic and never matches, either
-  value. `affordable {extra}` compares the card's own `mana_value` with
-  `untapped_mana + extra`, a plain view computation (`conditions.
-  untapped_mana`) with no engine call - `untapped_mana=None` (not given)
-  never matches rather than raising, since every real caller has a view in
-  scope to compute it from.
+  carries no `enters`/`unlocks`/`castable_now` field of its own. `hypo=None`
+  (the default, no facts fetched at all) raises `HypotheticalRequired`; a
+  `hypo` given but with no entry for this card's id means the same as any
+  other absent characteristic and never matches, either value. `affordable
+  {extra}` compares the card's own `mana_value` with `untapped_mana + extra`
+  (`conditions.untapped_mana`, a plain view computation) *and* reads
+  `castable_now`, since the mana value alone ignores whether the card has a
+  legal target at all - `legal_actions` still offers a cast row for a
+  target-less spell (Fatal Push, no creature anywhere), just with an empty
+  target candidate list, so a mana-only comparison used to read it as
+  affordable. `untapped_mana=None` (not given) never matches rather than
+  raising, since every real caller has a view in scope to compute it from.
 
 An empty list constrains nothing. A number the card does not have (a
 non-creature's power, a view with no `mana_value`) never matches.
@@ -97,8 +100,18 @@ Present = Callable[[Sequence[str], str], Iterable[dict[str, Any]]]
 #: the same as any other characteristic the view does not have.
 Hypo = Mapping[str, Mapping[str, Any]]
 #: The selector fields `matches` cannot answer without `hypo` - see the
-#: module docstring.
-_HYPO_FIELDS = ("enters_any", "unlocks", "unlocks_by_search", "unlocks_by_basic_search")
+#: module docstring. `affordable` joined this list at item 3: a mana_value
+#: comparison alone ignores whether the card has a legal target at all
+#: (`legal_actions` still offers a cast row for a target-less spell, just
+#: with empty target candidates), so `affordable` now also reads
+#: `hypothetical_facts.py`'s `castable_now`.
+_HYPO_FIELDS = (
+    "enters_any",
+    "unlocks",
+    "unlocks_by_search",
+    "unlocks_by_basic_search",
+    "affordable",
+)
 
 
 class HypotheticalRequired(ValueError):
@@ -233,17 +246,18 @@ def matches(
 ) -> bool:
     """Does `card` have every characteristic `selector` names? A selector
     with `missing_from` also needs `present`, the board it compares against.
-    `enters_any`/`unlocks`/`unlocks_by_search`/`unlocks_by_basic_search` need
-    `hypo`, the engine-computed facts keyed by card id (`HypotheticalRequired`
-    when it is not given at all); `affordable` reads `untapped_mana` but
-    never raises for a missing one - see the module docstring."""
+    `enters_any`/`unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`/
+    `affordable` (item 3) need `hypo`, the engine-computed facts keyed by
+    card id (`HypotheticalRequired` when it is not given at all);
+    `affordable` also reads `untapped_mana`, which never raises for a
+    missing one on its own - see the module docstring."""
     wanted = selector.model_dump(exclude_none=True) if isinstance(selector, BaseModel) else selector
     if "missing_from" in wanted and present is None:
         raise ValueError("a selector with missing_from reads the board: pass present")
     if hypo is None and any(field in wanted for field in _HYPO_FIELDS):
         raise HypotheticalRequired(
             "a selector reading enters_any/unlocks/unlocks_by_search/"
-            "unlocks_by_basic_search needs hypo: see hypothetical_facts.py"
+            "unlocks_by_basic_search/affordable needs hypo: see hypothetical_facts.py"
         )
     facts = (hypo or {}).get(card.get("id")) or {}
     face = _face(card)
@@ -315,5 +329,13 @@ def matches(
         if untapped_mana is None or mana_value is None:
             return False
         if not compare(mana_value, "<=", untapped_mana + extra):
+            return False
+        # Item 3: mana value alone ignores targets - `legal_actions` still
+        # offers a cast row for a spell with a mandatory target and none
+        # legal (Fatal Push, no creature anywhere), just with an empty
+        # candidate list, so a mana-only comparison read a target-less 1-drop
+        # as affordable. `castable_now` (`hypothetical_facts.py`) is the read
+        # that actually checks target availability.
+        if not facts.get("castable_now", False):
             return False
     return "missing_from" not in wanted or _missing(wanted, card, present)
