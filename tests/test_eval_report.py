@@ -205,6 +205,36 @@ def test_a_plan_declaration_is_never_scored():
     assert alice["reasoning"]["successes"] == 1
 
 
+def test_plan_declared_is_counted_by_for_turn_as_bare_usage():
+    """Not a grade of the plan - a usage count. S2 A1's `declare_plan(
+    for_turn="next")` should show up as `next` here even though the plan's
+    own quality is never scored (see `test_a_plan_declaration_is_never_scored`
+    above). A row with no `for_turn` key at all is an old-ledger row that
+    predates the field, and `schemas.DeclarePlanIn.for_turn` defaults to
+    `"current"` - so it is counted as `current`, not dropped and not
+    counted as `next`."""
+    plans = [
+        row(2, "plan_declared", player="alice", for_turn="next"),
+        row(3, "plan_declared", player="alice", for_turn="current"),
+        row(4, "plan_declared", player="alice"),  # old-shape row, no for_turn key
+        row(5, "plan_declared", player="bob", for_turn="next"),
+    ]
+    report = eval_report.build_report([finished_game("g1", "alice", extra=plans)])
+
+    alice = report["seats"]["alice"]
+    bob = report["seats"]["bob"]
+    assert alice["plan_declared"] == {"current": 2, "next": 1}, alice
+    assert bob["plan_declared"] == {"current": 0, "next": 1}, bob
+
+    # still never scored as play or an attempt
+    assert alice["actions"] == 0
+    assert alice["attempts"] == 0
+
+    rendered = eval_report.render(report)
+    assert "plan declared" in rendered.lower(), rendered
+    assert "current=2" in rendered and "next=1" in rendered, rendered
+
+
 # -- reasoning ---------------------------------------------------------------
 
 

@@ -52,15 +52,26 @@ treats it.
   mean wall time. Advise runs - moves proposed to a human, not taken - are
   tallied apart under `advise`, so a proposal nobody accepted never reads as
   the seat's own play.
+- **Plan-declared usage, by `for_turn`.** How many `plan_declared` rows each
+  seat wrote, split `current` vs `next` (S2 A1's plan-ahead, `declare_plan(
+  for_turn="next")`). A raw count of a thing that happened, exactly the "raw
+  pairing" the section below argues for - never a judgement of whether the
+  plan declared was any good, or whether it later held up. A row from before
+  `for_turn` existed carries no such key and is counted as `current`,
+  matching the field's own schema default rather than being dropped.
 
 ## What it deliberately does not grade
 
 `review.py` refuses to grade a declared plan, and this refuses with it: "a
 number is something a sceptic argues with (about the metric, the sample, the
-weighting), while the raw pairing is not". A `plan_declared` row is not an
-action, not an attempt, and contributes to nothing here. Everything this does
-score is an *outcome* - who won, how many turns, how many attempts were
-refused - which is arithmetic over facts the server wrote down, not a
+weighting), while the raw pairing is not". A `plan_declared` row is still not
+an action and not an attempt, and contributes nothing to any *outcome*-scored
+metric here - not win rate, not refusal rate, not reasoning coverage - and is
+never graded for whether the plan itself was correct or good. It is counted
+once, for bare usage (`current` vs `next`), which is exactly the raw pairing
+this section argues for rather than a judgement about it. Everything else
+this does score is an *outcome* - who won, how many turns, how many attempts
+were refused - which is arithmetic over facts the server wrote down, not a
 judgement about whether a prediction came true.
 
 ## Sizing, printed rather than assumed
@@ -182,6 +193,13 @@ GAME_OVER_ACTION = "game_over"
 #: that says the whole chain ran.
 SCRIPT_RUN_ACTION = "script_run"
 CHAIN_COMPLETE_EXIT = "chain_complete"
+
+#: `audit.PLAN_ACTION` (`app.py`'s `declare_plan`). Not a play action - see
+#: `NOT_PLAY` and the "What it deliberately does not grade" section above -
+#: but its `for_turn` (current vs next, S2 A1's plan-ahead) is still worth
+#: counting as bare usage, so it gets its own branch ahead of the
+#: `NOT_PLAY` skip, the same way `SCRIPT_RUN_ACTION` does.
+PLAN_DECLARED_ACTION = "plan_declared"
 
 #: `audit.ADVICE_ACTION`, named locally like every other action constant
 #: above rather than imported - this module reads `audit`'s rows, never its
@@ -593,6 +611,7 @@ class _SeatTally:
     unclassified: dict[str, int] = field(default_factory=dict)
     by_invoker: dict[str, int] = field(default_factory=dict)
     armed_fired: int = 0
+    plan_declared: dict[str, int] = field(default_factory=lambda: {"current": 0, "next": 0})
     own_turn_first_action_ms: list[float] = field(default_factory=list)
     advice_drafted_ms: list[float] = field(default_factory=list)
     advice_undrafted_ms: list[float] = field(default_factory=list)
@@ -694,6 +713,17 @@ def build_report(
                         bool(detail.get("advise")) and detail.get("exit") == "advised"
                     )
                     tally.armed_fired += int(fired)
+                continue
+            if action == PLAN_DECLARED_ACTION:
+                # Usage, not a grade: which `for_turn` was declared, never
+                # whether the plan itself was any good. A row with no
+                # `for_turn` key at all predates the field and is counted as
+                # `current` - `schemas.DeclarePlanIn.for_turn`'s own default.
+                for_turn = detail.get("for_turn")
+                if for_turn not in ("current", "next"):
+                    for_turn = "current"
+                tally = seats[player]
+                tally.plan_declared[for_turn] = tally.plan_declared.get(for_turn, 0) + 1
                 continue
             if action in NOT_PLAY:
                 continue
@@ -894,6 +924,13 @@ def _seat_report(tally: _SeatTally) -> dict[str, Any]:
             # moved the board (a seat) or proposed a move (an advisor).
             "armed_fired": tally.armed_fired,
         },
+        # S2 A1: how many `plan_declared` rows this seat wrote, split by
+        # `for_turn` - bare usage of plan-ahead, never a grade of what was
+        # declared (see "What it deliberately does not grade" above).
+        "plan_declared": {
+            "current": tally.plan_declared.get("current", 0),
+            "next": tally.plan_declared.get("next", 0),
+        },
         # S2 A7: how long the stall this task exists to catch actually took
         # to happen again, or did not - see `_own_turn_latencies` for what a
         # "turn" is here and why a plan-ahead row cannot inflate it.
@@ -1068,6 +1105,12 @@ def render(report: Mapping[str, Any]) -> str:
             lines.append(f"  scripts by invoker {rows}")
         if by_invoker.get("armed"):
             lines.append(f"  armed fired        {scripts_block.get('armed_fired', 0)}")
+        plan_declared = seat.get("plan_declared") or {}
+        if plan_declared.get("current") or plan_declared.get("next"):
+            lines.append(
+                f"  plan declared      current={plan_declared.get('current', 0)} "
+                f"next={plan_declared.get('next', 0)}"
+            )
         lines.append(f"  own turn 1st action {_ms(seat['own_turn_first_action_ms'])}")
         advice_latency = seat["advice"]["latency_ms"]
         lines.append(f"  advice latency (drafted)   {_ms(advice_latency['drafted'])}")
