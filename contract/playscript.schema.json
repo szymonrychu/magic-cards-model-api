@@ -849,6 +849,11 @@
           "title": "Unlocks",
           "type": "boolean"
         },
+        "unlocks_by_basic_search": {
+          "default": null,
+          "title": "Unlocks By Basic Search",
+          "type": "boolean"
+        },
         "unlocks_by_search": {
           "default": null,
           "title": "Unlocks By Search",

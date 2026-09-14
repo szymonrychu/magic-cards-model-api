@@ -621,6 +621,15 @@ def test_unlocks_by_search_matches_the_hypothetical_facts_bool():
     assert not matches({"unlocks_by_search": True}, spell, hypo={})
 
 
+def test_unlocks_by_basic_search_matches_the_hypothetical_facts_bool():
+    spell = bolt()
+    hot = {spell["id"]: {"unlocks_by_search": True, "unlocks_by_basic_search": True}}
+    shock_only = {spell["id"]: {"unlocks_by_search": True, "unlocks_by_basic_search": False}}
+    assert matches({"unlocks_by_basic_search": True}, spell, hypo=hot)
+    assert not matches({"unlocks_by_basic_search": True}, spell, hypo=shock_only)
+    assert not matches({"unlocks_by_basic_search": True}, spell, hypo={})
+
+
 def test_unlocks_without_hypothetical_facts_raises():
     from magic_cards_model_api.playscripts.selectors import HypotheticalRequired
 
@@ -628,6 +637,8 @@ def test_unlocks_without_hypothetical_facts_raises():
         matches({"unlocks": True}, mountain())
     with pytest.raises(HypotheticalRequired):
         matches({"unlocks_by_search": True}, bolt())
+    with pytest.raises(HypotheticalRequired):
+        matches({"unlocks_by_basic_search": True}, bolt())
 
 
 # -- affordable (O7) ---------------------------------------------------------------

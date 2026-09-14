@@ -43,10 +43,11 @@ card name (design D3):
   view's `name`; the candidate matches only when no card there shares any of
   them. A candidate with nothing to compare (no such subtype, no name) never
   matches. The candidate itself counts when it sits in one of the zones.
-- `enters_any` (O4), `unlocks` and `unlocks_by_search` (O7) read `hypo`, the
-  engine-computed facts keyed by card id (`hypothetical_facts.py`), never the
-  card view itself - the view carries no `enters`/`unlocks` field of its own.
-  `hypo=None` (the default, no facts fetched at all) raises
+- `enters_any` (O4), `unlocks`, `unlocks_by_search` and
+  `unlocks_by_basic_search` (O7) read `hypo`, the engine-computed facts keyed
+  by card id (`hypothetical_facts.py`), never the card view itself - the view
+  carries no `enters`/`unlocks` field of its own. `hypo=None` (the default,
+  no facts fetched at all) raises
   `HypotheticalRequired`; a `hypo` given but with no entry for this card's id
   means the same as any other absent characteristic and never matches, either
   value. `affordable {extra}` compares the card's own `mana_value` with
@@ -91,18 +92,19 @@ COLORLESS = COLOR_LETTERS["colorless"]
 #: The cards on `side` in `zones` a `missing_from` compares against.
 Present = Callable[[Sequence[str], str], Iterable[dict[str, Any]]]
 #: Engine-computed per-card facts (`hypothetical_facts.py`), keyed by card id:
-#: `enters` (an `EntersState` value), `unlocks` and `unlocks_by_search`
-#: (bool). A card with no entry carries no facts, the same as any other
-#: characteristic the view does not have.
+#: `enters` (an `EntersState` value), `unlocks`, `unlocks_by_search` and
+#: `unlocks_by_basic_search` (bool). A card with no entry carries no facts,
+#: the same as any other characteristic the view does not have.
 Hypo = Mapping[str, Mapping[str, Any]]
 #: The selector fields `matches` cannot answer without `hypo` - see the
 #: module docstring.
-_HYPO_FIELDS = ("enters_any", "unlocks", "unlocks_by_search")
+_HYPO_FIELDS = ("enters_any", "unlocks", "unlocks_by_search", "unlocks_by_basic_search")
 
 
 class HypotheticalRequired(ValueError):
-    """A selector reads `enters_any`, `unlocks` or `unlocks_by_search`, and
-    `matches` was called with no `hypo` at all - the caller never fetched the
+    """A selector reads `enters_any`, `unlocks`, `unlocks_by_search` or
+    `unlocks_by_basic_search`, and `matches` was called with no `hypo` at
+    all - the caller never fetched the
     engine-computed facts (`hypothetical_facts.py`) this selector needs."""
 
 
@@ -231,17 +233,17 @@ def matches(
 ) -> bool:
     """Does `card` have every characteristic `selector` names? A selector
     with `missing_from` also needs `present`, the board it compares against.
-    `enters_any`/`unlocks`/`unlocks_by_search` need `hypo`, the
-    engine-computed facts keyed by card id (`HypotheticalRequired` when it is
-    not given at all); `affordable` reads `untapped_mana` but never raises
-    for a missing one - see the module docstring."""
+    `enters_any`/`unlocks`/`unlocks_by_search`/`unlocks_by_basic_search` need
+    `hypo`, the engine-computed facts keyed by card id (`HypotheticalRequired`
+    when it is not given at all); `affordable` reads `untapped_mana` but
+    never raises for a missing one - see the module docstring."""
     wanted = selector.model_dump(exclude_none=True) if isinstance(selector, BaseModel) else selector
     if "missing_from" in wanted and present is None:
         raise ValueError("a selector with missing_from reads the board: pass present")
     if hypo is None and any(field in wanted for field in _HYPO_FIELDS):
         raise HypotheticalRequired(
-            "a selector reading enters_any/unlocks/unlocks_by_search needs hypo: "
-            "see hypothetical_facts.py"
+            "a selector reading enters_any/unlocks/unlocks_by_search/"
+            "unlocks_by_basic_search needs hypo: see hypothetical_facts.py"
         )
     facts = (hypo or {}).get(card.get("id")) or {}
     face = _face(card)
@@ -300,6 +302,11 @@ def matches(
     if (
         "unlocks_by_search" in wanted
         and facts.get("unlocks_by_search") is not wanted["unlocks_by_search"]
+    ):
+        return False
+    if (
+        "unlocks_by_basic_search" in wanted
+        and facts.get("unlocks_by_basic_search") is not wanted["unlocks_by_basic_search"]
     ):
         return False
     if "affordable" in wanted:

@@ -1277,7 +1277,8 @@ def _pick(
     takes the first `count` of them by sorted name. `present` is the board a
     `missing_from` compares against; `hypo`/`mana` are O4/O7's engine facts
     and untapped-mana count, for a `select`/`prefer` naming `enters_any`,
-    `unlocks`, `unlocks_by_search` or `affordable` - the caller fetches
+    `unlocks`, `unlocks_by_search`, `unlocks_by_basic_search` or
+    `affordable` - the caller fetches
     `hypo` only when the move actually needs it (`needs_hypothetical`)."""
     found = [
         card for card in cards if matches(select, card, present, untapped_mana=mana, hypo=hypo)

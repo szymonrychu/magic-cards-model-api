@@ -896,6 +896,9 @@ def test_needs_hypothetical_tells_the_caller_a_selector_reads_enters_or_unlocks(
     assert needs_hypothetical(
         play(true=[count("hand", "me", ">=", 1, {"unlocks_by_search": True})])
     )
+    assert needs_hypothetical(
+        play(true=[count("hand", "me", ">=", 1, {"unlocks_by_basic_search": True})])
+    )
     assert not needs_hypothetical(
         play(true=[count("hand", "me", ">=", 1, {"affordable": {"extra": 0}})])
     )
@@ -922,6 +925,12 @@ def test_needs_hypothetical_reads_only_what_the_caller_is_about_to_evaluate():
 def test_needs_contents_is_also_true_for_unlocks_by_search():
     assert needs_contents(play(true=[count("hand", "me", ">=", 1, {"unlocks_by_search": True})]))
     assert not needs_contents(play(true=[count("hand", "me", ">=", 1, {"unlocks": True})]))
+
+
+def test_needs_contents_is_also_true_for_unlocks_by_basic_search():
+    assert needs_contents(
+        play(true=[count("hand", "me", ">=", 1, {"unlocks_by_basic_search": True})])
+    )
 
 
 def test_a_selector_reading_enters_or_unlocks_cannot_be_evaluated_without_hypothetical_facts():

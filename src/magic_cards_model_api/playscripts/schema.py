@@ -325,6 +325,11 @@ class Selector(_Strict):
     #: This hand card searches the library, and some library land it could
     #: find would `unlocks` (O7).
     unlocks_by_search: bool = None
+    #: Same as `unlocks_by_search`, narrowed to a *basic* land (supertype
+    #: `Basic`) the search could find - a fetch-conservation play that only
+    #: wants "free" basics reachable, never a shockland or other non-basic
+    #: unlock (O7).
+    unlocks_by_basic_search: bool = None
     #: Mana value <= untapped mana + `extra` (O7).
     affordable: Affordable = None
 

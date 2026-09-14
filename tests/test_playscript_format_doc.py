@@ -117,15 +117,18 @@ def test_doc_defines_enters_any() -> None:
 
 def test_doc_defines_unlocks_unlocks_by_search_and_affordable() -> None:
     text = DOC.read_text()
-    section = text.split("### `unlocks`, `unlocks_by_search`, `affordable` (O7)", 1)[1].split(
-        "\n## ", 1
-    )[0]
+    section = text.split(
+        "### `unlocks`, `unlocks_by_search`, `unlocks_by_basic_search`, `affordable` (O7)", 1
+    )[1].split("\n## ", 1)[0]
     for phrase in (
         "payability_matrix",
         "notice",
         "needs_contents",
         "untapped_mana",
         "mana_value",
+        "unlocks_by_basic_search",
+        "supertype",
+        "Basic",
     ):
         assert phrase in section
 

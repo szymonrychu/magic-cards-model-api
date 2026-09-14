@@ -1338,10 +1338,11 @@ def get_game(game_id: str, uid: str | None = None, include: str | None = None) -
     response_model_exclude_unset=True,
 )
 def get_hypothetical_facts(game_id: str, uid: str | None = None) -> dict[str, Any]:
-    """O4's `enters_any` and O7's `unlocks`/`unlocks_by_search`: everything a
-    play's selectors can ask about `uid`'s own hand and library lands and
-    cards, computed once against the live game (`hypothetical_facts.
-    build_hypothetical_facts`) rather than read off a polled view.
+    """O4's `enters_any` and O7's `unlocks`/`unlocks_by_search`/
+    `unlocks_by_basic_search`: everything a play's selectors can ask about
+    `uid`'s own hand and library lands and cards, computed once against the
+    live game (`hypothetical_facts.build_hypothetical_facts`) rather than
+    read off a polled view.
 
     Only a real seat may ask - `uid` must resolve to one of this game's own
     players, never the admin key and never nobody, since a fact here is
@@ -1352,6 +1353,17 @@ def get_hypothetical_facts(game_id: str, uid: str | None = None) -> dict[str, An
     or returned - not merely redacted after the fact, as `get_game`'s view
     is, but never asked about in the first place.
 
+    A pending `choose_cards` decision for `uid` itself (a fetch's own search,
+    CR 701.23a) gets one thing more: `enters`/`unlocks` facts for every id
+    that decision's own `cards` offers, library lands included - never for
+    any other library card, and never anything about the library's order.
+    Read straight off the live paused command (`store.paused_command`, the
+    same source `serialize.state_view`'s own `pending_decision` reads) rather
+    than off a fetched view, so this never asks for a decision belonging to
+    another player or of any other kind. With no such decision pending, or
+    one pending for someone else, this withholds every library card's facts
+    exactly as before.
+
     Meant to be called sparingly: `conditions.needs_hypothetical` tells a
     caller when a play's conditions need this at all, and the runtime caches
     the answer until the board changes rather than calling this once per
@@ -1360,7 +1372,13 @@ def get_hypothetical_facts(game_id: str, uid: str | None = None) -> dict[str, An
     viewer = visibility.resolve_viewer(game_id, uid)
     if not isinstance(viewer, str):
         raise KeyError("that uid is no seat in this game")
-    return build_hypothetical_facts(game, viewer)
+    candidate_ids = None
+    paused = store.paused_command(game_id)
+    if paused is not None:
+        decision = paused[2].decision
+        if decision.player == viewer and decision.kind is DecisionKind.CHOOSE_CARDS:
+            candidate_ids = frozenset(str(c) for c in decision.cards)
+    return build_hypothetical_facts(game, viewer, candidate_ids=candidate_ids)
 
 
 @app.get(

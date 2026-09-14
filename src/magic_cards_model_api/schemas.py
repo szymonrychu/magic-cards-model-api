@@ -2172,8 +2172,9 @@ class HypotheticalFactsResponse(BaseModel):
     (`hypothetical_facts.build_hypothetical_facts`) - O4/O7's engine-computed
     per-card facts, keyed by card id (a string: JSON has no UUID keys).
     `cards[id]` is `{"enters"?: str, "unlocks"?: bool,
-    "unlocks_by_search"?: bool}` - only the facts that card actually has, the
-    same shape `selectors.Hypo` reads. `notices` is every notice the engine
+    "unlocks_by_search"?: bool, "unlocks_by_basic_search"?: bool}` - only the
+    facts that card actually has, the same shape `selectors.Hypo` reads.
+    `notices` is every notice the engine
     raised while working any of them out (an unread enters-tapped line, a
     lethal optional payment, an unresolved trigger); it is not tied to one
     card, since `selectors.matches` already applies the "any notice fails

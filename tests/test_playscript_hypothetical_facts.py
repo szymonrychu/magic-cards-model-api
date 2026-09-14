@@ -340,6 +340,160 @@ def test_no_hand_or_no_land_candidates_returns_no_facts(client, game):
     assert build_hypothetical_facts(_live(game), "alice") == {"cards": {}, "notices": []}
 
 
+# -- unlocks_by_search on the viewer's own battlefield fetches --------------------
+
+
+def test_a_battlefield_fetch_gets_its_own_unlocks_by_search_too(client, game):
+    """Some decks choose AMONG SEVERAL already-in-play, untapped fetches by
+    `unlocks_by_search` (a battlefield `source.select`, not a hand `card.
+    select`) - Polluted Delta's own search reaches the library Island that
+    unlocks Psychic Frog (Swamp already up, same combo `test_with_a_swamp_
+    up_island_unlocks_psychic_frog_and_so_does_watery_grave` proves), while
+    Bloodstained Mire's "Swamp or Mountain" clause cannot reach it at all.
+    `unlocks_by_search` is public information the instant it is asked about
+    a permanent already on the battlefield (CR 401.3), so this needs no
+    `candidate_ids` gate - unconditional, exactly like a hand card's own."""
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Polluted Delta", "alice", "battlefield")
+    add_card(client, game, "Bloodstained Mire", "alice", "battlefield")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    add_card(client, game, "Island", "alice", "library")
+    live = _live(game)
+    delta = next(c for c in live.permanents_controlled_by("alice") if c.name == "Polluted Delta")
+    mire = next(c for c in live.permanents_controlled_by("alice") if c.name == "Bloodstained Mire")
+
+    facts = _facts(game)
+
+    assert facts["cards"][str(delta.id)]["unlocks_by_search"] is True, (
+        "Polluted Delta's own search reaches the library Island that unlocks Psychic Frog"
+    )
+    assert facts["cards"][str(mire.id)]["unlocks_by_search"] is False, (
+        "Bloodstained Mire's Swamp-or-Mountain clause cannot reach any unlocking library land"
+    )
+
+
+def test_a_battlefield_fetch_never_gets_a_library_style_enters_or_unlocks_entry(client, game):
+    """Confirms the scope precisely: a battlefield permanent is never a land
+    `payability_matrix` can be asked to "enter" (it already has), so widening
+    `unlocks_by_search` to the battlefield adds exactly that one field to a
+    battlefield card's entry, never `enters`/`unlocks` alongside it."""
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Polluted Delta", "alice", "battlefield")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    add_card(client, game, "Island", "alice", "library")
+    live = _live(game)
+    delta = next(c for c in live.permanents_controlled_by("alice") if c.name == "Polluted Delta")
+
+    facts = _facts(game)
+
+    assert set(facts["cards"][str(delta.id)]) == {"unlocks_by_search", "unlocks_by_basic_search"}
+
+
+# -- unlocks_by_basic_search: narrowed to a basic land the search could find ------
+
+
+def test_a_shock_only_unlock_reads_unlocks_by_search_but_not_by_basic(client, game):
+    """Flooded Strand ("a Plains or Island card") can only reach Watery Grave
+    ("Land - Island Swamp", so a legal find by its Island half) among these
+    library cards, and Watery Grave is what unlocks Thoughtseize's B - not a
+    basic, so a play that only wants a free basic find must read this False
+    even though `unlocks_by_search` itself is True. Island is in the library
+    too, reachable and a basic, but produces only U and unlocks nothing."""
+    add_card(client, game, "Flooded Strand", "alice", "hand")
+    add_card(client, game, "Thoughtseize", "alice", "hand")
+    add_card(client, game, "Watery Grave", "alice", "library")
+    add_card(client, game, "Island", "alice", "library")
+    live = _live(game)
+    alice = live.player("alice")
+    strand_id = str(_by_name(alice.hand, "Flooded Strand").id)
+
+    facts = _facts(game)
+
+    assert facts["cards"][strand_id]["unlocks_by_search"] is True
+    assert facts["cards"][strand_id]["unlocks_by_basic_search"] is False
+
+
+def test_a_battlefield_fetch_reads_unlocks_by_basic_search_too(client, game):
+    """The same shape as the hand-card test above, with the fetch already on
+    the battlefield instead - `unlocks_by_basic_search` is unconditional for
+    a battlefield permanent exactly as `unlocks_by_search` already is."""
+    add_card(client, game, "Flooded Strand", "alice", "battlefield")
+    add_card(client, game, "Thoughtseize", "alice", "hand")
+    add_card(client, game, "Watery Grave", "alice", "library")
+    add_card(client, game, "Island", "alice", "library")
+    live = _live(game)
+    strand = next(c for c in live.permanents_controlled_by("alice") if c.name == "Flooded Strand")
+
+    facts = _facts(game)
+
+    assert facts["cards"][str(strand.id)]["unlocks_by_search"] is True
+    assert facts["cards"][str(strand.id)]["unlocks_by_basic_search"] is False
+
+
+# -- candidate_ids: a fetch's own choose_cards pick sees its library candidates ---
+
+
+def test_candidate_ids_writes_enters_and_unlocks_for_a_named_library_land(client, game):
+    """The defect: `open-fetch-unlocks`-style plays pick a library land by
+    `unlocks: true`, and before `candidate_ids` existed a library land never
+    carried that fact at all, so the pick could never match one. Naming the
+    land's id in `candidate_ids` is what makes its `enters`/`unlocks` show up,
+    computed the same way a hand land's already is."""
+    add_card(client, game, "Ragavan, Nimble Pilferer", "alice", "hand")
+    add_card(client, game, "Mountain", "alice", "library")
+    add_card(client, game, "Sacred Foundry", "alice", "library")
+    live = _live(game)
+    alice = live.player("alice")
+    mountain = _by_name(alice.library, "Mountain")
+    foundry = _by_name(alice.library, "Sacred Foundry")
+
+    facts = build_hypothetical_facts(live, "alice", candidate_ids=frozenset({str(mountain.id)}))
+
+    assert facts["cards"][str(mountain.id)]["enters"] == "untapped"
+    assert facts["cards"][str(mountain.id)]["unlocks"] is True, (
+        "Mountain pays Ragavan's R, nothing else in this board can"
+    )
+    assert str(foundry.id) not in facts["cards"], (
+        "Sacred Foundry was never named in candidate_ids, so it must stay invisible "
+        "even though it is a legal land in the same library"
+    )
+
+
+def test_no_candidate_ids_returns_no_library_land_facts_library_order_unchanged(client, game):
+    """D1 unchanged: with no `candidate_ids` at all (the default), a library
+    land's facts never reach the response, exactly as before this fix."""
+    add_card(client, game, "Ragavan, Nimble Pilferer", "alice", "hand")
+    add_card(client, game, "Mountain", "alice", "library")
+    add_card(client, game, "Sacred Foundry", "alice", "library")
+    live = _live(game)
+    alice = live.player("alice")
+    mountain = _by_name(alice.library, "Mountain")
+    foundry = _by_name(alice.library, "Sacred Foundry")
+
+    facts = build_hypothetical_facts(live, "alice")
+
+    assert str(mountain.id) not in facts["cards"]
+    assert str(foundry.id) not in facts["cards"]
+
+
+def test_candidate_ids_naming_a_hand_land_changes_nothing_it_already_had(client, game):
+    """A hand land named in `candidate_ids` too (redundant - it already gets
+    its own facts unconditionally) still gets exactly the one entry, not a
+    different one, and its notices still land in `notices` as before."""
+    add_card(client, game, "Sacred Foundry", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    alice.life = 2
+    foundry_id = str(_by_name(alice.hand, "Sacred Foundry").id)
+
+    with_candidate = build_hypothetical_facts(live, "alice", candidate_ids=frozenset({foundry_id}))
+    without = build_hypothetical_facts(live, "alice")
+
+    assert with_candidate == without
+    assert with_candidate["cards"][foundry_id]["enters"] == "tapped"
+    assert any("lethal" in notice.casefold() for notice in with_candidate["notices"])
+
+
 # -- timing on a realistic board --------------------------------------------------
 
 

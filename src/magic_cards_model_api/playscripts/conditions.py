@@ -85,9 +85,10 @@ def _missing_froms(node: Any):
 
 
 #: The selector fields `needs_hypothetical` walks for: O4's `enters_any` and
-#: O7's `unlocks`/`unlocks_by_search`, all engine-computed rather than read
-#: off the view - see `selectors.py`'s module docstring.
-_HYPOTHETICAL_FIELDS = ("enters_any", "unlocks", "unlocks_by_search")
+#: O7's `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`, all
+#: engine-computed rather than read off the view - see `selectors.py`'s
+#: module docstring.
+_HYPOTHETICAL_FIELDS = ("enters_any", "unlocks", "unlocks_by_search", "unlocks_by_basic_search")
 
 
 def _selector_fields(node: Any):
@@ -110,9 +111,10 @@ def needs_contents(script: BaseModel | dict[str, Any]) -> bool:
     """Must the caller fetch the view with `include=contents` to evaluate
     this play's conditions (or build this move, or this answer)? A count over
     the viewer's own library or sideboard, a `missing_from` reading either on
-    side `me`, or a selector naming `unlocks_by_search` (O7 - the library
-    lands it could unlock are read off the same viewer library the rest of a
-    play's own reasoning about that zone expects to have in hand), needs it."""
+    side `me`, or a selector naming `unlocks_by_search` or
+    `unlocks_by_basic_search` (O7 - the library lands it could unlock are
+    read off the same viewer library the rest of a play's own reasoning
+    about that zone expects to have in hand), needs it."""
     doc = _as_dict(script)
     return (
         any(
@@ -126,7 +128,10 @@ def needs_contents(script: BaseModel | dict[str, Any]) -> bool:
             missing.get("side") == "me" and set(missing.get("zones") or []) & set(HIDDEN_CONTENTS)
             for missing in _missing_froms(doc)
         )
-        or any(key == "unlocks_by_search" for key, _ in _selector_fields(doc))
+        or any(
+            key in ("unlocks_by_search", "unlocks_by_basic_search")
+            for key, _ in _selector_fields(doc)
+        )
     )
 
 
@@ -134,10 +139,11 @@ def needs_hypothetical(script: BaseModel | dict[str, Any]) -> bool:
     """Must the caller fetch engine-computed hypothetical facts
     (`hypothetical_facts.py`, the server's `.../playscripts/hypothetical-
     facts` endpoint) to evaluate this play's conditions (or build this move,
-    or this answer)? A selector naming `enters_any` (O4), `unlocks` or
-    `unlocks_by_search` (O7) needs them - `matches` cannot answer any of the
-    three from the view alone (see `selectors.py`'s module docstring), and
-    unlike `needs_contents` there is no cheaper local fallback: the caller
+    or this answer)? A selector naming `enters_any` (O4), `unlocks`,
+    `unlocks_by_search` or `unlocks_by_basic_search` (O7) needs them -
+    `matches` cannot answer any of the four from the view alone (see
+    `selectors.py`'s module docstring), and unlike `needs_contents` there is
+    no cheaper local fallback: the caller
     must ask the server, once, and only when this says so."""
     doc = _as_dict(script)
     return any(True for _ in _selector_fields(doc))
@@ -448,9 +454,9 @@ def evaluate(
     Raises `ContentsRequired` when a condition needs `include=contents`.
 
     `hypothetical` is the engine-computed per-card facts (O4's `enters_any`,
-    O7's `unlocks`/`unlocks_by_search`) a selector may read - see
-    `selectors.py`'s module docstring and `needs_hypothetical`. Left out
-    (the default), a selector naming any of the three raises
+    O7's `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`) a selector
+    may read - see `selectors.py`'s module docstring and `needs_hypothetical`.
+    Left out (the default), a selector naming any of the four raises
     `HypotheticalRequired` rather than silently mismatching: this function
     never computes them itself, since doing so needs the live game
     (`hypothetical_facts.py`), which a caller with only a view does not have.

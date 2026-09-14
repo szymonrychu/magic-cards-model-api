@@ -54,6 +54,16 @@ GUIDES_REVISION = re.search(
     (TESTS / "driver" / "test_guides.py").read_text(),
     re.MULTILINE,
 ).group(1)
+#: The live mtg-decks worktree, a sibling of this repo - not the vendored
+#: `GUIDES` slice, which is pinned behind `open-fetch-unlocks`'s own
+#: addition (M2, "a fetch's own choose_cards pick needs a library land's
+#: unlocks"). Read verbatim, straight off the real file, rather than copied
+#: into a fixture - the same "worktree carries the engine as a sibling"
+#: arithmetic `test_command_runner.py`'s `_ENGINE_PRINTINGS` already uses.
+MTG_DECKS_ROOT = TESTS.parent.parent / "mtg-decks"
+OPEN_FETCH_UNLOCKS = json.loads(
+    (MTG_DECKS_ROOT / "decks" / "boros-aggro" / "plays" / "open-fetch-unlocks.json").read_text()
+)
 
 ME, OPPONENT = "alice", "bob"
 REASONING = "thin the deck and fix my colours"
@@ -198,6 +208,210 @@ def fetch_shock_board(client: TestClient, game_id: str) -> None:
     for _ in range(6):
         add_card(client, game_id, "Galvanic Discharge", ME, "library")
     declare_plan(client, game_id, ME)
+
+
+# -- open-fetch-unlocks (M2: a search's own pick needs a library land's unlocks) --
+
+
+def open_fetch_unlocks_board(client: TestClient, game_id: str) -> None:
+    """Turn 1, precombat main, land drop available: Arid Mesa ("Search your
+    library for a Mountain or Plains card"), Ragavan Nimble Pilferer (needs
+    R) and Guide of Souls (needs W, never cast this test) in hand; the
+    library holds every legal find that clause can name - Mountain, Sacred
+    Foundry and Elegant Parlor (both "Land - Mountain Plains"), and Plains -
+    plus filler past the play's own `zone_size <= 5` stand-down guard."""
+    force_turn_position(game_id, Step.PRECOMBAT_MAIN, ME)
+    add_card(client, game_id, "Arid Mesa", ME, "hand")
+    add_card(client, game_id, "Ragavan, Nimble Pilferer", ME, "hand")
+    add_card(client, game_id, "Guide of Souls", ME, "hand")
+    add_card(client, game_id, "Mountain", ME, "library")
+    add_card(client, game_id, "Sacred Foundry", ME, "library")
+    add_card(client, game_id, "Elegant Parlor", ME, "library")
+    add_card(client, game_id, "Plains", ME, "library")
+    for _ in range(3):
+        add_card(client, game_id, "Lightning Bolt", ME, "library")
+    declare_plan(client, game_id, ME)
+
+
+def test_open_fetch_unlocks_picks_a_library_land_that_actually_unlocks_a_hand_card(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect this regresses: `hypothetical_facts.build_hypothetical_facts`
+    used to compute `enters`/`unlocks` for hand lands only, so this play's own
+    second move - `activate` Arid Mesa, answered by a `choose_cards` pick
+    naming `select: {types_all: [Land], unlocks: true}` - could never match a
+    library candidate, and the run exited `unforeseen` right after the fetch
+    was sacrificed and its life paid. Fixed, the pick reads Mountain's own
+    `unlocks` (Ragavan needs R and nothing else in this board pays it, so
+    Mountain is the only land besides Plains that unlocks anything, and the
+    pick's own `prefer: [{supertypes_any: [Basic]}, ...]` plus O2's "ties any"
+    alphabetical tiebreak both land on Mountain regardless) and the run
+    completes both moves."""
+    alice = seat_uid(game, ME)
+    register_corpus(client, game, alice, "boros-aggro", OPEN_FETCH_UNLOCKS)
+    open_fetch_unlocks_board(client, game)
+    server = mcp_server(client, monkeypatch, game)
+    before = state(client, game)
+
+    with opponent_passes(game):
+        payload = run(server, alice, OPEN_FETCH_UNLOCKS["id"])
+
+    assert payload["script_exit"]["exit"] == "chain_complete", payload["script_exit"]
+    assert (
+        payload["script_exit"]["moves_done"]
+        == payload["script_exit"]["moves_total"]
+        == len(OPEN_FETCH_UNLOCKS["moves"])
+        == 2
+    ), payload["script_exit"]
+    after = state(client, game)
+    assert named(after["graveyards"][ME], "Arid Mesa"), "the fetch was sacrificed"
+    [mountain] = named(after["battlefield"], "Mountain")
+    assert mountain["controller"] == ME
+    assert not named(after["battlefield"], "Sacred Foundry"), "Mountain, not the dual, was picked"
+    assert not named(after["battlefield"], "Elegant Parlor")
+    assert not named(after["battlefield"], "Plains")
+    assert life_of(after, ME) == life_of(before, ME) - 1, "Arid Mesa's own Pay 1 life, nothing else"
+
+
+# -- battlefield unlocks_by_search (M2: choose among several already-in-play fetches) --
+
+#: dimir-frog, esper-blink and instant-reanimator's real `open-fetch-unlocks`
+#: all share this exact `activate.source.select` shape - `unlocks_by_search`
+#: named on a BATTLEFIELD land, to choose among several already-in-play,
+#: untapped fetches rather than crack whichever one is merely untapped. Built
+#: here rather than read off a sibling worktree: the real dimir-frog file (at
+#: `mtg-decks-w1/decks/dimir-frog/plays/open-fetch-unlocks.json`, read once to
+#: copy this shape faithfully) lives in another agent's temporary, numbered
+#: scratch worktree - a fine thing to read, never a fine thing for a landed
+#: test to depend on, since that worktree does not outlive its own task. This
+#: is that same file's exact `true`/`false`/`moves` shape, `id` renamed.
+DIMIR_FROG_BATTLEFIELD_FETCH_PICK = json.loads(
+    """
+    {
+      "schema_version": 1,
+      "id": "open-fetch-unlocks-battlefield-choice",
+      "name": "Crack the untapped fetch that can actually reach the unlock",
+      "priority": 72,
+      "opposing_archetypes": ["*"],
+      "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+      "true": [
+        {"kind": "turn", "op": "<=", "n": 2},
+        {"kind": "land_drop_available", "value": true},
+        {
+          "kind": "count", "zone": "hand", "side": "me", "op": ">=", "n": 1,
+          "select": {
+            "types_all": ["Land"],
+            "searches_for_any": ["Plains", "Island", "Swamp", "Mountain", "Forest"],
+            "unlocks_by_search": true
+          }
+        }
+      ],
+      "false": [
+        {
+          "kind": "count", "zone": "hand", "side": "me", "op": ">=", "n": 1,
+          "select": {"types_all": ["Land"], "unlocks": true, "enters_any": ["untapped"]}
+        },
+        {"kind": "life", "side": "me", "op": "<=", "n": 7},
+        {"kind": "zone_size", "zone": "library", "side": "me", "op": "<=", "n": 5}
+      ],
+      "moves": [
+        {
+          "kind": "play_land",
+          "card": {
+            "select": {
+              "types_all": ["Land"],
+              "searches_for_any": ["Plains", "Island", "Swamp", "Mountain", "Forest"],
+              "unlocks_by_search": true
+            },
+            "ties": "any"
+          }
+        },
+        {
+          "kind": "activate",
+          "source": {
+            "zone": "battlefield",
+            "select": {
+              "types_all": ["Land"],
+              "searches_for_any": ["Plains", "Island", "Swamp", "Mountain", "Forest"],
+              "tapped": false,
+              "unlocks_by_search": true
+            },
+            "ties": "any"
+          },
+          "ability_text_has": "Search your library for",
+          "sacrifice": "source",
+          "answers": [
+            {
+              "decision": "choose_cards",
+              "pick": {
+                "select": {"types_all": ["Land"], "unlocks": true},
+                "count": 1,
+                "prefer": [{"supertypes_any": ["Basic"]}],
+                "ties": "any"
+              }
+            },
+            {"decision": "pay_life", "accept": true}
+          ]
+        }
+      ],
+      "next": []
+    }
+    """
+)
+
+
+def dimir_frog_battlefield_choice_board(client: TestClient, game_id: str) -> None:
+    """Turn 1, precombat main, land drop available: Polluted Delta ("Search
+    your library for an Island or Swamp card") and Thoughtseize (needs B) in
+    hand; Flooded Strand ("...for a Plains or Island card") already on the
+    battlefield, untapped, but unable to reach anything that unlocks
+    Thoughtseize - proving the activate move's own `unlocks_by_search`
+    selector picks the fetch that actually can, not merely the first
+    untapped one. Library holds the one land that does (a Swamp) plus filler
+    past the play's own `zone_size <= 5` stand-down guard."""
+    force_turn_position(game_id, Step.PRECOMBAT_MAIN, ME)
+    add_card(client, game_id, "Flooded Strand", ME, "battlefield")
+    add_card(client, game_id, "Polluted Delta", ME, "hand")
+    add_card(client, game_id, "Thoughtseize", ME, "hand")
+    add_card(client, game_id, "Swamp", ME, "library")
+    for _ in range(5):
+        add_card(client, game_id, "Psychic Frog", ME, "library")
+    declare_plan(client, game_id, ME)
+
+
+def test_battlefield_fetch_selects_the_untapped_one_that_actually_unlocks(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect this regresses (M2): `build_hypothetical_facts` used to
+    compute `unlocks_by_search` for hand cards only, so a play whose
+    `activate` move picks AMONG SEVERAL already-in-play, untapped fetches by
+    `source.select`'s own `unlocks_by_search: true` (dimir-frog, esper-blink
+    and instant-reanimator's real `open-fetch-unlocks` all share this exact
+    shape) could never match a battlefield land at all - the source select
+    found nothing and the run exited `unforeseen`. Fixed, Flooded Strand
+    (cannot reach a black source) is correctly passed over for Polluted
+    Delta (can), which is cracked for the library's own Swamp."""
+    alice = seat_uid(game, ME)
+    register_corpus(client, game, alice, "dimir-frog", DIMIR_FROG_BATTLEFIELD_FETCH_PICK)
+    dimir_frog_battlefield_choice_board(client, game)
+    server = mcp_server(client, monkeypatch, game)
+    before = state(client, game)
+
+    with opponent_passes(game):
+        payload = run(server, alice, DIMIR_FROG_BATTLEFIELD_FETCH_PICK["id"])
+
+    assert payload["script_exit"]["exit"] == "chain_complete", payload["script_exit"]
+    assert payload["script_exit"]["moves_done"] == payload["script_exit"]["moves_total"] == 2, (
+        payload["script_exit"]
+    )
+    after = state(client, game)
+    assert named(after["graveyards"][ME], "Polluted Delta"), "the reaching fetch was cracked"
+    assert named(after["battlefield"], "Flooded Strand"), "the non-reaching fetch stayed put"
+    [swamp] = named(after["battlefield"], "Swamp")
+    assert swamp["controller"] == ME
+    assert life_of(after, ME) == life_of(before, ME) - 1, (
+        "Polluted Delta's own Pay 1 life, nothing else"
+    )
 
 
 @contextmanager

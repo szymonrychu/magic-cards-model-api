@@ -353,6 +353,7 @@ def test_no_selector_field_takes_a_card_name():
         "enters_any",
         "unlocks",
         "unlocks_by_search",
+        "unlocks_by_basic_search",
         "affordable",
     }
 
@@ -459,6 +460,19 @@ def test_unlocks_by_search_validates_as_a_bool():
 
 def test_unlocks_by_search_non_bool_is_malformed():
     doc = mutate("true.0.select", {"unlocks_by_search": "yes"})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_unlocks_by_basic_search_validates_as_a_bool():
+    doc = mutate("true.0.select", {"unlocks_by_basic_search": True})
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).true[0].select.unlocks_by_basic_search is True
+
+
+def test_unlocks_by_basic_search_non_bool_is_malformed():
+    doc = mutate("true.0.select", {"unlocks_by_basic_search": "yes"})
     assert codes(doc) == ["malformed-play"]
     with pytest.raises(ValidationError):
         Play.model_validate(doc)

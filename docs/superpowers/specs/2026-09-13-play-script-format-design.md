@@ -199,9 +199,9 @@ silent false.
 
 - Enters states: `untapped`, `tapped`, `untapped_if_paid`
 
-### `unlocks`, `unlocks_by_search`, `affordable` (O7)
+### `unlocks`, `unlocks_by_search`, `unlocks_by_basic_search`, `affordable` (O7)
 
-Three more selector fields the engine, not the view, answers:
+Four more selector fields the engine, not the view, answers:
 
 - `unlocks` (bool): with this land entering right now exactly as `enters_any`
   above says it would (its optional cost paid only when doing so is not
@@ -224,6 +224,13 @@ Three more selector fields the engine, not the view, answers:
   `conditions.needs_contents` fires for any selector naming it, exactly as it
   does for a `count` over the viewer's own library, so a caller that walks a
   play for what it needs to fetch never has to ask twice.
+- `unlocks_by_basic_search` (bool): the same question as `unlocks_by_search`,
+  narrowed to a library land its search could find that is also a *basic*
+  land (supertype `Basic`, read off the library card the same way
+  `unlocks_by_search` already reads its subtypes) - a fetch-conservation play
+  that only wants a "free" find (never a shockland or other non-basic land
+  that also unlocks something) names this instead. It needs the viewer's own
+  library contents exactly as `unlocks_by_search` does, for the same reason.
 - `affordable {extra: n}` (`n` >= 0): the card's own `mana_value` is at most
   `untapped_mana + extra` - the same `untapped_mana` a `{kind: untapped_mana}`
   condition reads (`conditions.untapped_mana`), a plain view computation with
@@ -232,11 +239,11 @@ Three more selector fields the engine, not the view, answers:
   from untapped mana alone; a card with no `mana_value` (a land), or a call
   that never computed `untapped_mana` at all, never matches.
 
-`unlocks`/`unlocks_by_search` (and `enters_any`) need `hypo`; `affordable`
-never does, since `untapped_mana` costs nothing to compute from the view
-already in hand - a play mixing `affordable` with the other three still
-needs the `GET .../playscripts/hypothetical-facts` call for those, but never
-for `affordable` alone.
+`unlocks`/`unlocks_by_search`/`unlocks_by_basic_search` (and `enters_any`)
+need `hypo`; `affordable` never does, since `untapped_mana` costs nothing to
+compute from the view already in hand - a play mixing `affordable` with the
+other four still needs the `GET .../playscripts/hypothetical-facts` call for
+those, but never for `affordable` alone.
 
 ## Moves
 
