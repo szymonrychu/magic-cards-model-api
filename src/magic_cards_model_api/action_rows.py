@@ -524,7 +524,7 @@ class _Rows:
             "mana_cost": mana_cost,
             "x_range": action.x_range,
         }
-        if action.x_range is not None or schedule.words is not None:
+        if schedule.words is not None:
             update.update(
                 affordable=Affordability.UNKNOWN,
                 unaffordable_reason="X has not been announced yet (CR 107.3a)",
