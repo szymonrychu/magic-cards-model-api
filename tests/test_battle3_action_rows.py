@@ -519,10 +519,14 @@ def test_the_row_names_each_mode_the_engine_cannot_read(client, game):
 
     (row,) = rows_for(legal_actions(client, game, "alice"), rig["charm"])
     unreadable = {entry["mode_number"]: entry for entry in row["unreadable_modes"]}
-    assert 1 in unreadable, row
-    assert 2 not in unreadable, row
-    assert unreadable[1]["text"].startswith("Thraben Charm deals damage"), unreadable
-    assert "CR 700.2a" in unreadable[1]["notice"], unreadable
+    # The Reality Fracture number sweep taught the engine to read mode 1's
+    # dynamic damage amount ("equal to twice the number of creatures you
+    # control") - mode 3's "any number of target players' graveyards" is the
+    # one this pool still cannot read, so it is the case this test now proves.
+    assert 1 not in unreadable, row
+    assert 3 in unreadable, row
+    assert unreadable[3]["text"].startswith("Exile any number of target players"), unreadable
+    assert "CR 700.2a" in unreadable[3]["notice"], unreadable
 
 
 def test_casting_an_unreadable_mode_is_refused_and_keeps_the_card(client, game):
@@ -533,13 +537,13 @@ def test_casting_an_unreadable_mode_is_refused_and_keeps_the_card(client, game):
         json={
             "player": "alice",
             "card_id": rig["charm"],
-            "modes": [1],
-            "targets": [rig["bears"]],
+            "modes": [3],
+            "targets": ["bob"],
             "mana_sources": rig["plains"],
         },
     ).json()
     assert answer["allowed"] is False, answer
-    assert "mode 1" in answer["reason"], answer
+    assert "mode 3" in answer["reason"], answer
     after = state(client, game)
     assert find(after["hands"]["alice"], "Thraben Charm")["id"] == rig["charm"]
     assert not any(card["tapped"] for card in after["battlefield"] if card["name"] == "Plains")
