@@ -2218,6 +2218,7 @@ def test_the_two_field_tables_genuinely_differ():
         "pay_energy_amount",
         "pay_life_amount",
         "put_on_top_or_bottom",
+        "choose_pile",
         "order_triggers",
         "declare_attackers",
         "declare_blockers",

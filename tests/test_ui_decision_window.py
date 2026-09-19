@@ -1010,6 +1010,7 @@ SMALL = [
     },
     {**BASE, "kind": "choose_a_mode", "options": ["one", "two"], "source": "Small choose_a_mode"},
     {**BASE, "kind": "put_on_top_or_bottom", "source": "Small put_on_top_or_bottom"},
+    {**BASE, "kind": "choose_pile", "source": "Small choose_pile"},
     {**BASE, "kind": "opening_hand_action", "source": "Small opening_hand_action"},
     {
         **BASE,

@@ -4926,6 +4926,17 @@
             "title": "Pairs",
             "type": "array"
           },
+          "pile_one": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pile One"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -4972,6 +4983,13 @@
               }
             ],
             "title": "Top Order"
+          },
+          "usernames": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Usernames",
+            "type": "array"
           }
         },
         "required": [

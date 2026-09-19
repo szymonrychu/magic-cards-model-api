@@ -1289,6 +1289,21 @@ class DecideRequest(BoardRead):
     `pending_decision.player`. Not `accept`: this is a top/bottom choice, not
     a yes/no, even though both happen to be booleans. `None` (the default) is
     refused, matching `accept`/`choice`/`energy_amount`."""
+    pile_one: bool | None = None
+    """The `choose_pile` kind's answer (CR 700.3's pile primitive, Liliana of
+    the Veil's own `-6`, Do or Die) - `True` for pile one
+    (`pending_decision.cards`), `False` for its complement. Not `accept`,
+    the same reason `top` is not: this is a two-way pile choice, not a
+    yes/no, even though both are booleans. `None` (the default) is refused,
+    matching `top`."""
+    usernames: list[str] = Field(default_factory=list)
+    """The `choose_players` kind's answer (CR 701.34a's own Proliferate
+    player half) - `card_ids`' own twin, a subset of
+    `pending_decision.players` named by username rather than by id, since a
+    player has no id of their own. Empty is a real answer: every printed
+    proliferate in the pool offers "any number", so declining every player is
+    the legal decline, the same as an empty `card_ids` is for a
+    `choose_cards` question with `exact=False`."""
     order: list[str] = Field(default_factory=list)
     """The `order_triggers` kind's answer (CR 603.3b) - the order this
     player's simultaneously triggered abilities go on the stack, "in any order

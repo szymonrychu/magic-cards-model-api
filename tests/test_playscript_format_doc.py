@@ -172,7 +172,9 @@ def test_activate_move_line_carries_targets_and_the_sacrifice_and_discard_choice
 
 def test_doc_names_the_amount_decision_kinds_and_the_amount_field() -> None:
     assert _listed("- Amount decision kinds:") == list(AMOUNT_DECISION_KINDS)
-    assert "amount?: >=0|max, choice?: string}`" in DOC.read_text()
+    assert (
+        "amount?: >=0|max, choice?: string, pile_one?: bool, players?: [0-2 me|opponent]}`"
+    ) in DOC.read_text()
 
 
 def test_doc_names_every_runner_exit_in_enum_order() -> None:

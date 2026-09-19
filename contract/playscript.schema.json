@@ -95,7 +95,7 @@
     },
     "Answer": {
       "additionalProperties": false,
-      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; `choice` (O6) is taken only by\n`CHOICE_DECISION_KINDS`; every other kind takes `pick`, `accept`,\n`to_graveyard` or `to_bottom`.",
+      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; `choice` (O6) is taken only by\n`CHOICE_DECISION_KINDS`; every other kind takes `pick`, `accept`,\n`to_graveyard`, `to_bottom`, `pile_one` or `players`.",
       "properties": {
         "accept": {
           "default": null,
@@ -128,6 +128,8 @@
             "choose_a_mode",
             "choose_a_quality",
             "choose_cards",
+            "choose_pile",
+            "choose_players",
             "choose_targets",
             "declare_attackers",
             "declare_blockers",
@@ -150,6 +152,24 @@
         "pick": {
           "$ref": "#/$defs/Pick",
           "default": null
+        },
+        "pile_one": {
+          "default": null,
+          "title": "Pile One",
+          "type": "boolean"
+        },
+        "players": {
+          "default": null,
+          "items": {
+            "enum": [
+              "me",
+              "opponent"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "title": "Players",
+          "type": "array"
         },
         "to_bottom": {
           "$ref": "#/$defs/Selector",

@@ -381,15 +381,24 @@ and then this doc's test until it is listed here.
 
 ### `answers[]`
 
-Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select], ties?: any}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max, choice?: string}`.
+Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select], ties?: any}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max, choice?: string, pile_one?: bool, players?: [0-2 me|opponent]}`.
 
 An answer's fields must fit its decision kind, or it is
 `answer-shape-mismatch`. A pay-amount decision (Galvanic Discharge's
 `pay_energy_amount`, Necrodominance's `pay_life_amount`) is answered with
 `amount` alone: an integer from 0, or `max` for the most the decision allows.
-`accept`, `pick`, `to_graveyard`, `to_bottom` or `choice` on it, or no
-`amount`, is `answer-shape-mismatch`, and so is an `amount` on any other kind.
+`accept`, `pick`, `to_graveyard`, `to_bottom`, `choice`, `pile_one` or
+`players` on it, or no `amount`, is `answer-shape-mismatch`, and so is an
+`amount` on any other kind.
 A negative `amount` is `bounds-exceeded`; any other value is `malformed-play`.
+
+`pile_one` (CR 700.3's pile primitive - Liliana of the Veil's own `-6`, Do or
+Die) answers a `choose_pile` decision: `true` for pile one
+(`pending_decision.cards`), `false` for its complement. `players` (CR
+701.34a's own "and/or players" half of Proliferate) answers a
+`choose_players` decision: each `me`/`opponent` token resolves to that
+player's own username the same way a `PlayerTarget` already does, restricted
+to whoever the decision actually offered.
 
 - Amount decision kinds: `pay_energy_amount`, `pay_life_amount`
 
@@ -414,7 +423,7 @@ the api can pend. A value outside it (a typo such as `choose_cardz`) is
 `forbidden-kind`, because scripts never attack, block, assign combat damage or
 mulligan.
 
-- Decision kinds: `assign_combat_damage`, `choose_a_mode`, `choose_a_quality`, `choose_cards`, `choose_targets`, `declare_attackers`, `declare_blockers`, `may`, `mulligan`, `opening_hand_action`, `order_triggers`, `pay_energy`, `pay_energy_amount`, `pay_life`, `pay_life_amount`, `pay_mana`, `put_on_top_or_bottom`, `scry`, `surveil`
+- Decision kinds: `assign_combat_damage`, `choose_a_mode`, `choose_a_quality`, `choose_cards`, `choose_pile`, `choose_players`, `choose_targets`, `declare_attackers`, `declare_blockers`, `may`, `mulligan`, `opening_hand_action`, `order_triggers`, `pay_energy`, `pay_energy_amount`, `pay_life`, `pay_life_amount`, `pay_mana`, `put_on_top_or_bottom`, `scry`, `surveil`
 - Never answered: `assign_combat_damage`, `declare_attackers`, `declare_blockers`, `mulligan`
 
 ## How the runner builds a move

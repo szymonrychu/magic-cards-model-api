@@ -1309,6 +1309,28 @@ def decide_body(
             item["to_bottom"], cards[0], present, untapped_mana=mana, hypo=hypo
         )
         return body
+    if kind == "choose_pile" and "pile_one" in item:
+        # CR 700.3's pile primitive - a plain boolean, the same shape
+        # `put_on_top_or_bottom` already is: `True` for pile one
+        # (`pending_decision.cards`), `False` for its complement.
+        body["pile_one"] = bool(item["pile_one"])
+        return body
+    if kind == "choose_players" and "players" in item:
+        # CR 701.34a's own Proliferate player half: each "me"/"opponent"
+        # token resolves to a real username the same way `_targets`' own
+        # `PlayerTarget` already does, restricted to whoever the decision
+        # actually offered (`pending.players`) - a script naming a side
+        # nothing offered simply chooses nobody on that side, matching every
+        # other answer shape's "chosen must be a subset of offered" posture.
+        offered = {str(username) for username in pending.get("players") or ()}
+        all_names = [str(player.get("username")) for player in state.get("players") or []]
+        chosen_players: list[str] = []
+        for side in item["players"]:
+            for name in all_names:
+                if name in offered and name not in chosen_players and _on_side(name, side, me):
+                    chosen_players.append(name)
+        body["usernames"] = chosen_players
+        return body
     return ScriptExit(
         Exit.UNFORESEEN,
         stop_reason=f"the answer for the {kind} decision gives nothing that answers it",

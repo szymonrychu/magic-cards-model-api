@@ -100,6 +100,7 @@ function answerThrough(root, p) {
     case "pay_life": case "pay_energy": case "pay_mana": press("Pay"); press("Don't pay"); break;
     case "opening_hand_action": press("Do it"); press("Skip"); break;
     case "put_on_top_or_bottom": press("Top"); press("Bottom"); break;
+    case "choose_pile": press("Pile one"); press("The other pile"); break;
     case "pay_energy_amount": case "pay_life_amount":
       fire(input(), "change", { target: { value: "2" } });
       press("Pay");
@@ -159,6 +160,12 @@ SMALL = [
     },
     {**BASE, "kind": "put_on_top_or_bottom", "prompt": "Top or bottom?", "source": "Brainstone"},
     {**BASE, "kind": "opening_hand_action", "prompt": "Reveal it?", "source": "Chancellor"},
+    {
+        **BASE,
+        "kind": "choose_pile",
+        "prompt": "choose a pile to sacrifice",
+        "source": "Liliana of the Veil",
+    },
 ]
 
 EXPECTED_BODIES = {
@@ -168,6 +175,7 @@ EXPECTED_BODIES = {
     "pay_mana": [{"accept": True}, {"accept": False}],
     "opening_hand_action": [{"accept": True}, {"accept": False}],
     "put_on_top_or_bottom": [{"top": True}, {"top": False}],
+    "choose_pile": [{"pile_one": True}, {"pile_one": False}],
     "pay_energy_amount": [{"energy_amount": 2}],
     "pay_life_amount": [{"life_amount": 2}],
     "choose_a_mode": [{"choice": "Draw a card"}],

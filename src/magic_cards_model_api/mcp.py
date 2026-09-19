@@ -1921,6 +1921,8 @@ def build_server(seats: Seats) -> MCPServer:
         life_amount: int | None = None,
         choice: str = "",
         top: bool | None = None,
+        pile_one: bool | None = None,
+        usernames: str = "",
         order: str = "",
         damage: str = "",
         generation: int | None = None,
@@ -2134,6 +2136,29 @@ def build_server(seats: Seats) -> MCPServer:
           the *targeted spell's owner* here, not Subtlety's controller
           (CR 108.3) - check it before answering, since in a two-player game
           it is easy to assume it is always the caster.
+        - `choose_pile` (CR 700.3's pile primitive - Liliana of the Veil's
+          own `-6`, "Separate all permanents target player controls into two
+          piles. That player sacrifices all permanents in the pile of their
+          choice."; Do or Die is the same shape): `pile_one` is `True` to
+          choose pile one, `False` for the other pile. `pending_decision
+          .cards` names pile one's own contents (the divider's earlier
+          choice, a separate `choose_cards` question you already answered or
+          the engine already asked someone else); the complement of it,
+          among whatever the target player controls, is pile two. Not
+          `accept` - a two-way pile choice, not a yes/no, even though both
+          are booleans.
+        - `choose_players` (CR 701.34a's own "and/or players" half of
+          Proliferate - "choose any number of permanents and/or players,
+          then give each one a counter"): `usernames` is a comma-separated
+          list chosen from `pending_decision.players`. Every printed
+          proliferate in the pool offers "any number" (CR 107.1c), so this
+          is `exact=False` in practice - leaving `usernames` empty declines
+          every player, which is a real, legal answer, not a missing one.
+          `choose_players`'s own twin question, a `choose_cards` decision
+          over the same resolution's eligible permanents, is asked
+          alongside it (CR 701.34a proliferates both halves together) - answer
+          both, since proliferating nobody at all only skips the effect
+          entirely when neither offers a real choice.
         - `order_triggers` (CR 603.3b: "if multiple abilities have triggered
           since the last time a player received priority ... each player, in
           APNAP order, puts each triggered ability they control on the stack
@@ -2251,6 +2276,10 @@ def build_server(seats: Seats) -> MCPServer:
             body["choice"] = choice
         if top is not None:
             body["top"] = top
+        if pile_one is not None:
+            body["pile_one"] = pile_one
+        if usernames:
+            body["usernames"] = _parse_ids(usernames)
         if order:
             body["order"] = _parse_ids(order)
         if damage:

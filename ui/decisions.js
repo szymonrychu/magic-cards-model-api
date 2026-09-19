@@ -342,6 +342,63 @@ function topOrBottom(pending) {
   };
 }
 
+/** CR 700.3's pile primitive (Liliana of the Veil's own `-6`, Do or Die): a
+ * plain boolean, the same shape `topOrBottom` already is - `pending.cards`
+ * names pile one's own contents (the divider's earlier, separate
+ * `choose_cards` answer), so its labels are folded into the prompt the same
+ * way `chooseCardsOptions` already labels a `choose_cards` question, and the
+ * complement of it is the other pile. */
+function choosePile(pending) {
+  const pileOne = chooseCardsOptions(pending).map((o) => o.label);
+  const pileOneText = pileOne.length ? pileOne.join(", ") : "nothing";
+  return {
+    kind: pending.kind,
+    title: pending.source || pending.kind,
+    prompt: `${pending.prompt} (pile one: ${pileOneText})`,
+    controls: [],
+    submit: { label: "Pile one", enabled: true, answer: { pile_one: true } },
+    secondary: { label: "The other pile", answer: { pile_one: false } },
+    remaining: null,
+  };
+}
+
+/** CR 701.34a's own "and/or players" half of Proliferate - `chooseCards`'s
+ * own twin over `pending.players` (usernames) instead of `pending.cards`.
+ * Reuses the generic multi-select `options` control's `card_ids` draft key
+ * (`render/decision_controls.js`'s `renderOptionsControl`), the same way
+ * `choice` reuses its single-select `choice` key for two different kinds -
+ * only the final answer field (`usernames`, not `card_ids`) differs. */
+function choosePlayers(pending, draft) {
+  const chosen = draft.card_ids || [];
+  const options = (pending.players || []).map((username) => ({
+    id: username,
+    label: username,
+    selected: chosen.includes(username),
+    disabled: false,
+  }));
+  const max = pending.amount;
+  // Every printed proliferate in the pool offers "any number" (CR 107.1c),
+  // so this is `exact=false` in practice - the same fallback `chooseCards`
+  // takes for an absent/older `exact` field.
+  const exact = pending.exact === true;
+  const ok = exact
+    ? chosen.length === max
+    : chosen.length <= (max === null || max === undefined ? Infinity : max);
+  return {
+    kind: pending.kind,
+    title: pending.source || "Choose players",
+    prompt: pending.prompt,
+    controls: [{ type: "options", items: options, multi: true }],
+    submit: {
+      label: exact ? (max === 0 ? "Choose none" : `Choose ${max}`) : "Choose",
+      enabled: ok,
+      answer: { usernames: chosen },
+    },
+    secondary: exact ? null : { label: "Choose none", answer: { usernames: [] } },
+    remaining: null,
+  };
+}
+
 /**
  * The draft key one `assign_combat_damage` recipient answers under - a
  * blocker (`target.kind === "card"`) by its id, the defending player or
@@ -473,6 +530,8 @@ export const DECISION_KINDS = {
   choose_a_quality: choice,
   choose_a_mode: choice,
   put_on_top_or_bottom: topOrBottom,
+  choose_pile: choosePile,
+  choose_players: choosePlayers,
   order_triggers: orderTriggers,
   assign_combat_damage: assignDamage,
 };
@@ -544,6 +603,7 @@ const POPOVER_KINDS = new Set([
   "choose_a_quality",
   "choose_a_mode",
   "put_on_top_or_bottom",
+  "choose_pile",
   "opening_hand_action",
 ]);
 

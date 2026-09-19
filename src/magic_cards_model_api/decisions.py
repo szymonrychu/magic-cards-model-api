@@ -104,6 +104,20 @@ logger = logging.getLogger("mcm.decisions")
 #: creature type") - so it shares the same request field, `choice`, and
 #: `mode_answer` differs from `quality_answer` only in its error text citing
 #: CR 700.2a instead of CR 614.12a.
+#: `CHOOSE_PLAYERS` (CR 701.34a's own "and/or players" half of Proliferate)
+#: and `CHOOSE_PILE` (CR 700.3's pile primitive, Liliana of the Veil's own
+#: `-6`, Do or Die) joined this set the Reality Fracture way every kind above
+#: it did: the engine gained both, and the drift test caught the gap at merge
+#: time rather than in a live game. `CHOOSE_PLAYERS` is `CHOOSE_CARDS`'s own
+#: twin over `Decision.players` (usernames) instead of `Decision.cards` (card
+#: ids) - `usernames_answer` reads exactly like `card_ids_answer` but with no
+#: UUID parsing, since a username is not one. `CHOOSE_PILE` is a plain
+#: boolean the same shape `PUT_ON_TOP_OR_BOTTOM` already is - `True` for pile
+#: one (`Decision.cards`, the first player's own division), `False` for its
+#: complement - so `pile_answer` is `top_or_bottom_answer` read for a pile,
+#: with its own request field (`pile_one`) for the same reason `top` is not
+#: named `accept`: a client must not confuse this two-way choice for a
+#: yes/no.
 #: `OPENING_HAND_ACTION` (CR 103.6, "some cards allow a player to take actions
 #: with them from their opening hand") joined this set when the API started
 #: running CR 103.6 at all. It had no live transport before that, on the
@@ -224,6 +238,8 @@ ANSWERABLE_KINDS = frozenset(
         DecisionKind.DECLARE_ATTACKERS,
         DecisionKind.DECLARE_BLOCKERS,
         DecisionKind.ASSIGN_COMBAT_DAMAGE,
+        DecisionKind.CHOOSE_PLAYERS,
+        DecisionKind.CHOOSE_PILE,
     }
 )
 assert frozenset(DecisionKind) == ANSWERABLE_KINDS, (
@@ -263,6 +279,8 @@ ANSWER_FIELD_FOR_KIND: dict[DecisionKind, str] = {
     DecisionKind.DECLARE_ATTACKERS: "pairs",
     DecisionKind.DECLARE_BLOCKERS: "pairs",
     DecisionKind.ASSIGN_COMBAT_DAMAGE: "damage",
+    DecisionKind.CHOOSE_PLAYERS: "usernames",
+    DecisionKind.CHOOSE_PILE: "accept",
 }
 assert set(ANSWER_FIELD_FOR_KIND) == set(DecisionKind)
 
@@ -284,6 +302,7 @@ assert set(ANSWER_FIELD_FOR_KIND) == set(DecisionKind)
 #: | `choose_a_quality`/`choose_a_mode` | `text` | `choice` |
 #: | `pay_energy_amount`/`pay_life_amount` | `amount` | `energy_amount`/`life_amount` |
 #: | `put_on_top_or_bottom` | `accept` | `top` |
+#: | `choose_pile` | `accept` | `pile_one` |
 #: | `order_triggers` | `card_ids` | `order` |
 #: | `declare_attackers`/`declare_blockers` | `pairs` | `attackers`/`blocks`, on **another tool** |
 #:
@@ -321,6 +340,8 @@ TOOL_FIELD_FOR_KIND: dict[DecisionKind, str] = {
     DecisionKind.DECLARE_ATTACKERS: "attackers",
     DecisionKind.DECLARE_BLOCKERS: "blocks",
     DecisionKind.ASSIGN_COMBAT_DAMAGE: "damage",
+    DecisionKind.CHOOSE_PLAYERS: "usernames",
+    DecisionKind.CHOOSE_PILE: "pile_one",
 }
 assert set(TOOL_FIELD_FOR_KIND) == set(DecisionKind), (
     "TOOL_FIELD_FOR_KIND must cover every DecisionKind: a kind with no entry "
@@ -386,6 +407,11 @@ class PendingDecision:
     source: str | None
     amount: int
     cards: tuple[str, ...]
+    #: The candidate players a `CHOOSE_PLAYERS` answer must be a subset of
+    #: (CR 701.34a's own Proliferate player half) - `cards`' own twin, keyed
+    #: by username rather than card id, since a player has no id of their
+    #: own to be named by. Empty for every other kind.
+    players: tuple[str, ...] = ()
     targets: tuple[dict[str, str], ...] = ()
     target_maximum: int | None = None
     #: The floor a mandatory target requirement carries (CR 601.2c, CR
@@ -531,6 +557,11 @@ class PendingDecision:
             source_card_id=None if decision.source_id is None else str(decision.source_id),
             amount=decision.amount,
             cards=tuple(str(card_id) for card_id in decision.cards),
+            # `getattr`: an engine older than the Reality Fracture bump
+            # (`CHOOSE_PLAYERS`) still has to serve, and it carries no
+            # `players` field at all - the same fallback `moved_label`/
+            # `card_labels` already take just below.
+            players=tuple(getattr(decision, "players", ()) or ()),
             targets=tuple(_target_view(ref) for ref in decision.targets),
             target_maximum=decision.target_maximum,
             target_minimum=decision.target_minimum,
@@ -603,6 +634,12 @@ class PendingDecision:
             return "<true to take a mulligan, false to keep this hand>"
         if kind is DecisionKind.PUT_ON_TOP_OR_BOTTOM:
             return "<true for the top of the library, false for the bottom>"
+        if kind is DecisionKind.CHOOSE_PILE:
+            # CR 700.3's pile primitive: `pending_decision.cards` is pile
+            # one's own contents (the first player's division), so the
+            # complement of it, among whatever this player controls, is pile
+            # two.
+            return "<true for pile one (pending_decision.cards), false for the other pile>"
         if kind in (DecisionKind.PAY_ENERGY_AMOUNT, DecisionKind.PAY_LIFE_AMOUNT):
             # `amount` is the ceiling the payer actually has (CR 118.3,
             # CR 119.4); 0 is always legal and always the decline.
@@ -616,6 +653,19 @@ class PendingDecision:
             # answer is the decline rather than a missing answer.
             return (
                 f'"<up to {self.amount} of pending_decision.cards, comma-separated; '
+                f'empty declines>"'
+            )
+        if kind is DecisionKind.CHOOSE_PLAYERS:
+            # `CHOOSE_CARDS`'s own template, over `players` instead of
+            # `cards` - every printed proliferate in the pool is CR 107.1c's
+            # "any number", so this kind is never `exact=True` in practice,
+            # but the same shape check applies if it ever were.
+            if self.amount == 1:
+                return '"<one of pending_decision.players>"'
+            if self.exact:
+                return f'"<exactly {self.amount} of pending_decision.players, comma-separated>"'
+            return (
+                f'"<up to {self.amount} of pending_decision.players, comma-separated; '
                 f'empty declines>"'
             )
         if kind is DecisionKind.ORDER_TRIGGERS:
@@ -726,6 +776,7 @@ class PendingDecision:
             "source_card_id": self.source_card_id,
             "amount": self.amount,
             "cards": list(self.cards),
+            "players": list(self.players),
             "targets": [dict(ref) for ref in self.targets],
             "target_maximum": self.target_maximum,
             "target_minimum": self.target_minimum,
@@ -883,6 +934,36 @@ def top_or_bottom_answer(top: bool | None) -> bool:
     if top is None:
         raise ValueError("this decision needs a top-or-bottom answer ('top')")
     return top
+
+
+def pile_answer(pile_one: bool | None) -> bool:
+    """A `decide` request body's `pile_one`, in the shape `Game.ask` expects
+    for `CHOOSE_PILE` (CR 700.3's pile primitive, Liliana of the Veil's own
+    `-6`, Do or Die) - a plain `bool`, `True` for pile one
+    (`pending_decision.cards`), `False` for its complement.
+
+    Refuses a missing answer with a 400-shaped `ValueError`, matching
+    `top_or_bottom_answer`'s reasoning: `Game.ask`'s own `isinstance(value,
+    bool)` check would raise the same way but inside the other request
+    thread, where nobody would ever see it. Its own request field
+    (`pile_one`), not `accept`, so a client cannot confuse this two-way
+    choice for a yes/no.
+    """
+    if pile_one is None:
+        raise ValueError("this decision needs a pile answer ('pile_one')")
+    return pile_one
+
+
+def usernames_answer(usernames: list[str]) -> tuple[str, ...]:
+    """A `decide` request body's `usernames`, in the shape `Game.ask` expects
+    for `CHOOSE_PLAYERS` (CR 701.34a's own Proliferate player half) -
+    `card_ids_answer`'s own twin, a `tuple[str, ...]` with no id parsing at
+    all: a username is not a `UUID`, so there is nothing here to malform the
+    way a card id could. Whether each name was actually offered, and whether
+    the right count was named, is `validate_answer`'s job, matching
+    `card_ids_answer`'s own division of labour.
+    """
+    return tuple(usernames)
 
 
 def card_split_answer(moved: list[str], top_order: list[str] | None) -> CardSplit:
@@ -1296,6 +1377,36 @@ def validate_answer(decision: Decision, value: object) -> None:
     if decision.kind is DecisionKind.PUT_ON_TOP_OR_BOTTOM:
         if not isinstance(value, bool):
             raise ValueError(f"{decision.prompt}: needs a top-or-bottom bool answer")
+        return
+
+    if decision.kind is DecisionKind.CHOOSE_PILE:
+        if not isinstance(value, bool):
+            raise ValueError(f"{decision.prompt}: needs a which-pile bool answer")
+        return
+
+    if decision.kind is DecisionKind.CHOOSE_PLAYERS:
+        if not isinstance(value, tuple) or not all(isinstance(v, str) for v in value):
+            raise ValueError(f"{decision.prompt}: needs a tuple of chosen usernames")
+        offered = set(decision.players)
+        stray = [username for username in value if username not in offered]
+        if stray:
+            raise ValueError(
+                f"{decision.prompt}: cannot choose a player that was not offered: "
+                f"{', '.join(stray)}"
+            )
+        if len(set(value)) != len(value):
+            raise ValueError(f"{decision.prompt}: the same player cannot be chosen twice")
+        if decision.exact:
+            if len(value) != decision.amount:
+                raise ValueError(
+                    f"{decision.prompt}: needs {decision.amount} player(s) chosen, "
+                    f"{len(value)} given"
+                )
+        elif len(value) > decision.amount:
+            raise ValueError(
+                f"{decision.prompt}: at most {decision.amount} player(s) may be chosen "
+                f"(CR 107.1c), {len(value)} given"
+            )
         return
 
     if decision.kind in (DecisionKind.SCRY, DecisionKind.SURVEIL):

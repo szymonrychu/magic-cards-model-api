@@ -56,6 +56,7 @@ def _every_field_set() -> Decision:
         "card": third,
         "amount": 4,
         "cards": (first, second),
+        "players": ("alice", "bob"),
         "card_labels": ("first", "second"),
         "moved_label": "your hand",
         "kept_label": "bottom of your library",

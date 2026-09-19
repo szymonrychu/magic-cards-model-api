@@ -71,6 +71,9 @@ MAX_SELECTOR_WORDS = 15
 MAX_TARGETS = 6
 #: Ordered tie-breakers after `pick.select`, the same fan-out as `moves`.
 MAX_PREFER = 4
+#: A `choose_players` answer's own `players` list: "me" and "opponent" are
+#: the only tokens the vocabulary has, so two is every legal length already.
+MAX_PLAYERS_ANSWER = 2
 #: `ties: "any"` takes the first `count` still-tied candidates by sorted
 #: name instead of exiting `ambiguous`; left out, behaviour is unchanged.
 TIES = ("any",)
@@ -163,7 +166,15 @@ AMOUNT_DECISION_KINDS = tuple(
 #: `amount: "max"` pays the most the decision allows (its own `amount`).
 AMOUNT_POLICIES = ("max",)
 #: The answer fields an amount decision never takes.
-NON_AMOUNT_ANSWER_FIELDS = ("pick", "accept", "to_graveyard", "to_bottom", "choice")
+NON_AMOUNT_ANSWER_FIELDS = (
+    "pick",
+    "accept",
+    "to_graveyard",
+    "to_bottom",
+    "choice",
+    "pile_one",
+    "players",
+)
 #: The decision kinds answered by naming a string from an offered (or, for
 #: `choose_a_quality`, sometimes open) list: the kinds the api's
 #: `decisions.TOOL_FIELD_FOR_KIND` answers on `choice` (Cavern of Souls' and
@@ -505,7 +516,7 @@ class Answer(_Strict):
     """How to answer one pending decision of kind `decision`. A pay-amount
     decision takes `amount` alone; `choice` (O6) is taken only by
     `CHOICE_DECISION_KINDS`; every other kind takes `pick`, `accept`,
-    `to_graveyard` or `to_bottom`."""
+    `to_graveyard`, `to_bottom`, `pile_one` or `players`."""
 
     decision: DecisionKind
     pick: Pick = None
@@ -514,6 +525,18 @@ class Answer(_Strict):
     to_bottom: Selector = None
     amount: Amount = None
     choice: NonBlank = None
+    #: `choose_pile`'s own answer (CR 700.3's pile primitive, Liliana of the
+    #: Veil's own `-6`, Do or Die) - `True` for pile one
+    #: (`pending_decision.cards`), `False` for its complement. Not `accept`,
+    #: the same reason the api's own wire shape keeps it separate: a two-way
+    #: pile choice is not a yes/no.
+    pile_one: bool = None
+    #: `choose_players`'s own answer (CR 701.34a's own Proliferate player
+    #: half) - which side(s) to choose among `pending_decision.players`,
+    #: resolved to real usernames by `runtime.decide_body` the same way a
+    #: `PlayerTarget`'s `player` field already is. Not a `Selector`: a player
+    #: has no characteristics a selector could match against.
+    players: list[Literal["me", "opponent"]] = Field(default=None, max_length=MAX_PLAYERS_ANSWER)
 
     @model_validator(mode="after")
     def _fields_fit_the_decision(self) -> Answer:

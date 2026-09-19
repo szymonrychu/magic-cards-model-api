@@ -3880,6 +3880,20 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["top"] = req.top
+    elif kind is DecisionKind.CHOOSE_PILE:
+        # CR 700.3's pile primitive - a plain boolean, the same shape
+        # `PUT_ON_TOP_OR_BOTTOM` already is: `True` for pile one
+        # (`pending_decision.cards`), `False` for its complement.
+        try:
+            answer_value = decisions.pile_answer(req.pile_one)
+        except ValueError as exc:
+            return refuse(str(exc), **detail)
+        detail["pile_one"] = req.pile_one
+    elif kind is DecisionKind.CHOOSE_PLAYERS:
+        # CR 701.34a's own Proliferate player half - `CHOOSE_CARDS`'s own
+        # twin over usernames rather than card ids.
+        answer_value = decisions.usernames_answer(req.usernames)
+        detail["usernames"] = req.usernames
     elif kind in (DecisionKind.SCRY, DecisionKind.SURVEIL):
         try:
             answer_value = decisions.card_split_answer(req.moved, req.top_order)

@@ -414,6 +414,20 @@
           "type_error": null
         },
         {
+          "default": null,
+          "has_default": true,
+          "name": "pile_one",
+          "type": "bool | None",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "usernames",
+          "type": "str",
+          "type_error": null
+        },
+        {
           "default": "",
           "has_default": true,
           "name": "order",
