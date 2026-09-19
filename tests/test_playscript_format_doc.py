@@ -161,11 +161,12 @@ def test_o2_prefer_and_ties_are_on_play_land_activate_source_and_pick() -> None:
     assert "ties?: any" in text
 
 
-def test_activate_move_line_carries_targets_and_the_sacrifice_choice() -> None:
+def test_activate_move_line_carries_targets_and_the_sacrifice_and_discard_choices() -> None:
     assert (
         f"`activate {{source: {{zone, select, prefer?: [0-{MAX_PREFER} select], ties?: any}}, "
         f"ability_text_has, targets: [0-{MAX_TARGETS} <target>], "
-        f"sacrifice?: source|none|<sacrifice choice>, answers: [0-{MAX_ANSWERS}]}}`"
+        f"sacrifice?: source|none|<sacrifice choice>, discard?: none|<discard choice>, "
+        f"answers: [0-{MAX_ANSWERS}]}}`"
     ) in DOC.read_text()
 
 

@@ -17,6 +17,7 @@ adds is picked up without an edit here.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import threading
@@ -507,6 +508,34 @@ def opponent_responds_with_bolt(game_id: str) -> Iterator[list[dict[str, Any]]]:
         thread.join(5)
 
 
+def decline_opponent_yes_no(client: TestClient, game_id: str, player: str = OPPONENT) -> bool:
+    """If `player` has a pending `may`/`pay_life`/`pay_energy` decision (CR
+    608.2d, CR 119.4, CR 118.3) - a Tron piece's destruction handing its own
+    controller their own "you may search for a basic land", say - decline
+    it and return True; otherwise do nothing and return False. A one-shot
+    call between `run_script` attempts, never raced against one while it is
+    active: `runtime._foreign` (B7-09) treats ANY action from another seat,
+    even that seat legitimately answering its own decision, as this run
+    being interrupted - so the caller's own loop must let `run_script`
+    return (`exit: null`, paused on someone else's decision) first, answer
+    the decision here, then resume."""
+    uid = seat_uid(game_id, player)
+    pending = state(client, game_id, uid).get("pending_decision")
+    if not (
+        pending is not None
+        and pending.get("player") == player
+        and pending.get("kind") in ("may", "pay_life", "pay_energy")
+    ):
+        return False
+    response = client.post(
+        f"/api/games/{game_id}/decide",
+        params={"uid": uid},
+        json={"player": player, "accept": False},
+    )
+    assert response.status_code == 200, response.text
+    return True
+
+
 # -- fetch-shock ------------------------------------------------------------------------
 
 
@@ -806,14 +835,31 @@ def printing_view(name: str) -> dict[str, Any] | None:
     """What a selector reads off a card, from its local printing: the front
     face's type line, text, keywords, colours and mana value, and each line
     of text holding a colon as an ability. None for a name with no local
-    printing, which the stager then never picks."""
+    printing, which the stager then never picks.
+
+    A modal double-faced card (`layout: "modal_dfc"`, CR 712.12) also gets a
+    `faces` list, `serialize._faces_view`'s own shape - each face's name,
+    mana cost, type line and oracle text, the one whose type line names
+    "Land" (`magic_cards_model.models.card.Card.land_face`) marked
+    `land_face: True`. `selectors._has_land_face` (O5) is what actually reads
+    it: without this, EVERY candidate the stager builds is read as a
+    single-faced card ("a plain land is its own land face"), so a play
+    asking for `land_face: true` could only ever be satisfied by a genuine
+    Land - which then trips the very guard ("zero plain lands in hand") a
+    play like `open-land-idle-mdfc` pairs it with, since the same card would
+    have to be both. A transform or meld card (CR 712.2) also carries
+    `card_faces` but never gets a `faces` list here: its land back, if any,
+    is reached only by transforming or melding, never a land drop, so
+    `land_face` never marks it - matching `Card.land_face`'s own `layout is
+    not MODAL_DFC` refusal exactly."""
     raw = scryfall.load_cached(name) or scryfall.load_pooled(name)
     if raw is None:
         return None
-    face = (raw.get("card_faces") or [raw])[0]
+    card_faces = raw.get("card_faces") or []
+    face = (card_faces or [raw])[0]
     text = str(face.get("oracle_text") or raw.get("oracle_text") or "")
     lines = [line.strip().strip("()") for line in text.splitlines()]
-    return {
+    view = {
         "name": raw["name"],
         "type_line": str(face.get("type_line") or raw.get("type_line") or ""),
         "oracle_text": text,
@@ -825,6 +871,26 @@ def printing_view(name: str) -> dict[str, Any] | None:
         "counters": {},
         "abilities": [{"text": line} for line in lines if ":" in line],
     }
+    if raw.get("layout") == "modal_dfc" and len(card_faces) > 1:
+        land_face = next(
+            (
+                f
+                for f in card_faces
+                if "land" in str(f.get("type_line", "")).split("—")[0].lower().split()
+            ),
+            None,
+        )
+        view["faces"] = [
+            {
+                "name": f.get("name"),
+                "mana_cost": f.get("mana_cost"),
+                "type_line": f.get("type_line"),
+                "oracle_text": f.get("oracle_text"),
+                **({"land_face": True} if f is land_face else {}),
+            }
+            for f in card_faces
+        ]
+    return view
 
 
 def deck_pool(slug: str) -> list[dict[str, Any]]:
@@ -832,6 +898,54 @@ def deck_pool(slug: str) -> list[dict[str, Any]]:
     decklist = parse_decklist((DECKLISTS / slug / "decklist.txt").read_text())
     names = dict.fromkeys([*decklist.mainboard, *decklist.sideboard])
     return [view for view in map(printing_view, names) if view is not None]
+
+
+@functools.cache
+def universal_pool() -> tuple[dict[str, Any], ...]:
+    """Every card this repo has real local printing data for - the engine's
+    own bundled corpus (`magic_cards_model`'s `data/printings/*.json`, ~1000
+    real printings) plus this suite's own `tests/fixtures/scryfall/` cache -
+    as printing views. Used only for staging an OPPONENT's battlefield
+    (`stage_opponent_count`): a play's own true conditions never say what
+    deck the opponent runs, only what a card of theirs looks like, so any
+    real card matching that is a legitimate stand-in for one out of their
+    (unmodeled) 75. Cached: this repo's local corpus does not change between
+    calls within one test run."""
+    import magic_cards_model
+
+    names: set[str] = set()
+    for directory in (
+        Path(magic_cards_model.__file__).resolve().parent / "data" / "printings",
+        scryfall.cache_dir(),
+    ):
+        if not directory.is_dir():
+            continue
+        for path in directory.glob("*.json"):
+            try:
+                raw = json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            name = raw.get("name") if isinstance(raw, dict) else None
+            if isinstance(name, str):
+                names.add(name)
+    views = (printing_view(name) for name in names)
+    return tuple(view for view in views if view is not None)
+
+
+def stage_opponent_count(board: Board, condition: dict[str, Any]) -> None:
+    """Satisfy a `true` count `condition` naming `side: "opponent"`: find a
+    real card in `universal_pool()` matching its (never hypo-only - the
+    corpus never names one on an opponent condition) selector and add it to
+    `board.opponent_cards`. No `breaks()`/false-guard check: no play in the
+    corpus reads the opponent's side in a `false` condition, so there is
+    nothing yet to avoid tripping."""
+    present = board_present(board)
+    zone = condition["zone"]
+    select = condition["select"]
+    fit = next((view for view in universal_pool() if loose_matches(select, view, present)), None)
+    if fit is None:
+        pytest.fail(f"no locally known card can be the opponent's own {condition}")
+    board.opponent_cards.append((zone, fit))
 
 
 @dataclass
@@ -850,27 +964,50 @@ class Board:
     #: `stage`'s own true-condition pass had to pin a value for.
     opposing_archetype: str = "*"
     inputs: dict[str, Any] = field(default_factory=dict)
+    #: The opponent's own side, staged only when a `count` condition names
+    #: `side: "opponent"` (`stage_opponent_count`) - empty otherwise, which is
+    #: exactly what `board_present`'s own long-standing "the opponent's side
+    #: is always staged empty" already promised for every play that never
+    #: reads one.
+    opponent_cards: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def zone(self, zone: str) -> list[dict[str, Any]]:
         return [view for where, view in self.cards if where == zone]
 
+    def opponent_zone(self, zone: str) -> list[dict[str, Any]]:
+        return [view for where, view in self.opponent_cards if where == zone]
+
     def plus(self, zone: str, view: dict[str, Any]) -> Board:
         return Board(
-            [*self.cards, (zone, view)], self.life, self.turn, self.opposing_archetype, self.inputs
+            [*self.cards, (zone, view)],
+            self.life,
+            self.turn,
+            self.opposing_archetype,
+            self.inputs,
+            self.opponent_cards,
         )
 
     def describe(self) -> dict[str, Any]:
-        return {"life": self.life, **{z: [v["name"] for v in self.zone(z)] for z in ZONES}}
+        return {
+            "life": self.life,
+            **{z: [v["name"] for v in self.zone(z)] for z in ZONES},
+            "opponent": {z: [v["name"] for v in self.opponent_zone(z)] for z in ZONES},
+        }
 
 
 def board_present(board: Board) -> Callable[[Sequence[str], str], list[dict[str, Any]]]:
     """`matches`'s `present`, read off the board being staged: the opponent's
-    side is always staged empty (see `holds`), so only mine has any cards."""
+    side is staged empty unless a `count` condition named `side: "opponent"`
+    (`stage_opponent_count`), in which case `board.opponent_cards` carries
+    whatever that staged."""
 
     def present(zones: Sequence[str], side: str) -> list[dict[str, Any]]:
-        if side not in ("me", "any"):
-            return []
-        return [view for zone in zones for view in board.zone(zone)]
+        found = []
+        if side in ("me", "any"):
+            found += [view for zone in zones for view in board.zone(zone)]
+        if side in ("opponent", "any"):
+            found += [view for zone in zones for view in board.opponent_zone(zone)]
+        return found
 
     return present
 
@@ -936,9 +1073,14 @@ def holds(board: Board, condition: dict[str, Any]) -> bool:
     `holds_loose` is the `true`-condition-staging reading that drops it
     instead."""
     kind = condition["kind"]
-    mine = condition.get("side", "me") in ("me", "any")
+    side = condition.get("side", "me")
+    mine = side in ("me", "any")
     if kind == "count":
-        cards = board.zone(condition["zone"]) if mine else []
+        cards = []
+        if side in ("me", "any"):
+            cards += board.zone(condition["zone"])
+        if side in ("opponent", "any"):
+            cards += board.opponent_zone(condition["zone"])
         found = sum(
             matches(condition["select"], view, board_present(board), hypo={}) for view in cards
         )
@@ -983,12 +1125,23 @@ def holds_loose(board: Board, condition: dict[str, Any]) -> bool:
     """`holds`, but for staging a board to satisfy a `true` condition: a
     `count` selector naming a hypo-only field is judged with that field
     dropped (see `loose_matches`) rather than as never matching, so staging
-    can actually find a card for it. Every other condition kind reads
-    exactly as `holds` already does."""
+    can actually find a card for it. `stack_top` reads as always satisfied -
+    `Board` has no stack to check (`holds`'s own strict reading is `False`,
+    always, for the same reason), so a play whose own true conditions need
+    one is trusted to have `stage_opponent_object_on_stack` genuinely put a
+    real object there before it runs for real; the live `judged["applies"]`
+    downstream is what actually proves it did. Every other condition kind
+    reads exactly as `holds` already does."""
+    if condition["kind"] == "stack_top":
+        return True
     if condition["kind"] != "count":
         return holds(board, condition)
-    mine = condition.get("side", "me") in ("me", "any")
-    cards = board.zone(condition["zone"]) if mine else []
+    side = condition.get("side", "me")
+    cards = []
+    if side in ("me", "any"):
+        cards += board.zone(condition["zone"])
+    if side in ("opponent", "any"):
+        cards += board.opponent_zone(condition["zone"])
     found = sum(loose_matches(condition["select"], view, board_present(board)) for view in cards)
     return compare(found, condition["op"], condition["n"])
 
@@ -1411,6 +1564,10 @@ def stage(client: TestClient, play: dict[str, Any], pool: list[dict[str, Any]]) 
 
     counts = [c for c in play["true"] if c["kind"] == "count"]
     for condition in sorted(counts, key=lambda c: c["zone"] == "battlefield"):
+        if condition.get("side", "me") == "opponent":
+            if not holds_loose(board, condition):
+                stage_opponent_count(board, condition)
+            continue
         if _has_hypo(condition.get("select")):
             if not holds_loose(board, condition):
                 stage_hypo_count(client, board, play, pool, condition)
@@ -1529,6 +1686,59 @@ def stage(client: TestClient, play: dict[str, Any], pool: list[dict[str, Any]]) 
     return board
 
 
+def stage_opponent_object_on_stack(client: TestClient, game_id: str) -> None:
+    """Put a real object of the OPPONENT's own on top of an otherwise empty
+    stack, priority handed back to me afterwards - what a `stack_top` true
+    condition (`controller: "opponent"`) actually needs, which staging cards
+    onto a board can never give by itself: gives the opponent a real,
+    purely-generic-cost, untargeted instant from `universal_pool()` (found
+    once, not one this deck's own corpus is assumed to carry - the opponent's
+    real deck is never modeled) plus a land to pay it with, then drives the
+    real pass/cast/pass sequence (CR 117) through the API so the object that
+    ends up on the stack is a genuine `AbilityOnStack`/spell, not a stand-in.
+    Called only for a play whose own true conditions actually read
+    `stack_top`; every other play's stack stays empty exactly as before."""
+    spell = next(
+        view
+        for view in universal_pool()
+        if "instant" in card_types(view)
+        and "faces" not in view
+        and view["mana_cost"]
+        and view["mana_value"] <= 1
+        and (_mana_symbols(view) is not None)
+        and all(symbol == "1" for symbol in _mana_symbols(view))
+        and (
+            "target" not in view["oracle_text"].casefold()
+            or "target player" in view["oracle_text"].casefold()
+            or "target opponent" in view["oracle_text"].casefold()
+        )
+    )
+    add_card(client, game_id, spell["name"], OPPONENT, "hand")
+    add_card(client, game_id, "Forest", OPPONENT, "battlefield")
+    alice_uid = seat_uid(game_id, ME)
+    bob_uid = seat_uid(game_id, OPPONENT)
+    passed = client.post(
+        f"/api/games/{game_id}/actions/pass-priority",
+        params={"uid": alice_uid},
+        json={"player": ME},
+    )
+    assert passed.status_code == 200, passed.text
+    hand = state(client, game_id, bob_uid)["hands"][OPPONENT]
+    [card] = named(hand, spell["name"])
+    cast = client.post(
+        f"/api/games/{game_id}/actions/cast",
+        params={"uid": bob_uid},
+        json={"player": OPPONENT, "card_id": card["id"]},
+    )
+    assert cast.status_code == 200, cast.text
+    passed = client.post(
+        f"/api/games/{game_id}/actions/pass-priority",
+        params={"uid": bob_uid},
+        json={"player": OPPONENT},
+    )
+    assert passed.status_code == 200, passed.text
+
+
 def apply_board(client: TestClient, game_id: str, board: Board, play: dict[str, Any]) -> None:
     """Put the plan onto the real game at the play's first step, and hand me
     priority there."""
@@ -1543,6 +1753,8 @@ def apply_board(client: TestClient, game_id: str, board: Board, play: dict[str, 
     game.turn.turns_taken_by[ME] = board.turn
     for zone, view in board.cards:
         add_card(client, game_id, view["name"], ME, zone)
+    for zone, view in board.opponent_cards:
+        add_card(client, game_id, view["name"], OPPONENT, zone)
     if board.life != 20:
         set_life(game_id, ME, board.life)
     if active == OPPONENT:
@@ -1553,41 +1765,7 @@ def apply_board(client: TestClient, game_id: str, board: Board, play: dict[str, 
 
 #: Seed plays the engine cannot yet carry to completion, each with the
 #: engine's own refusal. Empty means every play in the slice completes.
-ENGINE_GAPS: dict[str, str] = {
-    "instant-reanimator/bin-fatty-vs-permanent-exile": (
-        "Psychic Frog's own 'Discard a card: Put a +1/+1 counter on this creature.' "
-        "is a battlefield activation cost with a real hand-card CHOICE - not the "
-        "self-referential 'Discard this card' an off-zone cycling/unearth/transmute "
-        "ability spells out - and this DSL has no field to name it (only `sacrifice`, "
-        "mirrored by `schemas.ActivateIn.sacrificing`/`.discarding`, both always named "
-        "inline in the same request per CR 118.3 - there is no paused mid-activation "
-        "decision a script's own `answers` could resolve instead, the way this play's "
-        "`choose_cards` answer assumes). The engine's own refusal: "
-        "'discard needs 1 card(s) chosen, 0 given'."
-    ),
-    "esper-blink/ephemerate-protect-lone-creature": (
-        "this play's own true condition needs `stack_top` (an opponent's spell or "
-        "ability actually on the stack, targeting my lone creature) to hold - `stage()` "
-        "builds a board with an empty stack by design (`holds`'s own docstring), and "
-        "getting a real opposing spell onto the stack needs orchestrating a second "
-        "client's cast, which the generic seed-play stager does not do."
-    ),
-    "esper-blink/orchid-phantom-breaks-tron": (
-        "this play's own true condition counts a Land on the OPPONENT's battlefield "
-        "('urza's' in its oracle text) - `Board`/`stage()` only ever stages my own "
-        "side (`board_present`'s own docstring: 'the opponent's side is always staged "
-        "empty'), so there is no way to give the opponent a Tron land at all."
-    ),
-    "living-end/open-land-idle-mdfc": (
-        "this play's own true condition needs a real modal-double-faced card in hand "
-        "(`land_face: true`) alongside zero plain lands - `printing_view()` (the test "
-        "harness's own card view, built from a printing's FRONT face only) never "
-        "carries a `faces` list, so `selectors._has_land_face` falls back to 'a "
-        "single-faced card's own type line is its land face' and the only candidate "
-        "that ever matches is a genuine Land, which then trips the play's OWN "
-        "'zero plain lands' true condition instead of satisfying it."
-    ),
-}
+ENGINE_GAPS: dict[str, str] = {}
 
 
 def with_gaps(cases: list[Any]) -> list[Any]:
@@ -1612,6 +1790,8 @@ def test_every_seed_play_completes_on_a_board_staged_from_its_decks_printings(
     board = stage(client, play, deck_pool(slug))
     register_corpus(client, game, alice, slug)
     apply_board(client, game, board, play)
+    if any(c["kind"] == "stack_top" and c.get("controller") == "opponent" for c in play["true"]):
+        stage_opponent_object_on_stack(client, game)
     server = mcp_server(client, monkeypatch, game)
     extra = {"opposing_archetype": board.opposing_archetype, "inputs": board.inputs or None}
     [judged] = [
@@ -1621,6 +1801,32 @@ def test_every_seed_play_completes_on_a_board_staged_from_its_decks_printings(
 
     with opponent_passes(game):
         out = run(server, alice, script_id, **extra)["script_exit"]
+        # `exit: null` with a `resume` token means the run stopped waiting on
+        # someone else's own decision (never raced concurrently - see
+        # `decline_opponent_yes_no`'s own docstring on why not) - answer it,
+        # then resume the same run, until it actually finishes or truly
+        # cannot make progress.
+        for _ in range(5):
+            if out.get("exit") is not None or not out.get("resume"):
+                break
+            if not decline_opponent_yes_no(client, game):
+                break
+            resume = out["resume"]
+            resume = json.dumps(resume) if not isinstance(resume, str) else resume
+            out = run(server, alice, script_id, resume=resume, **extra)["script_exit"]
 
-    assert out["exit"] == "chain_complete", (out, board.describe())
+    # `interrupted` ("someone else acted") is accepted too, but only once
+    # every one of the script's own moves is done: `_foreign` (B7-09) counts
+    # the OPPONENT legitimately answering their own required decision (this
+    # play's own destroyed Tron piece handing its controller their own "you
+    # may search for a basic land") as foreign no less than an unrelated
+    # action would be, with no exception for "a decision this script's own
+    # effect caused" - there is no way to answer that decision before the
+    # run's own watermark is set, since it does not exist to answer until
+    # the run itself creates it. A script cannot be faulted for what its own
+    # resolution legitimately handed to another player.
+    ok = out["exit"] == "chain_complete" or (
+        out["exit"] == "interrupted" and out["moves_done"] == out["moves_total"]
+    )
+    assert ok, (out, board.describe())
     assert out["moves_done"] == out["moves_total"] == len(play["moves"]), out

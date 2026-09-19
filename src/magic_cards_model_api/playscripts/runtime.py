@@ -82,6 +82,7 @@ from .selectors import Hypo, Present, matches
 ANSWER_FIELDS = {kind.value: name for kind, name in TOOL_FIELD_FOR_KIND.items()}
 #: How many permanents an activation cost's "Sacrifice <n> ..." piece names.
 SACRIFICE_NUMBER = re.compile(r"\bsacrifice (an?|another|one|two|three|four|five|\d+)\b", re.I)
+DISCARD_NUMBER = re.compile(r"\bdiscard (an?|another|one|two|three|four|five|\d+)\b", re.I)
 NUMBER_WORDS = {"a": 1, "an": 1, "another": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
 MAX_SCRIPTS_PER_RUN = 3
@@ -1069,6 +1070,27 @@ def _activate_request(
         if isinstance(sacrificed, ScriptExit):
             return sacrificed
         body["sacrificing"] = [card["id"] for card in sacrificed]
+    discard = move.get("discard")
+    if isinstance(discard, dict):
+        # Unlike `sacrifice`, there is no "source" keyword to branch on here
+        # - CR 701.9's discard only ever reads from hand, so a `discard`
+        # dict always means "a hand card chosen by selector", never the
+        # ability's own source (that case, "Discard this card", is
+        # `sacrifice`'s own "source" value, handled above).
+        discarded = _pick(
+            _zone_cards(state, "hand", me),
+            discard["select"],
+            "the card to discard",
+            discard.get("prefer"),
+            discard.get("count") or discard_count(ability),
+            present=present,
+            ties=discard.get("ties"),
+            hypo=hypo,
+            mana=mana,
+        )
+        if isinstance(discarded, ScriptExit):
+            return discarded
+        body["discarding"] = [card["id"] for card in discarded]
     # B7-10 (B5-05 variant): a play never names its own mana sources, so the
     # request names none and lets the engine auto-pay (CR 601.2g) - matching
     # the CLI/MCP semantics of #32. Naming every untapped source here made an
@@ -1080,6 +1102,17 @@ def sacrifice_count(ability: dict[str, Any]) -> int:
     """How many permanents the ability's cost sacrifices: the number its
     "Sacrifice <n> ..." piece names, one for `a`/`another` or no such piece."""
     found = SACRIFICE_NUMBER.search(str(ability.get("cost") or ""))
+    if found is None:
+        return 1
+    word = found.group(1).lower()
+    return int(word) if word.isdigit() else NUMBER_WORDS[word]
+
+
+def discard_count(ability: dict[str, Any]) -> int:
+    """How many cards the ability's cost discards: the number its
+    "Discard <n> ..." piece names (CR 701.9), one for `a`/`another` or no
+    such piece."""
+    found = DISCARD_NUMBER.search(str(ability.get("cost") or ""))
     if found is None:
         return 1
     word = found.group(1).lower()

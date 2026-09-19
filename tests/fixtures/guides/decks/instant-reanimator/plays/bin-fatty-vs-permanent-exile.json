@@ -98,33 +98,28 @@
         }
       },
       "ability_text_has": "Put a +1/+1 counter on",
-      "answers": [
-        {
-          "decision": "choose_cards",
-          "pick": {
-            "select": {
-              "types_all": [
-                "Creature"
-              ],
-              "supertypes_any": [
-                "Legendary"
-              ],
-              "mana_value": {
-                "op": ">=",
-                "n": 6
-              }
-            },
-            "count": 1,
-            "prefer": [
-              {
-                "colors_any": [
-                  "green"
-                ]
-              }
+      "discard": {
+        "select": {
+          "types_all": [
+            "Creature"
+          ],
+          "supertypes_any": [
+            "Legendary"
+          ],
+          "mana_value": {
+            "op": ">=",
+            "n": 6
+          }
+        },
+        "count": 1,
+        "prefer": [
+          {
+            "colors_any": [
+              "green"
             ]
           }
-        }
-      ]
+        ]
+      }
     }
   ],
   "next": []

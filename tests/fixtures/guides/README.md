@@ -1,7 +1,7 @@
 # Vendored slice of the deck-guides corpus
 
-Copied verbatim from `github.com/szymonrychu/mtg-decks` at commit `d681d42`
-(`d681d4280f76a6b7c5ead890df42d1b1149d6fe3`), the same corpus a seat Job
+Copied verbatim from `github.com/szymonrychu/mtg-decks` at commit `67b580e`
+(`67b580efc509086bf05a61089db2a7e8c3e72f62`), the same corpus a seat Job
 clones to `/guides`. That commit is on the mtg-decks **`decks-landing`
 branch**, local-only and not pushed to `origin` at the time of this refresh:
 it carries the opening-plays DSL work (`o-opening-plays`, merged into
@@ -11,6 +11,14 @@ names `decks-landing` until that work lands on `main`, and moves to the
 not trimmed: `tests/driver/test_matchup_card.py` asserts a byte budget on
 what `matchup_card.render_matchup_card` produces, and a budget measured
 against an approximation of the input is worth nothing.
+
+Refreshed again from `d681d42` to `67b580e`: one file changed,
+`decks/instant-reanimator/plays/bin-fatty-vs-permanent-exile.json`, rewritten
+upstream to use the new `activate.discard` field (a battlefield ability's own
+hand-discard cost, e.g. Psychic Frog's "Discard a card:") in place of the
+`choose_cards`-answer workaround the play used before that field existed -
+see this api repo's own `playscripts/schema.py`/`runtime.py` for the engine
+side of the same change. Every other file is byte-identical to `d681d42`.
 
 Refreshed from the previous pin (`3772971`): every `decklist.txt` and
 `archetype.json` in the corpus is byte-identical at `d681d42`, `meta/card-

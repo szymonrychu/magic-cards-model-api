@@ -14,7 +14,10 @@ or named keys, never both. An answer's fields fit its decision kind: a
 pay-amount decision (`AMOUNT_DECISION_KINDS`) is answered with `amount` alone,
 and no other kind takes one (`answer-shape-mismatch`). A `cast` or `activate`
 target is a card by selector and side, or a player; an `activate` sacrifices
-its source, nothing, or permanents chosen by selector. A selector's optional
+its source, nothing, or permanents chosen by selector, and independently
+discards nothing or hand cards chosen by selector (never the source itself -
+that is `sacrifice`'s own "source" value; CR 701.9's discard always reads
+from hand, never the battlefield). A selector's optional
 `missing_from` names zones (`MISSING_FROM_ZONES`, at least one), a side
 (`MISSING_FROM_SIDES`) and what it compares (`MISSING_FROM_BY`); a word outside
 those is `malformed-play` and no zones `bounds-exceeded`, so it adds no code.
@@ -590,12 +593,40 @@ Sacrifice = Annotated[
 ]
 
 
+class DiscardChoice(Pick):
+    """What an activation cost's own "Discard a/N card(s)" piece discards
+    (CR 701.9): cards from the activating player's own HAND matching
+    `select`, `count` of them (the cost's own number when left out), best
+    first by `prefer`. Never the ability's own source - an off-zone
+    activation whose cost is "Discard this card" (CR 702.29a cycling,
+    CR 702.53a transmute) has nothing here to name at all, since the source
+    already sits in hand and the cost spells the whole thing out; that case
+    is `sacrifice`'s own "source" value, read the same way regardless of
+    whether the underlying CR 118.3 component is a sacrifice or a discard."""
+
+
+def _discard_tag(value: Any) -> str:
+    return "discard-choice" if isinstance(value, dict) else "discard-keyword"
+
+
+#: `none` discards nothing; an object chooses what to discard by selector.
+#: No "source" keyword here - unlike `sacrifice`, which already carries that
+#: meaning for a battlefield ability's own source and for an off-zone
+#: ability's "Discard this card" self-reference alike.
+Discard = Annotated[
+    Annotated[Literal["none"], Tag("discard-keyword")]
+    | Annotated[DiscardChoice, Tag("discard-choice")],
+    Discriminator(_discard_tag),
+]
+
+
 class ActivateMove(_Strict):
     kind: Literal["activate"]
     source: ZonedCard
     ability_text_has: NonBlank
     targets: list[Target] = Field(default_factory=list, max_length=MAX_TARGETS)
     sacrifice: Sacrifice = None
+    discard: Discard = None
     answers: list[Answer] = Field(default_factory=list, max_length=MAX_ANSWERS)
 
 
@@ -731,6 +762,7 @@ _LITERAL_CODES = {"decision": "unknown-decision-kind", "cost": "unknown-cast-cos
 _SHAPE_TAGS = frozenset(
     {"amount-count", "amount-policy", "card-target", "player-target"}
     | {"sacrifice-keyword", "sacrifice-choice"}
+    | {"discard-keyword", "discard-choice"}
 )
 _MISSING = object()
 

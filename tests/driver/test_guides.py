@@ -42,7 +42,7 @@ from mtg_agent.driver.guides import (
 #: github.com/szymonrychu/mtg-decks, the commit the fixtures under
 #: `fixtures/mtg-decks/` were copied from. Grep for it there to see exactly
 #: which signatures this suite is pinned to.
-MTG_DECKS_SHA = "d681d4280f76a6b7c5ead890df42d1b1149d6fe3"
+MTG_DECKS_SHA = "67b580efc509086bf05a61089db2a7e8c3e72f62"
 
 #: The vendored corpus: `<slug>/archetype.json` + `<slug>/decklist.txt`.
 CORPUS = Path(__file__).resolve().parent / "fixtures" / "mtg-decks"

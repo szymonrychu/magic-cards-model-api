@@ -162,8 +162,8 @@ characteristic with it:
   contents multiset, fetched with `include=contents`, which the runner asks
   for whenever a condition or move reads it.
 - It works wherever a selector does: a `count` or `stack_top` condition, a
-  move's card, source, target or sacrifice choice, and an answer's `pick` and
-  its `prefer`. `zone_size` takes no selector.
+  move's card, source, target, sacrifice choice or discard choice, and an
+  answer's `pick` and its `prefer`. `zone_size` takes no selector.
 - A zone outside the set, a side other than `me`/`opponent`, or a `by` outside
   the set is `malformed-play`; no zones is `bounds-exceeded`.
 - The play-conflict check reads `missing_from` as part of the condition it is
@@ -320,7 +320,7 @@ the same five-field list.
 
 Move kinds (4), each with `answers: [0-3]` (an `answer` move needs 1-3):
 
-- `activate {source: {zone, select, prefer?: [0-4 select], ties?: any}, ability_text_has, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, answers: [0-3]}`
+- `activate {source: {zone, select, prefer?: [0-4 select], ties?: any}, ability_text_has, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, discard?: none|<discard choice>, answers: [0-3]}`
 - `cast {card: {zone, select, prefer?: [0-4 select], ties?: any}, cost?: <cast cost>, targets: [0-6 <target>], mana?: auto, answers: [0-3]}`
 - `play_land {card: {select, prefer?: [0-4 select], ties?: any}, answers: [0-3]}`
 - `answer {answers: [1-3]}`, for a decision already pending
@@ -336,10 +336,21 @@ activation cost's own "Sacrifice a ..." piece (Goblin Bombardment's "Sacrifice
 a creature"). `count` left out is the cost's own number. `source` sacrifices
 the ability's own source, `none` nothing.
 
+A discard choice is the same shape, `{select, count?: >=1, prefer?: [0-4
+select], ties?: any}`: cards in the activating player's own hand matching
+`select` (CR 701.9), for an activation cost's own "Discard a ..." piece
+(Psychic Frog's "Discard a card:"). `count` left out is the cost's own
+number, read off the cost text the same way a sacrifice choice's is. `none`
+discards nothing. There is no `source` value here - an off-zone ability
+whose whole cost is "Discard this card" (cycling, transmute) names nothing
+at all, since there is nothing left to choose; that case is `sacrifice`'s
+own `source` value, read off the ability's cost text regardless of whether
+the underlying component is a sacrifice or a discard.
+
 ### `prefer` and `ties` (O2)
 
 `play_land.card`, `cast.card`, `activate.source`, `Pick` (an answer's
-`pick`) and a sacrifice choice all take `prefer` (0-4 selectors, the same
+`pick`), a sacrifice choice and a discard choice all take `prefer` (0-4 selectors, the same
 fan-out as `moves`) and `ties: "any"`. `prefer` narrows the match through
 every selector in the list in turn, each one applied against whatever the
 previous one left - a selector that would leave nothing is skipped rather
@@ -418,10 +429,19 @@ read off the redacted state view:
 - A `{select, side}` target resolves over the battlefield and the stack to one
   id; a `{player: me|opponent}` target resolves to that player's name. Both go
   out in the route's `targets`, for `cast` and `activate` alike.
-- `activate.sacrifice` goes out as `ActivateRequest.sacrificing`: `source` is
-  the source's own id, `none` sends nothing, and a sacrifice choice picks from
-  the permanents the seat controls, `count` of them (left out, the number the
-  ability's cost names, `a`/`another` being one).
+- `activate.sacrifice` goes out as `ActivateRequest.sacrificing` (or, when the
+  ability's own cost text reads "discard" rather than "sacrifice",
+  `.discarding` instead - the same `source`/`none`/choice value either way):
+  `source` is the source's own id, unless the cost is a self-contained
+  "Discard this card" (cycling, transmute), which sends neither field at all,
+  since there is nothing left for either to name; `none` sends nothing; a
+  sacrifice choice picks from the permanents the seat controls, `count` of
+  them (left out, the number the ability's cost names, `a`/`another` being
+  one).
+- `activate.discard` goes out as `ActivateRequest.discarding`: `none` sends
+  nothing, and a discard choice picks from the seat's own hand, `count` of
+  them (left out, the number the ability's cost names the same way a
+  sacrifice choice's is).
 - An `amount` answer goes to `/decide` on the pending decision's own
   `answer_field` (`energy_amount`, `life_amount`) with its `generation`; `max`
   is the decision's own `amount`.

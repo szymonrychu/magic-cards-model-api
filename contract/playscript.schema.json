@@ -16,6 +16,19 @@
           "title": "Answers",
           "type": "array"
         },
+        "discard": {
+          "default": null,
+          "oneOf": [
+            {
+              "const": "none",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/DiscardChoice"
+            }
+          ],
+          "title": "Discard"
+        },
         "kind": {
           "const": "activate",
           "title": "Kind",
@@ -407,6 +420,41 @@
         "n"
       ],
       "title": "CounterComparison",
+      "type": "object"
+    },
+    "DiscardChoice": {
+      "additionalProperties": false,
+      "description": "What an activation cost's own \"Discard a/N card(s)\" piece discards\n(CR 701.9): cards from the activating player's own HAND matching\n`select`, `count` of them (the cost's own number when left out), best\nfirst by `prefer`. Never the ability's own source - an off-zone\nactivation whose cost is \"Discard this card\" (CR 702.29a cycling,\nCR 702.53a transmute) has nothing here to name at all, since the source\nalready sits in hand and the cost spells the whole thing out; that case\nis `sacrifice`'s own \"source\" value, read the same way regardless of\nwhether the underlying CR 118.3 component is a sacrifice or a discard.",
+      "properties": {
+        "count": {
+          "default": null,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
+        }
+      },
+      "required": [
+        "select"
+      ],
+      "title": "DiscardChoice",
       "type": "object"
     },
     "InputCondition": {

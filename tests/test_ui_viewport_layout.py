@@ -37,6 +37,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -211,6 +212,7 @@ import {{ mountTopbar }} from "/render/panels.js";
 import * as ribbon from "/render/ribbon.js";
 import {{ mountFullscreen }} from "/fullscreen.js";
 import {{ mountDecisionWindow, WINDOW_POSITION_KEY }} from "/render/decision_window.js";
+try {{
 if (location.search.includes("safe=1")) {{
   const insets = document.createElement("style");
   insets.textContent = ":root {{ " + Object.entries({json.dumps(SAFE_INSETS)})
@@ -257,6 +259,7 @@ if (location.search.includes("drawer=open")) {{
 const rail = $("#rail-pass");
 if (rail) store.subscribe((a) => ribbon.renderRailPass(rail, a, {{ onVerb: noop }}));
 store.set({{}});
+window.__phaseTrackAfterSet = document.querySelectorAll("#phase-track li").length;
 if (location.search.includes("decision=top")) {{
   const spot = JSON.stringify({{ left: 40, top: 0 }});
   try {{ localStorage.setItem(WINDOW_POSITION_KEY, spot); }} catch {{}}
@@ -271,6 +274,9 @@ if (location.search.includes("decision=top")) {{
   mountDecisionWindow(document, store, handlers);
   store.set({{ state: {{ ...state, pending_decision: scry }} }});
   mountDecisionWindow(document, store, handlers);
+}}
+}} catch (err) {{
+  window.__mountError = String((err && err.stack) || err);
 }}
 </script>
 </body></html>"""
@@ -439,7 +445,23 @@ function measure(frame, {{ size, open, permitted, safe, decision }}) {{
     stackCards: $("#stack-row").querySelectorAll(".card").length,
   }};
 }}
-const frames = FRAMES.map(({{ size: [width, height], open, permitted, safe, decision }}) => {{
+// Loading and settling every frame AT ONCE - append all 13-odd iframes, each
+// mounting its own full copy of the board plus module imports, then race
+// `requestAnimationFrame`s against all of them together - multiplies peak
+// CPU/memory work by the frame count right when the machine is already
+// busiest (the full suite running many pytest workers at once, each
+// spawning its own headless Chrome). Under real contention a frame has been
+// observed still rendering with `#phase-track` empty two animation frames
+// after its own "load" fired. So this instead loads and settles frames ONE
+// AT A TIME: only ever one iframe is actively parsing/executing/painting,
+// which caps peak load to a single frame's worth regardless of how many
+// pytest workers are competing for the CPU, and each frame is polled real
+// time until `#phase-track` (set once per mount, off `store.set({{}})` inside
+// the same synchronous module script "load" waits for, and never cleared
+// afterwards) actually has its step items rather than assumed settled after
+// a fixed frame count - bounded so a page that never settles still fails
+// instead of hanging.
+async function loadFrame({{ size: [width, height], open, permitted, safe, decision }}) {{
   const f = document.createElement("iframe");
   f.style.cssText = `width:${{width}}px;height:${{height}}px;border:0;display:block`;
   const query = [
@@ -448,19 +470,59 @@ const frames = FRAMES.map(({{ size: [width, height], open, permitted, safe, deci
     safe ? "safe=1" : "",
     decision ? "decision=top" : "",
   ].filter(Boolean).join("&");
+  // `src` is set before the iframe joins the document on purpose: appending
+  // a `src`-less iframe first briefly navigates it to `about:blank`, which
+  // fires its own "load" event - `poll` below would then read that empty
+  // document forever, real page or not, and reliably time out (this cost a
+  // whole debugging pass to a machine-load red herring the first time
+  // around). Setting `src` first means the one "load" this fires is for the
+  // real page.
   f.src = "/__viewport_game.html" + (query ? "?" + query : "");
   document.getElementById("frames").appendChild(f);
-  return new Promise((resolve) => f.addEventListener("load", () => resolve(f)));
-}});
-Promise.all(frames).then((loaded) => {{
-  requestAnimationFrame(() => requestAnimationFrame(() => {{
-    try {{
-      report(loaded.map((f, i) => measure(f, FRAMES[i])));
-    }} catch (err) {{
-      report({{ error: String((err && err.stack) || err) }});
-    }}
-  }}));
-}});
+  await new Promise((resolve, reject) => {{
+    f.addEventListener("load", () => {{
+      const deadline = performance.now() + 20000;
+      const poll = () => {{
+        const w = f.contentWindow;
+        if (w && w.__mountError) {{
+          reject(new Error(f.src + ": " + w.__mountError));
+          return;
+        }}
+        const track = f.contentDocument && f.contentDocument.querySelector("#phase-track");
+        if (track && track.children.length > 0) {{
+          resolve();
+          return;
+        }}
+        if (performance.now() > deadline) {{
+          const has = Boolean(f.contentDocument && f.contentDocument.querySelector("#phase-track"));
+          const state = f.contentDocument ? f.contentDocument.readyState : null;
+          const afterSet = w ? w.__phaseTrackAfterSet : "no window";
+          reject(new Error(
+            f.src + ": #phase-track never gained items (element present: " + has +
+              ", readyState: " + state + ", items right after store.set: " + afterSet + ")"
+          ));
+          return;
+        }}
+        requestAnimationFrame(poll);
+      }};
+      poll();
+    }});
+  }});
+  // Two more paints once `#phase-track` itself is populated, for whatever
+  // else `measure` reads that settles a frame later still (layout from a
+  // stylesheet applied this same tick, for one).
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  return f;
+}}
+(async () => {{
+  try {{
+    const loaded = [];
+    for (const frame of FRAMES) loaded.push(await loadFrame(frame));
+    report(loaded.map((f, i) => measure(f, FRAMES[i])));
+  }} catch (err) {{
+    report({{ error: String((err && err.stack) || err) }});
+  }}
+}})();
 </script></body></html>"""
 
 
@@ -533,16 +595,61 @@ def _collect(pages: dict[str, str], entry: str, profile: Path, within: float = 1
         pytest.fail(f"{url} reported something that is not JSON ({err}): {handler.result[:2000]!r}")
 
 
+#: `measurements` is `scope="module"` - every test function below shares the
+#: one collection, so a single flaky Chrome run used to fail all of them at
+#: once (a cascade, not thirty independent flakes). The flake itself: a frame
+#: occasionally reports fully loaded (`readyState: "complete"`, `#phase-track`
+#: present, no script error caught, the marker this same script sets right
+#: after its own `store.set({{}})` never reached) with `#phase-track` still
+#: empty - reproduces roughly one run in five run back to back in total
+#: isolation, and near-certainly when several copies of this file race each
+#: other, but the exact mechanism resisted pinning down further (no thrown
+#: exception, no rejected promise, the static markup present, only the mount
+#: itself silently never reaching its own next line) - a headless-Chrome
+#: iframe-navigation quirk is the leading suspect, not anything in this
+#: repo's own JS. Since a bad run can apparently make EVERY attempt fail (the
+#: three-parallel-copies stress test that found this flake in the first place
+#: failed all three retries under the old, lower count), `measurements` also
+#: waits a little between attempts rather than retrying back to back - giving
+#: whatever transient condition this is room to actually clear.
+_COLLECT_ATTEMPTS = 6
+
+
 @pytest.fixture(scope="module")
 def measurements(tmp_path_factory: pytest.TempPathFactory) -> list[dict]:
-    data = _collect(
-        {"/__viewport_game.html": _game_page(), "/__viewport_harness.html": _harness_page()},
-        "/__viewport_harness.html",
-        tmp_path_factory.mktemp("chrome-profile"),
+    """Every frame's measurements, collected once for the whole module -
+    retried (see `_COLLECT_ATTEMPTS`) rather than letting one flaky Chrome
+    run cascade into every test in this file failing together."""
+    problems: list[str] = []
+    for attempt in range(_COLLECT_ATTEMPTS):
+        if attempt > 0:
+            time.sleep(2.0)
+        try:
+            data = _collect(
+                {
+                    "/__viewport_game.html": _game_page(),
+                    "/__viewport_harness.html": _harness_page(),
+                },
+                "/__viewport_harness.html",
+                tmp_path_factory.mktemp(f"chrome-profile-{attempt}"),
+            )
+        except pytest.fail.Exception as err:
+            problems.append(str(err))
+            continue
+        if isinstance(data, dict):
+            problems.append(f"page reported an error: {data}")
+            continue
+        expected = len(VIEWPORTS) + 1 + len(PERMITTED) + 1 + 1
+        if len(data) != expected:
+            problems.append(f"expected {expected} frames, got {len(data)}")
+            continue
+        return data
+    pytest.fail(
+        f"measurements never collected cleanly in {_COLLECT_ATTEMPTS} attempts, each its "
+        f"own Chrome profile and port (not shared state - a transient failure each time): "
+        f"{problems}",
+        pytrace=False,
     )
-    assert not isinstance(data, dict), data
-    assert len(data) == len(VIEWPORTS) + 1 + len(PERMITTED) + 1 + 1, len(data)
-    return data
 
 
 def test_a_result_reported_after_the_page_settles_is_still_collected(tmp_path: Path) -> None:
