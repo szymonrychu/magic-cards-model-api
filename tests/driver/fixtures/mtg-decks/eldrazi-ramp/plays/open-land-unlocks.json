@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "id": "open-land-unlocks",
+  "name": "Play a free untapped land that unlocks a hand card on turn 1-2",
+  "intent": "On turn 1 or 2, before anything else about the land drop is decided, play a land from hand that already enters untapped and makes some other hand card payable that is not payable now - a basic Forest that lets a fixed-cost green spell like Malevolent Rumble be cast once a second green source is up. Green Sun's Zenith never triggers this selector: an X-cost hand card is excluded from unlocks entirely, because the engine only ever judges an X spell's payability at its cheapest legal announcement, X=0, which is never proof the X a play actually wants is payable. This never costs life, so it goes first: a land this good is never worse than holding it. Prefers a basic Forest first (the only untapped green source this deck's own one-drops need), then Eldrazi Temple by its own 'colorless Eldrazi' text. Mosswort Bridge never reaches this selector at all - it always enters tapped, so it can never satisfy enters_any: [untapped] - but Ugin's Labyrinth can (it always enters untapped; its own imprint trigger is answered may/choose_cards regardless of whether a legal exile target is in hand), and so can Cavern of Souls (untapped, unconditional creature-type choice), so both answers ride along on this move. Stands down once four or more untapped mana is already up - the same key cast-trigger-land-search's own guard reads, so the two never overlap. Only turns 1-2, only with the land drop still available, and only mine, precombat main, an empty stack. Stands down once two or more colorless mana-value-7-or-greater cards are in hand: the seat-admitted imprint-land-exile-least-castable play takes over the whole land-drop decision there (its own true key, byte-identical here), the same discipline prison-tron's open-labyrinth-land already uses against open-tron-land.",
+  "priority": 74,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 4
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 2,
+      "select": {
+        "colors_any": [
+          "colorless"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 7
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "unlocks": true,
+          "enters_any": [
+            "untapped"
+          ]
+        },
+        "prefer": [
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          },
+          {
+            "oracle_has": "colorless Eldrazi"
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "may",
+          "accept": true
+        },
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {},
+            "count": 1,
+            "prefer": [
+              {
+                "mana_value": {
+                  "op": ">=",
+                  "n": 7
+                }
+              }
+            ],
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "choose_a_quality",
+          "choice": "Eldrazi"
+        }
+      ]
+    }
+  ],
+  "next": []
+}

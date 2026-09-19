@@ -1035,7 +1035,25 @@ def _activate_request(
         body["targets"] = targets
     sacrifice = move.get("sacrifice")
     if sacrifice == "source":
-        body["sacrificing"] = [source["id"]]
+        # "source" names the ability's own source as what its cost spends.
+        # Almost always a literal CR 701.21 sacrifice (or, when the cost text
+        # says "discard" instead, a discard - CR 118.3's `discarding`, never
+        # sacrificing what was never on the battlefield to begin with). But
+        # an off-zone cycling/unearth/transmute family (CR 702.29a/702.84a/
+        # 702.53a) spells its whole ability out as "[cost], Discard this
+        # card: ..." with nothing left to name - `off_zone_activation`
+        # refuses any `sacrificing`/`discarding` given at all for one of
+        # those, so "this card" in the ability's own cost text (never a
+        # phrase a battlefield "Sacrifice/Discard a/another ..." cost uses,
+        # which always names a selector instead) means send neither.
+        cost_text = str(ability.get("cost") or "").casefold()
+        if "this card" not in cost_text:
+            key = (
+                "discarding"
+                if "discard" in cost_text and "sacrifice" not in cost_text
+                else "sacrificing"
+            )
+            body[key] = [source["id"]]
     elif isinstance(sacrifice, dict):
         sacrificed = _pick(
             _zone_cards(state, "battlefield", me),

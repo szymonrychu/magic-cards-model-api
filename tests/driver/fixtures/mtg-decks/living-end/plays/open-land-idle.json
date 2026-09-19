@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "id": "open-land-idle",
+  "name": "Play a land on turn 1-2 when nothing in hand unlocks anything, binning a surveilled creature",
+  "intent": "On turn 1 or 2, once none of open-land-unlocks, open-shock-unlocks or open-fetch-unlocks apply and no other hand card is already affordable, still play the land drop - any land beats holding it back with nothing to protect. Prefers a surveil land (Commercial District, Hedge Maze, Thundering Falls) first; then anything that would enter tapped anyway; then a shockland, life declined - a shock is a real (if paid) source of new mana this turn, strictly better to hold open than an already-untapped fetch that produces nothing until cracked; then a fetch, held everywhere else for a target-rich turn but taken here since nothing else is better. Unlike boros-aggro/devoted-combo/prowess's idle play, the surveil answer bins a Creature with mana value 4 or more instead of keeping it: living-end wants big reanimation targets in its own graveyard from turn 1, since casting suspended Living End exiles every creature card from its controller's graveyard and returns them to the battlefield - but Shardless Agent and Endurance (mana value 3, wanted for their own triggered/evoke value rather than as Living End fodder) stay on top rather than being binned. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped_if_paid"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_any": [
+          "Creature",
+          "Instant",
+          "Sorcery",
+          "Artifact",
+          "Enchantment",
+          "Planeswalker"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 1
+        },
+        "affordable": {
+          "extra": 1
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "types_all": [
+              "Land"
+            ],
+            "keywords_any": [
+              "Surveil"
+            ]
+          },
+          {
+            "enters_any": [
+              "tapped"
+            ]
+          },
+          {
+            "oracle_has": "you may pay 2 life"
+          },
+          {
+            "types_all": [
+              "Land"
+            ],
+            "searches_for_any": [
+              "Plains",
+              "Island",
+              "Swamp",
+              "Mountain",
+              "Forest"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "pay_life",
+          "accept": false
+        },
+        {
+          "decision": "surveil",
+          "to_graveyard": {
+            "types_all": [
+              "Creature"
+            ],
+            "mana_value": {
+              "op": ">=",
+              "n": 4
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "next": []
+}

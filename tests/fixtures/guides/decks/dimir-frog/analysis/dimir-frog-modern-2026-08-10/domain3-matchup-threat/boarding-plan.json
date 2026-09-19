@@ -1466,7 +1466,7 @@
    "play_plan": {
     "keep": "Two lands and two one-mana answers; a hand with no turn-one play is behind immediately.",
     "goldfish_for": "Toxic Deluge for two, after Guide of Souls has been answered or has resolved twice.",
-    "watch_for": "Static Prison and Goblin Bombardment mean a stabilised board still loses to reach.",
+    "watch_for": "Static Prison and Goblin Bombardment mean a stabilised board still loses to reach. Fetch the basic, not the shockland: two life is a turn of that reach.",
     "posture": "disrupt_first",
     "posture_why": "They kill on turn four, so nothing we do matters until their curve is broken."
    },
@@ -1490,7 +1490,13 @@
      "1 Drown in the Loch"
     ]
    },
-   "self_cost": "Toxic Deluge takes our own two-drops, and Engineered Explosives at one kills Tamiyo, Inquisitive Student. Cutting three Force of Negation for them also removes the only free interaction we have on their turn, which is the turn Voice of Victory would have stopped us anyway."
+   "self_cost": "Toxic Deluge takes our own two-drops, and Engineered Explosives at one kills Tamiyo, Inquisitive Student. Cutting three Force of Negation for them also removes the only free interaction we have on their turn, which is the turn Voice of Victory would have stopped us anyway.",
+   "notes": [
+    "Everything recorded here from game 9c9d2f2bf6714b689ca60fd62c1acbfc is two turns of one game, released before a single attack. It is evidence about the opening and about how the deck was identified, and it says nothing about how the matchup plays out.",
+    "Guide of Souls plus Galvanic Discharge is the tell that separates this row from boros aggro. Both decks run Guide of Souls; the Discharge is the energy card, and it is not in the boros aggro row's key cards. In game 9c9d2f2b a turn-one Thoughtseize on the play saw Voice of Victory, Solitude, Guide of Souls, Galvanic Discharge, Marsh Flats and two Flooded Strand - the hand named the archetype before the board had shown anything.",
+    "Take Voice of Victory over Guide of Souls with a turn-one Thoughtseize. \"Your opponents can't cast spells during your turn\" blanks all eleven reactive cards this 60 is built on - 2 Counterspell, 3 Force of Negation, 2 Spell Snare, 3 Subtlety, 1 Drown in the Loch - for as long as it lives, and Mobilize 2 makes it a three-body attack on top. Guide of Souls, Galvanic Discharge and Solitude each cost us a card to answer, but none of them turns the deck off. This is the opening-hand form of the decision `self_cost` already records for the three Force of Negation. It is a judgement call and not a demonstrated result: game 9c9d2f2b took the Voice and was released on turn two, so the line was never played out.",
+    "They spend life on their own manabase. In game 9c9d2f2b they cracked Marsh Flats for an untapped Sacred Foundry at 2 life on turn one to cast Guide of Souls, and were at 17 on their own first turn. Guide of Souls buys those points back, so price a race against a life total they are willing to pay down, not against twenty."
+   ]
   },
   {
    "name": "pinnacle affinity",

@@ -1,0 +1,141 @@
+{
+  "name": "broodscale bloodchief",
+  "meta_share": 6.947052196770559,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.4512,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='eldrazi tron', limit=60), committed verbatim at .protocol/raw-matchups.json; the deduplicated row for opponent='broodscale bloodchief' reads winrate 0.4512 over sample_size 36 matches, and archetype_a is eldrazi tron so it is our winrate read directly rather than a complement.",
+    "n": 36
+  },
+  "primary_gameplan": "Cursed Totem is the whole matchup: Basking Broodscale's adapt is an activated ability of a creature, and with adapt turned off the Blade of the Bloodchief loop never starts. Fetch it off the first Karn, then take the game with Ugin, Eye of the Storms or a Devourer of Destiny beating down.",
+  "secondary_gameplan": "Without Cursed Totem, Walking Ballista at X equals one removes Basking Broodscale before adapt, and Kozilek's Command exiles it at X equals two at instant speed; Trinisphere taxes the one and two mana half of their deck while Tron mana ignores the tax.",
+  "opponent_gameplan": "All ten committed 2026-09-10 lists run four Basking Broodscale, three Blade of the Bloodchief and four Ancient Stirrings. Basking Broodscale reads '{1}{G}: Adapt 1' and 'Whenever one or more +1/+1 counters are put on this creature, you may create a 0/1 colorless Eldrazi Spawn token'; with Blade of the Bloodchief attached, every Spawn sacrificed for mana puts another counter on the equipped creature, which makes another Spawn - an arbitrarily large body and arbitrarily much colorless mana in one loop. Malevolent Rumble and Ancient Stirrings dig for the missing half, and the deck also plays Sowing Mycospawn and Emrakul, the Promised End as its top end.",
+  "tournament_refs": [
+    {
+      "pilot": "makaaaa",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664801"
+    },
+    {
+      "pilot": "MystikHawk",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664728"
+    },
+    {
+      "pilot": "Foxantes",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664803"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Nature's Claim",
+      "count": 2,
+      "why": "10 of 10 committed 2026-09-10 lists; one green mana destroys any artifact we resolve, which is every card in our wish board",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Trinisphere",
+      "count": 2,
+      "why": "10 of 10 committed lists; taxes our Expedition Map, Giant's Boulder and Talisman of Resilience while their own Spawn mana pays around it",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Grafdigger's Cage",
+      "count": 2,
+      "why": "10 of 10 committed lists; aimed at other matchups but blanks nothing of ours, so it arrives as a free artifact for their Nature's Claim count to protect",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Dismember",
+      "count": 1,
+      "why": "10 of 10 committed lists; -5/-5 kills a Devourer of Destiny and is castable off their green manabase for two life",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Cursed Totem and Walking Ballista attack the combo directly at no cost to us, but the third and fourth fetches are Trinisphere and Disruptor Flute, both of which tax our own cheap artifacts. The tax is one-sided in practice because our mana comes from lands and theirs comes from two-mana creatures.",
+  "self_cost": "Trinisphere taxes us too: Expedition Map at one, Giant's Boulder at one and Talisman of Resilience at two all become three, which is a real cost on the turns before Tron is assembled. It is correct here only because their engine is built out of one and two mana spells and ours is built out of lands.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "The Basking Broodscale and Blade of the Bloodchief loop is a kill, not a value engine, so the deck is trying to assemble two cards before our fourth land.",
+    "key_cards": [
+      {
+        "card": "Basking Broodscale",
+        "why": "Named in the recorded gameplan; the adapt activated ability is the engine half of the loop"
+      },
+      {
+        "card": "Blade of the Bloodchief",
+        "why": "Named in the recorded gameplan; turns each sacrificed Spawn into another counter and so another Spawn"
+      },
+      {
+        "card": "Nature's Claim",
+        "why": "Boarded answer to every artifact we fetch, at one mana",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Trinisphere",
+        "why": "Boarded tax that hits our pre-Tron accelerants and not their creature mana",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Any hand with a turn-four Karn or with Dismember plus a land drop for their turn-two Broodscale.",
+    "goldfish_for": "Karn into Cursed Totem before they have both combo halves on the battlefield.",
+    "watch_for": "A Blade of the Bloodchief equipped onto anything, which means the loop is one adapt away.",
+    "posture": "disrupt_first",
+    "posture_why": "Removing one combo half is cheaper than racing an arbitrarily large body."
+  },
+  "fetch_priority": [
+    "Cursed Totem",
+    "Disruptor Flute",
+    "Trinisphere",
+    "Walking Ballista"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Cursed Totem",
+      "verdict": "SURVIVES",
+      "why": "Nature's Claim answers it, but the two copies they board are the only artifact removal in the recorded 75, and Totem shuts the loop off the turn it resolves rather than needing to stay."
+    },
+    {
+      "card": "Disruptor Flute",
+      "verdict": "SURVIVES",
+      "why": "Naming Basking Broodscale both taxes the hard cast by three and stops adapt, since adapt is an activated ability and not a mana ability; nothing in the recorded board makes the name wrong."
+    },
+    {
+      "card": "Trinisphere",
+      "verdict": "SURVIVES",
+      "why": "They board their own Trinisphere, which does not answer ours, and Nature's Claim is their only removal; the tax lands before their Spawn mana comes online."
+    },
+    {
+      "card": "Walking Ballista",
+      "verdict": "SURVIVES",
+      "why": "Dismember is their only creature removal in the recorded board and Ballista can be sacrificed for its damage in response, so the removal spell trades for nothing."
+    }
+  ],
+  "notes": [
+    "Cursed Totem is the first fetch even at four mana behind, because it is the only card in the pool that answers the loop without needing to target: adapt, the Spawn sacrifice for mana and Fiend-style outlets are all creature activated abilities.",
+    "Disruptor Flute names Basking Broodscale rather than Blade of the Bloodchief: the Blade is the replaceable half and the Broodscale is four copies.",
+    "Walking Ballista comes down at X equals one, not two: their Dismember answers a 2/2 as easily as a 1/1, and the extra mana buys nothing when the target is a two-drop."
+  ],
+  "card_names": [
+    "Basking Broodscale",
+    "Blade of the Bloodchief",
+    "Malevolent Rumble",
+    "Ancient Stirrings",
+    "Sowing Mycospawn",
+    "Emrakul, the Promised End",
+    "Haywire Mite",
+    "Springleaf Drum",
+    "Soul-Guide Lantern",
+    "Boseiju, Who Endures"
+  ]
+}

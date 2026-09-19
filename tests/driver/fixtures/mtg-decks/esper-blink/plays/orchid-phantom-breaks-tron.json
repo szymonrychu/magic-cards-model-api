@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "id": "orchid-phantom-breaks-tron",
+  "name": "Cast White Orchid Phantom and blow up a Tron piece",
+  "intent": "Against the Urzatron ramp deck, cast the two-mana white flier on my precombat main and point its enters trigger at an opponent land whose own text names the Urza's lands, so the trigger only ever sees their assembled or half-assembled Tron. The candidate list the engine offers for that trigger includes my own nonbasic lands - Flagstones of Trokair, a shockland, a fetch - and hitting one of those would be a disaster, so the pick's selector is written so that no land of mine can satisfy it: it demands a land whose oracle text names Urza's lands, which only Urza's Mine, Urza's Power-Plant and Urza's Tower do, and none of the twenty-odd lands in this deck. The preference order is Tower, then Power-Plant, then Mine: the Tower is the piece that turns two colourless into three, and killing it costs them the most mana per card while also being the piece they have fewest ways to rebuy. The order also narrows the pick to one card name, so a fully assembled Tron never leaves the trigger tied. The basic they may search up is fine - it is a tapped basic against a deck that wants seven mana. Only while they actually control such a land and I have two mana up. It never runs while an untapped fetch of mine is on the battlefield: fetch-untapped-shock and its two colour siblings own that decision point on my precombat main, and this play stands down there so the corpus keeps zero conflicts. Limits: untapped mana is counted, not its colour, so a board of two untapped lands that cannot make {W}{W} still reads as castable and the cast is simply refused; and the trigger's 'up to one' is answered as exactly one target, which is what I want whenever this play fires at all.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "eldrazi-ramp"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Creature"
+        ],
+        "oracle_has": "nonbasic land",
+        "mana_value": {
+          "op": "==",
+          "n": 2
+        }
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "opponent",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "oracle_has": "urza's"
+      }
+    },
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 2
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "ability_text_has": "Search your library for"
+      }
+    },
+    {
+      "kind": "stack_top",
+      "controller": "opponent",
+      "select": {}
+    }
+  ],
+  "moves": [
+    {
+      "kind": "cast",
+      "card": {
+        "zone": "hand",
+        "select": {
+          "types_all": [
+            "Creature"
+          ],
+          "oracle_has": "nonbasic land",
+          "mana_value": {
+            "op": "==",
+            "n": 2
+          }
+        }
+      },
+      "answers": [
+        {
+          "decision": "choose_targets",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "oracle_has": "urza's"
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "subtypes_any": [
+                  "Tower"
+                ]
+              },
+              {
+                "subtypes_any": [
+                  "Power-Plant"
+                ]
+              },
+              {
+                "subtypes_any": [
+                  "Mine"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "next": []
+}

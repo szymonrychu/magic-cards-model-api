@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "id": "open-land-idle",
+  "name": "Play a land on turn 1-2 when nothing in hand unlocks anything",
+  "intent": "On turn 1 or 2, once open-land-unlocks would not apply and no other hand card is already affordable, still play the land drop - any land in hand beats holding it back with nothing to protect. Prefers Mosswort Bridge first by its own 'This land enters tapped.' text (unique to it in this deck's manabase) - it enters tapped regardless of when it is played, so playing it now costs no tempo it would not already lose, and its own hideaway trigger fires the same turn either way. Then Eldrazi Temple by its own 'colorless Eldrazi' text (worth having down a turn early). Then a basic Forest. Then, only once none of those narrow anything, a land that actually taps for colorless by its own '{T}: Add {C}.' text (Grove of the Burnwillows, Cavern of Souls, Ugin's Labyrinth) over Boseiju, Who Endures or Dryad Arbor or Yavimaya: colors_any: [colorless] alone is not enough here, since Boseiju's own colors are [] (a Scryfall colorless card despite tapping for green, '{T}: Add {G}.') - without this tier keyed to the actual tap text, Boseiju or Arbor sorts before Grove/Cavern/Labyrinth by name and ties: any would hand either the pick even though neither makes colorless mana that turn (Arbor is also summoning-sick, a creature that can die to removal). Carries one unified choose_cards answer covering both Mosswort Bridge's own hideaway pick (over an unknown top 4 - a narrow select would risk unforeseen when none of the 4 happens to qualify) and Ugin's Labyrinth's own imprint pick (over hand, already legality-filtered by the engine, so the same broad select changes nothing there): select {} preferring mana value 7 or greater then a Creature (every colorless mv>=7 spell in this 60 except Ugin, Eye of the Storms is itself a Creature) - with no mv>=7 candidate in the top 4, the Creature tier decides Hideaway's own pick instead of a bare name-sort over whatever four cards happened to be on top. Also carries Cavern of Souls' choose_a_quality 'Eldrazi' answer. Stands down once four or more untapped mana is already up - the same key cast-trigger-land-search's own guard reads. Only turns 1-2, land drop available, mine, precombat main, empty stack. Stands down once two or more colorless mana-value-7-or-greater cards are in hand: the seat-admitted imprint-land-exile-least-castable play takes over the whole land-drop decision there (its own true key, byte-identical here), the same discipline prison-tron's open-labyrinth-land already uses against open-tron-land.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_any": [
+          "Creature",
+          "Instant",
+          "Sorcery",
+          "Artifact",
+          "Enchantment",
+          "Planeswalker"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 1
+        },
+        "affordable": {
+          "extra": 1
+        }
+      }
+    },
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 4
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 2,
+      "select": {
+        "colors_any": [
+          "colorless"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 7
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "oracle_has": "This land enters tapped."
+          },
+          {
+            "oracle_has": "colorless Eldrazi"
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          },
+          {
+            "oracle_has": "{T}: Add {C}."
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "may",
+          "accept": true
+        },
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {},
+            "count": 1,
+            "prefer": [
+              {
+                "mana_value": {
+                  "op": ">=",
+                  "n": 7
+                }
+              },
+              {
+                "types_all": [
+                  "Creature"
+                ]
+              }
+            ],
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "choose_a_quality",
+          "choice": "Eldrazi"
+        }
+      ]
+    }
+  ],
+  "next": []
+}

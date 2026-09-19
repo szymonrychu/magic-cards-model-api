@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "id": "open-land-idle",
+  "name": "Play a land on turn 1-2 when nothing in hand unlocks anything",
+  "intent": "On turn 1 or 2, once open-land-unlocks would not apply and no other hand card is already affordable, still play the land drop - any land in hand beats holding it back with nothing to protect. Prefers Urza's Saga first (chapter III wants to resolve on turn 3, so it goes down as early as possible regardless of what else is in hand), then Spirebluff Canal (untapped only with two or fewer other lands, so this early window is exactly when it wants to be played), then a basic Island (never worse than holding it, and free), then Fiery Islet last (its own colour access costs 1 life every time it is used, so it is the fallback rather than the first choice). Declines to pay any life this move (Steam Vents, if it is ever the only candidate left, enters tapped rather than paying for a turn that buys nothing). Stands down once three or more lands are already on the battlefield - the same key cantrip-scry's own guard reads - and also once a Saga is in hand: open-saga's own hand-Saga count sits byte-identical here, so a Saga hand always routes through open-saga rather than this play's own Saga prefer tier. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_any": [
+          "Creature",
+          "Instant",
+          "Sorcery",
+          "Artifact",
+          "Enchantment",
+          "Planeswalker"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 1
+        },
+        "affordable": {
+          "extra": 1
+        }
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 3,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "subtypes_any": [
+          "Saga"
+        ]
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "subtypes_any": [
+              "Saga"
+            ]
+          },
+          {
+            "oracle_has": "two or fewer other lands"
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          },
+          {
+            "oracle_has": "Pay 1 life: Add"
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "pay_life",
+          "accept": false
+        }
+      ]
+    }
+  ],
+  "next": []
+}

@@ -1,0 +1,104 @@
+{
+ "name": "boros energy",
+ "meta_share": 3.037974683544304,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format and archetype, statistics_archetypes carries no winrate field, and this run's own fingerprint records winrate_vs_field as an empty map. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "Ocelot Pride or Ragavan on turn one, Guide of Souls converting energy into life and counters, Ajani, Nacatl Pariah flipping into a threat, and Goblin Bombardment turning the board into reach.",
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Their curve tops out at three and Static Prison plus Goblin Bombardment converts any board into damage, so the game is over before a five-mana Quantum Riddler is castable.",
+  "key_cards": [
+   {
+    "card": "Guide of Souls",
+    "why": "each creature entering is a life and an energy, which outruns any life we spend on fetches and Thoughtseize."
+   },
+   {
+    "card": "Obsidian Charmaw",
+    "why": "destroys one of our seventeen nonbasic lands for two mana and leaves a 4/3 behind.",
+    "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+   },
+   {
+    "card": "High Noon",
+    "why": "one spell each turn is the tax a deck that holds up interaction cannot pay.",
+    "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+   },
+   {
+    "card": "Wrath of the Skies",
+    "why": "resets our board after we have committed, which is the only way they lose a long game.",
+    "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+   }
+  ]
+ },
+ "primary_gameplan": "Fatal Push and Orcish Bowmasters trade down early, Psychic Frog blocks and eats the cards we do not need, and Toxic Deluge for two resets once Guide of Souls has done its work.",
+ "pitfalls": [
+  "Toxic Deluge costs life against the one deck in the field that wins on life totals; two is usually the right X, not three.",
+  "Ocelot Pride rebuilds from a sweeper if they have a land drop and a life gain, so time Deluge for after their second wave, not the first.",
+  "Blood Moon is in the maindeck of the MayoDominaria list and turns our seventeen nonbasics into Mountains, which is worse than Harbinger of the Seas would be."
+ ],
+ "stance": "symmetric_counter",
+ "stance_rationale": "Guide of Souls energy and Ocelot Pride tokens make a board that one-for-one removal cannot keep up with, so the answer is Toxic Deluge. It is symmetric: our Psychic Frog and Orcish Bowmasters die to it as readily as their Ocelot Pride does.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Obsidian Charmaw",
+   "count": 3,
+   "why": "{2}{R} 4/3 destroying a nonbasic land on entry, aimed at manabases exactly like ours.",
+   "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+  },
+  {
+   "card": "High Noon",
+   "count": 2,
+   "why": "caps us at one spell a turn, which turns a threat-plus-counter turn into a threat-only turn.",
+   "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+  },
+  {
+   "card": "Wrath of the Skies",
+   "count": 2,
+   "why": "their sweeper for our Frogs, brought in because our two-drops outclass their one-drops on rate.",
+   "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+  },
+  {
+   "card": "Vexing Bauble",
+   "count": 2,
+   "why": "counters Force of Negation and evoked Subtlety, the free half of our interaction.",
+   "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "2 Toxic Deluge",
+    "2 Engineered Explosives"
+   ],
+   "out_cards": [
+    "3 Force of Negation",
+    "1 Drown in the Loch"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "2 Toxic Deluge",
+    "2 Engineered Explosives"
+   ],
+   "out_cards": [
+    "3 Force of Negation",
+    "1 Drown in the Loch"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Two lands and two one-mana answers; a hand with no turn-one play is behind immediately.",
+  "goldfish_for": "Toxic Deluge for two, after Guide of Souls has been answered or has resolved twice.",
+  "watch_for": "Static Prison and Goblin Bombardment mean a stabilised board still loses to reach.",
+  "posture": "disrupt_first",
+  "posture_why": "They kill on turn four, so nothing we do matters until their curve is broken."
+ },
+ "self_cost": "Toxic Deluge takes our own two-drops, and Engineered Explosives at one kills Tamiyo, Inquisitive Student. Cutting three Force of Negation for them also removes the only free interaction we have on their turn, which is the turn Voice of Victory would have stopped us anyway."
+}

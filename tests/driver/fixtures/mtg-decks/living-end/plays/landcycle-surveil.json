@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "id": "landcycle-surveil",
+  "name": "Landcycle a Forest- or Mountain-cycling creature into a surveil land at their end step",
+  "intent": "At the opponent's end step, with no untapped fetch already on the battlefield to crack instead and at least 1 untapped mana of my own available, discard Generous Ent or Oliphaunt for its own Forestcycling/Mountaincycling {1} ability, searching the library for whatever land it finds. The {1} cost is real mana, not a free discard, so this play stands down without an untapped source to pay it. Against the control-shaped matchups this play is keyed to (dimir-control, esper-control, esper-blink - none of which race, so a tapped land costs nothing and the scry is free value), the search prefers a surveil land (Commercial District, Hedge Maze, Thundering Falls); the two lands sharing the searched card's own basic type but not the Surveil keyword are still legal finds when no surveil land is available, since the select stays broad and only the prefer tier narrows. Falls back to open-fetch-unlocks/fetch-surveil-land[-keep] whenever an untapped fetch is already out, since cracking that fetch for the same search is strictly better (no discard spent). Never restricted to turns 1-2: a landcycling creature is a fine late-game draw smoothing tool too. Priority 45, one above landcycle-shock's 44 and below every turn 1-2 opening play and every archetype-keyed play in this deck's own pre-openings corpus - its own `when` fires only on the opponent's end step, never contending with the mine/precombat_main openings for the same land drop.",
+  "priority": 45,
+  "opposing_archetypes": [
+    "dimir-control",
+    "esper-control",
+    "esper-blink"
+  ],
+  "when": {
+    "whose_turn": "theirs",
+    "steps": [
+      "end_step"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Creature"
+        ],
+        "searches_for_any": [
+          "Forest",
+          "Mountain"
+        ]
+      }
+    },
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 1
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "ability_text_has": "Search your library for"
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "hand",
+        "select": {
+          "types_all": [
+            "Creature"
+          ],
+          "searches_for_any": [
+            "Forest",
+            "Mountain"
+          ]
+        },
+        "ties": "any"
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ]
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "types_all": [
+                  "Land"
+                ],
+                "keywords_any": [
+                  "Surveil"
+                ]
+              }
+            ],
+            "ties": "any"
+          }
+        }
+      ]
+    }
+  ],
+  "next": []
+}

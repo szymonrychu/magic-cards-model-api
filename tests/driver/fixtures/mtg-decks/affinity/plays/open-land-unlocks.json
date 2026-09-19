@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "id": "open-land-unlocks",
+  "name": "Play a free untapped land that unlocks a hand card on turn 1-2",
+  "intent": "On turn 1 or 2, before anything else about the land drop is decided, play a land from hand that already enters untapped and makes some other hand card payable that is not payable now - an Island that lets Preordain be cast. This never costs life, so it goes first: a land this good is never worse than holding it. Prefers Urza's Saga first (its own chapter III wants to resolve on turn 3, so getting the Saga down early matters more than any other consideration), then a basic Island (never a scarce fastland or the life-costing Islet), then Spirebluff Canal (untapped only with two or fewer other lands, so this is exactly the window it wants), then Fiery Islet last (its own colour access costs 1 life every time, unlike the others). Stands down once three or more lands are already on the battlefield - the same key cantrip-scry's own guard reads, so the two never overlap - and also once a Saga is in hand: open-saga's own hand-Saga count sits byte-identical here, since Saga's chapter III clock outranks whether this land happens to unlock something else (Saga itself never unlocks anything by entering, so this play would otherwise only reach a Saga hand through a DIFFERENT unlocking land, ranking Saga below it - wrong given chapter III's urgency). Only turns 1-2, only with the land drop still available, and only mine, precombat main, an empty stack.",
+  "priority": 74,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 3,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "subtypes_any": [
+          "Saga"
+        ]
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "unlocks": true,
+          "enters_any": [
+            "untapped"
+          ]
+        },
+        "prefer": [
+          {
+            "subtypes_any": [
+              "Saga"
+            ]
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          },
+          {
+            "oracle_has": "two or fewer other lands"
+          },
+          {
+            "oracle_has": "Pay 1 life: Add"
+          }
+        ],
+        "ties": "any"
+      }
+    }
+  ],
+  "next": []
+}

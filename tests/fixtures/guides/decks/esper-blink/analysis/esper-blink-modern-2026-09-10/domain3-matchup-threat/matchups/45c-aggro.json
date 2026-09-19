@@ -1,0 +1,93 @@
+{
+  "name": "45c aggro",
+  "meta_share": 2.102891475779196,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": null,
+  "winrate_basis": {
+    "kind": "absent",
+    "why": "The committed capture at .protocol/raw-matchups.json holds no row for '45c aggro' and no row this pass can join to it - '5c domain aggro' and 'zoo' are shares-vocabulary names that appear in the fingerprint and not in the capture, and asserting either join would be a guess. Unmeasured, so no number is recorded."
+  },
+  "primary_gameplan": "Witch Enchanter is the card, and it is four maindeck copies. Destroy target artifact OR enchantment answers all three of their best permanents: Leyline of the Guildpact and Leyline Binding are enchantments, and Scion of Draco is an artifact creature. Phelia, Exuberant Shepherd re-triggers it every attack step, so one body is a Naturalize a turn.",
+  "secondary_gameplan": "Wrath of the Skies at X=2 answers Ragavan, Nimble Pilferer and Territorial Kavu, and at X=4 it destroys a resolved Leyline of the Guildpact, which shrinks every Territorial Kavu and re-prices Leyline Binding. Solitude for evoke is the only removal in the deck that answers Scion of Draco, because Scion is mana value 12 and exiling does not care.",
+  "opponent_gameplan": "Leyline of the Guildpact starts on the battlefield from the opening hand and makes their lands every basic land type, and the whole deck is priced off domain from there. Scion of Draco costs {2} less for each basic land type, so a {12} spell lands for two mana as a 4/4 flier that hands their whole board vigilance, hexproof, lifelink, first strike and trample; Territorial Kavu's power and toughness each equal the number of basic land types; Leyline Binding costs {1} less per type and flashes in to exile a permanent until it leaves. Ragavan, Nimble Pilferer and Quantum Riddler are the fair cards around it, Tribal Flames is the reach and Stubborn Denial protects the curve. Post-board Rest in Peace and Consign to Memory arrive against our graveyard and our enters triggers.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 3,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; counters the enters triggers on Solitude, Flickerwisp and Witch Enchanter",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    },
+    {
+      "card": "Rest in Peace",
+      "count": 1,
+      "why": "10 of 10 pulled sideboards; blanks Overlord of the Balemurk's return and Emperor of Bones together",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    },
+    {
+      "card": "Wrath of the Skies",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; their own energy sweeper against our two- and three-drop board",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    },
+    {
+      "card": "Obsidian Charmaw",
+      "count": 2,
+      "why": "9 of 10 pulled sideboards; destroys one of the sixteen nonbasic lands this manabase runs and leaves a 4/4 flier",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "Wrath of the Skies answers the enabler rather than the threats, and that is a deliberate choice rather than a compromise: Scion of Draco is mana value 12 whatever it cost them, so no X reaches it, while X=4 destroys Leyline of the Guildpact itself and every Territorial Kavu shrinks with it. It costs our own plan little, because the board we hold on turn four here is usually an Overlord still on impending counters, which is not a creature yet.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Leyline of the Guildpact drops a two-mana Scion of Draco on turn two granting their board hexproof and lifelink, so the game is a fast clock backed by flash catch-all removal.",
+    "key_cards": [
+      {
+        "card": "Leyline of the Guildpact",
+        "why": "Named verbatim in opponent_gameplan; a free mana value 4 enchantment that prices Scion of Draco, Territorial Kavu and Leyline Binding all at once"
+      },
+      {
+        "card": "Scion of Draco",
+        "why": "Named verbatim in opponent_gameplan; a two-mana 4/4 flier under the Leyline whose mana value is still 12, so no Wrath of the Skies X we can pay touches it"
+      },
+      {
+        "card": "Consign to Memory",
+        "why": "Counters the enters triggers our removal suite is entirely made of",
+        "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+      },
+      {
+        "card": "Rest in Peace",
+        "why": "Turns off Overlord of the Balemurk's return and Emperor of Bones in one card",
+        "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Two lands, a white source and a Witch Enchanter or a cheap removal spell.",
+    "goldfish_for": "Witch Enchanter on their Leyline of the Guildpact, blinked by Phelia after.",
+    "watch_for": "A Leyline of the Guildpact in the opening hand, which changes every mana value.",
+    "posture": "disrupt_first",
+    "posture_why": "Their threats outclass ours on rate, so remove rather than block."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Wrath of the Skies",
+      "verdict": "SURVIVES",
+      "why": "Consign to Memory counters triggered abilities and colorless spells and Wrath of the Skies is a white sorcery, so their most-played board card does not apply. It destroys artifacts, creatures AND enchantments rather than creatures alone, so X=4 answers the mana value 4 Leyline of the Guildpact itself. What it never answers is Scion of Draco, at mana value 12."
+    }
+  ],
+  "card_names": [
+    "Leyline of the Guildpact",
+    "Scion of Draco",
+    "Territorial Kavu",
+    "Leyline Binding",
+    "Ragavan, Nimble Pilferer",
+    "Stubborn Denial",
+    "Lightning Bolt",
+    "Tribal Flames",
+    "Quantum Riddler",
+    "Arena of Glory"
+  ]
+}

@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "id": "open-land-idle",
+  "name": "Play a land on turn 1-2 when nothing in hand unlocks anything",
+  "intent": "On turn 1 or 2, once none of open-land-unlocks, open-shock-unlocks, open-fetch-unlocks or open-fetch-unlocks-basic apply and no other hand card is already affordable, still play the land drop. Prefers Undercity Sewers first and keeps the surveil, since it was entering tapped regardless and the scry is free value; then Watery Grave with life declined, since paying for it buys nothing this turn and an idle land drop should not hold a shock back the way F holds a fetch (item 5: hand Delta+Watery Grave+Frog plays the Grave, tapped); then a fetch, held for the existing end-step surveil crack rather than cracked now; then whichever basic (Island or Swamp) is not yet on the battlefield, so the land drop starts fixing a colour this deck does not already have rather than doubling one it does. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped_if_paid"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_any": [
+          "Creature",
+          "Instant",
+          "Sorcery",
+          "Artifact",
+          "Enchantment",
+          "Planeswalker"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 1
+        },
+        "affordable": {
+          "extra": 1
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "keywords_any": [
+              "Surveil"
+            ]
+          },
+          {
+            "oracle_has": "you may pay 2 life"
+          },
+          {
+            "types_all": [
+              "Land"
+            ],
+            "searches_for_any": [
+              "Plains",
+              "Island",
+              "Swamp",
+              "Mountain",
+              "Forest"
+            ]
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ],
+            "missing_from": {
+              "zones": [
+                "battlefield"
+              ],
+              "side": "me",
+              "by": "subtype"
+            }
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "pay_life",
+          "accept": false
+        },
+        {
+          "decision": "surveil"
+        }
+      ]
+    }
+  ],
+  "next": []
+}

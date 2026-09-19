@@ -1,0 +1,98 @@
+{
+  "name": "dimir frog",
+  "meta_share": 1.9902365752910252,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": null,
+  "winrate_basis": {
+    "kind": "absent",
+    "why": "The committed capture at .protocol/raw-matchups.json holds no row for 'dimir frog' and no row this pass can join to it. 'dimir control' is a separate row in the same capture and a separate archetype in the fingerprint at 2.10pp against this row's 1.99pp, so joining the two would assert a merge the 2026-09-10 signature validation does not support. Unmeasured, so no number is recorded."
+  },
+  "primary_gameplan": "Psychic Frog is a two-mana creature and we play four Fatal Push, so the fair half of their deck is answerable on rate. Teferi, Time Raveler stops them using Sink into Stupor, Subtlety and Counterspell on our turn, which is where a tempo deck gets all of its value.",
+  "secondary_gameplan": "Mystical Dispute costs one mana against Murktide Regent, Subtlety, Counterspell and Force of Negation. Overlord of the Balemurk is the threat that beats a deck of one-for-ones, because every attack returns another creature to hand.",
+  "opponent_gameplan": "Psychic Frog attacks for a card a turn and grows on every discard, Murktide Regent arrives cheap off a full graveyard, and Tamiyo, Inquisitive Student flips into a planeswalker off their own draws. Around them sit Counterspell, Spell Snare, Force of Negation and Subtlety to answer our threats on the cheap and Fatal Push and Sheoldred's Edict to clear the board. Post-board Harbinger of the Seas turns our nonbasic lands into Islands and Engineered Explosives sweeps a chosen mana value.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 2,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; counters the enters triggers our whole plan is built out of",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Mystical Dispute",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; one mana against our Teferi, Quantum Riddler and Consign to Memory",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Harbinger of the Seas",
+      "count": 2,
+      "why": "9 of 10 pulled sideboards; nonbasic lands become Islands, and sixteen of our nineteen lands are nonbasic",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Engineered Explosives",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; destroys every nonland permanent at one chosen mana value",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "Both additions attack the tempo half of the deck rather than the bodies. Mystical Dispute is one mana against Counterspell, Force of Negation, Subtlety and Murktide Regent, all blue; the third Teferi, Time Raveler makes every one of those a sorcery-speed card, which is the worst thing that can happen to a deck that wins by acting on our turn.",
+  "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Psychic Frog draws a card every connection and their interaction is one-for-one and cheap, so the game is decided on cards rather than on a clock.",
+    "key_cards": [
+      {
+        "card": "Psychic Frog",
+        "why": "Named verbatim in opponent_gameplan; a two-mana body that draws a card each attack and grows on every discard"
+      },
+      {
+        "card": "Murktide Regent",
+        "why": "Named verbatim in opponent_gameplan; a cheap large flier once their graveyard is full, and the card the game ends on"
+      },
+      {
+        "card": "Harbinger of the Seas",
+        "why": "Turns sixteen of our nineteen lands into Islands, cutting off white and black entirely",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      },
+      {
+        "card": "Engineered Explosives",
+        "why": "Sweeps our two-drops at a mana value they choose after seeing the board",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Two lands with a white or black source and a one-mana interactive card.",
+    "goldfish_for": "Fatal Push on Psychic Frog, then Teferi, Time Raveler on turn three.",
+    "watch_for": "One blue open on their turn two, which is Spell Snare on our two-drop.",
+    "posture": "grind",
+    "posture_why": "They trade one for one; our blink triggers do not, so the long game is ours."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Mystical Dispute",
+      "verdict": "SURVIVES",
+      "why": "Their whole interactive suite is blue, so ours costs one and theirs costs three against it. Harbinger of the Seas makes our lands Islands, which if anything makes casting a {U} card easier, and Engineered Explosives acts on permanents."
+    },
+    {
+      "card": "Teferi, Time Raveler",
+      "verdict": "SURVIVES",
+      "why": "Engineered Explosives at three charge counters answers it, which is removal rather than a blank. Nothing else in their pulled 2026-09-10 board removes a planeswalker - Toxic Deluge and Requiting Hex name creatures - and once resolved it turns off their whole instant-speed game."
+    }
+  ],
+  "card_names": [
+    "Psychic Frog",
+    "Murktide Regent",
+    "Tamiyo, Inquisitive Student",
+    "Counterspell",
+    "Spell Snare",
+    "Force of Negation",
+    "Subtlety",
+    "Orcish Bowmasters",
+    "Fatal Push",
+    "Sink into Stupor"
+  ]
+}

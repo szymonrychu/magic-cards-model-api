@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "id": "open-tron-land",
+  "name": "Play a land toward assembling Tron on turn 1-2, against a Tron-lane opponent",
+  "intent": "On turn 1 or 2, against the Tron lane only (dimir-control, esper-blink, eldrazi-ramp, boros-ponza - GAMEPLAN_GUIDE.md 'Which half of the manabase the hand is', mode 2: the game goes long against permission and land destruction, so the missing Urza piece is spent rather than a basic), play a land toward completing Tron: prefers a missing Urza's piece (Tower, Mine or Power-Plant whose subtype is not already on the battlefield - the same missing_from reading map-for-tron-missing-piece's own answer uses, narrowed here to the battlefield only since a hand copy still needs to be played this way too), then Eldrazi Temple by its own 'colorless Eldrazi' text, then a basic. Excludes the Temple lane (izzet-prowess, ur-cutter-prowess, boros-aggro, 45c-aggro, pinnacle-affinity - open-temple-land's own gate) and the Labyrinth lane (broodscale-bloodchief, devoted-combo, dimir-frog, goryos-vengeance, instant-reanimator, living-end - open-labyrinth-land's own gate, mode 3, '-- any other matchup --'): the three lanes' own `input opposing_archetype` conditions partition the deck's full archetype set, so they are provably exclusive without needing a false key at all (an unmodelled or wildcard archetype defaults here, to the Tron lane, since it is neither list). Ugin's Labyrinth can be the land actually picked once neither tier narrows anything (it always enters untapped; its own imprint trigger is answered may/choose_cards regardless of whether a legal exile target is in hand), so that answer rides along - its own imprint pick prefers a Planeswalker (Ugin, Eye of the Storms) then Ward (Sire of Seven Deaths' own keyword) over Devourer of Destiny, since all three of this deck's colorless mv>=7 cards share mana value 7 and GAMEPLAN_GUIDE.md names Ugin or Sire, not Devourer, as the Labyrinth-lane's own imprint hand. Chains into map-for-tron-missing-piece: if the land just played brings untapped mana to 2 or more, the search fires in the same window. Stands down once two or more untapped mana is already up - the same key map-for-tron-missing-piece's own true condition reads, so the land drop and the crack it chains into are provably exclusive from each other as standalone applications. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 65,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "input",
+      "name": "opposing_archetype",
+      "op": "not_in",
+      "value": [
+        "izzet-prowess",
+        "ur-cutter-prowess",
+        "boros-aggro",
+        "45c-aggro",
+        "pinnacle-affinity",
+        "broodscale-bloodchief",
+        "devoted-combo",
+        "dimir-frog",
+        "goryos-vengeance",
+        "instant-reanimator",
+        "living-end"
+      ]
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 2
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "subtypes_any": [
+              "Tower",
+              "Mine",
+              "Power-Plant"
+            ],
+            "missing_from": {
+              "zones": [
+                "battlefield"
+              ],
+              "side": "me",
+              "by": "subtype"
+            }
+          },
+          {
+            "oracle_has": "colorless Eldrazi"
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "may",
+          "accept": true
+        },
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "colors_any": [
+                "colorless"
+              ],
+              "mana_value": {
+                "op": ">=",
+                "n": 7
+              }
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "types_all": [
+                  "Planeswalker"
+                ]
+              },
+              {
+                "oracle_has": "Ward"
+              }
+            ],
+            "ties": "any"
+          }
+        }
+      ]
+    }
+  ],
+  "next": [
+    "map-for-tron-missing-piece"
+  ]
+}

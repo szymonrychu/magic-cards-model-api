@@ -1437,11 +1437,20 @@
       "play_plan": {
         "keep": "Two lands including a basic, two threats, and a turn-one play.",
         "goldfish_for": "Four damage by turn two, then a turn-three Blood Moon off a basic Plains.",
-        "watch_for": "One black mana up for Orcish Bowmasters before we make a token, and Psychic Frog's card count.",
+        "watch_for": "Sheoldred's Edict punishes controlling one nontoken creature with Cat tokens out, a clean one-for-one. Also watch one black mana up for Orcish Bowmasters before a token, and Psychic Frog's card count.",
         "posture": "race",
-        "posture_why": "Their card quality wins a long game, so the plan is to end it while their answers still cost them a card each."
+        "posture_why": "Their card quality wins a long game, so the plan is to end it while their answers still cost them a card each.",
+        "deploy_shape": "Deploy so the nontoken-creature Edict is never clean. Ajani, Nacatl Pariah beside a Cat token is the shape to want: the token-mode Edict kills a Cat, which flips Ajani into Ajani, Nacatl Avenger, so both modes cost them. Holding a second two-drop in hand rather than casting it is correct when it would be our only nontoken creature.",
+        "resolve_into_tapped_out": "Their removal and counters are all cheap, so the turn they tap out is the turn to resolve the card they most want to answer. Voice of Victory is that card - its static ability stops them casting anything on our turns at all - and it should jump the curve ahead of Ajani, because a creature has to survive their answer whenever it lands, while Voice only has to resolve once.",
+        "fetch_basics": "Fetch basics, not shocklands, unless one land must cover two colours this turn. Their clock is slow enough that two life per untapped shockland buys nothing, they Thoughtseize themselves down two at a time, and basics keep working under our own Blood Moon and dodge Field of Ruin."
       },
-      "self_cost": "Blood Moon turns our own fourteen nonbasics into Mountains and takes the fetch ability off all ten fetchlands, so it is only cast with a basic Plains already down. Against this deck it is still the right card: 10 of 10 recorded lists play three or fewer basics behind a manabase of Polluted Delta, Watery Grave, Undercity Sewers and Marsh Flats."
+      "self_cost": "Blood Moon turns our own fourteen nonbasics into Mountains and takes the fetch ability off all ten fetchlands, so it is only cast with a basic Plains already down. Against this deck it is still the right card: 10 of 10 recorded lists play three or fewer basics behind a manabase of Polluted Delta, Watery Grave, Undercity Sewers and Marsh Flats.",
+      "notes": [
+        "Played 2026-09-13, game 16a9cf8fd9f74ad396e10457875d2fed, boros-aggro on the draw after a mulligan to six. Released ahead 19-12 with Ajani plus two Cat tokens against three lands.",
+        "Two cards appeared that this row does not list: Sheoldred's Edict (x2) and Quantum Riddler, warped for {1}{U} as a self-exiling cantrip. Orcish Bowmasters and Counterspell never appeared, so the Bowmasters-centred warning in watch_for was not what the matchup actually turned on - the Edicts were.",
+        "Galvanic Discharge note: energy is paid during resolution, after the opponent's last chance to respond, so the discard-pump on Psychic Frog is not a reason to overpay - cast it, see whether they pump, then pay the least that kills. This pilot declined to pay cards to save a two-drop.",
+        "Their manabase was Undercity Sewers, Otawara, Verdant Catacombs into a basic Swamp, and they missed two land drops stuck on three mana, which is a further argument for hoarding life rather than spending it on untapped nonbasics."
+      ]
     }
   ],
   "sideboard_audit": [

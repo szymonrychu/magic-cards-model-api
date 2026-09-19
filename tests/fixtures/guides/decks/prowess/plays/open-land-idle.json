@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "id": "open-land-idle",
+  "name": "Play a land on turn 1-2 when nothing in hand unlocks anything",
+  "intent": "On turn 1 or 2, once none of open-land-unlocks, open-shock-unlocks, open-fetch-unlocks or open-fetch-unlocks-shock apply and no other hand card is already affordable, still play the land drop - any land in hand beats holding it back with nothing to protect. Prefers a surveil land (Thundering Falls) first and keeps the surveilled card, since it was entering tapped regardless and the scry is free value; then any other land that would enter tapped anyway (none exists in this manabase today, but the tier stays for a future addition and costs nothing to keep); then a shockland, life declined - a paid shockland is real mana this turn, strictly better to hold open than an already-untapped fetch that produces nothing until cracked (item 9, 2026-09-14 review batch, swapping the old fetch-before-shock order); then a fetch, held everywhere else for a target-rich turn but taken here since nothing else is better. The false list's own fetch keys narrow/extend to match F's own narrowed unlocks_by_basic_search true key plus the new open-fetch-unlocks-shock play's own broader unlocks_by_search true key (item 4), so this play only stands down for either once it would actually fire. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped_if_paid"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_any": [
+          "Creature",
+          "Instant",
+          "Sorcery",
+          "Artifact",
+          "Enchantment",
+          "Planeswalker"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 1
+        },
+        "affordable": {
+          "extra": 1
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "keywords_any": [
+              "Surveil"
+            ]
+          },
+          {
+            "enters_any": [
+              "tapped"
+            ]
+          },
+          {
+            "oracle_has": "you may pay 2 life"
+          },
+          {
+            "types_all": [
+              "Land"
+            ],
+            "searches_for_any": [
+              "Plains",
+              "Island",
+              "Swamp",
+              "Mountain",
+              "Forest"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "pay_life",
+          "accept": false
+        },
+        {
+          "decision": "surveil"
+        }
+      ]
+    }
+  ],
+  "next": []
+}

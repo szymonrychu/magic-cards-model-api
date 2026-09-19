@@ -1,0 +1,140 @@
+{
+  "name": "instant reanimator",
+  "meta_share": 4.50619601952685,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.4479,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='eldrazi tron', limit=60), committed verbatim at .protocol/raw-matchups.json; the deduplicated row for opponent='esper goryo' reads winrate 0.4479 over sample_size 43 matches, and archetype_a is eldrazi tron so it is our winrate read directly rather than a complement. The capture speaks 'esper goryo' where the fingerprint speaks 'instant reanimator'; the join is asserted in the capture's own `aliases` map, on the archetype-signature validation of 2026-09-10 that classified ten field lists per label identically.",
+    "n": 43
+  },
+  "primary_gameplan": "Grafdigger's Cage is the answer that reads exactly on their card: Goryo's Vengeance returns a legendary creature card from the graveyard to the battlefield, and 'Creature cards in graveyards and libraries can't enter the battlefield' stops that outright. Fetch it first and keep the game long.",
+  "secondary_gameplan": "Disruptor Flute naming Goryo's Vengeance taxes it by three, which is more mana than their curve has on turn two; Tormod's Crypt exiles the Atraxa, Grand Unifier they discarded, and Kozilek's Command exiles up to X cards from graveyards at instant speed for the same job.",
+  "opponent_gameplan": "All ten committed 2026-09-10 lists are the Psychic Frog shell: Thoughtseize and Psychic Frog on the first two turns, discard Atraxa, Grand Unifier or Griselbrand to the Frog, then Goryo's Vengeance at instant speed to put it on the battlefield with haste. Force of Negation protects the turn. Atraxa's enters trigger reveals ten cards and refills their hand, so a single resolution usually ends the game even though the body is exiled at the next end step.",
+  "tournament_refs": [
+    {
+      "pilot": "ElPuerco",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "bc856377-56fd-4150-bc55-9b3c11fd43a5",
+      "source_deck_id": "888163"
+    },
+    {
+      "pilot": "xfile",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "ed65a804-9ab0-48d9-aa93-4f7c0e66a405",
+      "source_deck_id": "888150"
+    },
+    {
+      "pilot": "HealthyEgo",
+      "tournament_date": "2026-09-07",
+      "tournament_id": "ce383ba2-494c-46cd-958c-4f6cb17d7b0a",
+      "source_deck_id": "887800"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 4,
+      "why": "9 of 10 committed 2026-09-10 lists; one blue mana counters a colorless spell or a triggered ability, which covers almost our whole deck including Devourer of Destiny's cast trigger",
+      "source_tournament_id": "bc856377-56fd-4150-bc55-9b3c11fd43a5"
+    },
+    {
+      "card": "Wrath of the Skies",
+      "count": 3,
+      "why": "9 of 10 committed lists; an X sweeper that answers a board of cheap artifacts and Eldrazi at once",
+      "source_tournament_id": "bc856377-56fd-4150-bc55-9b3c11fd43a5"
+    },
+    {
+      "card": "Teferi, Time Raveler",
+      "count": 1,
+      "why": "7 of 10 committed lists; his static clause forces us to cast Dismember and Kozilek's Command at sorcery speed, which is how the Goryo's turn is protected",
+      "source_tournament_id": "bc856377-56fd-4150-bc55-9b3c11fd43a5"
+    },
+    {
+      "card": "Clarion Conqueror",
+      "count": 1,
+      "why": "5 of 10 committed lists; turns off Karn's minus two and every activated wish target",
+      "source_tournament_id": "ce383ba2-494c-46cd-958c-4f6cb17d7b0a"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "Grafdigger's Cage, Tormod's Crypt, Disruptor Flute and Torpor Orb are all free for us: we put nothing in our own graveyard on purpose, we cast no spells from it, and none of our creatures has an enters trigger. This is the cheapest set of one-sided answers in the whole board, which is why the row is a straight counter and not a symmetric one.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A turn-two or turn-three Goryo's Vengeance on Atraxa is the plan; everything else in the deck buys the one turn it needs.",
+    "key_cards": [
+      {
+        "card": "Goryo's Vengeance",
+        "why": "Named in the recorded gameplan; the instant-speed reanimation that puts a seven-drop onto the battlefield for two mana"
+      },
+      {
+        "card": "Atraxa, Grand Unifier",
+        "why": "Named in the recorded gameplan; the enters trigger refills their hand even when the body is exiled at end of turn"
+      },
+      {
+        "card": "Consign to Memory",
+        "why": "Boarded counter for our colorless spells and our cast triggers, four copies deep",
+        "source_tournament_id": "bc856377-56fd-4150-bc55-9b3c11fd43a5"
+      },
+      {
+        "card": "Clarion Conqueror",
+        "why": "Boarded body that switches off Karn and the entire wish pool",
+        "source_tournament_id": "ce383ba2-494c-46cd-958c-4f6cb17d7b0a"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand with Dismember, or with Eldrazi Temple and a fourth land so Karn arrives on turn three.",
+    "goldfish_for": "Karn into Grafdigger's Cage before their second Psychic Frog activation fills the graveyard.",
+    "watch_for": "Blue held open on their turn two, which is Force of Negation protecting the Goryo's turn.",
+    "posture": "disrupt_first",
+    "posture_why": "This is a recorded worst case at forty-five percent; the only line that changes it is stopping the reanimation, never racing it."
+  },
+  "fetch_priority": [
+    "Grafdigger's Cage",
+    "Disruptor Flute",
+    "Tormod's Crypt",
+    "Torpor Orb"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Grafdigger's Cage",
+      "verdict": "SURVIVES",
+      "why": "Consign to Memory can counter it on the way down, but nothing in the recorded board destroys a resolved one-mana artifact; a resolved Cage makes Goryo's Vengeance a blank."
+    },
+    {
+      "card": "Disruptor Flute",
+      "verdict": "SURVIVES",
+      "why": "Its tax and its ability lock are a static effect and a replacement on cost, not an activated ability, so Clarion Conqueror does not switch it off."
+    },
+    {
+      "card": "Tormod's Crypt",
+      "verdict": "SURVIVES",
+      "why": "Clarion Conqueror does shut off its activated ability, which is why it is the third fetch; against everything else it is a free sacrifice in response to the Goryo's Vengeance cast."
+    },
+    {
+      "card": "Torpor Orb",
+      "verdict": "SURVIVES",
+      "why": "Static, so Conqueror misses it; it blanks the Atraxa enters trigger even on the turns where the reanimation itself resolves."
+    }
+  ],
+  "notes": [
+    "Fetch Grafdigger's Cage before Tormod's Crypt: the Crypt answers the graveyard they have already built, while the Cage answers every Goryo's Vengeance they will ever draw, including the ones cast on a freshly discarded Atraxa.",
+    "Torpor Orb is the fetch that still matters after a Goryo's Vengeance has resolved, because the game is usually lost to Atraxa's enters trigger rather than to the body, which is exiled at the next end step anyway.",
+    "Kozilek's Command in the maindeck already does half of Tormod's Crypt's job at instant speed; hold it rather than fetching a second graveyard answer when Tron is assembled."
+  ],
+  "card_names": [
+    "Goryo's Vengeance",
+    "Atraxa, Grand Unifier",
+    "Griselbrand",
+    "Psychic Frog",
+    "Thoughtseize",
+    "Force of Negation",
+    "Consign to Memory",
+    "Teferi, Time Raveler",
+    "Wrath of the Skies",
+    "Clarion Conqueror"
+  ]
+}

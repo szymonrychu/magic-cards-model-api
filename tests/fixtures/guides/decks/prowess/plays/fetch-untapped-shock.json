@@ -80,6 +80,11 @@
           "Mountain"
         ]
       }
+    },
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
     }
   ],
   "moves": [

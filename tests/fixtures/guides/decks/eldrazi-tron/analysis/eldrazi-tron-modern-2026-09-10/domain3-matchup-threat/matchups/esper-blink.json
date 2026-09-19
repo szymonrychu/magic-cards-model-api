@@ -1,0 +1,141 @@
+{
+  "name": "esper blink",
+  "meta_share": 7.660533233195643,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.5447,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='eldrazi tron', limit=60), committed verbatim at .protocol/raw-matchups.json; the deduplicated row for opponent='esper blink' reads winrate 0.5447 over sample_size 108 matches, and archetype_a is eldrazi tron so it is our winrate read directly rather than a complement.",
+    "n": 108
+  },
+  "primary_gameplan": "Assemble Tron or Eldrazi Temple mana under a resolved threat, then use Karn, the Great Creator to fetch The Stone Brain and name Overlord of the Balemurk, which is the card their long game is made of. Ugin, Eye of the Storms is the finisher: every colorless spell we cast afterwards exiles another of their coloured permanents for free.",
+  "secondary_gameplan": "If Karn cannot resolve, Devourer of Destiny's cast trigger exiles a Solitude or a Witch Enchanter on the way down and Kozilek's Command exiles their graveyard at X, which is what makes Overlord of the Balemurk's return clause miss.",
+  "opponent_gameplan": "All ten committed 2026-09-10 lists are the same shell: Thoughtseize and Fatal Push on the cheap end, Solitude and Flickerwisp and Phelia, Exuberant Shepherd as the blink bodies, Quantum Riddler for cards, and Overlord of the Balemurk as the recursion engine - it mills four and returns a creature or planeswalker card to hand whenever it enters or attacks, so a single copy is a value loop the deck rebuilds from every turn. Ephemerate and Emperor of Bones re-buy the enters-the-battlefield triggers. They do not race; they take the game apart one permanent at a time and win with a 3/3 flier.",
+  "tournament_refs": [
+    {
+      "pilot": "rastaf",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664807"
+    },
+    {
+      "pilot": "MercurialChemister",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664680"
+    },
+    {
+      "pilot": "Willthepill",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664743"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Wrath of the Skies",
+      "count": 3,
+      "why": "10 of 10 committed 2026-09-10 lists board it; an X sweeper that scales to whatever mana value our artifacts and Eldrazi sit at",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Consign to Memory",
+      "count": 3,
+      "why": "10 of 10 committed lists; counters a triggered ability or a colorless spell, and 56 of our 60 mainboard cards are colorless or produce a cast trigger",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Clarion Conqueror",
+      "count": 2,
+      "why": "10 of 10 committed lists; 'Activated abilities of artifacts, creatures, and planeswalkers can't be activated' turns off Karn's minus two, Expedition Map and every fetched artifact at once",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "White Orchid Phantom",
+      "count": 2,
+      "why": "9 of 10 committed lists; destroys a nonbasic land, and 21 of our 24 lands are nonbasic",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "The Stone Brain, Torpor Orb and Tormod's Crypt each attack the recursion loop without costing our own plan anything: none of our creatures has an enters-the-battlefield trigger (Devourer of Destiny and Sowing Mycospawn both trigger on CAST), and our graveyard is empty by design, so Torpor Orb and Crypt are one-sided here.",
+  "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Flicker and recursion value out-accumulates a passive Tron draw over ten turns rather than racing it, and their removal buys the turns that takes.",
+    "key_cards": [
+      {
+        "card": "Overlord of the Balemurk",
+        "why": "Named in the recorded gameplan; mills four and returns a creature or planeswalker to hand on every enter and every attack, which is the whole long game"
+      },
+      {
+        "card": "Clarion Conqueror",
+        "why": "Shuts off Karn's minus two and every activated artifact in the wish pool in one body",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Consign to Memory",
+        "why": "Counters our colorless spells and our cast triggers for one mana, three copies deep",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "White Orchid Phantom",
+        "why": "Uncontested land destruction against an almost entirely nonbasic manabase",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand that survives one Thoughtseize and still reaches four mana without needing a specific land.",
+    "goldfish_for": "Karn on turn four into The Stone Brain naming Overlord of the Balemurk before their loop starts.",
+    "watch_for": "Whether they hold up two blue for Consign to Memory or tap out for Overlord on its impending cost.",
+    "posture": "disrupt_first",
+    "posture_why": "Their engine outgrinds us; strip it before racing, because our clock is a single Eldrazi body."
+  },
+  "fetch_priority": [
+    "The Stone Brain",
+    "Torpor Orb",
+    "Tormod's Crypt",
+    "Cityscape Leveler"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "The Stone Brain",
+      "verdict": "SURVIVES",
+      "why": "Its own activation exiles it as a cost, so Wrath of the Skies has nothing left to hit once it has been used; a resolved Clarion Conqueror does stop it, which is why it is fetched and activated the turn Karn lands rather than held."
+    },
+    {
+      "card": "Torpor Orb",
+      "verdict": "SURVIVES",
+      "why": "A static effect with no activated ability, so Clarion Conqueror does not touch it, and nothing in the recorded board except Wrath of the Skies at two energy answers a resolved artifact."
+    },
+    {
+      "card": "Tormod's Crypt",
+      "verdict": "SURVIVES",
+      "why": "Mana value zero and it sacrifices itself, so it is used in response to the Overlord trigger rather than left on board for Wrath of the Skies."
+    },
+    {
+      "card": "Cityscape Leveler",
+      "verdict": "SURVIVES",
+      "why": "Its destroy trigger fires on CAST, so Solitude exiling it afterwards still leaves the permanent destroyed; Wrath of the Skies would need eight energy to reach it."
+    }
+  ],
+  "notes": [
+    "Fetch order is The Stone Brain first because Overlord of the Balemurk is four copies and every other card in their 75 is replaceable; Torpor Orb second only when Solitude and Witch Enchanter have already cost us two permanents.",
+    "Tormod's Crypt is held rather than cast on sight: the Overlord mill puts the return targets into the graveyard, so cracking it in response to the enters-or-attacks trigger is worth more than a turn-one blank.",
+    "Cityscape Leveler is the fifth-turn-plus fetch and only when the game has gone long enough that eight mana is real; against a Clarion Conqueror board it is the one wish target Karn's static ability does not need to survive."
+  ],
+  "card_names": [
+    "Overlord of the Balemurk",
+    "Solitude",
+    "Phelia, Exuberant Shepherd",
+    "Flickerwisp",
+    "Quantum Riddler",
+    "Thoughtseize",
+    "Fatal Push",
+    "Ephemerate",
+    "Emperor of Bones",
+    "Witch Enchanter"
+  ]
+}

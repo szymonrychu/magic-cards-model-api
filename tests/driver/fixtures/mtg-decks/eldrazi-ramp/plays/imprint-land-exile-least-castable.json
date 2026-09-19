@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "imprint-land-exile-least-castable",
+  "name": "Play the imprint land for the land drop and imprint the least castable colorless fatty",
+  "intent": "Ugin's Labyrinth shape. The land drop itself is the whole play: an imprinted Labyrinth taps for two colorless instead of one, and that second colorless is this deck's main acceleration toward the seven- and ten-drops, so the imprint is accepted whenever the hand holds a legal colorless card of mana value seven or greater. Which card goes under it is decided by what I am least likely to ever hard-cast: the thirteen-drop first, then the ten-drop, then the seven-mana colorless planeswalker, and the seven-mana colorless creatures last, because those seven-drops are realistic payoffs I want to keep castable from hand while the thirteen-drop is not one this deck casts on curve. The deck's own matchup notes warn twice about the downside: the Labyrinth returns the exiled card only for a tap, which is a turn a race does not give me, and an opposing kicked land-search creature can exile the Labyrinth itself and take the imprinted card with it. The condition language here cannot read 'is this my last win condition', so the play takes the safe side of that warning bluntly: it applies only when the hand holds MORE THAN ONE colorless card of mana value seven or greater, so the card that goes under the land is never the only big colorless threat in hand and losing the Labyrinth to land removal is never losing the game plan outright. With one such card in hand the play does not fire at all and the imprint is left to be judged by hand. It also holds off once four or more mana is untapped: that is the window the land-search creature cast wants, so the two plays never contend for one decision point, and this play chains into that cast afterwards, which is the ordering a real turn wants anyway - land first, then the four-drop.",
+  "priority": 55,
+  "opposing_archetypes": ["*"],
+  "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+  "true": [
+    {"kind": "land_drop_available", "value": true},
+    {"kind": "count", "zone": "hand", "side": "me", "op": ">=", "n": 1,
+     "select": {"types_all": ["Land"], "oracle_has": "mana value 7 or greater"}},
+    {"kind": "count", "zone": "hand", "side": "me", "op": ">=", "n": 2,
+     "select": {"colors_any": ["colorless"], "mana_value": {"op": ">=", "n": 7}}},
+    {"kind": "untapped_mana", "op": "<=", "n": 3}
+  ],
+  "false": [],
+  "moves": [
+    {"kind": "play_land",
+     "card": {"select": {"types_all": ["Land"], "oracle_has": "mana value 7 or greater"}},
+     "answers": [
+       {"decision": "may", "accept": true},
+       {"decision": "choose_cards",
+        "pick": {"select": {"colors_any": ["colorless"], "mana_value": {"op": ">=", "n": 7}},
+                 "count": 1,
+                 "prefer": [
+                   {"colors_any": ["colorless"], "mana_value": {"op": ">=", "n": 13}},
+                   {"colors_any": ["colorless"], "mana_value": {"op": ">=", "n": 10}},
+                   {"colors_any": ["colorless"], "types_all": ["Planeswalker"]},
+                   {"colors_any": ["colorless"], "types_all": ["Creature"], "mana_value": {"op": ">=", "n": 7}}
+                 ]}}
+     ]}
+  ],
+  "next": ["cast-trigger-land-search"]
+}

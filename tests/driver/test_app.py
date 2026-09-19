@@ -729,13 +729,18 @@ def test_an_unreachable_scripts_route_does_not_fail_the_dispatch(world):
 
 
 def test_the_briefing_lists_the_registered_scripts(world):
+    from mtg_agent.driver.prompt import _clip
+
     dispatch(world.client)
 
     text = (world.settings.workspace / "current-game.md").read_text()
     assert "## Your registered play scripts" in text
     for script in fixture_plays():
         assert f"`{script['id']}`" in text
-        assert script["name"] in text
+        # `_clip` (`prompt.py`'s own row renderer, `_script_row`) trims a
+        # name past its own character budget - the corpus vendors real,
+        # sometimes long, play names, so the row is read the same way.
+        assert _clip(script["name"]) in text
         assert f"priority {script['priority']}" in text
         assert ", ".join(script["opposing_archetypes"]) in text
     assert "## Your registered play scripts" in world.submitted[0]["text"]

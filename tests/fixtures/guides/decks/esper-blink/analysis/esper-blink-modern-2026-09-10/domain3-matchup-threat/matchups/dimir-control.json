@@ -1,0 +1,99 @@
+{
+  "name": "dimir control",
+  "meta_share": 2.102891475779196,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.6455,
+  "winrate_basis": {
+    "kind": "data",
+    "n": 123,
+    "source": "statistics_matchups(format=modern, archetype_a='esper blink', limit=60), committed verbatim at .protocol/raw-matchups.json; row opponent='dimir control' winrate=0.6455 over sample_size=123 matches. This is the best number the capture records against any archetype in this boarding field"
+  },
+  "primary_gameplan": "Their answers are all one-for-one and ours are not: Overlord of the Balemurk returns a creature every attack, Phelia, Exuberant Shepherd re-triggers a Solitude or a Quantum Riddler, and every blink is a card they have to answer twice. Teferi, Time Raveler stops them holding up Counterspell and Force of Negation on our turn.",
+  "secondary_gameplan": "Mystical Dispute costs one mana against a deck that is blue in every counterspell slot, and Thoughtseize on turn one takes the counter rather than the threat. Quantum Riddler replaces itself even when it is answered.",
+  "opponent_gameplan": "Counterspell, Spell Snare, Force of Negation and Subtlety answer whatever we resolve, Fatal Push and Sheoldred's Edict clear the board, and Orcish Bowmasters punishes every extra draw. Wan Shi Tong, Librarian grows and draws each time we crack a fetchland, Consult the Star Charts digs as deep as their land count, and Snapcaster Mage gives an answer in the graveyard flashback for its own cost. Post-board Engineered Explosives sweeps a chosen mana value and Consign to Memory counters our enters triggers.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Engineered Explosives",
+      "count": 2,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; sets a mana value and destroys every nonland permanent at it, which is our whole two-drop shell",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Consign to Memory",
+      "count": 4,
+      "why": "10 of 10 pulled sideboards; counters the enters triggers this deck is entirely built out of",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Mystical Dispute",
+      "count": 3,
+      "why": "10 of 10 pulled sideboards; one mana against our Teferi, Quantum Riddler and Consign to Memory",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Damnation",
+      "count": 2,
+      "why": "6 of 10 pulled sideboards; destroys all creatures with no regeneration, against a board we rebuild slowly",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "The two cards added answer the half of their deck our maindeck cannot touch. Mystical Dispute is one mana against Counterspell, Force of Negation, Subtlety and Wan Shi Tong, Librarian, all blue; the third Teferi, Time Raveler forces them to act on their own turn, which is where every card in their deck is worst. Neither slows our own curve.",
+  "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Every card they play answers one of ours and every card they draw replaces itself, so the plan is to run us out of threats rather than to end the game quickly.",
+    "key_cards": [
+      {
+        "card": "Counterspell",
+        "why": "Named verbatim in opponent_gameplan; two mana, no conditions, and Snapcaster Mage gives it flashback for the same price later"
+      },
+      {
+        "card": "Wan Shi Tong, Librarian",
+        "why": "Named verbatim in opponent_gameplan; grows and draws a card every time we crack one of our nine fetchlands"
+      },
+      {
+        "card": "Engineered Explosives",
+        "why": "Destroys every nonland permanent at one chosen mana value, which is the whole two-drop half of our board",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Consign to Memory",
+        "why": "Counters the enters triggers that are our card advantage and our removal both",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand with a threat and a way to protect or rebuy it, not five lands.",
+    "goldfish_for": "Teferi, Time Raveler resolving, then Overlord of the Balemurk under it.",
+    "watch_for": "Two blue open, which is Counterspell rather than Consign to Memory.",
+    "posture": "grind",
+    "posture_why": "Our threats rebuy themselves and their answers do not, so trade patiently."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Mystical Dispute",
+      "verdict": "SURVIVES",
+      "why": "Their counterspells are blue, so ours costs one mana and their Mystical Dispute costs three against it. Engineered Explosives and Damnation act on permanents, so nothing in their pulled 2026-09-10 board answers it on the stack at parity."
+    },
+    {
+      "card": "Teferi, Time Raveler",
+      "verdict": "SURVIVES",
+      "why": "Engineered Explosives at three charge counters destroys it, which is removal rather than a blank and costs them a card and four mana. Damnation names creatures only, and once Teferi resolves their Counterspell, Force of Negation and Subtlety can only be cast on their own turn."
+    }
+  ],
+  "card_names": [
+    "Counterspell",
+    "Spell Snare",
+    "Force of Negation",
+    "Subtlety",
+    "Orcish Bowmasters",
+    "Wan Shi Tong, Librarian",
+    "Fatal Push",
+    "Sheoldred's Edict",
+    "Consult the Star Charts",
+    "Snapcaster Mage"
+  ]
+}

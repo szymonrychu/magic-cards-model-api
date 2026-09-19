@@ -1,0 +1,141 @@
+{
+  "name": "eldrazi ramp",
+  "meta_share": 4.618850920015021,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.539,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='eldrazi tron', limit=60), committed verbatim at .protocol/raw-matchups.json; the deduplicated row for opponent='eldrazi ramp' reads winrate 0.539 over sample_size 69 matches, and archetype_a is eldrazi tron so it is our winrate read directly rather than a complement.",
+    "n": 69
+  },
+  "primary_gameplan": "This is the colorless mirror decided by who lands the first seven-drop. Torpor Orb turns off Thought-Knot Seer and Disciple of Freyalise's enters triggers while costing us nothing, and Trinisphere taxes Green Sun's Zenith and Malevolent Rumble while Tron mana pays around it. Ugin, Eye of the Storms is the card that ends it.",
+  "secondary_gameplan": "Sowing Mycospawn kicked exiles their Eldrazi Temple or their Boseiju, Who Endures, and Haywire Mite exiles Fight Rigging or Leyline of Abundance, both of which are noncreature enchantments and both of which are how they get ahead on mana.",
+  "opponent_gameplan": "The ten committed 2026-09-10 lists ramp with Malevolent Rumble, Disciple of Freyalise and Leyline of Abundance into Emrakul, the Promised End and Ulamog, the Ceaseless Hunger, with Fight Rigging hiding a free seven-drop away and Green Sun's Zenith finding the creature half. They share our Eldrazi Temple, Ugin's Labyrinth, Sowing Mycospawn and Ugin, Eye of the Storms, so both decks are playing the same mana game with different top ends: theirs is a green creature curve and ours is Tron.",
+  "tournament_refs": [
+    {
+      "pilot": "HouseOfManaMTG",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664724"
+    },
+    {
+      "pilot": "chagu",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5",
+      "source_deck_id": "videre-58663895"
+    },
+    {
+      "pilot": "sgcyrus",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6",
+      "source_deck_id": "videre-58664355"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Trinisphere",
+      "count": 3,
+      "why": "9 of 10 committed 2026-09-10 lists; taxes our one and two mana accelerants, and their Leyline of Abundance mana pays the tax more easily than our pre-Tron lands do",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Grafdigger's Cage",
+      "count": 2,
+      "why": "8 of 10 committed lists; boarded for the field rather than for us, and it blanks nothing in our 75, which makes it a free artifact on their side of the table",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Force of Vigor",
+      "count": 2,
+      "why": "6 of 10 committed lists; a free two-for-one on our turn against a deck whose sideboard is fifteen artifacts",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Warping Wail",
+      "count": 2,
+      "why": "5 of 10 committed lists; counters a sorcery or exiles a small creature, and it is the only interaction in the recorded board that answers Sowing Mycospawn",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Torpor Orb, Cityscape Leveler and Haywire Mite are all one-sided; Trinisphere is not, and it is fetched only when we are on the play or already have Tron assembled, which is when the tax is theirs alone.",
+  "self_cost": "Trinisphere is the symmetric half: it turns our Expedition Map, Giant's Boulder and Talisman of Resilience into three-mana cards on exactly the turns we are trying to accelerate. It is right here only because their Malevolent Rumble, Ancient Stirrings and Green Sun's Zenith at low X are the cards that get them to seven first.",
+  "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "They are not racing; they are ramping toward a bigger endgame than ours and expecting the seven-drop that lands first to decide the game.",
+    "key_cards": [
+      {
+        "card": "Sowing Mycospawn",
+        "why": "Named in the recorded gameplan; fetches their missing land and, kicked, exiles one of our Tron pieces"
+      },
+      {
+        "card": "Emrakul, the Promised End",
+        "why": "Named in the recorded gameplan; the top end that takes a turn from us as its cast trigger"
+      },
+      {
+        "card": "Trinisphere",
+        "why": "Boarded tax on the accelerants that would let us reach seven mana first",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Force of Vigor",
+        "why": "Boarded free answer to two of our artifacts at once, on our own turn",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Anything with two Tron pieces plus Expedition Map, or Eldrazi Temple plus a seven-drop for Ugin's Labyrinth.",
+    "goldfish_for": "Turn-four Karn or a turn-five Ugin, Eye of the Storms off assembled Tron.",
+    "watch_for": "A kicked Sowing Mycospawn aimed at whichever Tron piece we only have one of.",
+    "posture": "grind",
+    "posture_why": "Both decks are colorless piles; the one that resolves its seven-drop first wins, so land drops matter more than interaction."
+  },
+  "fetch_priority": [
+    "Torpor Orb",
+    "Trinisphere",
+    "Cityscape Leveler",
+    "Haywire Mite"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Torpor Orb",
+      "verdict": "SURVIVES",
+      "why": "Force of Vigor answers it, but Torpor Orb has already done its work if it resolves before Thought-Knot Seer; Warping Wail cannot counter an artifact spell and Grafdigger's Cage is irrelevant to it."
+    },
+    {
+      "card": "Trinisphere",
+      "verdict": "SURVIVES",
+      "why": "They board their own copies, which do not answer ours, and the tax applies from the moment it resolves; only Force of Vigor removes it."
+    },
+    {
+      "card": "Cityscape Leveler",
+      "verdict": "SURVIVES",
+      "why": "Its destroy trigger is on CAST, so it has already destroyed a permanent before Force of Vigor or Warping Wail could matter, and Warping Wail counters sorceries only."
+    },
+    {
+      "card": "Haywire Mite",
+      "verdict": "SURVIVES",
+      "why": "Warping Wail exiles a creature with power or toughness one or less and does answer it, but Mite is sacrificed for its own ability in response, so the exchange still exiles Fight Rigging or Leyline of Abundance."
+    }
+  ],
+  "notes": [
+    "Torpor Orb is the first fetch because it is free for us: Devourer of Destiny and Sowing Mycospawn both trigger on CAST, not on entering, so the Orb is one-sided in a mirror that otherwise shares half its cards.",
+    "Trinisphere is fetched on the play and skipped on the draw, because on the draw the tax lands after their accelerants have already run.",
+    "Haywire Mite needs a green source: two Forest, four Talisman of Resilience, three Giant's Boulder and Boseiju, Who Endures are the ten in this 60, though only the three lands among them count toward mana-check's census."
+  ],
+  "card_names": [
+    "Sowing Mycospawn",
+    "Malevolent Rumble",
+    "Fight Rigging",
+    "Emrakul, the Promised End",
+    "Ugin, Eye of the Storms",
+    "Green Sun's Zenith",
+    "Disciple of Freyalise",
+    "Ulamog, the Ceaseless Hunger",
+    "Leyline of Abundance",
+    "Eldrazi Temple"
+  ]
+}

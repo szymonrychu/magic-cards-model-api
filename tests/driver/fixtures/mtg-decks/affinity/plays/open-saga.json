@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "id": "open-saga",
+  "name": "Play Urza's Saga on turn 1-2 regardless of what else is in hand",
+  "intent": "On turn 1 or 2, with Urza's Saga in hand and no copy already on the battlefield, play it - chapter III wants to resolve on turn 3, so the Saga has to go down as early as possible, and that is true whether or not it happens to unlock anything else this turn (it does not, by itself: entering does not make any other hand card payable). open-land-unlocks's own Saga prefer tier only ever fires inside its own select (unlocks: true, enters_any: [untapped]), which Saga itself never satisfies, so without this play a hand with only a Saga and cards it does not unlock would fall through to open-land-idle - correct in outcome (open-land-idle also prefers Saga first) but wrong in reason, and a hand where some OTHER land in the same hand does unlock something would have open-land-unlocks pick that other land over the Saga even though the Saga is the more urgent play. Priority 75, above U/I's 70-74, and this play's own hand-Saga count is byte-identical in open-land-unlocks's and open-land-idle's own false lists, so the three are provably exclusive rather than relying on priority order alone; also stands down once three or more lands are already on the battlefield - the same key cantrip-scry's own guard reads, so a late-drawn Saga past turn 2's usual land count does not fight the cantrip. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 75,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "subtypes_any": [
+          "Saga"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": "==",
+      "n": 0,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "subtypes_any": [
+          "Saga"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 3,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "subtypes_any": [
+            "Saga"
+          ]
+        },
+        "ties": "any"
+      }
+    }
+  ],
+  "next": []
+}

@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "id": "open-land-idle",
+  "name": "Play a land on turn 1-2 when nothing in hand unlocks anything",
+  "intent": "On turn 1 or 2, once neither open-land-unlocks nor open-fetch-unlocks-basic applies and no other hand card is already affordable, still play the land drop - any land in hand beats holding it back with nothing to protect. Prefers Shadowy Backstreet first and keeps the surveil, since it was entering tapped regardless and the scry is free value; then Emeria, the Sky Ruin or Mistveil Plains (both always enter tapped, oracle 'This land enters tapped.', unconditionally - unlike a fastland this never sets up a future turn either way, so ranking them ahead of a declined shock costs nothing); then Godless Shrine, life declined, since paying for it buys nothing this turn and an idle land drop should not hold a shock back the way F-basic holds a fetch (item 5: hand Flats+Godless Shrine+Phelia plays the Shrine, tapped); then a fetch, held for later rather than cracked now. The spec's own fifth tier (a bare BASIC) is dropped: orzhov-martyr's full land pool is already covered by the other four (SURV = Backstreet, the tapped-oracle tier = Emeria/Mistveil/Backstreet, SHOCK = Godless Shrine, FETCH = Marsh Flats/Flooded Strand), so a basic Plains only ever appears in the final candidate set when none of those four narrow it away - the same outcome a fifth BASIC tier would produce, since it is the deck's only basic land type and there is no missing_from colour choice to make among Plains alone. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_any": [
+          "Creature",
+          "Instant",
+          "Sorcery",
+          "Artifact",
+          "Enchantment",
+          "Planeswalker"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 1
+        },
+        "affordable": {
+          "extra": 1
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "keywords_any": [
+              "Surveil"
+            ]
+          },
+          {
+            "oracle_has": "This land enters tapped."
+          },
+          {
+            "oracle_has": "you may pay 2 life"
+          },
+          {
+            "types_all": [
+              "Land"
+            ],
+            "searches_for_any": [
+              "Plains",
+              "Island",
+              "Swamp",
+              "Mountain",
+              "Forest"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "pay_life",
+          "accept": false
+        },
+        {
+          "decision": "surveil"
+        }
+      ]
+    }
+  ],
+  "next": []
+}

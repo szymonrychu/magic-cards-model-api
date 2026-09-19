@@ -1,0 +1,100 @@
+{
+ "name": "ur cutter prowess",
+ "meta_share": 2.0253164556962027,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format, statistics_archetypes carries no winrate field, and this run's own fingerprint records winrate_vs_field as all-zero. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "One-mana threats plus Cori-Steel Cutter tokens and free pump, killing on turn three or four; post-board they add graveyard hate and Consign to Memory for the cascade trigger.",
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "One-mana threats and Cori-Steel Cutter tokens kill on turn three or four; the post-board Consign to Memory and Tormod's Crypt exist only to keep our sweeper-and-cascade reset off the table.",
+  "key_cards": [
+   {
+    "card": "Cori-Steel Cutter",
+    "why": "makes a token every turn with free pump behind it, which is how the clock rebuilds after a sweeper"
+   },
+   {
+    "card": "Consign to Memory",
+    "why": "one mana with replicate for the cascade trigger, so the reset never resolves and the race stands",
+    "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+   },
+   {
+    "card": "Tormod's Crypt",
+    "why": "free instant-speed graveyard exile that empties the payload in response, buying the turns their clock needs",
+    "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+   }
+  ]
+ },
+ "primary_gameplan": "Anger resets the board for a deck that has already spent its hand, and Dispute protects the one cascade we need to resolve.",
+ "pitfalls": [
+  "Sweeping into open mana with Mutagenic Growth up and no follow-up - they rebuild with one Cutter trigger.",
+  "Cycling aggressively into Lava Dart flashback range while at fifteen or less.",
+  "Holding Dispute for Consign to Memory when the real counter is Spell Snare on Shardless Agent."
+ ],
+ "stance": "counter",
+ "stance_rationale": "They win with two toughness and a Cutter, and lose to us only by countering the cascade trigger, so a sweeper plus counters for their blue interaction covers both halves.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Consign to Memory",
+   "count": 3,
+   "why": "one mana with replicate, countering the cascade trigger itself rather than the spell",
+   "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+  },
+  {
+   "card": "Tormod's Crypt",
+   "count": 2,
+   "why": "free, instant-speed, and empties the payload in response to the cascade",
+   "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+  },
+  {
+   "card": "Surgical Extraction",
+   "count": 2,
+   "why": "takes all three Living End for free once one is in the graveyard",
+   "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+  },
+  {
+   "card": "Soul-Guide Lantern",
+   "count": 1,
+   "why": "one-mana permanent graveyard hate that also strips a single card on entry",
+   "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "2 Anger of the Gods",
+    "2 Mystical Dispute"
+   ],
+   "out_cards": [
+    "2 Oliphaunt",
+    "1 Waker of Waves",
+    "1 Sink into Stupor"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "2 Anger of the Gods",
+    "3 Mystical Dispute"
+   ],
+   "out_cards": [
+    "2 Oliphaunt",
+    "1 Waker of Waves",
+    "2 Sink into Stupor"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Two red sources plus a cycler, or a hand that Angers on three; one-landers are unplayable here.",
+  "goldfish_for": "Anger into an untapped land for Dispute, so the follow-up cascade resolves.",
+  "watch_for": "One untapped Island and no attack means Consign to Memory, not Spell Snare - bait with Shardless Agent.",
+  "posture": "disrupt_first",
+  "posture_why": "the sweeper resets a deck that cannot rebuild fast."
+ }
+}

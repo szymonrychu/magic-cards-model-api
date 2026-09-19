@@ -1,0 +1,94 @@
+{
+  "name": "boros aggro",
+  "meta_share": 2.2906496432594814,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.4621,
+  "winrate_basis": {
+    "kind": "data",
+    "n": 468,
+    "source": "statistics_matchups(format=modern, archetype_a='esper blink', limit=60), committed verbatim at .protocol/raw-matchups.json; row opponent='boros aggro' winrate=0.4621 over sample_size=468 matches, read directly. The capture also holds a separate 'boros energy' row at 0.54; the 2026-09-10 signature validation makes those one archetype, and this dossier uses the exact-name row rather than joining them"
+  },
+  "primary_gameplan": "Wrath of the Skies at X=1 or X=2 is the reset their curve cannot rebuild through fast enough: Ocelot Pride, Guide of Souls, Ragavan and every Cat token are one or two mana. Solitude for its evoke cost answers the one creature that got through in the meantime, at instant speed and for no mana.",
+  "secondary_gameplan": "Fatal Push at one mana kills Ocelot Pride, Guide of Souls, Ragavan and Ajani; Solitude exiles the biggest attacker at instant speed for no mana, though note its trigger gives the life to THAT creature's controller, not to us. Witch Enchanter destroys a resolved Goblin Bombardment or Blood Moon.",
+  "opponent_gameplan": "Ocelot Pride and Guide of Souls turn any lifegain into a widening board, Ajani, Nacatl Pariah flips off a dying Cat, Voice of Victory stops us casting spells on their turn, and Goblin Bombardment turns the whole board into reach we cannot block. Ragavan and Seasoned Pyromancer supply the cards. Post-board they add Wrath of the Skies of their own and High Noon, and Surgical Extraction strips whatever Overlord of the Balemurk milled.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Wrath of the Skies",
+      "count": 2,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; they sweep too, at an X that leaves their own one-drops alive",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Vexing Bauble",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; counters any spell cast for no mana, which is every evoked Solitude",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "High Noon",
+      "count": 2,
+      "why": "9 of 10 pulled sideboards; caps us at one spell a turn while their board is already deployed",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Obsidian Charmaw",
+      "count": 2,
+      "why": "8 of 10 pulled sideboards; a 4/4 flier that destroys a nonbasic land, though its discount counts lands that could produce {C} and not one of our nineteen does, so it costs them the full five",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "Wrath of the Skies is the answer to a go-wide board rather than to any one creature, and we choose X after seeing what they committed, so it is a clean counter rather than a symmetric one: our own board on the turn we cast it is usually empty or a single Overlord of the Balemurk still on impending counters, which is not a creature yet and survives the sweep.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Ocelot Pride and Guide of Souls widen the board every turn and Goblin Bombardment converts it straight to damage, so blocking does not stop the clock.",
+    "key_cards": [
+      {
+        "card": "Ocelot Pride",
+        "why": "Named verbatim in opponent_gameplan; a one-drop that makes a Cat every end step they gained life, and doubles them with the city's blessing"
+      },
+      {
+        "card": "Goblin Bombardment",
+        "why": "Named verbatim in opponent_gameplan; turns their whole board into damage we cannot block or race"
+      },
+      {
+        "card": "Vexing Bauble",
+        "why": "Counters an evoked Solitude, which is our cheapest answer to their board",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Obsidian Charmaw",
+        "why": "A flying body that also takes one of the sixteen nonbasic lands this manabase runs, at full price because no land of ours makes {C}",
+        "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Two lands with a one- or two-mana answer; a hand of five-drops loses.",
+    "goldfish_for": "Fatal Push on turn one, Wrath of the Skies at X=2 on turn four.",
+    "watch_for": "The city's blessing on Ocelot Pride, after which sweeping stops being enough.",
+    "posture": "disrupt_first",
+    "posture_why": "Their board doubles itself, so answer early rather than stabilising late."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Wrath of the Skies",
+      "verdict": "SURVIVES",
+      "why": "Vexing Bauble counters only a spell cast for no mana and Wrath of the Skies always costs {X}{W}{W}, so their most-played board card does not apply. High Noon delays it by a turn rather than answering it, and nothing else in their pulled board interacts with a sorcery."
+    }
+  ],
+  "card_names": [
+    "Ocelot Pride",
+    "Guide of Souls",
+    "Ragavan, Nimble Pilferer",
+    "Ajani, Nacatl Pariah",
+    "Voice of Victory",
+    "Goblin Bombardment",
+    "Seasoned Pyromancer",
+    "Galvanic Discharge",
+    "Thraben Charm",
+    "Solitude"
+  ]
+}

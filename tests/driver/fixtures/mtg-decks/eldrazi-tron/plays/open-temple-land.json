@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "id": "open-temple-land",
+  "name": "Play a land on turn 1-2, preferring Eldrazi Temple against a Temple opponent",
+  "intent": "On turn 1 or 2, against the Temple lane (izzet-prowess, ur-cutter-prowess, boros-aggro, 45c-aggro, pinnacle-affinity - fast enough that Eldrazi Temple's own early colorless Eldrazi mana matters more than completing the long-game Tron structure), play a land, preferring Eldrazi Temple by its own 'colorless Eldrazi' text first, then a missing Urza's piece (Tower, Mine or Power-Plant whose subtype is not already on the battlefield), then a basic - the same three tiers as open-tron-land, reordered. Carries the same Ugin's Labyrinth may/choose_cards imprint answers, since it can be the land actually picked once none of the tiers narrow anything. Chains into map-for-tron-missing-piece the same way. Stands down once two or more untapped mana is already up - the same key map-for-tron-missing-piece's own true condition reads. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 65,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "input",
+      "name": "opposing_archetype",
+      "op": "in",
+      "value": [
+        "izzet-prowess",
+        "ur-cutter-prowess",
+        "boros-aggro",
+        "45c-aggro",
+        "pinnacle-affinity"
+      ]
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 2
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "oracle_has": "colorless Eldrazi"
+          },
+          {
+            "subtypes_any": [
+              "Tower",
+              "Mine",
+              "Power-Plant"
+            ],
+            "missing_from": {
+              "zones": [
+                "battlefield"
+              ],
+              "side": "me",
+              "by": "subtype"
+            }
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "may",
+          "accept": true
+        },
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "colors_any": [
+                "colorless"
+              ],
+              "mana_value": {
+                "op": ">=",
+                "n": 7
+              }
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "types_all": [
+                  "Planeswalker"
+                ]
+              },
+              {
+                "oracle_has": "Ward"
+              }
+            ],
+            "ties": "any"
+          }
+        }
+      ]
+    }
+  ],
+  "next": [
+    "map-for-tron-missing-piece"
+  ]
+}

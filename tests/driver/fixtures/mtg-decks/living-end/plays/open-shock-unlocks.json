@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "id": "open-shock-unlocks",
+  "name": "Pay 2 life for a shockland that unlocks a hand card on turn 1-2",
+  "intent": "On turn 1 or 2, once open-land-unlocks has had first refusal, play a shockland from hand (Breeding Pool, Steam Vents, Stomping Ground) and pay the 2 life when doing so makes some other hand card payable that is not payable now - Steam Vents unlocking Curator of Mysteries' Cycling {U}. A free untapped land always wins when one is available (this play's false repeats U's own key), and a tapped-entering land in hand also stands this down (U's own new false key, repeated here for the same reason - see open-land-unlocks), and life stays unspent below 8. Also stands down once a fetch in hand could reach the same kind of unlock for a free BASIC (F's own true key, unlocks_by_basic_search rather than the broader unlocks_by_search - narrowed so P no longer wrongly defers to F on a hand whose only fetch reach is itself a non-basic shock, which F never touches any more either; see open-fetch-unlocks). Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 73,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped_if_paid"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "enters_any": [
+          "tapped"
+        ]
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": "<=",
+      "n": 7
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "unlocks": true,
+          "enters_any": [
+            "untapped_if_paid"
+          ]
+        },
+        "prefer": [
+          {
+            "oracle_has": "you may pay 2 life"
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "pay_life",
+          "accept": true
+        }
+      ]
+    }
+  ],
+  "next": []
+}

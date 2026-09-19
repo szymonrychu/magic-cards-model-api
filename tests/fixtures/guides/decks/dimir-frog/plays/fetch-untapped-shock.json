@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "id": "fetch-untapped-shock",
-  "name": "Crack a fetch for an untapped shockland when no Island is up",
-  "intent": "Crack Flooded Strand, Marsh Flats or Polluted Delta on my precombat main for an untapped shockland carrying Island (blue for Psychic Frog and Counterspell) when no untapped land of mine carries that type, paying 2 life because that colour is actually missing. If Island is up, fetch-untapped-shock-second-color checks Swamp. It prefers a shock with Island, then a basic Island, then any basic, so with no such shock in reach it takes a free basic rather than paying for a colour that is up. Only at 8 life or more, since Orcish Bowmasters mirrors and aggro punish the 3 life, and only while a shock with Island is still in my library. With Island and Swamp all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Gloomlake Verge and Otawara, Soaring City and mana creatures are not seen, and this can pay for a colour they already make; one play cannot say that any one of several colours is missing, hence one play per colour; and a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics.",
-  "priority": 60,
+  "name": "Crack a fetch for an untapped blue source when no Island is up, basic Island first",
+  "intent": "Crack Flooded Strand, Marsh Flats or Polluted Delta on my precombat main for an untapped land carrying Island (blue for Psychic Frog and Counterspell) when no untapped land of mine carries that type. If Island is up, fetch-untapped-shock-second-color checks Swamp. The pick is an ordered preference and it is deliberate, not incidental: a basic Island first, then a shock carrying Island, then any basic. A basic supplies the same untapped blue for zero life where a shockland charges 2, so the shock is the fallback for when no basic Island is left in the library, never the default - in the Boros energy game where this fired on turn two the engine's own default pointed at Watery Grave and the play took the basic Island instead, which is this order working; the game before it cracked Polluted Delta on turn one for an untapped shockland and sat at 15 life on turn one against Boros energy, whose whole plan is that margin. Only at 8 life or more, since Orcish Bowmasters mirrors and aggro punish the 3 life, and only while a shock with Island is still in my library. With Island and Swamp all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Gloomlake Verge and Otawara, Soaring City and mana creatures are not seen, and this can pay for a colour they already make; one play cannot say that any one of several colours is missing, hence one play per colour; a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics; the pick cannot know which colour the turn's spells want, so it fixes the missing colour rather than the one a spell in hand needs; and it cannot take the shock for the one case that deserves it, a turn that needs both colours off this single land, because a preference reads only the candidate's own characteristics and which subtypes are already on the board, never my land count or my hand - and 'neither Island nor Swamp anywhere' is exactly the turn-one empty board where the basic is right, so that case stays with the pilot.",
+  "priority": 64,
   "opposing_archetypes": [
     "*"
   ],
@@ -80,6 +80,11 @@
           "Island"
         ]
       }
+    },
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
     }
   ],
   "moves": [
@@ -109,15 +114,15 @@
             "count": 1,
             "prefer": [
               {
-                "oracle_has": "you may pay 2 life",
+                "supertypes_any": [
+                  "Basic"
+                ],
                 "subtypes_any": [
                   "Island"
                 ]
               },
               {
-                "supertypes_any": [
-                  "Basic"
-                ],
+                "oracle_has": "you may pay 2 life",
                 "subtypes_any": [
                   "Island"
                 ]

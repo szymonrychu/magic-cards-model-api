@@ -1,0 +1,140 @@
+{
+  "name": "dimir control",
+  "meta_share": 2.102891475779196,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.4486,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='eldrazi tron', limit=60), committed verbatim at .protocol/raw-matchups.json; the deduplicated row for opponent='dimir control' reads winrate 0.4486 over sample_size 49 matches, and archetype_a is eldrazi tron so it is our winrate read directly rather than a complement.",
+    "n": 49
+  },
+  "primary_gameplan": "A recorded worst case at 44.9 percent, and the reason is permission: they answer threats one at a time and never run out. Cityscape Leveler is the fetch that beats that, because its destroy trigger fires on CAST and resolves even when the creature itself is countered.",
+  "secondary_gameplan": "Cursed Totem switches off Psychic Frog-style creature abilities and Snapcaster Mage value loops; The Stone Brain names Counterspell or Wan Shi Tong, Librarian; Liquimetal Coating with Karn out keeps a land off each turn, which is how a permission deck runs out of mana.",
+  "opponent_gameplan": "The ten committed 2026-09-10 lists are a true draw-go build rather than the Frog tempo one: four Counterspell, four Spell Snare, four Fatal Push, four Subtlety, three Orcish Bowmasters, four Consult the Star Charts, four Wan Shi Tong, Librarian and four Field of Ruin. Wan Shi Tong also reads 'Whenever an opponent searches their library, put a +1/+1 counter on Wan Shi Tong and draw a card', so every Expedition Map and every Sowing Mycospawn we cast grows it and refills their hand.",
+  "tournament_refs": [
+    {
+      "pilot": "m0sc0wmitch",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664727"
+    },
+    {
+      "pilot": "DelverOfBolts",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664730"
+    },
+    {
+      "pilot": "SlankyPotato",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6",
+      "source_deck_id": "videre-58664455"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 4,
+      "why": "10 of 10 committed 2026-09-10 lists; one blue mana answers our colorless spells and our cast triggers, which is the cheapest interaction anyone in the field has against us",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Engineered Explosives",
+      "count": 2,
+      "why": "10 of 10 committed lists; a scaling sweeper for the cheap artifacts we fetch",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Harbinger of the Seas",
+      "count": 2,
+      "why": "4 of 10 committed lists; 'Nonbasic lands are Islands' turns twenty-one of our twenty-four lands into Islands, which is a hard lock on a colorless deck",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Break the Ice",
+      "count": 1,
+      "why": "2 of 10 committed lists; destroys a land that could produce colorless, and overloaded it destroys every one of them",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "Every fetch in this row costs us nothing. Cityscape Leveler, Liquimetal Coating, Cursed Totem and The Stone Brain are all cards whose value comes from a permission deck having to answer them on the stack, and none of them taxes our own spells.",
+  "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Draw-go permission with four Field of Ruin and a card-advantage engine: they intend to answer every threat and win at their leisure.",
+    "key_cards": [
+      {
+        "card": "Wan Shi Tong, Librarian",
+        "why": "Named in the recorded gameplan; grows and draws a card every time we search our library, which our Map and Mycospawn do constantly"
+      },
+      {
+        "card": "Counterspell",
+        "why": "Named in the recorded gameplan; four copies of hard permission is what makes this a recorded worst case"
+      },
+      {
+        "card": "Consign to Memory",
+        "why": "Boarded one-mana answer to a colorless spell or a cast trigger, four copies",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Harbinger of the Seas",
+        "why": "Boarded body that turns almost every land we own into an Island",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand with two threats rather than one, because the first one is being countered.",
+    "goldfish_for": "Cityscape Leveler off assembled Tron; its destroy trigger fires on cast and resolves through a counterspell.",
+    "watch_for": "Two untapped blue sources on our turn four, which is Counterspell plus Spell Snare.",
+    "posture": "grind",
+    "posture_why": "A recorded worst case at forty-five percent; the game is decided by whether we present more threats than they hold answers."
+  },
+  "fetch_priority": [
+    "Cityscape Leveler",
+    "Liquimetal Coating",
+    "Cursed Totem",
+    "The Stone Brain"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Cityscape Leveler",
+      "verdict": "SURVIVES",
+      "why": "Its destroy trigger is on CAST, so even a Counterspell leaves a permanent of theirs destroyed; that is the whole reason it is the first fetch against permission."
+    },
+    {
+      "card": "Liquimetal Coating",
+      "verdict": "SURVIVES",
+      "why": "Engineered Explosives at two counters answers it, but with Karn already on the battlefield one activation per turn keeps a land of theirs from producing mana, which is worth the two-mana artifact."
+    },
+    {
+      "card": "Cursed Totem",
+      "verdict": "SURVIVES",
+      "why": "It is static, and their recorded board answers artifacts only with Engineered Explosives; it stops Snapcaster Mage-style value loops and any creature ability they lean on."
+    },
+    {
+      "card": "The Stone Brain",
+      "verdict": "SURVIVES",
+      "why": "Its activation exiles it as a cost, so Engineered Explosives cannot two-for-one it after use; naming Counterspell removes four cards from the game at once."
+    }
+  ],
+  "notes": [
+    "Cityscape Leveler over The Stone Brain here even though the Brain is cheaper: against four Counterspell and four Consign to Memory, a card whose value is on the stack beats a card whose value is on the battlefield.",
+    "Expedition Map and Sowing Mycospawn both search the library, which grows Wan Shi Tong and draws them a card. With a Wan Shi Tong on the battlefield, hold the Map rather than cracking it for a land we can hit off a natural draw.",
+    "Boseiju, Who Endures answers a boarded Harbinger of the Seas only indirectly; Dismember is the real answer and it should be held rather than spent on Orcish Bowmasters."
+  ],
+  "card_names": [
+    "Counterspell",
+    "Spell Snare",
+    "Fatal Push",
+    "Subtlety",
+    "Orcish Bowmasters",
+    "Wan Shi Tong, Librarian",
+    "Consult the Star Charts",
+    "Snapcaster Mage",
+    "Sheoldred's Edict",
+    "Field of Ruin"
+  ]
+}

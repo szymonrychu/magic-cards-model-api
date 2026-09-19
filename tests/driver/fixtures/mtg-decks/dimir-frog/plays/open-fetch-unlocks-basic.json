@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "id": "open-fetch-unlocks-basic",
+  "name": "Crack a fetch on turn 1-2 for a basic that unlocks a hand card, never paying life",
+  "intent": "Against boros-aggro, boros-energy and ur-cutter-prowess - the format's fast aggressive decks - open-shock-unlocks and open-fetch-unlocks both stand down rather than spend 2 life on turn 1 or 2. This play covers the same fetch-for-an-unlock need against exactly those three archetypes, restricted to finding a basic (never a shockland, so pay_life is always declined) - a Swamp or Island in the library that makes some other hand card payable. Triggers on unlocks_by_basic_search, not the broader unlocks_by_search: a fetch whose own search can only reach a non-basic unlock (a shockland the library holds but no basic) must never be cracked by this play, since its own choose_cards pick is restricted to a basic and would fail to find one - wasting the fetch and the shuffle for nothing (failing hand vs boros-aggro T1: Flooded Strand, Island, Thoughtseize, Psychic Frog, Fatal Push, with only a library Watery Grave reachable - this play must not crack Strand for that). Same fetch-selection prefer as open-fetch-unlocks (a fetch whose other search target is Plains, dimir-frog's dead colour, ahead of Polluted Delta, which has no dead half) and the same untapped-and-can-actually-reach-it restriction on the crack source. Stands down once open-land-unlocks would already fire (U's own key), the library is down to 5 cards or fewer, or life is 1 or less - the fetch's own draw-a-card-less shuffle still costs a turn even when it costs no life, and a seat at 1 life has bigger problems than a free basic. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 71,
+  "opposing_archetypes": [
+    "boros-aggro",
+    "boros-energy",
+    "ur-cutter-prowess"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "zone_size",
+      "zone": "library",
+      "side": "me",
+      "op": "<=",
+      "n": 5
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": "<=",
+      "n": 1
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "unlocks_by_basic_search": true
+        },
+        "prefer": [
+          {
+            "searches_for_any": [
+              "Plains"
+            ]
+          }
+        ],
+        "ties": "any"
+      }
+    },
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "tapped": false,
+          "unlocks_by_basic_search": true
+        },
+        "ties": "any"
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "unlocks": true,
+              "supertypes_any": [
+                "Basic"
+              ]
+            },
+            "count": 1,
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "pay_life",
+          "accept": false
+        }
+      ]
+    }
+  ],
+  "next": []
+}

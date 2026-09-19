@@ -187,16 +187,38 @@ def test_the_readme_enumerates_every_guided_deck_in_the_slice():
         )
 
 
-def test_every_guided_deck_vendors_two_matchup_files():
+#: Every guided deck vendors at least its two largest matchup files (so
+#: `matchups_dir` resolves and the size evidence in the README holds); a deck
+#: whose own `plays/` corpus names more archetype keys than those two cover
+#: vendors one real matchup file per extra key too, so `mcp-seat plays check`
+#: does not read the slice's own trimming as a corpus defect - see the
+#: README's matchups bullet and "Refreshing" section for why `dimir-frog` and
+#: `living-end` carry more than two at this pin.
+EXPECTED_MATCHUP_FILE_COUNTS = {
+    "affinity": 2,
+    "boros-aggro": 2,
+    "dimir-frog": 5,
+    "living-end": 9,
+    "orzhov-martyr": 2,
+    "prison-tron": 2,
+}
+
+
+def test_every_guided_deck_vendors_its_expected_matchup_files():
     """What the README's bullet claims, and what makes `matchups_dir` resolve
     for every deck the suite renders."""
+    assert set(EXPECTED_MATCHUP_FILE_COUNTS) == set(guided_slugs())
     for slug in guided_slugs():
         files = sorted(
             (FIXTURE_GUIDES / "decks" / slug).glob(
                 "analysis/*/domain3-matchup-threat/matchups/*.json"
             )
         )
-        assert len(files) == 2, f"{slug} vendors {len(files)} matchup files, not two"
+        expected = EXPECTED_MATCHUP_FILE_COUNTS[slug]
+        assert len(files) == expected, (
+            f"{slug} vendors {len(files)} matchup files, expected {expected}"
+        )
+        assert len(files) >= 2, f"{slug} vendors fewer than the two largest matchup files"
 
 
 def test_the_readme_quotes_the_size_the_card_actually_renders_to(library):

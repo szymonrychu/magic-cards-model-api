@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "open-labyrinth-land",
+  "name": "Play a land on turn 1-2, preferring Ugin's Labyrinth against a Labyrinth-lane opponent",
+  "intent": "On turn 1 or 2, against the Labyrinth lane (broodscale-bloodchief, devoted-combo, dimir-frog, goryos-vengeance, instant-reanimator, living-end - GAMEPLAN_GUIDE.md 'Which half of the manabase the hand is', mode 3, '-- any other matchup --': 'A hand holding Ugin, Eye of the Storms or Sire of Seven Deaths imprints it on Ugin's Labyrinth for two mana and returns it later for a tap'), once a colorless card of mana value 7 or greater is also in hand (an imprint target - the same count condition prison-tron's own open-labyrinth-land reads), play a land, preferring Ugin's Labyrinth first by its own printed 'mana value 7 or greater' imprint text, then a missing Urza's piece, then Eldrazi Temple, then a basic - the same three fallback tiers open-tron-land reads, reordered with Labyrinth promoted ahead of them. Fixed 2026-09-14: this play used to rank Labyrinth first whenever it was merely a hand candidate, with no imprint target required at all, so it could play Labyrinth with nothing to imprint on it (hand: Ugin's Labyrinth + Urza's Tower + Urza's Mine + Expedition Map, no 7-drop). Now the hand-imprint-target count sits in this play's own true list, and its sibling open-labyrinth-lane-no-imprint (same archetype gate, that same count in its own false list, the Tron-lane prefer order) takes the Labyrinth-lane hand whenever no imprint target is in hand yet, so no coverage is lost and Labyrinth is never played to sit idle. See decks/eldrazi-tron/NOTES.md 'Known limits (opening plays)'. Carries the same Ugin's Labyrinth may/choose_cards imprint answers as its siblings, with the same Planeswalker-then-Ward imprint prefer (Ugin or Sire over Devourer of Destiny). Excludes the Temple lane and the Tron lane (open-temple-land's and open-tron-land's own gates): the four plays' `input opposing_archetype` conditions partition the deck's full archetype set two ways (by lane, then by imprint-target count within the Labyrinth lane), so they are provably exclusive without needing a false key for the archetype axis. Chains into map-for-tron-missing-piece the same way. Stands down once two or more untapped mana is already up - the same key map-for-tron-missing-piece's own true condition reads. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 65,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "input",
+      "name": "opposing_archetype",
+      "op": "in",
+      "value": [
+        "broodscale-bloodchief",
+        "devoted-combo",
+        "dimir-frog",
+        "goryos-vengeance",
+        "instant-reanimator",
+        "living-end"
+      ]
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "colors_any": [
+          "colorless"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 7
+        }
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 2
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "types_all": [
+              "Land"
+            ],
+            "oracle_has": "mana value 7 or greater"
+          },
+          {
+            "subtypes_any": [
+              "Tower",
+              "Mine",
+              "Power-Plant"
+            ],
+            "missing_from": {
+              "zones": [
+                "battlefield"
+              ],
+              "side": "me",
+              "by": "subtype"
+            }
+          },
+          {
+            "oracle_has": "colorless Eldrazi"
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "may",
+          "accept": true
+        },
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "colors_any": [
+                "colorless"
+              ],
+              "mana_value": {
+                "op": ">=",
+                "n": 7
+              }
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "types_all": [
+                  "Planeswalker"
+                ]
+              },
+              {
+                "oracle_has": "Ward"
+              }
+            ],
+            "ties": "any"
+          }
+        }
+      ]
+    }
+  ],
+  "next": [
+    "map-for-tron-missing-piece"
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "name": "devoted combo",
+  "meta_share": 4.769057453999249,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": null,
+  "winrate_basis": {
+    "kind": "absent",
+    "why": "The committed capture at .protocol/raw-matchups.json holds no row for 'devoted combo' and no row whose name this pass can join to it. The matchup vocabulary is not the shares vocabulary, and an unresolvable name is UNMEASURED rather than zero, so no number is recorded here."
+  },
+  "primary_gameplan": "Clarion Conqueror is the whole answer: Devoted Druid untaps itself by putting a -1/-1 counter on itself, Vizier of Remedies stops that counter, and both halves are activated abilities of creatures that Conqueror switches off. Thoughtseize takes the half of the combo they are holding before it lands.",
+  "secondary_gameplan": "Failing that, Fatal Push and Solitude split the pair - Devoted Druid and Vizier of Remedies are both two-mana creatures - and Emperor of Bones exiles the one that goes to the graveyard so Tyvar, Jubilant Brawler cannot return it.",
+  "opponent_gameplan": "Devoted Druid taps for green and untaps by putting a -1/-1 counter on itself; Vizier of Remedies makes that counter never arrive, so the pair makes unbounded green mana. Tyvar, Jubilant Brawler lets it happen the turn it lands and rebuys a two-drop from the graveyard, and Green Sun's Zenith, Nature's Rhythm and Fiend Artisan all find whichever half is missing. Leyline of Abundance turns any creature into extra mana. Post-board they add Kraul Harpooner for our fliers and Abrupt Decay for our cheap permanents.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Kraul Harpooner",
+      "count": 1,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; its enters trigger fights a creature we control with flying, which is Clarion Conqueror and Flickerwisp",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Vexing Bauble",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; counters any spell cast for no mana, which is every evoked Solitude",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Abrupt Decay",
+      "count": 3,
+      "why": "8 of 10 pulled sideboards; uncounterable, and destroys any nonland permanent of mana value three or less",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Endurance",
+      "count": 1,
+      "why": "9 of 10 pulled sideboards; a flash 3/4 reach body that also empties a graveyard Emperor of Bones wants",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Every piece of their combo is an activated ability of a creature: Devoted Druid's untap, Fiend Artisan's tutor, Duskwatch Recruiter's dig, and the mana abilities Leyline of Abundance doubles. Clarion Conqueror is the only card in the seventy-five that answers the class rather than a copy, and it costs us Teferi's loyalty abilities and Emperor's adapt to have it.",
+  "opponent_plan": {
+    "posture": "lock",
+    "posture_why": "Devoted Druid and Vizier of Remedies make unbounded mana on the battlefield, so the game ends on an assembled pair rather than on damage or on a long grind.",
+    "key_cards": [
+      {
+        "card": "Devoted Druid",
+        "why": "Named verbatim in opponent_gameplan; the untap ability is one half of the unbounded mana engine"
+      },
+      {
+        "card": "Vizier of Remedies",
+        "why": "Named verbatim in opponent_gameplan; removes the -1/-1 counter that would otherwise cap the untaps"
+      },
+      {
+        "card": "Kraul Harpooner",
+        "why": "Fights and kills the flying Clarion Conqueror that is our only structural answer to the pair",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      },
+      {
+        "card": "Abrupt Decay",
+        "why": "Cannot be countered and answers Clarion Conqueror, Phelia and Teferi at instant speed",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand with Thoughtseize or a two-mana answer, not a pile of five-drops.",
+    "goldfish_for": "Thoughtseize on turn one taking Vizier of Remedies, Clarion Conqueror on turn three.",
+    "watch_for": "Green mana held open for Abrupt Decay before committing the Conqueror.",
+    "posture": "disrupt_first",
+    "posture_why": "Their kill is a resolved pair, so strip a half rather than build a board."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Clarion Conqueror",
+      "verdict": "SURVIVES",
+      "why": "Nothing in their board turns the static ability off; what they have is removal. Kraul Harpooner (10 of 10 pulled boards) fights a flier, which Conqueror is, and Abrupt Decay (8 of 10) cannot be countered and destroys a mana value 3 nonland permanent. The lock is real while it is on the battlefield, and two copies against eleven answers a Green Sun's Zenith can find is why this matchup is recorded in `gaps`."
+    }
+  ],
+  "card_names": [
+    "Devoted Druid",
+    "Vizier of Remedies",
+    "Tyvar, Jubilant Brawler",
+    "Green Sun's Zenith",
+    "Nature's Rhythm",
+    "Fiend Artisan",
+    "Leyline of Abundance",
+    "Delighted Halfling",
+    "Birds of Paradise",
+    "Boseiju, Who Endures"
+  ],
+  "self_cost": "Clarion Conqueror stops activated abilities of artifacts, creatures and planeswalkers for both players. Our two Teferi, Time Raveler keep only their static ability while it is out, and Emperor of Bones' {1}{B} adapt stops working, and with it the counter-triggered ability that returns a creature exiled with it. Emperor stays in here because exiling from their graveyard is a beginning-of-combat trigger and is untouched."
+}

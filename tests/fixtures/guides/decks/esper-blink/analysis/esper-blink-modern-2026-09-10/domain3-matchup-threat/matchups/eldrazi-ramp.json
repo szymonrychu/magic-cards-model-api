@@ -1,0 +1,99 @@
+{
+  "name": "eldrazi ramp",
+  "meta_share": 4.618850920015021,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.4735,
+  "winrate_basis": {
+    "kind": "data",
+    "n": 211,
+    "source": "statistics_matchups(format=modern, archetype_a='esper blink', limit=60), committed verbatim at .protocol/raw-matchups.json; row opponent='eldrazi ramp' winrate=0.4735 over sample_size=211 matches"
+  },
+  "primary_gameplan": "Break the ramp before the top end arrives. White Orchid Phantom destroys Eldrazi Temple or Ugin's Labyrinth and Phelia, Exuberant Shepherd blinks it back every attack, and the basic Forest they fetch instead produces none of the colorless mana Kozilek's Command and their Eldrazi need. Thoughtseize takes the ramp piece, not the fatty.",
+  "secondary_gameplan": "Consign to Memory counters Kozilek's Command outright because it is a colorless spell, and counters the cast trigger on Sowing Mycospawn and on Devourer of Destiny. Overlord of the Balemurk and Quantum Riddler then win a game that goes long.",
+  "opponent_gameplan": "Eldrazi Temple and Ugin's Labyrinth turn a two-land draw into four or five mana, Malevolent Rumble and Sowing Mycospawn find the rest, and the game ends on Emrakul, the Promised End taking our turn or Ugin, Eye of the Storms exiling a coloured permanent every time they cast a colorless spell. Kozilek's Command is the flexible early interaction. Post-board Trinisphere taxes every cheap card we have and Grafdigger's Cage turns off Emperor of Bones.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Trinisphere",
+      "count": 3,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; every spell that would cost under three costs three, which is most of our seventy-five",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Torpor Orb",
+      "count": 1,
+      "why": "5 of 10 pulled sideboards; creatures entering do not cause abilities to trigger, which is every enters trigger in our seventy-five",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Dismember",
+      "count": 1,
+      "why": "7 of 10 pulled sideboards; one mana and four life kills any creature in our list",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Force of Vigor",
+      "count": 2,
+      "why": "6 of 10 pulled sideboards; free on our turn and destroys two artifacts or enchantments, which includes Overlord of the Balemurk",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "Both cards we bring in attack the half of their deck that is not a creature. White Orchid Phantom answers the ramp lands their whole curve is priced off, and Consign to Memory answers Kozilek's Command and the cast triggers on Sowing Mycospawn and Devourer of Destiny, neither of which any maindeck card of ours can touch. Nothing we bring in slows our own plan.",
+  "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "They ramp into permanents that end the game on their own rather than racing, and Trinisphere plus Kozilek's Command buys the turns the ramp needs.",
+    "key_cards": [
+      {
+        "card": "Eldrazi Temple",
+        "why": "Named verbatim in opponent_gameplan; the extra colorless mana that makes turn-three Devourer of Destiny real"
+      },
+      {
+        "card": "Kozilek's Command",
+        "why": "Named verbatim in opponent_gameplan; a modal colorless instant that removes a creature or refuels at any point on the curve"
+      },
+      {
+        "card": "Trinisphere",
+        "why": "Prices Fatal Push, Thoughtseize and Consign to Memory at three, which is what buys the ramp its turns",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Force of Vigor",
+        "why": "Free on our turn and destroys Overlord of the Balemurk, our best long-game threat",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Two lands, a white source and something that interacts by turn two.",
+    "goldfish_for": "White Orchid Phantom on Eldrazi Temple, then Phelia blinking it every turn.",
+    "watch_for": "A Trinisphere on the battlefield before we hold up Consign to Memory.",
+    "posture": "disrupt_first",
+    "posture_why": "Their threats end the game outright, so the mana is the thing to attack."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Consign to Memory",
+      "verdict": "SURVIVES",
+      "why": "Trinisphere taxes it to three mana and it still counters Kozilek's Command, Sowing Mycospawn's cast trigger and Ugin's colorless-spell trigger. None of Grafdigger's Cage, Dismember or Force of Vigor can answer an instant on the stack."
+    },
+    {
+      "card": "White Orchid Phantom",
+      "verdict": "SURVIVES",
+      "why": "Only Dismember answers the body, and the land is already gone by then. The basic they search for makes green, not the colorless their Eldrazi and Kozilek's Command are priced in, so the replacement is a downgrade rather than a wash."
+    }
+  ],
+  "card_names": [
+    "Eldrazi Temple",
+    "Ugin's Labyrinth",
+    "Kozilek's Command",
+    "Malevolent Rumble",
+    "Sowing Mycospawn",
+    "Emrakul, the Promised End",
+    "Ugin, Eye of the Storms",
+    "Devourer of Destiny",
+    "Fight Rigging",
+    "Cavern of Souls"
+  ]
+}

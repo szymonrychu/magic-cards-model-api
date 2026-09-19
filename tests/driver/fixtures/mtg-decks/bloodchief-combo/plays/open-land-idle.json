@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "id": "open-land-idle",
+  "name": "Play a land on turn 1-2 when nothing in hand unlocks anything",
+  "intent": "On turn 1 or 2, once open-land-unlocks would not apply and no other hand card is already affordable, still play the land drop - any land in hand beats holding it back with nothing to protect. Prefers Urza's Saga first (chapter III wants to resolve on turn 3, so it goes down as early as possible regardless of what else is in hand), then Eldrazi Temple by its own 'colorless Eldrazi' text (worth having down a turn early even before its restricted ability matters, since the deck's whole plan runs through colorless Eldrazi spells), then a basic Forest (free and never worse than holding it), then, only once none of those narrow anything, a land that actually taps for colorless by its own '{T}: Add {C}.' text (Cavern of Souls, Gemstone Caverns, Ugin's Labyrinth) over Boseiju, Who Endures or Shifting Woodland or Yavimaya - Boseiju's own colors are [] (a Scryfall colorless card despite tapping for green), so without this tier it sorts before Ugin's Labyrinth by name and ties: any would hand it the pick even though it makes no mana of its own kind that turn. Carries the same Ugin's Labyrinth (may/choose_cards) and Cavern of Souls (choose_a_quality) answers as open-land-unlocks, since this play's own select is a plain land and either can be the one chosen when nothing else in the prefer order applies; the imprint pick itself prefers mana_value >= 8 (unique to Emrakul, the Promised End in this 60) over Devourer of Destiny (mv 7) - GAMEPLAN_GUIDE.md 'Combo or Eldrazi' mode 2: 'Ugin's Labyrinth imprinting Emrakul, the Promised End is the real win condition'. Stands down once four or more untapped mana is already up - the same key cast-trigger-land-search's own guard reads. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_any": [
+          "Creature",
+          "Instant",
+          "Sorcery",
+          "Artifact",
+          "Enchantment",
+          "Planeswalker"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 1
+        },
+        "affordable": {
+          "extra": 1
+        }
+      }
+    },
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 4
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "subtypes_any": [
+              "Saga"
+            ]
+          },
+          {
+            "oracle_has": "colorless Eldrazi"
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          },
+          {
+            "oracle_has": "{T}: Add {C}."
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "may",
+          "accept": true
+        },
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "colors_any": [
+                "colorless"
+              ],
+              "mana_value": {
+                "op": ">=",
+                "n": 7
+              }
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "mana_value": {
+                  "op": ">=",
+                  "n": 8
+                }
+              }
+            ],
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "choose_a_quality",
+          "choice": "Eldrazi"
+        }
+      ]
+    }
+  ],
+  "next": []
+}

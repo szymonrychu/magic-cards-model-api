@@ -1,0 +1,103 @@
+{
+ "name": "dimir control",
+ "meta_share": 2.320675105485232,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format, statistics_archetypes carries no winrate field, and this run's own fingerprint records winrate_vs_field as all-zero. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "Thoughtseize and cheap counters into Psychic Frog, Murktide Regent and Kaito, winning a long game on card quality; Orcish Bowmasters punishes our cycling directly.",
+ "opponent_plan": {
+  "posture": "disrupt_first",
+  "posture_why": "Prose calls it a long game on card quality, but the pitfalls and stance describe a counter war: Thoughtseize and three counters answer our cascade first, then Murktide Regent closes.",
+  "key_cards": [
+   {
+    "card": "Thoughtseize",
+    "why": "strips the cascade spell before it is ever cast, which is the cheapest way to answer our plan"
+   },
+   {
+    "card": "Consign to Memory",
+    "why": "one mana with replicate for the cascade trigger itself, the counter our own Dispute cannot outnumber",
+    "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+   },
+   {
+    "card": "Orcish Bowmasters",
+    "why": "taxes the cycling we use to set up, so building the payload costs us life and gives them a body"
+   },
+   {
+    "card": "Murktide Regent",
+    "why": "the clock they deploy once our cascade has been answered, closing a game they never had to race"
+   }
+  ]
+ },
+ "primary_gameplan": "Bait the first counter, resolve the second cascade with Dispute backup, and rebuild through Bowmasters by cycling only when we can follow up.",
+ "pitfalls": [
+  "Cycling Street Wraith into Orcish Bowmasters and taking free damage plus an Orc army for nothing.",
+  "Casting the cascade spell into four open mana because we hold a Dispute; they have three counters and we have one.",
+  "Fetching only nonbasics with three Harbinger of the Seas in their deck."
+ ],
+ "stance": "counter",
+ "stance_rationale": "Every relevant card they own is blue, so the cheapest counter in the format is the whole plan; nothing else in the fifteen improves a matchup decided by a counter war.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Consign to Memory",
+   "count": 4,
+   "why": "counters the cascade trigger for one mana with replicate for the second copy",
+   "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+  },
+  {
+   "card": "Mystical Dispute",
+   "count": 3,
+   "why": "one mana against Shardless Agent, Subtlety and Force of Negation",
+   "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+  },
+  {
+   "card": "Nihil Spellbomb",
+   "count": 2,
+   "why": "instant-speed graveyard exile with the cascade trigger on the stack",
+   "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+  },
+  {
+   "card": "Harbinger of the Seas",
+   "count": 3,
+   "why": "makes our nonbasics Islands, which cuts the red and green halves of the cascade shell",
+   "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "3 Mystical Dispute",
+    "1 Dismember"
+   ],
+   "out_cards": [
+    "2 Oliphaunt",
+    "1 Waker of Waves",
+    "1 Curator of Mysteries"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "3 Mystical Dispute",
+    "1 Dismember"
+   ],
+   "out_cards": [
+    "2 Oliphaunt",
+    "1 Waker of Waves",
+    "1 Curator of Mysteries"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "A hand with two lands, a cascade spell and a blue source for Dispute; do not keep pure cyclers.",
+  "goldfish_for": "The turn they tap low for Psychic Frog or Kaito, with Dispute and a cascade spell both castable.",
+  "watch_for": "Two open mana on our turn is Spell Snare plus Dispute, so lead Violent Outburst, not Shardless Agent.",
+  "posture": "bait",
+  "posture_why": "we need their counters spent before the real cascade."
+ }
+}

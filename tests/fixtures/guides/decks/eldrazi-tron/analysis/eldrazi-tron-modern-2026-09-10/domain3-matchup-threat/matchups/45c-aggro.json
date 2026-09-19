@@ -1,0 +1,140 @@
+{
+  "name": "45c aggro",
+  "meta_share": 2.102891475779196,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": null,
+  "winrate_basis": {
+    "kind": "absent",
+    "why": "The committed 2026-09-10 capture .protocol/raw-matchups.json holds no row for 45c aggro. It does hold a 'domain zoo' row at 0.5083 over 80 matches, which is a plausible-looking neighbour, but no validation in this repository joins those two labels, so asserting the join would be a guess dressed as a measurement. UNMEASURED: never zero, never a confirmed absence."
+  },
+  "primary_gameplan": "Their manabase is the deck: Leyline of the Guildpact makes every land every basic type, which is what casts Scion of Draco and Territorial Kavu for nothing. Liquimetal Coating plus Haywire Mite exiles that Leyline, and Karn plus Coating turns their untapped land off.",
+  "secondary_gameplan": "Ensnaring Bridge stops the Territorial Kavu and Scion of Draco bodies without targeting them, which matters because Scion of Draco gives their team protection-shaped abilities off Leyline; Extinguisher Battleship sweeps for four once Tron is assembled.",
+  "opponent_gameplan": "All ten committed 2026-09-10 lists are the Leyline shell: four Leyline of the Guildpact, four Scion of Draco, four Territorial Kavu, four Leyline Binding, four Ragavan, Nimble Pilferer, four Quantum Riddler and three Stubborn Denial. With the Leyline on the battlefield the five-drops cost one or two, Leyline Binding costs a single mana, and the deck curves out on turn two. Without it the deck is a pile of expensive gold cards, which is what makes the enchantment the correct target.",
+  "tournament_refs": [
+    {
+      "pilot": "The_Catfin",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6",
+      "source_deck_id": "videre-58664250"
+    },
+    {
+      "pilot": "FacadeJK",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6",
+      "source_deck_id": "videre-58664437"
+    },
+    {
+      "pilot": "WhiteNinja",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5",
+      "source_deck_id": "videre-58663915"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 3,
+      "why": "10 of 10 committed 2026-09-10 lists; the one-mana answer to a colorless spell or a cast trigger",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    },
+    {
+      "card": "Obsidian Charmaw",
+      "count": 2,
+      "why": "9 of 10 committed lists; cheaper for every colorless-producing land we control, and it destroys a Tron piece as it enters",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    },
+    {
+      "card": "Wrath of the Skies",
+      "count": 2,
+      "why": "10 of 10 committed lists; the X sweeper that answers our artifacts and our Eldrazi at once",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    },
+    {
+      "card": "Clarion Conqueror",
+      "count": 1,
+      "why": "6 of 10 committed lists; switches off Karn's minus two and every activated artifact we could fetch",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Liquimetal Coating, Haywire Mite and Extinguisher Battleship are one-sided; Ensnaring Bridge is the symmetric one. The Coating and Mite pair is the reason this row exists: it is the only line in the wish pool that answers an enchantment.",
+  "self_cost": "Ensnaring Bridge grounds Devourer of Destiny and Sire of Seven Deaths whenever our hand is empty. Against a deck whose threats are a 4/4 for one and a 5/5 with keyword soup, taking combat out of the game is still the right trade, but it is a trade and not a free answer.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A turn-one Leyline of the Guildpact into a turn-two Territorial Kavu is a three-turn clock, and Stubborn Denial protects it.",
+    "key_cards": [
+      {
+        "card": "Scion of Draco",
+        "why": "Named in the recorded gameplan; costs almost nothing under the Leyline and hands the team lifelink and protection-shaped abilities"
+      },
+      {
+        "card": "Territorial Kavu",
+        "why": "Named in the recorded gameplan; a one-or-two mana 4/4 or bigger under the Leyline"
+      },
+      {
+        "card": "Obsidian Charmaw",
+        "why": "Boarded cheap flier that also destroys one of our Tron pieces",
+        "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+      },
+      {
+        "card": "Consign to Memory",
+        "why": "Boarded counter for our colorless deck, three copies",
+        "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand with two coloured sources for Haywire Mite, or Dismember plus a turn-three play.",
+    "goldfish_for": "Karn fetching Liquimetal Coating with a green source up, which exiles Leyline of the Guildpact.",
+    "watch_for": "Whether the Leyline started on the battlefield; without it their curve is four turns slower.",
+    "posture": "disrupt_first",
+    "posture_why": "Their whole cost structure rests on one enchantment, so removing it is worth more than any threat we deploy."
+  },
+  "fetch_priority": [
+    "Liquimetal Coating",
+    "Haywire Mite",
+    "Ensnaring Bridge",
+    "Extinguisher Battleship"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Liquimetal Coating",
+      "verdict": "SURVIVES",
+      "why": "Nothing in the recorded board destroys an artifact; Consign to Memory can counter it on the way down, which is why it is cast with a land up rather than tapped out."
+    },
+    {
+      "card": "Haywire Mite",
+      "verdict": "SURVIVES",
+      "why": "It sacrifices itself as its own cost, so Wrath of the Skies and Leyline Binding both arrive too late; a resolved Clarion Conqueror does stop the activation, which is what the fetch order accounts for."
+    },
+    {
+      "card": "Ensnaring Bridge",
+      "verdict": "SURVIVES",
+      "why": "Leyline Binding exiles a nonland permanent and can answer it, but that is one of four copies aimed at a whole field; no other card in the recorded board removes an artifact."
+    },
+    {
+      "card": "Extinguisher Battleship",
+      "verdict": "SURVIVES",
+      "why": "Its enters trigger destroys a noncreature permanent, which can be the Leyline itself, and then deals four damage to each creature; nothing in the recorded board answers eight mana of artifact before it resolves."
+    }
+  ],
+  "notes": [
+    "The Coating and Mite pair is the only enchantment answer in the pool. Haywire Mite exiles a noncreature artifact or enchantment, so it can take Leyline of the Guildpact on its own; Liquimetal Coating is what lets the same Mite take a land or a creature-shaped permanent instead.",
+    "Fetch Coating before Mite when Karn is already on the battlefield: with Karn out, Coating on their untapped land also stops that land producing mana for the turn.",
+    "Leyline Binding is a one-mana exile effect under their Leyline, so do not fetch Ensnaring Bridge into an untapped board that has mana for it."
+  ],
+  "card_names": [
+    "Leyline of the Guildpact",
+    "Scion of Draco",
+    "Territorial Kavu",
+    "Leyline Binding",
+    "Ragavan, Nimble Pilferer",
+    "Quantum Riddler",
+    "Stubborn Denial",
+    "Lightning Bolt",
+    "Arena of Glory",
+    "Obsidian Charmaw"
+  ]
+}

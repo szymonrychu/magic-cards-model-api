@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "id": "bin-fatty-vs-permanent-exile",
+  "name": "Bin the fatty to the outlet early when their interaction exiles permanents",
+  "intent": "The standing discipline of this deck is to hold the discard until the turn Goryo's Vengeance can be cast in the same window, so a Grafdigger's Cage or a Relic never gets a turn to answer a legendary creature sitting in the graveyard. That discipline is right against graveyard hate and wrong against a deck whose interaction exiles the outlet instead. Ugin, Eye of the Storms has a cast trigger and a whenever-you-cast-a-colorless-spell trigger, each of which exiles up to one target permanent that's one or more colors, and every permanent this deck plays is coloured, so the trigger always has a legal target and there is no playing around it: a Tron opponent who assembles on turn three exiles the Psychic Frog, the only discard outlet on the battlefield, and with no outlet no legendary creature ever reaches the graveyard, Goryo's Vengeance has no legal target for the rest of the game, and a hand of Atraxa and Griselbrand is dead. A legendary creature already in the graveyard cannot be exiled by that trigger; the outlet on the battlefield can. So when opposing_interaction is permanent-exile, the outlet is the fragile piece and the graveyard is the safe one: bin the fatty the moment the outlet has resolved and lived through a turn cycle, even though Goryo's Vengeance cannot be cast this turn. Firing on my own precombat main is what makes 'lived through a turn cycle' board-readable, because an outlet standing there before I have cast anything this turn was already there through their whole turn. It stops once one legendary creature is in the graveyard, since a second binned fatty is a second Goryo's Vengeance target and only one Goryo's Vengeance is ever cast a turn. It holds off while an untapped fetchland is still up, because the three fetch-untapped-shock plays want that same window first and the mana matters more than the order of the discard. Against every other interaction profile, graveyard hate above all, this play does not fire and the held-discard discipline stands unchanged.",
+  "priority": 55,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "input",
+      "name": "opposing_interaction",
+      "op": "eq",
+      "value": "permanent-exile"
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Creature"
+        ],
+        "ability_text_has": "Put a +1/+1 counter on"
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Creature"
+        ],
+        "supertypes_any": [
+          "Legendary"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 6
+        }
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "graveyard",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Creature"
+        ],
+        "supertypes_any": [
+          "Legendary"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "ability_text_has": "Search your library for"
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Creature"
+          ],
+          "ability_text_has": "Put a +1/+1 counter on"
+        }
+      },
+      "ability_text_has": "Put a +1/+1 counter on",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Creature"
+              ],
+              "supertypes_any": [
+                "Legendary"
+              ],
+              "mana_value": {
+                "op": ">=",
+                "n": 6
+              }
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "colors_any": [
+                  "green"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "next": []
+}

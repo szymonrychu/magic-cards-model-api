@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "fetch-surveil-land-keep",
   "name": "Fetch a surveil land at their end step, lands stay on top",
-  "intent": "At the opponent's end step with fewer than four lands out, crack a fetch for a surveil land, Hedge Maze first, then Thundering Falls, then Commercial District, and surveil only a creature into the graveyard so Living End returns it. A land, a fetchland included, stays on top: the cascade turn still needs it. From four lands fetch-surveil-land bins lands instead. Only at 6 life or more and while fewer than two surveil lands are out.",
+  "intent": "At the opponent's end step with fewer than four lands out, crack a fetch for a surveil land, Hedge Maze first, then Thundering Falls, then Commercial District, and surveil only a creature with mana value 4 or more into the graveyard so Living End returns it; a smaller creature (Shardless Agent, Endurance, mana value 3, wanted for its own triggered/evoke value rather than as Living End fodder) stays on top instead, the same threshold open-land-idle's own surveil answer uses. A land, a fetchland included, stays on top either way: the cascade turn still needs it. From four lands fetch-surveil-land bins lands instead. Only at 6 life or more and while fewer than two surveil lands are out.",
   "priority": 50,
   "opposing_archetypes": [
     "*"
@@ -109,9 +109,13 @@
         {
           "decision": "surveil",
           "to_graveyard": {
-            "types_any": [
+            "types_all": [
               "Creature"
-            ]
+            ],
+            "mana_value": {
+              "op": ">=",
+              "n": 4
+            }
           }
         }
       ]

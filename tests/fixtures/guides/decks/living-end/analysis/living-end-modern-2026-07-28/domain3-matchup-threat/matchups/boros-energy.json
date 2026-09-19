@@ -1,0 +1,92 @@
+{
+ "name": "boros energy",
+ "meta_share": 3.037974683544304,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format, statistics_archetypes carries no winrate field, and this run's own fingerprint records winrate_vs_field as all-zero. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "One-drops that generate energy and life, Ajani and Guide of Souls converting that into a flying clock, with Galvanic Discharge and Goblin Bombardment as reach.",
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Energy one-drops into Guide of Souls build a lifelinking flying clock we cannot outrace, with Galvanic Discharge and Goblin Bombardment supplying reach through a stalled board.",
+  "key_cards": [
+   {
+    "card": "Guide of Souls",
+    "why": "converts every one-drop into life and flying damage, which is why our goldfish loses the race outright"
+   },
+   {
+    "card": "Galvanic Discharge",
+    "why": "cheap removal that clears a blocker and keeps the clock moving on schedule"
+   },
+   {
+    "card": "Goblin Bombardment",
+    "why": "sacrifices the board in response to our sweeper, converting a race we were about to reset into damage"
+   }
+  ]
+ },
+ "primary_gameplan": "Survive to a Living End that sacrifices their whole board while we get four bodies, using Anger to buy the turn and Endurance as a free blocker.",
+ "pitfalls": [
+  "Sweeping into an open Goblin Bombardment - they convert the board into damage in response.",
+  "Fetching untapped duals on turn one against three Obsidian Charmaw; sequence the basics last only if you can afford it.",
+  "Cascading into Living End while they have Vexing Bauble out: the payload is countered and the graveyard is spent."
+ ],
+ "stance": "counter",
+ "stance_rationale": "Their curve out beats us before turn three on the draw, and Anger exiles rather than kills, which is the only sweeper that does not pay them off.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Obsidian Charmaw",
+   "count": 3,
+   "why": "kills a nonbasic on curve, and seventeen of our twenty land slots are nonbasic",
+   "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+  },
+  {
+   "card": "Surgical Extraction",
+   "count": 2,
+   "why": "free, and takes all three Living End the moment one hits the graveyard",
+   "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+  },
+  {
+   "card": "Vexing Bauble",
+   "count": 2,
+   "why": "counters the cascaded Living End and both free pitch spells, since no mana is spent on any of them",
+   "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+  },
+  {
+   "card": "Blood Moon",
+   "count": 1,
+   "why": "our manabase is three basics deep, so this cuts us off green and blue entirely",
+   "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "2 Anger of the Gods"
+   ],
+   "out_cards": [
+    "2 Oliphaunt"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "2 Anger of the Gods"
+   ],
+   "out_cards": [
+    "2 Oliphaunt"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Double red by turn three, or a hand that cascades on three; anything slower loses to Ocelot Pride.",
+  "goldfish_for": "Anger on the turn they commit the third body, holding cascade mana for the rebuild.",
+  "watch_for": "Goblin Bombardment on the board means they sacrifice in response - sweep before it lands or eat the damage.",
+  "posture": "disrupt_first",
+  "posture_why": "we cannot race a lifelinking start."
+ }
+}

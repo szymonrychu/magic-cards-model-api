@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "id": "open-fetch-unlocks-basic",
+  "name": "Crack a fetch on turn 1-2 for a basic that unlocks a hand card, never paying life",
+  "intent": "On turn 1 or 2, once open-land-unlocks has had first refusal, play a fetch from hand and crack it for a library basic that unlocks some other hand card - Marsh Flats found for a library Plains that lets Serra Ascendant be cast. orzhov-martyr never pays life for a land drop: Serra Ascendant and Martyr of Sands both care about this deck's own life total directly, so this play, unlike the shock-then-fetch pair the other three decks in this pass carry, never runs open-shock-unlocks at all and restricts its own fetch to a basic, answering pay_life false always. orzhov-martyr carries no basic Swamp and no basic Island at all, so Flooded Strand's Island half and Marsh Flats' Swamp half are both dead weight - neither fetch is more precious than the other here, and the prefer tier ({searches_for_any: [Plains]}) matches both, a deliberate no-op left to ties: any. The crack itself is restricted to an untapped source that can actually reach the unlock (searches_for_any plus unlocks_by_search), so a stale fetch already on the battlefield that cannot reach the needed land is never cracked in place of the one that can. Stands down once open-land-unlocks would already fire (U's own key), the library is down to 5 cards or fewer, or life is 1 or less - the same guard dimir-frog's own F-basic carries, matched here for consistency even though this deck's own life-gain plan (Serra Ascendant, Martyr of Sands) makes 1 life a rarer spot to be in. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 72,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_search": true
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "zone_size",
+      "zone": "library",
+      "side": "me",
+      "op": "<=",
+      "n": 5
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": "<=",
+      "n": 1
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "unlocks_by_search": true
+        },
+        "prefer": [
+          {
+            "searches_for_any": [
+              "Plains"
+            ]
+          }
+        ],
+        "ties": "any"
+      }
+    },
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "tapped": false,
+          "unlocks_by_search": true
+        },
+        "ties": "any"
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "unlocks": true,
+              "supertypes_any": [
+                "Basic"
+              ]
+            },
+            "count": 1,
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "pay_life",
+          "accept": false
+        }
+      ]
+    }
+  ],
+  "next": []
+}

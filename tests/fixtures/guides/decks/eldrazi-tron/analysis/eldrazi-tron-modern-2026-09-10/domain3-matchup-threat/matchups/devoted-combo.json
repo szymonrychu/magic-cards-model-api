@@ -1,0 +1,145 @@
+{
+  "name": "devoted combo",
+  "meta_share": 4.769057453999249,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": null,
+  "winrate_basis": {
+    "kind": "absent",
+    "why": "The committed 2026-09-10 capture .protocol/raw-matchups.json holds no row whose opponent resolves to 'devoted combo' - the fifty rows it returned for eldrazi tron stop at 'yawgmoth' and no alias in this repository joins any of them to this archetype. That is UNMEASURED, not zero and not a confirmed absence: the pairing simply did not come back in the response this pass committed."
+  },
+  "primary_gameplan": "Cursed Totem answers the whole deck at once: Devoted Druid's untap, Delighted Halfling's mana, Fiend Artisan's tutor and Duskwatch Recruiter are all activated abilities of creatures. Fetch it first, then The Stone Brain naming Devoted Druid to make the combo unfindable.",
+  "secondary_gameplan": "Extinguisher Battleship's enters trigger deals four damage to each creature, which sweeps Devoted Druid, Vizier of Remedies, Birds of Paradise and Delighted Halfling in one card; Walking Ballista and Dismember cover the single combo piece before Tron is online.",
+  "opponent_gameplan": "The ten committed 2026-09-10 lists are a Golgari-green creature toolbox: Delighted Halfling, Birds of Paradise and Leyline of Abundance for mana, Tyvar, Jubilant Brawler to make creature abilities usable the turn they land, Badgermole Cub and Duskwatch Recruiter for pressure and digging, and Fiend Artisan plus Green Sun's Zenith to find the missing piece. Devoted Druid taps for green and untaps itself by taking a -1/-1 counter; Vizier of Remedies replaces that counter with nothing, so the pair makes unbounded green mana. Note the mana values: Devoted Druid is {1}{G} and Vizier of Remedies is {1}{W}, so both are mana value two and a Chalice of the Void set to one misses both.",
+  "tournament_refs": [
+    {
+      "pilot": "musasabi",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6",
+      "source_deck_id": "videre-58664421"
+    },
+    {
+      "pilot": "sikolio",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6",
+      "source_deck_id": "videre-58664303"
+    },
+    {
+      "pilot": "BlueDrivesMonster",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6",
+      "source_deck_id": "videre-58664458"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Collector Ouphe",
+      "count": 1,
+      "why": "6 of 10 committed 2026-09-10 lists; 'Activated abilities of artifacts can't be activated' with no mana-ability exception in the printed text, so it turns off Expedition Map, Talisman of Resilience, Giant's Boulder and every wish target at once",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Abrupt Decay",
+      "count": 3,
+      "why": "8 of 10 committed lists; uncounterable removal for any permanent we resolve at mana value three or less, which is most of the wish board",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Thoughtseize",
+      "count": 3,
+      "why": "8 of 10 committed lists carry it as their proactive disruption; takes the Karn before it can fetch anything",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Force of Vigor",
+      "count": 1,
+      "why": "7 of 10 committed lists; a free two-for-one on artifacts on our turn, and every card in our board is an artifact",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "Every fetch here is one-sided. Cursed Totem, The Stone Brain, Torpor Orb and Walking Ballista cost us nothing - our creatures have cast triggers rather than enters triggers, and we activate no creature abilities except Walking Ballista's own, which we choose to run into it.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Devoted Druid plus Vizier of Remedies is a two-card kill off three mana, so the deck is trying to land both before our fourth land drop.",
+    "key_cards": [
+      {
+        "card": "Devoted Druid",
+        "why": "Named in the recorded gameplan; the untap-for-a-counter half of the mana engine, mana value two"
+      },
+      {
+        "card": "Vizier of Remedies",
+        "why": "Named in the recorded gameplan; removes the counter that would kill the Druid, making the mana unbounded"
+      },
+      {
+        "card": "Collector Ouphe",
+        "why": "Boarded static that turns off every artifact we own including the whole wish pool",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      },
+      {
+        "card": "Abrupt Decay",
+        "why": "Boarded uncounterable answer to whatever we do resolve at three or less",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Any hand with Dismember or a fourth land, because the combo is live on their third turn.",
+    "goldfish_for": "Karn into Cursed Totem, or Kozilek's Command exiling Devoted Druid at instant speed.",
+    "watch_for": "Tyvar, Jubilant Brawler, which makes the Druid usable the turn it arrives.",
+    "posture": "disrupt_first",
+    "posture_why": "There is no racing a combo that kills on turn three; the only line is answering a piece."
+  },
+  "fetch_priority": [
+    "Cursed Totem",
+    "The Stone Brain",
+    "Torpor Orb",
+    "Walking Ballista",
+    "Extinguisher Battleship"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Cursed Totem",
+      "verdict": "SURVIVES",
+      "why": "Abrupt Decay and Force of Vigor answer it, but Collector Ouphe does not - Totem is a static ability, not an activated one - and it stops the combo the moment it resolves."
+    },
+    {
+      "card": "The Stone Brain",
+      "verdict": "SURVIVES",
+      "why": "It is activated the turn it lands and exiles itself as part of the cost, so Abrupt Decay only ever answers it in response to an activation they cannot stop."
+    },
+    {
+      "card": "Torpor Orb",
+      "verdict": "SURVIVES",
+      "why": "Static, so Collector Ouphe misses it; it blanks Kraul Harpooner and Duskwatch Recruiter's enters triggers and their own Endurance's graveyard clause."
+    },
+    {
+      "card": "Walking Ballista",
+      "verdict": "SURVIVES",
+      "why": "Collector Ouphe does shut its damage ability off, which is why it is the fourth fetch and not the first; while Ouphe is not on the battlefield nothing in the recorded board answers it profitably."
+    },
+    {
+      "card": "Extinguisher Battleship",
+      "verdict": "SURVIVES",
+      "why": "Its enters trigger destroys a noncreature permanent and deals four damage to each creature; Collector Ouphe, Devoted Druid and Vizier of Remedies all die to it, and no card in the recorded board answers an eight-mana artifact before it resolves."
+    }
+  ],
+  "notes": [
+    "The Chalice number here is two, not one: Devoted Druid is {1}{G} and Vizier of Remedies is {1}{W}, both mana value two, so a Chalice on one catches only Delighted Halfling and Birds of Paradise. Chalice is not in this row's fetch order because Cursed Totem answers both halves for the same two mana.",
+    "The Stone Brain names Devoted Druid rather than Vizier of Remedies: the Druid is the four-of and the Vizier is findable with Fiend Artisan and Green Sun's Zenith, so exiling the Druid removes the copies that cannot be replaced.",
+    "Extinguisher Battleship is the concession fetch when the game has gone long and they have rebuilt: four damage to each creature answers a whole board of one and two toughness mana creatures at once."
+  ],
+  "card_names": [
+    "Devoted Druid",
+    "Vizier of Remedies",
+    "Delighted Halfling",
+    "Birds of Paradise",
+    "Tyvar, Jubilant Brawler",
+    "Fiend Artisan",
+    "Green Sun's Zenith",
+    "Leyline of Abundance",
+    "Badgermole Cub",
+    "Duskwatch Recruiter"
+  ]
+}

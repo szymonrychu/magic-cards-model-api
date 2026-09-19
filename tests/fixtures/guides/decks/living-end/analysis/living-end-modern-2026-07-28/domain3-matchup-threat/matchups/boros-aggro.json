@@ -1,0 +1,92 @@
+{
+ "name": "boros aggro",
+ "meta_share": 3.291139240506329,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format, statistics_archetypes carries no winrate field, and this run's own fingerprint records winrate_vs_field as all-zero. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "White and red one-drops into Ajani and Voice of Victory, with Ranger-Captain of Eos protecting the alpha strike and Goblin Bombardment converting a stalled board into reach.",
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Their one-drop curve beats our goldfish by a turn, and Ranger-Captain of Eos plus Goblin Bombardment convert a stalled board into the last points before we can rebuild.",
+  "key_cards": [
+   {
+    "card": "Voice of Victory",
+    "why": "a protected threat that also stops us casting spells on their turn, so the alpha strike goes unanswered"
+   },
+   {
+    "card": "Ranger-Captain of Eos",
+    "why": "sacrificed, it stops our noncreature spells for the turn, which is the cascade turn they are racing to"
+   },
+   {
+    "card": "Goblin Bombardment",
+    "why": "turns a board we have blocked or swept into reach, so the race does not stall out"
+   }
+  ]
+ },
+ "primary_gameplan": "Buy a turn with Anger, then land Living End into a board they have overcommitted to and stabilise behind Generous Ent and Colossal Skyturtle.",
+ "pitfalls": [
+  "Cascading into a Ranger-Captain of Eos sacrifice, which stops noncreature spells for the turn.",
+  "Sweeping on curve when they are holding two cards - the second wave is why we keep Endurance.",
+  "Leaving Boseiju in the deck without a plan for Rest in Peace; it is the only maindeck answer we can find on demand."
+ ],
+ "stance": "counter",
+ "stance_rationale": "Same shape as Boros Energy without the energy payoff: a three-damage exile sweeper on turn three is the card that turns a lost race into a Living End turn.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Obsidian Charmaw",
+   "count": 4,
+   "why": "a two-for-one on our manabase that also presents a four-power body",
+   "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+  },
+  {
+   "card": "Rest in Peace",
+   "count": 1,
+   "why": "exiles our graveyard on entry and keeps it empty, blanking Living End completely",
+   "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+  },
+  {
+   "card": "Vexing Bauble",
+   "count": 2,
+   "why": "counters the cascaded Living End, Force of Negation and Subtlety, all cast for no mana",
+   "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+  },
+  {
+   "card": "Blood Moon",
+   "count": 2,
+   "why": "shuts off the green and blue halves of an almost entirely nonbasic manabase",
+   "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "2 Anger of the Gods"
+   ],
+   "out_cards": [
+    "2 Oliphaunt"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "2 Anger of the Gods"
+   ],
+   "out_cards": [
+    "2 Oliphaunt"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Double red on three, or a cascade on three with a red source; mulligan hands that cannot interact until four.",
+  "goldfish_for": "Anger after the second Ocelot Pride trigger, then cascade with Endurance still in hand.",
+  "watch_for": "Ranger-Captain of Eos on the board means their sacrifice stops our cascade turn entirely.",
+  "posture": "disrupt_first",
+  "posture_why": "their clock beats our goldfish by a turn."
+ }
+}

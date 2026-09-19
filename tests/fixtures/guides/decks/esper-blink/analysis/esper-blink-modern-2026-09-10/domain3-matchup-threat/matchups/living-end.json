@@ -1,0 +1,100 @@
+{
+  "name": "living end",
+  "meta_share": 3.0792339466766805,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.6078,
+  "winrate_basis": {
+    "kind": "data",
+    "n": 102,
+    "source": "statistics_matchups(format=modern, archetype_a='esper blink', limit=60), committed verbatim at .protocol/raw-matchups.json; row opponent='living end' winrate=0.6078 over sample_size=102 matches"
+  },
+  "primary_gameplan": "High Noon and Teferi, Time Raveler both stop the cascade turn, by different routes. Violent Outburst and Shardless Agent cast Living End off cascade without paying its cost, and casting the cascade spell is itself a cast: under High Noon there is no second cast that turn, and under Teferi they cannot cast Violent Outburst on our end step at all.",
+  "secondary_gameplan": "Boggart Trawler and Emperor of Bones exile the creature cards Living End would return, Thoughtseize takes the cascade spell before it happens, and Overlord of the Balemurk rebuilds our board after a resolved Living End because it returns a creature from the graveyard every attack.",
+  "opponent_gameplan": "Street Wraith, Generous Ent, Oliphaunt and Waker of Waves are cycled away for one mana or less to fill the graveyard, and then Violent Outburst or Shardless Agent cascades into Living End - a card with no mana cost, so it is always the hit - which sacrifices our board and returns their whole graveyard as a battlefield. Force of Negation protects the turn for free. Post-board Mystical Dispute and Force of Vigor come in against blue and white answers, and Inevitable Betrayal is the plan B that wins a long game where the cascade never resolved.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Mystical Dispute",
+      "count": 4,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; one mana against our Consign to Memory, Quantum Riddler and Teferi",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Force of Vigor",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; free on our turn and destroys two enchantments, which is High Noon and Overlord",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Inevitable Betrayal",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; a suspended card-advantage plan that wins a long game where the cascade has been answered",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Brotherhood's End",
+      "count": 1,
+      "why": "9 of 10 pulled sideboards; 3 damage to each creature AND each planeswalker, so it answers our board and a spent Teferi together",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Their kill is not a card, it is a SEQUENCE - cast a cascade spell, cascade casts a second spell in the same turn - and High Noon answers the sequence rather than any copy of it. Teferi, Time Raveler answers the other half, the instant-speed timing that makes Violent Outburst safe. Both cost us tempo, which is why the stance is symmetric, and neither is answerable by their graveyard.",
+  "opponent_plan": {
+    "posture": "bait",
+    "posture_why": "The whole deck is cycling until one cascade spell resolves, so the turns before it are spent making us tap out or spend an answer on nothing.",
+    "key_cards": [
+      {
+        "card": "Violent Outburst",
+        "why": "Named verbatim in opponent_gameplan; the instant-speed cascade that casts Living End on our end step"
+      },
+      {
+        "card": "Living End",
+        "why": "Named verbatim in opponent_gameplan; sacrifices our board and returns their whole graveyard in one resolution"
+      },
+      {
+        "card": "Force of Vigor",
+        "why": "Free on our turn, and destroys the High Noon or Overlord that was holding the game",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Mystical Dispute",
+        "why": "One mana against every blue answer we brought in for this matchup",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand with a turn-two or turn-three enchantment, or Thoughtseize on the play.",
+    "goldfish_for": "High Noon before their third land, and a body to attack with under it.",
+    "watch_for": "A cycle on our end step, which is the tell that the cascade spell is live.",
+    "posture": "disrupt_first",
+    "posture_why": "One resolved Living End undoes any board, so stop the cast rather than build."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "High Noon",
+      "verdict": "SURVIVES",
+      "why": "Force of Vigor (10 of 10 pulled boards) destroys it for free on our turn, which is removal rather than a blank: the turn it is on the battlefield the cascade cannot happen, and answering it costs them a card from hand plus the Force itself. Mystical Dispute costs three against a white spell, not one."
+    },
+    {
+      "card": "Teferi, Time Raveler",
+      "verdict": "SURVIVES",
+      "why": "Mystical Dispute counters it on the stack for three, since Teferi is blue, and nothing in their pulled board removes a resolved planeswalker: Force of Vigor names artifacts and enchantments and Inevitable Betrayal is not removal at all. Brotherhood's End does reach it - its first mode deals 3 damage to each creature and each planeswalker - so a Teferi that has already spent its minus can die to it, which is removal rather than a structural blank, and it is a mode they do not want after a resolved Living End."
+    }
+  ],
+  "card_names": [
+    "Violent Outburst",
+    "Shardless Agent",
+    "Living End",
+    "Street Wraith",
+    "Generous Ent",
+    "Oliphaunt",
+    "Waker of Waves",
+    "Force of Negation",
+    "Subtlety",
+    "Endurance"
+  ],
+  "self_cost": "High Noon caps us at one spell a turn too. That costs the Ephemerate-plus-creature turn and the evoke-Solitude-plus-two-drop turn, and it makes our own hand of cheap interaction sit unused. It is worth it because a cascade spell has to cast a second spell to do anything and we do not."
+}

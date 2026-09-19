@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "id": "open-land-idle",
+  "name": "Play a land on turn 1-2 when nothing in hand unlocks anything",
+  "intent": "On turn 1 or 2, once none of open-land-unlocks, open-shock-unlocks or open-fetch-unlocks apply and no other hand card is already affordable, still play the land drop - any land in hand beats holding it back with nothing to protect. Prefers a surveil land (Meticulous Archive, Shadowy Backstreet, Undercity Sewers) first, since it was entering tapped regardless and the scry is free value; then any other land that would enter tapped anyway, since playing it now costs no tempo it would not already lose; then a shockland, life declined, since paying for it buys nothing this turn and an idle land drop should not hold a shock back the way F holds a fetch (item 5); then a fetch, held for a target-rich later turn but taken here since nothing else is better. Unlike the other three decks in this pass, the surveil answer bins a big legendary creature (Atraxa, Griselbrand) into the graveyard instead of keeping it - this is instant-reanimator's whole plan: Goryo's Vengeance wants exactly that card in the yard, so an idle turn 1-2 surveil is this deck's own reanimation setup, not lost value. Only turns 1-2, land drop available, mine, precombat main, empty stack. Stands down once the discard outlet (a creature with an own +1/+1-counter-put ability, Psychic Frog in this 60) is already on the battlefield: that fact is byte-identical to the seat-admitted bin-fatty-vs-permanent-exile play's own battlefield-outlet true key, and it can never hold on a genuine turn 1-2 board anyway - the outlet costs two mana and has to survive a turn cycle before that play reads it as safe to fire, so this key costs this play nothing here and only prevents the two plays overlapping later in the game.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped_if_paid"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_any": [
+          "Creature",
+          "Instant",
+          "Sorcery",
+          "Artifact",
+          "Enchantment",
+          "Planeswalker"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 1
+        },
+        "affordable": {
+          "extra": 1
+        }
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Creature"
+        ],
+        "ability_text_has": "Put a +1/+1 counter on"
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "keywords_any": [
+              "Surveil"
+            ]
+          },
+          {
+            "enters_any": [
+              "tapped"
+            ]
+          },
+          {
+            "oracle_has": "you may pay 2 life"
+          },
+          {
+            "types_all": [
+              "Land"
+            ],
+            "searches_for_any": [
+              "Plains",
+              "Island",
+              "Swamp",
+              "Mountain",
+              "Forest"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "pay_life",
+          "accept": false
+        },
+        {
+          "decision": "surveil",
+          "to_graveyard": {
+            "types_all": [
+              "Creature"
+            ],
+            "supertypes_any": [
+              "Legendary"
+            ],
+            "mana_value": {
+              "op": ">=",
+              "n": 7
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "next": []
+}

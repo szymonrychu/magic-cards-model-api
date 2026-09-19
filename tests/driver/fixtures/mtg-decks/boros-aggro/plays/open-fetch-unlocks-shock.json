@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "id": "open-fetch-unlocks",
-  "name": "Crack a fetch on turn 1-2 for a land that unlocks a hand card",
-  "intent": "On turn 1 or 2, once open-land-unlocks has had first refusal, play a fetch from hand and crack it for whatever land in the library would unlock some other hand card - Arid Mesa found for a library Mountain that lets Ragavan be cast. The fetch itself is chosen among whichever hand fetches can already reach an unlock (select's own unlocks_by_search: true already narrows to exactly that, regardless of prefer order - the prefer tiers below only break a genuine tie between two or more such fetches). Prefers a fetch that searches for Swamp (Marsh Flats) then one that searches for Island (Flooded Strand) ahead of Arid Mesa specifically: Arid Mesa's own Mountain-or-Plains search always overlaps every other fetch's own Plains half, so a review found it winning prefer by simply being listed Mountain-first even in a hand where the actual unlock needed nothing red at all - Arid Mesa is picked only when it is the only fetch select admits (see the invariant test below), never by default. searches_for_any reads the fetch's own template rather than the printed 'Search your library for' phrase, since that phrase also matches Urza's Saga elsewhere in the format and searches_for_any is what actually narrows to a basic land type. Its own choose_cards pick prefers a basic first (never spend life when a free basic unlocks the same thing), then a shockland, paying life only when the fetch's own find needs it. The source cracked is always the one whose own search can reach the unlock (unlocks_by_search: true, in select rather than merely preferred - this play only fires when some hand-or-library path unlocks something, so its own crack source is never legitimately one that cannot reach it; the DSL has no 'played this turn' condition to prefer instead, but unlocks_by_search is strictly the correct criterion regardless of when a battlefield fetch was played). Stands down once open-land-unlocks would already fire (U's own key), at 7 life or less, and once the library is down to 5 cards or fewer - thinning this early is not worth decking risk later. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
-  "priority": 72,
+  "id": "open-fetch-unlocks-shock",
+  "name": "Crack a fetch on turn 1-2 for a non-basic land that unlocks a hand card",
+  "intent": "On turn 1 or 2, once open-land-unlocks, open-shock-unlocks and open-fetch-unlocks have all had first refusal, play a fetch from hand and crack it for a library land that unlocks some other hand card even though that land is not a basic - Arid Mesa reaching a second Sacred Foundry once the library's own basic Mountain and Plains are gone. Item 2 (2026-09-14 review batch): open-fetch-unlocks' own true key narrowed from unlocks_by_search to unlocks_by_basic_search, fixing the regression where it cracked Marsh Flats for a library Sacred Foundry (3 life total) with Arid Mesa sitting in the same hand able to reach a free basic Mountain instead - but that narrowing leaves boros-aggro with no play at all for a hand whose only fetch reach is itself non-basic. This lane closes that gap, priced correctly: it pays the fetch's own 1 life to crack plus the found land's own optional 2, strictly worse than either open-land-unlocks (free) or open-shock-unlocks (one payment only) - so it stands down whenever either of those, or open-fetch-unlocks itself (which would find a free basic instead), already would. The choose_cards pick shares open-fetch-unlocks' own basic-first, life-last prefer order - this deck has only one non-basic unlocking land shape (a shockland carrying both its colours), so no missing-subtype tier is needed the way prowess's own scarcer-colour fetch-shock lane reads one. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 71,
   "opposing_archetypes": [
     "*"
   ],
@@ -63,6 +63,42 @@
       }
     },
     {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped_if_paid"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    },
+    {
       "kind": "life",
       "side": "me",
       "op": "<=",
@@ -93,18 +129,6 @@
           ],
           "unlocks_by_search": true
         },
-        "prefer": [
-          {
-            "searches_for_any": [
-              "Swamp"
-            ]
-          },
-          {
-            "searches_for_any": [
-              "Island"
-            ]
-          }
-        ],
         "ties": "any"
       }
     },
@@ -123,9 +147,13 @@
             "Mountain",
             "Forest"
           ],
-          "tapped": false,
-          "unlocks_by_search": true
+          "tapped": false
         },
+        "prefer": [
+          {
+            "unlocks_by_search": true
+          }
+        ],
         "ties": "any"
       },
       "ability_text_has": "Search your library for",
