@@ -1232,6 +1232,18 @@ h3 { font-size: 14px; }
   font-size: 9px;
   padding: 2px 5px;
 }
+/* CR 722.3a's prepared designation - top-center, the one corner-badge
+   pattern here leaves free (counters top-left, sickness/abilities
+   top-right, P/T/damage/loyalty along the bottom). */
+.badge-prepared {
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-radius: 999px;
+  padding: 2px 6px;
+}
 
 /* ------------------------------------------------------ mana symbols ---- */
 

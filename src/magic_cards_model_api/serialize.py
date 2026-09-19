@@ -664,6 +664,13 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         # anywhere else the key would only ever be absent anyway.
         if state.attachment is not None:
             view["attached_to"] = _target_refs(game, [state.attachment])[0]
+        if state.prepared:
+            # CR 722.3a's "prepared" designation - a marker a permanent with
+            # a prepare spell carries after its own preparation card cast
+            # from exile, surfaced only on the battlefield the same way
+            # `attached_to` is: the field the engine clears the moment the
+            # permanent leaves is one a client need never see stale.
+            view["prepared"] = True
         printed_type_line = state.card.type_line
         # The printing plus counters, never the layer engine: a bound card's
         # `power`/`toughness` already answer with the computed board (CR 613.5).
