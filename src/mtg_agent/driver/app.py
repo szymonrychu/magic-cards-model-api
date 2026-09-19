@@ -72,6 +72,21 @@ log = logging.getLogger("driver")
 #: was about to succeed reads here as an unreachable wrapper instead.
 REVIEW_HTTP_TIMEOUT = 650.0
 
+#: How long `retire` waits for the AI review's background thread
+#: (`post_ai_review`, spawned by `turn_done`'s reflection branch) before
+#: giving up on it and proceeding anyway - `DELETE /v1/session` tears the
+#: agent container down, and `exit_after_match` can end this very process
+#: right after, so a review still in flight when either happens is lost for
+#: good rather than merely late. Bounded by `REVIEW_HTTP_TIMEOUT` (the
+#: review's own slow call, `POST /v1/review`) plus headroom for the two
+#: quick calls around it (the review-record fetch, the `ai-review` post,
+#: each on `make_client`'s ordinary 30s timeout) - `post_ai_review` itself
+#: never runs longer than this in practice, so the join is expected to
+#: return well before its own timeout on every call that succeeds, and to
+#: hit it only on the same failures that would have made the review
+#: unreachable anyway.
+RETIRE_REVIEW_JOIN_TIMEOUT = REVIEW_HTTP_TIMEOUT + 70.0
+
 #: How much of the agent's own account of a turn goes into the container log.
 #: The whole `finalText` can be a page; the first paragraphs are where the
 #: agent says what it did and why, which is what a person watching
@@ -232,6 +247,15 @@ def build_app(
         # straight to answering with the current handover status, rather than
         # filing a second reflection or spawning a second review thread.
         "reflectionHandled": False,
+        # The AI review's own background `threading.Thread` (`post_ai_
+        # review`), once `turn_done` has spawned one - `retire` joins it,
+        # bounded by `RETIRE_REVIEW_JOIN_TIMEOUT`, before it tears the
+        # session down or exits the process, so the review is never merely
+        # racing the container's own shutdown. `None` until a reflection
+        # actually completes and spawns one; reset by `clear_locked` like
+        # everything else assignment-scoped, once `retire` has already
+        # joined whatever it named.
+        "reviewThread": None,
     }
 
     def clear_locked() -> None:
@@ -245,6 +269,7 @@ def build_app(
             outcome=None,
             handover=None,
             reflectionHandled=False,
+            reviewThread=None,
         )
 
     def seed_plan_file(assignment: Assignment) -> None:
@@ -513,7 +538,37 @@ def build_app(
 
         A failure here is logged and swallowed: an agent we cannot reach is
         already gone, and refusing to forget the finished game would wedge
-        the driver against every future dispatch."""
+        the driver against every future dispatch.
+
+        **Joins the AI review's background thread first, bounded by
+        `RETIRE_REVIEW_JOIN_TIMEOUT`.** The handover itself already ran to
+        completion by the time anything calls `retire` (`run_handover`'s own
+        last step) - nobody waits on the review to see the handover marker
+        or its own turn complete. But `DELETE /v1/session` tears the agent
+        container down, and `exit_after_match` can end this very process
+        right after - a handover typically finishes in 20-30s, while an
+        Opus review over a whole game routinely takes longer, so without
+        this join the review was lost for good on essentially every real
+        exit, not merely a slow one. Still best-effort throughout: a review
+        that fails or does not finish within the bound is logged and
+        retirement proceeds anyway, exactly as it always has for every
+        other way `post_ai_review` can fail."""
+        with lock:
+            review_thread = current.get("reviewThread")
+        if review_thread is not None and review_thread.is_alive():
+            log.info(
+                "match %s retiring: waiting on the AI review (up to %.0fs) before the session ends",
+                assignment.game_id,
+                RETIRE_REVIEW_JOIN_TIMEOUT,
+            )
+            review_thread.join(timeout=RETIRE_REVIEW_JOIN_TIMEOUT)
+            if review_thread.is_alive():
+                log.warning(
+                    "match %s retiring: the AI review did not finish within %.0fs, "
+                    "continuing without it",
+                    assignment.game_id,
+                    RETIRE_REVIEW_JOIN_TIMEOUT,
+                )
         stopped = True
         try:
             with make_client(settings.wrapper_api) as client:
@@ -1123,11 +1178,14 @@ def build_app(
                 ended = current["outcome"] or ""
             handover_status = start_handover(ended)
             if not already_handled:
-                threading.Thread(
+                review_thread = threading.Thread(
                     target=post_ai_review,
                     args=(assignment, reflection_text_value),
                     daemon=True,
-                ).start()
+                )
+                review_thread.start()
+                with lock:
+                    current["reviewThread"] = review_thread
             return {
                 "handover": handover_status,
                 "gameId": assignment.game_id,

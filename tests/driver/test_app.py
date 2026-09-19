@@ -559,6 +559,87 @@ def test_the_agent_is_stopped_only_once_per_match(world):
     assert state["deleted"] == 1
 
 
+def test_two_sequential_games_through_one_driver_each_get_their_own_review(world):
+    """`reflectionHandled` (and the rest of `clear_locked`'s reset) must not
+    leak from one match into the next. A compose-style driver (not
+    `exit_after_match`) is not thrown away between matches - `retire`
+    clears the assignment and the next dispatch, once the replacement agent
+    container is up, starts clean - so the SAME driver process runs the
+    whole reflect-review-handover flow twice here, and the second game's
+    own reflection and review must land under its own game id and uid,
+    exactly as the first game's did."""
+    client = world.client
+    state = world.state
+    submitted = world.submitted
+
+    play_out_the_match(client, state, submitted)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    assert world.ai_review_posts[0] == {
+        "game_id": "g-1",
+        "player": "bob",
+        "uid": "secret-uid",
+        "text": "a solid game overall, but the turn 6 attack was a misread",
+    }
+
+    state["agent"] = "up"  # the replacement container finished booting
+    state["winner"] = None
+    state["review_text"] = "the second game's own critique"
+    dispatched = dispatch(client, uid="uid-2", game_id="g-2")
+    assert dispatched.status_code == 202
+    turn_zero_id = dispatched.json()["turnId"]
+
+    # `complete_handover`/naive polling for "any handover-opening turn"
+    # would find game ONE's own (already completed) handover turn - still
+    # sitting in `submitted` - on the very first check, before game two's
+    # own has even been pushed. Recording the count first and waiting for
+    # it to grow is what actually waits for THIS game's handover turn.
+    handover_turns_before = sum(
+        1 for turn in submitted if turn["text"].startswith(HANDOVER_OPENING)
+    )
+
+    state["winner"] = "bob"
+    client.post(
+        "/turn-done", json={"turnId": turn_zero_id, "state": "complete", "finalText": "gg2"}
+    )
+    assert "The game is over" in submitted[-1]["text"]
+    reflection_id = f"turn-{len(submitted)}"
+    client.post(
+        "/turn-done", json={"turnId": reflection_id, "state": "complete", "finalText": "wrote2"}
+    )
+
+    def newest_handover_turn_ids() -> list[str] | None:
+        matches = [
+            f"turn-{index + 1}"
+            for index, turn in enumerate(submitted)
+            if turn["text"].startswith(HANDOVER_OPENING)
+        ]
+        return matches if len(matches) > handover_turns_before else None
+
+    handover_ids = wait_for(newest_handover_turn_ids)
+    client.post(
+        "/turn-done",
+        json={"turnId": handover_ids[-1], "state": "complete", "finalText": "pushed"},
+    )
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+
+    wait_for(lambda: len(world.ai_review_posts) == 2)
+    assert world.reflection_posts[-1] == {
+        "game_id": "g-2",
+        "player": "bob",
+        "uid": "uid-2",
+        "text": "wrote2",
+    }
+    assert world.ai_review_posts[-1] == {
+        "game_id": "g-2",
+        "player": "bob",
+        "uid": "uid-2",
+        "text": "the second game's own critique",
+    }
+    # Neither game's own reflection or review was duplicated by the other's.
+    assert len(world.reflection_posts) == 2
+    assert len(world.ai_review_posts) == 2
+
+
 def test_a_match_is_retired_even_when_the_agent_is_already_gone(world):
     client = world.client
     state = world.state
