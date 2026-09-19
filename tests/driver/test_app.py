@@ -284,6 +284,94 @@ def test_the_completed_reflection_turn_posts_it_to_the_game_server(world):
     ]
 
 
+def test_the_completed_reflection_turn_also_generates_and_posts_an_ai_review(world):
+    """The other half of the handoff: once the reflection is posted, the
+    driver asks the fake wrapper's `/v1/review` (Opus, `AgentSettings.
+    review_default` - never the seat's own play settings) to critique the
+    game, using the just-posted reflection plus the game's own review
+    record, and files the answer under `POST .../ai-review`."""
+    client = world.client
+    state = world.state
+    play_out_the_match(client, state, world.submitted)
+
+    assert len(world.review_requests) == 1
+    review_request = world.review_requests[0]
+    assert review_request["model"] == "claude-opus-5"
+    assert review_request["effort"] == "high"
+    # The prompt is built from the reflection text this same call sequence
+    # just posted - proof the review runs AFTER the reflection, not before.
+    assert "wrote" in review_request["prompt"]
+    assert "bob" in review_request["prompt"]
+
+    assert world.ai_review_posts == [
+        {
+            "game_id": "g-1",
+            "player": "bob",
+            "uid": "secret-uid",
+            "text": "a solid game overall, but the turn 6 attack was a misread",
+        }
+    ]
+
+
+def test_an_unreachable_wrapper_review_does_not_block_retirement(world):
+    """Best-effort, exactly like `post_reflection` and `sync_agent_settings`
+    beside it: a wrapper `/v1/review` this driver cannot reach must not wedge
+    the agent mid-retirement, and must not stop the reflection itself from
+    having already been filed."""
+    client = world.client
+    state = world.state
+    state["wrapper_review"] = "down"
+    play_out_the_match(client, state, world.submitted)
+    assert world.reflection_posts != []
+    assert world.ai_review_posts == []
+
+
+def test_a_claude_failure_generating_the_review_does_not_block_retirement(world):
+    client = world.client
+    state = world.state
+    state["wrapper_review"] = "error"
+    play_out_the_match(client, state, world.submitted)
+    assert world.reflection_posts != []
+    assert world.ai_review_posts == []
+
+
+def test_an_unreachable_game_server_for_the_review_record_does_not_block_retirement(world):
+    """`get_review` (fetching the game record the prompt is built from) is
+    the first of the AI review's three calls - an unreachable game server
+    there must fail the review generation the same way a later failure
+    would, without ever reaching the wrapper."""
+    client = world.client
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+    real_get_review = state["game"]
+
+    # Flip the game server down only once the reflection has landed (so the
+    # reflection post itself still succeeds), by way of a second `state`
+    # flag `post_ai_review` cannot tell apart from the review-record read -
+    # both go through the same `game` app, so simply going down here covers
+    # the review's own GET too.
+    state["game"] = "down"
+    body = client.post(
+        "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+    ).json()
+    assert body["handover"]["outcome"] == "bob won"
+    complete_handover(client, world.submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    assert world.review_requests == []
+    assert world.ai_review_posts == []
+    assert real_get_review == "up"
+
+
+def test_a_review_the_wrapper_answers_with_no_text_is_not_filed(world):
+    client = world.client
+    state = world.state
+    state["review_text"] = "   "
+    play_out_the_match(client, state, world.submitted)
+    assert world.ai_review_posts == []
+
+
 def test_a_reflection_turn_that_said_nothing_still_posts_a_placeholder(world):
     client = world.client
     state = world.state

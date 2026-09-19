@@ -74,7 +74,6 @@ def boot(
     *,
     seed: int = 11,
     buddy: bool = True,
-    buddy_agent: dict[str, Any] | None = None,
     ai: bool = True,
     headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -83,8 +82,6 @@ def boot(
     human: dict[str, Any] = {"username": "you", "decklist_text": LEGAL_DECK, "ai": False}
     if buddy:
         human["buddy"] = True
-    if buddy_agent is not None:
-        human["buddy_agent"] = buddy_agent
     response = client.post(
         "/api/lobby/games",
         json={
@@ -124,16 +121,26 @@ def test_a_game_with_no_buddy_answers_exactly_as_it_always_did(client: TestClien
 def test_the_buddys_agent_settings_live_in_the_advisor_entry(client: TestClient) -> None:
     """The verified trap: `store.agent_settings` is NAME-keyed, so a buddy's
     settings filed under the human's name would make the lobby read the human
-    as the AI seat."""
-    created = boot(client, buddy_agent={"model": "opus", "effort": "max"})
+    as the AI seat. Since 2026-09-19 the settings themselves are always the
+    fixed server default (no request field can choose anything else), but
+    the trap this test guards against is about *where* they land, not what
+    they are."""
+    created = boot(client)
     game_id = created["game_id"]
     advisor = store.advisor_uids(game_id)[created["advisor_uids"]["you"]]
-    assert advisor.agent == AgentSettings(model="opus", effort="max")
+    assert advisor.agent == AgentSettings.default({})
     assert "you" not in store.agent_settings(game_id)
     assert list(store.agent_settings(game_id)) == ["bot"]
 
 
-def test_buddy_agent_settings_without_a_buddy_are_refused(client: TestClient) -> None:
+def test_buddy_agent_field_is_rejected_even_with_buddy_true(client: TestClient) -> None:
+    """`buddy_agent` is gone from `NewUiPlayer` entirely (2026-09-19) - a
+    request that still sends it is refused whether or not the seat
+    legitimately wants a buddy, unlike the old rule this test used to pin
+    (settings only accepted *with* `buddy: true`). `test_game_agent_settings.
+    test_buddy_agent_field_is_rejected` covers the plain case; this is the
+    one place that proves opting into a buddy for real does not let the
+    field back in."""
     response = client.post(
         "/api/lobby/games",
         json={
@@ -142,14 +149,14 @@ def test_buddy_agent_settings_without_a_buddy_are_refused(client: TestClient) ->
                     "username": "you",
                     "decklist_text": LEGAL_DECK,
                     "ai": False,
+                    "buddy": True,
                     "buddy_agent": {"model": "opus"},
                 },
                 {"username": "bot", "decklist_text": LEGAL_DECK_B, "ai": True},
             ]
         },
     )
-    assert response.status_code == 400
-    assert "buddy" in response.text
+    assert response.status_code == 422
 
 
 def test_a_buddy_on_an_ai_seat_is_refused(client: TestClient) -> None:
@@ -274,7 +281,7 @@ def test_the_lobby_model_still_identifies_the_human_with_a_buddy_present(
     the seat with no `agents` entry, so this is the end-to-end guard that a
     buddy's settings never land under the human's name."""
     alice = bearer_header(token(private_key, sub="alice"))
-    created = boot(client, buddy_agent={"model": "opus"}, headers=alice)
+    created = boot(client, headers=alice)
     row = _row(client, created["game_id"], alice)
     assert row is not None
     seats = run_module("lobby_model.js", "m.seatsFromRow(game, null)", game=row)
@@ -297,13 +304,13 @@ def _seats(client: TestClient, game_id: str, **params) -> list[dict[str, Any]]:
 def test_game_seats_lists_the_advisor_with_its_role_player_and_status(
     client: TestClient, spawnable: None, fresh_registry: ai_seat.AiSeatRegistry
 ) -> None:
-    created = boot(client, buddy_agent={"model": "opus"})
+    created = boot(client)
     rows = _seats(client, created["game_id"])
     advisors = [row for row in rows if row.get("role") == "advisor"]
     assert len(advisors) == 1
     advisor = advisors[0]
     assert advisor["player"] == "you"
-    assert advisor["agent"]["model"] == "opus"
+    assert advisor["agent"]["model"] == "claude-sonnet-5"
     assert advisor["ai_seat"]["role"] == "advisor"
     # The seat rows are untouched and still say what they always said.
     seats = [row for row in rows if row.get("role", "seat") == "seat"]
@@ -639,7 +646,7 @@ def test_a_failed_buddy_leaves_the_game_fully_playable(
 def test_restart_and_stop_reuse_the_ai_seat_routes(
     client: TestClient, spawnable: None, fresh_registry: ai_seat.AiSeatRegistry
 ) -> None:
-    created = boot(client, buddy_agent={"model": "opus"})
+    created = boot(client)
     game_id, uid = created["game_id"], created["advisor_uids"]["you"]
     stopped = client.post(f"/api/lobby/games/{game_id}/ai-seat/stop", json={"advisor_uid": uid})
     assert stopped.status_code == 200, stopped.text
@@ -1132,7 +1139,9 @@ def test_a_game_created_through_the_lobby_form_with_the_buddy_registers_an_advis
     """The real `ui/render/lobby.js` builds the create body from its form (the
     buddy toggled on), and that exact body - not a hand-written one - is what
     the server gets. It must mint an advisor for the human, holding the
-    settings the form chose, and nothing under the name-keyed agent map."""
+    server's fixed default settings (2026-09-19: the form carries no model
+    field any more for `submitCreate` to fill in), and nothing under the
+    name-keyed agent map."""
     from test_ui_lobby import FAKE_DOM, LOBBY_FORM
 
     captured = run_module(
@@ -1144,8 +1153,6 @@ def test_a_game_created_through_the_lobby_form_with_the_buddy_registers_an_advis
             "youDeck": LEGAL_DECK,
             "aiDeck": LEGAL_DECK_B,
             "buddy": True,
-            "buddyModel": "fable",
-            "buddyEffort": "high",
         },
     )
     assert len(captured["posted"]) == 1, f"the lobby sent no create request: {captured}"
@@ -1157,16 +1164,16 @@ def test_a_game_created_through_the_lobby_form_with_the_buddy_registers_an_advis
     advisors = store.advisor_uids(created["game_id"])
     assert list(advisors) == [uid]
     assert advisors[uid].player == "you"
-    assert advisors[uid].agent == AgentSettings(model="fable", effort="high")
+    assert advisors[uid].agent == AgentSettings.default({})
     assert set(store.agent_settings(created["game_id"])) == {"bot"}
 
 
-def test_a_buddy_with_no_settings_runs_as_opus(client: TestClient) -> None:
+def test_a_buddy_with_no_settings_runs_as_the_play_default(client: TestClient) -> None:
     created = boot(client)
     uid = created["advisor_uids"]["you"]
     advisor = store.advisor_uids(created["game_id"])[uid]
     assert advisor.agent is not None
-    assert advisor.agent.model == "opus"
+    assert advisor.agent.model == "claude-sonnet-5"
 
 
 def test_the_advisor_wrapper_prose_says_its_legal_plays_arrive_on_the_wake() -> None:

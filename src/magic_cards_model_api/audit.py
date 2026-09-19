@@ -69,6 +69,22 @@ GAME_OVER_ACTION = "game_over"
 #: starts reaching the ledger rather than needing the page changed again.
 REFLECTION_ACTION = "game_reflection"
 
+#: The post-game AI review (`POST /api/games/{id}/ai-review`), filed once
+#: per game by whichever seat's driver generates it first
+#: (`mtg_agent.driver.review`) - a separate, Opus-generated critique built
+#: from the seat's own reflection (the "handoff") plus the game's own
+#: review record (`review.build_review`'s declarations/advice), never a
+#: seat's own account of what it did (that is `REFLECTION_ACTION`). Gated
+#: post-game exactly like a reflection (`app.declare_ai_review` mirrors
+#: `app.declare_reflection`'s gate). Not deduplicated server-side: in an
+#: AIvAI game both seats' drivers could in principle reach `turn_done`'s
+#: reflection branch and each generate one - deliberately accepted (see
+#: `mtg_agent.driver.review`'s own docstring), the same way multiple
+#: `REFLECTION_ACTION` rows already are, and for the same reason: the UI
+#: reads the last one, and a second review is not a defect, only a rare
+#: extra API call.
+AI_REVIEW_ACTION = "ai_review"
+
 #: An advisor's proposal: one action it says its human should take, validated
 #: against the engine where the request shape allowed it, recorded but never
 #: performed (`POST /api/games/{id}/advice`, `schemas.AdviceIn`). The row

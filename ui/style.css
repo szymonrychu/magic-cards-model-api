@@ -2006,6 +2006,18 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 }
 .reflection-who { color: var(--ink-faint); font-size: 12px; }
 
+/* The post-game AI review: a separate, Opus-generated critique, set apart
+   the same way `.reflection` is and for the same reason - written after
+   the result, so nothing above it may rest on it. */
+.ai-review {
+  margin-top: 20px;
+  border: 1px dashed var(--line-bright);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.015);
+  padding: 16px 18px;
+}
+.ai-review h2 { font-size: 15px; }
+
 @media (max-width: 900px) {
   .pairing { grid-template-columns: 1fr; }
   .pairing-rule { height: 1px; margin: 12px 0; }

@@ -47,15 +47,21 @@ export const GAME_OVER_ACTION = "game_over";
 export const ADVICE_ACTION = "advice";
 export const ADVICE_APPROVED_ACTION = "advice_approved";
 
-//: The actions a post-game write-up would arrive as, should one ever be
-//: written into the ledger. Today nothing writes any of them: the agent's
-//: reflection turn (`mtg_agent/driver/prompt.py`'s `reflection_turn`) writes
-//: markdown into its own memory directory and never posts it to the API, so
-//: `reflectionOf` returns `null` for every game this server can serve. It is
-//: matched anyway, and `review.reflection` with it, so the section appears
-//: the day either one starts carrying it rather than needing this page
-//: changed again.
+//: The actions a seat's own post-game write-up arrives as - `mtg_agent/
+//: driver/app.py`'s `post_reflection` posts the agent's `finalText` from its
+//: reflection turn to `POST /api/games/{id}/reflection` the moment the game
+//: server confirms a result, which lands as `audit.REFLECTION_ACTION`
+//: ("game_reflection"). The other two spellings are matched defensively for
+//: an older row or a differently-shaped write this page has not seen yet.
 export const REFLECTION_ACTIONS = ["game_reflection", "reflection", "post_game_reflection"];
+
+//: The post-game AI review's own action (`audit.AI_REVIEW_ACTION`,
+//: "ai_review") - a separate, Opus-generated critique built from the seat's
+//: reflection plus the game's review record (`mtg_agent/driver/review.py`),
+//: posted by `mtg_agent/driver/app.py`'s `post_ai_review` right after the
+//: reflection above it. Never mistaken for the seat's own reflection: a
+//: different action, read by `aiReviewOf` rather than `reflectionOf`.
+export const AI_REVIEW_ACTIONS = ["ai_review"];
 
 //: The rows that are the turn walking forward rather than a seat doing
 //: something. A real game is mostly these - 219 `advance` rows out of 297 in
@@ -755,6 +761,32 @@ export function reflectionOf(review) {
       seq: entry.seq,
       ts: entry.ts,
       afterTheResult: true,
+    };
+  }
+  return null;
+}
+
+/** The post-game AI review, if this game has one - `null` for a game whose
+ * driver never reached, or never finished, `post_ai_review` (an
+ * unreachable wrapper, a `claude` failure, or an older api build that
+ * predates the feature all read the same way here: nothing to show).
+ * Reads the newest `AI_REVIEW_ACTIONS` row exactly the way `reflectionOf`
+ * reads the newest reflection - see that function for why "newest wins"
+ * rather than "exactly one exists" (an AIvAI game's two drivers could each
+ * file one; `mtg_agent/driver/review.py`'s own docstring explains why that
+ * is accepted rather than coordinated against). */
+export function aiReviewOf(review) {
+  const entries = (review && review.entries) || [];
+  for (const entry of [...entries].reverse()) {
+    if (!AI_REVIEW_ACTIONS.includes(entry.action)) continue;
+    const detail = entry.detail || {};
+    const text = detail.text || entry.reasoning || "";
+    if (!text) continue;
+    return {
+      text,
+      player: detail.player || null,
+      seq: entry.seq,
+      ts: entry.ts,
     };
   }
   return null;

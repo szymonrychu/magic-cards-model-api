@@ -670,6 +670,62 @@ def test_a_reflection_the_endpoint_carries_itself_is_used_when_present() -> None
     assert found["afterTheResult"] is True
 
 
+# ------------------------------------------------------- the AI review -----
+
+
+def test_a_review_with_no_ai_review_has_none() -> None:
+    assert call("m.aiReviewOf(rev)", rev=review([entry(1, "cast")], [])) is None
+
+
+def test_an_ai_review_row_is_found_and_carries_its_own_seq() -> None:
+    rows = [
+        entry(1, "cast", detail={"player": "bob", "card": "Grizzly Bears"}),
+        entry(2, "game_over", detail={"winner": "bob"}),
+        entry(3, "game_reflection", detail={"player": "bob", "text": "notes"}),
+        entry(
+            4,
+            "ai_review",
+            detail={
+                "player": "bob",
+                "text": "the turn 6 attack was a misread of the empty board",
+            },
+        ),
+    ]
+    found = call("m.aiReviewOf(rev)", rev=review(rows, []))
+    assert found["text"] == "the turn 6 attack was a misread of the empty board"
+    assert found["player"] == "bob"
+    assert found["seq"] == 4
+
+
+def test_an_ai_review_is_never_confused_with_a_reflection() -> None:
+    """A `game_reflection` row alone must never satisfy `aiReviewOf`, and an
+    `ai_review` row alone must never satisfy `reflectionOf` - the two are
+    separate actions, read by separate functions."""
+    reflection_only = review(
+        [entry(1, "game_reflection", detail={"player": "bob", "text": "notes"})], []
+    )
+    assert call("m.aiReviewOf(rev)", rev=reflection_only) is None
+
+    review_only = review(
+        [entry(1, "ai_review", detail={"player": "bob", "text": "a critique"})], []
+    )
+    assert call("m.reflectionOf(rev)", rev=review_only) is None
+    assert call("m.aiReviewOf(rev)", rev=review_only)["text"] == "a critique"
+
+
+def test_the_newest_ai_review_wins_when_more_than_one_was_filed() -> None:
+    """Documented, accepted behaviour (`mtg_agent/driver/review.py`'s own
+    docstring): an AIvAI game's two drivers could each file one, and this
+    reads the most recent rather than assuming exactly one exists."""
+    rows = [
+        entry(1, "ai_review", detail={"player": "bob", "text": "first pass"}),
+        entry(2, "ai_review", detail={"player": "alice", "text": "second pass"}),
+    ]
+    found = call("m.aiReviewOf(rev)", rev=review(rows, []))
+    assert found["text"] == "second pass"
+    assert found["player"] == "alice"
+
+
 # --------------------------------------------------- mtg-buddy's advice -----
 
 

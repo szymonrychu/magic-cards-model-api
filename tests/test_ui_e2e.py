@@ -45,12 +45,12 @@ def booted_game(client: TestClient) -> dict:
                     "username": "bob",
                     "decklist_text": LEGAL_DECK_B,
                     "ai": True,
-                    # The lobby's `#ai-model`/`#ai-effort`/`#ai-thinking` fields,
-                    # sent through `agentFrom` - `test_ui_lobby.py` covers that
-                    # function itself; this proves the whole request round trip
-                    # carries it, the same `agent` field `decks_api.py`'s
-                    # `NewUiPlayer` accepts.
-                    "agent": {"model": "opus", "effort": "max", "max_thinking_tokens": None},
+                    # No `agent` field: 2026-09-19, model/effort/thinking
+                    # budget are a fixed server-side deployment choice, not
+                    # a per-request one - `NewUiPlayer` carries no field a
+                    # request could use to ask for anything else any more
+                    # (`test_game_agent_settings.py` pins the 422 a request
+                    # that still sends one gets).
                 },
             ],
             "seed": 7,
@@ -59,7 +59,7 @@ def booted_game(client: TestClient) -> dict:
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["agents"] == {
-        "bob": {"model": "opus", "effort": "max", "max_thinking_tokens": None}
+        "bob": {"model": "claude-sonnet-5", "effort": "high", "max_thinking_tokens": None}
     }
 
     # The boot leaves the game resting in CR 103.5's mulligan step (turn 0),

@@ -4,7 +4,10 @@ The driver holds no game state. It learns of a game when ai_seat.py hands it
 a dispatched seat, reads that seat's decklist from the game server, works out
 which guided deck it is, writes `current-game.md`, and pushes turn 0. When a
 turn finishes it asks the game server whether the game ended; if it did, it
-pushes exactly one reflection turn, then the handover turn.
+pushes exactly one reflection turn, files it and the post-game AI review
+(`post_ai_review`, `review.py` - a separate, Opus-generated critique, best
+effort and never blocking) once that reflection completes, then the handover
+turn.
 
 One agent container plays exactly one match. Once the handover is in (see
 `start_handover`), the driver sends `DELETE /v1/session` and forgets the
@@ -30,6 +33,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.playscripts.report import script_run_table
 
 from .config import DriverSettings
@@ -57,9 +61,16 @@ from .prompt import (
     render_current_game,
     turn_zero,
 )
+from .review import review_prompt
 from .revision import guides_revision
 
 log = logging.getLogger("driver")
+
+#: Headroom over the wrapper's own `Settings.review_timeout` default (600s,
+#: `oneshot.run_review`'s bound on the subprocess itself) - the driver's own
+#: client timeout for `POST /v1/review` must outlast it, or a review that
+#: was about to succeed reads here as an unreachable wrapper instead.
+REVIEW_HTTP_TIMEOUT = 650.0
 
 #: How much of the agent's own account of a turn goes into the container log.
 #: The whole `finalText` can be a page; the first paragraphs are where the
@@ -399,6 +410,86 @@ def build_app(
                 )
         except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
             log.warning("could not post the reflection for game %s: %s", assignment.game_id, exc)
+
+    def post_ai_review(assignment: Assignment, reflection_text: str) -> None:
+        """Generate and file the post-game AI review - the handoff's other
+        half, run on Opus (`AgentSettings.review_default`, fixed, never this
+        seat's own play settings) from `reflection_text` (the just-posted
+        reflection) plus the game's own review record. See
+        `mtg_agent.driver.review`'s module docstring for the full reasoning.
+
+        Best-effort throughout, exactly like `post_reflection` beside it:
+        nothing here may block or fail the handover that always follows it.
+        Three calls, each independently allowed to fail without touching the
+        others already having happened - fetch the review record, ask the
+        wrapper to generate the review, file the result."""
+        try:
+            with make_client(settings.game_api) as client:
+                response = client.get(
+                    f"/api/games/{assignment.game_id}/review", params={"uid": assignment.uid}
+                )
+            if response.status_code >= 400:
+                log.warning(
+                    "could not read the review record for game %s: %s",
+                    assignment.game_id,
+                    response.status_code,
+                )
+                return
+            review_record = response.json()
+        except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
+            log.warning("could not read the review record for game %s: %s", assignment.game_id, exc)
+            return
+
+        prompt = review_prompt(assignment, reflection_text, review_record)
+        review_settings = AgentSettings.review_default()
+        try:
+            with make_client(settings.wrapper_api) as client:
+                response = client.post(
+                    "/v1/review",
+                    json={
+                        "prompt": prompt,
+                        "model": review_settings.model,
+                        "effort": review_settings.effort,
+                    },
+                    headers=wrapper_headers(),
+                    timeout=REVIEW_HTTP_TIMEOUT,
+                )
+            if response.status_code >= 400:
+                log.warning(
+                    "the wrapper could not generate an AI review for game %s: %s",
+                    assignment.game_id,
+                    response.status_code,
+                )
+                return
+            review_text = str(response.json().get("text") or "").strip()
+        except Exception as exc:  # noqa: BLE001 - an unreachable/slow wrapper must not block retire
+            log.warning("could not generate the AI review for game %s: %s", assignment.game_id, exc)
+            return
+        if not review_text:
+            log.warning(
+                "the AI review for game %s came back with no text; not filing it",
+                assignment.game_id,
+            )
+            return
+
+        try:
+            with make_client(settings.game_api) as client:
+                response = client.post(
+                    f"/api/games/{assignment.game_id}/ai-review",
+                    json={
+                        "player": assignment.player,
+                        "uid": assignment.uid,
+                        "text": review_text,
+                    },
+                )
+            if response.status_code >= 400:
+                log.warning(
+                    "game server refused the AI review for game %s: %s",
+                    assignment.game_id,
+                    response.status_code,
+                )
+        except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
+            log.warning("could not post the AI review for game %s: %s", assignment.game_id, exc)
 
     def retire(assignment: Assignment) -> bool:
         """End the agent's life. `DELETE /v1/session` makes it exit, its
@@ -990,7 +1081,9 @@ def build_app(
             # what the agent said while writing them into the game's own
             # ledger, then hand over; the handover retires the agent once its
             # marker is written.
-            post_reflection(assignment, str(record.get("finalText") or ""))
+            reflection_text_value = str(record.get("finalText") or "")
+            post_reflection(assignment, reflection_text_value)
+            post_ai_review(assignment, reflection_text_value)
             with lock:
                 ended = current["outcome"] or ""
             return {

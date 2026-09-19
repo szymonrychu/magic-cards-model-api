@@ -94,6 +94,21 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         #: "down" makes the scripts PUT alone unreachable, the rest of the
         #: game server still answering.
         "scripts_route": "up",
+        #: `GET /api/games/{id}/review`'s own body - the "game record" the
+        #: AI review prompt is built from. A minimal but real shape
+        #: (`review.build_review`'s own keys), overridable per test.
+        "review_record": {
+            "players": ["bob", "alice"],
+            "winner": "bob",
+            "drawn": False,
+            "declarations": [],
+            "advice": [],
+        },
+        #: The fake wrapper's `/v1/review` (the post-game AI review's
+        #: one-shot call): "up" answers with `review_text`, "down" is an
+        #: unreachable wrapper, "error" is a `claude` failure (502).
+        "wrapper_review": "up",
+        "review_text": "a solid game overall, but the turn 6 attack was a misread",
     }
     #: The fake wrapper's own idea of its current model/effort/max_thinking_
     #: tokens - what `GET /v1/session` answers and `POST /v1/session` updates.
@@ -102,10 +117,14 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
     session_posts: list[dict] = []
     submitted: list[dict] = []
     reflection_posts: list[dict] = []
+    #: Every `POST /api/games/{id}/ai-review` the driver sent.
+    ai_review_posts: list[dict] = []
+    #: Every `POST /v1/review` the driver sent to the fake wrapper.
+    review_requests: list[dict] = []
     #: Every `PUT /api/games/{id}/seats/{uid}/scripts` the driver sent.
     script_puts: list[dict] = []
     #: What the fake wrapper and game server were asked, in order: `message`,
-    #: `interrupt`, `probe`, `delete` and `reflection`.
+    #: `interrupt`, `probe`, `delete`, `reflection`, `review` and `ai_review`.
     events: list[str] = []
     interrupts: list[dict] = []
     probes: list[dict] = []
@@ -146,6 +165,23 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         reflection_posts.append({"game_id": game_id, **body})
         events.append("reflection")
         return {"recorded": True, "log_seq": len(reflection_posts), "player": body.get("player")}
+
+    @game.get("/api/games/{game_id}/review")
+    def get_review(game_id: str, uid: str | None = None, key: str | None = None):
+        if state["game"] == "down":
+            raise httpx.ConnectError("connection refused")
+        return state["review_record"]
+
+    @game.post("/api/games/{game_id}/ai-review")
+    def post_ai_review(game_id: str, body: dict):
+        # Mirrors `post_reflection` above: only the failure mode a driver
+        # test cares about (an unreachable game server) - the real route's
+        # gates are `test_review.py`'s job.
+        if state["game"] == "down":
+            raise httpx.ConnectError("connection refused")
+        ai_review_posts.append({"game_id": game_id, **body})
+        events.append("ai_review")
+        return {"recorded": True, "log_seq": len(ai_review_posts), "player": body.get("player")}
 
     @game.get("/api/lobby/games/{game_id}/seats")
     def get_seats(game_id: str, uid: str | None = None):
@@ -236,6 +272,19 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         state["agent"] = "booting"
         return {"stopping": True, "exiting": True}
 
+    @wrapper.post("/v1/review")
+    def post_review(body: dict):
+        # Deliberately reads no state the interactive session touches
+        # (`state["agent"]`) - the whole point of `/v1/review` is that it
+        # never competes with, or waits on, a turn in flight.
+        review_requests.append(body)
+        events.append("review")
+        if state["wrapper_review"] == "down":
+            raise httpx.ConnectError("connection refused")
+        if state["wrapper_review"] == "error":
+            raise HTTPException(status_code=502, detail="claude exited 1")
+        return {"text": state["review_text"]}
+
     @wrapper.post("/v1/interrupt", status_code=202)
     def post_interrupt():
         if state["agent"] == "down":
@@ -297,6 +346,8 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         submitted=submitted,
         wrapper_posts=submitted,
         reflection_posts=reflection_posts,
+        ai_review_posts=ai_review_posts,
+        review_requests=review_requests,
         script_puts=script_puts,
         session_settings=session_settings,
         session_posts=session_posts,

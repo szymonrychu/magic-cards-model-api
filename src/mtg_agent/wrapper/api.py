@@ -18,8 +18,16 @@ from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Requ
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Settings
+from .oneshot import ReviewFailed, run_review
 from .probe import ProbeUnavailableError
 from .session import BusyError, DeadError, Manager, NotReadyError
+
+#: `review_runner`'s shape (`api.py`'s own default is `oneshot.run_review`) -
+#: `(settings, prompt, model, effort) -> text`, raising `ReviewFailed` on
+#: any failure. A parameter rather than a hardcoded call so tests substitute
+#: a fake and never spawn a real `claude` subprocess (see
+#: `tests/wrapper/test_api.py`'s `review_wired` fixture).
+ReviewRunner = Callable[[Settings, str, str, str], str]
 
 
 class MessageIn(BaseModel):
@@ -29,6 +37,22 @@ class MessageIn(BaseModel):
 
 class ProbeIn(BaseModel):
     text: str = ""
+
+
+class ReviewIn(BaseModel):
+    """`POST /v1/review` - the post-game AI review's one-shot call. Carries
+    its own `model`/`effort` rather than reading `manager.settings`: the
+    review always runs on Opus (`AgentSettings.review_default`, the driver's
+    own fixed choice - see `mtg_agent.driver.review`), which must never be
+    confused with whatever this container's supervised session is playing
+    with, and requesting it explicitly is what keeps that true even if a
+    future caller ever wants something else here."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = ""
+    model: str = ""
+    effort: str = ""
 
 
 class SessionIn(BaseModel):
@@ -60,6 +84,7 @@ def build_public_app(
     settings: Settings,
     *,
     on_exit: Callable[[], None] | None = None,
+    review_runner: ReviewRunner = run_review,
 ) -> FastAPI:
     """`on_exit` is how the HTTP layer asks the process to stop.
 
@@ -162,6 +187,28 @@ def build_public_app(
         if status is None:
             raise HTTPException(status_code=404, detail="unknown or superseded probe")
         return status
+
+    @app.post("/v1/review", dependencies=guard)
+    def post_review(body: ReviewIn) -> dict:
+        """The post-game AI review's one-shot call - entirely separate from
+        `manager`/the supervised session above: no turn is submitted, no
+        session state is touched, and this never competes with, or waits
+        on, a turn in flight (unlike `/v1/session`'s 409-while-busy). See
+        `oneshot.py`'s module docstring for why this is `claude --print`
+        rather than another turn of the interactive session, and
+        `mtg_agent.driver.review` for who calls this and why the game is
+        already over by the time anything does.
+
+        Blocking, bounded by `Settings.review_timeout` inside
+        `review_runner` - the caller (the driver) is expected to use a
+        client timeout at least that long."""
+        if not body.prompt.strip():
+            raise HTTPException(status_code=400, detail="prompt is required")
+        try:
+            text = review_runner(settings, body.prompt, body.model, body.effort)
+        except ReviewFailed as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"text": text}
 
     @app.post("/v1/interrupt", status_code=202, dependencies=guard)
     def post_interrupt() -> dict:

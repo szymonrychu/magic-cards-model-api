@@ -361,6 +361,35 @@ class ReflectionResponse(BaseModel):
     player: str
 
 
+class AiReviewIn(RequestModel):
+    """`POST /api/games/{game_id}/ai-review` - the post-game AI review
+    (`audit.AI_REVIEW_ACTION`), a separate critique generated on Opus from a
+    seat's own reflection plus the game's review record
+    (`mtg_agent.driver.review`), never a seat's own account of what it did.
+
+    Shaped exactly like `ReflectionIn` and gated the same way (post-game
+    only, `uid` must open `player`'s own seat) - see that class's docstring
+    for why this is deliberately just one seat's credential and one block of
+    text, nothing structured."""
+
+    player: Stated
+    uid: Stated
+    """The seat whose driver generated this review - its own credential, so
+    nobody may write one into another seat's name."""
+    text: Stated
+    """The review itself, in Opus's own words."""
+
+
+class AiReviewResponse(BaseModel):
+    """`POST .../ai-review`'s answer. No state view, for the same reason
+    `ReflectionResponse` has none: this mutates no `Game`."""
+
+    recorded: bool
+    log_seq: int
+    """The `records` row this review became."""
+    player: str
+
+
 class AdviceIn(RequestModel):
     """`POST /api/games/{game_id}/advice` - one action an **advisor** thinks
     its human should take, recorded and never performed.

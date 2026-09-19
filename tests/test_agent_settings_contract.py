@@ -44,12 +44,15 @@ def test_the_wire_shape_of_a_default_agent_validates(schema):
 
 def test_the_wire_shape_of_the_server_default_validates(schema):
     """The settings a seat or buddy actually runs as when the request named
-    none (`AgentSettings.default`, no `AGENT_DEFAULT_MODEL` set) - Opus. The
-    schema carries no default of its own: `model` is required on the wire,
-    so the default is decided here and only ever travels as a value."""
+    none (`AgentSettings.default`, no `AGENT_DEFAULT_MODEL`/
+    `AGENT_DEFAULT_EFFORT` set) - Sonnet at high effort (2026-09-19, cost
+    cutting; a request cannot name anything else any more, see
+    `test_game_agent_settings.py`). The schema carries no default of its
+    own: `model` is required on the wire, so the default is decided here and
+    only ever travels as a value."""
     payload = AgentSettings.default({}).to_wire()
     jsonschema.validate(payload, schema)
-    assert payload == {"model": "opus", "effort": "medium", "maxThinkingTokens": None}
+    assert payload == {"model": "claude-sonnet-5", "effort": "high", "maxThinkingTokens": None}
     assert "default" not in schema["properties"]["model"]
 
 

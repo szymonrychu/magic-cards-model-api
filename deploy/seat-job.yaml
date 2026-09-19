@@ -85,8 +85,8 @@ metadata:
     mtg/seat-uid: u1234567890
   annotations:
     mtg/player: bot
-    mtg/model: opus
-    mtg/effort: max
+    mtg/model: claude-sonnet-5
+    mtg/effort: high
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 14400

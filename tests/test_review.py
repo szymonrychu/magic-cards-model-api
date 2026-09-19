@@ -549,6 +549,98 @@ def test_a_reflection_for_a_game_that_never_existed_is_a_404(client: TestClient)
 
 
 # ---------------------------------------------------------------------------
+# the AI review: a separate, Opus-generated critique, gated the same way
+# ---------------------------------------------------------------------------
+
+
+def _ai_review(client: TestClient, info: dict[str, Any], player: str = "bob", **overrides: Any):
+    body = {
+        "player": player,
+        "uid": info["seat_uids"][player],
+        "text": "bob's mainboard removal came a turn late twice - the reflection already"
+        " named the first instance, the ledger confirms the second on turn 6",
+        **overrides,
+    }
+    return client.post(f"/api/games/{info['game_id']}/ai-review", json=body)
+
+
+def test_an_ai_review_is_refused_while_the_game_is_still_live(client: TestClient) -> None:
+    """Same post-game gate as a reflection - `declare_ai_review` mirrors
+    `declare_reflection` exactly."""
+    info = _agent_game(client)
+    game_id = info["game_id"]
+    try:
+        response = _ai_review(client, info)
+        assert response.status_code == 409, response.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_an_ai_review_requires_the_seats_own_uid(client: TestClient) -> None:
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        wrong_seat = _ai_review(client, info, player="bob", uid=info["seat_uids"]["alice"])
+        assert wrong_seat.status_code == 404, wrong_seat.text
+        stranger = _ai_review(client, info, player="bob", uid="not-a-uid")
+        assert stranger.status_code == 404, stranger.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_finished_games_ai_review_is_recorded_and_reaches_the_review(
+    client: TestClient,
+) -> None:
+    """`POST .../ai-review` writes an `ai_review` row (`audit.AI_REVIEW_ACTION`),
+    which `GET .../review` hands back inside `entries` exactly like every
+    other row - a separate action from `game_reflection`, never mistaken for
+    the seat's own reflection."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        filed = _ai_review(client, info)
+        assert filed.status_code == 200, filed.text
+        body = filed.json()
+        assert body["recorded"] is True
+        assert body["player"] == "bob"
+        assert isinstance(body["log_seq"], int)
+
+        review_body = _review(client, game_id, key=info["admin_key"]).json()
+        reviews = [e for e in review_body["entries"] if e["action"] == audit.AI_REVIEW_ACTION]
+        assert len(reviews) == 1
+        entry = reviews[0]
+        assert entry["detail"]["player"] == "bob"
+        assert "mainboard removal" in entry["detail"]["text"]
+        assert entry["action"] != audit.REFLECTION_ACTION
+        assert entry["action"] != audit.PLAN_ACTION
+        assert all(entry["seq"] != d["seq"] for d in review_body["declarations"])
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_an_ai_review_can_be_filed_after_the_game_is_ended(client: TestClient) -> None:
+    info = _played_out(client)
+    game_id = info["game_id"]
+    ended = client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+    assert ended.status_code == 200, ended.text
+
+    filed = _ai_review(client, info)
+    assert filed.status_code == 200, filed.text
+
+    review_body = _review(client, game_id, key=info["admin_key"]).json()
+    actions = [e["action"] for e in review_body["entries"]]
+    assert audit.AI_REVIEW_ACTION in actions
+
+
+def test_an_ai_review_for_a_game_that_never_existed_is_a_404(client: TestClient) -> None:
+    response = client.post(
+        "/api/games/no-such-game/ai-review",
+        json={"player": "bob", "uid": "whatever", "text": "notes"},
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # the snapshot this build cannot decode: the review is rebuilt from the ledger
 # ---------------------------------------------------------------------------
 #
