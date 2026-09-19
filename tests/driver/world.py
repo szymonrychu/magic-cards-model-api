@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -109,6 +110,10 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         #: unreachable wrapper, "error" is a `claude` failure (502).
         "wrapper_review": "up",
         "review_text": "a solid game overall, but the turn 6 attack was a misread",
+        #: Seconds `/v1/review`'s fake sleeps before answering - 0 by
+        #: default. Set to simulate a slow review generation, to prove the
+        #: driver never waits on it before answering `/turn-done`.
+        "wrapper_review_delay": 0,
     }
     #: The fake wrapper's own idea of its current model/effort/max_thinking_
     #: tokens - what `GET /v1/session` answers and `POST /v1/session` updates.
@@ -279,6 +284,8 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         # never competes with, or waits on, a turn in flight.
         review_requests.append(body)
         events.append("review")
+        if state["wrapper_review_delay"]:
+            time.sleep(state["wrapper_review_delay"])
         if state["wrapper_review"] == "down":
             raise httpx.ConnectError("connection refused")
         if state["wrapper_review"] == "error":

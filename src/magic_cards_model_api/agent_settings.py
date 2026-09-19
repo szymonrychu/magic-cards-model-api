@@ -121,7 +121,7 @@ class AgentSettings(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     model: str = Field(min_length=1)
-    effort: Effort = "medium"
+    effort: Effort = "high"
     max_thinking_tokens: int | None = Field(
         default=None,
         ge=0,

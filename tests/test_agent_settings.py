@@ -22,9 +22,11 @@ def test_defaults_come_from_env() -> None:
     assert AgentSettings.default({"AGENT_DEFAULT_MODEL": "  "}).model == "claude-sonnet-5"
     # Straight from the model's own API, not grepped off the source line.
     # This is the bare pydantic field default (used when deserialising old
-    # stored data that carries no `effort` key at all) - orthogonal to what
-    # `.default()` above now returns, and unchanged by this pass.
-    assert AgentSettings.model_fields["effort"].default == "medium"
+    # stored data that carries no `effort` key at all, or when code
+    # constructs `AgentSettings(model=...)` without naming one) - matches
+    # `.default()`'s own "high" now rather than trailing the old "medium"
+    # default the field used to carry on its own.
+    assert AgentSettings.model_fields["effort"].default == "high"
 
 
 def test_default_effort_env_override() -> None:

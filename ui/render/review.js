@@ -49,7 +49,7 @@ import {
   frameState,
   cardNamesIn,
   perspectiveOf,
-  aiReviewOf,
+  aiReviewsOf,
   reflectionOf,
   collapseRoutine,
   adviceOf,
@@ -675,11 +675,13 @@ function reflectionNode(reflection) {
   );
 }
 
-/** The post-game AI review, drawn right after `reflectionNode` (which it
+/** One post-game AI review, drawn right after `reflectionNode` (which it
  * follows in `draw` below): a separate section since it is a separate
  * thing - Opus's own opinion of the game, not the seat's own words, and
- * `aiReviewOf`'s own docstring says so. Written after the result exactly
- * like the reflection, for the same reason. */
+ * `aiReviewsOf`'s own docstring says so. Written after the result exactly
+ * like the reflection, for the same reason. `draw` calls this once per
+ * entry `aiReviewsOf` returns - an AIvAI game gets one section per AI
+ * seat, never just the last one drawn over the other. */
 function aiReviewNode(aiReview) {
   return h(
     "section",
@@ -765,8 +767,9 @@ export function mountReview(root, handlers) {
     }
     const reflection = reflectionOf(review);
     if (reflection) body.appendChild(reflectionNode(reflection));
-    const aiReview = aiReviewOf(review);
-    if (aiReview) body.appendChild(aiReviewNode(aiReview));
+    for (const aiReview of aiReviewsOf(review)) {
+      body.appendChild(aiReviewNode(aiReview));
+    }
   }
 
   async function open({ gameId, uid }) {

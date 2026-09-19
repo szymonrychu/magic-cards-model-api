@@ -224,6 +224,14 @@ def build_app(
         # latest one this driver ran, which a preStop after retirement joins.
         "handover": None,
         "lastHandover": None,
+        # Set, under `lock`, the first time `turn_done` starts processing the
+        # reflection turn's own completion - before `post_reflection` or the
+        # background review are ever started, so a retried or genuinely
+        # concurrent duplicate delivery of that SAME callback (`webhook.
+        # Deliverer` retries a slow response) sees it already True and skips
+        # straight to answering with the current handover status, rather than
+        # filing a second reflection or spawning a second review thread.
+        "reflectionHandled": False,
     }
 
     def clear_locked() -> None:
@@ -236,6 +244,7 @@ def build_app(
             turnActive=False,
             outcome=None,
             handover=None,
+            reflectionHandled=False,
         )
 
     def seed_plan_file(assignment: Assignment) -> None:
@@ -440,7 +449,13 @@ def build_app(
             log.warning("could not read the review record for game %s: %s", assignment.game_id, exc)
             return
 
-        prompt = review_prompt(assignment, reflection_text, review_record)
+        try:
+            prompt = review_prompt(assignment, reflection_text, review_record)
+        except Exception as exc:  # noqa: BLE001 - a malformed review record must not block retire
+            log.warning(
+                "could not build the AI review prompt for game %s: %s", assignment.game_id, exc
+            )
+            return
         review_settings = AgentSettings.review_default()
         try:
             with make_client(settings.wrapper_api) as client:
@@ -1079,15 +1094,42 @@ def build_app(
         if reflection_id is not None and finished == reflection_id:
             # The notes are written, on disk, in this container only. Post
             # what the agent said while writing them into the game's own
-            # ledger, then hand over; the handover retires the agent once its
-            # marker is written.
+            # ledger, then hand over immediately - the handover retires the
+            # agent once its marker is written, and must not wait on the AI
+            # review below, which can run for minutes.
+            #
+            # `reflectionHandled` dedupes this whole branch: `webhook.
+            # Deliverer` retries a `/turn-done` delivery (its own 10s client
+            # timeout, up to 3 attempts) whenever the driver does not answer
+            # within it, and inline review generation used to blow through
+            # that easily - three redundant deliveries of the SAME callback
+            # used to file the reflection three times, generate the review
+            # three times, and delay the handover by however long the
+            # slowest of them took. The flag is claimed under `lock` before
+            # any of that work starts, so a retried - or genuinely
+            # concurrent, not merely sequential - duplicate delivery sees it
+            # already set and skips straight to `start_handover`, which is
+            # itself idempotent (`start_handover`'s own docstring: "the
+            # first call claims it ... a later call gets its current
+            # status") and so safe to call on every delivery, duplicate or
+            # not.
             reflection_text_value = str(record.get("finalText") or "")
-            post_reflection(assignment, reflection_text_value)
-            post_ai_review(assignment, reflection_text_value)
+            with lock:
+                already_handled = current["reflectionHandled"]
+                current["reflectionHandled"] = True
+            if not already_handled:
+                post_reflection(assignment, reflection_text_value)
             with lock:
                 ended = current["outcome"] or ""
+            handover_status = start_handover(ended)
+            if not already_handled:
+                threading.Thread(
+                    target=post_ai_review,
+                    args=(assignment, reflection_text_value),
+                    daemon=True,
+                ).start()
             return {
-                "handover": start_handover(ended),
+                "handover": handover_status,
                 "gameId": assignment.game_id,
                 "reflected": True,
             }

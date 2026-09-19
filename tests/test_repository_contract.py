@@ -1258,6 +1258,39 @@ def test_archived_is_none_for_a_game_that_never_existed(repo: GameRepository) ->
     assert repo.archived("no-such-game") is None
 
 
+def test_archived_carries_ai_players_for_a_live_game(repo: GameRepository) -> None:
+    """`declare_ai_review` gates on "is this player an AI seat of this
+    game" against the ARCHIVED row (same reason `admin_key`/`seat_uids` are
+    there: the credential/fact a post-game route authorises against must
+    survive the soft delete `archived()` is built to see past) - so this
+    has to be populated live too, not only after `delete()`."""
+    game_id = repo.create(_real_game())
+    repo.register_ai_players(game_id, ["bot"])
+
+    archived = repo.archived(game_id)
+
+    assert archived is not None
+    assert archived.ai_players == {"bot"}
+
+
+def test_archived_ai_players_survives_the_soft_delete(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.register_ai_players(game_id, ["bot"])
+
+    assert repo.delete(game_id) is True
+
+    archived = repo.archived(game_id)
+    assert archived is not None
+    assert archived.ai_players == {"bot"}
+
+
+def test_archived_ai_players_is_empty_for_a_game_that_never_registered_any(
+    repo: GameRepository,
+) -> None:
+    game_id = repo.create(_real_game())
+    assert repo.archived(game_id).ai_players == set()
+
+
 def test_a_deleted_games_state_and_credentials_survive_for_review(repo: GameRepository) -> None:
     """The user's own requirement: "Games must be persisting in the database
     even after are stopped/finished/conceded." A hard delete kept the audit

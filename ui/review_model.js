@@ -60,7 +60,7 @@ export const REFLECTION_ACTIONS = ["game_reflection", "reflection", "post_game_r
 //: reflection plus the game's review record (`mtg_agent/driver/review.py`),
 //: posted by `mtg_agent/driver/app.py`'s `post_ai_review` right after the
 //: reflection above it. Never mistaken for the seat's own reflection: a
-//: different action, read by `aiReviewOf` rather than `reflectionOf`.
+//: different action, read by `aiReviewsOf` rather than `reflectionOf`.
 export const AI_REVIEW_ACTIONS = ["ai_review"];
 
 //: The rows that are the turn walking forward rather than a seat doing
@@ -766,28 +766,33 @@ export function reflectionOf(review) {
   return null;
 }
 
-/** The post-game AI review, if this game has one - `null` for a game whose
- * driver never reached, or never finished, `post_ai_review` (an
- * unreachable wrapper, a `claude` failure, or an older api build that
- * predates the feature all read the same way here: nothing to show).
- * Reads the newest `AI_REVIEW_ACTIONS` row exactly the way `reflectionOf`
- * reads the newest reflection - see that function for why "newest wins"
- * rather than "exactly one exists" (an AIvAI game's two drivers could each
- * file one; `mtg_agent/driver/review.py`'s own docstring explains why that
- * is accepted rather than coordinated against). */
-export function aiReviewOf(review) {
+/** Every post-game AI review this game has, one per player who has one -
+ * `[]` for a game whose driver never reached, or never finished,
+ * `post_ai_review` (an unreachable wrapper, a `claude` failure, or an older
+ * api build that predates the feature all read the same way here: nothing
+ * to show).
+ *
+ * **One per player, not one overall.** An AIvAI game runs two independent
+ * drivers, and each files its own review of its own seat
+ * (`mtg_agent/driver/review.py`'s own docstring: not coordinated against,
+ * on purpose) - collapsing to a single "the newest one wins" would silently
+ * drop one seat's review whenever the other seat's driver happened to file
+ * afterward. Within one player's own rows the newest still wins (a retried
+ * or re-generated review replaces an earlier attempt for the same seat).
+ * Ordered by each player's own winning row's `seq`, ascending - not by
+ * where that player's *first* row appeared in the ledger, so a player whose
+ * only review lands late does not jump ahead of one whose current review is
+ * actually older. */
+export function aiReviewsOf(review) {
   const entries = (review && review.entries) || [];
-  for (const entry of [...entries].reverse()) {
+  const byPlayer = new Map();
+  for (const entry of entries) {
     if (!AI_REVIEW_ACTIONS.includes(entry.action)) continue;
     const detail = entry.detail || {};
     const text = detail.text || entry.reasoning || "";
     if (!text) continue;
-    return {
-      text,
-      player: detail.player || null,
-      seq: entry.seq,
-      ts: entry.ts,
-    };
+    const player = detail.player || null;
+    byPlayer.set(player, { text, player, seq: entry.seq, ts: entry.ts });
   }
-  return null;
+  return [...byPlayer.values()].sort((a, b) => a.seq - b.seq);
 }

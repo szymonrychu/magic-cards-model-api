@@ -2253,7 +2253,7 @@
         "additionalProperties": false,
         "properties": {
           "effort": {
-            "default": "medium",
+            "default": "high",
             "enum": [
               "low",
               "medium",
@@ -15024,7 +15024,7 @@
     },
     "/api/games/{game_id}/ai-review": {
       "post": {
-        "description": "File the post-game AI review (`mtg_agent.driver.review`, run on Opus\nfrom a seat's own reflection plus the game's review record) -\n`audit.AI_REVIEW_ACTION`, a row entirely separate from\n`audit.REFLECTION_ACTION`.\n\nMirrors `declare_reflection` exactly: same gate (post-game only, against\n`store.archived` so a soft-deleted lobby game still accepts one), same\nuid-owns-seat check, same \"mutates no `Game`\" shape. See that route's\ndocstring for the reasoning; nothing here differs beyond which action\nthe row is filed under and whose words it carries.",
+        "description": "File the post-game AI review (`mtg_agent.driver.review`, run on Opus\nfrom a seat's own reflection plus the game's review record) -\n`audit.AI_REVIEW_ACTION`, a row entirely separate from\n`audit.REFLECTION_ACTION`.\n\nMirrors `declare_reflection` exactly: same gate (post-game only, against\n`store.archived` so a soft-deleted lobby game still accepts one), same\nuid-owns-seat check, same \"mutates no `Game`\" shape. See that route's\ndocstring for the reasoning; nothing here differs beyond which action\nthe row is filed under and whose words it carries.\n\n**One check `declare_reflection` does not need: `req.player` must be a\nregistered AI seat of this game (`archived.ai_players`).** A reflection\nis legitimately a human's own words about their own game; an AI review\nis never that - it is only ever the output of an AI seat's own driver\ncritiquing that seat's play, so a human's own uid (which genuinely opens\ntheir own seat, and would otherwise pass the check above) must not be\nable to file one in anybody's name. Without this a human player could\nforge a review of themselves or of their opponent, since the uid check\nalone only proves \"this credential speaks for this seat\", not \"this\nseat is the kind that ever calls this route\" - the same distinction\n`AiReviewIn`'s docstring draws in words.",
         "operationId": "declare_ai_review_api_games__game_id__ai_review_post",
         "parameters": [
           {

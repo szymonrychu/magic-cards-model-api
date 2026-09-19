@@ -3473,12 +3473,26 @@ def declare_ai_review(game_id: str, req: AiReviewIn) -> dict[str, Any]:
     `store.archived` so a soft-deleted lobby game still accepts one), same
     uid-owns-seat check, same "mutates no `Game`" shape. See that route's
     docstring for the reasoning; nothing here differs beyond which action
-    the row is filed under and whose words it carries."""
+    the row is filed under and whose words it carries.
+
+    **One check `declare_reflection` does not need: `req.player` must be a
+    registered AI seat of this game (`archived.ai_players`).** A reflection
+    is legitimately a human's own words about their own game; an AI review
+    is never that - it is only ever the output of an AI seat's own driver
+    critiquing that seat's play, so a human's own uid (which genuinely opens
+    their own seat, and would otherwise pass the check above) must not be
+    able to file one in anybody's name. Without this a human player could
+    forge a review of themselves or of their opponent, since the uid check
+    alone only proves "this credential speaks for this seat", not "this
+    seat is the kind that ever calls this route" - the same distinction
+    `AiReviewIn`'s docstring draws in words."""
     archived = store.archived(game_id)
     if archived is None:
         raise KeyError(f"no game {game_id}")
     if archived.seat_uids.get(req.uid) != req.player:
         raise KeyError("that uid is not that seat in this game")
+    if req.player not in archived.ai_players:
+        raise KeyError("that seat is not an AI seat in this game")
     if not _post_game(archived, _gate_entries(archived)):
         raise HTTPException(
             status_code=409,

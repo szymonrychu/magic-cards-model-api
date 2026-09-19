@@ -588,6 +588,23 @@ def test_an_ai_review_requires_the_seats_own_uid(client: TestClient) -> None:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
+def test_an_ai_review_is_refused_for_a_player_who_is_not_an_ai_seat(client: TestClient) -> None:
+    """Forged reviews: `alice` is a human seat in `_played_out` (only `bob`
+    is registered `is_agent`/AI) - her own uid genuinely opens her own seat,
+    so the uid-owns-seat check alone would let her file a review "of"
+    herself or of `bob` under her own credential. Only an AI seat's driver
+    may ever generate one."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        as_herself = _ai_review(client, info, player="alice", uid=info["seat_uids"]["alice"])
+        assert as_herself.status_code == 404, as_herself.text
+        review_body = _review(client, game_id, key=info["admin_key"]).json()
+        assert all(e["action"] != audit.AI_REVIEW_ACTION for e in review_body["entries"])
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
 def test_a_finished_games_ai_review_is_recorded_and_reaches_the_review(
     client: TestClient,
 ) -> None:

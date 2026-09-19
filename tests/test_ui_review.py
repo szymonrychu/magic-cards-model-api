@@ -542,6 +542,49 @@ def test_the_ai_review_is_last_after_the_reflection() -> None:
     assert "reflection" in result["secondLastClass"]
 
 
+def test_an_aivai_game_draws_one_ai_review_section_per_seat() -> None:
+    reviewed = {
+        **REVIEW,
+        "entries": [
+            *REVIEW["entries"],
+            entry(
+                109,
+                "ai_review",
+                detail={"player": "claude", "text": "claude's own review text"},
+            ),
+            entry(
+                110,
+                "ai_review",
+                detail={"player": "alice", "text": "alice's own review text"},
+            ),
+        ],
+    }
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          const nodes = findAll(els.body, "ai-review");
+          return { count: nodes.length, texts: nodes.map((n) => n.textContent) };
+        })()
+        """,
+        review=reviewed,
+        card=CARD_ANSWER,
+    )
+    assert result["count"] == 2
+    joined = " ".join(result["texts"])
+    assert "claude's own review text" in joined
+    assert "alice's own review text" in joined
+
+
 def test_back_returns_to_the_lobby() -> None:
     result = drive(
         """

@@ -62,25 +62,33 @@ def _resolve(game_id: str, req: StartAiSeat) -> tuple[str, str, str, AgentSettin
     one lookup `start` and `stop` share.
 
     This is `store.player_for_uid` extended to advisors: a seat uid resolves
-    to the player it plays and that player's own `agent_settings`, and an
-    advisor uid resolves to the player it *reads* and to the settings stored
-    inside its own advisor entry (`repository.Advisor.agent`, never the
-    name-keyed map - `decks_api.NewUiPlayer.buddy_agent` says why). Anything
-    else is a 404, indistinguishable from a game that does not exist, the
-    same refusal this route has always given an unknown uid.
-    """
+    to the player it plays, and an advisor uid resolves to the player it
+    *reads*. Anything else is a 404, indistinguishable from a game that does
+    not exist, the same refusal this route has always given an unknown uid.
+
+    **`agent` is always the CURRENT `AgentSettings.default()`, never
+    whatever this game's seat or advisor entry has stored** (2026-09-19,
+    owner direction, cost cutting). `store.agent_settings`/`repository.
+    Advisor.agent` still carry the historical value a game was actually
+    created with - `GET .../seats` and the review page read those directly,
+    and must keep showing it verbatim - but `_resolve` answers a different
+    question: what should the runner this call is about to (re)start
+    actually be DISPATCHED with, right now. `AiSeatRegistry` is entirely
+    process-local (see its own module docstring), so every server restart
+    forgets which seats were ever running; without this, a seat from a game
+    created before the deployment's default changed would run on whatever
+    it was created with forever, resurrecting an old, more expensive choice
+    every time an operator restarts it long after the fact."""
     uid, role = req.target()
     if role == ai_seat.ROLE_ADVISOR:
         advisor = store.advisor_uids(game_id).get(uid)
         if advisor is None:
             raise KeyError("that uid is no advisor in this game")
-        agent = advisor.agent or AgentSettings.default(os.environ)
-        return uid, role, advisor.player, agent
+        return uid, role, advisor.player, AgentSettings.default(os.environ)
     player = store.player_for_uid(game_id, uid)
     if player is None:
         raise KeyError("that uid is no seat in this game")
-    agent = store.agent_settings(game_id).get(player) or AgentSettings.default(os.environ)
-    return uid, role, player, agent
+    return uid, role, player, AgentSettings.default(os.environ)
 
 
 @router.post("/games/{game_id}/ai-seat/start")

@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -289,11 +290,17 @@ def test_the_completed_reflection_turn_also_generates_and_posts_an_ai_review(wor
     driver asks the fake wrapper's `/v1/review` (Opus, `AgentSettings.
     review_default` - never the seat's own play settings) to critique the
     game, using the just-posted reflection plus the game's own review
-    record, and files the answer under `POST .../ai-review`."""
+    record, and files the answer under `POST .../ai-review`.
+
+    The review itself runs in a background thread (started after
+    `start_handover`, never before), so `play_out_the_match`'s own wait for
+    retirement can win the race against it landing - `wait_for` below is
+    what makes this deterministic rather than occasionally flaky."""
     client = world.client
     state = world.state
     play_out_the_match(client, state, world.submitted)
 
+    wait_for(lambda: len(world.ai_review_posts) == 1)
     assert len(world.review_requests) == 1
     review_request = world.review_requests[0]
     assert review_request["model"] == "claude-opus-5"
@@ -311,6 +318,112 @@ def test_the_completed_reflection_turn_also_generates_and_posts_an_ai_review(wor
             "text": "a solid game overall, but the turn 6 attack was a misread",
         }
     ]
+
+
+def test_a_slow_review_never_delays_the_handover_response(world):
+    """The bug: `post_ai_review` used to run inline, in `turn_done`, before
+    the handover was even started - a slow (or merely not-instant) review
+    generation delayed the handover response by exactly as long as the
+    review took, up to `REVIEW_HTTP_TIMEOUT` (650s). It must now run in the
+    background, started only after `start_handover`, so a slow review never
+    delays retirement at all."""
+    client = world.client
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    state["wrapper_review_delay"] = 2.0
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+
+    started = time.monotonic()
+    response = client.post(
+        "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+    )
+    elapsed = time.monotonic() - started
+
+    assert response.status_code == 202
+    assert response.json()["handover"] is not None
+    assert elapsed < 1.0, f"turn-done waited {elapsed:.2f}s on a 2s-slow review"
+
+    wait_for(lambda: len(world.ai_review_posts) == 1, timeout=5.0)
+
+
+def test_a_retried_reflection_turn_done_does_not_duplicate_work(world):
+    """`webhook.Deliverer` retries a `/turn-done` delivery (its own 10s
+    client timeout, up to 3 attempts) whenever the driver does not answer
+    within it - which inline review generation used to blow through easily.
+    Simulated here by simply POSTing the SAME reflection turn-done twice,
+    the way a slow first response and a retried second delivery look from
+    the driver's own side: both must succeed, but the reflection and the
+    review must each be filed exactly once."""
+    client = world.client
+    submitted = world.submitted
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+
+    first = client.post(
+        "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+    )
+    assert first.status_code == 202
+    assert first.json()["handover"] is not None
+
+    second = client.post(
+        "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+    )
+    assert second.status_code == 202
+    assert second.json()["handover"] is not None
+
+    assert world.reflection_posts == [
+        {"game_id": "g-1", "player": "bob", "uid": "secret-uid", "text": "wrote"}
+    ]
+
+    complete_handover(client, submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    assert len(world.review_requests) == 1
+
+
+def test_two_concurrent_deliveries_of_the_same_reflection_file_one_reflection(world):
+    """The actual race `webhook.Deliverer` can produce: its own client-side
+    timeout can fire while the driver is still mid-response, so a retried
+    delivery can be genuinely concurrent with the first one still being
+    processed, not merely sequential. Three real threads hitting the same
+    endpoint at once is what actually exercises the dedup lock, rather than
+    relying on the first call happening to finish before the second one
+    starts."""
+    client = world.client
+    submitted = world.submitted
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+
+    results: list = []
+    lock = threading.Lock()
+
+    def fire() -> None:
+        response = client.post(
+            "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+        )
+        with lock:
+            results.append(response)
+
+    threads = [threading.Thread(target=fire) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert all(r.status_code == 202 for r in results), [r.text for r in results]
+    assert world.reflection_posts == [
+        {"game_id": "g-1", "player": "bob", "uid": "secret-uid", "text": "wrote"}
+    ]
+
+    complete_handover(client, submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    assert len(world.review_requests) == 1
 
 
 def test_an_unreachable_wrapper_review_does_not_block_retirement(world):
@@ -369,6 +482,23 @@ def test_a_review_the_wrapper_answers_with_no_text_is_not_filed(world):
     state = world.state
     state["review_text"] = "   "
     play_out_the_match(client, state, world.submitted)
+    assert world.ai_review_posts == []
+
+
+def test_a_malformed_review_record_does_not_block_retirement(world):
+    """`review_prompt` (`review_prompt(assignment, reflection_text,
+    review_record)`) is a plain function call between the fetch and the
+    wrapper POST, outside either of their own try/excepts - a game server
+    answering something `GET .../review` was never meant to (`null`, here)
+    must not propagate an uncaught exception out of the background review
+    thread, and must not stop retirement, exactly like every other way this
+    best-effort chain can fail."""
+    client = world.client
+    state = world.state
+    state["review_record"] = None
+    play_out_the_match(client, state, world.submitted)
+    assert world.reflection_posts != []
+    assert world.review_requests == []
     assert world.ai_review_posts == []
 
 
