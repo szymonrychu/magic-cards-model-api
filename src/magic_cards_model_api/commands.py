@@ -570,12 +570,19 @@ def _replay_copy(game: Game) -> Game:
     return engine_api.copy_game(game)
 
 
-#: `Game`'s own 18 fail-closed notice lists (`models/game.py:1148-1306`) - one
-#: per category of clause this engine recognised but could not read, each
-#: appended and never cleared. `continuous_effects.layer_notices` is the
-#: 19th and lives one level down (`ContinuousEffects`, not `Game` itself), so
-#: `_notice_snapshot`/`_new_notices` read it separately below rather than
-#: folding it into this tuple.
+#: `Game`'s own fail-closed notice lists (`models/game.py`) - one per category
+#: of clause this engine recognised but could not read, each appended and
+#: never cleared. `continuous_effects.layer_notices` lives one level down
+#: (`ContinuousEffects`, not `Game` itself), so `_notice_snapshot`/
+#: `_new_notices` read it separately below rather than folding it into this
+#: tuple.
+#:
+#: `layer_remainder_notices` (the Reality Fracture bump, engine 03a891c) is
+#: the newest entry: `LayerRemainderNotice` (`machines/effects.py`) records a
+#: sibling sentence a multi-sentence resolution's layer-effect wave could not
+#: read (Academic Ascent's own "Empower Jace 2." used to vanish with no
+#: trace) - the same "unreadable is not the same as no effect" record every
+#: other list here already keeps.
 _NOTICE_LIST_NAMES: tuple[str, ...] = (
     "targeting_notices",
     "intervening_if_notices",
@@ -583,6 +590,7 @@ _NOTICE_LIST_NAMES: tuple[str, ...] = (
     "mode_notices",
     "cost_modifier_notices",
     "anaphoric_clause_notices",
+    "layer_remainder_notices",
     "imprint_notices",
     "cast_from_hand_exile_notices",
     "conditional_clause_notices",
@@ -604,7 +612,7 @@ _LAYER_NOTICE_KIND = "layer_notices"
 
 
 def _notice_snapshot(game: Game) -> dict[str, int]:
-    """How many entries each of `game`'s 19 notice lists holds right now -
+    """How many entries each of `game`'s 20 notice lists holds right now -
     `run_command`'s "before" half of the diff `_new_notices` takes after a
     command finishes."""
     snapshot = {name: len(getattr(game, name)) for name in _NOTICE_LIST_NAMES}
@@ -637,7 +645,7 @@ def _notice_source(game: Game, source_id: UUID | None) -> tuple[str | None, str 
 
 
 def _new_notices(game: Game, before: dict[str, int]) -> list[dict[str, Any]]:
-    """Every notice appended to any of `game`'s 19 lists since `before` was
+    """Every notice appended to any of `game`'s 20 lists since `before` was
     taken, as `{"kind": <the engine's own list name>, **notice.model_dump
     (mode="json"), "zone": ..., "controller": ...}` - the engine's own record
     passed straight through, plus the two bookkeeping keys `_notice_source`
@@ -645,8 +653,8 @@ def _new_notices(game: Game, before: dict[str, int]) -> list[dict[str, Any]]:
     sentence is authored here - what a notice *means* belongs in the MCP
     tool docstring and `driver/prompt.py`, not in this data.
 
-    Generic across all 19 lists and every command kind: this never has to
-    change when a 20th notice list is added, and carries no per-handler
+    Generic across all 20 lists and every command kind: this never has to
+    change when a 21st notice list is added, and carries no per-handler
     knowledge of what any single notice type means.
     """
     notices: list[dict[str, Any]] = []

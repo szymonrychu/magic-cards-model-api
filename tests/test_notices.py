@@ -26,6 +26,7 @@ from uuid import UUID
 
 import pytest
 from conftest import add_card
+from magic_cards_model.machines.effects import LayerRemainderNotice
 from magic_cards_model.machines.opening_hand import OpeningHandNotice
 from magic_cards_model.machines.triggers import TargetingNotice, TargetingNoticeKind
 from magic_cards_model.models import Game, Zone
@@ -322,6 +323,44 @@ def test_an_opening_hand_notice_is_captured_as_hand_with_no_controller(monkeypat
     assert notice["kind"] == "opening_hand_notices"
     assert notice["zone"] == "hand"
     assert notice["controller"] is None
+
+
+def test_a_layer_remainder_notice_reaches_the_seats_own_result(monkeypatch, client, game):
+    """`LayerRemainderNotice` (the Reality Fracture bump, engine 03a891c) is
+    `Game`'s newest fail-closed list - `_compose_layer_effect_with_remainder`
+    records it when a resolving spell's layer effect reads fine but a sibling
+    sentence beside it (Academic Ascent's own "Empower Jace 2.") does not,
+    the same "unreadable is not the same as no effect" record every other
+    list already keeps. `commands._NOTICE_LIST_NAMES` has to name the field
+    for `_new_notices`'s generic diff to ever see one - this is the
+    regression test for that wiring, built the same white-box way
+    `test_a_notice_naming_a_card_in_hand_is_captured_with_that_zone_and_controller`
+    proves `targeting_notices`'s own capture, since no printing in the pool
+    is guaranteed to stay unreadable as the engine's own parsers keep
+    improving."""
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    live = store.get(game)
+    bears = next(
+        state for state in live.shared_zones[Zone.BATTLEFIELD] if state.name == "Grizzly Bears"
+    )
+
+    def _probe(g: Game, payload: dict) -> dict:
+        g.layer_remainder_notices.append(
+            LayerRemainderNotice(
+                source_id=bears.id, source_name="Grizzly Bears", text="Empower Jace 2."
+            )
+        )
+        return {}
+
+    monkeypatch.setitem(commands.COMMAND_HANDLERS, "test_layer_remainder_probe", _probe)
+    result = run_command(live, Command(kind="test_layer_remainder_probe", payload={}))
+
+    assert result.status is RunStatus.COMPLETED
+    (notice,) = result.outcome["notices"]
+    assert notice["kind"] == "layer_remainder_notices"
+    assert notice["text"] == "Empower Jace 2."
+    assert notice["zone"] == "battlefield"
+    assert notice["controller"] == "alice"
 
 
 # -- reaching an AI seat ------------------------------------------------------
