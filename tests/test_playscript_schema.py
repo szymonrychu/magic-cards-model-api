@@ -570,6 +570,49 @@ def test_the_answer_item_takes_to_bottom_for_scry():
     assert model.moves[0].answers[0].to_bottom is not None
 
 
+def test_the_answer_item_takes_pile_one_for_choose_pile():
+    doc = mutate(
+        "moves",
+        [{"kind": "answer", "answers": [{"decision": "choose_pile", "pile_one": True}]}],
+    )
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.moves[0].answers[0].pile_one is True
+
+
+def test_the_answer_item_takes_players_for_choose_players():
+    doc = mutate(
+        "moves",
+        [
+            {
+                "kind": "answer",
+                "answers": [{"decision": "choose_players", "players": ["me", "opponent"]}],
+            }
+        ],
+    )
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.moves[0].answers[0].players == ["me", "opponent"]
+
+
+def test_players_answer_is_bounded_to_two_and_a_closed_vocabulary():
+    too_many = mutate(
+        "moves",
+        [
+            {
+                "kind": "answer",
+                "answers": [{"decision": "choose_players", "players": ["me", "opponent", "me"]}],
+            }
+        ],
+    )
+    assert codes(too_many) == ["bounds-exceeded"]
+    bad_token = mutate(
+        "moves",
+        [{"kind": "answer", "answers": [{"decision": "choose_players", "players": ["carol"]}]}],
+    )
+    assert codes(bad_token) == ["malformed-play"]
+
+
 def test_every_move_kind_validates_in_its_documented_shape():
     moves = [
         {

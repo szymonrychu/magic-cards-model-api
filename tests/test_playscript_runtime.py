@@ -2820,6 +2820,74 @@ def test_an_answer_naming_no_split_keeps_every_card_on_top(kind: str) -> None:
     }
 
 
+def test_choose_pile_answer_sends_pile_one_bool() -> None:
+    """CR 700.3's pile primitive - `pile_one` goes out exactly as given,
+    the same shape `put_on_top_or_bottom`'s `top` already is."""
+    pending = {
+        "kind": "choose_pile",
+        "player": "bob",
+        "generation": 5,
+        "cards": ["00000000-0000-4000-8000-000000000001"],
+    }
+
+    body = runtime.decide_body(
+        {"decision": "choose_pile", "pile_one": True}, pending, {}, "bob", REASONING
+    )
+
+    assert body == {
+        "player": "bob",
+        "reasoning": REASONING,
+        "generation": 5,
+        "pile_one": True,
+    }
+
+
+def test_choose_players_resolves_me_and_opponent_to_real_usernames() -> None:
+    """CR 701.34a's own Proliferate player half - each `me`/`opponent` token
+    resolves to that player's real username, `_targets`' own `PlayerTarget`
+    shape."""
+    pending = {
+        "kind": "choose_players",
+        "player": "alice",
+        "generation": 2,
+        "players": ["alice", "bob"],
+    }
+    state_view = {"players": [{"username": "alice"}, {"username": "bob"}]}
+
+    body = runtime.decide_body(
+        {"decision": "choose_players", "players": ["me", "opponent"]},
+        pending,
+        state_view,
+        "alice",
+        REASONING,
+    )
+
+    assert body == {
+        "player": "alice",
+        "reasoning": REASONING,
+        "generation": 2,
+        "usernames": ["alice", "bob"],
+    }
+
+
+def test_choose_players_only_names_players_the_decision_actually_offered() -> None:
+    """A `me`/`opponent` token whose real username the decision never
+    offered chooses nobody on that side - the same "chosen must be a subset
+    of offered" posture every other answer shape already keeps."""
+    pending = {"kind": "choose_players", "player": "alice", "generation": 1, "players": []}
+    state_view = {"players": [{"username": "alice"}, {"username": "bob"}]}
+
+    body = runtime.decide_body(
+        {"decision": "choose_players", "players": ["me", "opponent"]},
+        pending,
+        state_view,
+        "alice",
+        REASONING,
+    )
+
+    assert body["usernames"] == []
+
+
 def test_the_active_opponent_passing_after_the_runs_resolution_does_not_interrupt(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
