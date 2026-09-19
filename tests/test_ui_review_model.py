@@ -670,6 +670,88 @@ def test_a_reflection_the_endpoint_carries_itself_is_used_when_present() -> None
     assert found["afterTheResult"] is True
 
 
+# ------------------------------------------------------- the AI review -----
+
+
+def test_a_review_with_no_ai_review_is_empty() -> None:
+    assert call("m.aiReviewsOf(rev)", rev=review([entry(1, "cast")], [])) == []
+
+
+def test_an_ai_review_row_is_found_and_carries_its_own_seq() -> None:
+    rows = [
+        entry(1, "cast", detail={"player": "bob", "card": "Grizzly Bears"}),
+        entry(2, "game_over", detail={"winner": "bob"}),
+        entry(3, "game_reflection", detail={"player": "bob", "text": "notes"}),
+        entry(
+            4,
+            "ai_review",
+            detail={
+                "player": "bob",
+                "text": "the turn 6 attack was a misread of the empty board",
+            },
+        ),
+    ]
+    found = call("m.aiReviewsOf(rev)", rev=review(rows, []))
+    assert len(found) == 1
+    assert found[0]["text"] == "the turn 6 attack was a misread of the empty board"
+    assert found[0]["player"] == "bob"
+    assert found[0]["seq"] == 4
+
+
+def test_an_ai_review_is_never_confused_with_a_reflection() -> None:
+    """A `game_reflection` row alone must never satisfy `aiReviewsOf`, and an
+    `ai_review` row alone must never satisfy `reflectionOf` - the two are
+    separate actions, read by separate functions."""
+    reflection_only = review(
+        [entry(1, "game_reflection", detail={"player": "bob", "text": "notes"})], []
+    )
+    assert call("m.aiReviewsOf(rev)", rev=reflection_only) == []
+
+    review_only = review(
+        [entry(1, "ai_review", detail={"player": "bob", "text": "a critique"})], []
+    )
+    assert call("m.reflectionOf(rev)", rev=review_only) is None
+    assert call("m.aiReviewsOf(rev)", rev=review_only)[0]["text"] == "a critique"
+
+
+def test_the_newest_review_wins_when_the_same_player_has_more_than_one() -> None:
+    rows = [
+        entry(1, "ai_review", detail={"player": "bob", "text": "first pass"}),
+        entry(2, "ai_review", detail={"player": "bob", "text": "second pass"}),
+    ]
+    found = call("m.aiReviewsOf(rev)", rev=review(rows, []))
+    assert len(found) == 1
+    assert found[0]["text"] == "second pass"
+
+
+def test_an_aivai_game_shows_one_review_per_ai_seat() -> None:
+    """Documented, accepted behaviour (`mtg_agent/driver/review.py`'s own
+    docstring): an AIvAI game's two drivers each file their own review, of
+    their own seat, and both must be shown - never just the last one
+    overwriting the other."""
+    rows = [
+        entry(1, "ai_review", detail={"player": "bob", "text": "bob's own review"}),
+        entry(2, "ai_review", detail={"player": "alice", "text": "alice's own review"}),
+    ]
+    found = call("m.aiReviewsOf(rev)", rev=review(rows, []))
+    assert len(found) == 2
+    by_player = {r["player"]: r["text"] for r in found}
+    assert by_player == {"bob": "bob's own review", "alice": "alice's own review"}
+
+
+def test_ai_reviews_are_ordered_by_each_players_own_seq() -> None:
+    rows = [
+        entry(1, "ai_review", detail={"player": "alice", "text": "alice v1"}),
+        entry(2, "ai_review", detail={"player": "bob", "text": "bob v1"}),
+        entry(3, "ai_review", detail={"player": "alice", "text": "alice v2"}),
+    ]
+    found = call("m.aiReviewsOf(rev)", rev=review(rows, []))
+    # bob's single review (seq 2) sorts ahead of alice's newest (seq 3),
+    # even though alice's row appeared first in the ledger.
+    assert [r["player"] for r in found] == ["bob", "alice"]
+    assert [r["text"] for r in found] == ["bob v1", "alice v2"]
+
+
 # --------------------------------------------------- mtg-buddy's advice -----
 
 

@@ -25,29 +25,26 @@ def test_the_root_serves_the_lobby(client: TestClient) -> None:
     assert 'id="start-game"' in response.text
 
 
-def test_the_lobby_defaults_the_effort_dropdown_to_medium(client: TestClient) -> None:
-    """A live-pod audit found latency correlates almost perfectly with output
-    tokens and `high` effort - not context size - is what makes a seat slow.
-    `low` is deliberately not the default (documented as stopping to ask when
-    a task is multi-step, but a seat's `AskUserQuestion` is denied and it is
-    forbidden from stopping). The dropdown itself must still offer every
-    level - a combo-heavy deck can still be dispatched at `high` - only the
-    pre-selected option moves."""
+def test_the_lobby_offers_no_model_effort_or_thinking_controls(client: TestClient) -> None:
+    """2026-09-19 (owner direction, cost cutting): model, effort and
+    thinking budget are a fixed server-side deployment choice
+    (`AgentSettings.default`), not a per-game one - the lobby's picker
+    (`#ai-model`/`#ai-effort`/`#ai-thinking`, and the buddy's own
+    `#you-buddy-model`/`#you-buddy-effort`/`#you-buddy-thinking`) is gone,
+    replacing the two tests this one used to sit beside (one pinning the
+    effort dropdown's default, one pinning the thinking field's caption -
+    both premised on controls that no longer exist)."""
     text = client.get("/").text
-    assert '<option value="medium" selected>medium</option>' in text
-    assert '<option value="high">high</option>' in text
-    for level in ("low", "medium", "high", "xhigh", "max"):
-        assert f'value="{level}"' in text
-
-
-def test_the_thinking_budget_field_explains_when_it_applies(client: TestClient) -> None:
-    """`max_thinking_tokens` is silently ignored by the default model
-    (Sonnet 5, adaptive reasoning) - the field must say so rather than let
-    someone set it and wonder why nothing changed."""
-    text = client.get("/").text
-    assert 'id="ai-thinking"' in text
-    assert "adaptive" in text.lower()
-    assert "effort" in text.lower().split('id="ai-thinking"', 1)[1][:600]
+    for control in (
+        "ai-model",
+        "ai-effort",
+        "ai-thinking",
+        "ai-model-suggestions",
+        "you-buddy-model",
+        "you-buddy-effort",
+        "you-buddy-thinking",
+    ):
+        assert f'id="{control}"' not in text, f"#{control} is still on the page"
 
 
 def test_the_relative_assets_resolve_from_the_root(client: TestClient) -> None:

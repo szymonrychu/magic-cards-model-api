@@ -4,7 +4,10 @@ The driver holds no game state. It learns of a game when ai_seat.py hands it
 a dispatched seat, reads that seat's decklist from the game server, works out
 which guided deck it is, writes `current-game.md`, and pushes turn 0. When a
 turn finishes it asks the game server whether the game ended; if it did, it
-pushes exactly one reflection turn, then the handover turn.
+pushes exactly one reflection turn, files it and the post-game AI review
+(`post_ai_review`, `review.py` - a separate, Opus-generated critique, best
+effort and never blocking) once that reflection completes, then the handover
+turn.
 
 One agent container plays exactly one match. Once the handover is in (see
 `start_handover`), the driver sends `DELETE /v1/session` and forgets the
@@ -30,6 +33,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.playscripts.report import script_run_table
 
 from .config import DriverSettings
@@ -57,9 +61,31 @@ from .prompt import (
     render_current_game,
     turn_zero,
 )
+from .review import review_prompt
 from .revision import guides_revision
 
 log = logging.getLogger("driver")
+
+#: Headroom over the wrapper's own `Settings.review_timeout` default (600s,
+#: `oneshot.run_review`'s bound on the subprocess itself) - the driver's own
+#: client timeout for `POST /v1/review` must outlast it, or a review that
+#: was about to succeed reads here as an unreachable wrapper instead.
+REVIEW_HTTP_TIMEOUT = 650.0
+
+#: How long `retire` waits for the AI review's background thread
+#: (`post_ai_review`, spawned by `turn_done`'s reflection branch) before
+#: giving up on it and proceeding anyway - `DELETE /v1/session` tears the
+#: agent container down, and `exit_after_match` can end this very process
+#: right after, so a review still in flight when either happens is lost for
+#: good rather than merely late. Bounded by `REVIEW_HTTP_TIMEOUT` (the
+#: review's own slow call, `POST /v1/review`) plus headroom for the two
+#: quick calls around it (the review-record fetch, the `ai-review` post,
+#: each on `make_client`'s ordinary 30s timeout) - `post_ai_review` itself
+#: never runs longer than this in practice, so the join is expected to
+#: return well before its own timeout on every call that succeeds, and to
+#: hit it only on the same failures that would have made the review
+#: unreachable anyway.
+RETIRE_REVIEW_JOIN_TIMEOUT = REVIEW_HTTP_TIMEOUT + 70.0
 
 #: How much of the agent's own account of a turn goes into the container log.
 #: The whole `finalText` can be a page; the first paragraphs are where the
@@ -213,6 +239,23 @@ def build_app(
         # latest one this driver ran, which a preStop after retirement joins.
         "handover": None,
         "lastHandover": None,
+        # Set, under `lock`, the first time `turn_done` starts processing the
+        # reflection turn's own completion - before `post_reflection` or the
+        # background review are ever started, so a retried or genuinely
+        # concurrent duplicate delivery of that SAME callback (`webhook.
+        # Deliverer` retries a slow response) sees it already True and skips
+        # straight to answering with the current handover status, rather than
+        # filing a second reflection or spawning a second review thread.
+        "reflectionHandled": False,
+        # The AI review's own background `threading.Thread` (`post_ai_
+        # review`), once `turn_done` has spawned one - `retire` joins it,
+        # bounded by `RETIRE_REVIEW_JOIN_TIMEOUT`, before it tears the
+        # session down or exits the process, so the review is never merely
+        # racing the container's own shutdown. `None` until a reflection
+        # actually completes and spawns one; reset by `clear_locked` like
+        # everything else assignment-scoped, once `retire` has already
+        # joined whatever it named.
+        "reviewThread": None,
     }
 
     def clear_locked() -> None:
@@ -225,6 +268,8 @@ def build_app(
             turnActive=False,
             outcome=None,
             handover=None,
+            reflectionHandled=False,
+            reviewThread=None,
         )
 
     def seed_plan_file(assignment: Assignment) -> None:
@@ -400,6 +445,92 @@ def build_app(
         except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
             log.warning("could not post the reflection for game %s: %s", assignment.game_id, exc)
 
+    def post_ai_review(assignment: Assignment, reflection_text: str) -> None:
+        """Generate and file the post-game AI review - the handoff's other
+        half, run on Opus (`AgentSettings.review_default`, fixed, never this
+        seat's own play settings) from `reflection_text` (the just-posted
+        reflection) plus the game's own review record. See
+        `mtg_agent.driver.review`'s module docstring for the full reasoning.
+
+        Best-effort throughout, exactly like `post_reflection` beside it:
+        nothing here may block or fail the handover that always follows it.
+        Three calls, each independently allowed to fail without touching the
+        others already having happened - fetch the review record, ask the
+        wrapper to generate the review, file the result."""
+        try:
+            with make_client(settings.game_api) as client:
+                response = client.get(
+                    f"/api/games/{assignment.game_id}/review", params={"uid": assignment.uid}
+                )
+            if response.status_code >= 400:
+                log.warning(
+                    "could not read the review record for game %s: %s",
+                    assignment.game_id,
+                    response.status_code,
+                )
+                return
+            review_record = response.json()
+        except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
+            log.warning("could not read the review record for game %s: %s", assignment.game_id, exc)
+            return
+
+        try:
+            prompt = review_prompt(assignment, reflection_text, review_record)
+        except Exception as exc:  # noqa: BLE001 - a malformed review record must not block retire
+            log.warning(
+                "could not build the AI review prompt for game %s: %s", assignment.game_id, exc
+            )
+            return
+        review_settings = AgentSettings.review_default()
+        try:
+            with make_client(settings.wrapper_api) as client:
+                response = client.post(
+                    "/v1/review",
+                    json={
+                        "prompt": prompt,
+                        "model": review_settings.model,
+                        "effort": review_settings.effort,
+                    },
+                    headers=wrapper_headers(),
+                    timeout=REVIEW_HTTP_TIMEOUT,
+                )
+            if response.status_code >= 400:
+                log.warning(
+                    "the wrapper could not generate an AI review for game %s: %s",
+                    assignment.game_id,
+                    response.status_code,
+                )
+                return
+            review_text = str(response.json().get("text") or "").strip()
+        except Exception as exc:  # noqa: BLE001 - an unreachable/slow wrapper must not block retire
+            log.warning("could not generate the AI review for game %s: %s", assignment.game_id, exc)
+            return
+        if not review_text:
+            log.warning(
+                "the AI review for game %s came back with no text; not filing it",
+                assignment.game_id,
+            )
+            return
+
+        try:
+            with make_client(settings.game_api) as client:
+                response = client.post(
+                    f"/api/games/{assignment.game_id}/ai-review",
+                    json={
+                        "player": assignment.player,
+                        "uid": assignment.uid,
+                        "text": review_text,
+                    },
+                )
+            if response.status_code >= 400:
+                log.warning(
+                    "game server refused the AI review for game %s: %s",
+                    assignment.game_id,
+                    response.status_code,
+                )
+        except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
+            log.warning("could not post the AI review for game %s: %s", assignment.game_id, exc)
+
     def retire(assignment: Assignment) -> bool:
         """End the agent's life. `DELETE /v1/session` makes it exit, its
         restart policy gives the next match a fresh container, and we drop
@@ -407,7 +538,37 @@ def build_app(
 
         A failure here is logged and swallowed: an agent we cannot reach is
         already gone, and refusing to forget the finished game would wedge
-        the driver against every future dispatch."""
+        the driver against every future dispatch.
+
+        **Joins the AI review's background thread first, bounded by
+        `RETIRE_REVIEW_JOIN_TIMEOUT`.** The handover itself already ran to
+        completion by the time anything calls `retire` (`run_handover`'s own
+        last step) - nobody waits on the review to see the handover marker
+        or its own turn complete. But `DELETE /v1/session` tears the agent
+        container down, and `exit_after_match` can end this very process
+        right after - a handover typically finishes in 20-30s, while an
+        Opus review over a whole game routinely takes longer, so without
+        this join the review was lost for good on essentially every real
+        exit, not merely a slow one. Still best-effort throughout: a review
+        that fails or does not finish within the bound is logged and
+        retirement proceeds anyway, exactly as it always has for every
+        other way `post_ai_review` can fail."""
+        with lock:
+            review_thread = current.get("reviewThread")
+        if review_thread is not None and review_thread.is_alive():
+            log.info(
+                "match %s retiring: waiting on the AI review (up to %.0fs) before the session ends",
+                assignment.game_id,
+                RETIRE_REVIEW_JOIN_TIMEOUT,
+            )
+            review_thread.join(timeout=RETIRE_REVIEW_JOIN_TIMEOUT)
+            if review_thread.is_alive():
+                log.warning(
+                    "match %s retiring: the AI review did not finish within %.0fs, "
+                    "continuing without it",
+                    assignment.game_id,
+                    RETIRE_REVIEW_JOIN_TIMEOUT,
+                )
         stopped = True
         try:
             with make_client(settings.wrapper_api) as client:
@@ -988,13 +1149,45 @@ def build_app(
         if reflection_id is not None and finished == reflection_id:
             # The notes are written, on disk, in this container only. Post
             # what the agent said while writing them into the game's own
-            # ledger, then hand over; the handover retires the agent once its
-            # marker is written.
-            post_reflection(assignment, str(record.get("finalText") or ""))
+            # ledger, then hand over immediately - the handover retires the
+            # agent once its marker is written, and must not wait on the AI
+            # review below, which can run for minutes.
+            #
+            # `reflectionHandled` dedupes this whole branch: `webhook.
+            # Deliverer` retries a `/turn-done` delivery (its own 10s client
+            # timeout, up to 3 attempts) whenever the driver does not answer
+            # within it, and inline review generation used to blow through
+            # that easily - three redundant deliveries of the SAME callback
+            # used to file the reflection three times, generate the review
+            # three times, and delay the handover by however long the
+            # slowest of them took. The flag is claimed under `lock` before
+            # any of that work starts, so a retried - or genuinely
+            # concurrent, not merely sequential - duplicate delivery sees it
+            # already set and skips straight to `start_handover`, which is
+            # itself idempotent (`start_handover`'s own docstring: "the
+            # first call claims it ... a later call gets its current
+            # status") and so safe to call on every delivery, duplicate or
+            # not.
+            reflection_text_value = str(record.get("finalText") or "")
+            with lock:
+                already_handled = current["reflectionHandled"]
+                current["reflectionHandled"] = True
+            if not already_handled:
+                post_reflection(assignment, reflection_text_value)
             with lock:
                 ended = current["outcome"] or ""
+            handover_status = start_handover(ended)
+            if not already_handled:
+                review_thread = threading.Thread(
+                    target=post_ai_review,
+                    args=(assignment, reflection_text_value),
+                    daemon=True,
+                )
+                review_thread.start()
+                with lock:
+                    current["reviewThread"] = review_thread
             return {
-                "handover": start_handover(ended),
+                "handover": handover_status,
                 "gameId": assignment.game_id,
                 "reflected": True,
             }

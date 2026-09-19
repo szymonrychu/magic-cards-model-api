@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -284,6 +285,223 @@ def test_the_completed_reflection_turn_posts_it_to_the_game_server(world):
     ]
 
 
+def test_the_completed_reflection_turn_also_generates_and_posts_an_ai_review(world):
+    """The other half of the handoff: once the reflection is posted, the
+    driver asks the fake wrapper's `/v1/review` (Opus, `AgentSettings.
+    review_default` - never the seat's own play settings) to critique the
+    game, using the just-posted reflection plus the game's own review
+    record, and files the answer under `POST .../ai-review`.
+
+    The review itself runs in a background thread (started after
+    `start_handover`, never before), so `play_out_the_match`'s own wait for
+    retirement can win the race against it landing - `wait_for` below is
+    what makes this deterministic rather than occasionally flaky."""
+    client = world.client
+    state = world.state
+    play_out_the_match(client, state, world.submitted)
+
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    assert len(world.review_requests) == 1
+    review_request = world.review_requests[0]
+    assert review_request["model"] == "claude-opus-5"
+    assert review_request["effort"] == "high"
+    # The prompt is built from the reflection text this same call sequence
+    # just posted - proof the review runs AFTER the reflection, not before.
+    assert "wrote" in review_request["prompt"]
+    assert "bob" in review_request["prompt"]
+
+    assert world.ai_review_posts == [
+        {
+            "game_id": "g-1",
+            "player": "bob",
+            "uid": "secret-uid",
+            "text": "a solid game overall, but the turn 6 attack was a misread",
+        }
+    ]
+
+
+def test_a_slow_review_never_delays_the_handover_response(world):
+    """The bug: `post_ai_review` used to run inline, in `turn_done`, before
+    the handover was even started - a slow (or merely not-instant) review
+    generation delayed the handover response by exactly as long as the
+    review took, up to `REVIEW_HTTP_TIMEOUT` (650s). It must now run in the
+    background, started only after `start_handover`, so a slow review never
+    delays retirement at all."""
+    client = world.client
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    state["wrapper_review_delay"] = 2.0
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+
+    started = time.monotonic()
+    response = client.post(
+        "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+    )
+    elapsed = time.monotonic() - started
+
+    assert response.status_code == 202
+    assert response.json()["handover"] is not None
+    assert elapsed < 1.0, f"turn-done waited {elapsed:.2f}s on a 2s-slow review"
+
+    wait_for(lambda: len(world.ai_review_posts) == 1, timeout=5.0)
+
+
+def test_a_retried_reflection_turn_done_does_not_duplicate_work(world):
+    """`webhook.Deliverer` retries a `/turn-done` delivery (its own 10s
+    client timeout, up to 3 attempts) whenever the driver does not answer
+    within it - which inline review generation used to blow through easily.
+    Simulated here by simply POSTing the SAME reflection turn-done twice,
+    the way a slow first response and a retried second delivery look from
+    the driver's own side: both must succeed, but the reflection and the
+    review must each be filed exactly once."""
+    client = world.client
+    submitted = world.submitted
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+
+    first = client.post(
+        "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+    )
+    assert first.status_code == 202
+    assert first.json()["handover"] is not None
+
+    second = client.post(
+        "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+    )
+    assert second.status_code == 202
+    assert second.json()["handover"] is not None
+
+    assert world.reflection_posts == [
+        {"game_id": "g-1", "player": "bob", "uid": "secret-uid", "text": "wrote"}
+    ]
+
+    complete_handover(client, submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    assert len(world.review_requests) == 1
+
+
+def test_two_concurrent_deliveries_of_the_same_reflection_file_one_reflection(world):
+    """The actual race `webhook.Deliverer` can produce: its own client-side
+    timeout can fire while the driver is still mid-response, so a retried
+    delivery can be genuinely concurrent with the first one still being
+    processed, not merely sequential. Three real threads hitting the same
+    endpoint at once is what actually exercises the dedup lock, rather than
+    relying on the first call happening to finish before the second one
+    starts."""
+    client = world.client
+    submitted = world.submitted
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+
+    results: list = []
+    lock = threading.Lock()
+
+    def fire() -> None:
+        response = client.post(
+            "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+        )
+        with lock:
+            results.append(response)
+
+    threads = [threading.Thread(target=fire) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert all(r.status_code == 202 for r in results), [r.text for r in results]
+    assert world.reflection_posts == [
+        {"game_id": "g-1", "player": "bob", "uid": "secret-uid", "text": "wrote"}
+    ]
+
+    complete_handover(client, submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    assert len(world.review_requests) == 1
+
+
+def test_an_unreachable_wrapper_review_does_not_block_retirement(world):
+    """Best-effort, exactly like `post_reflection` and `sync_agent_settings`
+    beside it: a wrapper `/v1/review` this driver cannot reach must not wedge
+    the agent mid-retirement, and must not stop the reflection itself from
+    having already been filed."""
+    client = world.client
+    state = world.state
+    state["wrapper_review"] = "down"
+    play_out_the_match(client, state, world.submitted)
+    assert world.reflection_posts != []
+    assert world.ai_review_posts == []
+
+
+def test_a_claude_failure_generating_the_review_does_not_block_retirement(world):
+    client = world.client
+    state = world.state
+    state["wrapper_review"] = "error"
+    play_out_the_match(client, state, world.submitted)
+    assert world.reflection_posts != []
+    assert world.ai_review_posts == []
+
+
+def test_an_unreachable_game_server_for_the_review_record_does_not_block_retirement(world):
+    """`get_review` (fetching the game record the prompt is built from) is
+    the first of the AI review's three calls - an unreachable game server
+    there must fail the review generation the same way a later failure
+    would, without ever reaching the wrapper."""
+    client = world.client
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+    real_get_review = state["game"]
+
+    # Flip the game server down only once the reflection has landed (so the
+    # reflection post itself still succeeds), by way of a second `state`
+    # flag `post_ai_review` cannot tell apart from the review-record read -
+    # both go through the same `game` app, so simply going down here covers
+    # the review's own GET too.
+    state["game"] = "down"
+    body = client.post(
+        "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+    ).json()
+    assert body["handover"]["outcome"] == "bob won"
+    complete_handover(client, world.submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    assert world.review_requests == []
+    assert world.ai_review_posts == []
+    assert real_get_review == "up"
+
+
+def test_a_review_the_wrapper_answers_with_no_text_is_not_filed(world):
+    client = world.client
+    state = world.state
+    state["review_text"] = "   "
+    play_out_the_match(client, state, world.submitted)
+    assert world.ai_review_posts == []
+
+
+def test_a_malformed_review_record_does_not_block_retirement(world):
+    """`review_prompt` (`review_prompt(assignment, reflection_text,
+    review_record)`) is a plain function call between the fetch and the
+    wrapper POST, outside either of their own try/excepts - a game server
+    answering something `GET .../review` was never meant to (`null`, here)
+    must not propagate an uncaught exception out of the background review
+    thread, and must not stop retirement, exactly like every other way this
+    best-effort chain can fail."""
+    client = world.client
+    state = world.state
+    state["review_record"] = None
+    play_out_the_match(client, state, world.submitted)
+    assert world.reflection_posts != []
+    assert world.review_requests == []
+    assert world.ai_review_posts == []
+
+
 def test_a_reflection_turn_that_said_nothing_still_posts_a_placeholder(world):
     client = world.client
     state = world.state
@@ -339,6 +557,87 @@ def test_the_agent_is_stopped_only_once_per_match(world):
     play_out_the_match(client, state, world.submitted)
     client.post("/turn-done", json={"turnId": "turn-2", "state": "complete"})
     assert state["deleted"] == 1
+
+
+def test_two_sequential_games_through_one_driver_each_get_their_own_review(world):
+    """`reflectionHandled` (and the rest of `clear_locked`'s reset) must not
+    leak from one match into the next. A compose-style driver (not
+    `exit_after_match`) is not thrown away between matches - `retire`
+    clears the assignment and the next dispatch, once the replacement agent
+    container is up, starts clean - so the SAME driver process runs the
+    whole reflect-review-handover flow twice here, and the second game's
+    own reflection and review must land under its own game id and uid,
+    exactly as the first game's did."""
+    client = world.client
+    state = world.state
+    submitted = world.submitted
+
+    play_out_the_match(client, state, submitted)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    assert world.ai_review_posts[0] == {
+        "game_id": "g-1",
+        "player": "bob",
+        "uid": "secret-uid",
+        "text": "a solid game overall, but the turn 6 attack was a misread",
+    }
+
+    state["agent"] = "up"  # the replacement container finished booting
+    state["winner"] = None
+    state["review_text"] = "the second game's own critique"
+    dispatched = dispatch(client, uid="uid-2", game_id="g-2")
+    assert dispatched.status_code == 202
+    turn_zero_id = dispatched.json()["turnId"]
+
+    # `complete_handover`/naive polling for "any handover-opening turn"
+    # would find game ONE's own (already completed) handover turn - still
+    # sitting in `submitted` - on the very first check, before game two's
+    # own has even been pushed. Recording the count first and waiting for
+    # it to grow is what actually waits for THIS game's handover turn.
+    handover_turns_before = sum(
+        1 for turn in submitted if turn["text"].startswith(HANDOVER_OPENING)
+    )
+
+    state["winner"] = "bob"
+    client.post(
+        "/turn-done", json={"turnId": turn_zero_id, "state": "complete", "finalText": "gg2"}
+    )
+    assert "The game is over" in submitted[-1]["text"]
+    reflection_id = f"turn-{len(submitted)}"
+    client.post(
+        "/turn-done", json={"turnId": reflection_id, "state": "complete", "finalText": "wrote2"}
+    )
+
+    def newest_handover_turn_ids() -> list[str] | None:
+        matches = [
+            f"turn-{index + 1}"
+            for index, turn in enumerate(submitted)
+            if turn["text"].startswith(HANDOVER_OPENING)
+        ]
+        return matches if len(matches) > handover_turns_before else None
+
+    handover_ids = wait_for(newest_handover_turn_ids)
+    client.post(
+        "/turn-done",
+        json={"turnId": handover_ids[-1], "state": "complete", "finalText": "pushed"},
+    )
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+
+    wait_for(lambda: len(world.ai_review_posts) == 2)
+    assert world.reflection_posts[-1] == {
+        "game_id": "g-2",
+        "player": "bob",
+        "uid": "uid-2",
+        "text": "wrote2",
+    }
+    assert world.ai_review_posts[-1] == {
+        "game_id": "g-2",
+        "player": "bob",
+        "uid": "uid-2",
+        "text": "the second game's own critique",
+    }
+    # Neither game's own reflection or review was duplicated by the other's.
+    assert len(world.reflection_posts) == 2
+    assert len(world.ai_review_posts) == 2
 
 
 def test_a_match_is_retired_even_when_the_agent_is_already_gone(world):

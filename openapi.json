@@ -2253,7 +2253,7 @@
         "additionalProperties": false,
         "properties": {
           "effort": {
-            "default": "medium",
+            "default": "high",
             "enum": [
               "low",
               "medium",
@@ -2286,6 +2286,58 @@
           "model"
         ],
         "title": "AgentSettings",
+        "type": "object"
+      },
+      "AiReviewIn": {
+        "additionalProperties": false,
+        "description": "`POST /api/games/{game_id}/ai-review` - the post-game AI review\n(`audit.AI_REVIEW_ACTION`), a separate critique generated on Opus from a\nseat's own reflection plus the game's review record\n(`mtg_agent.driver.review`), never a seat's own account of what it did.\n\nShaped exactly like `ReflectionIn` and gated the same way (post-game\nonly, `uid` must open `player`'s own seat) - see that class's docstring\nfor why this is deliberately just one seat's credential and one block of\ntext, nothing structured.",
+        "properties": {
+          "player": {
+            "minLength": 1,
+            "title": "Player",
+            "type": "string"
+          },
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "uid": {
+            "minLength": 1,
+            "title": "Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player",
+          "uid",
+          "text"
+        ],
+        "title": "AiReviewIn",
+        "type": "object"
+      },
+      "AiReviewResponse": {
+        "description": "`POST .../ai-review`'s answer. No state view, for the same reason\n`ReflectionResponse` has none: this mutates no `Game`.",
+        "properties": {
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recorded",
+          "log_seq",
+          "player"
+        ],
+        "title": "AiReviewResponse",
         "type": "object"
       },
       "AlternativeCostView": {
@@ -7718,16 +7770,6 @@
       "NewUiPlayer": {
         "additionalProperties": false,
         "properties": {
-          "agent": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentSettings"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "ai": {
             "default": false,
             "title": "Ai",
@@ -7737,16 +7779,6 @@
             "default": false,
             "title": "Buddy",
             "type": "boolean"
-          },
-          "buddy_agent": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentSettings"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "decklist_text": {
             "minLength": 1,
@@ -14988,6 +15020,56 @@
           }
         },
         "summary": "Get Affordances"
+      }
+    },
+    "/api/games/{game_id}/ai-review": {
+      "post": {
+        "description": "File the post-game AI review (`mtg_agent.driver.review`, run on Opus\nfrom a seat's own reflection plus the game's review record) -\n`audit.AI_REVIEW_ACTION`, a row entirely separate from\n`audit.REFLECTION_ACTION`.\n\nMirrors `declare_reflection` exactly: same gate (post-game only, against\n`store.archived` so a soft-deleted lobby game still accepts one), same\nuid-owns-seat check, same \"mutates no `Game`\" shape. See that route's\ndocstring for the reasoning; nothing here differs beyond which action\nthe row is filed under and whose words it carries.\n\n**One check `declare_reflection` does not need: `req.player` must be a\nregistered AI seat of this game (`archived.ai_players`).** A reflection\nis legitimately a human's own words about their own game; an AI review\nis never that - it is only ever the output of an AI seat's own driver\ncritiquing that seat's play, so a human's own uid (which genuinely opens\ntheir own seat, and would otherwise pass the check above) must not be\nable to file one in anybody's name. Without this a human player could\nforge a review of themselves or of their opponent, since the uid check\nalone only proves \"this credential speaks for this seat\", not \"this\nseat is the kind that ever calls this route\" - the same distinction\n`AiReviewIn`'s docstring draws in words.",
+        "operationId": "declare_ai_review_api_games__game_id__ai_review_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiReviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Declare Ai Review"
       }
     },
     "/api/games/{game_id}/cards": {

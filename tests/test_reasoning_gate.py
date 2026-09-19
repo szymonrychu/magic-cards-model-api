@@ -105,6 +105,13 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
         "in-progress agent turn here for `records.require_reasoning` to "
         "gate."
     ),
+    ("POST", "/api/games/{game_id}/ai-review"): (
+        "the same exemption `POST .../reflection` gets, for the same reason: "
+        "the review text itself is the whole content of the row - there is "
+        "no separate action to reason about, it mutates no `Game`, and it "
+        "is refused outright before the game is even over, so there is no "
+        "in-progress agent turn for `records.require_reasoning` to gate."
+    ),
     ("POST", "/api/games/{game_id}/advice"): (
         "`AdviceIn.reasoning` IS the reasoning, and required non-blank by the "
         "shape itself rather than by this gate - which is the stronger "

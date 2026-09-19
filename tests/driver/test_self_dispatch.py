@@ -114,6 +114,49 @@ def test_the_completed_match_also_exits_when_told_to(world, tmp_path) -> None:  
     assert app.state.should_exit is True
 
 
+def test_the_ai_review_completes_before_the_session_ends_and_the_process_exits(
+    world,  # noqa: F811
+    tmp_path,
+) -> None:
+    """The bug this guards: the AI review runs in a background daemon
+    thread (`post_ai_review`, spawned by `turn_done`'s reflection branch),
+    and `retire` used to fire `DELETE /v1/session` - which tears the agent
+    container down - and, here, set `should_exit` - which ends this very
+    driver process - without ever waiting on it. A handover typically
+    finishes in 20-30s; an Opus review over a whole game routinely takes
+    longer, so the review was lost for good on every real exit. `retire`
+    must now join that thread (bounded by `RETIRE_REVIEW_JOIN_TIMEOUT`)
+    before either the DELETE or the exit - proved here by a real, if short,
+    delay on the fake wrapper's own `/v1/review`, and by `world.events`
+    (appended to by both fake apps' route handlers, in the order their
+    calls actually complete) showing the review landing first."""
+    world.state["wrapper_review_delay"] = 0.3
+    settings = DriverSettings.from_env(_env(tmp_path, DRIVER_EXIT_AFTER_MATCH="1"))
+    app = build_app(settings, client_factory=world.client_factory)
+    with TestClient(app) as client:
+        client.post(
+            "/dispatch",
+            json={
+                "uid": world.uid,
+                "game_id": world.game_id,
+                "player": "bob",
+                "api_base": "http://game:8000",
+            },
+        )
+        world.state["winner"] = "bob"
+        client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+        client.post(
+            "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+        )
+        complete_handover(client, world.submitted)
+        wait_for(lambda: app.state.should_exit)
+    assert app.state.should_exit is True
+    assert world.ai_review_posts, "the review must have been filed at all, not merely raced"
+    assert world.events.index("ai_review") < world.events.index("delete"), (
+        f"the session must not end before the AI review is filed: events were {world.events}"
+    )
+
+
 # ---- a self-dispatch that never gets going must not hang the Job forever --
 
 

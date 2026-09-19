@@ -311,3 +311,91 @@ def test_a_watcher_that_raises_never_takes_the_session_route_down(wired):
     response = public.get("/v1/session")
     assert response.status_code == 200
     assert response.json()["activity"] is None
+
+
+# ---- the post-game AI review: a one-shot call, entirely separate from the
+# supervised interactive session `wired`/`restartable` above exercise -------
+#
+# `POST /v1/review` never touches `manager` at all: it runs a bounded,
+# non-PTY `claude --print` subprocess through an injectable `review_runner`,
+# so these tests never spawn a real `claude` and never touch the turn state
+# machine a `/v1/messages` turn would.
+
+
+@pytest.fixture
+def review_wired(monkeypatch):
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc)
+    settings = manager.settings
+    calls: list[dict] = []
+
+    def fake_runner(settings, prompt, model, effort):
+        calls.append({"prompt": prompt, "model": model, "effort": effort})
+        return "the review text"
+
+    public = TestClient(build_public_app(manager, settings, review_runner=fake_runner))
+    yield public, calls
+    manager.shutdown()
+
+
+def test_post_review_runs_the_injected_runner_and_returns_its_text(review_wired):
+    public, calls = review_wired
+    response = public.post(
+        "/v1/review",
+        json={"prompt": "critique this game", "model": "claude-opus-5", "effort": "high"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"text": "the review text"}
+    assert calls == [{"prompt": "critique this game", "model": "claude-opus-5", "effort": "high"}]
+
+
+def test_post_review_without_a_prompt_is_400(review_wired):
+    public, calls = review_wired
+    response = public.post("/v1/review", json={"prompt": "  ", "model": "m", "effort": "high"})
+    assert response.status_code == 400
+    assert calls == [], "a blank prompt must never reach the runner"
+
+
+def test_post_review_never_touches_the_supervised_session(review_wired):
+    """The whole point of a separate one-shot call: it must not compete with
+    a real turn for the single supervised claude process, and must not
+    require one to be idle first (unlike `/v1/session`'s 409-while-busy)."""
+    public, _ = review_wired
+    started = public.post("/v1/messages", json={"text": "a turn"})
+    assert started.status_code == 202
+    response = public.post(
+        "/v1/review", json={"prompt": "critique this game", "model": "m", "effort": "high"}
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_post_review_surfaces_a_runner_failure_as_502(monkeypatch):
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc)
+
+    def failing_runner(settings, prompt, model, effort):
+        from mtg_agent.wrapper.oneshot import ReviewFailed
+
+        raise ReviewFailed("claude exited 1")
+
+    public = TestClient(build_public_app(manager, manager.settings, review_runner=failing_runner))
+    try:
+        response = public.post(
+            "/v1/review", json={"prompt": "critique this game", "model": "m", "effort": "high"}
+        )
+        assert response.status_code == 502
+        assert "claude exited 1" in response.json()["detail"]
+    finally:
+        manager.shutdown()
+
+
+def test_post_review_is_guarded_by_the_shared_secret(monkeypatch):
+    proc = FakeProc(b"ready")
+    settings = fast_settings(WRAPPER_SHARED_SECRET="s3cr3t")
+    manager = ready_manager(monkeypatch, proc, settings=settings)
+    public = TestClient(build_public_app(manager, settings, review_runner=lambda *a: "unused"))
+    try:
+        response = public.post("/v1/review", json={"prompt": "x", "model": "m", "effort": "high"})
+        assert response.status_code == 401
+    finally:
+        manager.shutdown()
