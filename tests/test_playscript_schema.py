@@ -175,6 +175,7 @@ MALFORMED = [
         ),
     ),
     ("sacrifice-unknown", mutate("moves.0.sacrifice", "other")),
+    ("discard-unknown", mutate("moves.0.discard", "other")),
     (
         "input-op-unknown",
         mutate("true", [{"kind": "input", "name": "plan", "op": "contains", "value": "a"}]),
@@ -699,6 +700,36 @@ def test_pick_and_sacrifice_choice_take_ties():
     assert Play.model_validate(doc).moves[0].answers[0].pick.ties == "any"
     sac_doc = mutate("moves.0.sacrifice", {"select": {"types_all": ["Creature"]}, "ties": "any"})
     assert play_errors(sac_doc) == []
+    discard_doc = mutate("moves.0.discard", {"select": {"types_all": ["Land"]}, "ties": "any"})
+    assert play_errors(discard_doc) == []
+    assert Play.model_validate(discard_doc).moves[0].discard.ties == "any"
+
+
+def test_discard_takes_none_or_a_selector_choice_the_same_shape_sacrifice_does():
+    """`Discard` mirrors `Sacrifice` with no "source" value (CR 701.9's own
+    discard cost only ever reads from hand - there is no "discard this
+    card" self-reference the way "sacrifice this card" is a real cost
+    shape) - `none` and a selector choice are the two the schema accepts."""
+    none_doc = mutate("moves.0.discard", "none")
+    assert play_errors(none_doc) == []
+    assert Play.model_validate(none_doc).moves[0].discard == "none"
+    choice_doc = mutate("moves.0.discard", {"select": {"types_all": ["Land"]}, "count": 2})
+    assert play_errors(choice_doc) == []
+    move = Play.model_validate(choice_doc).moves[0]
+    assert move.discard.select.types_all == ["Land"]
+    assert move.discard.count == 2
+
+
+def test_discard_source_is_unknown_field_unlike_sacrifice():
+    """Unlike `Sacrifice`, `Discard` has no `"source"` keyword at all - CR
+    701.9's discard cost always reads from hand, so "discard this card" (the
+    ability's own source) is a self-contained off-zone activation cost with
+    nothing here left to name (`runtime.py`'s own `_activate_request`
+    docstring), never `discard: "source"`."""
+    doc = mutate("moves.0.discard", "source")
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
 
 
 def test_ties_outside_any_is_malformed_on_play_land_card():

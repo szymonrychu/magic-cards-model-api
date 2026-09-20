@@ -2375,6 +2375,119 @@ def test_a_sacrifice_choice_tied_between_different_cards_exits_ambiguous_unless_
     assert lions and hook.posts("/actions/activate")[0]["sacrificing"] == [lions[0]["id"]]
 
 
+# -- activate.discard: mirrors sacrifice's own selector-choice shape, CR ------
+# -- 701.9's own discard cost always reading from hand alone -----------------
+
+
+def frog_pump(discard: Any) -> dict[str, Any]:
+    """Psychic Frog's own "Discard a card: Put a +1/+1 counter on this
+    creature." - a real CR 701.9 discard cost with no "this card"
+    self-reference (that shape is `sacrifice`'s own "source" value, tested
+    elsewhere), so `discard` always means "a hand card chosen by selector"."""
+    move: dict[str, Any] = {
+        "kind": "activate",
+        "source": {"zone": "battlefield", "select": {"subtypes_any": ["Frog"]}},
+        "ability_text_has": "Discard a card",
+    }
+    if discard is not None:
+        move["discard"] = discard
+    return one_move_script("frog_pump", move)
+
+
+def test_an_activation_discards_by_selector(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, frog_pump({"select": {"types_all": ["Land"]}}))
+    add_card(client, board, "Psychic Frog", "alice", "battlefield")
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    island_id = state(client, board)["hands"]["alice"][0]["id"]
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="frog_pump", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/activate")
+    assert body["discarding"] == [island_id]
+    assert "sacrificing" not in body
+
+
+def test_discard_none_names_nothing_and_the_engine_refuses_the_cost(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, frog_pump("none"))
+    add_card(client, board, "Psychic Frog", "alice", "battlefield")
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="frog_pump", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.REFUSED, result.to_dict()
+    assert "discard needs 1 card(s) chosen, 0 given" in result.script_exit.refusal
+    [body] = hook.posts("/actions/activate")
+    assert "discarding" not in body
+
+
+def test_a_discard_choice_matching_nothing_exits_unforeseen(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, frog_pump({"select": {"types_all": ["Land"]}}))
+    add_card(client, board, "Psychic Frog", "alice", "battlefield")
+    add_card(client, board, "Lightning Bolt", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="frog_pump", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert "discard" in result.script_exit.stop_reason
+    assert hook.posts("/actions/activate") == []
+
+
+def test_a_discard_choice_tied_between_different_cards_exits_ambiguous_unless_preferred(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    choice: dict[str, Any] = {"select": {"types_all": ["Land"]}}
+    register(client, board, alice, frog_pump(choice))
+    add_card(client, board, "Psychic Frog", "alice", "battlefield")
+    add_card(client, board, "Island", "alice", "hand")
+    add_card(client, board, "Forest", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    tied = run_script(
+        seat, script_id="frog_pump", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert tied.script_exit.exit is Exit.AMBIGUOUS, tied.to_dict()
+    assert tied.script_exit.ambiguous_names == ["Forest", "Island"]
+    assert hook.posts("/actions/activate") == []
+
+    store.get(board).turn.turn_number += 1
+    preferred = {**choice, "prefer": [{"subtypes_any": ["Forest"]}]}
+    register(client, board, alice, frog_pump(preferred))
+    seat, hook = hooked_seat(seats, alice)
+    with opponent_passes(board):
+        chosen = run_script(seat, script_id="frog_pump", reasoning=REASONING, corpora={})
+    assert chosen.script_exit.exit is Exit.CHAIN_COMPLETE, chosen.to_dict()
+    forest_id = next(
+        c["id"] for c in state(client, board)["graveyards"]["alice"] if c["name"] == "Forest"
+    )
+    assert hook.posts("/actions/activate")[0]["discarding"] == [forest_id]
+
+
 def test_cavern_of_souls_played_with_eldrazi_answers_choose_a_quality_with_choice(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
