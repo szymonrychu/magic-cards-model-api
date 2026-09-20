@@ -232,6 +232,17 @@ or for having had no applicable window. Change a script's priority by at most
 or discard. Wait for every subagent and background task you started to report
 back before you end the handover turn: the pod stops when that turn ends.
 
+A deck's guide is play review only. A system problem - an api bug, an engine
+rules gap, a tool misbehaviour, a timeout, a pod or deployment issue, a
+missing or wrong MCP argument, anything whose remedy is a code change - goes
+to `report` instead, and never into `decks/SLUG/NOTES.md`, a
+`matchups[].play_plan` or a `matchups[].notes`. The test for one sentence:
+would it still be true and useful to a human pilot playing this deck with
+paper cards and no software at all? Yes means the guide; no means `report`.
+If you are unsure, ask whether the remedy involves changing code, a tool
+argument or a deployment - if it does, it is a report. Report a problem when
+you spot it during the game, not at the handover.
+
 You never act in the game, but after it you may hand over what you saw. These
 commands take no `--uid` and touch no game. They work the deck-guides
 checkout at `/guides`, and your commits are authored as `mtg-buddy`. Each

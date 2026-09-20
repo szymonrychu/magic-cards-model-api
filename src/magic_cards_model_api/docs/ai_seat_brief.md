@@ -771,6 +771,10 @@ call for you to guess at - only report something you can actually point to
 in the state or the log as wrong. Filing a report ends your game session,
 which is a legitimate stop.
 
+This is also the destination rule for what you write at the handover: a
+problem belongs in a report, never in the deck's `NOTES.md` or its matchup
+notes. See ## Play scripts and guides, for handover for the other half.
+
 ## Play scripts and guides, for handover
 
 Finish the handover inside the time budget: do priority updates and admits
@@ -781,6 +785,19 @@ or for having had no applicable window. Change a script's priority by at most
 5 per game. Never `git stash` in /guides: commit through the provided commands
 or discard. Wait for every subagent and background task you started to report
 back before you end the handover turn: the pod stops when that turn ends.
+
+A deck's guide is play review only. A system problem - an api bug, an engine
+rules gap, a tool misbehaviour, a timeout, a pod or deployment issue, a
+missing or wrong MCP argument, anything whose remedy is a code change - goes
+to `report` instead, and never into `decks/SLUG/NOTES.md`, a
+`matchups[].play_plan` or a `matchups[].notes`. The test for one sentence:
+would it still be true and useful to a human pilot playing this deck with
+paper cards and no software at all? Yes means the guide; no means `report`.
+If you are unsure, ask whether the remedy involves changing code, a tool
+argument or a deployment - if it does, it is a report. Report a problem when
+you spot it during the game, not at the handover.
+
+See ## Filing a problem report for the other destination.
 
 These commands take no `--uid` and touch no game. They work the deck-guides
 checkout at `/guides`, and they are how what you learned this game reaches

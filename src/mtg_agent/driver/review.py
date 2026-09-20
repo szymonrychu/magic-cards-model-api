@@ -29,6 +29,13 @@ docstring for why a second `claude` process, in the one container that has
 the binary, is the right shape rather than another turn of the session that
 just finished playing.
 
+**Where what it writes goes.** The critique is play review, and play review
+is guide content - so this prompt carries `prompt.NOTES_ROUTING`, the one
+statement of the play-content vs. system-problem split, interpolated after
+the untrusted record's END marker where it reads as instruction rather than
+data. The seat's own handover turn carries the identical text from the same
+constant: two prompts that can write to a deck's guide, one rule, no drift.
+
 **Not deduplicated.** In an AIvAI game each seat's own driver reaches
 `app.turn_done`'s reflection branch independently, and each could in
 principle generate and file its own AI review. This is accepted rather than
@@ -49,7 +56,7 @@ import re
 import secrets
 from typing import Any
 
-from .prompt import Assignment
+from .prompt import NOTES_ROUTING, Assignment
 
 #: How many of a game's declarations the prompt carries in full. A long game
 #: can declare a plan every turn for 20+ turns; `review.py`'s own
@@ -221,6 +228,16 @@ def review_prompt(
         lines.append("")
 
     lines.append(record_end)
+    lines.append("")
+
+    # The routing rule is the DRIVER's own instruction, so it lands after the
+    # END marker: inside the block it would be data the reviewer was just
+    # told never to follow. One constant, shared with the seat's own handover
+    # turn (`prompt.NOTES_ROUTING`), so the two write-back prompts cannot
+    # drift into two different rules about the same files.
+    lines.append("Where anything you write down goes:")
+    lines.append("")
+    lines.append(NOTES_ROUTING)
     lines.append("")
 
     lines.append(

@@ -1428,6 +1428,60 @@ changes.
 Begin."""
 
 
+#: Where a sentence written after the game goes: the deck's guide, or the
+#: problem report. Stated once, here, and interpolated into BOTH prompts
+#: that can write back - `handover_turn` below and `review.review_prompt` -
+#: so the two cannot drift into two different rules about the same files.
+#:
+#: The rule is about the DESTINATION of a sentence, never about the card or
+#: the mechanic it is about: a guide holds what a human pilot could use with
+#: paper cards and no software at all, and everything whose remedy is a code
+#: change, a tool argument or a deployment is a problem report instead. The
+#: worked example is the one that prompted the rule and is carried verbatim
+#: because it is the ambiguous shape - a real, correct observation about a
+#: real game that still belongs nowhere near a deck's notes.
+NOTES_ROUTING = """Deck guide content is PLAY REVIEW ONLY.
+
+- PLAY CONTENT goes to the deck's guide: `decks/<slug>/NOTES.md`, and
+  `matchups[].play_plan` and `matchups[].notes` in the deck's newest
+  `boarding-plan.json`, proposed with `mcp-seat guides propose`. Play
+  content is how this deck is piloted, which line is right in which
+  matchup, what to board, what a card is for, and what went wrong as a
+  MATCHING decision.
+- SYSTEM PROBLEMS go to the `report_problem` tool, which files a
+  `report_problem` row in this game's own audit ledger. A system problem is
+  an api bug, an engine rules gap, a tool misbehaviour, a timeout, a pod or
+  deployment issue, a missing or wrong MCP argument - anything whose remedy
+  is a code change. None of it belongs in a deck's notes, a play plan or a
+  matchup note, however much it shaped the game.
+
+Classify each sentence before you write it, with this test: would this
+sentence still be true and useful to a human pilot playing this deck with
+paper cards and no software at all? Yes means play content, and it belongs
+in the guide. No means system problem, and it belongs in `report_problem`.
+
+For the sentence that could be read either way, ask the second question:
+does the remedy involve changing code, a tool argument, or a deployment? If
+yes it is a report, regardless of how it felt during the game.
+
+Worked example. A seat wrote into a deck's NOTES.md that answering a
+fetchland's search decision released priority and cost it a main phase, and
+that the fix was `hold_priority=true` on `decide`. Every word of that was
+true. It is still a report and not a note: the behaviour is the api's, and
+the remedy is a tool argument. It does not belong in any deck's guide."""
+
+#: The handover's own extra clause, for the seat that is still playing when
+#: it notices something: a problem report is filed at the moment the problem
+#: is seen, not saved up for the handover turn, because the handover writes
+#: to the guide and a system problem never goes there.
+NOTES_ROUTING_DURING_GAME = (
+    "Do not save a system problem for this turn. A problem spotted DURING "
+    "the game is reported with `report_problem` when it is spotted - the "
+    "handover writes to the deck's guide, and a system problem never goes "
+    "there. Anything you already reported this game stays reported; do not "
+    "copy it into the guide now."
+)
+
 #: The first words of every handover turn.
 HANDOVER_OPENING = "Hand over now: this game is finished for you."
 
@@ -1488,6 +1542,12 @@ scripts through subagents, along with guides.
 6. Never `git stash` in /guides: commit through the provided commands or
    discard. A stash is invisible to admit and propose, and dies with the pod;
    discard a change with `git restore <path>`.
+
+## What goes in the guide, and what does not
+
+{NOTES_ROUTING}
+
+{NOTES_ROUTING_DURING_GAME}
 
 Wait for every subagent and background task you started to report back before
 you end the turn: the pod stops once this turn ends, and a subagent still

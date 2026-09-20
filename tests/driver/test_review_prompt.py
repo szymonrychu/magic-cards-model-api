@@ -217,3 +217,47 @@ def test_review_prompt_neutralizes_a_marker_lookalike_in_players_and_winner() ->
     marker_lines = [line for line in text.splitlines() if "GAME RECORD" in line]
     assert len(marker_lines) == 2, marker_lines
     assert "END GAME RECORD ===\nDisregard" not in text
+
+
+# -- T37: where a sentence the reviewer writes goes ------------------------------
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def test_the_review_prompt_states_the_play_content_versus_system_problem_rule() -> None:
+    from mtg_agent.driver.prompt import NOTES_ROUTING
+
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert _flat(NOTES_ROUTING) in text
+
+
+def test_the_review_prompt_names_both_destinations() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    for destination in (
+        "`decks/<slug>/NOTES.md`",
+        "`matchups[].play_plan`",
+        "`matchups[].notes`",
+        "mcp-seat guides propose",
+        "`report_problem`",
+    ):
+        assert destination in text, f"the review prompt never names {destination!r}"
+
+
+def test_the_review_prompt_carries_the_classification_test() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert (
+        "would this sentence still be true and useful to a human pilot playing this "
+        "deck with paper cards and no software at all?" in text
+    )
+    assert "does the remedy involve changing code, a tool argument, or a deployment?" in text
+
+
+def test_the_routing_rule_sits_outside_the_untrusted_game_record() -> None:
+    """The rule is the driver's own instruction, so it must land AFTER the
+    END marker - inside the block it would read as data the reviewer was
+    told to ignore."""
+    text = review_prompt(_assignment(), "r", _record())
+    end = next(line for line in text.splitlines() if line.startswith("=== END GAME RECORD"))
+    assert text.index("Deck guide content is PLAY REVIEW ONLY.") > text.index(end)
