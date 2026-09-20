@@ -1877,73 +1877,82 @@ class Seat:
         # the human's client names its own board when it finally acts.
         ready = {key: value for key, value in sending.items() if key != "dry_run"}
         ready["player"] = self.player
-        armed = self._advice_drafts.get(self.uid)
-        if capture_draft and armed is not None and armed.get("action") is None:
-            # S2 A6: `stage_advice` armed a window and this is the next
-            # committing call since - capture it as a draft rather than
-            # posting. `recent_log` both names the ledger position this draft
-            # was captured at (`AdviceIn.drafted_at_seq`, for the metrics task
-            # to measure how long it sat staged) and is cheaper than a second
-            # `fetch_state` just for that number.
-            #
-            # Review fix 5 (2026-09-14): the whole action dict, `opponent_
-            # signature` and `drafted_at_seq` are all built HERE, in a local
-            # dict, before `armed` itself is touched at all. The old code set
-            # `armed["action"]` first and only afterward made the `recent_log`
-            # HTTP call that fills in `opponent_signature`/`drafted_at_seq` -
-            # a window, however short, where a concurrent `resolve_advice_
-            # draft` on another thread (same `Seats`, same uid, a different
-            # `Seat` object sharing this very dict by reference) could see
-            # `armed.get("action")` already filled in - readable as "this
-            # draft is ready" - while `opponent_signature` was still absent
-            # (`None`), which never equals a freshly computed signature, so
-            # the draft would be read as stale on board grounds and dropped
-            # before it was ever whole. Installed under this uid's own
-            # per-uid lock (`resolve_advice_draft`'s own `_advice_draft_
-            # locks`) so a concurrent resolve either sees the whole thing at
-            # once or - `lock.acquire(blocking=False)` fails while this
-            # install is in flight - answers `{"status": "held"}` and tries
-            # again on its next poll, exactly as it would for any other
-            # draft already mid-flight.
-            drafted_state = self.fetch_state()
-            built_action: dict[str, Any] = {
-                "method": method.upper(),
-                "path": path,
-                "body": ready,
-                "reasoning": ready.get("reasoning") or "",
-                "validated": validated,
-                "action_key": action_key,
-                "outcome": outcome,
-            }
-            if action_key == "decide":
-                # Review fix 6 (2026-09-14): the identity of the pending
-                # decision this draft actually answers, from the board right
-                # now - `_unvalidated_action_still_legal` requires both to
-                # still match the pending decision standing at the window,
-                # not merely that some decision is pending for this player.
-                drafted_pending = drafted_state.get("pending_decision")
-                built_action["decision_kind"] = (
-                    drafted_pending.get("kind") if isinstance(drafted_pending, dict) else None
-                )
-                built_action["decision_generation"] = (
-                    drafted_pending.get("generation") if isinstance(drafted_pending, dict) else None
-                )
-            opponent_signature = opponent_board_signature(drafted_state, self.player)
-            drafted_at_seq = self.recent_log().get("last_seq")
-            lock = self._advice_draft_locks.setdefault(self.uid, threading.Lock())
-            with lock:
+        # Review fix 7: the READ of `self._advice_drafts.get(self.uid)` and
+        # the "is this slot still free to claim" CHECK used to run outside
+        # this uid's own per-uid lock, with only the final three-field
+        # write installed under it (review fix 5's own fix, below). Two
+        # committing calls racing on the same uid could both read
+        # `armed.get("action") is None` as true before either had taken the
+        # lock, both do the full precomputation (a `fetch_state`, an
+        # `opponent_board_signature`, a `recent_log` HTTP call apiece), and
+        # then both answer their own caller `"drafted": True` - but only
+        # whichever `with lock:` block ran last actually stuck, silently
+        # discarding the other caller's own committing call with no error at
+        # all. The whole read-check-build-write sequence is now one atomic
+        # section under the lock, the same "claim first, only then trust
+        # what you read" shape `resolve_advice_draft`'s own lock already
+        # uses - re-reading `armed` fresh here also covers a `stage_advice`
+        # call that replaced `self._advice_drafts[self.uid]` with a brand
+        # new dict between the check above and now.
+        lock = self._advice_draft_locks.setdefault(self.uid, threading.Lock())
+        with lock:
+            armed = self._advice_drafts.get(self.uid)
+            if capture_draft and armed is not None and armed.get("action") is None:
+                # S2 A6: `stage_advice` armed a window and this is the next
+                # committing call since - capture it as a draft rather than
+                # posting. `recent_log` both names the ledger position this
+                # draft was captured at (`AdviceIn.drafted_at_seq`, for the
+                # metrics task to measure how long it sat staged) and is
+                # cheaper than a second `fetch_state` just for that number.
+                #
+                # Review fix 5 (2026-09-14): the whole action dict, `opponent_
+                # signature` and `drafted_at_seq` are all built into a local
+                # dict before `armed` itself is touched at all, so a reader of
+                # `armed` never sees `action` filled in while `opponent_
+                # signature`/`drafted_at_seq` are still absent - now moot as a
+                # cross-thread concern (the whole section is one lock hold),
+                # kept anyway so `armed` itself is only ever assigned once,
+                # as a whole.
+                drafted_state = self.fetch_state()
+                built_action: dict[str, Any] = {
+                    "method": method.upper(),
+                    "path": path,
+                    "body": ready,
+                    "reasoning": ready.get("reasoning") or "",
+                    "validated": validated,
+                    "action_key": action_key,
+                    "outcome": outcome,
+                }
+                if action_key == "decide":
+                    # Review fix 6 (2026-09-14): the identity of the pending
+                    # decision this draft actually answers, from the board
+                    # right now - `_unvalidated_action_still_legal` requires
+                    # both to still match the pending decision standing at
+                    # the window, not merely that some decision is pending
+                    # for this player.
+                    drafted_pending = drafted_state.get("pending_decision")
+                    built_action["decision_kind"] = (
+                        drafted_pending.get("kind") if isinstance(drafted_pending, dict) else None
+                    )
+                    built_action["decision_generation"] = (
+                        drafted_pending.get("generation")
+                        if isinstance(drafted_pending, dict)
+                        else None
+                    )
+                opponent_signature = opponent_board_signature(drafted_state, self.player)
+                drafted_at_seq = self.recent_log().get("last_seq")
                 armed["action"] = built_action
                 armed["opponent_signature"] = opponent_signature
                 armed["drafted_at_seq"] = drafted_at_seq
-            return 200, {
-                "drafted": True,
-                "window": {
-                    "step": armed["window"].get("step"),
-                    "whose_turn": armed["window"].get("whose_turn"),
-                },
-                "validated": validated,
-                "outcome": outcome,
-            }
+                return 200, {
+                    "drafted": True,
+                    "window": {
+                        "step": armed["window"].get("step"),
+                        "whose_turn": armed["window"].get("whose_turn"),
+                    },
+                    "validated": validated,
+                    "outcome": outcome,
+                }
         status, advice = self._request_json(
             "POST",
             f"/api/games/{self.game_id()}/advice",

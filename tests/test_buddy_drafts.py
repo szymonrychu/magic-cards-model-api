@@ -919,6 +919,62 @@ def test_two_concurrent_resolves_produce_exactly_one_post(
     assert len(advice_rows(game)) == 1
 
 
+def _slow_fetch_state(delay: float) -> Any:
+    """Patches `Seat.fetch_state` to take `delay` seconds - long enough that
+    a second, concurrent capturing call is guaranteed to reach its own
+    read-and-check of `self._advice_drafts` while the first is still mid
+    precomputation."""
+    original = seatkit.Seat.fetch_state
+
+    def slow(self: Seat, *, include_contents: bool = False) -> Any:
+        result = original(self, include_contents=include_contents)
+        time.sleep(delay)
+        return result
+
+    return slow
+
+
+def test_two_concurrent_captures_of_the_same_window_capture_exactly_once(
+    client: TestClient, game: str, wired: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review fix 7: the read of `self._advice_drafts.get(self.uid)` and the
+    "is this slot still free" check used to run OUTSIDE this uid's own
+    per-uid lock, with only the final three-field write installed under it.
+    Two committing calls racing on the same uid could both read
+    `armed.get("action") is None` as true before either took the lock, both
+    do the full precomputation, and both answer their own caller `"drafted":
+    True` - but only whichever `with lock:` block ran last actually stuck,
+    silently discarding the other caller's own committing call with no
+    error. Slowing `fetch_state` (paid inside the vulnerable section, before
+    the old code's lock) reproduces exactly that window."""
+    seat = buddy(game)
+    seat.stage_advice("declare_attackers", "mine")
+    monkeypatch.setattr(seatkit.Seat, "fetch_state", _slow_fetch_state(0.15))
+
+    results: list[Any] = []
+    results_lock = threading.Lock()
+
+    def capture() -> None:
+        result = capture_a_pass_draft(seat, game)
+        with results_lock:
+            results.append(result)
+
+    first = threading.Thread(target=capture)
+    second = threading.Thread(target=capture)
+    first.start()
+    time.sleep(0.03)  # let `first` reach the slow fetch_state first
+    second.start()
+    first.join(5)
+    second.join(5)
+
+    drafted = [r for r in results if isinstance(r, dict) and r.get("drafted") is True]
+    assert len(drafted) == 1, results
+    entry = seat._advice_drafts[ADVISOR_UID]
+    assert entry["action"] is not None
+    assert entry["opponent_signature"] is not None
+    assert isinstance(entry["drafted_at_seq"], int)
+
+
 def test_a_restage_during_posting_survives(
     client: TestClient, game: str, wired: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
