@@ -507,7 +507,6 @@ def test_prefer_stays_capped_at_four_selectors():
     assert MAX_PREFER == 4
 
 
-
 # -- O7: unlocks, unlocks_by_search, affordable ----------------------------------
 
 

@@ -260,9 +260,7 @@ EntersAnyWords = Annotated[list[Literal[ENTERS_STATES]], Field(max_length=len(EN
 #: (`hypothetical_facts.py`) touches. A word outside the four is
 #: `malformed-play`, never a silent no-match.
 PAYABLE_STATES = ("now", "with_a_land", "next_turn", "no")
-PayableAnyWords = Annotated[
-    list[Literal[PAYABLE_STATES]], Field(max_length=len(PAYABLE_STATES))
-]
+PayableAnyWords = Annotated[list[Literal[PAYABLE_STATES]], Field(max_length=len(PAYABLE_STATES))]
 
 
 class _Strict(BaseModel):

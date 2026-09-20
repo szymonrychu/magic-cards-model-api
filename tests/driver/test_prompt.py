@@ -1517,7 +1517,7 @@ TIMING_SENTENCES = (
     "play against all of it",
     "does acting now destroy a combination that waiting would have kept",
     "the latest legal moment",
-    "so this never becomes \"always wait\"",
+    'so this never becomes "always wait"',
     "a window that does not come back",
     "Mana you hold up and never spend is not free either",
 )
@@ -1640,9 +1640,7 @@ def test_the_advisor_brief_carries_the_same_two_sided_test():
 def test_the_advisor_prompt_carries_the_same_two_sided_test(guide, tmp_path):
     """And its MCP twin, for the same no-drift reason the seat's has."""
     text = _flat(
-        advisor_turn_zero(
-            replace(assignment(guide), role="advisor"), tmp_path / "current-game.md"
-        )
+        advisor_turn_zero(replace(assignment(guide), role="advisor"), tmp_path / "current-game.md")
     )
     assert (
         "what do I lose by acting now instead of waiting, and what do I lose by "

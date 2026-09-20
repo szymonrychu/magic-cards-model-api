@@ -619,8 +619,7 @@ def build_app(
             review_record = response.json()
         except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
             log.warning(
-                "ai-review-failed[review_record]: could not read the review record for "
-                "game %s: %s",
+                "ai-review-failed[review_record]: could not read the review record for game %s: %s",
                 assignment.game_id,
                 exc,
             )
@@ -631,8 +630,7 @@ def build_app(
             prompt = review_prompt(assignment, reflection_text, review_record)
         except Exception as exc:  # noqa: BLE001 - a malformed review record must not block retire
             log.warning(
-                "ai-review-failed[prompt]: could not build the AI review prompt for "
-                "game %s: %s",
+                "ai-review-failed[prompt]: could not build the AI review prompt for game %s: %s",
                 assignment.game_id,
                 exc,
             )
@@ -706,8 +704,7 @@ def build_app(
                 )
             if response.status_code >= 400:
                 log.warning(
-                    "ai-review-failed[file]: the game server refused the AI review for "
-                    "game %s: %s",
+                    "ai-review-failed[file]: the game server refused the AI review for game %s: %s",
                     assignment.game_id,
                     response.status_code,
                 )
@@ -726,7 +723,7 @@ def build_app(
             record_review_failure(assignment, "file", str(exc) or repr(exc), invoked=True)
 
     def consider_ai_review(assignment: Assignment, reflection_text: str, path: str) -> bool:
-        """"The game has ended - file the AI review, or say why not."
+        """ "The game has ended - file the AI review, or say why not."
         The one place that decides, reached from every name in
         `TERMINAL_PATHS`. Returns whether this call is the one that started
         the review.
@@ -766,9 +763,7 @@ def build_app(
                 )
                 return False
             current["aiReviewConsidered"] = True
-        log.info(
-            "considering the AI review for game %s, reached by %s", assignment.game_id, path
-        )
+        log.info("considering the AI review for game %s, reached by %s", assignment.game_id, path)
         review_thread = threading.Thread(
             target=post_ai_review,
             args=(assignment, reflection_text),

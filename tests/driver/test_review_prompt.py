@@ -450,9 +450,7 @@ def test_a_worst_case_long_games_prompt_stays_under_the_oneshot_ceiling() -> Non
 
 
 def test_the_ledger_block_respects_its_own_character_budget() -> None:
-    record = _record(
-        entries=[_row(seq, reasoning="z" * 5000) for seq in range(1, 201)]
-    )
+    record = _record(entries=[_row(seq, reasoning="z" * 5000) for seq in range(1, 201)])
     text = review_prompt(_assignment(), "notes", record)
     assert len(text) < MAX_LEDGER_CHARS + 20_000
     assert "earlier rows omitted" in text

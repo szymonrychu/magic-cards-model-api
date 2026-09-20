@@ -410,9 +410,7 @@ def test_the_checkout_lock_is_held_across_processes(tmp_path):
     holder = threading.Thread(target=hold)
     holder.start()
     held.wait(5.0)
-    child = subprocess.Popen(
-        [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True
-    )
+    child = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True)
     try:
         assert child.poll() is None
         release.set()
