@@ -68,7 +68,7 @@ from uuid import UUID
 from magic_cards_model.machines.decisions import DecisionKind, ScriptedAnswer
 from magic_cards_model.models import Game
 
-from . import audit, engine_api
+from . import audit, engine_api, handoff
 from .store import store
 
 
@@ -322,30 +322,39 @@ def finish_opening_hand_actions(
     is allowed to make. That is a reported freeze, and it was the common case
     rather than the corner one: a seat whose agent is failing is exactly the
     seat the backstop moves for.
+
+    Both statements run inside `handoff.in_flight`, because settling *after*
+    the pregame ends only fixes what this caller is handed back. This is the
+    one mutating path that edits the stored `Game` in place rather than
+    committing a working copy (`app.py`'s `_run_command`, which every
+    ordinary command goes through, swaps a finished copy in under
+    `store.replace`), so a concurrent lock-free board read could land between
+    the two lines and be handed the frozen page itself - see `handoff.py`.
     """
-    try:
-        step = game.finish_opening_hand_actions(username)
-    except ValueError as exc:
-        if not automatic:
-            _overruled(game_id, username, "opening_hand", "this CR 103.6 pass", exc)
-        raise
-    if automatic:
-        store.record_automatic_pregame(game_id, username, "opening_hand")
-    audit.record(
-        game_id,
-        "opening_hand_done",
-        player=username,
-        step=step.value,
-        live=not automatic,
-        automatic=automatic,
-        reason=reason,
-        reasoning=reasoning,
-    )
-    result: dict[str, Any] = {"step": step.value, "pregame": pregame_view(game)}
-    crossed = engine_api.settle_priorityless_steps(game)
-    if crossed and game.turn is not None:
-        result["step"] = game.turn.step.value
-        result["settled_through"] = crossed
+    with handoff.in_flight(game_id):
+        try:
+            step = game.finish_opening_hand_actions(username)
+        except ValueError as exc:
+            if not automatic:
+                _overruled(game_id, username, "opening_hand", "this CR 103.6 pass", exc)
+            raise
+        if automatic:
+            store.record_automatic_pregame(game_id, username, "opening_hand")
+        audit.record(
+            game_id,
+            "opening_hand_done",
+            player=username,
+            step=step.value,
+            live=not automatic,
+            automatic=automatic,
+            reason=reason,
+            reasoning=reasoning,
+        )
+        result: dict[str, Any] = {"step": step.value, "pregame": pregame_view(game)}
+        crossed = engine_api.settle_priorityless_steps(game)
+        if crossed and game.turn is not None:
+            result["step"] = game.turn.step.value
+            result["settled_through"] = crossed
     return result
 
 

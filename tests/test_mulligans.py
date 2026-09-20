@@ -39,7 +39,7 @@ from typing import Any
 import httpx
 from fastapi.testclient import TestClient
 
-from magic_cards_model_api import ai_pregame, ai_seat
+from magic_cards_model_api import ai_pregame, ai_seat, engine_api
 from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.main import app
 from magic_cards_model_api.mcp import build_server
@@ -912,6 +912,80 @@ def test_a_human_reaches_turn_one_though_the_ai_seat_never_moves(
         # ai_pregame calls opening.finish_opening_hand_actions directly rather
         # than through the HTTP handler where settling was first wired.
         assert state["step"] == "upkeep"
+        assert state["priority_holder"] == "alice", "the human can actually act now"
+        assert state["turn_number"] == 1
+    finally:
+        delete(client, info)
+
+
+def test_a_board_read_never_lands_inside_the_backstops_last_pregame_move(
+    client: TestClient, monkeypatch
+) -> None:
+    """The settling of CR 500.3's untap step must be *unobservable*, not merely
+    eventual.
+
+    `opening.finish_opening_hand_actions` ends the pregame and only then
+    settles past CR 103.8's untap step. The backstop runs that on its watcher
+    thread under the game lock, but `GET /api/games/{id}` read the `Game`
+    without taking the lock at all - so a poll landing between those two
+    statements was handed exactly the frozen page the settling exists to
+    prevent: `pregame: null`, `step: "untap"`, `priority_holder: null`, and no
+    move any client is allowed to make. That is the reported freeze, only
+    narrower: a whole-suite run reproduced it as a red
+    `test_a_human_reaches_turn_one_though_the_ai_seat_never_moves`, and a
+    browser polling the board hits the same window.
+
+    The window is opened deliberately here rather than waited for: the
+    watcher is stopped, this test makes the backstop's calls itself, and the
+    settling is held open long enough that the read is certain to land inside
+    it.
+    """
+    monkeypatch.setenv("AI_PREGAME_GRACE_SECONDS", "0")
+    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1, ai_players=("bob",))
+    game_id = info["game_id"]
+    # The watcher would settle bob's moves on its own schedule; this test needs
+    # to choose the moment, so it takes the backstop's job over.
+    ai_pregame.stop(game_id)
+    try:
+        assert declare(client, info, "alice", take=False).status_code == 200
+        assert ai_pregame.settle_now(game_id, {"bob"}) is not None, (
+            "bob still owed CR 103.5's declaration"
+        )
+        assert finish_opening_hand(client, info, "alice").status_code == 200
+
+        # bob now owes the LAST pregame move - the case the settling exists for.
+        inside = threading.Event()
+        real_settle = engine_api.settle_priorityless_steps
+
+        def slow_settle(game: Any) -> list[str]:
+            inside.set()
+            # Wide enough that the read below cannot miss the window, and
+            # bounded so a reader that (correctly) waits for the lock is not
+            # held up for long.
+            time.sleep(0.5)
+            return real_settle(game)
+
+        monkeypatch.setattr(engine_api, "settle_priorityless_steps", slow_settle)
+
+        settled: list[Any] = []
+        worker = threading.Thread(
+            target=lambda: settled.append(ai_pregame.settle_now(game_id, {"bob"})),
+            daemon=True,
+        )
+        worker.start()
+        assert inside.wait(10.0), "the backstop never reached the settling"
+
+        state = view(client, info, "alice")
+
+        worker.join(10.0)
+        assert not worker.is_alive()
+        assert settled and settled[0] is not None, "the backstop made no move"
+
+        assert not (state["pregame"] is None and state["step"] == "untap"), (
+            "a read landed inside the backstop's last pregame move and was handed "
+            "the frozen untap page the settling exists to prevent"
+        )
+        assert state["step"] == FIRST_PLAYABLE_STEP
         assert state["priority_holder"] == "alice", "the human can actually act now"
         assert state["turn_number"] == 1
     finally:

@@ -41,6 +41,7 @@ from . import (
     decks_api,
     engine_api,
     game_access,
+    handoff,
     lobby,
     oidc,
     opening,
@@ -1383,6 +1384,18 @@ def get_game(game_id: str, uid: str | None = None, include: str | None = None) -
             status_code=422,
             detail=f"unknown include value(s) {unknown}; the only one is 'contents'",
         )
+    # Never inside the pregame's last move. This route takes no game lock by
+    # design (`tests/test_action_flow.py`'s
+    # `test_no_deadlock_block_until_wake_never_holds_the_game_lock`), and
+    # `opening.finish_opening_hand_actions` edits the stored `Game` in place -
+    # so without this a poll could read it after the pregame ended and before
+    # CR 103.8's untap step was settled, and be handed the frozen page the
+    # settling exists to prevent. `handoff.wait` is not the game lock: it
+    # returns at once unless that one mutation is actually running, so
+    # `POST /advance` and `PUT /step` still observe a priorityless step on
+    # purpose, and holding `store.locked` alone gates nothing. See
+    # `handoff.py`.
+    handoff.wait(game_id)
     game = game_or_404(game_id)
     viewer = visibility.resolve_viewer(game_id, uid)
     view = state_view(game, game_id, include_contents="contents" in included)
