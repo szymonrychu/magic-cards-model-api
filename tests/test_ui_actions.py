@@ -1301,6 +1301,67 @@ WEAR_TEAR = {
     "abilities": [],
 }
 
+# -- CR 702.126a's improvise, and a mode the engine cannot read --------------
+
+KAPPA_CANNONEER = {
+    "id": "kappa",
+    "name": "Kappa Cannoneer",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Artifact Creature - Turtle Warrior",
+    "cast": {
+        "mana_cost": "{5}{U}",
+        "needs_x": False,
+        "modes": None,
+        "targeting": {
+            "targets_anything": False,
+            "understood": True,
+            "minimum": 0,
+            "maximum": 0,
+            "requirements": [],
+        },
+        "object_costs": [{"keyword": "Improvise", "rule": "CR 702.126a"}],
+    },
+    "abilities": [],
+}
+
+THRABEN_CHARM = {
+    "id": "tc",
+    "name": "Thraben Charm",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Instant",
+    "cast": {
+        "mana_cost": "{1}{W}",
+        "needs_x": False,
+        "modes": {
+            "instruction": "Choose one -",
+            "minimum": 1,
+            "maximum": 1,
+            "repeatable": False,
+            "understood": True,
+            "options": [
+                {"number": 1, "text": "... to target creature.", "understood": True},
+                {"number": 2, "text": "Destroy target enchantment.", "understood": True},
+                {
+                    "number": 3,
+                    "text": "Exile any number of target players' graveyards.",
+                    "understood": False,
+                    "notice": "cannot be read by this engine",
+                },
+            ],
+        },
+        "targeting": {
+            "targets_anything": True,
+            "understood": False,
+            "minimum": 0,
+            "maximum": None,
+            "requirements": [],
+        },
+    },
+    "abilities": [],
+}
+
 
 def test_a_non_mana_x_is_announced_like_any_other() -> None:
     """The reported defect, at this layer: the announcement must not be
@@ -1377,3 +1438,58 @@ def test_x_follows_the_chosen_half() -> None:
         card=card,
     )
     assert result == [False, True]
+
+
+def test_improvise_artifacts_appear_in_the_body() -> None:
+    """`CastRequest.improvise` takes a flat list of ids, the same shape
+    `delve` does; a second click on the same artifact takes it back."""
+    body = run_module(
+        "actions.js",
+        "(() => { let a = m.begin('cast', kappa, {}); a = m.toggleImprovise(a, 'thopter'); "
+        "a = m.toggleImprovise(a, 'drum'); a = m.toggleImprovise(a, 'drum'); "
+        "return m.bodyFor(a, 'alice', []); })()",
+        kappa=KAPPA_CANNONEER,
+    )
+    assert body == {"player": "alice", "card_id": "kappa", "improvise": ["thopter"]}
+
+
+def test_an_improvise_card_needs_choices_before_it_is_cast() -> None:
+    """The reported defect: nothing else about Kappa Cannoneer asks the
+    player anything, so `beginCast` fired it at the full {5}{U} on the click
+    that opened its own menu, with the artifact-tap step never drawn."""
+    assert run_module("actions.js", "m.needsChoices(kappa, null)", kappa=KAPPA_CANNONEER) is True
+
+
+def test_an_improvise_card_waits_for_an_explicit_cast() -> None:
+    assert (
+        run_module(
+            "actions.js",
+            "m.needsExplicitFire(m.begin('cast', kappa, {}))",
+            kappa=KAPPA_CANNONEER,
+        )
+        is True
+    )
+
+
+def test_a_card_paying_with_no_objects_still_fires_on_its_own() -> None:
+    assert run_module("actions.js", "m.needsChoices(memnite, null)", memnite=MEMNITE) is False
+    assert (
+        run_module(
+            "actions.js", "m.needsExplicitFire(m.begin('cast', memnite, {}))", memnite=MEMNITE
+        )
+        is False
+    )
+
+
+def test_a_mode_the_engine_cannot_read_cannot_be_announced() -> None:
+    """No silent refusal path: the chip is never drawn (`render/ribbon.js`),
+    and the store refuses the mode too, so it cannot reach `CastRequest.modes`
+    and be refused after the targets have been chosen."""
+    modes = run_module(
+        "actions.js",
+        "(() => { let a = m.begin('cast', charm, {}); a = m.toggleMode(a, 3); "
+        "a = m.toggleMode(a, 2); return a.modes; })()",
+        charm=THRABEN_CHARM,
+    )
+    assert modes == [2]
+

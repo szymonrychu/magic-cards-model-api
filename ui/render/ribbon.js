@@ -369,6 +369,21 @@ function slotIsOpen(slot) {
   return (slot.count === null || slot.minimum < (slot.count || 0)) && slot.targets.length < cap;
 }
 
+/**
+ * CR 700.2's modes, one chip each - except for a mode this engine cannot
+ * read (`ModeOptionView.understood: false`, `engine_api.unreadable_modes`).
+ *
+ * That one is drawn as a notice rather than a chip. CR 700.2a carries each
+ * chosen mode out one by one, and a mode the engine reads as nothing
+ * resolves doing nothing at all, so a cast naming one is refused
+ * (`engine_api.unreadable_mode_notice`) - but that refusal lands *after* the
+ * human has chosen targets, quoting a limitation the chip never hinted at.
+ * Marking it before the choice is the same failing-closed-out-loud treatment
+ * `renderRestrictedMana` gives an unread CR 106.6 restriction and
+ * `renderAdditionalCosts` gives a cost the engine cannot charge: the
+ * printed sentence in full, the engine's own reason beside it, and no button
+ * offering to choose it.
+ */
 function renderModeChips(card, action, handlers, symbols) {
   const modes = card.cast && card.cast.modes;
   if (!modes || action.kind !== "cast") return null;
@@ -381,12 +396,25 @@ function renderModeChips(card, action, handlers, symbols) {
       "div",
       { class: "chip-row" },
       ...modes.options.map((m) =>
-        h(
-          "button",
-          { class: `chip ${action.modes.includes(m.number) ? "on" : ""}`, onClick: () => handlers.onToggleMode(m.number) },
-          `${m.number}. `,
-          withSymbols(symbols, m.text)
-        )
+        m.understood === false
+          ? h(
+              "div",
+              { class: "restricted-note unusable" },
+              h("span", { class: "n" }, `${m.number}.`),
+              withSymbols(symbols, m.text),
+              h(
+                "span",
+                { class: "sentence" },
+                m.notice ||
+                  "this mode cannot be read by this engine, so a cast choosing it is refused"
+              )
+            )
+          : h(
+              "button",
+              { class: `chip ${action.modes.includes(m.number) ? "on" : ""}`, onClick: () => handlers.onToggleMode(m.number) },
+              `${m.number}. `,
+              withSymbols(symbols, m.text)
+            )
       )
     )
   );
@@ -805,6 +833,11 @@ function renderCastingStrip(el, app, handlers) {
   } else if (action.kind === "cast") {
     if (objectCosts.convoke) el.appendChild(renderObjectCostStep(action, objectCosts.convoke, "convoke", "Convoke", handlers.onToggleConvoke));
     if (objectCosts.delve) el.appendChild(renderObjectCostStep(action, objectCosts.delve, "delve", "Delve", handlers.onToggleDelve));
+    // CR 702.126a, the fourth face of the same `ObjectOffer` the three above
+    // come from - published by `affordances.object_costs` since it was
+    // written and drawn by nothing, so Kappa Cannoneer's cast went in at its
+    // full {5}{U} and came back refused.
+    if (objectCosts.improvise) el.appendChild(renderObjectCostStep(action, objectCosts.improvise, "improvise", "Improvise", handlers.onToggleImprovise));
   }
 
   const altStep = renderAltCosts(action, handlers);

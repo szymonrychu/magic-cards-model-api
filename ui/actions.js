@@ -35,6 +35,26 @@ function announceable(card) {
   return additionalCosts(card).filter((option) => option.understood && option.keyword);
 }
 
+/** CR 702.51a's convoke, CR 702.66a's delve and CR 702.126a's improvise, as
+ * `affordances.cast_hints` reads them off the printing - the *printed* half
+ * of the same question `action.affordance.object_costs` answers against a
+ * board. This one rides the board poll, so it is in hand before any
+ * affordance fetch, which is what `needsChoices` below needs it to be. */
+export function objectCosts(card) {
+  return castHints(card).object_costs || [];
+}
+
+/** Whether mode `n` of `card` is one this engine cannot read into an effect
+ * (`ModeOptionView.understood`, from `engine_api.unreadable_modes`).
+ * `render/ribbon.js` never draws a chip for one; this is the same answer at
+ * the store, so no other surface can announce a mode the cast would only be
+ * refused for once the targets had been chosen. */
+export function modeUnreadable(card, n) {
+  const modes = castHints(card).modes;
+  const option = ((modes && modes.options) || []).find((m) => m.number === n);
+  return Boolean(option && option.understood === false);
+}
+
 function abilityOf(card, abilityIndex) {
   return abilityIndex === null || abilityIndex === undefined
     ? null
@@ -72,6 +92,13 @@ export function needsChoices(card, abilityIndex, spellFace) {
   // counts too: the player is owed the notice before the cast is committed,
   // not after.
   if (additionalCosts(card).length) return true;
+  // CR 702.51a/702.66a/702.126a: a cost that objects can pay instead of mana
+  // is an unmade decision of the same shape. Kappa Cannoneer targets nothing,
+  // has no X, no modes and no optional additional cost, so every check above
+  // read false and the cast fired at its full {5}{U} - artifacts untapped,
+  // the step never drawn, the cast refused for mana the player had sitting
+  // on the board.
+  if (objectCosts(card).length) return true;
   // CR 118.9 alternative costs (evoke, dash, morph, ...) live entirely on an
   // enter-the-battlefield trigger line for a card like Wistfulness or
   // Solitude, which the engine's `_spell_text` strips before it ever builds
@@ -119,6 +146,10 @@ export function begin(kind, card, extra) {
     choosing: [],
     convoke: [],
     delve: [],
+    // CR 702.126a's artifacts, tapped for one generic each - the same shape
+    // `delve` has (a flat list of ids), because `CastRequest.improvise` takes
+    // the same.
+    improvise: [],
     crewing: [],
     slots: [],
     shares: {},
@@ -167,6 +198,13 @@ export function withAffordance(action, affordance) {
 }
 
 export function toggleMode(action, n) {
+  // A mode this engine cannot read is not a choice: chosen, it resolves
+  // doing nothing (CR 700.2a) and the cast is refused for naming it
+  // (`engine_api.unreadable_mode_notice`) - after the targets have been
+  // picked, which is too late to have chosen another. `render/ribbon.js`
+  // draws it as a notice rather than a chip, and this is the same answer at
+  // the store, so it cannot be announced from anywhere.
+  if (modeUnreadable(action.card, n)) return action;
   const modes = action.modes.includes(n)
     ? action.modes.filter((x) => x !== n)
     : [...action.modes, n];
@@ -241,6 +279,10 @@ export function toggleConvoke(action, id) {
 
 export function toggleDelve(action, id) {
   return { ...action, delve: toggleIn(action.delve, id) };
+}
+
+export function toggleImprovise(action, id) {
+  return { ...action, improvise: toggleIn(action.improvise, id) };
 }
 
 export function toggleCrewing(action, id) {
@@ -428,7 +470,16 @@ export function needsExplicitFire(action) {
       // entered (a kicker already ticked is still one the player might have
       // meant to take back), and whether or not the engine can charge it:
       // an `understood: false` notice is worth reading before the cast.
-      (action.kind === "cast" && additionalCosts(action.card).length > 0)
+      (action.kind === "cast" && additionalCosts(action.card).length > 0) ||
+      // CR 702.51b/702.66a/702.126b: convoke, delve and improvise apply
+      // after the total cost is determined, so a cast that could spend
+      // objects instead of mana is legal at the full printed price and
+      // firing it there the instant it becomes legal is the player never
+      // being asked - the same reasoning as an unchosen alternative cost.
+      // The printed keyword is enough; whether anything is currently
+      // eligible is `renderObjectCostStep`'s own "nothing eligible right
+      // now".
+      (action.kind === "cast" && objectCosts(action.card).length > 0)
   );
 }
 
@@ -529,6 +580,7 @@ export function bodyFor(action, you, untapped) {
     if (action.keyword) body.keyword = action.keyword;
     if (action.convoke.length) body.convoke = action.convoke.map((id) => ({ card_id: id }));
     if (action.delve.length) body.delve = action.delve;
+    if (action.improvise.length) body.improvise = action.improvise;
     if (action.altCost !== null) body.alternative_cost = action.altCost;
     if (action.choosing.length) body.choosing = action.choosing;
     // CR 601.2b's announcement, as counts - `CastRequest.optional_costs`.

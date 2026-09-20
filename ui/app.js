@@ -2052,6 +2052,13 @@ async function main() {
       store.set((s) => ({ action: A.toggleDelve(s.action, id) }));
       previewAndMaybeFire();
     },
+    // CR 702.126a, the same three lines as its two siblings above - the step
+    // `render/ribbon.js` draws for it had no handler to call at all, which
+    // is why an improvise spell went in at its full printed mana.
+    onToggleImprovise: (id) => {
+      store.set((s) => ({ action: A.toggleImprovise(s.action, id) }));
+      previewAndMaybeFire();
+    },
     onUnfill: (slotIndex, id) => {
       store.set((s) => ({
         action: {

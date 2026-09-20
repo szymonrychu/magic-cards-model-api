@@ -197,7 +197,8 @@ function makeStore(initial) {
 const NOOP = () => {};
 const HANDLERS = {
   onToggleMode: NOOP, onSetX: NOOP, onChooseColor: NOOP, onChooseAltCost: NOOP,
-  onTogglePitch: NOOP, onToggleConvoke: NOOP, onToggleDelve: NOOP, onFocusSlot: NOOP,
+  onTogglePitch: NOOP, onToggleConvoke: NOOP, onToggleDelve: NOOP,
+  onToggleImprovise: NOOP, onFocusSlot: NOOP,
   onUnfill: NOOP, onSetShare: NOOP, onDone: NOOP, onCast: NOOP, onCancel: NOOP,
   onHoldPriority: NOOP, onDecisionDraft: NOOP, onDecide: NOOP, onVerb: NOOP,
   onStopRun: NOOP, onToggleStop: NOOP, onToggleStackStop: NOOP,
@@ -1737,3 +1738,254 @@ def test_the_strip_header_names_the_half_being_cast() -> None:
     strip = _strip(card, {"spellFace": "Tear"})
     assert "Cast: Tear" in strip
     assert "// " not in strip, "the combined cost is not the cost of either half"
+
+
+# -- CR 702.126a's improvise in the casting strip ----------------------------
+#
+# The strip drew an object-cost step for convoke and delve only, so an
+# improvise spell offered no artifact-tap step at all and the cast went in at
+# its full printed mana and came back refused. Kappa Cannoneer ({5}{U},
+# maindeck in affinity) was effectively uncastable in the browser. The step
+# follows the shape convoke and delve already have - `renderObjectCostStep`,
+# one chip per candidate the *engine* named.
+
+KAPPA = {
+    "id": "kappa",
+    "name": "Kappa Cannoneer",
+    "mana_cost": "{5}{U}",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Artifact Creature - Turtle Warrior",
+    "cast": {
+        "mana_cost": "{5}{U}",
+        "needs_x": False,
+        "modes": None,
+        "targeting": {
+            "targets_anything": False,
+            "understood": True,
+            "minimum": 0,
+            "maximum": 0,
+            "requirements": [],
+        },
+        "object_costs": [{"keyword": "Improvise", "rule": "CR 702.126a"}],
+    },
+    "abilities": [],
+}
+KAPPA_AFF = {
+    "targets_anything": False,
+    "understood": True,
+    "minimum": 0,
+    "maximum": 0,
+    "requirements": [],
+    "division": None,
+    "candidates": [],
+    "object_costs": {
+        "improvise": {
+            "rule": "CR 702.126a",
+            "candidates": [
+                {"id": "thopter", "kind": "card", "name": "Ornithopter", "zone": "battlefield"},
+                {"id": "drum", "kind": "card", "name": "Springleaf Drum", "zone": "battlefield"},
+            ],
+        }
+    },
+}
+
+IMPROVISE_ACTION = """
+function kappaAction(overrides) {
+  return {
+    kind: "cast", cardId: kappa.id, card: kappa, abilityIndex: null, keyword: null,
+    modes: [], optionalCosts: {}, xValue: null, color: null, altCost: null,
+    choosing: [], convoke: [], delve: [], improvise: [], crewing: [], slots: [],
+    shares: {}, pinned: [], freeTargets: [], pendingTargets: [], focusSlot: null,
+    affordance: kappaAff, error: null, holdPriority: false, done: false,
+    ...(overrides || {}),
+  };
+}
+function kappaStrip(overrides, handlers) {
+  const state = baseState({ hands: { alice: [kappa] } });
+  const store = makeStore(baseApp(state, { action: kappaAction(overrides) }));
+  m.mountRibbon(document, store, handlers || HANDLERS);
+  store.set({});
+  return document.querySelector("#casting-strip");
+}
+"""
+
+
+def test_improvise_offers_the_artifacts_the_engine_named() -> None:
+    strip = run_module(
+        "render/ribbon.js",
+        FAKE_DOM + IMPROVISE_ACTION + "kappaStrip().textContent",
+        kappa=KAPPA,
+        kappaAff=KAPPA_AFF,
+    )
+    assert "Improvise" in strip
+    assert "Ornithopter" in strip and "Springleaf Drum" in strip
+    assert "CR 702.126a" in strip
+
+
+def test_clicking_an_improvise_artifact_taps_it_into_the_announcement() -> None:
+    calls = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + IMPROVISE_ACTION
+        + """
+        (() => {
+          const calls = [];
+          const handlers = { ...HANDLERS, onToggleImprovise: (id) => calls.push(id) };
+          const strip = kappaStrip({}, handlers);
+          click(findByText(strip, "button", "Ornithopter"));
+          return calls;
+        })()
+        """,
+        kappa=KAPPA,
+        kappaAff=KAPPA_AFF,
+    )
+    assert calls == ["thopter"]
+
+
+def test_a_chosen_improvise_artifact_is_counted_and_marked() -> None:
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + IMPROVISE_ACTION
+        + """
+        (() => {
+          const strip = kappaStrip({ improvise: ["thopter"] });
+          const chip = findByText(strip, "button", "Ornithopter");
+          return { text: strip.textContent, on: (chip.className || "").includes("on") };
+        })()
+        """,
+        kappa=KAPPA,
+        kappaAff=KAPPA_AFF,
+    )
+    assert "(1 chosen)" in result["text"]
+    assert result["on"] is True
+
+
+# -- a mode this engine cannot read ------------------------------------------
+#
+# The chips were drawn from `cast.modes.options` unconditionally, so a mode
+# the engine cannot read into an effect looked exactly like one it can - and
+# picking it was refused only after the human had chosen targets, with a
+# message the chip never hinted at. Thraben Charm (boros-aggro,
+# orzhov-martyr) prints one: "Exile any number of target players'
+# graveyards". Marked before the choice, the same `.restricted-note.unusable`
+# an uncharged optional cost and an unread CR 106.6 restriction already get.
+
+THRABEN_NOTICE = (
+    "Thraben Charm's mode 3 (\"Exile any number of target players' graveyards.\") "
+    "cannot be read by this engine: chosen, it would resolve doing nothing and "
+    "leave only a mode notice (CR 700.2a), so a cast choosing it is refused"
+)
+THRABEN = {
+    "id": "tc",
+    "name": "Thraben Charm",
+    "mana_cost": "{1}{W}",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Instant",
+    "cast": {
+        "mana_cost": "{1}{W}",
+        "needs_x": False,
+        "modes": {
+            "instruction": "Choose one -",
+            "minimum": 1,
+            "maximum": 1,
+            "repeatable": False,
+            "understood": True,
+            "options": [
+                {
+                    "number": 1,
+                    "text": "Thraben Charm deals damage equal to twice the number of "
+                    "creatures you control to target creature.",
+                    "understood": True,
+                    "notice": None,
+                },
+                {
+                    "number": 2,
+                    "text": "Destroy target enchantment.",
+                    "understood": True,
+                    "notice": None,
+                },
+                {
+                    "number": 3,
+                    "text": "Exile any number of target players' graveyards.",
+                    "understood": False,
+                    "notice": THRABEN_NOTICE,
+                },
+            ],
+        },
+        "targeting": {
+            "targets_anything": True,
+            "understood": False,
+            "minimum": 0,
+            "maximum": None,
+            "requirements": [],
+        },
+    },
+    "abilities": [],
+}
+
+THRABEN_ACTION = """
+function charmStrip(handlers) {
+  const state = baseState({ hands: { alice: [charm] } });
+  const store = makeStore(baseApp(state, { action: {
+    kind: "cast", cardId: charm.id, card: charm, abilityIndex: null, keyword: null,
+    modes: [], optionalCosts: {}, xValue: null, color: null, altCost: null,
+    choosing: [], convoke: [], delve: [], improvise: [], crewing: [], slots: [],
+    shares: {}, pinned: [], freeTargets: [], pendingTargets: [], focusSlot: null,
+    affordance: null, error: null, holdPriority: false, done: false,
+  } }));
+  m.mountRibbon(document, store, handlers || HANDLERS);
+  store.set({});
+  return document.querySelector("#casting-strip");
+}
+"""
+
+
+def test_a_mode_the_engine_cannot_read_is_marked_before_it_is_chosen() -> None:
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + THRABEN_ACTION
+        + """
+        (() => {
+          const strip = charmStrip();
+          const find = (node) => {
+            if ((node.className || "").includes("unusable")) return node;
+            for (const c of node.children || []) { const f = find(c); if (f) return f; }
+            return null;
+          };
+          return { text: strip.textContent, unusable: Boolean(find(strip)) };
+        })()
+        """,
+        charm=THRABEN,
+    )
+    assert result["unusable"] is True
+    assert "Exile any number of target players' graveyards." in result["text"]
+    assert "cannot be read by this engine" in result["text"]
+
+
+def test_a_mode_the_engine_cannot_read_is_not_a_chip_to_click() -> None:
+    """No silent refusal path left: there is no button for it, so it cannot
+    reach `onToggleMode` and be refused after the targets are picked."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + THRABEN_ACTION
+        + """
+        (() => {
+          const calls = [];
+          const handlers = { ...HANDLERS, onToggleMode: (n) => calls.push(n) };
+          const strip = charmStrip(handlers);
+          const unreadable = findByText(strip, "button", "Exile any number of target players");
+          click(findByText(strip, "button", "Destroy target enchantment"));
+          return { unreadable: Boolean(unreadable), calls };
+        })()
+        """,
+        charm=THRABEN,
+    )
+    assert result["unreadable"] is False
+    # The readable mode beside it is still an ordinary chip.
+    assert result["calls"] == [2]
+
