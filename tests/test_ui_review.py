@@ -1230,3 +1230,100 @@ def test_the_rationale_sent_through_the_real_route_reaches_the_retrospective(cli
         assert _review_advice_why(review.json()) == [said]
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+# -- T11 clause (h): the existing rendering path handles the richer output ----
+#
+# This task widens what the REVIEWER is given, not what the page is given -
+# `GET /api/games/{id}/review` is unchanged and so is `ui/render/review.js`.
+# What has to be confirmed is that the longer critique a full ledger produces
+# renders in full, and that an AIvAI game's two reviews still come out one
+# node each, in the order `aiReviewsOf` returns them.
+
+LONG_REVIEW = "\n\n".join(
+    [
+        "Turn 4 is the turn this game turned on. The declared plan was to burn the "
+        "blocker and swing, and the ledger shows the burn spell cast at precombat "
+        "main with the opponent holding two untapped Islands.",
+        "The reasoning recorded on that row - that her only blocker was tapped - was "
+        "true and still not the whole read: the enumeration on the same row shows a "
+        "second castable spell that was legal and not taken.",
+        "By turn 7 the same pattern repeats. Three rows in a row show a committing "
+        "action taken at sorcery speed with the same two Islands open, and none of "
+        "the recorded reasons mentions them.",
+        "Two concrete changes. Hold the burn spell for the opponent's end step when "
+        "nothing is lost by waiting, and say in the reasoning what the open mana "
+        "could be, so the next review can tell a read from an oversight.",
+    ]
+)
+
+
+def test_a_long_multi_paragraph_review_renders_in_full() -> None:
+    reviewed = {
+        **REVIEW,
+        "entries": [
+            *REVIEW["entries"],
+            entry(109, "ai_review", detail={"player": "claude", "text": LONG_REVIEW}),
+        ],
+    }
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          const nodes = findAll(els.body, "ai-review");
+          return { count: nodes.length, text: nodes.map((n) => n.textContent).join("") };
+        })()
+        """,
+        review=reviewed,
+        card=CARD_ANSWER,
+    )
+    assert result["count"] == 1
+    for paragraph in LONG_REVIEW.split("\n\n"):
+        assert paragraph in result["text"], paragraph[:60]
+    assert result["text"].count("Turn 4 is the turn") == 1
+
+
+def test_two_seats_reviews_render_one_node_each_in_the_order_they_are_read() -> None:
+    reviewed = {
+        **REVIEW,
+        "entries": [
+            *REVIEW["entries"],
+            entry(109, "ai_review", detail={"player": "alice", "text": "alice's own critique"}),
+            entry(110, "ai_review", detail={"player": "claude", "text": "claude's own critique"}),
+        ],
+    }
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          const nodes = findAll(els.body, "ai-review");
+          return { count: nodes.length, texts: nodes.map((n) => n.textContent) };
+        })()
+        """,
+        review=reviewed,
+        card=CARD_ANSWER,
+    )
+    assert result["count"] == 2
+    # `aiReviewsOf` orders by each player's own newest `seq` - alice at 109
+    # before claude at 110 - and the page draws one section per entry in
+    # that order (`tests/test_ui_review_model.py` pins the ordering itself).
+    assert "alice's own critique" in result["texts"][0]
+    assert "claude's own critique" in result["texts"][1]
