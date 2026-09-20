@@ -129,6 +129,51 @@ FETCH_SURVEIL: dict[str, Any] = {
 }
 
 
+#: A permanent castable at instant speed, for the capability proof (T18).
+#: The card is chosen for being a legal flash permanent with a plain cost and
+#: nothing else: no enter trigger to answer, no target to choose, no cost
+#: choice. Nothing in the proof is about this card, and nothing asserts
+#: anything specific to it - swap the printing and every test still reads.
+FLASH_PERMANENT = "Containment Priest"
+
+
+def flash_permanent_play(
+    play_id: str,
+    *,
+    whose_turn: str = "theirs",
+    steps: tuple[str, ...] = ("end_step",),
+    stack: str = "empty",
+    true: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """A minimal play that casts a permanent at instant speed.
+
+    The selector names the permanent by CHARACTERISTIC - a nonland permanent
+    card with the flash keyword - never by name, the same discipline every
+    other selector in this schema keeps."""
+    return {
+        "schema_version": 1,
+        "id": play_id,
+        "name": "Cast a permanent at instant speed",
+        "intent": "Hold the permanent and commit it in the latest legal window.",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": whose_turn, "steps": list(steps), "stack": stack},
+        "true": list(true or []),
+        "false": [],
+        "moves": [
+            {
+                "kind": "cast",
+                "card": {
+                    "zone": "hand",
+                    "select": {"keywords_any": ["Flash"], "types_any": ["Creature"]},
+                },
+                "mana": "auto",
+            }
+        ],
+        "next": [],
+    }
+
+
 def play(**over: Any) -> dict[str, Any]:
     """The fetch-shock worked example with top-level fields replaced."""
     base = copy.deepcopy(FETCH_SHOCK)
