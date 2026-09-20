@@ -686,3 +686,73 @@ def test_affordable_without_hypothetical_facts_raises():
     spell = bolt()
     with pytest.raises(HypotheticalRequired):
         matches({"affordable": {"extra": 0}}, spell, untapped_mana=1)
+
+
+# -- payable_any (T5) -------------------------------------------------------------
+
+
+def test_payable_any_matches_the_hypothetical_facts_payability():
+    spell = bolt()
+    hypo = {spell["id"]: {"payable_any": "now"}}
+    assert matches({"payable_any": ["now"]}, spell, hypo=hypo)
+    assert not matches({"payable_any": ["with_a_land"]}, spell, hypo=hypo)
+    assert matches({"payable_any": ["no", "now"]}, spell, hypo=hypo)
+
+
+@pytest.mark.parametrize("word", ["now", "with_a_land", "next_turn", "no"])
+def test_each_payability_word_matches_its_own_fact_and_no_other(word):
+    spell = bolt()
+    hypo = {spell["id"]: {"payable_any": word}}
+    assert matches({"payable_any": [word]}, spell, hypo=hypo)
+    for other in ("now", "with_a_land", "next_turn", "no"):
+        if other != word:
+            assert not matches({"payable_any": [other]}, spell, hypo=hypo)
+
+
+def test_payable_any_fails_closed_for_a_card_with_no_payability_entry():
+    """The X-cost case: the engine answers no payability for a spell whose
+    cost is not a number, so the card carries no `payable_any` fact and must
+    match NOTHING - never every word, and never the `no` word by default."""
+    spell = bolt()
+    for word in ("now", "with_a_land", "next_turn", "no"):
+        assert not matches({"payable_any": [word]}, spell, hypo={spell["id"]: {}})
+        assert not matches({"payable_any": [word]}, spell, hypo={})
+    assert not matches(
+        {"payable_any": ["now", "with_a_land", "next_turn", "no"]},
+        spell,
+        hypo={spell["id"]: {"unlocks": True}},
+    )
+
+
+def test_payable_any_without_hypothetical_facts_raises():
+    from magic_cards_model_api.playscripts.selectors import HypotheticalRequired
+
+    with pytest.raises(HypotheticalRequired):
+        matches({"payable_any": ["now"]}, bolt())
+
+
+# -- unlocks_next (T5) ------------------------------------------------------------
+
+
+def test_unlocks_next_matches_the_hypothetical_facts_bool():
+    land = mountain()
+    assert matches({"unlocks_next": True}, land, hypo={land["id"]: {"unlocks_next": True}})
+    assert not matches({"unlocks_next": True}, land, hypo={land["id"]: {"unlocks_next": False}})
+    assert matches({"unlocks_next": False}, land, hypo={land["id"]: {"unlocks_next": False}})
+    assert not matches({"unlocks_next": True}, land, hypo={})
+    assert not matches({"unlocks_next": False}, land, hypo={})
+
+
+def test_unlocks_next_is_independent_of_unlocks():
+    land = mountain()
+    hypo = {land["id"]: {"unlocks": False, "unlocks_next": True}}
+    assert matches({"unlocks": False}, land, hypo=hypo)
+    assert matches({"unlocks_next": True}, land, hypo=hypo)
+    assert not matches({"unlocks": True, "unlocks_next": True}, land, hypo=hypo)
+
+
+def test_unlocks_next_without_hypothetical_facts_raises():
+    from magic_cards_model_api.playscripts.selectors import HypotheticalRequired
+
+    with pytest.raises(HypotheticalRequired):
+        matches({"unlocks_next": True}, mountain())

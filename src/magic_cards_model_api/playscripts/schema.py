@@ -250,6 +250,19 @@ SearchesForWords = Annotated[
 #: `searches_for_any` gets.
 ENTERS_STATES = ("untapped", "tapped", "untapped_if_paid")
 EntersAnyWords = Annotated[list[Literal[ENTERS_STATES]], Field(max_length=len(ENTERS_STATES))]
+#: `payable_any` (T5): how soon the engine says this card's cost can actually
+#: be paid, in colours as well as amount - `now` with the mana available this
+#: moment, `with_a_land` once the land drop still available this turn is made,
+#: `next_turn` once the lands already on the battlefield untap, and `no` when
+#: none of those pays for it. Spelled out here rather than imported for the
+#: same reason `enters_any` is: this schema stays free of the engine's
+#: `machines.hypothetical`, which only the server-side evaluation path
+#: (`hypothetical_facts.py`) touches. A word outside the four is
+#: `malformed-play`, never a silent no-match.
+PAYABLE_STATES = ("now", "with_a_land", "next_turn", "no")
+PayableAnyWords = Annotated[
+    list[Literal[PAYABLE_STATES]], Field(max_length=len(PAYABLE_STATES))
+]
 
 
 class _Strict(BaseModel):
@@ -333,9 +346,18 @@ class Selector(_Strict):
     #: How this land would enter the battlefield right now (O4), judged
     #: against the live game - see `hypothetical_facts.py`.
     enters_any: EntersAnyWords = None
+    #: How soon this card's cost can be paid, colours included, judged
+    #: against the live game (T5) - see `hypothetical_facts.py`. A card the
+    #: engine answers no payability for (an X cost) carries no fact and
+    #: matches nothing, whichever words are asked for.
+    payable_any: PayableAnyWords = None
     #: With this land hypothetically on the battlefield, some other hand
     #: card becomes payable that is not payable now (O7).
     unlocks: bool = None
+    #: Same as `unlocks`, one turn further out: with this land on the
+    #: battlefield and the lands already there untapped, some other hand card
+    #: becomes payable that is not payable next turn without it (T5).
+    unlocks_next: bool = None
     #: This hand card searches the library, and some library land it could
     #: find would `unlocks` (O7).
     unlocks_by_search: bool = None
@@ -344,7 +366,13 @@ class Selector(_Strict):
     #: wants "free" basics reachable, never a shockland or other non-basic
     #: unlock (O7).
     unlocks_by_basic_search: bool = None
-    #: Mana value <= untapped mana + `extra` (O7).
+    #: Mana value <= untapped mana + `extra` (O7). DEPRECATED, replaced by
+    #: `payable_any`: `affordable` is colour-blind, because it compares the
+    #: card's plain `mana_value` against a count of untapped mana and so reads
+    #: a double-black two-drop as affordable off two white sources.
+    #: `payable_any` asks the engine whether the cost can actually be paid,
+    #: colours included. Kept, and still answered exactly as before, so no
+    #: script already written stops validating.
     affordable: Affordable = None
 
 
@@ -760,6 +788,7 @@ _ITEM_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "zones": TypeAdapter(Literal[MISSING_FROM_ZONES]),
     "searches_for_any": TypeAdapter(Literal[BASIC_LAND_TYPES]),
     "enters_any": TypeAdapter(Literal[ENTERS_STATES]),
+    "payable_any": TypeAdapter(Literal[PAYABLE_STATES]),
     **{field: TypeAdapter(NonBlank) for field in SELECTOR_WORD_FIELDS},
 }
 _BOUND_TYPES = (

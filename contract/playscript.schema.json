@@ -843,6 +843,21 @@
           "title": "Oracle Has",
           "type": "string"
         },
+        "payable_any": {
+          "default": null,
+          "items": {
+            "enum": [
+              "now",
+              "with_a_land",
+              "next_turn",
+              "no"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "title": "Payable Any",
+          "type": "array"
+        },
         "power": {
           "$ref": "#/$defs/Comparison",
           "default": null
@@ -925,6 +940,11 @@
         "unlocks_by_search": {
           "default": null,
           "title": "Unlocks By Search",
+          "type": "boolean"
+        },
+        "unlocks_next": {
+          "default": null,
+          "title": "Unlocks Next",
           "type": "boolean"
         }
       },
