@@ -658,6 +658,123 @@ def test_an_ai_review_for_a_game_that_never_existed_is_a_404(client: TestClient)
 
 
 # ---------------------------------------------------------------------------
+# T35: an AI review that could not be produced, recorded durably
+# ---------------------------------------------------------------------------
+
+
+def _ai_review_failure(
+    client: TestClient, info: dict[str, Any], player: str = "bob", **overrides: Any
+):
+    body = {
+        "player": player,
+        "uid": info["seat_uids"][player],
+        "stage": "generate",
+        "reason": "the wrapper answered 502",
+        "invoked": True,
+        **overrides,
+    }
+    return client.post(f"/api/games/{info['game_id']}/ai-review-failure", json=body)
+
+
+def test_an_ai_review_failure_is_recorded_and_reaches_the_review(client: TestClient) -> None:
+    """The signal is a row of the same ledger everything else in this system
+    is durable in - `audit.AI_REVIEW_FAILED_ACTION`, never `ai_review`, so a
+    reader never mistakes "no review" for a review."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        filed = _ai_review_failure(client, info)
+        assert filed.status_code == 200, filed.text
+        assert filed.json()["recorded"] is True
+
+        review_body = _review(client, game_id, key=info["admin_key"]).json()
+        rows = [
+            e for e in review_body["entries"] if e["action"] == audit.AI_REVIEW_FAILED_ACTION
+        ]
+        assert len(rows) == 1
+        assert rows[0]["detail"]["stage"] == "generate"
+        assert rows[0]["detail"]["invoked"] is True
+        assert "502" in rows[0]["detail"]["reason"]
+        assert all(e["action"] != audit.AI_REVIEW_ACTION for e in review_body["entries"])
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_the_review_body_surfaces_ai_review_failures_without_reading_the_ledger(
+    client: TestClient,
+) -> None:
+    """Clause (c): readable through an existing surface. An operator reads
+    `GET .../review` and sees WHY there is no review, without grepping pod
+    logs or walking `entries` by hand."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        _ai_review_failure(client, info, stage="review_record", reason="500", invoked=False)
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        assert body["ai_review_failures"] == [
+            {
+                "seq": body["ai_review_failures"][0]["seq"],
+                "ts": body["ai_review_failures"][0]["ts"],
+                "player": "bob",
+                "stage": "review_record",
+                "reason": "500",
+                "invoked": False,
+            }
+        ]
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_game_with_no_review_failure_carries_an_empty_list(client: TestClient) -> None:
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        assert _review(client, game_id, key=info["admin_key"]).json()["ai_review_failures"] == []
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_an_ai_review_failure_is_gated_exactly_like_an_ai_review(client: TestClient) -> None:
+    live = _agent_game(client)
+    try:
+        assert _ai_review_failure(client, live).status_code == 409
+    finally:
+        client.delete(f"/api/games/{live['game_id']}", params={"key": live["admin_key"]})
+
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        wrong_seat = _ai_review_failure(
+            client, info, player="bob", uid=info["seat_uids"]["alice"]
+        )
+        assert wrong_seat.status_code == 404, wrong_seat.text
+        human = _ai_review_failure(client, info, player="alice", uid=info["seat_uids"]["alice"])
+        assert human.status_code == 404, human.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_an_ai_review_failure_refuses_a_stage_outside_the_vocabulary(client: TestClient) -> None:
+    """The stage is a closed vocabulary, so `ai_review_failures` can be read
+    as data rather than as free text a driver invented."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        bad = _ai_review_failure(client, info, stage="whatever")
+        assert bad.status_code == 422, bad.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_the_review_failure_action_is_not_loud(client: TestClient) -> None:
+    """A judgement made deliberately, not inherited: a driver-side
+    infrastructure failure is not a seat filing an engine bug, and
+    `LOUD_ACTIONS`'s banner names a seat as the actor. The durable row plus
+    the driver's own warning line carry it instead."""
+    assert audit.AI_REVIEW_FAILED_ACTION not in audit.LOUD_ACTIONS
+
+
+# ---------------------------------------------------------------------------
 # the snapshot this build cannot decode: the review is rebuilt from the ledger
 # ---------------------------------------------------------------------------
 #

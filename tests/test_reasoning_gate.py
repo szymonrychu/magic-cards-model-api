@@ -112,6 +112,16 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
         "is refused outright before the game is even over, so there is no "
         "in-progress agent turn for `records.require_reasoning` to gate."
     ),
+    ("POST", "/api/games/{game_id}/ai-review-failure"): (
+        "the same exemption `POST .../ai-review` gets, for the same reason, "
+        "and one more of its own: `reason` IS the reasoning, the row is "
+        "written by a driver rather than by a seat taking a turn, it mutates "
+        "no `Game`, and it is refused outright before the game is over - so "
+        "there is no in-progress agent turn for `records.require_reasoning` "
+        "to gate. Gating it on a seat's reasoning would also be circular: "
+        "this route exists precisely for the case where the seat's own "
+        "post-game work could not be done."
+    ),
     ("POST", "/api/games/{game_id}/advice"): (
         "`AdviceIn.reasoning` IS the reasoning, and required non-blank by the "
         "shape itself rather than by this gate - which is the stronger "

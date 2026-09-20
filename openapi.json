@@ -2288,6 +2288,144 @@
         "title": "AgentSettings",
         "type": "object"
       },
+      "AiReviewFailure": {
+        "description": "One `audit.AI_REVIEW_FAILED_ACTION` row, flattened - `review.py`'s\n`_ai_review_failures`. `invoked` separates a reviewer that ran and\nfailed from one that was never asked at all.",
+        "properties": {
+          "invoked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoked"
+          },
+          "player": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "title": "AiReviewFailure",
+        "type": "object"
+      },
+      "AiReviewFailureIn": {
+        "additionalProperties": false,
+        "description": "`POST /api/games/{game_id}/ai-review-failure` - the durable record\nthat a post-game AI review could not be produced, and why.\n\nGated exactly like `AiReviewIn` (post-game only, `uid` must open\n`player`'s own seat, and `player` must be a registered AI seat), for the\nsame reasons: only an AI seat's own driver ever generates a review, so\nonly it can report that one failed.\n\n`invoked` is the field this shape exists for. Without it \"the reviewer\nfailed\" and \"the reviewer was never invoked\" are the same absence, which\nis precisely the ambiguity the pod logs left - it is `True` only when the\nwrapper's `/v1/review` was actually reached and answered.",
+        "properties": {
+          "invoked": {
+            "title": "Invoked",
+            "type": "boolean"
+          },
+          "player": {
+            "minLength": 1,
+            "title": "Player",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "stage": {
+            "enum": [
+              "review_record",
+              "prompt",
+              "generate",
+              "empty",
+              "file"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "uid": {
+            "minLength": 1,
+            "title": "Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player",
+          "uid",
+          "stage",
+          "reason",
+          "invoked"
+        ],
+        "title": "AiReviewFailureIn",
+        "type": "object"
+      },
+      "AiReviewFailureResponse": {
+        "description": "`POST .../ai-review-failure`'s answer, shaped like\n`AiReviewResponse`: this mutates no `Game` either.",
+        "properties": {
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recorded",
+          "log_seq",
+          "player"
+        ],
+        "title": "AiReviewFailureResponse",
+        "type": "object"
+      },
       "AiReviewIn": {
         "additionalProperties": false,
         "description": "`POST /api/games/{game_id}/ai-review` - the post-game AI review\n(`audit.AI_REVIEW_ACTION`), a separate critique generated on Opus from a\nseat's own reflection plus the game's review record\n(`mtg_agent.driver.review`), never a seat's own account of what it did.\n\nShaped exactly like `ReflectionIn` and gated the same way (post-game\nonly, `uid` must open `player`'s own seat) - see that class's docstring\nfor why this is deliberately just one seat's credential and one block of\ntext, nothing structured.",
@@ -5542,6 +5680,13 @@
               "$ref": "#/components/schemas/ReviewAdvice"
             },
             "title": "Advice",
+            "type": "array"
+          },
+          "ai_review_failures": {
+            "items": {
+              "$ref": "#/components/schemas/AiReviewFailure"
+            },
+            "title": "Ai Review Failures",
             "type": "array"
           },
           "created_at": {
@@ -15090,6 +15235,56 @@
           }
         },
         "summary": "Declare Ai Review"
+      }
+    },
+    "/api/games/{game_id}/ai-review-failure": {
+      "post": {
+        "description": "Record that the post-game AI review could NOT be produced, and why -\n`audit.AI_REVIEW_FAILED_ACTION`.\n\nGated identically to `declare_ai_review` beside it, down to the AI-seat\ncheck: only an AI seat's own driver ever generates a review, so only it\ncan report that one failed, and a human's own uid must not be able to\nwrite \"your review failed\" into anybody's ledger.\n\n**Why a route at all.** The driver is a separate process from this api\nand reaches it only over HTTP, so a durable signal it can write has to be\na route. The alternative - leaving the four failures in the driver's own\n`log.warning` calls - is what made \"the reviewer failed\" and \"the\nreviewer was never invoked\" indistinguishable once a pod's logs rolled.\nSee `audit.AI_REVIEW_FAILED_ACTION` for why this row is not loud.",
+        "operationId": "declare_ai_review_failure_api_games__game_id__ai_review_failure_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiReviewFailureIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiReviewFailureResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Declare Ai Review Failure"
       }
     },
     "/api/games/{game_id}/cards": {

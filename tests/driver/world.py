@@ -110,6 +110,14 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         #: unreachable wrapper, "error" is a `claude` failure (502).
         "wrapper_review": "up",
         "review_text": "a solid game overall, but the turn 6 attack was a misread",
+        #: "error" makes `POST .../ai-review` alone refuse (500), the rest of
+        #: the game server still answering - a review generated and then
+        #: refused is still a review nobody can read.
+        "ai_review_route": "up",
+        #: "down" makes `POST .../ai-review-failure` alone unreachable, so a
+        #: test can prove that failing to record a failure is itself
+        #: swallowed.
+        "failure_route": "up",
         #: Seconds `/v1/review`'s fake sleeps before answering - 0 by
         #: default. Set to simulate a slow review generation, to prove the
         #: driver never waits on it before answering `/turn-done`.
@@ -124,6 +132,9 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
     reflection_posts: list[dict] = []
     #: Every `POST /api/games/{id}/ai-review` the driver sent.
     ai_review_posts: list[dict] = []
+    #: Every `POST /api/games/{id}/ai-review-failure` the driver sent - the
+    #: durable signal T35 files when a review could not be produced.
+    ai_review_failures: list[dict] = []
     #: Every `POST /v1/review` the driver sent to the fake wrapper.
     review_requests: list[dict] = []
     #: Every `PUT /api/games/{id}/seats/{uid}/scripts` the driver sent.
@@ -175,7 +186,22 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
     def get_review(game_id: str, uid: str | None = None, key: str | None = None):
         if state["game"] == "down":
             raise httpx.ConnectError("connection refused")
+        if state["review_record"] == "error":
+            # The game server is up and refuses this one read - the shape
+            # that lets a test watch the driver file a durable failure
+            # signal, which an unreachable server could never carry.
+            raise HTTPException(status_code=500, detail="review record unavailable")
         return state["review_record"]
+
+    @game.post("/api/games/{game_id}/ai-review-failure")
+    def post_ai_review_failure(game_id: str, body: dict):
+        if state["game"] == "down":
+            raise httpx.ConnectError("connection refused")
+        if state["failure_route"] == "down":
+            raise httpx.ConnectError("connection refused")
+        ai_review_failures.append({"game_id": game_id, **body})
+        events.append("ai_review_failure")
+        return {"recorded": True, "log_seq": len(ai_review_failures), "player": body.get("player")}
 
     @game.post("/api/games/{game_id}/ai-review")
     def post_ai_review(game_id: str, body: dict):
@@ -184,6 +210,8 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         # gates are `test_review.py`'s job.
         if state["game"] == "down":
             raise httpx.ConnectError("connection refused")
+        if state["ai_review_route"] == "error":
+            raise HTTPException(status_code=500, detail="refused")
         ai_review_posts.append({"game_id": game_id, **body})
         events.append("ai_review")
         return {"recorded": True, "log_seq": len(ai_review_posts), "player": body.get("player")}
@@ -354,6 +382,7 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         wrapper_posts=submitted,
         reflection_posts=reflection_posts,
         ai_review_posts=ai_review_posts,
+        ai_review_failures=ai_review_failures,
         review_requests=review_requests,
         script_puts=script_puts,
         session_settings=session_settings,

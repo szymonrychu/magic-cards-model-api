@@ -85,6 +85,26 @@ REFLECTION_ACTION = "game_reflection"
 #: extra API call.
 AI_REVIEW_ACTION = "ai_review"
 
+#: The AI review that could NOT be produced
+#: (`POST /api/games/{id}/ai-review-failure`), filed by the same driver that
+#: would have filed the review itself. Every failure inside
+#: `mtg_agent.driver.app`'s `post_ai_review` used to be swallowed to a
+#: `log.warning` in a pod whose logs roll, so "the reviewer failed" and "the
+#: reviewer was never invoked" were the same observable: no
+#: `AI_REVIEW_ACTION` row and nothing else either. This row is the durable
+#: difference. `detail` carries `stage` (which of the four calls failed, a
+#: closed vocabulary - `schemas.AiReviewFailureIn`), `reason` (what it said)
+#: and `invoked` (whether the reviewer was ever actually asked), which is
+#: the distinction the pod logs could not make.
+#:
+#: Deliberately NOT in `LOUD_ACTIONS`, and the judgement is made here rather
+#: than inherited: a loud banner names a SEAT as the actor ("PROBLEM
+#: REPORTED by bob"), and this is a driver-side infrastructure failure that
+#: no seat did. It is already durable in the ledger and surfaced by
+#: `review.build_review`'s own `ai_review_failures`, and the driver still
+#: logs its own distinct warning line for each stage.
+AI_REVIEW_FAILED_ACTION = "ai_review_failed"
+
 #: An advisor's proposal: one action it says its human should take, validated
 #: against the engine where the request shape allowed it, recorded but never
 #: performed (`POST /api/games/{id}/advice`, `schemas.AdviceIn`). The row

@@ -55,6 +55,7 @@ from typing import Any
 from .audit import (
     ADVICE_ACTION,
     ADVICE_APPROVED_ACTION,
+    AI_REVIEW_FAILED_ACTION,
     GAME_OVER_ACTION,
     PLAN_ACTION,
     SCRIPT_RUN_ACTIONS,
@@ -121,8 +122,34 @@ def build_review(archived: ArchivedGame, entries: list[dict[str, Any]]) -> dict[
         **head,
         "declarations": _declarations(entries),
         "advice": _advice(entries),
+        "ai_review_failures": _ai_review_failures(entries),
         "entries": entries,
     }
+
+
+def _ai_review_failures(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every `ai_review_failed` row, flattened to the fields a reader needs
+    (T35).
+
+    The rows are already in `entries`, like everything else - this list
+    exists so the question an operator actually asks ("there is no AI review
+    on this page; was one ever attempted, and what went wrong?") is answered
+    by reading one key rather than by walking a whole ledger looking for an
+    action they would have to know the name of first. `invoked` is the field
+    that makes it an answer rather than a shrug: it separates a reviewer that
+    ran and failed from one that was never asked."""
+    return [
+        {
+            "seq": entry["seq"],
+            "ts": entry.get("ts"),
+            "player": (entry.get("detail") or {}).get("player"),
+            "stage": (entry.get("detail") or {}).get("stage"),
+            "reason": (entry.get("detail") or {}).get("reason"),
+            "invoked": (entry.get("detail") or {}).get("invoked"),
+        }
+        for entry in entries
+        if entry.get("action") == AI_REVIEW_FAILED_ACTION
+    ]
 
 
 def _from_the_ledger(

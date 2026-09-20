@@ -68,6 +68,8 @@ from .schemas import (
     AdviceIn,
     AdviceResponse,
     AffordancesResponse,
+    AiReviewFailureIn,
+    AiReviewFailureResponse,
     AiReviewIn,
     AiReviewResponse,
     AttackRequest,
@@ -3507,6 +3509,53 @@ def declare_ai_review(game_id: str, req: AiReviewIn) -> dict[str, Any]:
         audit.AI_REVIEW_ACTION,
         player=req.player,
         text=req.text,
+    )
+    return {"recorded": True, "log_seq": seq, "player": req.player}
+
+
+@app.post(
+    "/api/games/{game_id}/ai-review-failure",
+    response_model=AiReviewFailureResponse,
+    response_model_exclude_unset=True,
+)
+def declare_ai_review_failure(game_id: str, req: AiReviewFailureIn) -> dict[str, Any]:
+    """Record that the post-game AI review could NOT be produced, and why -
+    `audit.AI_REVIEW_FAILED_ACTION`.
+
+    Gated identically to `declare_ai_review` beside it, down to the AI-seat
+    check: only an AI seat's own driver ever generates a review, so only it
+    can report that one failed, and a human's own uid must not be able to
+    write "your review failed" into anybody's ledger.
+
+    **Why a route at all.** The driver is a separate process from this api
+    and reaches it only over HTTP, so a durable signal it can write has to be
+    a route. The alternative - leaving the four failures in the driver's own
+    `log.warning` calls - is what made "the reviewer failed" and "the
+    reviewer was never invoked" indistinguishable once a pod's logs rolled.
+    See `audit.AI_REVIEW_FAILED_ACTION` for why this row is not loud."""
+    archived = store.archived(game_id)
+    if archived is None:
+        raise KeyError(f"no game {game_id}")
+    if archived.seat_uids.get(req.uid) != req.player:
+        raise KeyError("that uid is not that seat in this game")
+    if req.player not in archived.ai_players:
+        raise KeyError("that seat is not an AI seat in this game")
+    if not _post_game(archived, _gate_entries(archived)):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "this game is still in progress - an AI review failure is "
+                "recorded after the result is known, so it cannot be filed "
+                "for a game that has not ended"
+            ),
+        )
+    seq = audit.record(
+        game_id,
+        audit.AI_REVIEW_FAILED_ACTION,
+        player=req.player,
+        stage=req.stage,
+        reason=req.reason,
+        invoked=req.invoked,
     )
     return {"recorded": True, "log_seq": seq, "player": req.player}
 
