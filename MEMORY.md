@@ -7,6 +7,30 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- 2026-09-20 a pinned mana source is offered, not promised (the owner's "Ugin
+  ultimate: the spells should be castable from exile for free, but the engine
+  kept tapping and paying some mana for them"). The engine half was priced
+  right; the tapping was this repo's. `engine_api.pay_with` gated only *bare
+  id* sources on `payment.shortfall` and tapped a `ManaSource` carrying a
+  colour or an `ability_index` unconditionally - and `ui/mana.js` pins a
+  clicked land as exactly that shape. Clicking lands before a free cast tapped
+  them for a cost with no mana in it; clicking three before a one-mana spell
+  tapped all three and floated the rest. CR 601.2g opens the mana-ability
+  window only "if the total cost includes a mana payment" and CR 118.3c says
+  activating one is never mandatory, so every shape is now gated and a pin the
+  cost does not need is passed over in silence - the `tapped` detail these
+  routes already return is the record, and a notice would fire on the
+  commonest cast there is. The gate is `owes_mana` (pool vs `mana_owed` with
+  **no life on the table**), not `payment.shortfall`: shortfall counts the
+  payer's whole life total for a Phyrexian symbol, so gating a pinned land on
+  it would read "already affordable" and quietly pay 2 life for a Mutagenic
+  Growth the player pinned a Forest for. The unnamed path keeps `shortfall` on
+  purpose - naming nothing hands the choice to the engine, and paying the life
+  has to stay reachable from a front end that offers every untapped source by
+  default. Convoke/delve/improvise are the same "objects offered for a cost"
+  shape and need nothing here: `CostPayment.substitute` already refuses an
+  offer beyond what the cost holds rather than spending it.
+
 - 2026-09-20 kicker reaching a human (the owner's "Sowing Mycospawn, cast with
   kicker didn't work. I simply wasn't presented with option to pay the
   kicker"): every server layer already had it - `ActionRow.optional_costs`,

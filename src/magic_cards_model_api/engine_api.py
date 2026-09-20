@@ -455,6 +455,38 @@ def mana_colors(
     return produced
 
 
+def owes_mana(payment: Any) -> bool:
+    """True while this payment's pool still cannot cover the mana part of the
+    total cost **out of mana alone** - which is what decides whether one more
+    mana ability may be activated for it.
+
+    CR 601.2g opens the mana-ability window only "if the total cost includes a
+    mana payment", and CR 118.3c adds that activating mana abilities "is not
+    mandatory, even if paying a cost is". So a cost that owes nothing - a free
+    cast through a zone permission (plot, an "you may cast it without paying
+    its mana cost" grant), an evoke or an alternative cost with no mana in it -
+    opens no window at all, and a cost whose remaining mana the pool already
+    covers has nothing left for another activation to buy. Tapping anyway is
+    not a refusal, it is an activation the rules never asked for, and the
+    player gets the land back for nothing.
+
+    Not `CostPayment.shortfall`, deliberately, though it is the same question
+    one argument apart: `shortfall` counts the payer's whole life total as
+    available (`life_available`), because a Phyrexian symbol (CR 107.4f) can
+    be paid with life and affording a cost that way is still affording it.
+    That is the right reading for "can this be cast at all", which is what
+    every other caller here asks it for. It is the wrong reading for "may
+    another land be tapped": a player who pinned a land for a Phyrexian cost
+    asked to pay the mana, and a payment that reads as already-affordable
+    because the life is there would skip that land and quietly pay life
+    instead (`ManaPool.payment_for` settles an open choice at "least life
+    first, then least mana", so the mana is preferred once it is in the pool).
+    Asking with no life on the table taps the land, and the pinned mana is
+    then what pays.
+    """
+    return not payment.pool.can_pay(payment.mana_owed, spend=payment.spend)
+
+
 def target_thing(game: Game, token: str) -> Any:
     """A target named as a player name, a card id, or the id of an ability on
     the stack (`Game.find_ability_by_id`): Consign to Memory's "target
@@ -528,6 +560,38 @@ def pay_with(
     `ability_index=None` - absent, or explicitly null - is the second and third
     shapes exactly as they always were: the branch below is only entered by an
     entry that positively names an ability.
+
+    **Every shape is gated on the payment still needing mana**, and that gate
+    is what the first two were missing: a bare id went through `auto_tap`,
+    which stops as soon as the pool can pay, while a `ManaSource` carrying a
+    colour or an ability index was tapped unconditionally. A browser pins a
+    clicked land as exactly that shape (`ui/mana.js`), so a player who clicked
+    lands and then cast a spell that owes nothing - a free cast through a zone
+    permission - had them tapped for a cost with no mana in it, and one who
+    clicked three lands for a one-mana spell had all three tapped with the
+    surplus left floating. CR 601.2g opens the mana-ability window only "if
+    the total cost includes a mana payment"; CR 118.3c says activating one is
+    never mandatory.
+
+    The two gates are deliberately not the same question. A pinned source asks
+    `owes_mana` - can the pool cover this out of *mana*, life aside - because
+    pinning a land for a Phyrexian symbol is a player saying they would rather
+    spend the land than the life. An unnamed source asks `payment.shortfall`,
+    which counts that life, because naming nothing is handing the choice to
+    the engine, and there "already affordable" includes affordable by paying
+    life (CR 107.4f); gating it on `owes_mana` instead would tap a land for
+    every Phyrexian cost and make paying the life unreachable from a front end
+    that offers its untapped sources by default.
+
+    A pin the payment does not need is passed over in silence rather than
+    refused or announced. It is not a failure to fail closed about: the cast
+    the player asked for happens, and it happens for less. The record is the
+    `tapped` detail every one of these routes already returns - the sources
+    that actually paid, which is where a seat or a ledger reader looks - and a
+    notice on top of it would fire on the commonest cast there is (a front end
+    offering more sources than the cost needs) and say nothing the `tapped`
+    list does not already say. The refusal a caller does still get is for a
+    source it named that *was* needed and could not pay.
     """
     from magic_cards_model.machines.cost import spend_restriction
 
@@ -535,6 +599,8 @@ def pay_with(
     for entry in sources:
         if isinstance(entry, ManaSource) and entry.ability_index is not None:
             source = find_card(game, entry.card_id)
+            if not owes_mana(payment):
+                continue
             ability = mana_ability_at(game, source, entry.ability_index)
             payment.tap_for_mana(
                 source,
@@ -543,6 +609,8 @@ def pay_with(
             )
         elif isinstance(entry, ManaSource) and entry.colors:
             source = find_card(game, entry.card_id)
+            if not owes_mana(payment):
+                continue
             payment.tap_for_mana(source, mana_colors(source, entry.colors, game))
         else:
             card_id = entry.card_id if isinstance(entry, ManaSource) else entry
