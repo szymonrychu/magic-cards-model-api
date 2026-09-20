@@ -32,6 +32,7 @@ with `knowledge_search` in the session that wrote it.
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 import time
 from typing import Any
@@ -45,6 +46,10 @@ from magic_cards_model_api.main import app
 from magic_cards_model_api.mcp import build_server
 from magic_cards_model_api.seatkit import Seats
 from magic_cards_model_api.store import store
+
+#: The route module itself, not the `FastAPI` instance the package re-exports
+#: under the same name - `get_game` looks `state_view` up in these globals.
+app_module = sys.modules["magic_cards_model_api.app"]
 
 #: 56 Swamp + 4 Leyline of the Void: a legal sixty (CR 100.2a exempts basic
 #: lands from the four-copy limit), built only from recorded fixtures.
@@ -983,6 +988,92 @@ def test_a_board_read_never_lands_inside_the_backstops_last_pregame_move(
 
         assert not (state["pregame"] is None and state["step"] == "untap"), (
             "a read landed inside the backstop's last pregame move and was handed "
+            "the frozen untap page the settling exists to prevent"
+        )
+        assert state["step"] == FIRST_PLAYABLE_STEP
+        assert state["priority_holder"] == "alice", "the human can actually act now"
+        assert state["turn_number"] == 1
+    finally:
+        delete(client, info)
+
+
+def test_a_board_read_that_passed_the_gate_first_still_never_sees_the_window(
+    client: TestClient, monkeypatch
+) -> None:
+    """The other ordering, and the one a one-shot check cannot hold.
+
+    `test_a_board_read_never_lands_inside_the_backstops_last_pregame_move`
+    drives the case where the handoff is already open when the read arrives.
+    A gate that is only consulted *before* the view is built does nothing for
+    the reverse: a read that passes it while nothing is in flight, and is then
+    overtaken - the pregame's last move opens its handoff and ends the pregame
+    while this request is still assembling its answer - is handed exactly the
+    frozen `untap` page out of the live `Game` it holds by reference.
+
+    Driven deterministically: the read is held inside `state_view` until the
+    backstop has ended the pregame, so it is guaranteed to build its view from
+    the half-applied state.
+    """
+    monkeypatch.setenv("AI_PREGAME_GRACE_SECONDS", "0")
+    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1, ai_players=("bob",))
+    game_id = info["game_id"]
+    ai_pregame.stop(game_id)
+    try:
+        assert declare(client, info, "alice", take=False).status_code == 200
+        assert ai_pregame.settle_now(game_id, {"bob"}) is not None, (
+            "bob still owed CR 103.5's declaration"
+        )
+        assert finish_opening_hand(client, info, "alice").status_code == 200
+
+        # bob owes the LAST pregame move. The read goes first, and is held
+        # past the gate until that move is half applied.
+        reading = threading.Event()
+        window = threading.Event()
+        real_state_view = app_module.state_view
+        real_settle = engine_api.settle_priorityless_steps
+        overtaken = threading.Event()
+
+        def held_state_view(*args: Any, **kwargs: Any) -> Any:
+            if not overtaken.is_set():
+                overtaken.set()
+                reading.set()
+                assert window.wait(10.0), "the backstop never ended the pregame"
+            return real_state_view(*args, **kwargs)
+
+        def slow_settle(game: Any) -> list[str]:
+            # The pregame is over and CR 103.8's untap step is not settled yet:
+            # precisely the state no client may act on.
+            window.set()
+            time.sleep(0.3)
+            return real_settle(game)
+
+        monkeypatch.setattr(app_module, "state_view", held_state_view)
+        monkeypatch.setattr(engine_api, "settle_priorityless_steps", slow_settle)
+
+        read: list[dict[str, Any]] = []
+        reader = threading.Thread(
+            target=lambda: read.append(view(client, info, "alice")), daemon=True
+        )
+        reader.start()
+        assert reading.wait(10.0), "the read never got past the gate"
+
+        settled: list[Any] = []
+        worker = threading.Thread(
+            target=lambda: settled.append(ai_pregame.settle_now(game_id, {"bob"})),
+            daemon=True,
+        )
+        worker.start()
+
+        reader.join(20.0)
+        assert not reader.is_alive(), "the board read never answered"
+        worker.join(10.0)
+        assert not worker.is_alive()
+        assert settled and settled[0] is not None, "the backstop made no move"
+
+        assert read, "the board read never answered"
+        state = read[0]
+        assert not (state["pregame"] is None and state["step"] == "untap"), (
+            "a read that passed the gate before the window opened was still handed "
             "the frozen untap page the settling exists to prevent"
         )
         assert state["step"] == FIRST_PLAYABLE_STEP

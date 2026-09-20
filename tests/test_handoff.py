@@ -7,6 +7,12 @@ contract, which that test cannot show: that it costs nothing when nothing is
 in flight, that it really does block a waiter while one is, that it is bounded
 rather than indefinite, that nesting cannot clear it early, and that it is
 per-game.
+
+`stable_read`'s own contract is here too: that a read overtaken *after* it
+passed the gate is rebuilt rather than handed back, which is the ordering a
+one-shot `wait` cannot hold and which
+`test_a_board_read_that_passed_the_gate_first_still_never_sees_the_window`
+drives through a real game.
 """
 
 from __future__ import annotations
@@ -96,3 +102,120 @@ def test_one_games_handoff_does_not_gate_another() -> None:
         started = time.monotonic()
         assert handoff.wait("game-b", timeout=5.0) is True
         assert time.monotonic() - started < 0.5
+
+
+# -- stable_read: the check after the build, not only before it ---------------
+
+
+def test_a_build_nothing_races_runs_once_and_is_handed_straight_back() -> None:
+    """The ordinary poll: no handoff anywhere near it, so no wait, no rebuild,
+    no second pass over `state_view`."""
+    runs = []
+
+    def build() -> str:
+        runs.append(None)
+        return "the board"
+
+    started = time.monotonic()
+    assert handoff.stable_read("calm-game", build) == "the board"
+    assert len(runs) == 1, "an uncontended read built its view more than once"
+    assert time.monotonic() - started < 0.5
+
+
+def test_a_build_overtaken_by_a_handoff_is_thrown_away_and_rebuilt() -> None:
+    """The finding this exists for: the read passes the gate while nothing is
+    in flight, and the pregame's last move opens its handoff while the view is
+    still being assembled. The half-applied view must not be what comes back.
+    """
+    seen = []
+
+    def build() -> str:
+        if not seen:
+            seen.append("half-applied")
+            # The mutation overtakes this build, exactly as the backstop's
+            # thread does to a poll: opened and closed while we were working.
+            with handoff.in_flight("overtaken-game"):
+                pass
+            return "half-applied"
+        seen.append("settled")
+        return "settled"
+
+    assert handoff.stable_read("overtaken-game", build) == "settled"
+    assert seen == ["half-applied", "settled"], "the overtaken view was not rebuilt"
+
+
+def test_a_handoff_still_open_when_the_build_ends_is_rebuilt_too() -> None:
+    """`_open` alone, unlike the generation counter, does catch this one - but
+    only because the handoff is still open at the check. Both halves of the
+    mark are load-bearing and both are asserted."""
+    holder = []
+
+    def build() -> str:
+        if not holder:
+            opened = handoff.in_flight("straddled-game")
+            opened.__enter__()
+            holder.append(opened)
+            return "half-applied"
+        holder.pop().__exit__(None, None, None)
+        return "settled"
+
+    assert handoff.stable_read("straddled-game", build) == "settled"
+    assert not handoff.is_in_flight("straddled-game")
+
+
+def test_a_read_that_cannot_win_the_race_is_still_bounded() -> None:
+    """A handoff that never closes must not hang the poll - the same bound
+    `wait` carries, for the same reason. What comes back is the last view
+    built, which is what the route would have handed back before any of this
+    existed."""
+    with handoff.in_flight("stuck-game"):
+        started = time.monotonic()
+        assert handoff.stable_read("stuck-game", lambda: "whatever is there", timeout=0.2) == (
+            "whatever is there"
+        )
+        elapsed = time.monotonic() - started
+    assert elapsed < 5.0, "a read against a stuck handoff did not respect its bound"
+
+
+def test_a_build_that_raises_uncontended_is_not_retried() -> None:
+    """A 404 for a game that does not exist is the read's own answer, not a
+    race to be retried - it must reach the caller unchanged, and once."""
+    runs = []
+
+    def build() -> str:
+        runs.append(None)
+        raise LookupError("no game gone-game")
+
+    try:
+        handoff.stable_read("gone-game", build)
+    except LookupError:
+        pass
+    else:  # pragma: no cover - the raise above is the point
+        raise AssertionError("the build's own exception was swallowed")
+    assert len(runs) == 1, "an uncontended failure was retried"
+
+
+def test_a_build_that_raises_because_it_was_overtaken_is_retried() -> None:
+    """Half-applied state can make an assembling view raise rather than merely
+    come out wrong. That is still a race, and it is still rebuilt."""
+    runs = []
+
+    def build() -> str:
+        runs.append(None)
+        if len(runs) == 1:
+            with handoff.in_flight("raising-game"):
+                pass
+            raise RuntimeError("read a game mid-move")
+        return "settled"
+
+    assert handoff.stable_read("raising-game", build) == "settled"
+    assert len(runs) == 2
+
+
+def test_the_generation_counter_only_ever_moves_forward() -> None:
+    before = handoff.generation()
+    with handoff.in_flight("counted-game"):
+        assert handoff.generation() == before + 1
+    # Closing does not move it back: a read that noted the count before a
+    # handoff that has since ended must still see a different number.
+    assert handoff.generation() == before + 1
