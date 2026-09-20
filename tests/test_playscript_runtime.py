@@ -2314,6 +2314,38 @@ def test_a_sacrifice_choice_matching_nothing_exits_unforeseen(
     assert hook.posts("/actions/activate") == []
 
 
+def test_a_pick_short_of_its_own_count_exits_unforeseen_rather_than_truncating(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_pick`'s own `count` is a floor, not a ceiling `found[:count]` may
+    silently truncate down to: asking for 2 candidates when only 1 matches
+    used to return that 1 with no error at all, so a sacrifice/discard/pick
+    two short of its own count sent an under-sized list the engine would
+    then refuse for a different, less clear reason - or, worse, accept as a
+    legal but wrong-sized answer for a cost that reads its own count
+    elsewhere. This must fail closed in the runtime itself, with its own
+    stop_reason, before any request is ever built."""
+    alice = seat_uid(board, "alice")
+    register(
+        client,
+        board,
+        alice,
+        bombard({"player": "opponent"}, {"select": {"types_all": ["Creature"]}, "count": 2}),
+    )
+    add_card(client, board, "Goblin Bombardment", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="bombard", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert result.script_exit.stop_reason
+    assert hook.posts("/actions/activate") == []
+
+
 def test_a_sacrifice_choice_tied_between_different_cards_exits_ambiguous_unless_preferred(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1428,6 +1428,19 @@ def _pick(
                 stop_reason=f"different cards tie for {what}",
             )
         found = sorted(found, key=lambda card: str(card.get("name") or card.get("card_name")))
+    if len(found) < count:
+        # `count` is a floor this pick must meet, not a ceiling `found[:count]`
+        # may silently truncate down to - the caller asked for `count` and
+        # building a request with fewer used to send an under-sized answer
+        # the engine could not always tell was wrong (Goblin Bombardment's
+        # own cost only ever needs 1 sacrifice, so a script's own `count: 2`
+        # picking just 1 still reads as a fully legal payment to the engine,
+        # silently downgrading the script's stated intent with no error
+        # anywhere). Fail closed here instead, before any request is built.
+        return ScriptExit(
+            Exit.UNFORESEEN,
+            stop_reason=f"only found {len(found)} of the {count} needed for {what}",
+        )
     return found[:count]
 
 
