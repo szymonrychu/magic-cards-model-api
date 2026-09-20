@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from conftest import add_card
+from conftest import add_card, force_turn_position
+from magic_cards_model.machines import Step
 from magic_cards_model.machines.hypothetical import payability_matrix
 from magic_cards_model.models import CardState
 
@@ -873,8 +874,7 @@ def test_a_land_whose_untapped_option_is_lethal_never_reads_unlocks_next(client,
 
     assert lethal["cards"][foundry_id]["unlocks_next"] is False
     assert any(
-        "lethal" in notice.casefold() and "unlocks_next" in notice
-        for notice in lethal["notices"]
+        "lethal" in notice.casefold() and "unlocks_next" in notice for notice in lethal["notices"]
     ), lethal["notices"]
 
 
@@ -919,25 +919,116 @@ def test_a_hand_land_carries_unlocks_next_beside_unlocks(client, game):
     assert entry["unlocks_next"] is True
 
 
-def test_with_a_land_names_its_land_drop_assumption_in_a_notice(client, game):
-    """D-3: `with_a_land` answers "some land in hand pays it", and says
-    nothing about whether the land drop is still available (CR 305.2) - the
-    same thing `unlocks` has always assumed. Rather than gate the fact (and
-    so make `payable_any` and `unlocks` disagree about the very same land on
-    the very same board), the limit is named in a notice whenever the engine
-    itself says the drop is gone."""
+def test_with_a_land_is_withheld_once_this_turns_land_drop_is_spent(client, game):
+    """D-3, the fix: `playscripts.schema` defines the word as "`with_a_land`
+    once the land drop still available this turn is made" (and `mtg-decks`'
+    mirror says the same), so the fact is gated on that drop actually being
+    available - CR 305.2a's own comparison of the lands this player may play
+    this turn against the ones they already played.
+
+    Preordain ({U}) with an Island in hand reads "with_a_land" while the drop
+    is there. Spend it and no land can be played this turn at all, so the
+    word is withheld: with nothing on the battlefield to untap either, the
+    honest answer left in the four-word vocabulary is "no"."""
     add_card(client, game, "Island", "alice", "hand")
     add_card(client, game, "Preordain", "alice", "hand")
     live = _live(game)
+    preordain_id = str(_by_name(live.player("alice").hand, "Preordain").id)
 
-    assert not any("305.2" in notice for notice in _horizon(game)["notices"])
+    assert _horizon(game)["cards"][preordain_id]["payable_any"] == "with_a_land"
 
     live.lands_played["alice"] = live.land_allowance("alice")
     spent = _horizon(game)
 
-    assert any("with_a_land" in notice and "305.2" in notice for notice in spent["notices"]), (
+    assert spent["cards"][preordain_id]["payable_any"] == "no"
+    assert any("with_a_land" in notice and "305.2a" in notice for notice in spent["notices"]), (
         spent["notices"]
     )
+
+
+def test_with_a_land_is_withheld_on_the_opponents_turn(client, game):
+    """CR 305.3, "A player can't play a land, for any reason, if it isn't
+    their turn" - the other durable half of the drop. Fatal Push is the card
+    that makes the point: an instant is castable on bob's turn (CR 117.1a),
+    so nothing about the *timing* stops it and the Swamp in hand really does
+    pay the {B} - what stops it is that alice cannot play that Swamp at all
+    while it is not her turn. So the word is withheld, and the notice names
+    the rule."""
+    add_card(client, game, "Swamp", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    live = _live(game)
+    push_id = str(_by_name(live.player("alice").hand, "Fatal Push").id)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
+
+    facts = _horizon(game)
+
+    assert facts["cards"][push_id]["payable_any"] == "no"
+    assert any("with_a_land" in notice and "305.3" in notice for notice in facts["notices"]), facts[
+        "notices"
+    ]
+
+
+def test_with_a_land_survives_a_non_empty_stack_and_says_timing_is_not_read(client, game):
+    """The half of CR 305 the gate deliberately does **not** read: CR 305.1's
+    own timing (a main phase, an empty stack, priority in hand). That half is
+    this instant's, satisfied again the moment the stack empties, and it is
+    never satisfied at all while a `candidate_ids` caller asks mid-resolution
+    (CR 608.2d) - gating on it would collapse every `with_a_land` for a seat
+    reading a script mid-search.
+
+    So with a spell on the stack and the drop still unspent, Fatal Push still
+    reads "with_a_land" off the Swamp in hand, and a notice says in the
+    engine's own words which timing the fact did not read."""
+    add_card(client, game, "Swamp", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "stack")
+    live = _live(game)
+    push_id = str(_by_name(live.player("alice").hand, "Fatal Push").id)
+
+    facts = _horizon(game)
+
+    assert facts["cards"][push_id]["payable_any"] == "with_a_land"
+    assert any("305.1" in notice for notice in facts["notices"]), facts["notices"]
+
+
+def test_the_land_drop_gate_never_touches_unlocks(client, game):
+    """The gate is `payable_any`'s alone. `unlocks` answers "would this land
+    entering turn something on", a question with no land drop in it at all
+    (its own contract never mentions one), so a spent drop leaves it exactly
+    where it was - and the divergence between the two facts is the one the
+    module docstring records rather than a bug."""
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    live = _live(game)
+    island_id = str(_by_name(live.player("alice").hand, "Island").id)
+    live.lands_played["alice"] = live.land_allowance("alice")
+
+    plain = build_hypothetical_facts(live, "alice")
+    horizon = _horizon(game)
+
+    assert plain["cards"][island_id]["unlocks"] is True
+    assert horizon["cards"][island_id]["unlocks"] is True
+    assert horizon["cards"][island_id]["unlocks_next"] is True
+
+
+def test_an_extra_land_play_keeps_with_a_land_alive_after_the_first_drop(client, game):
+    """CR 305.2's "continuous effects may increase this number", read through
+    the engine's own `land_allowance` rather than a hardcoded one: with a
+    second land play granted, one spent drop does not withhold the word."""
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    live = _live(game)
+    preordain_id = str(_by_name(live.player("alice").hand, "Preordain").id)
+    live.lands_played["alice"] = 1
+    live.grant_extra_land_play("alice")
+
+    facts = _horizon(game)
+
+    assert live.land_allowance("alice") == 2
+    assert facts["cards"][preordain_id]["payable_any"] == "with_a_land"
+    assert not any("with_a_land" in notice and "withheld" in notice for notice in facts["notices"])
 
 
 def test_with_the_flag_unset_nothing_moves_and_the_second_pass_never_runs(client, game):

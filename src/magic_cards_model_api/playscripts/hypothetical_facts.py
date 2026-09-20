@@ -124,17 +124,38 @@ search finish and priority returns.
     and still not payable. The sibling gates on `Affordability.YES`, which
     is the whole question here.
   - `"with_a_land"` - `payable` in some **hand** land's own column of the
-    real matrix. D-3: this assumes only that the land could enter, exactly
-    as `unlocks` has always assumed it; it does **not** check that the land
-    drop is still available (CR 305.2 - the right step, an empty stack, the
-    player's own turn, an unspent allowance). Gating the fact on the drop
-    was the alternative and is deliberately not taken: it would make
-    `payable_any` and `unlocks` answer differently about the very same land
-    on the very same board, and a seat reading a script mid-resolution
-    (`candidate_ids`, where the stack is never empty) would see every
-    `with_a_land` collapse. Instead the limit is named out loud: whenever
-    `Game.why_cannot_play_land` refuses, its own words are recorded in
-    `notices`, so a reader is never left to assume the drop is there.
+    real matrix, **and** `player` still has a land drop to make this turn.
+
+    D-3, and the reason the gate is there: `playscripts.schema`'s own
+    `PAYABLE_STATES` contract - the definition a play is written against,
+    mirrored verbatim into `mtg-decks`' `scripts/check_plays.py` - reads
+    "`with_a_land` once the land drop still available this turn is made".
+    An ungated fact would make that sentence false in two repos at once: a
+    play written against the documented meaning would match on a turn whose
+    drop is already spent, and act on a land it cannot play. So the word is
+    gated on exactly what the sentence says, `_land_drop_available`: CR
+    305.3's "if it isn't their turn", and CR 305.2a's comparison of
+    `Game.land_allowance` (CR 305.2's continuous-effect increases included)
+    against `Game.lands_played`.
+
+    The gate reads only that **durable** half. CR 305.1's own half - a main
+    phase, an empty stack, priority in hand - is this instant's timing,
+    satisfied again later in the same turn, and never satisfied at all while
+    a `candidate_ids` caller asks mid-resolution (CR 608.2d), where reading
+    it would collapse every `"with_a_land"` a search's own answer depends
+    on. That half is named out loud instead: whenever `Game.
+    why_cannot_play_land` refuses while the drop itself is still there, its
+    own words go into `notices`. The drop being gone is recorded there too,
+    naming which of CR 305.3 / CR 305.2a withheld the word.
+
+    This is deliberately the one place `payable_any` and `unlocks` answer
+    differently about the same land on the same board: `unlocks` asks "would
+    this land entering turn something on", a question with no land drop in
+    it (nothing in its own contract mentions one), while `"with_a_land"`
+    claims the drop outright. A card only a hand land could pay for reads
+    `"no"` rather than `"with_a_land"` once the drop is spent - next turn's
+    own drop is outside this four-word vocabulary, which reaches no further
+    than the untap step `"next_turn"` models.
   - `"next_turn"` - `payable` in the `assuming_untapped` pass's own `now`
     row: the board with `player`'s untap step already taken. That pass
     models the mana and nothing else - no draw, no upkeep trigger, no turn
@@ -350,9 +371,7 @@ _ASSUMING_UNTAPPED_PREFIX = "assuming untapped: "
 def _engine_notices(notices: tuple[str, ...]) -> tuple[str, ...]:
     """`notices` less the ones the `assuming_untapped` pass stamps on every
     row it answers - a no-op on the ordinary pass, which carries none."""
-    return tuple(
-        notice for notice in notices if not notice.startswith(_ASSUMING_UNTAPPED_PREFIX)
-    )
+    return tuple(notice for notice in notices if not notice.startswith(_ASSUMING_UNTAPPED_PREFIX))
 
 
 def _newly_payable(
@@ -460,6 +479,74 @@ def _unlocks_next(
     return unlocks_next, notices
 
 
+def _land_drop_available(game: Game, player: str) -> bool:
+    """Whether `player` still has a land drop to make this turn - the
+    **durable** half of CR 305, and the whole of what `"with_a_land"` claims.
+
+    Two reads, both of them facts about the turn rather than about this
+    instant:
+
+    - CR 305.3, "A player can't play a land, for any reason, if it isn't
+      their turn."
+    - CR 305.2a, "To determine whether a player can play a land, compare the
+      number of lands the player can play this turn with the number of lands
+      they have already played this turn ... If the number of lands the
+      player can play is greater, the play is legal." `Game.land_allowance`
+      is that first number (CR 305.2's "continuous effects may increase this
+      number" included, so an extra land play grant is honoured rather than
+      a hardcoded 1), `Game.lands_played` the second.
+
+    CR 305.1's own half - "A player who has priority may play a land card
+    from their hand during a main phase of their turn when the stack is
+    empty" - is deliberately **not** read. That half is this instant's
+    timing: the stack empties, the phase comes round, and it is satisfied
+    again inside the same turn. Worse, it is never satisfied while a
+    `candidate_ids` caller asks (CR 608.2d - the asking ability is still on
+    the stack until this very question is answered), so reading it would
+    collapse every `"with_a_land"` for a seat reading a script mid-search.
+    `_land_drop_notices` names that half out loud instead.
+    """
+    turn = game.turn
+    if turn is None or game.is_over or player != turn.active_player:
+        return False
+    return game.lands_played.get(player, 0) < game.land_allowance(player)
+
+
+def _land_drop_notices(game: Game, player: str, available: bool) -> list[str]:
+    """What `payable_any` says out loud about the land drop behind
+    `"with_a_land"` (D-3), in the engine's own words wherever it has them:
+    why the word was withheld when the drop is gone, and - when the drop is
+    there but CR 305.1's timing refuses right now - that the fact did not
+    read that timing and why."""
+    refusal = (
+        game.why_cannot_play_land(player) if game.turn is not None and not game.is_over else None
+    )
+    if not available:
+        if game.turn is None:
+            reason = "no turn is in progress"
+        elif game.is_over:
+            reason = game.why_game_is_over() or "the game is over"
+        elif player != game.turn.active_player:
+            reason = f"it is {game.turn.active_player}'s turn (CR 305.3)"
+        else:
+            reason = (
+                f"{game.lands_played.get(player, 0)} of the "
+                f"{game.land_allowance(player)} lands {player} may play this turn are "
+                "already played (CR 305.2a, CR 305.2b)"
+            )
+        return [
+            'payable_any: "with_a_land" is withheld from every hand card - no land drop '
+            f"remains for {player} this turn (CR 305.2a, CR 305.3): {reason}"
+        ]
+    if refusal is not None:
+        return [
+            'payable_any: "with_a_land" reads this turn\'s remaining land drop (CR '
+            "305.2a, CR 305.3) and never CR 305.1's own timing - a main phase, an empty "
+            f"stack, priority in hand - which right now refuses: {refusal}"
+        ]
+    return []
+
+
 def _payable_any(
     matrix: PayabilityMatrix,
     untapped: PayabilityMatrix,
@@ -467,22 +554,29 @@ def _payable_any(
     hand_ids: set[str],
     now_payable: dict[UUID, Payability],
     x_cost_ids: set[UUID],
+    land_drop_available: bool,
 ) -> dict[str, str]:
     """`{card id: "now" | "with_a_land" | "next_turn" | "no"}` for every hand
     card, earliest wins - less every X-cost card, which gets no entry at all
     (item 2's fail-closed rule, `_has_x`). See the module docstring for what
-    each word claims, D-3's land-drop assumption and D-6's life-paid
-    unlocks, which this does not distinguish (`Payability.life_paid` is
-    where that lives)."""
+    each word claims, D-3's land-drop gate (`land_drop_available`, the
+    caller's `_land_drop_available` read) and D-6's life-paid unlocks, which
+    this does not distinguish (`Payability.life_paid` is where that lives)."""
     #: Hand cards some *hand* land's own column of the real matrix makes
-    #: payable - a land the player could play this turn, D-3 above.
-    with_a_land = {
-        payability.card_id
-        for column in matrix.lands
-        if str(column.land_id) in hand_ids
-        for payability in column.cards
-        if payability.payable
-    }
+    #: payable - but only while `player` still has a land drop to make this
+    #: turn (D-3): with no drop left, no land in hand can enter at all, so
+    #: the word claims something the board cannot deliver and is withheld.
+    with_a_land = (
+        {
+            payability.card_id
+            for column in matrix.lands
+            if str(column.land_id) in hand_ids
+            for payability in column.cards
+            if payability.payable
+        }
+        if land_drop_available
+        else set()
+    )
     later = {payability.card_id for payability in untapped.now if payability.payable}
     verdicts: dict[str, str] = {}
     for card in hand:
@@ -542,8 +636,9 @@ def build_hypothetical_facts(
     `"with_a_land"` / `"next_turn"` / `"no"`, earliest wins, and absent
     entirely for an X-cost card) and `unlocks_next` on exactly the lands
     `unlocks` is already offered on. See the module docstring for what each
-    one does and does not claim - in particular D-3's land-drop assumption
-    behind `"with_a_land"`, named in `notices` whenever the drop is gone,
+    one does and does not claim - in particular D-3's land-drop gate behind
+    `"with_a_land"` (CR 305.2a/CR 305.3, the word withheld outright once the
+    drop is gone, with CR 305.1's timing named in `notices` instead of read)
     and D-6's life-paid unlocks, which `payable_any` does not distinguish."""
     me = game.player(player)
     hand = list(me.hand)
@@ -672,21 +767,17 @@ def build_hypothetical_facts(
         # first pass has already said in the same words, so the second pass
         # adds what it alone knows rather than a duplicate.
         notices.extend(notice for notice in next_turn_notices if notice not in notices)
+        # D-3: `"with_a_land"` is gated on this turn's own remaining land
+        # drop (CR 305.2a/CR 305.3) - the word `playscripts.schema` defines
+        # as "once the land drop still available this turn is made" - and on
+        # nothing else. CR 305.1's timing is named in a notice rather than
+        # read; see `_land_drop_available`.
+        land_drop_available = _land_drop_available(game, player)
         for card_id, verdict in _payable_any(
-            matrix, untapped, hand, hand_ids, now_payable, x_cost_ids
+            matrix, untapped, hand, hand_ids, now_payable, x_cost_ids, land_drop_available
         ).items():
             cards.setdefault(card_id, {})["payable_any"] = verdict
-        # D-3: `"with_a_land"` assumes only that the land could enter, never
-        # that the drop is still available. The fact is deliberately not
-        # gated on it (see the module docstring); the limit is named instead,
-        # in the engine's own words, whenever CR 305.2's own check refuses.
-        if game.turn is not None:
-            refusal = game.why_cannot_play_land(player)
-            if refusal is not None:
-                notices.append(
-                    'payable_any: "with_a_land" assumes a land drop (CR 305.2) is still '
-                    f"available this turn, and right now it is not - {refusal}"
-                )
+        notices.extend(_land_drop_notices(game, player, land_drop_available))
 
     library_land_types: dict[str, set[str]] = {
         str(card.id): _land_subtypes(card) for card in library if card.card.is_land
