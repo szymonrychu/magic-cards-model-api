@@ -463,11 +463,17 @@ def _resume(ctx: _Context, script_id: str, token: dict[str, Any]) -> RunResult:
         return RunResult(True, play)
     if run.started or run.move_index > 0:
         state = ctx.seat.fetch_state()
-        if (state.get("turn_number"), state.get("step")) != (run.turn, run.step):
+        # `turns_taken`, not `turn_number` (CR 500's own round counter,
+        # shared by both seats' turns in one round) - the same identity
+        # `_start`/`_guarded` stamp `run.turn` from below, and the one
+        # `records.py`'s own module docstring names as the rule for a
+        # per-turn identity check: `turn_number` would let this resume
+        # think the board had not moved across a same-round turn change.
+        if (state.get("turns_taken"), state.get("step")) != (run.turn, run.step):
             moved = _runner_refusal(
                 run.script_id,
                 f"cannot resume: the run was at turn {run.turn}, {run.step} and the game is "
-                f"now at turn {state.get('turn_number')}, {state.get('step')}",
+                f"now at turn {state.get('turns_taken')}, {state.get('step')}",
             )
             return _end(ctx, run, play, moved)
     return _guarded(ctx, run, play, wait=True)
@@ -479,7 +485,7 @@ def _guarded(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> R
     except _Unfinished:
         state = ctx.seat.fetch_state()
         if not run.started:
-            run.turn, run.step = state.get("turn_number"), state.get("step")
+            run.turn, run.step = state.get("turns_taken"), state.get("step")
         return RunResult(False, None, resume=run.token(ctx.elapsed_ms()), state=state)
     except HypotheticalFactsUnavailable as exc:
         # D2: wherever inside `_drive` a hypothetical-facts fetch failed
@@ -1631,7 +1637,15 @@ class _Unregistered(Exception):
 def _start(
     ctx: _Context, run: _Run, play: dict[str, Any] | None, state: dict[str, Any]
 ) -> ScriptExit | None:
-    run.turn, run.step = state.get("turn_number"), state.get("step")
+    # `turns_taken`, not `turn_number`: `TurnMachine.turn_number` counts
+    # rounds of the table and both seats' turns in one round share it, so a
+    # `whose_turn: "either"` script that legitimately runs once on this
+    # seat's own turn and again on the opponent's turn of the same round
+    # (`turn_number` unchanged, `turns_taken` up one) must not collide on
+    # the once-per-turn-and-step ledger slot (`records._SCRIPT_RUN_KEY`) -
+    # see that module's own docstring for the identical rule already
+    # applied to `require_plan`.
+    run.turn, run.step = state.get("turns_taken"), state.get("step")
     answer = _post_run(ctx, {**_run_fields(ctx, run, play), "phase": "start"})
     if isinstance(answer, dict) and answer.get("recorded") is True:
         run.started = True

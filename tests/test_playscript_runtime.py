@@ -1736,7 +1736,7 @@ def test_resume_after_the_start_record_is_refused_when_the_turn_moved(
     [start] = started(board)
     assert (token["turn"], token["step"]) == (start["turn"], start["step"])
 
-    store.get(board).turn.turn_number += 1
+    store.get(board).turn.turns_taken += 1
     seat, hook = hooked_seat(seats, alice)
     result = run_script(
         seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora, resume=token
@@ -3068,3 +3068,66 @@ def test_hypothetical_cache_refetches_once_the_position_changes() -> None:
     cache.get(seat, state1)
     cache.get(seat, state2)
     assert seat.calls == 2, "a changed board must be refetched, never served stale"
+
+
+# -- the once-per-turn ledger key's own identity ------------------------------
+
+
+class _StubSeatForStart:
+    player = "alice"
+    advise = False
+
+
+def test_start_stamps_run_turn_from_turns_taken_not_turn_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_SCRIPT_RUN_KEY` (`records.py`) keys the once-per-turn-and-step
+    ledger slot on `run.turn`, and `records.py`'s own module docstring
+    states the rule: match on `turns_taken`, never `turn_number` -
+    `TurnMachine.turn_number` counts rounds of the table, shared by both
+    seats' turns in one round, so a `whose_turn: "either"` script that
+    legitimately runs once on alice's own turn and again on bob's turn of
+    the SAME round collided on that stale identity and was refused
+    `already_ran` for a turn it never actually ran on.
+
+    `_start` used to stamp `run.turn` from `state["turn_number"]`; this
+    pins it to `state["turns_taken"]` instead, the identity the state view
+    already carries (`serialize.py`'s own `turns_taken` field) and the one
+    every other per-turn ledger check in this repo already uses
+    (`records.py:205-213`, `script_tools.py:534-540`)."""
+    captured: dict[str, Any] = {}
+
+    def fake_post_run(ctx: Any, body: dict[str, Any]) -> dict[str, Any]:
+        captured.update(body)
+        return {"recorded": True}
+
+    monkeypatch.setattr(runtime, "_post_run", fake_post_run)
+
+    ctx = runtime._Context(
+        seat=_StubSeatForStart(),
+        reasoning="test",
+        corpus={},
+        inputs={},
+        catalog={},
+        deadline=0.0,
+        poll_seconds=0.1,
+        call_started=0.0,
+    )
+    run = runtime._Run(
+        run_id="r1",
+        script_id="s1",
+        script_sha="sha1",
+        parent_run_id=None,
+        scripts_run=[],
+        moves_run=0,
+    )
+    # A same-round turn change: `turn_number` unchanged (both seats' turns
+    # in one round share it), `turns_taken` up one - exactly the shape a
+    # real alice-then-bob turn rollover within one round produces.
+    state = {"turn_number": 1, "turns_taken": 5, "step": "precombat_main"}
+
+    out = runtime._start(ctx, run, play=None, state=state)
+
+    assert out is None
+    assert run.turn == 5, "run.turn must be stamped from turns_taken, not turn_number"
+    assert captured["turn"] == 5
