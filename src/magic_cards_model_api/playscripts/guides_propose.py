@@ -7,6 +7,18 @@ pinned), and `decks/<slug>/NOTES.md`. Anything else - another key of that
 file, the decklist, evidence, sim profiles, shell or archetype, an older run,
 a play, any other path - is `refused` before anything runs.
 
+The same discipline applies to the CONTENT of those two files. A deck's guide
+is play review only, so the text a proposal ADDS (diffed against HEAD, so
+nothing already committed is re-judged) goes through `content_gate` before
+anything is rendered, committed or pushed. Text that reads as a system problem
+rather than as how the deck is piloted is `refused_content` - its own outcome,
+told apart from the file-path `refused` because the remedy is different - with
+a message naming the `report_problem` tool and quoting what it read. The gate
+is a heuristic that fails closed: when it cannot read the added text it
+refuses and says it could not decide, and it never edits, truncates or filters
+the text on the way through. `content_gate`'s own docstring states that
+ceiling, and says why `plays admit` is deliberately not gated this way.
+
 Then, on a local `seat/<game>-<deck>-<role>-guides` branch (`guides_branch`),
 one per proposing seat or buddy, so two decks of one game never share a pull
 request: `python3 scripts/render_guides.py
@@ -31,7 +43,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import gitwork
+from . import content_gate, gitwork
+from .content_gate import CONTENT_REFUSED, Undecidable
 from .gitwork import (
     MAIN,
     UPSTREAM,
@@ -138,6 +151,7 @@ def _propose(root: Path, deck: str, game_id: str) -> dict[str, Any]:
         )
     if plan in changed:
         _check_plan(git, plan)
+    _check_content(git, changed, plan, notes)
 
     renderer = root / "scripts" / "render_guides.py"
     if not renderer.is_file():
@@ -179,6 +193,51 @@ def _propose(root: Path, deck: str, game_id: str) -> dict[str, Any]:
         raise
     git.out("switch", "-q", MAIN)
     return _publish(git, deck, game_id, branch)
+
+
+def _check_content(git: Git, changed: list[str], plan: str | None, notes: str) -> None:
+    """Refuse a proposal whose ADDED text is about this system rather than
+    about playing the deck, before anything is rendered, committed or pushed.
+
+    Only the text this proposal adds is judged - `content_gate` says why -
+    and a file the gate cannot read is `refused_content` too, with its own
+    "could not decide" reason, rather than admitted unread. Nothing here
+    writes: the seat's own text is left exactly as the seat wrote it.
+    """
+    passages: list[str] = []
+    for path in changed:
+        try:
+            passages += _added_text(git, path, plan)
+        except Undecidable as exc:
+            raise Outcome(
+                CONTENT_REFUSED, f"{path}: {content_gate.undecided_message(str(exc))}", files=[path]
+            ) from None
+    reasons = content_gate.system_problem_reasons(passages)
+    if reasons:
+        raise Outcome(
+            CONTENT_REFUSED,
+            content_gate.refusal_message(reasons),
+            files=sorted(set(changed)),
+        )
+
+
+def _added_text(git: Git, path: str, plan: str | None) -> list[str]:
+    """What `path` adds over HEAD, as passages the gate can judge."""
+    working = git.root / path
+    if not working.is_file():
+        # A deletion adds no text; the allowlist has already had its say.
+        return []
+    head = git.show(f"HEAD:{path}")
+    try:
+        after = working.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise Undecidable(f"it is not readable as text ({exc.__class__.__name__})") from None
+    if path != plan:
+        return content_gate.added_lines(head, after)
+    try:
+        return content_gate.added_plan_passages(json.loads(head or "{}"), json.loads(after))
+    except ValueError as exc:
+        raise Undecidable(f"it is not readable JSON ({exc})") from None
 
 
 def _check_plan(git: Git, plan: str) -> None:
