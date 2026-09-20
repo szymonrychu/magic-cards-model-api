@@ -2920,6 +2920,27 @@ def _merge_armed(result: dict[str, Any], armed: dict[str, Any] | str | None, sea
         result["recent_log"] = seat.recent_log()
 
 
+#: Every key `wait_and_arm`'s own answer can carry beyond `state`/
+#: `wake_reason`/`recent_log` - this module's own docstring above states the
+#: full documented contract (`armed`, `armed_conflict`, `armed_error`,
+#: `armed_skipped`) plus `armed_refusal` (`_arming_moment`'s own bad-request
+#: refusal, S2 A3) and `armed_facts_unavailable` (`_merge_armed`, D2). A
+#: caller that forwards `wait_and_arm`'s answer onto a seat-facing state
+#: (`mcp.py`'s `wait_for_priority`, `seat_cli.py`'s `wait`) must copy every
+#: one of these, not a subset it happened to remember: `armed_error` in
+#: particular is the only way a seat can tell "nothing applied" apart from
+#: "arming itself crashed", and a caller that drops it silently reports the
+#: crash as though nothing had been armed at all.
+ARMED_RESULT_FIELDS = (
+    "armed",
+    "armed_conflict",
+    "armed_refusal",
+    "armed_error",
+    "armed_skipped",
+    "armed_facts_unavailable",
+)
+
+
 def wait_and_arm(
     seat: Seat,
     before: dict[str, Any] | None,

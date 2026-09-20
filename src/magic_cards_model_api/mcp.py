@@ -963,12 +963,9 @@ def build_server(seats: Seats) -> MCPServer:
         )
         woken["state"]["wake_reason"] = woken["wake_reason"]
         woken["state"]["recent_log"] = woken["recent_log"]
-        if "armed" in woken:
-            woken["state"]["armed"] = woken["armed"]
-        if "armed_conflict" in woken:
-            woken["state"]["armed_conflict"] = woken["armed_conflict"]
-        if "armed_refusal" in woken:
-            woken["state"]["armed_refusal"] = woken["armed_refusal"]
+        for field_name in seatkit.ARMED_RESULT_FIELDS:
+            if field_name in woken:
+                woken["state"][field_name] = woken[field_name]
         if seat.advise and woken["wake_reason"] != seatkit.NOTHING_NEW_YET:
             # The advisor's legal plays, on the one answer that wakes it
             # (`pass_until` is refused to an advise seat). A GET, like every

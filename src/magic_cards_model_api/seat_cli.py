@@ -1780,12 +1780,9 @@ def run(argv: list[str] | None = None) -> int:
                 draft_staged=draft_staged,
             )
             woken["state"]["wake_reason"] = woken["wake_reason"]
-            if "armed" in woken:
-                woken["state"]["armed"] = woken["armed"]
-            if "armed_conflict" in woken:
-                woken["state"]["armed_conflict"] = woken["armed_conflict"]
-            if "armed_refusal" in woken:
-                woken["state"]["armed_refusal"] = woken["armed_refusal"]
+            for field_name in seatkit.ARMED_RESULT_FIELDS:
+                if field_name in woken:
+                    woken["state"][field_name] = woken[field_name]
             _attach_script_hint(woken["state"], seat, seats.script_corpora, woken["state"])
             # `wait_and_arm` above already did every bit of waiting this
             # command will do, fully unlocked - `locked()` here only covers

@@ -1491,3 +1491,96 @@ def test_a_stack_arrival_while_waiting_for_own_priority_is_reported(
         "terms rather than hard-skipped by the wait"
     )
     assert not hook.posts("/actions/activate")
+
+
+# -- finding: every documented armed_* field reaches the seat, not just three -
+
+
+def test_mcp_wait_for_priority_carries_every_documented_armed_field(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`wait_and_arm`'s own documented answer (`seatkit.py`'s own module
+    docstring) can carry `armed`, `armed_conflict`, `armed_refusal`,
+    `armed_error` (arming itself crashed, not a script's own refusal),
+    `armed_skipped` (too little budget left to even attempt arming), and
+    `armed_facts_unavailable` (a script judged against facts the board could
+    not fetch) - `mcp.py`'s `wait_for_priority` only ever copied the first
+    three onto the seat-facing state, so a seat could not tell "nothing
+    applied" from "arming crashed" or "arming never even tried"."""
+    import json
+
+    from test_mcp_input_required import call_tool
+
+    from magic_cards_model_api.mcp import build_server
+
+    alice = seat_uid(board, "alice")
+    seats = wired(monkeypatch, board)
+    seat, _ = hooked_seat(seats, alice)
+    real_state = seat.fetch_state()
+
+    def fake_wait_and_arm(*_a: Any, **_kw: Any) -> dict[str, Any]:
+        return {
+            "state": real_state,
+            "wake_reason": "priority",
+            "recent_log": [],
+            "armed": [],
+            "armed_conflict": ["already-covered"],
+            "armed_refusal": "already-covered",
+            "armed_error": "arming raised RuntimeError: arming blew up",
+            "armed_skipped": seatkit.ARMING_SKIPPED_LOW_BUDGET,
+            "armed_facts_unavailable": [{"id": "needs-facts", "reason": "500"}],
+        }
+
+    monkeypatch.setattr(seatkit, "wait_and_arm", fake_wait_and_arm)
+    server = build_server(seats)
+
+    result = call_tool(server, "wait_for_priority", {"player_uid": alice})
+    answer = json.loads(result.content[0].text)
+
+    assert answer["armed_error"] == "arming raised RuntimeError: arming blew up"
+    assert answer["armed_skipped"] == seatkit.ARMING_SKIPPED_LOW_BUDGET
+    assert answer["armed_facts_unavailable"] == [{"id": "needs-facts", "reason": "500"}]
+
+
+def test_cli_wait_carries_every_documented_armed_field(
+    client: TestClient,
+    board: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The same gap as `test_mcp_wait_for_priority_carries_every_documented_
+    armed_field`, in the CLI's own `wait` command (`seat_cli.py`), which
+    copies `wait_and_arm`'s answer onto the printed state independently of
+    the MCP tool."""
+    import json
+
+    from test_front_end_parity import wire
+
+    wire(monkeypatch)
+    alice = seat_uid(board, "alice")
+    seats = wired(monkeypatch, board)
+    seat, _ = hooked_seat(seats, alice)
+    real_state = seat.fetch_state()
+
+    def fake_wait_and_arm(*_a: Any, **_kw: Any) -> dict[str, Any]:
+        return {
+            "state": real_state,
+            "wake_reason": "priority",
+            "recent_log": [],
+            "armed": [],
+            "armed_conflict": ["already-covered"],
+            "armed_refusal": "already-covered",
+            "armed_error": "arming raised RuntimeError: arming blew up",
+            "armed_skipped": seatkit.ARMING_SKIPPED_LOW_BUDGET,
+            "armed_facts_unavailable": [{"id": "needs-facts", "reason": "500"}],
+        }
+
+    monkeypatch.setattr(seat_cli, "wait_and_arm", fake_wait_and_arm)
+
+    exit_code = seat_cli.run(["--uid", alice, "--game", board, "wait"])
+
+    assert exit_code == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["armed_error"] == "arming raised RuntimeError: arming blew up"
+    assert printed["armed_skipped"] == seatkit.ARMING_SKIPPED_LOW_BUDGET
+    assert printed["armed_facts_unavailable"] == [{"id": "needs-facts", "reason": "500"}]
