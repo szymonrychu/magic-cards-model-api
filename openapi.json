@@ -7689,6 +7689,7 @@
           },
           "username": {
             "minLength": 1,
+            "pattern": "\\A[^\\x00-\\x1f\\x7f]+\\z",
             "title": "Username",
             "type": "string"
           }
@@ -7805,6 +7806,7 @@
           },
           "username": {
             "minLength": 1,
+            "pattern": "\\A[^\\x00-\\x1f\\x7f]+\\z",
             "title": "Username",
             "type": "string"
           }
@@ -11058,6 +11060,7 @@
             "title": "Guides Revision"
           },
           "invoked_via": {
+            "default": "mcp",
             "enum": [
               "mcp",
               "cli",
@@ -11265,8 +11268,7 @@
           "role",
           "script_id",
           "turn",
-          "step",
-          "invoked_via"
+          "step"
         ],
         "title": "ScriptRunIn",
         "type": "object"
