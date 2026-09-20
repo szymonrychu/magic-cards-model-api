@@ -78,6 +78,27 @@ def test_run_review_raises_on_a_nonzero_exit(tmp_path: Path) -> None:
         run_review(settings, "x", "m", "high")
 
 
+def test_run_review_includes_stdout_when_the_cli_writes_its_failure_there(
+    tmp_path: Path,
+) -> None:
+    """The real `claude` CLI writes an auth failure to STDOUT, not stderr -
+    building the failure message from stderr alone left it as bare as
+    "claude exited 1" with nothing telling an operator why, the one time
+    they most need to know. Both streams are captured; either carrying the
+    real reason must reach the raised message."""
+    stub = _stub(
+        tmp_path,
+        """
+        import sys
+        print("Invalid API key \\u00b7 Please run /login")
+        sys.exit(1)
+        """,
+    )
+    settings = _settings(stub, WORKSPACE=str(tmp_path))
+    with pytest.raises(ReviewFailed, match="claude exited 1.*Invalid API key"):
+        run_review(settings, "x", "m", "high")
+
+
 def test_run_review_raises_on_a_missing_binary(tmp_path: Path) -> None:
     settings = _settings(str(tmp_path / "no-such-claude"), WORKSPACE=str(tmp_path))
     with pytest.raises(ReviewFailed, match="not on PATH"):

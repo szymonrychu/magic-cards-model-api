@@ -155,7 +155,17 @@ def run_review(settings: Settings, prompt: str, model: str, effort: str) -> str:
     finally:
         shutil.rmtree(home, ignore_errors=True)
     if result.returncode != 0:
-        tail = (result.stderr or "").strip()[-2000:]
+        # The real `claude` CLI writes some failures - an auth error among
+        # them - to STDOUT, not stderr; building this from stderr alone left
+        # a bare "claude exited 1" in production logs with nothing telling
+        # an operator why, the one time they most need to know. Both
+        # streams are captured either way, so both are read here - stdout
+        # first, since a `--print` process on a genuine failure path prints
+        # nothing else there for this to be confused with.
+        combined = "\n".join(
+            part.strip() for part in (result.stdout, result.stderr) if part and part.strip()
+        )
+        tail = combined[-2000:]
         raise ReviewFailed(
             f"claude exited {result.returncode}: {tail}"
             if tail
