@@ -16,6 +16,9 @@
   clone's play-script change, gated and ratcheted, onto mtg-decks main.
 - `guides_propose` - `mcp-seat guides propose`: a matchup plan edit and its
   regenerated guides as a pull request.
+- `content_gate` - the heuristic `guides propose` judges its added TEXT with:
+  play content goes in the guide, a system problem goes to `report_problem`.
+  Not applied to `plays admit`, for the reason its docstring gives.
 - `gitwork` - the git and GitHub REST plumbing both share.
 - `report` - the compact per-script run table a handover prompt carries.
 """

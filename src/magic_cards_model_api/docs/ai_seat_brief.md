@@ -887,3 +887,12 @@ over. Each prints one JSON object, and its `result` says what happened:
   it never waits for checks or a merge. mtg-decks has no CI budget, so the
   owner reviews and merges the pull request by hand; the edit is not live
   until then, so do not wait for it. Any other change is `refused`.
+  - `refused_content`: what you wrote reads as a system problem rather than
+    as how the deck is piloted, so none of the proposal landed. The message
+    quotes the sentence it read that way. This is a check and not a verdict
+    on you: if the sentence really is a system problem, file it with
+    `report_problem`; if it really is play content, reword it without the
+    wording the message names and propose again. Nothing was changed and your
+    text is untouched, so nothing is lost either way. `plays admit` is not
+    checked this way - a play's `intent` may talk about the DSL's own limits
+    freely.

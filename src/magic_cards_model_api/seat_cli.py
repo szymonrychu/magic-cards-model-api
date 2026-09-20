@@ -63,6 +63,11 @@ Two commands are not seat actions at all, and need no `--uid`:
   on either). Each prints one JSON result and exits 0 on admitted / pr_opened
   / awaiting_owner_review / nothing_to_admit (or a priority set), 1
   otherwise; see `playscripts.admit` and `playscripts.guides_propose`.
+  `guides propose` additionally gates what the text SAYS: new prose reading
+  as a system problem rather than as how the deck is piloted is
+  `refused_content` (its own outcome, not the file-path `refused`) and goes
+  to the `report_problem` tool instead - see `playscripts.content_gate`.
+  `plays admit` is deliberately not gated that way.
 """
 
 from __future__ import annotations
@@ -1455,7 +1460,10 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "render and commit a matchups[].play_plan / notes edit of the newest boarding plan "
             "and NOTES.md, push seat/<game-id>-<deck>-<role>-guides and open a pull request "
-            "the owner merges by hand - returns at once, never waits on CI or automerge"
+            "the owner merges by hand - returns at once, never waits on CI or automerge; "
+            "prints awaiting_owner_review | refused | refused_content | gate_failed | "
+            "nothing_to_admit, where refused_content means the new text reads as a system "
+            "problem and belongs in the report_problem tool"
         ),
     )
     _guides_target(propose, game=True)

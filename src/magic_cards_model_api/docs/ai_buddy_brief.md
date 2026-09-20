@@ -282,3 +282,8 @@ prints one JSON object, and its `result` says what happened:
   has no CI budget, so the owner reviews and merges the PR by hand; the edit
   is not live until then. Scripts are different: `plays admit` pushes
   straight to mtg-decks main.
+  - `refused_content`: what you wrote reads as a system problem rather than
+    as how the deck is piloted, so none of the proposal landed. File that
+    with `report_problem` instead, or reword it without the wording the
+    message names and propose again. Your text is untouched either way, and
+    `plays admit` is not checked this way.
