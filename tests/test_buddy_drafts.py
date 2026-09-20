@@ -251,6 +251,22 @@ def test_staged_in_the_opponents_combat_for_upkeep_opponent(client, game, wired)
     assert seatkit.draft_window_status(window, opponents_next_upkeep, "alice") == "reached"
 
 
+def test_a_window_many_turns_stale_reads_after_not_reached(client, game, wired) -> None:
+    """The step/whose_turn match alone is not enough to call a window
+    "reached": that same step recurs every turn, so with no bound on how far
+    `turns_taken` has drifted past the stamp, a window nobody ever polled
+    during its real next occurrence would read "reached" again at ANY later
+    matching step - staged at `turns_taken=2` and first read again at 12
+    (ten turns later, nobody having polled in between) is not "the moment
+    has arrived", it is a window whose one real occurrence came and went
+    long ago."""
+    staged = _board(step="declare_attackers", active_player="bob", turn_number=1, turns_taken=2)
+    window = _staged_window(staged, "upkeep", "opponent")
+
+    long_stale_upkeep = _board(step="upkeep", active_player="bob", turn_number=6, turns_taken=12)
+    assert seatkit.draft_window_status(window, long_stale_upkeep, "alice") == "after"
+
+
 def test_an_extra_turn_does_not_falsely_mask_reached_as_before(client, game, wired) -> None:
     """CR 500.7: an extra turn bumps `turns_taken` but leaves `turn_number`
     alone (`seatkit.py`'s own `turns_taken` note). Staged in the human's
@@ -396,6 +412,35 @@ def test_posted_once_the_window_is_reached_and_priority_is_theirs(
         "drafted before it was posted, so its seq must be strictly earlier"
     )
     assert ADVISOR_UID not in seat._advice_drafts, "a posted draft leaves nothing staged behind"
+
+
+def test_condition_a2_the_ledger_drifting_far_past_staging_drops_the_draft(
+    client: TestClient, game: str, wired: None
+) -> None:
+    """A second, independent bound on "reached": `draft_window_status`'s own
+    `MAX_DRAFT_WINDOW_TURNS_TAKEN_DRIFT` catches a window stale by whole
+    turns, but says nothing about how much has happened WITHIN the turns
+    since staging - many priority passes, casts and responses can pile up
+    `last_seq` well past `window["stamped_seq"]` without ever moving
+    `turns_taken` at all. Reached on the letter (still turn 1, the exact
+    step and whose_turn staged for) but not the spirit: this many ledger
+    rows since staging means the board this draft was drafted against is
+    not the board it would post against."""
+    from magic_cards_model_api import audit
+
+    seat = buddy(game)
+    seat.stage_advice("declare_attackers", "mine")
+    capture_a_pass_draft(seat, game)
+
+    for _ in range(seatkit.MAX_DRAFT_WINDOW_SEQ_DRIFT + 1):
+        audit.record(game, "test_filler", player="alice")
+
+    force_turn_position(game, Step.DECLARE_ATTACKERS, "alice")
+    result = seatkit.resolve_advice_draft(seat, seat.fetch_state())
+
+    assert result == {"status": "stale", "failed": "window"}
+    assert advice_rows(game) == []
+    assert ADVISOR_UID not in seat._advice_drafts
 
 
 def test_condition_a_the_window_passing_drops_the_draft(

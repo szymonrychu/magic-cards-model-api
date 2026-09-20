@@ -2017,6 +2017,12 @@ class Seat:
         # from the turn it extended.
         window["stamped_step"] = state.get("step")
         window["stamped_turns_taken"] = state.get("turns_taken")
+        # `resolve_advice_draft`'s own second, independent staleness bound
+        # (`MAX_DRAFT_WINDOW_SEQ_DRIFT`) - the ledger position this window
+        # was staged at, the same `recent_log().get("last_seq")` read
+        # `run_action` already pays for when it stamps the CAPTURED action's
+        # own `drafted_at_seq` a little later in this draft's life.
+        window["stamped_seq"] = self.recent_log().get("last_seq")
         self._advice_drafts[self.uid] = {"window": window, "action": None}
         return {"staged": True, "window": {"step": step, "whose_turn": whose_turn}}
 
@@ -3852,6 +3858,29 @@ def _step_rank(step: Any) -> int | None:
         return None
 
 
+#: The most `turns_taken` may drift past a staged window's own stamp and
+#: still count as "reached" rather than stale. This module's own tests cover
+#: a delta of 2 as legitimate (staged in one player's combat for the
+#: opponent's own upkeep, `test_staged_in_the_opponents_combat_for_upkeep_
+#: opponent`); this leaves headroom for an extra turn (CR 500.7) landing
+#: before the real next occurrence too, while still catching a window
+#: nobody polled across many real turns (the reported case: staged at
+#: `turns_taken=2`, first read again at 12).
+MAX_DRAFT_WINDOW_TURNS_TAKEN_DRIFT = 4
+
+#: The most `last_seq` may drift past a staged window's own `stamped_seq`
+#: (`resolve_advice_draft`'s own second, independent staleness bound) before
+#: a "reached" window is treated as stale anyway - many priority passes,
+#: casts and responses within the same handful of turns the turns-taken
+#: bound alone would still call fresh. Not tied to `records.
+#: RECENT_RECORDS_WINDOW` (a different budget, for a different question -
+#: "is this row still among the newest ones a bounded scan reaches" rather
+#: than "how much has genuinely happened since this was staged"); a local
+#: constant so this module states its own reasoning rather than borrowing
+#: another module's.
+MAX_DRAFT_WINDOW_SEQ_DRIFT = 200
+
+
 def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: str) -> str:
     """Where `state` stands relative to a staged draft's `window`, one of:
 
@@ -3925,15 +3954,31 @@ def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: s
         state.get("step") == window.get("stamped_step")
         and current_turns_taken == stamped_turns_taken
     )
+    # The step/whose_turn match alone is not "reached": that same step
+    # recurs every turn, so with no bound on how far `turns_taken` has
+    # drifted past the stamp, a window nobody ever polled during its real
+    # next occurrence would read "reached" again at ANY later matching
+    # step - staged at `turns_taken=2` and first read again at 12 is not
+    # "the moment has arrived", it is one whose one real occurrence came
+    # and went long ago and must read "after" instead. `MAX_DRAFT_WINDOW_
+    # TURNS_TAKEN_DRIFT` is generous enough to cover the legitimate cases
+    # this module's own tests already exercise - an opponent's turn away
+    # (+1), an extra turn or two inserted before the target occurrence
+    # (+1/+2) - while still catching a window stale by many real turns.
+    turns_taken_drift = current_turns_taken - stamped_turns_taken
+    within_drift_bound = turns_taken_drift <= MAX_DRAFT_WINDOW_TURNS_TAKEN_DRIFT
     if (
         wanted
         and state.get("step") == wanted
         and whose_matches_now
         and not same_occurrence_started_in
+        and within_drift_bound
     ):
         return "reached"
     if same_occurrence_started_in:
         return "before"
+    if wanted and state.get("step") == wanted and whose_matches_now and not within_drift_bound:
+        return "after"
     target_rank = _step_rank(wanted)
     current_rank = _step_rank(state.get("step"))
     stamped_rank = _step_rank(window.get("stamped_step"))
@@ -4194,6 +4239,24 @@ def resolve_advice_draft(
         if status == "after":
             _pop_draft_if_same(seat, entry)
             return {"status": "stale", "failed": "window"}
+        # Second, independent bound on the same "reached" answer:
+        # `draft_window_status`'s own `MAX_DRAFT_WINDOW_TURNS_TAKEN_DRIFT`
+        # catches a window stale by whole turns, but says nothing about how
+        # much has happened WITHIN the turns since staging - many priority
+        # passes, casts and responses can pile up `last_seq` well past
+        # `window["stamped_seq"]` without ever moving `turns_taken` by more
+        # than the drift bound allows. Checked only here, once "reached"
+        # already holds, so the ordinary `"before"` poll never pays for the
+        # extra `recent_log()` fetch this needs.
+        stamped_seq = window.get("stamped_seq")
+        if stamped_seq is not None:
+            current_seq = seat.recent_log().get("last_seq")
+            if (
+                isinstance(current_seq, int)
+                and current_seq - stamped_seq > MAX_DRAFT_WINDOW_SEQ_DRIFT
+            ):
+                _pop_draft_if_same(seat, entry)
+                return {"status": "stale", "failed": "window"}
         if state.get("priority_holder") != seat.player:
             return {"status": "held"}
         action = entry["action"]
