@@ -6,6 +6,12 @@ idempotent `POST /handover` in `app.py`; this module holds what that route
 shares with the preStop: the marker both containers wait on, the time budget,
 and the compact conflict-warning block the handover prompt carries.
 
+A handover is also where the post-game AI review is filed for every game
+that did not reach one through a completed reflection turn - the preStop's
+`POST /handover` included. `app.py`'s `TERMINAL_PATHS` and
+`consider_ai_review` own that decision; nothing in this module makes it, and
+nothing here waits on it.
+
 `python -m mtg_agent.driver.handover --wait N` is the driver container's
 preStop (`deploy/seat-job.yaml`). It POSTs the local driver's `/handover`
 with no outcome, so the driver names `killed` unless it knows a winner or a
