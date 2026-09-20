@@ -502,11 +502,12 @@ function boardIsNewest(seq) {
  *
  * `targeting_notices` is here for a different reason than the other six: it
  * is the one notice model carrying a meaning of its own in a second field
- * (`TargetingNoticeKind`, which `commands._new_notices` keeps as
- * `notice_kind` so the list name can own `kind`). `unparsed_targets` is an
- * engine gap; `no_legal_targets` is CR 608.2d working exactly as printed, and
- * calling that one an engine gap would teach a player to distrust a correct
- * board. */
+ * (`TargetingNoticeKind`, which `commands._notice_payload` keeps as
+ * `notice_kind` so the list name can own `kind`). Its four values are four
+ * different outcomes - two engine gaps, two the rules working as printed,
+ * and the object ends up on the stack, off the stack, or in a graveyard
+ * depending which - so it delegates to `TARGETING_NOTICE_MESSAGES` below
+ * rather than printing one sentence over all of them. */
 const ENGINE_GAP_NOTICE_MESSAGES = {
   unmodeled_trigger_effect_notices: (notice) =>
     `${noticeCardName(notice)}: the engine could not read this card's text, so it did nothing. Reported as an engine gap.`,
@@ -521,9 +522,46 @@ const ENGINE_GAP_NOTICE_MESSAGES = {
   keyword_line_notices: (notice) =>
     `${noticeCardName(notice)}: part of a computed ability line could not be read as a keyword. Reported as an engine gap.`,
   targeting_notices: (notice) =>
-    notice.notice_kind === "no_legal_targets"
-      ? `${noticeCardName(notice)}: nothing on the board was a legal target${noticeClause(notice)}, so its ability went on the stack with no target. That is the rule, not a bug.`
-      : `${noticeCardName(notice)}: a targeting restriction${noticeClause(notice)} could not be read, so its ability went on the stack with no target chosen. Reported as an engine gap.`,
+    (TARGETING_NOTICE_MESSAGES[notice.notice_kind] || TARGETING_NOTICE_MESSAGES.unparsed_targets)(
+      notice,
+    ),
+};
+
+/** `targeting_notices` is one list carrying four genuinely different
+ * outcomes, told apart by the notice's own `TargetingNoticeKind`
+ * (`machines/triggers.py`), which `commands._notice_payload` keeps beside the
+ * list name as `notice_kind`. Two of them are the rules working exactly as
+ * printed and two are engine gaps, and - the part one shared sentence got
+ * wrong - the board ends up in three different places:
+ *
+ * - `unparsed_targets`: the restriction could not be read at all. An engine
+ *   gap. The ability is on the stack, having chosen nothing.
+ * - `no_legal_targets`: nothing was legal and the requirement was optional
+ *   (CR 115.6's "up to N"). Correct, and the ability is on the stack having
+ *   chosen nothing - the one case the old single line described.
+ * - `mandatory_target_missing`: nothing was legal and the requirement was
+ *   not optional. Also correct (CR 603.3d removes the ability from the
+ *   stack; CR 601.2e refuses the equivalent activation), but the ability is
+ *   gone rather than sitting there.
+ * - `unreadable_aura_target`: a resolving Aura whose attachment the parser
+ *   could not re-resolve. An engine gap, and the Aura is in its owner's
+ *   graveyard rather than on the battlefield or the stack.
+ *
+ * A `notice_kind` this table does not know falls back to the engine-gap
+ * line, never to one of the two "that is the rule" lines: over-reporting a
+ * gap costs a false bug report, while telling a player a refusal was correct
+ * when nobody checked is how a real gap goes unreported.
+ * `tests/test_ui_app.py` drives this table over `TargetingNoticeKind` read
+ * live off the engine, so a fifth sub-kind fails there by name. */
+const TARGETING_NOTICE_MESSAGES = {
+  unparsed_targets: (notice) =>
+    `${noticeCardName(notice)}: a targeting restriction${noticeClause(notice)} could not be read, so its ability went on the stack with no target chosen. Reported as an engine gap.`,
+  no_legal_targets: (notice) =>
+    `${noticeCardName(notice)}: nothing on the board was a legal target${noticeClause(notice)}, and that target was optional, so its ability went on the stack having chosen none. That is the rule, not a bug.`,
+  mandatory_target_missing: (notice) =>
+    `${noticeCardName(notice)}: nothing on the board was a legal target${noticeClause(notice)}, and that target was not optional, so the ability never went on the stack at all and does nothing. That is the rule, not a bug.`,
+  unreadable_aura_target: (notice) =>
+    `${noticeCardName(notice)}: the engine could not work out what this Aura attaches to${noticeClause(notice)}, so it went to its owner's graveyard instead of entering the battlefield. Reported as an engine gap.`,
 };
 
 /** The card a notice is about. Almost every notice model names it
@@ -598,12 +636,25 @@ export function noticeMessage(notice) {
  * left to put the rest in - the log panel this would otherwise have shared is
  * gone - and a notice is rare by construction (the engine files one only when
  * it refuses a clause), so the volume that would make a toast the wrong
- * choice for a routine event does not arise here. */
+ * choice for a routine event does not arise here.
+ *
+ * Every notice on every entry, not one per tick: `toast` holds all the lines
+ * that are live at once (`liveToasts`), which is what makes toasting a whole
+ * tick's worth of them honest. Before that it overwrote, so a tick carrying
+ * two showed only the second - the same silent drop this change exists to
+ * remove, moved one step later in the pipeline. */
 function toastEngineGapNotices(entries) {
   for (const entry of entries || []) {
-    const notices = (entry.detail && entry.detail.notices) || [];
-    for (const notice of notices) toast(noticeMessage(notice));
+    toastNotices((entry.detail && entry.detail.notices) || []);
   }
+}
+
+/** One line per notice, all of them on screen together.
+ *
+ * Exported for `tests/test_ui_app.py`, which drives a burst of five straight
+ * through it rather than through a `/log` read shaped to carry five. */
+export function toastNotices(notices) {
+  for (const notice of notices || []) toast(noticeMessage(notice));
 }
 
 export async function poll() {
@@ -1734,14 +1785,51 @@ async function onPregame(path, body) {
   await refresh();
 }
 
-function toast(text) {
+/** How long one toasted line stays on screen. Per line, not per element:
+ * see `liveToasts`. */
+const TOAST_MS = 4000;
+
+/** Every line currently on screen, oldest first, each with its own expiry.
+ *
+ * `#toast` used to be a single string with a single shared timer: each call
+ * overwrote whatever was there and reset the clock. That is fine for the
+ * refusal a player's own click just earned - there is only ever one of those
+ * in flight - and wrong for `toastNotices`, which routinely has several
+ * lines to show at once. One poll tick reads every log entry since the last
+ * one, so an opponent's or an AI's whole turn arrives together, and a single
+ * resolution can file notices to two different lists; with an overwrite,
+ * every line but the last was gone before the browser ever painted it, and
+ * the game log panel that used to be the backstop no longer exists
+ * (`ui/render/panels.js`). So the element holds all the lines that are
+ * currently live instead, each expiring on its own timer.
+ *
+ * Nothing is queued behind anything: a new line is painted immediately, so a
+ * refusal never waits out a notice's 4000ms. Nothing is capped either - a
+ * notice is rare by construction (the engine files one only when it refuses
+ * a clause), and silently dropping the twelfth would reintroduce, at a
+ * higher water mark, exactly the defect this replaces. */
+const liveToasts = [];
+
+function paintToasts() {
   const el = document.querySelector("#toast");
-  el.textContent = text;
-  el.hidden = false;
-  clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => {
-    el.hidden = true;
-  }, 4000);
+  if (!el) return;
+  el.textContent = liveToasts.map((entry) => entry.text).join("\n");
+  el.hidden = liveToasts.length === 0;
+}
+
+/** Put one line on screen for `TOAST_MS`, beside whatever else is up.
+ *
+ * Exported for `tests/test_ui_app.py`, which checks that a refusal toasted
+ * while notices are on screen appears at once and displaces none of them. */
+export function toast(text) {
+  const entry = { text };
+  liveToasts.push(entry);
+  entry.timer = setTimeout(() => {
+    const at = liveToasts.indexOf(entry);
+    if (at >= 0) liveToasts.splice(at, 1);
+    paintToasts();
+  }, TOAST_MS);
+  paintToasts();
 }
 
 // ---- names, zones, the report form, the AI seat, and leaving the game -----

@@ -669,8 +669,9 @@ def _notice_payload(kind: str, item: Any) -> dict[str, Any]:
 
     The list name wins over anything the notice model itself calls `kind`.
     `TargetingNotice` is the one model that has such a field
-    (`TargetingNoticeKind`: `unparsed_targets`, an engine gap, against
-    `no_legal_targets`, CR 608.2d working as printed), and the obvious
+    (`TargetingNoticeKind`: four outcomes, two of them engine gaps and two of
+    them the rules working as printed - `ui/app.js`'s
+    `TARGETING_NOTICE_MESSAGES` renders one line each), and the obvious
     `{"kind": kind, **item.model_dump()}` let that dump overwrite the list
     name - so one list out of twenty-four reached every consumer labelled
     `no_legal_targets` instead of `targeting_notices`, which is the key

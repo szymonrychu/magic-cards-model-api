@@ -4654,3 +4654,254 @@ def test_the_six_already_wired_kinds_keep_their_own_specific_wording() -> None:
     )
     for kind, phrase in specific.items():
         assert phrase in messages[kind], (kind, messages[kind])
+
+
+# -- a burst of notices: every one of them, not just the last ----------------
+
+
+def test_two_notices_landing_in_one_poll_tick_both_reach_the_player() -> None:
+    """The defect this is written against: `toastEngineGapNotices` called
+    `toast()` once per notice in a synchronous loop, and `toast()` overwrote
+    `#toast`.textContent and reset one shared timer - so a poll tick carrying
+    more than one notice showed only the last of them, with the others
+    discarded before any repaint. The log panel is gone
+    (`ui/render/panels.js`), so there was nowhere else left to read them.
+
+    One tick carrying two is not exotic: `/log` returns every entry since
+    `lastSeq`, so an opponent's or an AI's whole turn arrives in one read,
+    and a single resolution can file notices to two different lists at once
+    (a cost modifier it could not apply and a mode it could not read). Going
+    from six rendered kinds to twenty-four makes it commonplace.
+
+    Both messages have to be on screen together - this is the assertion that
+    "nothing is silently discarded" actually holds at the surface, not only
+    in the wiring that computes the lines."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          body: {
+            classList: { toggle: () => {} },
+            setAttribute: () => {},
+            removeAttribute: () => {},
+          },
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        const board = {
+          you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+          active_player: "bob", priority_holder: "alice", battlefield: [],
+          hands: { alice: [] }, stack: [], combat: { attacks: [] },
+          winner: null, drawn: false, pregame: null,
+        };
+        globalThis.fetch = (path) => {
+          if (path.includes("/log")) {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                log: [
+                  {
+                    seq: 1,
+                    action: "pass_priority",
+                    detail: {
+                      notices: [
+                        {
+                          kind: "cost_modifier_notices",
+                          source_id: "s1",
+                          source_name: "Trinisphere",
+                          text: "each spell that would cost less than three",
+                          zone: "battlefield",
+                          controller: "bob",
+                        },
+                        {
+                          kind: "mode_notices",
+                          source_id: "s2",
+                          source_name: "Cryptic Command",
+                          text: "choose two",
+                          zone: "stack",
+                          controller: "alice",
+                        },
+                      ],
+                    },
+                  },
+                ],
+                last_seq: 1,
+              }),
+            });
+          }
+          return Promise.resolve({ ok: true, json: async () => board });
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null, busy: 0,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: board, log: { entries: [], lastSeq: 0 },
+          });
+          await m.poll();
+          return { toast: globalThis.__toast.textContent, hidden: globalThis.__toast.hidden };
+        })()
+        """
+    )
+    assert result["hidden"] is False
+    assert "Trinisphere" in result["toast"], (
+        "the first of two notices in one tick was overwritten by the second and "
+        "is gone for good - the log panel that used to carry it does not exist"
+    )
+    assert "Cryptic Command" in result["toast"], result["toast"]
+
+
+def test_a_burst_of_notices_keeps_every_line_on_screen() -> None:
+    """The same guarantee at the size a real turn produces: five notices
+    filed by one command all read back off `#toast` together, in the order
+    the engine filed them. A presentation that showed one and queued the
+    rest behind a shared 4000ms timer would pass the two-notice test above
+    by luck of ordering and still lose four of these."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        m.toastNotices([
+          { kind: "mode_notices", source_name: "Card One", text: "one" },
+          { kind: "imprint_notices", source_name: "Card Two", text: "two" },
+          { kind: "layer_notices", source_name: "Card Three", text: "three" },
+          { kind: "evasion_notices", source_name: "Card Four", text: "four" },
+          { kind: "opening_hand_notices", card_name: "Card Five", text: "five" },
+        ]);
+        ({ toast: globalThis.__toast.textContent, hidden: globalThis.__toast.hidden })
+        """
+    )
+    assert result["hidden"] is False
+    for name in ("Card One", "Card Two", "Card Three", "Card Four", "Card Five"):
+        assert name in result["toast"], (name, result["toast"])
+    order = [result["toast"].index(name) for name in ("Card One", "Card Three", "Card Five")]
+    assert order == sorted(order), f"notices are shown out of the order they were filed: {result}"
+
+
+def test_an_ordinary_refusal_still_shows_the_moment_it_is_toasted() -> None:
+    """The other half of the same surface: a refusal a player's own click
+    just earned must not wait behind anything. Whatever holds several
+    notices together has to put a newly toasted line on screen immediately,
+    not schedule it."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        m.toastNotices([
+          { kind: "mode_notices", source_name: "Card One", text: "one" },
+          { kind: "imprint_notices", source_name: "Card Two", text: "two" },
+        ]);
+        m.toast("you cannot cast that right now");
+        globalThis.__toast.textContent
+        """
+    )
+    assert "you cannot cast that right now" in result, result
+    assert "Card One" in result, "a refusal must not wipe the notices already on screen"
+
+
+# -- targeting notices: four outcomes, four lines ---------------------------
+
+
+def _targeting_notice_kinds() -> list[str]:
+    """Every `TargetingNoticeKind` the engine defines, read live off the
+    engine module rather than restated here - the same posture
+    `_server_notice_kinds` takes for the notice lists themselves."""
+    from magic_cards_model.machines.triggers import TargetingNoticeKind
+
+    return [kind.value for kind in TargetingNoticeKind]
+
+
+#: What each targeting sub-kind actually did to the board, and whether it is
+#: an engine gap. Hand-written on purpose: it is the assertion, and a kind
+#: the engine adds without an entry here fails
+#: `test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is` by
+#: name rather than silently inheriting somebody else's sentence.
+_TARGETING_OUTCOMES = {
+    "unparsed_targets": {
+        "gap": True,
+        "says": "went on the stack",
+        "never_says": "never went on the stack",
+    },
+    "no_legal_targets": {
+        "gap": False,
+        "says": "went on the stack",
+        "never_says": "never went on the stack",
+    },
+    "mandatory_target_missing": {
+        "gap": False,
+        "says": "never went on the stack",
+        "never_says": "graveyard",
+    },
+    "unreadable_aura_target": {
+        "gap": True,
+        "says": "graveyard",
+        "never_says": "went on the stack",
+    },
+}
+
+
+def test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is() -> None:
+    """`targeting_notices` is one list carrying four genuinely different
+    outcomes in its own `kind` field (`commands._notice_payload` keeps it as
+    `notice_kind`), and the browser is where a human learns which one
+    happened:
+
+    - `unparsed_targets` - the restriction could not be read. Engine gap; the
+      ability is on the stack having chosen nothing.
+    - `no_legal_targets` - nothing was legal and the target was optional
+      (CR 115.6). The rules working as printed; the ability is on the stack
+      having chosen nothing.
+    - `mandatory_target_missing` - nothing was legal and the target was not
+      optional. Also the rules working as printed (CR 603.3d), but the
+      ability is *gone*, never placed on the stack at all.
+    - `unreadable_aura_target` - a resolving Aura whose attachment could not
+      be re-resolved. Engine gap, and the Aura is in a graveyard rather than
+      anywhere near the stack.
+
+    The defect this pins: one line was rendered for all of them, claiming
+    "its ability went on the stack with no target. That is the rule, not a
+    bug." That is true of exactly one of the four. For the other three it
+    states the opposite of what happened, and for two of them it actively
+    suppresses an engine-gap report - the precise failure this whole change
+    exists to remove."""
+    kinds = _targeting_notice_kinds()
+    assert set(kinds) == set(_TARGETING_OUTCOMES), (
+        "the engine's TargetingNoticeKind and this file's expectations have "
+        f"drifted apart: engine={sorted(kinds)} expected={sorted(_TARGETING_OUTCOMES)}. "
+        "A new sub-kind is a new outcome for a player to be told about - give it "
+        "its own line in ui/app.js's TARGETING_NOTICE_MESSAGES and its own row here."
+    )
+    lines = run_app(
+        "Object.fromEntries(KINDS.map((notice_kind) => [notice_kind, m.noticeMessage("
+        '{ kind: "targeting_notices", notice_kind, source_name: "Hyena Umbra",'
+        ' text: "enchant creature" })]))',
+        KINDS=kinds,
+    )
+    for kind, expected in _TARGETING_OUTCOMES.items():
+        line = lines[kind]
+        assert "Hyena Umbra" in line, (kind, line)
+        assert expected["says"] in line, (kind, line)
+        assert expected["never_says"] not in line, (kind, line)
+        if expected["gap"]:
+            assert "engine gap" in line.lower(), (kind, line)
+        else:
+            assert "engine gap" not in line.lower(), (kind, line)
+            assert "not a bug" in line.lower(), (kind, line)
+    assert len(set(lines.values())) == len(lines), f"two outcomes render the same line: {lines}"
+
+
+def test_a_targeting_sub_kind_this_ui_has_never_seen_fails_loud() -> None:
+    """The fifth sub-kind, tested before it exists. An unrecognised
+    `notice_kind` must fall back to the engine-gap wording rather than to any
+    of the four lines above: over-reporting a gap costs a false bug report,
+    while a wrong "that is the rule, not a bug" teaches a player to trust a
+    board the engine itself refused to stand behind."""
+    line = run_app(
+        'm.noticeMessage({ kind: "targeting_notices", notice_kind: "some_future_kind",'
+        ' source_name: "Hyena Umbra", text: "enchant creature" })'
+    )
+    assert "Hyena Umbra" in line, line
+    assert "engine gap" in line.lower(), line
+    assert "not a bug" not in line.lower(), line
