@@ -11,6 +11,7 @@ asked.
 """
 
 import json
+import threading
 
 from fastapi.testclient import TestClient
 
@@ -155,6 +156,65 @@ def test_the_ai_review_completes_before_the_session_ends_and_the_process_exits(
     assert world.events.index("ai_review") < world.events.index("delete"), (
         f"the session must not end before the AI review is filed: events were {world.events}"
     )
+
+
+def test_the_review_thread_is_registered_before_the_handover_thread_is_created(
+    world,  # noqa: F811
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """`current["reviewThread"]` used to be set only AFTER `start_handover`
+    returned - but `start_handover` itself is what creates and starts
+    `run_handover`'s own background thread, which calls `retire` at its own
+    end and joins `current["reviewThread"]` only if it is already set. A
+    `run_handover` racing ahead fast enough could reach `retire` before the
+    review thread was ever registered, finding nothing to join and losing
+    the review outright - not merely slower than `RETIRE_REVIEW_JOIN_
+    TIMEOUT`, never joined at all.
+
+    Proven here without depending on real thread-scheduling luck: which of
+    the two `threading.Thread` objects gets CONSTRUCTED first is a
+    deterministic, single-threaded fact, not a race - `run_handover`'s own
+    `Thread` is constructed only inside `start_handover`, so the review's
+    own `Thread` being constructed (and, on the same code path, started and
+    registered into `current["reviewThread"]`) strictly before that call is
+    what makes the join possible on every ordering the OS scheduler could
+    ever produce, not merely a lucky one."""
+    created: list[str] = []
+    original_init = threading.Thread.__init__
+
+    def recording_init(self: threading.Thread, *args: object, **kwargs: object) -> None:
+        target = kwargs.get("target")
+        if target is not None and getattr(target, "__name__", None) in (
+            "run_handover",
+            "post_ai_review",
+        ):
+            created.append(target.__name__)
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(threading.Thread, "__init__", recording_init)
+    settings = DriverSettings.from_env(_env(tmp_path, DRIVER_EXIT_AFTER_MATCH="1"))
+    app = build_app(settings, client_factory=world.client_factory)
+    with TestClient(app) as client:
+        client.post(
+            "/dispatch",
+            json={
+                "uid": world.uid,
+                "game_id": world.game_id,
+                "player": "bob",
+                "api_base": "http://game:8000",
+            },
+        )
+        world.state["winner"] = "bob"
+        client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+        client.post(
+            "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+        )
+        complete_handover(client, world.submitted)
+        wait_for(lambda: app.state.should_exit)
+
+    assert "post_ai_review" in created and "run_handover" in created, created
+    assert created.index("post_ai_review") < created.index("run_handover"), created
 
 
 # ---- a self-dispatch that never gets going must not hang the Job forever --

@@ -1174,10 +1174,17 @@ def build_app(
                 current["reflectionHandled"] = True
             if not already_handled:
                 post_reflection(assignment, reflection_text_value)
-            with lock:
-                ended = current["outcome"] or ""
-            handover_status = start_handover(ended)
             if not already_handled:
+                # Registered BEFORE `start_handover` below, not after: that
+                # call is what creates and starts `run_handover`'s own
+                # background thread, which calls `retire` at its own end and
+                # joins `current["reviewThread"]` only if it is already set.
+                # A `run_handover` racing ahead fast enough used to reach
+                # `retire` before this ever ran, finding nothing to join and
+                # losing the review outright. `run_handover`'s thread cannot
+                # exist before `start_handover` creates it, so registering
+                # first makes the join possible on every ordering the OS
+                # scheduler could ever produce, not merely a lucky one.
                 review_thread = threading.Thread(
                     target=post_ai_review,
                     args=(assignment, reflection_text_value),
@@ -1186,6 +1193,9 @@ def build_app(
                 review_thread.start()
                 with lock:
                     current["reviewThread"] = review_thread
+            with lock:
+                ended = current["outcome"] or ""
+            handover_status = start_handover(ended)
             return {
                 "handover": handover_status,
                 "gameId": assignment.game_id,
