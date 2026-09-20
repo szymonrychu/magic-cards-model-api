@@ -1323,3 +1323,164 @@ def test_the_review_stays_best_effort_and_never_blocking_under_the_checkout_lock
     wait_for(lambda: client.get("/status").json()["gameId"] is None)
     # And the slow review still landed rather than being dropped on the way out.
     assert len(world.ai_review_posts) == 1
+
+
+# -- T34: a review is considered on EVERY way a game reaches a terminal state --
+#
+# `post_ai_review` used to be spawned only from `turn_done`'s reflection
+# branch, so a game ending any other way filed nothing and its review page
+# rendered no `section.ai-review` at all. `consider_ai_review` is now the one
+# place that decides, and every terminal path reaches it.
+
+
+def test_every_terminal_path_is_named_and_reaches_the_filing_decision():
+    """The structural guard (clause f): the enumeration is not a comment.
+    Every name in `TERMINAL_PATHS` is passed to `consider_ai_review` by some
+    call site in the driver, and `retire` - which every terminal path ends
+    in - is itself one of them, so a future terminal path that drops the
+    assignment cannot silently join the set that files nothing."""
+    from pathlib import Path
+
+    from mtg_agent.driver.app import TERMINAL_PATHS
+
+    source = Path(
+        __import__("mtg_agent.driver.app", fromlist=["app"]).__file__ or ""
+    ).read_text()
+    for name in TERMINAL_PATHS:
+        assert f'"{name}"' in source, f"no call site ever passes the terminal path {name!r}"
+    assert "retire" in TERMINAL_PATHS
+    assert "reflection_turn" in TERMINAL_PATHS
+    assert "handover_without_reflection" in TERMINAL_PATHS
+
+
+def test_a_handover_without_a_reflection_still_files_a_review(world):
+    """The live-observed path: the retained cluster log shows a driver
+    `releasing game ... without a reflection turn, handing over first`, and
+    that game's review carried no `ai_review` action at all."""
+    client = world.client
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    released = client.post("/release", json={"uid": "secret-uid", "reason": "lobby reset"})
+    assert released.json()["reflected"] is False
+    complete_handover(client, world.submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    assert world.reflection_posts == []
+    assert world.ai_review_posts[0]["player"] == "bob"
+
+
+def test_a_reflectionless_review_prompt_is_well_formed(world):
+    """Clause (c): `review_prompt` already tolerates a missing reflection,
+    and the prompt it builds from an empty one plus a full ledger still
+    names the seat, the outcome and the record's own declarations."""
+    client = world.client
+    state = world.state
+    state["review_record"] = {
+        "players": ["bob", "alice"],
+        "winner": "bob",
+        "drawn": False,
+        "declarations": [
+            {
+                "player": "bob",
+                "turn": 3,
+                "plan": "trade on the ground and hold the counterspell",
+                "prediction": "she taps out for the four-drop",
+                "did": [{"action": "cast"}],
+                "opponent_did": [{"action": "play_land"}],
+            }
+        ],
+        "advice": [],
+    }
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/release", json={"uid": "secret-uid", "reason": "lobby reset"})
+    complete_handover(client, world.submitted)
+    wait_for(lambda: len(world.review_requests) == 1)
+
+    prompt = world.review_requests[0]["prompt"]
+    assert "(the seat left no reflection)" in prompt
+    assert "trade on the ground and hold the counterspell" in prompt
+    assert "bob" in prompt and "alice" in prompt
+    assert "bob won" in prompt
+
+
+def test_a_game_that_ended_with_an_unreachable_agent_still_files_a_review(world):
+    """The abnormal termination: the game is over, the agent cannot be given
+    a reflection turn at all, and `turn_done` retires it on the spot. That
+    path used to file nothing."""
+    client = world.client
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    state["agent"] = "down"
+    body = client.post(
+        "/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"}
+    ).json()
+    assert body["retired"] is True
+    assert body["reflected"] is False
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    assert world.ai_review_posts[0]["player"] == "bob"
+
+
+def test_no_terminal_path_files_two_reviews_for_one_game(world):
+    """Clause (d): the dedupe is extended to cover the new paths. The
+    reflection branch considers the review, and the handover that follows it
+    reaches `consider_ai_review` again, as does `retire` - exactly one
+    review is filed."""
+    client = world.client
+    state = world.state
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    # A retried `/turn-done` delivery, which `webhook.Deliverer` really does
+    # send up to three times.
+    client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"})
+    client.post("/handover", json={"outcome": "bob won"})
+    time.sleep(0.2)
+    assert len(world.ai_review_posts) == 1
+    assert len(world.review_requests) == 1
+
+
+def test_a_review_on_a_new_path_never_blocks_the_handover_or_retirement(world):
+    """Clause (e): the best-effort property holds everywhere. A wrapper that
+    cannot generate the review on the handover-without-reflection path must
+    still let the handover complete and the agent retire."""
+    client = world.client
+    state = world.state
+    state["wrapper_review"] = "down"
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/release", json={"uid": "secret-uid", "reason": "lobby reset"})
+    complete_handover(client, world.submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    wait_for(lambda: len(world.review_requests) == 1)
+    assert world.ai_review_posts == []
+
+
+def test_a_path_that_cannot_file_a_review_records_why(world, caplog):
+    """Clause (b): "cannot" is only acceptable with a stated reason. A game
+    released before it ended reaches the filing decision on the
+    handover-without-reflection path, and when the record it would review is
+    unusable it says so rather than skipping silently. Turning that stated
+    reason into a durable `ai_review_failed` row is T35's deliverable and is
+    asserted on T35's branch - this branch owns only "every terminal path
+    reaches the decision, and a path that cannot file says why"."""
+    import logging
+
+    client = world.client
+    state = world.state
+    state["review_record"] = "not a review record"
+    caplog.set_level(logging.WARNING, logger="driver")
+    dispatch(client)
+    client.post("/release", json={"uid": "secret-uid", "reason": "lobby reset"})
+    complete_handover(client, world.submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    wait_for(
+        lambda: any(
+            "could not build the AI review prompt for game" in r.getMessage()
+            for r in caplog.records
+        )
+    )
+    assert world.review_requests == []
+    assert world.ai_review_posts == []
