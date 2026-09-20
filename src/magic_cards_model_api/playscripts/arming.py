@@ -214,6 +214,31 @@ def arm(
                 or judged.get(script_id, {}).get("invalid_input") is not None
             ]
             if not needing:
+                # `_judge_round` already computed a `refusal` for any id in
+                # `remaining` it could not judge at all - not registered
+                # under this seat's corpus, or a malformed script doc
+                # (`script_tools._judged`'s own `ScriptExit` branch). Surface
+                # each one as a refused `armed` entry, the same shape
+                # `script_tools.run` itself refusing already gets below,
+                # rather than silently dropping the one thing that explains
+                # why nothing fired: an armed id typo'd or never registered
+                # used to look identical to one that genuinely never applied.
+                unregistered = [
+                    script_id
+                    for script_id in remaining
+                    if judged.get(script_id, {}).get("refusal") is not None
+                ]
+                if unregistered:
+                    for script_id in unregistered:
+                        armed_out.append(
+                            {
+                                "script": script_id,
+                                "exit": Exit.REFUSED.value,
+                                "refusal": judged[script_id]["refusal"],
+                            }
+                        )
+                        remaining.remove(script_id)
+                    continue
                 break
             script_id = needing[0]
 

@@ -933,8 +933,10 @@ def test_cli_pass_until_arm_is_repeatable(
 ) -> None:
     """Two `--arm` flags collect into one list rather than the second
     overwriting the first - proven by both being judged: the unregistered
-    `another-one` is silently ignored (it never becomes a firing candidate)
-    while `drop` still fires once the crossing reaches alice's own main."""
+    `another-one` never becomes a firing candidate and comes back its own
+    refused `armed` entry (`test_arm_returns_the_refusal_for_an_unregistered_
+    armed_id`) while `drop` still fires once the crossing reaches alice's
+    own main."""
     from test_front_end_parity import wire
 
     wire(monkeypatch)
@@ -970,9 +972,10 @@ def test_cli_pass_until_arm_is_repeatable(
 
     printed = json.loads(capsys.readouterr().out)
     assert printed["finished"] is True, printed
-    [entry] = printed["armed"]
-    assert entry["script"] == "drop"
-    assert entry["exit"] == "chain_complete", entry
+    by_script = {entry["script"]: entry for entry in printed["armed"]}
+    assert by_script["drop"]["exit"] == "chain_complete", printed["armed"]
+    assert by_script["another-one"]["exit"] == "refused", printed["armed"]
+    assert "registered" in by_script["another-one"]["refusal"]
 
 
 # -- MCP tools ------------------------------------------------------------------
@@ -1584,3 +1587,39 @@ def test_cli_wait_carries_every_documented_armed_field(
     assert printed["armed_error"] == "arming raised RuntimeError: arming blew up"
     assert printed["armed_skipped"] == seatkit.ARMING_SKIPPED_LOW_BUDGET
     assert printed["armed_facts_unavailable"] == [{"id": "needs-facts", "reason": "500"}]
+
+
+# -- an unregistered armed id's own computed refusal must reach the caller ---
+
+
+def test_arm_returns_the_refusal_for_an_unregistered_armed_id(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_judge_round` already computes a `refusal` for an armed id that is
+    not registered under this seat's corpus ("no script %r is registered
+    for this seat") - `arm`'s own loop only ever read `applies`/
+    `needs_input`/`invalid_input` off each judged entry, never `refusal`,
+    so that computed refusal was silently thrown away and the caller saw
+    only an empty `armed: []` with no way to tell "genuinely nothing
+    applies yet" from "this id does not exist at all"."""
+    from magic_cards_model_api.playscripts import arming
+    from magic_cards_model_api.playscripts.runtime import Exit
+
+    alice = seat_uid(game, "alice")
+    seats = wired(monkeypatch, game)
+    seat, _ = hooked_seat(seats, alice)
+    register(client, game, alice, land_script("drop"))
+
+    result = arming.arm(
+        seat,
+        seats.script_corpora,
+        arm=["not-a-real-script"],
+        arm_reasoning=ARM_REASONING,
+    )
+
+    assert isinstance(result, dict), result
+    [entry] = result["armed"]
+    assert entry["script"] == "not-a-real-script"
+    assert entry["exit"] == Exit.REFUSED.value
+    assert "not-a-real-script" in entry["refusal"]
+    assert "registered" in entry["refusal"]
