@@ -407,6 +407,59 @@ class AiReviewResponse(BaseModel):
     player: str
 
 
+#: The four calls `mtg_agent.driver.app`'s `post_ai_review` makes, in order,
+#: any of which can leave a game with no review. A closed vocabulary so
+#: `review.build_review`'s `ai_review_failures` reads as data rather than as
+#: free text a driver invented:
+#:
+#: - `review_record`: `GET /api/games/{id}/review` failed, so there was
+#:   nothing to build a prompt from;
+#: - `prompt`: the record came back but `review.review_prompt` could not be
+#:   built from it;
+#: - `generate`: the wrapper's `/v1/review` failed, timed out, or could not
+#:   be reached at all;
+#: - `empty`: the wrapper answered, with no usable text;
+#: - `file`: the review existed and `POST .../ai-review` refused it.
+AI_REVIEW_STAGES = ("review_record", "prompt", "generate", "empty", "file")
+
+
+class AiReviewFailureIn(RequestModel):
+    """`POST /api/games/{game_id}/ai-review-failure` - the durable record
+    that a post-game AI review could not be produced, and why.
+
+    Gated exactly like `AiReviewIn` (post-game only, `uid` must open
+    `player`'s own seat, and `player` must be a registered AI seat), for the
+    same reasons: only an AI seat's own driver ever generates a review, so
+    only it can report that one failed.
+
+    `invoked` is the field this shape exists for. Without it "the reviewer
+    failed" and "the reviewer was never invoked" are the same absence, which
+    is precisely the ambiguity the pod logs left - it is `True` only when the
+    wrapper's `/v1/review` was actually reached and answered."""
+
+    player: Stated
+    uid: Stated
+    """The seat whose driver was generating the review - its own credential,
+    so nobody may write a failure into another seat's name."""
+    stage: Literal[AI_REVIEW_STAGES]
+    """Which of the four calls failed."""
+    reason: Stated
+    """What it said - a status code, an exception's text, or the driver's own
+    description of an answer it could not use."""
+    invoked: bool
+    """Whether the reviewer itself was ever asked."""
+
+
+class AiReviewFailureResponse(BaseModel):
+    """`POST .../ai-review-failure`'s answer, shaped like
+    `AiReviewResponse`: this mutates no `Game` either."""
+
+    recorded: bool
+    log_seq: int
+    """The `records` row this failure became."""
+    player: str
+
+
 class AdviceIn(RequestModel):
     """`POST /api/games/{game_id}/advice` - one action an **advisor** thinks
     its human should take, recorded and never performed.
@@ -2416,6 +2469,19 @@ class ReviewAdvice(BaseModel):
     retrying a refused attempt more than once."""
 
 
+class AiReviewFailure(BaseModel):
+    """One `audit.AI_REVIEW_FAILED_ACTION` row, flattened - `review.py`'s
+    `_ai_review_failures`. `invoked` separates a reviewer that ran and
+    failed from one that was never asked at all."""
+
+    seq: int
+    ts: str | None = None
+    player: str | None = None
+    stage: str | None = None
+    reason: str | None = None
+    invoked: bool | None = None
+
+
 class GameReviewResponse(BaseModel):
     """`GET /api/games/{game_id}/review` - post-game only, and never open."""
 
@@ -2454,6 +2520,12 @@ class GameReviewResponse(BaseModel):
     game, paired with whether it was approved and what happened next - a
     stream of its own, beside `declarations` rather than folded into it. See
     `ReviewAdvice`."""
+    ai_review_failures: list[AiReviewFailure] = Field(default_factory=list)
+    """Every recorded reason this game has no AI review (T35). Empty when
+    the review was produced, and empty for a game whose driver never got as
+    far as trying - which is itself the distinction `invoked` draws inside
+    each row. The rows are in `entries` too; this is the flattened read, so
+    "why is there no review here?" is answered without walking the ledger."""
     entries: list[dict[str, Any]] = Field(default_factory=list)
     """The whole ledger, oldest first, each row carrying its own
     full-information `snapshot` - the frames a reviewer renders. Left

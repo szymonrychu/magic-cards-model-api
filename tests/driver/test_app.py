@@ -1181,3 +1181,119 @@ def test_the_real_game_server_accepts_the_corpus_the_driver_registers(tmp_path):
     assert put.status_code == 200, put.text
     assert put.json()["count"] == len(fixture_plays())
     assert read["inputs"] == DECLARED_INPUTS["inputs"]
+
+
+# -- T35: an AI review that could not be produced says so, durably -------------
+#
+# Every failure inside `post_ai_review` used to be swallowed to
+# `log.warning`, and "the reviewer failed" was indistinguishable from "the
+# reviewer was never invoked" without pod-log archaeology. Each of the four
+# failure points now files an `ai_review_failed` row through
+# `POST /api/games/{id}/ai-review-failure`, carrying the stage, the reason
+# and whether the reviewer was ever invoked at all.
+
+
+def test_a_failed_review_record_read_files_a_durable_signal(world):
+    client = world.client
+    state = world.state
+    state["review_record"] = "error"
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: len(world.ai_review_failures) == 1)
+    signal = world.ai_review_failures[0]
+    assert signal["game_id"] == "g-1"
+    assert signal["player"] == "bob"
+    assert signal["uid"] == "secret-uid"
+    assert signal["stage"] == "review_record"
+    assert signal["invoked"] is False
+    assert "500" in signal["reason"]
+    assert world.ai_review_posts == []
+
+
+def test_a_malformed_review_record_files_a_durable_signal(world):
+    client = world.client
+    state = world.state
+    state["review_record"] = None
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: len(world.ai_review_failures) == 1)
+    signal = world.ai_review_failures[0]
+    assert signal["stage"] == "prompt"
+    assert signal["invoked"] is False
+    assert signal["reason"]
+    assert world.review_requests == []
+    assert world.ai_review_posts == []
+
+
+def test_a_wrapper_that_cannot_generate_the_review_files_a_durable_signal(world):
+    client = world.client
+    state = world.state
+    state["wrapper_review"] = "error"
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: len(world.ai_review_failures) == 1)
+    signal = world.ai_review_failures[0]
+    assert signal["stage"] == "generate"
+    assert signal["invoked"] is True
+    assert "502" in signal["reason"]
+    assert world.ai_review_posts == []
+
+
+def test_an_unreachable_wrapper_files_a_signal_that_says_it_was_never_invoked(world):
+    """The exact ambiguity this task exists to close: a wrapper the driver
+    could not reach never ran the reviewer, and that is a different fact
+    from a reviewer that ran and failed."""
+    client = world.client
+    state = world.state
+    state["wrapper_review"] = "down"
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: len(world.ai_review_failures) == 1)
+    signal = world.ai_review_failures[0]
+    assert signal["stage"] == "generate"
+    assert signal["invoked"] is False
+    assert world.ai_review_posts == []
+
+
+def test_an_empty_review_files_a_durable_signal(world):
+    client = world.client
+    state = world.state
+    state["review_text"] = "   "
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: len(world.ai_review_failures) == 1)
+    signal = world.ai_review_failures[0]
+    assert signal["stage"] == "empty"
+    assert signal["invoked"] is True
+    assert world.ai_review_posts == []
+
+
+def test_a_review_that_the_game_server_refuses_files_a_durable_signal(world):
+    """The fourth call, the filing itself: a review generated and then
+    refused is not a review anybody can read, so it gets a signal too."""
+    client = world.client
+    state = world.state
+    state["ai_review_route"] = "error"
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: len(world.ai_review_failures) == 1)
+    signal = world.ai_review_failures[0]
+    assert signal["stage"] == "file"
+    assert signal["invoked"] is True
+    assert world.ai_review_posts == []
+
+
+def test_failing_to_record_a_failure_is_itself_swallowed(world):
+    """Clause (e): a failure to record a failure must not be able to throw
+    out of the background review thread or wedge retirement."""
+    client = world.client
+    state = world.state
+    state["wrapper_review"] = "error"
+    state["failure_route"] = "down"
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    assert world.ai_review_failures == []
+    assert world.ai_review_posts == []
+    assert world.reflection_posts != []
+
+
+def test_a_successful_review_files_no_failure_signal(world):
+    client = world.client
+    state = world.state
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    assert world.ai_review_failures == []

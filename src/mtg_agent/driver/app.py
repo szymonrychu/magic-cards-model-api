@@ -445,6 +445,53 @@ def build_app(
         except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
             log.warning("could not post the reflection for game %s: %s", assignment.game_id, exc)
 
+    def record_review_failure(
+        assignment: Assignment, stage: str, reason: str, *, invoked: bool
+    ) -> None:
+        """File the durable record that the AI review could not be produced
+        (`audit.AI_REVIEW_FAILED_ACTION`, via
+        `POST /api/games/{id}/ai-review-failure`).
+
+        `invoked` is the whole point: it says whether the reviewer itself
+        was ever asked. Without it, an unreachable wrapper and a wrapper
+        that ran Opus and got nothing usable leave the same trace - no
+        review, no explanation - which is exactly the ambiguity the pod logs
+        left behind and this exists to close.
+
+        **A failure to record a failure is swallowed, on purpose.** This
+        runs inside the best-effort review thread, after something has
+        already gone wrong; raising here would turn a missing review into an
+        uncaught exception out of a daemon thread and could only make the
+        situation worse. The caller has already logged its own distinct
+        warning line, so nothing is lost that was not already lost."""
+        try:
+            with make_client(settings.game_api) as client:
+                response = client.post(
+                    f"/api/games/{assignment.game_id}/ai-review-failure",
+                    json={
+                        "player": assignment.player,
+                        "uid": assignment.uid,
+                        "stage": stage,
+                        "reason": reason,
+                        "invoked": invoked,
+                    },
+                )
+            if response.status_code >= 400:
+                log.warning(
+                    "ai-review-failure: the game server refused the %s failure signal "
+                    "for game %s: %s",
+                    stage,
+                    assignment.game_id,
+                    response.status_code,
+                )
+        except Exception as exc:  # noqa: BLE001 - a failure to record a failure is swallowed
+            log.warning(
+                "ai-review-failure: could not record the %s failure for game %s: %s",
+                stage,
+                assignment.game_id,
+                exc,
+            )
+
     def post_ai_review(assignment: Assignment, reflection_text: str) -> None:
         """Generate and file the post-game AI review - the handoff's other
         half, run on Opus (`AgentSettings.review_default`, fixed, never this
@@ -456,7 +503,18 @@ def build_app(
         nothing here may block or fail the handover that always follows it.
         Three calls, each independently allowed to fail without touching the
         others already having happened - fetch the review record, ask the
-        wrapper to generate the review, file the result."""
+        wrapper to generate the review, file the result.
+
+        **Best-effort is not silent (T35).** Every way this can end without
+        a review now also files a durable row through
+        `record_review_failure` - the stage that failed, what it said, and
+        whether the reviewer was ever invoked - so an operator reading
+        `GET /api/games/{id}/review` can tell "the reviewer failed" from
+        "the reviewer was never invoked" without pod-log archaeology. The
+        `log.warning` lines all stay, and each carries its own distinct
+        `ai-review-failed[<stage>]` prefix so they are greppable and told
+        apart in logs too; the durable row is in addition to logging, never
+        instead of it."""
         try:
             with make_client(settings.game_api) as client:
                 response = client.get(
@@ -464,22 +522,39 @@ def build_app(
                 )
             if response.status_code >= 400:
                 log.warning(
-                    "could not read the review record for game %s: %s",
+                    "ai-review-failed[review_record]: the game server refused the review "
+                    "record for game %s: %s",
                     assignment.game_id,
                     response.status_code,
+                )
+                record_review_failure(
+                    assignment,
+                    "review_record",
+                    f"the game server answered {response.status_code}",
+                    invoked=False,
                 )
                 return
             review_record = response.json()
         except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
-            log.warning("could not read the review record for game %s: %s", assignment.game_id, exc)
+            log.warning(
+                "ai-review-failed[review_record]: could not read the review record for "
+                "game %s: %s",
+                assignment.game_id,
+                exc,
+            )
+            record_review_failure(assignment, "review_record", str(exc) or repr(exc), invoked=False)
             return
 
         try:
             prompt = review_prompt(assignment, reflection_text, review_record)
         except Exception as exc:  # noqa: BLE001 - a malformed review record must not block retire
             log.warning(
-                "could not build the AI review prompt for game %s: %s", assignment.game_id, exc
+                "ai-review-failed[prompt]: could not build the AI review prompt for "
+                "game %s: %s",
+                assignment.game_id,
+                exc,
             )
+            record_review_failure(assignment, "prompt", str(exc) or repr(exc), invoked=False)
             return
         review_settings = AgentSettings.review_default()
         try:
@@ -496,19 +571,44 @@ def build_app(
                 )
             if response.status_code >= 400:
                 log.warning(
-                    "the wrapper could not generate an AI review for game %s: %s",
+                    "ai-review-failed[generate]: the wrapper could not generate an AI "
+                    "review for game %s: %s",
                     assignment.game_id,
                     response.status_code,
+                )
+                # The wrapper answered, so the reviewer WAS invoked - it ran
+                # and failed, which is a different fact from never having
+                # been asked.
+                record_review_failure(
+                    assignment,
+                    "generate",
+                    f"the wrapper answered {response.status_code}",
+                    invoked=True,
                 )
                 return
             review_text = str(response.json().get("text") or "").strip()
         except Exception as exc:  # noqa: BLE001 - an unreachable/slow wrapper must not block retire
-            log.warning("could not generate the AI review for game %s: %s", assignment.game_id, exc)
+            log.warning(
+                "ai-review-failed[generate]: could not reach the wrapper to generate the "
+                "AI review for game %s: %s",
+                assignment.game_id,
+                exc,
+            )
+            # No answer at all - a refused connection, a timeout, a wrapper
+            # that is not there. The reviewer was never invoked.
+            record_review_failure(assignment, "generate", str(exc) or repr(exc), invoked=False)
             return
         if not review_text:
             log.warning(
-                "the AI review for game %s came back with no text; not filing it",
+                "ai-review-failed[empty]: the AI review for game %s came back with no "
+                "text; not filing it",
                 assignment.game_id,
+            )
+            record_review_failure(
+                assignment,
+                "empty",
+                "the wrapper answered with no usable review text",
+                invoked=True,
             )
             return
 
@@ -524,12 +624,24 @@ def build_app(
                 )
             if response.status_code >= 400:
                 log.warning(
-                    "game server refused the AI review for game %s: %s",
+                    "ai-review-failed[file]: the game server refused the AI review for "
+                    "game %s: %s",
                     assignment.game_id,
                     response.status_code,
                 )
+                record_review_failure(
+                    assignment,
+                    "file",
+                    f"the game server answered {response.status_code}",
+                    invoked=True,
+                )
         except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
-            log.warning("could not post the AI review for game %s: %s", assignment.game_id, exc)
+            log.warning(
+                "ai-review-failed[file]: could not post the AI review for game %s: %s",
+                assignment.game_id,
+                exc,
+            )
+            record_review_failure(assignment, "file", str(exc) or repr(exc), invoked=True)
 
     def retire(assignment: Assignment) -> bool:
         """End the agent's life. `DELETE /v1/session` makes it exit, its
