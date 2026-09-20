@@ -182,9 +182,10 @@ def _tuplify(value: Any) -> Any:
 
 def _load_cli_draft(game_id: str, uid: str) -> tuple[dict[str, Any] | None, str | None]:
     """`(entry, note)`: `entry` is the draft a previous CLI invocation left
-    staged for `uid`, or `None` for no file, one that is not valid JSON, or
-    one that is not a JSON object - all three read the same as "nothing
-    staged", never an error a command run fails on.
+    staged for `uid`, or `None` for no file, one that is not valid UTF-8
+    (a stray binary write, a different encoding), one that is not valid
+    JSON, or one that is not a JSON object - all four read the same as
+    "nothing staged", never an error a command run fails on.
 
     `note` (review fix 3, 2026-09-14) is `None` for every one of those
     ordinary cases - a missing or malformed file is not a problem worth
@@ -206,6 +207,15 @@ def _load_cli_draft(game_id: str, uid: str) -> tuple[dict[str, Any] | None, str 
         text = path.read_text()
     except OSError as exc:
         return None, f"could not read the staged advisor draft: {exc}"
+    except UnicodeDecodeError:
+        # A `UnicodeDecodeError` is a `ValueError`, not an `OSError` -
+        # `path.read_text()` raises it for a file that cannot be decoded
+        # (a stray binary write, a different encoding), and it was falling
+        # straight through the `except OSError` above uncaught, aborting the
+        # seat's whole command. Read the same way `json.loads` failing does
+        # just below: the file's bytes are malformed, not the directory, so
+        # this is "nothing staged", silently - not a problem worth a note.
+        return None, None
     try:
         loaded = json.loads(text)
     except ValueError:

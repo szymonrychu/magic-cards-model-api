@@ -1285,6 +1285,28 @@ def test_an_unwritable_cli_drafts_dir_reports_a_draft_note_in_the_answer(
     assert isinstance(out["draft"].get("note"), str) and out["draft"]["note"]
 
 
+def test_a_non_utf8_draft_file_is_treated_as_nothing_staged(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`_load_cli_draft` already treats a missing file, one that is not
+    valid JSON, and one that is not a JSON object all as "nothing staged",
+    never an error a command run fails on - a file that cannot even be
+    DECODED as UTF-8 (a stray binary write, a different encoding) used to
+    raise `UnicodeDecodeError` straight out of `path.read_text()`, uncaught
+    by the `except OSError` around it, aborting the seat's whole CLI command
+    instead of being read the same ordinary way."""
+    uid = advisor_uid(game)
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir()
+    monkeypatch.setenv(seat_cli.CLI_DRAFTS_DIR_ENV, str(drafts_dir))
+    path = seat_cli._cli_draft_path(game, uid)
+    path.write_bytes(b"\xff\xfe\x00\x01not valid utf-8 \xc0\xc1")
+
+    loaded, note = seat_cli._load_cli_draft(game, uid)
+
+    assert loaded is None
+
+
 # ---------------------------------------------------------------------------
 # 9. re-review, 2026-09-14, finding 2: a script only supersedes a draft whose
 # own window is reached in this very answer
