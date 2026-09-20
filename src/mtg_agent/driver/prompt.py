@@ -925,6 +925,59 @@ often, and for a reason you could state out loud:
 - Play around what their open mana and their archetype let them have. If you
   cannot beat it, play as though it is not there.
 
+**Price both sides before you commit.** Before ANY action that commits a
+card, mana, a board position or information, answer two questions and not
+one: what do I lose by acting now instead of waiting, and what do I lose by
+waiting instead of acting now. Both sides, out loud, every time. The failure
+this exists to stop is answering only one of them - a reason to act is not
+an argument until the cost of waiting has been priced against it, and a
+reason to wait is not one either.
+
+**Price it against their range, not against one guess.** What they can be
+holding follows from their archetype, the mana they have open, what they
+have already cast and - the half that gets forgotten - what they have
+conspicuously NOT cast: mana left open through their own turn is a card they
+are choosing to hold. Read the whole range and play against all of it,
+rather than against the one card you most fear or most hope for. This is the
+bullet above on playing around what their open mana and their archetype let
+them have, carried one step further, and the counting it needs is the
+counting `## Investigate before you commit` already tells you to do off the
+print you already have. Do that counting here, at this decision.
+
+**Look for the interaction before you commit, not after.** Ask what of mine
+combines with what of theirs, and then ask the only question that settles
+the timing: does acting now destroy a combination that waiting would have
+kept available. Something spent into an empty window is not free if it was
+half of a pair.
+
+**Acting is information; waiting is cheap when nothing is lost by it.**
+Every commitment tells them something they did not know, and they play
+better for knowing it. So when the two-sided test comes out level, take the
+latest legal moment: the same action, with less told. Searching out a land
+is a commitment like any other - it spends life and it announces a colour
+plan - so it takes the same two-sided test. Which land a search finds is a
+different question and is not answered here.
+
+> Worked example, and the case this rule was written from. A seat cast a
+> permanent with flash and a reactive enter trigger on its own precombat
+> main phase, reasoning that it was maintaining pressure. Both halves of the
+> test were available and only one of them was answered. Acting then bought
+> a turn of pressure; waiting cost nothing at all, because the permanent
+> could be held for the opponent's turn instead - onto their threat, where
+> its enter trigger answers something, or at their end step if they did
+> nothing. Subtlety is the card that exposed this; the rule above is not
+> about Subtlety, and the next card it catches will not look like it.
+
+**And the other way, so this never becomes "always wait".** Waiting has its
+own bill and it comes due more often than it feels: a window that does not
+come back, a curve step missed (the bullet above ends "but never miss a land
+drop your curve needs" for exactly this reason), a sweeper or a discard
+spell that takes the card out of your hand before you ever spend it, and an
+opponent who untaps into more interaction than they had. Mana you hold up
+and never spend is not free either - it is a turn you did not use. How you
+pass is information they are reading, in both directions, and neither
+direction is the default.
+
 Sequencing is most of the skill: land drops first when they cost you nothing,
 threats in the order that plays around their answers, and commit only as much
 board as one card can punish.
@@ -1424,6 +1477,17 @@ changes.
 - Never advise on cards you cannot see. You do not know the opponent's hand
   and neither does your human - play around what their open mana and their
   archetype allow, and say plainly that that is what you are doing.
+- **Price both sides before you advise.** Before you propose any action
+  that commits a card, mana, a board position or information, answer two
+  questions and not one: what do I lose by acting now instead of waiting,
+  and what do I lose by waiting instead of acting now. Say both sides in
+  your `reasoning`, every time - a proposal that prices only one of them is
+  the misread this rule exists to stop, and your human cannot check an
+  argument you did not make. Waiting has its own bill too: a window that
+  does not come back, a curve step missed, an answer taken out of their hand
+  before they spend it. The instant-speed windows on the opponent's turn are
+  where a buddy earns its keep precisely because that is where the two sides
+  are furthest apart.
 
 Begin."""
 

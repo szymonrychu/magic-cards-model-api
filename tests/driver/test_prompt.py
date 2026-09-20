@@ -1491,3 +1491,160 @@ def test_both_briefs_keep_system_problems_out_of_the_guide(brief):
         f"{brief}'s handover section never states the classification test"
     )
     assert "`report`" in handover, f"{brief}'s handover section never names the report subcommand"
+
+
+# -- T17: the general timing discipline for any committing action ---------------
+#
+# The owner's report was about one card, and the fix must not be. A reviewer
+# reading the new material should not be able to tell which card prompted
+# it - the rule is stated in terms of THE DECISION, and the card appears
+# only in the worked example under it.
+
+#: Where the discipline lives, and the two anchors the checks below read
+#: between. It goes inside `## Not playing is a play` - the section where
+#: every other "do not act yet" rule already lives, and which several tests
+#: already read - not as a new top-level section nothing pins.
+TIMING_OPENER = "**Price both sides before you commit.**"
+TIMING_CLOSER = "Sequencing is most of the skill"
+
+#: The load-bearing sentences, short enough to survive a rewording of the
+#: prose around them.
+TIMING_SENTENCES = (
+    "what do I lose by acting now instead of waiting, and what do I lose by "
+    "waiting instead of acting now",
+    "answering only one of them",
+    "what they have conspicuously NOT cast",
+    "play against all of it",
+    "does acting now destroy a combination that waiting would have kept",
+    "the latest legal moment",
+    "so this never becomes \"always wait\"",
+    "a window that does not come back",
+    "Mana you hold up and never spend is not free either",
+)
+
+#: The worked example's own marker: everything after it may name a card.
+WORKED_EXAMPLE = "Worked example"
+
+#: Tokens that would turn the rule into card-specific advice again. Checked
+#: mechanically over the new material ABOVE the worked example.
+CARD_SPECIFIC_TOKENS = ("flash", "evoke", "subtlety")
+
+
+def _timing_sources() -> dict[str, str]:
+    from magic_cards_model_api import ai_seat
+    from mtg_agent.driver import prompt as prompt_module
+
+    return {
+        "ai_seat_brief.md": ai_seat.load_brief(),
+        "prompt.py": Path(prompt_module.__file__).read_text(),
+    }
+
+
+def _timing_block(text: str) -> str:
+    """The new material, with the worked example's blockquote markers
+    stripped so a sentence reads the same whether it is quoted or not."""
+    start = text.index(TIMING_OPENER)
+    block = text[start : text.index(TIMING_CLOSER, start)]
+    return "\n".join(line.removeprefix("> ").removeprefix(">") for line in block.splitlines())
+
+
+@pytest.mark.parametrize("source", ["ai_seat_brief.md", "prompt.py"])
+@pytest.mark.parametrize("sentence", TIMING_SENTENCES)
+def test_the_timing_discipline_is_stated_in_both_twins(source, sentence):
+    """Clause (i): the MCP-vocabulary twin does not drift. `prompt.py`'s own
+    docstring says its rules of engagement are lifted from the brief, and
+    three separate test files already iterate over both - a sentence that
+    moves in one and not the other is the drift this pins."""
+    flat = _flat(_timing_block(_timing_sources()[source]))
+    assert sentence in flat, f"{source} is missing {sentence!r}"
+
+
+@pytest.mark.parametrize("source", ["ai_seat_brief.md", "prompt.py"])
+def test_the_discipline_sits_inside_the_not_playing_section(source):
+    """Clause (g): not a new top-level section, which no test pins."""
+    text = _timing_sources()[source]
+    section = _section(text, "## Not playing is a play")
+    assert TIMING_OPENER in section
+    assert TIMING_CLOSER in section
+
+
+@pytest.mark.parametrize("source", ["ai_seat_brief.md", "prompt.py"])
+def test_the_rule_itself_names_no_card_no_keyword_and_no_card_type(source):
+    """Clause (h), the acceptance condition a reviewer checks mechanically.
+    Everything above the worked example is the rule, and the rule may not be
+    about a card, a keyword or a card type."""
+    block = _timing_block(_timing_sources()[source])
+    rule = block[: block.index(WORKED_EXAMPLE)].lower()
+    for token in CARD_SPECIFIC_TOKENS:
+        assert token not in rule, (
+            f"{source}'s timing rule names {token!r} - the rule is about the decision, "
+            "and only the worked example may name a card"
+        )
+
+
+@pytest.mark.parametrize("source", ["ai_seat_brief.md", "prompt.py"])
+def test_the_worked_example_is_an_example_and_says_so(source):
+    """Clause (d): the reported case lands as a worked example only, and it
+    says out loud that the rule above it is not about that card."""
+    block = _timing_block(_timing_sources()[source])
+    example = block[block.index(WORKED_EXAMPLE) :]
+    flat = _flat(example)
+    assert "maintaining pressure" in flat
+    assert "the rule above is not about" in flat
+
+
+@pytest.mark.parametrize("source", ["ai_seat_brief.md", "prompt.py"])
+def test_the_discipline_states_no_rule_about_which_land_to_fetch(source):
+    """Clause (f): WHEN to commit is this rule's subject; WHICH land a search
+    finds is not, and the incorrect "always fetch the shock to open the most
+    colours" must not be encoded here by accident."""
+    flat = _flat(_timing_block(_timing_sources()[source])).lower()
+    assert "shock" not in flat
+    assert "most colours" not in flat and "most colors" not in flat
+    assert "is a different question" in flat, (
+        f"{source} never says which land a search finds is not answered here"
+    )
+
+
+@pytest.mark.parametrize("source", ["ai_seat_brief.md", "prompt.py"])
+def test_the_discipline_connects_the_material_it_extends_rather_than_repeating_it(source):
+    """Clause (b) and (e): the adjacent passages are referenced or absorbed,
+    never duplicated into a second drifting phrasing."""
+    text = _timing_sources()[source]
+    flat_block = _flat(_timing_block(text))
+    assert "Investigate before you commit" in flat_block
+    assert "never miss a land drop your curve needs" in flat_block
+    # And the passages themselves are still there, once each.
+    # Once each, in the seat's own prose. `prompt.py` carries the advisor's
+    # separate copy of the open-mana line too, which is its own role's rule
+    # and not a duplicate of this one - so the count is taken inside the
+    # section this material extends.
+    section = _flat(_section(text, "## Not playing is a play")).lower()
+    assert section.count("play around what their open mana and their archetype") == 1
+    assert _flat(text).lower().count("count their untapped mana and their cards in hand") == 1
+
+
+def test_the_advisor_brief_carries_the_same_two_sided_test():
+    """Clause (j): the advisor half. `ai_buddy_brief.md` already says the
+    instant-speed windows on the opponent's turn are where a buddy earns its
+    keep, which is this discipline from the advising side - so it is
+    extended rather than left silent."""
+    buddy = _flat((BRIEFS / "ai_buddy_brief.md").read_text())
+    assert (
+        "what do I lose by acting now instead of waiting, and what do I lose by "
+        "waiting instead of acting now" in buddy
+    )
+    assert "earns its keep" in buddy
+
+
+def test_the_advisor_prompt_carries_the_same_two_sided_test(guide, tmp_path):
+    """And its MCP twin, for the same no-drift reason the seat's has."""
+    text = _flat(
+        advisor_turn_zero(
+            replace(assignment(guide), role="advisor"), tmp_path / "current-game.md"
+        )
+    )
+    assert (
+        "what do I lose by acting now instead of waiting, and what do I lose by "
+        "waiting instead of acting now" in text
+    )
