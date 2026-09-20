@@ -43,13 +43,21 @@ card name (design D3):
   view's `name`; the candidate matches only when no card there shares any of
   them. A candidate with nothing to compare (no such subtype, no name) never
   matches. The candidate itself counts when it sits in one of the zones.
-- `enters_any` (O4), `unlocks`, `unlocks_by_search`, `unlocks_by_basic_search`
+- `enters_any` (O4), `payable_any` and `unlocks_next` (T5), `unlocks`,
+  `unlocks_by_search`, `unlocks_by_basic_search`
   (O7) and `affordable` (item 3) read `hypo`, the engine-computed facts keyed
   by card id (`hypothetical_facts.py`), never the card view itself - the view
-  carries no `enters`/`unlocks`/`castable_now` field of its own. `hypo=None`
+  carries no `enters`/`payable_any`/`unlocks`/`castable_now` field of its own. `hypo=None`
   (the default, no facts fetched at all) raises `HypotheticalRequired`; a
   `hypo` given but with no entry for this card's id means the same as any
-  other absent characteristic and never matches, either value. `affordable
+  other absent characteristic and never matches, either value. `payable_any`
+  matches when the card's own `payable_any` fact is one of the words asked
+  for; a card the engine answers no payability for (an X cost, whose cost is
+  not a number until it is announced) carries no such fact and so matches
+  nothing at all - it fails closed rather than reading as `no`, because "the
+  engine cannot say" and "the engine says it cannot be paid" are different
+  answers and only the second is a reason to skip the card. `unlocks_next`
+  reads its own bool by identity, exactly as `unlocks` does. `affordable
   {extra}` compares the card's own `mana_value` with `untapped_mana + extra`
   (`conditions.untapped_mana`, a plain view computation) *and* reads
   `castable_now`, since the mana value alone ignores whether the card has a
@@ -95,7 +103,8 @@ COLORLESS = COLOR_LETTERS["colorless"]
 #: The cards on `side` in `zones` a `missing_from` compares against.
 Present = Callable[[Sequence[str], str], Iterable[dict[str, Any]]]
 #: Engine-computed per-card facts (`hypothetical_facts.py`), keyed by card id:
-#: `enters` (an `EntersState` value), `unlocks`, `unlocks_by_search` and
+#: `enters` (an `EntersState` value), `payable_any` (a `PAYABLE_STATES` word),
+#: `unlocks`, `unlocks_next`, `unlocks_by_search` and
 #: `unlocks_by_basic_search` (bool). A card with no entry carries no facts,
 #: the same as any other characteristic the view does not have.
 Hypo = Mapping[str, Mapping[str, Any]]
@@ -107,7 +116,9 @@ Hypo = Mapping[str, Mapping[str, Any]]
 #: `hypothetical_facts.py`'s `castable_now`.
 _HYPO_FIELDS = (
     "enters_any",
+    "payable_any",
     "unlocks",
+    "unlocks_next",
     "unlocks_by_search",
     "unlocks_by_basic_search",
     "affordable",
@@ -115,10 +126,11 @@ _HYPO_FIELDS = (
 
 
 class HypotheticalRequired(ValueError):
-    """A selector reads `enters_any`, `unlocks`, `unlocks_by_search` or
-    `unlocks_by_basic_search`, and `matches` was called with no `hypo` at
-    all - the caller never fetched the
-    engine-computed facts (`hypothetical_facts.py`) this selector needs."""
+    """A selector reads one of `_HYPO_FIELDS` - `enters_any`, `payable_any`,
+    `unlocks`, `unlocks_next`, `unlocks_by_search`, `unlocks_by_basic_search`
+    or `affordable` - and `matches` was called with no `hypo` at all: the
+    caller never fetched the engine-computed facts
+    (`hypothetical_facts.py`) this selector needs."""
 
 
 _COMPARE: dict[str, Callable[[Any, Any], bool]] = {
@@ -246,7 +258,8 @@ def matches(
 ) -> bool:
     """Does `card` have every characteristic `selector` names? A selector
     with `missing_from` also needs `present`, the board it compares against.
-    `enters_any`/`unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`/
+    `enters_any`/`payable_any`/`unlocks`/`unlocks_next`/`unlocks_by_search`/
+    `unlocks_by_basic_search`/
     `affordable` (item 3) need `hypo`, the engine-computed facts keyed by
     card id (`HypotheticalRequired` when it is not given at all);
     `affordable` also reads `untapped_mana`, which never raises for a
@@ -256,8 +269,9 @@ def matches(
         raise ValueError("a selector with missing_from reads the board: pass present")
     if hypo is None and any(field in wanted for field in _HYPO_FIELDS):
         raise HypotheticalRequired(
-            "a selector reading enters_any/unlocks/unlocks_by_search/"
-            "unlocks_by_basic_search/affordable needs hypo: see hypothetical_facts.py"
+            "a selector reading enters_any/payable_any/unlocks/unlocks_next/"
+            "unlocks_by_search/unlocks_by_basic_search/affordable needs hypo: "
+            "see hypothetical_facts.py"
         )
     facts = (hypo or {}).get(card.get("id")) or {}
     face = _face(card)
@@ -311,7 +325,11 @@ def matches(
         return False
     if wanted.get("enters_any") and facts.get("enters") not in set(wanted["enters_any"]):
         return False
+    if wanted.get("payable_any") and facts.get("payable_any") not in set(wanted["payable_any"]):
+        return False
     if "unlocks" in wanted and facts.get("unlocks") is not wanted["unlocks"]:
+        return False
+    if "unlocks_next" in wanted and facts.get("unlocks_next") is not wanted["unlocks_next"]:
         return False
     if (
         "unlocks_by_search" in wanted

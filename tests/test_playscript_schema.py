@@ -34,6 +34,7 @@ from magic_cards_model_api.playscripts.schema import (
     MISSING_FROM_SIDES,
     MISSING_FROM_ZONES,
     MOVE_KINDS,
+    PAYABLE_STATES,
     STEPS,
     Play,
     Selector,
@@ -356,6 +357,8 @@ def test_no_selector_field_takes_a_card_name():
         "unlocks_by_search",
         "unlocks_by_basic_search",
         "affordable",
+        "payable_any",
+        "unlocks_next",
     }
 
 
@@ -435,6 +438,74 @@ def test_enters_any_is_bounded_at_the_three_enters_states():
     assert codes(over) == ["bounds-exceeded"]
     with pytest.raises(ValidationError):
         Play.model_validate(over)
+
+
+# -- T5: payable_any ------------------------------------------------------------
+
+
+def test_payable_any_is_the_four_payability_words():
+    assert PAYABLE_STATES == ("now", "with_a_land", "next_turn", "no")
+
+
+@pytest.mark.parametrize("word", PAYABLE_STATES)
+def test_payable_any_validates_with_each_payability_word(word):
+    doc = mutate("true.0.select", {"payable_any": [word]})
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.true[0].select.payable_any == [word]
+
+
+def test_payable_any_validates_with_several_payability_words():
+    doc = mutate("true.0.select", {"payable_any": ["now", "with_a_land"]})
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.true[0].select.payable_any == ["now", "with_a_land"]
+
+
+@pytest.mark.parametrize("word", ["yes", "Now", "with a land", "later", ""])
+def test_a_word_outside_the_four_payability_words_is_malformed(word):
+    doc = mutate("true.0.select", {"payable_any": [word]})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_payable_any_is_bounded_at_the_four_payability_words():
+    doc = mutate("true.0.select", {"payable_any": list(PAYABLE_STATES)})
+    assert play_errors(doc) == []
+    over = mutate("true.0.select", {"payable_any": [*PAYABLE_STATES, "now"]})
+    assert codes(over) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(over)
+
+
+def test_an_over_long_payable_any_still_names_the_word_outside_the_vocabulary():
+    """A too-long list stops pydantic judging its items, so `_ITEM_ADAPTERS`
+    re-reads them: the bad word must be reported alongside the bound."""
+    over = mutate("true.0.select", {"payable_any": [*PAYABLE_STATES, "someday"]})
+    assert codes(over) == ["bounds-exceeded", "malformed-play"]
+
+
+# -- T5: unlocks_next -----------------------------------------------------------
+
+
+def test_unlocks_next_validates_as_a_bool():
+    for value in (True, False):
+        doc = mutate("true.0.select", {"unlocks_next": value})
+        assert play_errors(doc) == []
+        assert Play.model_validate(doc).true[0].select.unlocks_next is value
+
+
+def test_unlocks_next_non_bool_is_malformed():
+    doc = mutate("true.0.select", {"unlocks_next": "yes"})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_prefer_stays_capped_at_four_selectors():
+    assert MAX_PREFER == 4
+
 
 
 # -- O7: unlocks, unlocks_by_search, affordable ----------------------------------
