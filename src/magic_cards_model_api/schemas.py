@@ -633,16 +633,24 @@ class ScriptRunIn(RequestModel):
     wall_ms: int | None = Field(default=None, ge=0)
     reapplicable_after: str | None = None
     """When the runner may try this script again."""
-    invoked_via: Literal["mcp", "cli", "armed"]
+    invoked_via: Literal["mcp", "cli", "armed"] = "mcp"
     """Which front end started this run: the MCP `run_script` tool,
     `mcp-seat script run`, or `"armed"` for one `playscripts.arming.arm`
-    fired on its own between a seat's own moves (S2). Required on both
+    fired on its own between a seat's own moves (S2). Recorded on both
     `start` and `finish` - S1: a live seat cracked every fetch land by hand
     because nothing told it a script applied, and a stale memory line
     claiming scripts "auto-fire" traced back to runs a human had staged from
     the CLI during development. Recording who actually started a run is what
     lets a seat (and `eval_report.py`) tell its own runs apart from one an
-    operator staged, or one arming fired for it."""
+    operator staged, or one arming fired for it.
+
+    Defaults to `"mcp"` rather than being required: a seat Job already in
+    flight at deploy time was built before this field existed and never
+    sends it, and refusing that run's `start`/`finish` with 422 would leave
+    a bare `start` row with no matching `finish` ever able to land,
+    permanently blocking that turn and step slot (`already_ran` only clears
+    on a `finish`). `"mcp"` is the front end every run predating this field
+    was in fact started from."""
 
     @model_validator(mode="after")
     def _a_finish_names_its_exit(self) -> ScriptRunIn:

@@ -943,21 +943,32 @@ def test_a_finish_needs_an_exit(client: TestClient, game: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_start_needs_invoked_via(client: TestClient, game: str) -> None:
+def test_a_start_without_invoked_via_defaults_to_mcp(client: TestClient, game: str) -> None:
+    """A seat Job already in flight at deploy time was built before
+    `invoked_via` existed, and never sends it. Refusing that run with 422
+    would leave a bare `start` row with no matching `finish`, blocking that
+    turn and step slot for good (`already_ran` never clears without a
+    `finish`) - defaulting to `"mcp"` keeps a run built before this field
+    existed working exactly as it did before the field was added."""
     alice = seat_uid(game, "alice")
     assert register(client, game, alice, uid=alice).status_code == 200
     body = run()
     del body["invoked_via"]
 
-    assert post_run(client, game, body, uid=alice).status_code == 422
+    assert post_run(client, game, body, uid=alice).status_code == 200
 
 
-def test_a_finish_needs_invoked_via(client: TestClient, game: str) -> None:
+def test_a_finish_without_invoked_via_defaults_to_mcp_and_is_recorded(
+    client: TestClient, game: str
+) -> None:
     alice = seat_uid(game, "alice")
     body = finish()
     del body["invoked_via"]
 
-    assert post_run(client, game, body, uid=alice).status_code == 422
+    assert post_run(client, game, body, uid=alice).status_code == 200
+
+    [row] = script_rows(audit.entries(game))
+    assert row["detail"]["invoked_via"] == "mcp"
 
 
 def test_an_unknown_invoked_via_is_refused(client: TestClient, game: str) -> None:
