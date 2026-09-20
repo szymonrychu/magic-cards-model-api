@@ -32,6 +32,7 @@ import pytest
 from conftest import add_card, force_turn_position, life_of, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
+from playscript_testkit import FLASH_PERMANENT, flash_permanent_play
 from test_cast_cost_choices import answer
 from test_mcp_input_required import call_tool, wired
 from test_playscript_runtime import finished, opponent_passes, seat_uid
@@ -1830,3 +1831,162 @@ def test_every_seed_play_completes_on_a_board_staged_from_its_decks_printings(
     )
     assert ok, (out, board.describe())
     assert out["moves_done"] == out["moves_total"] == len(play["moves"]), out
+
+
+# -- T18: the seat can reach and act in the opponent's turn window ------------------------
+#
+# A capability proof, not a behaviour change. If the seat's own judgement
+# decides to hold a card and act on the opponent's turn, the machinery has to
+# let it - and no play in the vendored corpus has ever cast anything on the
+# opponent's turn (all fifteen `theirs` plays are `play_land` or `activate`),
+# so the path was undemonstrated. These run the real runtime against the real
+# engine; the opponent is a second client making real HTTP calls.
+
+
+def _white_mana_for_me(client: TestClient, game_id: str, count: int = 2) -> None:
+    for _ in range(count):
+        add_card(client, game_id, "Plains", ME, "battlefield")
+
+
+def test_the_seat_casts_a_permanent_from_hand_at_the_opponents_end_step(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Clause (a): the opponent's end step, reached with priority, and a real
+    cast from hand that resolves - a completed run, not `not_applicable`, not
+    `unforeseen`, not refused."""
+    alice = seat_uid(game, ME)
+    play = flash_permanent_play("theirs-end-step-cast")
+    register_corpus(client, game, alice, "boros-aggro", play)
+    force_turn_position(game, Step("end_step"), OPPONENT)
+    _white_mana_for_me(client, game)
+    add_card(client, game, FLASH_PERMANENT, ME, "hand")
+    hand_priority_to_me(client, game)
+    server = mcp_server(client, monkeypatch, game)
+
+    with opponent_passes(game):
+        payload = run(server, alice, play["id"])
+
+    assert payload["script_exit"]["exit"] == "chain_complete", payload["script_exit"]
+    assert payload["script_exit"]["moves_done"] == 1
+    after = state(client, game)
+    assert named(after["battlefield"], FLASH_PERMANENT), (
+        "the permanent never reached the battlefield on the opponent's turn"
+    )
+    assert not named(after["hands"][ME], FLASH_PERMANENT)
+
+
+def test_the_seat_casts_in_response_to_the_opponents_spell_on_their_turn(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Clause (b): `when.stack: "any"` with a `stack_top` condition naming the
+    opponent as controller, firing while their spell is really on the stack.
+
+    `conditions.stack_top` matches `stack[0]` only, so exactly one object is
+    put on the stack before the run."""
+    alice = seat_uid(game, ME)
+    play = flash_permanent_play(
+        "theirs-respond-to-stack",
+        steps=("precombat_main",),
+        stack="any",
+        true=[
+            {
+                "kind": "stack_top",
+                "controller": "opponent",
+                "select": {"types_any": ["Instant"]},
+            }
+        ],
+    )
+    register_corpus(client, game, alice, "boros-aggro", play)
+    force_turn_position(game, Step("precombat_main"), OPPONENT)
+    _white_mana_for_me(client, game)
+    add_card(client, game, FLASH_PERMANENT, ME, "hand")
+    bob = seat_uid(game, OPPONENT)
+    mountain = add_card(client, game, "Mountain", OPPONENT, "battlefield")
+    bolt = add_card(client, game, "Lightning Bolt", OPPONENT, "hand")
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        params={"uid": bob},
+        json={
+            "player": OPPONENT,
+            "card_id": bolt["added"]["card_id"],
+            "targets": [ME],
+            "mana_sources": [mountain["added"]["card_id"]],
+        },
+    )
+    assert cast.status_code == 200, cast.text
+    server = mcp_server(client, monkeypatch, game)
+
+    with opponent_passes(game):
+        payload = run(server, alice, play["id"])
+
+    assert payload["script_exit"]["exit"] == "chain_complete", payload["script_exit"]
+    after = state(client, game)
+    assert named(after["battlefield"], FLASH_PERMANENT), (
+        "the permanent was never cast in response to the opponent's spell"
+    )
+
+
+def test_the_same_play_does_not_fire_on_the_seats_own_turn(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Clause (c): "acts on their turn" is a real property of the play, not an
+    artefact of the harness.
+
+    The identical shape, on the identical board, with only the active player
+    changed, never casts. What it does instead is WAIT: `when.whose_turn:
+    "theirs"` is a window the runner arms for rather than a condition it
+    fails, so the run ends on its own time cap with no move made and the
+    card still in hand. Either way the property under test holds - the seat
+    did not act outside its window - and this is what the arming runner
+    really does, not a shape invented for the assertion. `max_seconds` keeps
+    the wait short; `wait: False` alone would not prove the run declines to
+    act when it is given time."""
+    alice = seat_uid(game, ME)
+    play = flash_permanent_play("theirs-end-step-cast")
+    register_corpus(client, game, alice, "boros-aggro", play)
+    force_turn_position(game, Step("end_step"), ME)
+    _white_mana_for_me(client, game)
+    add_card(client, game, FLASH_PERMANENT, ME, "hand")
+    server = mcp_server(client, monkeypatch, game)
+    watermark = audit.last_seq(game)
+
+    with opponent_passes(game):
+        payload = run(server, alice, play["id"], max_seconds=2.0)
+
+    exit_row = payload["script_exit"]
+    assert exit_row["moves_done"] == 0, exit_row
+    assert exit_row["exit"] != "chain_complete", exit_row
+    after = state(client, game)
+    assert not named(after["battlefield"], FLASH_PERMANENT)
+    assert named(after["hands"][ME], FLASH_PERMANENT)
+    assert not [
+        row
+        for row in audit.entries_since(game, watermark)
+        if row["action"] == "cast" and row["detail"].get("player") == ME
+    ], "the play cast something on the seat's own turn"
+
+
+@pytest.mark.parametrize("step", ["declare_attackers", "declare_blockers"])
+def test_a_combat_declaration_step_is_refused_by_the_schema(
+    client: TestClient, game: str, step: str
+) -> None:
+    """Clause (d): the limit of this capability is discoverable from a test.
+    A script never attacks or blocks, and the schema hard-refuses the two
+    declaration steps rather than accepting a play that could never run."""
+    from magic_cards_model_api.playscripts.schema import play_errors
+
+    alice = seat_uid(game, ME)
+    play = flash_permanent_play("theirs-combat", steps=(step,))
+    assert "forbidden-kind" in {error.code for error in play_errors(play)}
+
+    response = client.put(
+        f"/api/games/{game}/seats/{alice}/scripts",
+        params={"uid": alice},
+        json={
+            "deck_slug": "boros-aggro",
+            "guides_revision": GUIDES_REVISION,
+            "scripts": [play],
+            "inputs": [],
+        },
+    )
+    assert response.status_code == 422, response.text
