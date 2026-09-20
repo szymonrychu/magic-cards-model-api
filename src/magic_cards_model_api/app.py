@@ -2138,6 +2138,7 @@ def get_affordances(
     ability_index: int | None = None,
     modes: str | None = None,
     x_value: int | None = None,
+    spell_face: str | None = None,
 ) -> dict[str, Any]:
     """Which objects this announcement could legally target right now.
 
@@ -2151,6 +2152,13 @@ def get_affordances(
     spell's targeting is unanswerable until the modes are chosen (CR 700.2f),
     so the UI asks again with them once the player has picked.
 
+    `spell_face` is the half being cast, for a split or adventurer card (CR
+    709.3, CR 715.3) - the same string `Action.spell_face` publishes and
+    `CastRequest.spell_face` takes back. CR 709.3b makes the chosen half's
+    own text the one the announcement is read against, so asking without it
+    answers the front half's targeting for both halves: Wear // Tear offered
+    Wear's "target artifact" while Tear was being cast.
+
     Nothing here is hidden information: every candidate is an object in a
     public zone (`affordances.CANDIDATE_ZONES`) or a player, so this needs no
     `visibility.redact_view` pass of its own.
@@ -2162,7 +2170,10 @@ def get_affordances(
         raise KeyError(str(exc)) from exc
     mode_numbers = [int(part) for part in modes.split(",") if part.strip()] if modes else None
     return read_on_one_board(
-        lambda: _affordances_of(game, state, player, ability_index, mode_numbers, x_value), game
+        lambda: _affordances_of(
+            game, state, player, ability_index, mode_numbers, x_value, spell_face
+        ),
+        game,
     )
 
 
@@ -2173,6 +2184,7 @@ def _affordances_of(
     ability_index: int | None,
     mode_numbers: list[int] | None,
     x_value: int | None,
+    spell_face: str | None = None,
 ) -> dict[str, Any]:
     """`get_affordances`' answer, on one layered board."""
     result = affordances.candidates(
@@ -2182,6 +2194,7 @@ def _affordances_of(
         ability_index=ability_index,
         modes=mode_numbers,
         x_value=x_value,
+        spell_face=spell_face,
     )
     if ability_index is None:
         # CR 118.9's alternative costs, for a cast only - an ability has no

@@ -812,3 +812,55 @@ def test_a_real_battlefield_abilitys_own_index_is_the_one_the_menu_matches_on(cl
     assert len(matching) == 1, [r for r in rows if r["card_id"] == mountain["id"]]
     assert matching[0]["kind"] == "activate_mana"
     assert call("m.enrichItems(items, rows)", items=items, rows=rows) == items
+
+
+def test_a_permission_on_a_split_card_offers_its_halves_too():
+    """CR 709.3 does not care which zone the cast begins in: a split card
+    made playable from exile or a graveyard (CR 601.3's dynamic play
+    permissions) still has a half to choose, and a permission menu that
+    offered one undifferentiated Cast would send no `spell_face` at all -
+    the same silent wrong the hand menu had. The caption stays the granting
+    source, which is what `enrichItems` replaces with the engine's reason
+    when a half cannot be paid for."""
+    permission = {
+        "card": {
+            "id": "x2",
+            "name": "Wear",
+            "cast": {
+                "mana_cost": "{1}{R} // {W}",
+                "needs_x": False,
+                "spell_faces": [
+                    {"spell_face": "Wear", "name": "Wear", "mana_cost": "{1}{R}"},
+                    {"spell_face": "Tear", "name": "Tear", "mana_cost": "{W}"},
+                ],
+            },
+        },
+        "granted_by": "Bloodbraid Elf",
+        "from_zone": "exile",
+        "action": "cast",
+        "usable_now": True,
+    }
+    assert call("m.permissionMenuItems(permission)", permission=permission) == [
+        {
+            "key": "cast:Wear",
+            "label": "Cast Wear",
+            "sublabel": "Bloodbraid Elf",
+            "match": {
+                "card_id": "x2",
+                "kind": "cast",
+                "ability_index": None,
+                "spell_face": "Wear",
+            },
+        },
+        {
+            "key": "cast:Tear",
+            "label": "Cast Tear",
+            "sublabel": "Bloodbraid Elf",
+            "match": {
+                "card_id": "x2",
+                "kind": "cast",
+                "ability_index": None,
+                "spell_face": "Tear",
+            },
+        },
+    ]

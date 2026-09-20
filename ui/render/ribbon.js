@@ -54,7 +54,9 @@ import { anchoredPosition } from "../menus.js";
 import { withSymbols, restrictedManaRows } from "../symbols.js";
 import {
   additionalCosts,
+  faceBeingCast,
   needsExplicitFire,
+  needsX,
   optionalCostTimes,
   readyToFire,
   targetSlotIndex,
@@ -435,10 +437,17 @@ function renderRestrictedMana(app) {
   );
 }
 
+/** CR 107.3a's "Announce X" box, shown exactly when `actions.js` says this
+ * announcement has an X to announce - the same predicate `readyToFire` gates
+ * on, so the box can never be missing from a strip whose Cast button is
+ * waiting for it (or present on one that is not).
+ *
+ * It used to re-derive the answer from `card.cast.needs_x`, which is only
+ * half of the rule and none of the per-face reading: Toxic Deluge's "pay X
+ * life" got no box at all, and a split card's X-less half would have got one
+ * off the printing's combined cost. */
 function renderXInput(card, action, handlers) {
-  const ability = action.abilityIndex !== null ? (card.abilities || [])[action.abilityIndex] : null;
-  const needsX = ability ? Boolean(ability.needs_x) : Boolean(card.cast && card.cast.needs_x);
-  if (!needsX) return null;
+  if (!needsX(action)) return null;
   return h(
     "div",
     { class: "tray-step" },
@@ -751,9 +760,17 @@ function renderCastingStrip(el, app, handlers) {
   const title = actionTitle(action);
 
   // One header line - what is being cast and what it costs - rather than
-  // three separate rows of the ribbon's column.
-  const head = h("div", { class: "strip-head" }, h("strong", {}, `${title}: ${card.name}`));
-  if (card.mana_cost && !ability) head.appendChild(withSymbols(app.symbols, card.mana_cost));
+  // three separate rows of the ribbon's column. A cast that named a face
+  // (CR 709.3's half, CR 715.3's Adventure) is printed as THAT face: the
+  // card view's own `name` and `mana_cost` are the printing's, which for a
+  // split card is the front half's name and both halves' costs joined, and
+  // saying "Cast: Wear / {1}{R} // {W}" while announcing Tear is the strip
+  // disagreeing with the request it is about to send.
+  const face = faceBeingCast(action);
+  const heading = face ? face.name : card.name;
+  const cost = face ? face.mana_cost : card.mana_cost;
+  const head = h("div", { class: "strip-head" }, h("strong", {}, `${title}: ${heading}`));
+  if (cost && !ability) head.appendChild(withSymbols(app.symbols, cost));
   if (ability) head.appendChild(h("span", { class: "hint" }, ability.loyalty ? `${ability.loyalty.label} ` : "", withSymbols(app.symbols, ability.text)));
   el.appendChild(head);
 

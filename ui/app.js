@@ -309,21 +309,69 @@ export async function send(method, path, body) {
 // below are thin wrappers that act on the plan; this is the one place that
 // decides it.
 
+/** Whether clicking this card is a LAND DROP rather than a cast, read off
+ * the face whose characteristics the card actually has where it is sitting.
+ *
+ * CR 712.8a: "While a double-faced card is outside the game or in a zone
+ * other than the battlefield or stack, it has only the characteristics of
+ * its front face." So a double-faced card's front face decides this, and
+ * `card.type_line` emphatically does not: off the battlefield it is the
+ * printing's COMBINED line ("Creature - Human Warlock // Land",
+ * `serialize._faces_view`'s own note), which is neither face and which a
+ * `/land/i` test matches on every modal double-faced card with a land back.
+ * That is the reported defect in full: Witch Enchanter // Witch-Blessed
+ * Meadow planned as `{kind: "land"}`, its menu offered only Play, and the
+ * click burned a four-of as a tapped land with the creature half unreachable
+ * from the browser at all.
+ *
+ * A split or adventurer card has no `faces` (they are two halves of one
+ * face, CR 709/CR 715 - `serialize._faces_view` publishes none), so those
+ * fall through to the printed line exactly as they always did. */
+function clickPlaysALand(card) {
+  const faces = card.faces || [];
+  const front = faces.length ? faces[0] : null;
+  return /land/i.test((front ? front.type_line : card.type_line) || "");
+}
+
 /** What clicking a card in your own hand should do. `{kind: "cancel"}`
  * (clicking the card already mid-cast again) | `{kind: "target", id}`
  * (an action or a `choose_targets` decision is live, so this click is a
  * target pick) | `{kind: "land"}` | `{kind: "cast"}` |
- * `{kind: "menu", isLand, specials, cycling}` (more than one thing this card
- * could do - a special action, cycling, or, for a land, more than one). */
+ * `{kind: "menu", isLand, specials, cycling, landFace, spellFaces}` (more
+ * than one thing this card could do - a special action, cycling, a land face
+ * beside a castable front face, or more than one castable face).
+ *
+ * `landFace` is CR 712.12's other half of a modal double-faced card: the
+ * name of the face this card may be PLAYED as a land as, when the ordinary
+ * click is not already a land drop. `Card.land_face` is the engine's own
+ * read and `serialize._faces_view` publishes it as `faces[].land_face`, on a
+ * modal double-faced card only - a transform card's land back (Treasure Map
+ * // Treasure Cove) is reached by transforming (CR 712.2), never by a land
+ * drop, and is deliberately not marked.
+ *
+ * `spellFaces` is CR 709.3/CR 715.3's castable faces
+ * (`cast.spell_faces`, from the engine's own `machines.casting.
+ * castable_faces`): a split card's two halves, an adventurer card's normal
+ * cast plus its Adventure. Empty for every card that offers no choice. */
 export function planHandCardClick(card, app) {
   if (app.action && app.action.cardId === card.id) return { kind: "cancel" };
   if (app.action) return { kind: "target", id: card.id };
-  const isLand = /land/i.test(card.type_line || "");
+  const isLand = clickPlaysALand(card);
   const specials = Object.keys(card.special_actions || {}).filter((k) => k !== "cycling");
   const cycling = (card.special_actions && card.special_actions.cycling) || [];
-  if (isLand && !specials.length && !cycling.length) return { kind: "land" };
-  if (specials.length || cycling.length) return { kind: "menu", isLand, specials, cycling };
-  return { kind: "cast" };
+  const spellFaces = (card.cast && card.cast.spell_faces) || [];
+  const landFaceEntry = (card.faces || []).find((face) => face.land_face) || null;
+  // A card whose ordinary click is already the land drop has nothing extra
+  // to offer: `Card.land_face` names the one face it would play either way.
+  const landFace = !isLand && landFaceEntry ? landFaceEntry.name : null;
+  // How many things this click could do before specials and cycling: the
+  // cast (one item, or one per castable face) unless the click is a land
+  // drop, plus a land face offered beside it.
+  const heads = (isLand ? 0 : Math.max(1, spellFaces.length)) + (landFace ? 1 : 0);
+  if (heads <= 1 && !specials.length && !cycling.length) {
+    return isLand ? { kind: "land" } : { kind: "cast" };
+  }
+  return { kind: "menu", isLand, specials, cycling, landFace, spellFaces };
 }
 
 /** What clicking a permanent on the battlefield should do. `{kind: "target",
@@ -766,6 +814,7 @@ async function refreshAffordance() {
   if (q.ability_index !== undefined) query.set("ability_index", q.ability_index);
   if (q.modes) query.set("modes", q.modes.join(","));
   if (q.x_value !== undefined) query.set("x_value", q.x_value);
+  if (q.spell_face !== undefined) query.set("spell_face", q.spell_face);
   if (action.kind === "cast" && !A.modesReady(action)) return;
   const affordance = await send("GET", gamePath(`affordances/${action.cardId}?${query}`));
   if (affordance === null) return;
@@ -1023,15 +1072,26 @@ export async function onHandCard(card, event) {
   return openActionMenu(card, event, M.handMenuItems(plan, card), (key) => {
     if (key === "play") return playLand(card);
     if (key === "cast") return beginCast(card);
+    // CR 709.3/CR 715.3: `cast:<face>` is the half the player picked, keyed
+    // by the engine's own `spell_face` string (`menus.handMenuItems`).
+    if (key.startsWith("cast:")) return beginCast(card, key.slice("cast:".length));
     if (key === "cycle") return cycle(card);
     if (key.startsWith("special:")) return fireSpecial(card, key.slice("special:".length));
   });
 }
 
-async function beginCast(card) {
+/** Begin announcing `card`, optionally as one named face of it (CR 709.3's
+ * split half, CR 715.3's Adventure). `spellFace` rides on the action from
+ * here: `actions.js`'s `affordanceQuery` asks the server what THAT half
+ * targets, and its `bodyFor` sends it as `CastRequest.spell_face`. */
+async function beginCast(card, spellFace) {
   hidePopover();
-  store.set({ action: A.begin("cast", card, {}), preview: null, pendingRelease: null });
-  if (!A.needsChoices(card, null)) return previewAndMaybeFire();
+  store.set({
+    action: A.begin("cast", card, { spellFace: spellFace || null }),
+    preview: null,
+    pendingRelease: null,
+  });
+  if (!A.needsChoices(card, null, spellFace)) return previewAndMaybeFire();
   return refreshAffordance();
 }
 
@@ -1047,10 +1107,14 @@ function beginCrew(card) {
  * `fromZone` (exile, a graveyard) rather than the hand - `actions.js`'s
  * `bodyFor` sends `from_zone` only when this is set, so an ordinary hand
  * cast is unaffected. */
-function beginCastFromPermission(card, fromZone) {
+function beginCastFromPermission(card, fromZone, spellFace) {
   hidePopover();
-  store.set({ action: A.begin("cast", card, { fromZone }), preview: null, pendingRelease: null });
-  if (!A.needsChoices(card, null)) return previewAndMaybeFire();
+  store.set({
+    action: A.begin("cast", card, { fromZone, spellFace: spellFace || null }),
+    preview: null,
+    pendingRelease: null,
+  });
+  if (!A.needsChoices(card, null, spellFace)) return previewAndMaybeFire();
   return refreshAffordance();
 }
 
@@ -1066,6 +1130,11 @@ export function onPermission(permission, event) {
   const card = permission.card;
   return openActionMenu(card, event, M.permissionMenuItems(permission), (key) => {
     if (key === "cast") return beginCastFromPermission(card, permission.from_zone);
+    // CR 709.3's half, picked out of a permission's menu exactly as it is
+    // out of the hand's (`menus.permissionMenuItems`).
+    if (key.startsWith("cast:")) {
+      return beginCastFromPermission(card, permission.from_zone, key.slice("cast:".length));
+    }
   });
 }
 

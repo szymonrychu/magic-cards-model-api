@@ -4521,3 +4521,366 @@ def test_an_unwired_notice_kind_toasts_nothing() -> None:
         """
     )
     assert result is True, "a notice kind with no toast message must not toast"
+
+
+# -- U1: the cast path's three silently-wrong clicks -------------------------
+#
+# All three are the same click - a card picked up out of the hand - and all
+# three did the wrong thing rather than nothing, which is why they are one
+# section:
+#
+#   * a modal double-faced card (CR 712.12) was PLAYED AS A LAND when the
+#     player meant to cast it, because `type_line` off the battlefield is the
+#     printing's combined "Creature - Human Warlock // Land" and a `/land/i`
+#     test over the whole of it matches. The card was gone, and its spell half
+#     was unreachable from the browser at all.
+#   * a spell whose X is not in its mana cost (CR 107.3a - Toxic Deluge's
+#     "pay X life") was cast with no X box shown and no `x_value` sent, so it
+#     resolved as -0/-0.
+#   * a split card (CR 709.3) was cast with no half chosen, so it kept the
+#     printing's combined cost and both halves' targeting.
+#
+# The card views below are real payloads: each one was read out of
+# `GET /api/games/{id}` for that printing (the server-side halves are pinned
+# in `tests/test_affordances.py`), trimmed to the keys these planners read.
+
+WITCH_ENCHANTER = {
+    "id": "we1",
+    "name": "Witch Enchanter",
+    "card_name": "Witch Enchanter // Witch-Blessed Meadow",
+    "type_line": "Creature — Human Warlock // Land",
+    "zone": "hand",
+    "controller": "alice",
+    "faces": [
+        {
+            "name": "Witch Enchanter",
+            "mana_cost": "{3}{W}",
+            "type_line": "Creature — Human Warlock",
+        },
+        {
+            "name": "Witch-Blessed Meadow",
+            "mana_cost": "",
+            "type_line": "Land",
+            "land_face": True,
+        },
+    ],
+    "cast": {"mana_cost": "{3}{W}", "needs_x": False, "targeting": {"targets_anything": False}},
+    "abilities": [],
+}
+
+#: The generality card: a different MDFC layout (`Instant // Land`, not
+#: `Creature // Land`), from a different deck, never the reported one.
+SINK_INTO_STUPOR = {
+    "id": "ss1",
+    "name": "Sink into Stupor",
+    "card_name": "Sink into Stupor // Soporific Springs",
+    "type_line": "Instant // Land",
+    "zone": "hand",
+    "controller": "alice",
+    "faces": [
+        {"name": "Sink into Stupor", "mana_cost": "{1}{U}{U}", "type_line": "Instant"},
+        {"name": "Soporific Springs", "mana_cost": "", "type_line": "Land", "land_face": True},
+    ],
+    "cast": {
+        "mana_cost": "{1}{U}{U}",
+        "needs_x": False,
+        "targeting": {"targets_anything": True, "understood": True},
+    },
+    "abilities": [],
+}
+
+#: A transform card, not a modal one: its land back (CR 712.2) is reached by
+#: transforming, never by a land drop, so `serialize._faces_view` marks no
+#: face `land_face` and nothing here offers to play it.
+TREASURE_MAP = {
+    "id": "tm1",
+    "name": "Treasure Map",
+    "card_name": "Treasure Map // Treasure Cove",
+    "type_line": "Artifact // Land",
+    "zone": "hand",
+    "controller": "alice",
+    "faces": [
+        {"name": "Treasure Map", "mana_cost": "{2}", "type_line": "Artifact"},
+        {"name": "Treasure Cove", "mana_cost": "", "type_line": "Land"},
+    ],
+    "cast": {"mana_cost": "{2}", "needs_x": False, "targeting": {"targets_anything": False}},
+    "abilities": [],
+}
+
+WEAR_TEAR = {
+    "id": "wt1",
+    "name": "Wear",
+    "card_name": "Wear // Tear",
+    "type_line": "Instant // Instant",
+    "zone": "hand",
+    "controller": "alice",
+    "cast": {
+        "mana_cost": "{1}{R} // {W}",
+        "needs_x": False,
+        "targeting": {"targets_anything": True, "understood": True},
+        "spell_faces": [
+            {
+                "spell_face": "Wear",
+                "name": "Wear",
+                "mana_cost": "{1}{R}",
+                "type_line": "Instant",
+                "needs_x": False,
+            },
+            {
+                "spell_face": "Tear",
+                "name": "Tear",
+                "mana_cost": "{W}",
+                "type_line": "Instant",
+                "needs_x": False,
+            },
+        ],
+    },
+    "abilities": [],
+}
+
+TOXIC_DELUGE = {
+    "id": "td1",
+    "name": "Toxic Deluge",
+    "card_name": "Toxic Deluge",
+    "type_line": "Sorcery",
+    "zone": "hand",
+    "controller": "alice",
+    "cast": {
+        "mana_cost": "{2}{B}",
+        # CR 107.3a's X, announced for the printed additional cost rather
+        # than for an `{X}` in the mana cost - `affordances.cast_hints`.
+        "needs_x": True,
+        "targeting": {"targets_anything": False, "understood": True},
+    },
+    "abilities": [],
+}
+
+
+def _hand_menu(card: dict) -> list[dict]:
+    """The real menu the real planner opens for `card` - `app.js`'s own
+    `planHandCardClick` fed straight into `menus.js`'s `handMenuItems`, which
+    is the pair the browser runs."""
+    return run_app(
+        """(async () => {
+          const M = await import(menusUrl);
+          return M.handMenuItems(m.planHandCardClick(card, app), card);
+        })()""",
+        card=card,
+        app=base_app(),
+        menusUrl=(Path(__file__).resolve().parents[1] / "ui" / "menus.js").as_uri(),
+    )
+
+
+def test_a_modal_dfc_is_not_planned_as_a_plain_land_play() -> None:
+    """The critical one. `/land/i.test(card.type_line)` matched the combined
+    line, so the plan was `{kind: "land"}`, the menu offered only Play, and
+    the click burned a four-of as a tapped land. CR 712.8a: off the
+    battlefield and the stack, only the FRONT face's characteristics apply -
+    so the front face is what decides whether this click plays a land."""
+    plan = run_app("m.planHandCardClick(card, app)", card=WITCH_ENCHANTER, app=base_app())
+    assert plan["kind"] == "menu"
+    assert plan["isLand"] is False, "the front face is a creature"
+    assert plan["landFace"] == "Witch-Blessed Meadow"
+
+
+def test_an_instant_land_modal_dfc_plans_the_same_way() -> None:
+    """Generality, on a card that is neither the reported one nor in the same
+    deck: Sink into Stupor // Soporific Springs is `Instant // Land`, a
+    different layout from Witch Enchanter's `Creature // Land`, and the rule
+    being applied is the same one."""
+    plan = run_app("m.planHandCardClick(card, app)", card=SINK_INTO_STUPOR, app=base_app())
+    assert plan["kind"] == "menu"
+    assert plan["isLand"] is False
+    assert plan["landFace"] == "Soporific Springs"
+
+
+def test_a_transform_cards_land_back_is_not_offered_as_a_land_drop() -> None:
+    """CR 712.2/CR 712.12: only a MODAL double-faced card may be played as a
+    land, so Treasure Map // Treasure Cove stays a plain cast even though its
+    combined type line says `Land` just as loudly."""
+    plan = run_app("m.planHandCardClick(card, app)", card=TREASURE_MAP, app=base_app())
+    assert plan == {"kind": "cast"}
+
+
+def test_a_modal_dfc_offers_both_halves_each_named() -> None:
+    """Both halves, each labelled with its own face name so the player can
+    tell them apart - and each naming the engine row it would take, so
+    `enrichItems` can grey out exactly the one that cannot be paid for."""
+    assert _hand_menu(WITCH_ENCHANTER) == [
+        {
+            "key": "cast",
+            "label": "Cast Witch Enchanter",
+            "sublabel": "{3}{W}",
+            "match": {"card_id": "we1", "kind": "cast", "ability_index": None},
+        },
+        {
+            "key": "play",
+            "label": "Play Witch-Blessed Meadow",
+            "sublabel": "",
+            "match": {
+                "card_id": "we1",
+                "kind": "play_land",
+                "ability_index": None,
+                "land_face": "Witch-Blessed Meadow",
+            },
+        },
+    ]
+
+
+def test_the_other_modal_dfc_offers_both_halves_too() -> None:
+    assert [item["label"] for item in _hand_menu(SINK_INTO_STUPOR)] == [
+        "Cast Sink into Stupor",
+        "Play Soporific Springs",
+    ]
+
+
+def test_a_plain_land_and_a_plain_spell_are_untouched() -> None:
+    """The regression guard for the two menus that were already right."""
+    assert [item["label"] for item in _hand_menu(MOUNTAIN)] == ["Play"]
+    assert [item["label"] for item in _hand_menu(MEMNITE)] == ["Cast"]
+
+
+def test_a_split_card_offers_one_cast_per_half() -> None:
+    """CR 709.3: the caster "chooses which half of a split card they are
+    casting", and `machines.casting.castable_faces` is the engine's own
+    enumeration of those halves. Each item names its own `spell_face`, which
+    is what `CastRequest.spell_face` takes back verbatim."""
+    assert _hand_menu(WEAR_TEAR) == [
+        {
+            "key": "cast:Wear",
+            "label": "Cast Wear",
+            "sublabel": "{1}{R}",
+            "match": {
+                "card_id": "wt1",
+                "kind": "cast",
+                "ability_index": None,
+                "spell_face": "Wear",
+            },
+        },
+        {
+            "key": "cast:Tear",
+            "label": "Cast Tear",
+            "sublabel": "{W}",
+            "match": {
+                "card_id": "wt1",
+                "kind": "cast",
+                "ability_index": None,
+                "spell_face": "Tear",
+            },
+        },
+    ]
+
+
+def test_picking_the_land_half_of_a_modal_dfc_plays_the_land() -> None:
+    result = _click(
+        """
+          const clicked = m.onHandCard(card, { currentTarget: anchor });
+          const labels = options().map((o) => o.label);
+          await clicked;
+          options()[1].click();
+          await settle();
+          return { labels, calls: globalThis.__calls };
+        """,
+        state=_click_state(hands={"alice": [WITCH_ENCHANTER]}),
+        card=WITCH_ENCHANTER,
+    )
+    assert result["labels"] == ["Cast Witch Enchanter", "Play Witch-Blessed Meadow"]
+    plays = [
+        c for c in result["calls"] if c["method"] == "POST" and "actions/play-land" in c["path"]
+    ]
+    assert len(plays) == 1, result["calls"]
+    assert plays[0]["body"] == {"player": "alice", "card_id": "we1"}
+
+
+def test_picking_the_spell_half_of_a_modal_dfc_casts_it() -> None:
+    """The half that was unreachable from the browser at all: picking Cast
+    announces the creature (`POST actions/cast`) and nothing ever reaches
+    `actions/play-land`. Witch Enchanter targets nothing, has no X and no
+    modes, so the announcement needs nothing further and goes through on the
+    pick - the staged-announcement case is the split card's below."""
+    result = _click(
+        """
+          const clicked = m.onHandCard(card, { currentTarget: anchor });
+          const staged = m.store.get().action;
+          await clicked;
+          options()[0].click();
+          await settle();
+          return { staged, calls: globalThis.__calls };
+        """,
+        state=_click_state(hands={"alice": [WITCH_ENCHANTER]}),
+        card=WITCH_ENCHANTER,
+    )
+    assert result["staged"] is None, "nothing may begin before the confirm is picked"
+    assert not [c for c in result["calls"] if "actions/play-land" in c["path"]], result["calls"]
+    casts = [c for c in result["calls"] if c["method"] == "POST" and "actions/cast" in c["path"]]
+    assert casts, result["calls"]
+    assert casts[-1]["body"]["card_id"] == "we1"
+    assert casts[-1]["body"].get("dry_run") is not True, "the cast must actually fire"
+    assert "spell_face" not in casts[-1]["body"], "an MDFC names no cast face (CR 712.8a)"
+
+
+def test_picking_a_split_cards_half_sends_that_face_with_the_cast() -> None:
+    """The chosen half rides on every request the announcement makes: the
+    affordance it asks for (so the candidates are that half's own, CR 709.3b)
+    and the cast it posts."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("affordances/")) {
+              return Promise.resolve({ ok: true, json: async () => ({
+                targets_anything: true, understood: true, minimum: 1, maximum: 1,
+                requirements: [{ phrase: "target enchantment", count: 1, minimum: 1,
+                                 unbounded: false, variable_count: false,
+                                 mode: null, mode_text: null }],
+                division: null,
+                candidates: [{ id: "bm1", kind: "card", name: "Blood Moon",
+                               zone: "battlefield", controller: "bob",
+                               requirements: [0] }],
+              })});
+            }
+            return null;
+          };
+          const clicked = m.onHandCard(card, { currentTarget: anchor });
+          const labels = options().map((o) => o.label);
+          await clicked;
+          options()[1].click();
+          await settle();
+          await m.tryTarget("bm1");
+          await settle();
+          return { labels, calls: globalThis.__calls };
+        """,
+        state=_click_state(hands={"alice": [WEAR_TEAR]}),
+        card=WEAR_TEAR,
+    )
+    assert result["labels"] == ["Cast Wear", "Cast Tear"]
+    reads = [c for c in result["calls"] if "affordances/" in c["path"]]
+    assert reads, result["calls"]
+    assert "spell_face=Tear" in reads[0]["path"], reads[0]["path"]
+    casts = [c for c in result["calls"] if c["method"] == "POST" and "actions/cast" in c["path"]]
+    assert casts, result["calls"]
+    assert casts[-1]["body"]["spell_face"] == "Tear"
+    assert casts[-1]["body"]["targets"] == ["bm1"]
+
+
+def test_a_non_mana_x_spell_does_not_fire_before_its_x_is_announced() -> None:
+    """CR 107.3a. With `cast.needs_x` published truthfully for Toxic Deluge's
+    "pay X life" (`tests/test_affordances.py` pins the server half), the
+    announcement stages and WAITS: `readyToFire` is false until an X is
+    entered, so the click can no longer post a cast that resolves at X=0
+    with 0 life paid. The value actually reaching the request is
+    `tests/test_ui_actions.py`'s own half."""
+    result = _click(
+        """
+          const clicked = m.onHandCard(card, { currentTarget: anchor });
+          await clicked;
+          options()[0].click();
+          await settle();
+          return { action: m.store.get().action, calls: globalThis.__calls };
+        """,
+        state=_click_state(hands={"alice": [TOXIC_DELUGE]}),
+        card=TOXIC_DELUGE,
+    )
+    assert result["action"]["kind"] == "cast", "the announcement must stage"
+    assert result["action"]["xValue"] is None
+    casts = [c for c in result["calls"] if c["method"] == "POST" and "actions/cast" in c["path"]]
+    assert casts == [], "no cast may be posted before X is announced"

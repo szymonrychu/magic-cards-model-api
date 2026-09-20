@@ -400,3 +400,114 @@ def test_a_face_up_candidate_is_still_named(client: TestClient, game: str) -> No
     )
 
     assert affordances_module._label(bears)["name"] == "Grizzly Bears"
+
+
+# -- CR 107.3a: an X that is not in the mana cost ----------------------------
+
+
+def test_toxic_deluges_pay_x_life_is_published_as_an_x_to_announce(client, game):
+    """CR 107.3a counts "a mana cost, alternative cost, additional cost,
+    and/or activation cost with an {X}, [-X], or X in it" - so Toxic Deluge's
+    printed "As an additional cost to cast this spell, pay X life." is an X
+    the caster announces, exactly like an `{X}` in a mana cost.
+
+    The defect: `cast.needs_x` was `"{X}" in mana_cost`, which is False here,
+    so the browser showed no X box, sent no `x_value`, and the wrath resolved
+    as -0/-0 with 0 life paid. The engine always knew - the same card's row
+    in `GET .../legal-actions` carries `x_range`, from
+    `machines.legal_actions._cast_action`'s own reading of CR 107.3a - and
+    this is that reading published where the surfaces actually read it.
+
+    CR 107.3a was verified against the engine's own citation in
+    `machines/legal_actions._cast_action`; no rule number is restated here
+    from memory.
+    """
+    add_card(client, game, "Toxic Deluge", "alice", "hand")
+    deluge = find(state(client, game)["hands"]["alice"], "Toxic Deluge")
+
+    assert "{X}" not in deluge["cast"]["mana_cost"], (
+        "the X is in the additional cost, not the mana cost"
+    )
+    assert deluge["cast"]["needs_x"] is True
+
+
+def test_a_spell_whose_text_merely_says_x_does_not_ask_for_one(client, game):
+    """The narrow half of the same reading: only a printed *cost* announces X
+    (CR 107.3a). Fireblast's own additional cost sacrifices Mountains and
+    names no X, so nothing here starts asking for one."""
+    add_card(client, game, "Fireblast", "alice", "hand")
+    fireblast = find(state(client, game)["hands"]["alice"], "Fireblast")
+
+    assert fireblast["cast"]["needs_x"] is False
+
+
+# -- CR 709.3 / CR 715.3: which half of the card is being cast --------------
+
+
+def test_a_split_card_publishes_both_halves_as_castable_faces(client, game):
+    """`machines.casting.castable_faces` is the engine's own enumeration of
+    the faces a cast may name (CR 709.3's "chooses which half of a split card
+    they are casting"), and it is the same set `legal_actions` emits one row
+    per. Published on the card view so the hand menu can offer the halves at
+    the moment the player picks the card up, before any affordance or
+    legal-actions row exists."""
+    add_card(client, game, "Wear // Tear", "alice", "hand")
+    wear = find(state(client, game)["hands"]["alice"], "Wear")
+
+    assert wear["cast"]["spell_faces"] == [
+        {
+            "spell_face": "Wear",
+            "name": "Wear",
+            "mana_cost": "{1}{R}",
+            "type_line": "Instant",
+            "needs_x": False,
+        },
+        {
+            "spell_face": "Tear",
+            "name": "Tear",
+            "mana_cost": "{W}",
+            "type_line": "Instant",
+            "needs_x": False,
+        },
+    ]
+
+
+def test_a_single_faced_card_publishes_no_castable_faces(client, game):
+    """Absent, never an empty list or a one-entry one: there is no choice to
+    make, and the hand menu's plain Cast item is the whole of it."""
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    bolt = find(state(client, game)["hands"]["alice"], "Lightning Bolt")
+
+    assert "spell_faces" not in bolt["cast"]
+
+
+def test_an_adventurer_card_offers_the_faceless_cast_and_its_adventure(client, game):
+    """CR 715.3: "the player chooses whether they play the card normally or
+    as an Adventure" - two options, and the normal one names no face at all
+    (`spell_face: null`, `CastRequest.spell_face`'s own default)."""
+    add_card(client, game, "Bonecrusher Giant", "alice", "hand")
+    giant = find(state(client, game)["hands"]["alice"], "Bonecrusher Giant")
+
+    faces = giant["cast"]["spell_faces"]
+    assert [face["spell_face"] for face in faces] == [None, "Stomp"]
+    assert faces[0]["name"] == "Bonecrusher Giant"
+
+
+def test_the_affordance_of_a_chosen_half_is_that_halfs_own_targeting(client, game):
+    """CR 709.3b: the chosen half's own text is what the announcement is read
+    against. Asking for Wear // Tear's candidates with no face named answers
+    the printing's front half ("target artifact"); naming Tear answers Tear's
+    ("target enchantment"). Without the face the browser would fill Wear's
+    slot with Wear's candidates and post it as a cast of Tear."""
+    add_card(client, game, "Wear // Tear", "alice", "hand")
+    add_card(client, game, "Blood Moon", "bob", "battlefield")
+    add_card(client, game, "Aether Spellbomb", "bob", "battlefield")
+    wear = find(state(client, game)["hands"]["alice"], "Wear")
+
+    front = affordances(client, game, wear["id"])
+    tear = affordances(client, game, wear["id"], spell_face="Tear")
+
+    assert [r["phrase"] for r in front["requirements"]] == ["target artifact"]
+    assert names(front) == {"Aether Spellbomb"}
+    assert [r["phrase"] for r in tear["requirements"]] == ["target enchantment"]
+    assert names(tear) == {"Blood Moon"}

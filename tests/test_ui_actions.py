@@ -1224,3 +1224,156 @@ def test_a_cost_the_engine_cannot_charge_is_never_announced() -> None:
         })()""",
         march=MARCH_OF_OTHERWORLDLY_LIGHT,
     ) == {"player": "alice", "card_id": "march"}
+
+
+# -- U1: CR 107.3a's X, and CR 709.3's chosen half --------------------------
+
+#: Toxic Deluge: no `{X}` in the mana cost, and an X all the same - "As an
+#: additional cost to cast this spell, pay X life." `cast.needs_x` is the
+#: server's own answer (`affordances.cast_hints`, pinned in
+#: `tests/test_affordances.py`); this file only asserts what the browser does
+#: with it.
+TOXIC_DELUGE = {
+    "id": "td1",
+    "name": "Toxic Deluge",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Sorcery",
+    "cast": {
+        "mana_cost": "{2}{B}",
+        "needs_x": True,
+        "modes": None,
+        "targeting": {
+            "targets_anything": False,
+            "understood": True,
+            "minimum": 0,
+            "maximum": 0,
+            "requirements": [],
+        },
+    },
+    "abilities": [],
+}
+
+WEAR_TEAR = {
+    "id": "wt1",
+    "name": "Wear",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Instant // Instant",
+    "cast": {
+        "mana_cost": "{1}{R} // {W}",
+        "needs_x": False,
+        "modes": None,
+        "targeting": {
+            "targets_anything": True,
+            "understood": True,
+            "minimum": 1,
+            "maximum": 1,
+            "requirements": [
+                {
+                    "phrase": "target artifact",
+                    "count": 1,
+                    "minimum": 1,
+                    "unbounded": False,
+                    "variable_count": False,
+                    "mode": None,
+                    "mode_text": None,
+                }
+            ],
+        },
+        "spell_faces": [
+            {
+                "spell_face": "Wear",
+                "name": "Wear",
+                "mana_cost": "{1}{R}",
+                "type_line": "Instant",
+                "needs_x": False,
+            },
+            {
+                "spell_face": "Tear",
+                "name": "Tear",
+                "mana_cost": "{W}",
+                "type_line": "Instant",
+                "needs_x": False,
+            },
+        ],
+    },
+    "abilities": [],
+}
+
+
+def test_a_non_mana_x_is_announced_like_any_other() -> None:
+    """The reported defect, at this layer: the announcement must not be
+    fireable until X is chosen, and the chosen value must reach the request.
+    Nothing here is special-cased to the additional-cost X - `needs_x` is one
+    published answer and this is the one reader of it."""
+    result = run_module(
+        "actions.js",
+        "(() => { let a = m.begin('cast', deluge, {}); "
+        "const before = m.readyToFire(a); a = m.setX(a, 3); "
+        "return [before, m.readyToFire(a), m.bodyFor(a, 'alice', ['s1'])]; })()",
+        deluge=TOXIC_DELUGE,
+    )
+    assert result[0] is False, "a spell with an X to announce may not fire at X=0"
+    assert result[1] is True
+    assert result[2]["x_value"] == 3
+
+
+def test_a_non_mana_x_spell_is_never_fired_on_the_click() -> None:
+    """`needsChoices` is what `app.js`'s `beginCast` asks before firing
+    straight away. Toxic Deluge targets nothing, has no modes and prints no
+    optional additional cost, so every other check in it reads false - the X
+    is the only thing standing between the click and a -0/-0 wrath."""
+    assert run_module("actions.js", "m.needsChoices(deluge, null)", deluge=TOXIC_DELUGE) is True
+
+
+def test_the_chosen_half_rides_on_the_cast_and_on_the_affordance() -> None:
+    """CR 709.3's chosen half, carried by the one action object: it is sent
+    as `CastRequest.spell_face` and asked for in the affordance query, so the
+    candidates the player is offered are that half's own (CR 709.3b)."""
+    result = run_module(
+        "actions.js",
+        "(() => { const a = m.begin('cast', wear, { spellFace: 'Tear' }); "
+        "return [m.bodyFor(a, 'alice', []), m.affordanceQuery(a), "
+        "m.bodyFor(m.begin('cast', wear, {}), 'alice', [])]; })()",
+        wear=WEAR_TEAR,
+    )
+    assert result[0]["spell_face"] == "Tear"
+    assert result[1]["spell_face"] == "Tear"
+    assert "spell_face" not in result[2], "a cast that named no half sends no face"
+
+
+def test_a_chosen_half_always_asks_the_server_what_it_targets() -> None:
+    """A half's own targeting is not on the card view - `cast.targeting` is
+    the printing's combined reading, which is the FRONT half's text - so a
+    cast that names a face can never fire off local state alone."""
+    assert run_module("actions.js", "m.needsChoices(wear, null, 'Tear')", wear=WEAR_TEAR) is True
+
+
+def test_x_follows_the_chosen_half() -> None:
+    """Each half announces its own X: `needs_x` on the chosen `spell_faces`
+    entry is what the strip asks for, not the printing's combined cost."""
+    faces = [
+        {
+            "spell_face": "Consign",
+            "name": "Consign",
+            "mana_cost": "{1}{U}",
+            "type_line": "Instant",
+            "needs_x": False,
+        },
+        {
+            "spell_face": "Oblivion",
+            "name": "Oblivion",
+            "mana_cost": "{X}{B}{B}",
+            "type_line": "Sorcery",
+            "needs_x": True,
+        },
+    ]
+    card = {**WEAR_TEAR, "cast": {**WEAR_TEAR["cast"], "needs_x": True, "spell_faces": faces}}
+    result = run_module(
+        "actions.js",
+        "[m.needsX(m.begin('cast', card, { spellFace: 'Consign' })), "
+        "m.needsX(m.begin('cast', card, { spellFace: 'Oblivion' }))]",
+        card=card,
+    )
+    assert result == [False, True]
