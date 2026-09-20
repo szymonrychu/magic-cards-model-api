@@ -66,14 +66,19 @@ than stalling a headless process for ever. `--strict-mcp-config` stays, now
 paired with an explicit `--mcp-config` so the seat's own MCP servers are
 exactly what loads and nothing from any other source can.
 
-**What the reviewer still cannot do, stated rather than left to be
-discovered.** `NOTES_ROUTING` (the routing rule `driver/review.py`
-interpolates into the prompt) sends system problems to the `report_problem`
-tool - an MCP tool of the `mtg` server that takes a live `player_uid`. The
-review runs after the game is over and is given no seat uid, so that half of
-the routing is not reachable from here and `report_problem` is deliberately
-not on the allowlist; a reviewer that finds a system problem says so in its
-critique, which is filed either way.
+**Both halves of the routing rule are reachable from here.**
+`NOTES_ROUTING` (the rule `driver/review.py` interpolates into the prompt)
+has two destinations: play content to the deck's guide, and system problems
+to the `report_problem` tool. The guide half is what `REVIEW_BASH_RULES`
+below is for. The problem half is `REVIEW_MCP_TOOLS`: `report_problem` is
+an MCP tool of the `mtg` server and takes a `player_uid`, which this
+process has none of by itself - so `prompt.NOTES_ROUTING_AFTER_GAME` names
+the SEAT's uid in the prompt (it outlives the game: `app.find_seat`
+resolves a uid against every game the store still holds, and
+`app.report_problem` has no "the game is over" guard), and this module
+allows that one tool and no other on that server. A rule that named a
+destination the process could not reach would be a rule asking for
+something impossible, which is how it stood before T13-r1.2.
 """
 
 from __future__ import annotations
@@ -153,13 +158,48 @@ REVIEW_BASH_RULES = (
     "Bash(mcp-seat guides propose:*)",
 )
 
-#: What may run without asking (`--allowedTools`): the file tools above, and
-#: Bash only through `REVIEW_BASH_RULES`. Bare `"Bash"` is deliberately NOT
-#: here - an unscoped Bash rule would make the scoping above decoration.
-#: Paired with `--permission-prompts none`, anything outside this list is
-#: denied automatically rather than prompting a process with nobody at the
-#: terminal to answer.
-REVIEW_ALLOWED_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep", *REVIEW_BASH_RULES)
+#: The MCP tools the review may call, and the reason there is exactly one.
+#:
+#: `--tools` above is the BUILT-IN set only (`claude --help`: "the list of
+#: available tools from the built-in set"), so an MCP server named by
+#: `--mcp-config` offers all of its tools whatever that flag says; what may
+#: actually be called is decided here, on `--allowedTools`, with
+#: `--permission-prompts none` denying everything else rather than stalling.
+#:
+#: - `mcp__mtg__report_problem` - the second destination of
+#:   `prompt.NOTES_ROUTING`. A reviewer that finds an api bug, an engine
+#:   rules gap, a tool misbehaviour or a timeout files it as a
+#:   `report_problem` row in the game's own audit ledger, exactly where the
+#:   seat's own report would have gone - and `playscripts.content_gate`
+#:   refuses that same sentence in a `guides propose`, so without this the
+#:   finding had nowhere at all to go.
+#:
+#: Nothing else on the `mtg` server is here. The prompt hands this process a
+#: live seat credential to call `report_problem` with, and a finished game
+#: has no move left to make: `cast`, `pass`, `activate`, `declare_plan` and
+#: the rest would only let untrusted text inside the game record talk a
+#: reviewer into touching a game it is supposed to be writing ABOUT. The
+#: `spellslinger` server is absent for its own reason - it is a network
+#: lookup, the same reason `WebFetch`/`WebSearch` are off `REVIEW_TOOLS`.
+REVIEW_MCP_TOOLS = ("mcp__mtg__report_problem",)
+
+#: What may run without asking (`--allowedTools`): the file tools above,
+#: Bash only through `REVIEW_BASH_RULES`, and the MCP tools in
+#: `REVIEW_MCP_TOOLS`. Bare `"Bash"` is deliberately NOT here - an unscoped
+#: Bash rule would make the scoping above decoration - and neither is a
+#: server-wide `mcp__mtg` or `mcp__mtg__*`, for the same reason. Paired with
+#: `--permission-prompts none`, anything outside this list is denied
+#: automatically rather than prompting a process with nobody at the terminal
+#: to answer.
+REVIEW_ALLOWED_TOOLS = (
+    "Read",
+    "Edit",
+    "Write",
+    "Glob",
+    "Grep",
+    *REVIEW_BASH_RULES,
+    *REVIEW_MCP_TOOLS,
+)
 
 #: Where a Stop hook that fires in this process anyway is sent instead of
 #: the wrapper's own internal listener - see the module docstring. Port 1 on

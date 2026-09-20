@@ -36,6 +36,16 @@ the untrusted record's END marker where it reads as instruction rather than
 data. The seat's own handover turn carries the identical text from the same
 constant: two prompts that can write to a deck's guide, one rule, no drift.
 
+That rule has two destinations, and the reviewer can reach both. The guide
+half it reaches with `mcp-seat guides propose`. The system-problem half is
+`report_problem`, an `mtg` MCP tool that takes a `player_uid` - which a
+reviewer, never having played anything, does not have. So this prompt also
+carries `prompt.NOTES_ROUTING_AFTER_GAME`, which names the SEAT's own uid
+(it outlives the game) and says that `report_problem` is the one tool on
+that server the review may call; `wrapper.oneshot.REVIEW_MCP_TOOLS` is the
+allowlist that makes that true. Before it, the routing rule named a
+destination this process had no way of reaching.
+
 **Not deduplicated.** In an AIvAI game each seat's own driver reaches
 `app.turn_done`'s reflection branch independently, and each could in
 principle generate and file its own AI review. This is accepted rather than
@@ -58,7 +68,7 @@ import secrets
 from collections import Counter
 from typing import Any
 
-from .prompt import NOTES_ROUTING, Assignment
+from .prompt import NOTES_ROUTING, Assignment, notes_routing_after_game
 
 #: How many of a game's declarations the prompt carries in full. A long game
 #: can declare a plan every turn for 20+ turns; `review.py`'s own
@@ -127,11 +137,15 @@ _DETAIL_IN_HEADING = ("player", "card", "allowed", "reason")
 ROUTING_HEADING = "Where anything you write down goes:"
 
 #: The routing block's own rendered size - the heading, a blank line, the
-#: shared `NOTES_ROUTING` text and a trailing blank, each with its newline.
-#: The ledger is fitted under `PROMPT_BUDGET_CHARS` INCLUDING this, because
-#: the routing rule is appended after the ledger has already been rendered
-#: and would otherwise be budget the bound never knew it had spent.
-_ROUTING_SIZE = len(ROUTING_HEADING) + len(NOTES_ROUTING) + 4
+#: shared `NOTES_ROUTING` text, the reviewer's own `NOTES_ROUTING_AFTER_GAME`
+#: clause and a trailing blank, each with its newline. The ledger is fitted
+#: under `PROMPT_BUDGET_CHARS` INCLUDING this, because the routing rule is
+#: appended after the ledger has already been rendered and would otherwise
+#: be budget the bound never knew it had spent. The after-game clause is
+#: measured RENDERED (below, per call) rather than from the template: it
+#: interpolates a uid, a game id and a player name, none of which has a
+#: length bound of its own.
+_ROUTING_SIZE = len(ROUTING_HEADING) + len(NOTES_ROUTING) + 6
 
 
 #: Matches this module's own BEGIN/END marker shape, with or without a
@@ -307,7 +321,10 @@ def review_prompt(
     # a fixed ledger budget alone could still walk the whole prompt into
     # `oneshot._capped`'s silent guillotine. Measured against what is
     # already built plus what is still to come.
-    tail_size = len(record_end) + _ROUTING_SIZE + _ASK_SIZE + len(assignment.player)
+    after_game = notes_routing_after_game(assignment)
+    tail_size = (
+        len(record_end) + _ROUTING_SIZE + len(after_game) + _ASK_SIZE + len(assignment.player)
+    )
     remaining = PROMPT_BUDGET_CHARS - sum(len(line) + 1 for line in lines) - tail_size
     ledger = _ledger_lines(
         review_record.get("entries") or [], max(0, min(MAX_LEDGER_CHARS, remaining))
@@ -344,6 +361,14 @@ def review_prompt(
     lines.append(ROUTING_HEADING)
     lines.append("")
     lines.append(NOTES_ROUTING)
+    lines.append("")
+    # The reviewer's own half of that rule: `report_problem` takes a
+    # `player_uid`, and a reviewer is not a seat. Without this the
+    # system-problem destination is named but unreachable, which is a rule
+    # asking for something the process cannot do - see
+    # `prompt.NOTES_ROUTING_AFTER_GAME`. After the END marker for the same
+    # reason the rule itself is, and doubly so: it carries a credential.
+    lines.append(after_game)
     lines.append("")
 
     lines.append(_ask(assignment.player))

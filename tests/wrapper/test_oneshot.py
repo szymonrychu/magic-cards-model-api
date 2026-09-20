@@ -150,6 +150,53 @@ def test_the_allowlist_reaches_the_guides_checkout_only_through_mcp_seat(
     assert "mcp-seat plays check" in joined
 
 
+def test_the_reviewer_can_still_file_a_system_problem_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """T37's routing rule has two destinations, and this one used to be
+    dead. `prompt.NOTES_ROUTING` sends a system problem - an api bug, an
+    engine rules gap, a tool misbehaviour - to the `report_problem` tool,
+    and the reviewer's allowlist named no MCP tool at all, so a reviewer
+    that found one had nowhere to put it and the rule asked for something
+    it could not do. `report_problem` is on the allowlist now, and
+    `driver.review`'s prompt hands the reviewer the `player_uid` it
+    takes."""
+    argv = _captured(monkeypatch, tmp_path)["argv"]
+    allowed = _flag(argv, "--allowedTools").split(",")
+
+    assert "mcp__mtg__report_problem" in allowed, (
+        "NOTES_ROUTING routes system problems here; an allowlist without it "
+        "makes that half of the rule unreachable"
+    )
+    assert "mcp__mtg__report_problem" in oneshot.REVIEW_MCP_TOOLS
+
+
+def test_report_problem_is_the_only_mcp_tool_the_reviewer_may_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The game is over: nothing on the `mtg` server except the problem
+    report has a job left to do here, and the reviewer is handed a live
+    seat credential to call it with. Naming exactly one tool is what keeps
+    that credential usable for the report and for nothing else."""
+    argv = _captured(monkeypatch, tmp_path)["argv"]
+    allowed = _flag(argv, "--allowedTools").split(",")
+
+    assert [rule for rule in allowed if rule.startswith("mcp__")] == [
+        "mcp__mtg__report_problem"
+    ]
+    for tool in (
+        "mcp__mtg",
+        "mcp__mtg__*",
+        "mcp__mtg__cast",
+        "mcp__mtg__pass",
+        "mcp__mtg__activate",
+        "mcp__mtg__declare_plan",
+        "mcp__mtg__run_script",
+        "mcp__spellslinger__knowledge_search",
+    ):
+        assert tool not in allowed, f"{tool} has no job in a finished game's review"
+
+
 def test_the_interactive_tools_a_headless_process_can_only_stall_on_stay_denied(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
