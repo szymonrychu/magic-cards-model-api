@@ -1297,3 +1297,29 @@ def test_a_successful_review_files_no_failure_signal(world):
     play_out_the_match(client, state, world.submitted)
     wait_for(lambda: len(world.ai_review_posts) == 1)
     assert world.ai_review_failures == []
+
+
+def test_the_review_stays_best_effort_and_never_blocking_under_the_checkout_lock(world):
+    """T14 clause (b): the serialization is a lock on the /guides checkout,
+    NOT a join before the handover - so the property that made the join
+    unnecessary has to still hold. A slow review neither delays the handover
+    response nor is abandoned by retirement: `retire` still joins it, bounded.
+    """
+    client = world.client
+    state = world.state
+    state["wrapper_review_delay"] = 0.5
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+    started = time.monotonic()
+    body = client.post(
+        "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+    ).json()
+    # The handover was answered without waiting on the review at all.
+    assert time.monotonic() - started < 0.4
+    assert body["handover"]["outcome"] == "bob won"
+
+    complete_handover(client, world.submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    # And the slow review still landed rather than being dropped on the way out.
+    assert len(world.ai_review_posts) == 1

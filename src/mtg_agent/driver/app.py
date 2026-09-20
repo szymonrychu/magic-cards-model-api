@@ -9,6 +9,24 @@ pushes exactly one reflection turn, files it and the post-game AI review
 effort and never blocking) once that reflection completes, then the handover
 turn.
 
+**The review and the handover never touch the /guides checkout at the same
+time (defect D-1).** The review runs on a background thread while the
+handover turn is pushed into the interactive session, and the handover
+turn's own step 2 is `mcp-seat plays admit` - so the two really can arrive
+together, and a second committer inside one clone corrupts a
+fetch-and-rebase rather than merely losing a race. The guarantee is a real
+mutual-exclusion lock on the checkout itself
+(`playscripts.gitwork.checkout_lock`), which `plays admit` and
+`guides propose` both take for the whole of their git phase and which the
+reviewer's own write channel takes too once it has one. A file lock, not an
+in-process one, because the writers are separate processes in one container.
+
+Choosing the lock rather than joining the review before the handover is what
+KEEPS `post_ai_review`'s "best effort, never blocking retire" property: the
+review stays on its daemon thread, nothing waits on it to hand over, and
+`retire` still joins it once, bounded by `RETIRE_REVIEW_JOIN_TIMEOUT`, so a
+slow review is never merely abandoned either.
+
 One agent container plays exactly one match. Once the handover is in (see
 `start_handover`), the driver sends `DELETE /v1/session` and forgets the
 assignment: the agent
