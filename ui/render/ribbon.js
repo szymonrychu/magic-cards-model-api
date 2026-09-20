@@ -67,20 +67,33 @@ import { viewModel } from "../decisions.js";
 
 // --------------------------------------------------------------- pregame ---
 
+/** The server's own notice for a pregame move it found owed by a seat
+ * nothing is playing and refused to answer, or null when there is none.
+ *
+ * It outranks `opponentSeatNote` below, which only ever knew what the seat's
+ * process looked like: this knows what the *game* is actually held on, and
+ * carries the ways out. See `ai_pregame.stall_text`. */
+function pregameStallNote(pregame, you) {
+  const stalled = (pregame && pregame.stalled) || [];
+  const held = stalled.find((entry) => entry && entry.player !== you);
+  return held ? h("div", { class: "card-warning" }, held.text) : null;
+}
+
+/** Deliberately does NOT promise that the server will make the seat's moves.
+ * It moves a gone seat along only where the move has exactly one legal
+ * answer (`ai_pregame.is_forced`); a real choice is held open for the seat
+ * and reported by `pregameStallNote` above, because a kept hand cannot be
+ * given back. */
 function opponentSeatNote(status) {
   if (!status) return null;
   if (status.mechanism === "fallback" || status.state === "not_started") {
-    return h(
-      "div",
-      { class: "hint" },
-      `Its agent is not running (${status.reason || "not started"}) - the server will make its pregame moves shortly.`
-    );
+    return h("div", { class: "hint" }, `Its agent is not running (${status.reason || "not started"}).`);
   }
   if (status.state === "error") {
-    return h("div", { class: "hint" }, "Its agent stopped with an error - the server will make its pregame moves shortly.");
+    return h("div", { class: "hint" }, "Its agent stopped with an error.");
   }
   if (status.state === "stopped") {
-    return h("div", { class: "hint" }, "Its agent has exited - the server will make its pregame moves shortly.");
+    return h("div", { class: "hint" }, "Its agent has exited.");
   }
   return h("div", { class: "hint" }, `Its agent is ${status.state}.`);
 }
@@ -97,7 +110,7 @@ function renderMulliganStep(state, app) {
   const others = waiting.filter((n) => n !== you);
   const who = others.length ? others.join(", ") : "the other seat";
   const box = h("div", { class: "pregame-step" }, h("span", {}, `Mulligans (CR 103.5): waiting on ${who}.${takingText}`));
-  const note = opponentSeatNote(app.aiStatus);
+  const note = pregameStallNote(pregame, you) || opponentSeatNote(app.aiStatus);
   if (note) box.appendChild(note);
   return box;
 }
@@ -112,7 +125,7 @@ function renderOpeningHandStep(state, app, handlers) {
       { class: "pregame-step" },
       h("span", {}, `Opening-hand actions (CR 103.6): waiting on ${who || "the other seat"}.`)
     );
-    const note = opponentSeatNote(app.aiStatus);
+    const note = pregameStallNote(pregame, you) || opponentSeatNote(app.aiStatus);
     if (note) box.appendChild(note);
     return box;
   }
