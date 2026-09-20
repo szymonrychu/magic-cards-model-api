@@ -53,25 +53,6 @@ import pytest
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
 
-#: Why the affordance half of this file is `xfail` and the cast half is not.
-NEEDS_ENGINE_FIX = (
-    "needs an engine change to `Game.announcement_profile` "
-    "(`models/game.py`): its X branch answers "
-    "`profile_for_text(substitute_x(state.card.oracle_text, x_value))`, which "
-    "reads the printing WHOLE, so an activated or triggered ability's "
-    "'any target' is counted as a requirement of the spell. The engine "
-    "already has the right call for it - `machines.targeting."
-    "spell_profile_for_text(text, card)`, which runs the same `_spell_text` "
-    "line filter `targeting_profile` and `Casting.targeting` do (and stamps "
-    "`source_card`, which `profile_for_text` does not). Swapping that one "
-    "call changes exactly three printings in the pool, measured: Walking "
-    "Ballista, Chamber Sentry and Ajani's Anguish, each from one 'any "
-    "target' requirement to none. Verified green under that swap before this "
-    "marker was written. The api side is a faithful relay - "
-    "`affordances._profile_for` asks the engine and publishes the answer - "
-    "so there is nothing to fix here."
-)
-
 #: Each card is an X spell with NO cast target, whose printed text still says
 #: "any target" on a line belonging to an ability. `land`/`lands` are what the
 #: listed `x_value` needs to be payable.
@@ -83,12 +64,7 @@ TARGETLESS_X_SPELLS = [
 IDS = ["activated-ability-reported", "activated-ability-other-card", "triggered-ability"]
 
 SPELL_PARAMS = [
-    pytest.param(*row, id=name)
-    for row, name in zip(TARGETLESS_X_SPELLS, IDS, strict=True)
-]
-SPELL_PARAMS_PENDING_ENGINE = [
-    pytest.param(*row, id=name, marks=pytest.mark.xfail(strict=True, reason=NEEDS_ENGINE_FIX))
-    for row, name in zip(TARGETLESS_X_SPELLS, IDS, strict=True)
+    pytest.param(*row, id=name) for row, name in zip(TARGETLESS_X_SPELLS, IDS, strict=True)
 ]
 
 
@@ -123,7 +99,7 @@ def assert_no_cast_target(answer: dict, name: str) -> None:
     assert answer["candidates"] == []
 
 
-@pytest.mark.parametrize(("name", "x_value", "land", "lands"), SPELL_PARAMS_PENDING_ENGINE)
+@pytest.mark.parametrize(("name", "x_value", "land", "lands"), SPELL_PARAMS)
 def test_announcing_x_asks_for_no_cast_target(client, game, name, x_value, land, lands):
     """The affordance `ui/app.js`'s `refreshAffordance()` fetches the moment
     the player types X. `ui/render/board.js`'s `targetingOpts()` and
