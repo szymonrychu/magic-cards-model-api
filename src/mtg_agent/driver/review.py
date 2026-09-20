@@ -373,6 +373,14 @@ def _ask(player: str) -> str:
     repo bans, and would go stale against every card the taxonomy never
     heard of.
 
+    **Both seats' turns, because that is where half the taxonomy lives.**
+    The walk covers every turn in the ledger, not only the reviewed seat's
+    own: a block is declared on the opponent's turn, and so is every window
+    a held-up instant was held for. Scoping it to this seat's turns would
+    leave COMBAT's blocks and TIMING AND INSTANT SPEED's passed windows
+    with no turn to be checked against, while the ledger carries both
+    seats' rows precisely so they can be.
+
     **Pointed at fields the record actually carries.** "Say what was
     available instead" is answerable only because `legal_actions_before`
     reaches the prompt (T11) and `_options_line` renders it as "options
@@ -383,10 +391,15 @@ def _ask(player: str) -> str:
     The player name is interpolated exactly once, because `_ASK_SIZE`
     measures `_ask("")` and `review_prompt` adds one `len(player)` back."""
     return (
-        "Walk the ledger turn by turn. For each of " + player + "'s own turns, "
-        "check what was actually done against every one of the six categories "
-        "below before you move on to the next turn, and wherever a row carries "
-        'an "options that were legal and not taken" line - the ledger\'s own '
+        "Walk the ledger turn by turn - every turn it carries, " + player + "'s "
+        "own turns and the opponent's alike. The opponent's turns are where a "
+        "block is declared and where every window a held-up instant was held "
+        "for comes up (their upkeep, their declared-attackers step, their end "
+        "step), so on those turns check what this seat declined to do as "
+        "closely as what it did. For each turn, check what was actually done "
+        "and what was passed on against every one of the six categories below "
+        "before you move on to the next turn, and wherever a row carries an "
+        '"options that were legal and not taken" line - the ledger\'s own '
         "rendering of that action's legal_actions_before - use it to say what "
         "was available instead, rather than guessing at what might have been. "
         "The categories:\n"

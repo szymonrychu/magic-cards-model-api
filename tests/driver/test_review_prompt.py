@@ -578,6 +578,40 @@ def test_the_ask_tells_the_reviewer_to_walk_the_ledger_turn_by_turn() -> None:
     assert "every one of the six categories" in text
 
 
+def _walk_instruction() -> str:
+    """Just the walk instruction: from "Walk the ledger" up to the first
+    category name, so an assertion about it cannot be satisfied by a word
+    that happens to appear in the record above."""
+    text = _ask_text()
+    return text[text.index("Walk the ledger") : text.index("TIMING AND INSTANT SPEED")]
+
+
+def test_the_walk_covers_both_seats_turns_not_only_the_reviewed_seats_own() -> None:
+    """Clause (c), and the reason two categories exist at all.
+
+    A block only ever happens on the opponent's turn, and so does every
+    window a held-up instant was held for - their end step, their upkeep,
+    their declared-attackers step. A walk scoped to "each of bob's own
+    turns" leaves COMBAT's blocks and TIMING AND INSTANT SPEED's passed
+    windows with no turn the reviewer was told to check them against, even
+    though the ledger deliberately carries both seats' rows."""
+    text = _ask_text()
+    assert "each of bob's own turns" not in text, "the walk is scoped to one seat's turns"
+    walk = _walk_instruction()
+    assert "every turn" in walk, "the walk never says every turn is in scope"
+    assert "the opponent's" in walk, "the walk never brings the opponent's turns into scope"
+
+
+def test_the_walk_says_what_there_is_to_check_on_an_opponents_turn() -> None:
+    """Naming the opponent's turns is only half of it: on those turns the
+    interesting misplay is usually something this seat did NOT do, so the
+    walk has to say that a passed window counts as much as an action."""
+    walk = _walk_instruction()
+    assert "block" in walk
+    assert "held" in walk
+    assert "declined" in walk or "did not" in walk
+
+
 def test_the_ask_points_at_the_legal_actions_the_ledger_carries() -> None:
     """Clause (c): saying what was available instead is what T11's
     `legal_actions_before` was put in the prompt for, so the ask has to name
