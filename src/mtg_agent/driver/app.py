@@ -9,6 +9,16 @@ pushes exactly one reflection turn, files it and the post-game AI review
 effort and never blocking) once that reflection completes, then the handover
 turn.
 
+**The review is not only the reflection turn's.** A game reaches a terminal
+state several ways and only one of them is a completed reflection; the
+others - a release, a preStop handover, an agent that could not be given a
+reflection turn at all - used to file nothing, so the review page rendered
+no `section.ai-review` whatsoever. `TERMINAL_PATHS` names each one and what
+it does, `consider_ai_review` is the single place that decides, and `retire`
+calls it as a funnel so a path added later reaches the decision even if
+nobody wires it up. `UNREACHABLE_TERMINAL_PATH` names the one case this
+process cannot act on at all, rather than leaving it unsaid.
+
 One agent container plays exactly one match. Once the handover is in (see
 `start_handover`), the driver sends `DELETE /v1/session` and forgets the
 assignment: the agent
@@ -197,6 +207,52 @@ class AgentUnavailable(RuntimeError):
         self.status = status
 
 
+#: Every way a game this driver is holding reaches a terminal state, by
+#: name, with what each one does about the post-game AI review. "All paths"
+#: is not a description a reader can check; this is (T34, clause a).
+#:
+#: The list is closed by construction rather than by vigilance: every entry
+#: below ends in `retire`, and `retire` itself calls `consider_ai_review` as
+#: its last-resort funnel, so a terminal path added later that drops the
+#: assignment reaches the filing decision whether or not its author knew
+#: this existed.
+TERMINAL_PATHS = {
+    "reflection_turn": (
+        "the seat's reflection turn completed (`turn_done`'s reflection "
+        "branch). The review is filed with the seat's own reflection text."
+    ),
+    "agent_unreachable": (
+        "the game ended but the agent could not be given a reflection turn "
+        "at all (`AgentUnavailable`), so `turn_done` retires it on the "
+        "spot. The review is filed with no reflection text."
+    ),
+    "handover_without_reflection": (
+        "a handover started with no reflection behind it - `POST /release` "
+        "(the lobby abandoning the game, a lobby-side end or soft delete, "
+        "the live-observed `releasing game ... without a reflection turn` "
+        "line), `POST /handover`, and the Job's own preStop, which POSTs "
+        "that route. The review is filed with no reflection text."
+    ),
+    "retire": (
+        "the assignment is being dropped by any route that did not already "
+        "decide - a driver interrupt, an abandonment, a pod that is being "
+        "terminated gracefully enough to run its preStop. Last-resort "
+        "funnel: files the review if nothing else already considered it."
+    ),
+}
+
+#: The one terminal state this process cannot act on, stated rather than
+#: quietly omitted: a pod killed outright (SIGKILL, a node loss, an OOM
+#: kill) runs no code at all, so nothing here files a review and nothing
+#: here records why. What is left in the ledger is a game with neither an
+#: `ai_review` row nor an `ai_review_failed` one, and that combination means
+#: exactly "no driver survived to decide" - which is a different, readable
+#: fact from either "the reviewer failed" or "the reviewer was never
+#: invoked". A graceful termination is not this case: Kubernetes runs the
+#: Job's preStop, which reaches `handover_without_reflection` above.
+UNREACHABLE_TERMINAL_PATH = "pod_killed_outright"
+
+
 def build_app(
     settings: DriverSettings,
     *,
@@ -247,6 +303,13 @@ def build_app(
         # straight to answering with the current handover status, rather than
         # filing a second reflection or spawning a second review thread.
         "reflectionHandled": False,
+        # Set, under `lock`, the first time ANY terminal path reaches
+        # `consider_ai_review` - which is a wider net than
+        # `reflectionHandled` beside it, because a game can now end several
+        # ways that never touch the reflection branch at all. It is what
+        # keeps "every terminal path considers the review" from becoming
+        # "a game whose end trips two of them files two reviews".
+        "aiReviewConsidered": False,
         # The AI review's own background `threading.Thread` (`post_ai_
         # review`), once `turn_done` has spawned one - `retire` joins it,
         # bounded by `RETIRE_REVIEW_JOIN_TIMEOUT`, before it tears the
@@ -269,6 +332,7 @@ def build_app(
             outcome=None,
             handover=None,
             reflectionHandled=False,
+            aiReviewConsidered=False,
             reviewThread=None,
         )
 
@@ -531,6 +595,61 @@ def build_app(
         except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
             log.warning("could not post the AI review for game %s: %s", assignment.game_id, exc)
 
+    def consider_ai_review(assignment: Assignment, reflection_text: str, path: str) -> bool:
+        """"The game has ended - file the AI review, or say why not."
+        The one place that decides, reached from every name in
+        `TERMINAL_PATHS`. Returns whether this call is the one that started
+        the review.
+
+        **Why one function rather than a call at each end.** The review used
+        to be spawned from exactly one place, `turn_done`'s reflection
+        branch, so every other way a game finishes filed nothing at all and
+        the review page rendered no `section.ai-review` - not an empty one,
+        none. Spraying the same three lines over each terminal path would
+        have fixed the observed case and left the next one to be found in
+        production again; funnelling them instead means the decision is made
+        in one place, deduped in one place, and - because `retire` is one of
+        the callers and every terminal path ends in `retire` - made even for
+        a path nobody thought to wire up.
+
+        **Deduped across paths, not merely across retries.**
+        `reflectionHandled` beside it dedupes one callback being delivered
+        three times; this claims `aiReviewConsidered` for the whole
+        assignment, so a game that both reflects and hands over (the normal
+        case - the reflection branch calls this and then starts the
+        handover, which calls it again, and the handover retires, which
+        calls it a third time) still files exactly one review.
+
+        **Best effort, and never blocking.** Same property `post_ai_review`
+        has always had: the work runs on a daemon thread, nothing here waits
+        on it, and a failure inside it records `audit.AI_REVIEW_FAILED_
+        ACTION` rather than propagating. A path that CANNOT produce a review
+        - a game released before it ended, whose api-side post-game gate
+        refuses the review record - is therefore never silent either: the
+        refusal lands as a durable `review_record` failure row."""
+        with lock:
+            if current["aiReviewConsidered"]:
+                log.info(
+                    "the AI review for game %s was already considered; %s files none",
+                    assignment.game_id,
+                    path,
+                )
+                return False
+            current["aiReviewConsidered"] = True
+        log.info(
+            "considering the AI review for game %s, reached by %s", assignment.game_id, path
+        )
+        review_thread = threading.Thread(
+            target=post_ai_review,
+            args=(assignment, reflection_text),
+            daemon=True,
+            name="driver-ai-review",
+        )
+        review_thread.start()
+        with lock:
+            current["reviewThread"] = review_thread
+        return True
+
     def retire(assignment: Assignment) -> bool:
         """End the agent's life. `DELETE /v1/session` makes it exit, its
         restart policy gives the next match a fresh container, and we drop
@@ -553,6 +672,11 @@ def build_app(
         that fails or does not finish within the bound is logged and
         retirement proceeds anyway, exactly as it always has for every
         other way `post_ai_review` can fail."""
+        # The last-resort funnel (`TERMINAL_PATHS["retire"]`): whatever
+        # brought the assignment here, the review has now been considered.
+        # Before the join below, never after - a review this call is the one
+        # to start still gets waited on.
+        consider_ai_review(assignment, "", "retire")
         with lock:
             review_thread = current.get("reviewThread")
         if review_thread is not None and review_thread.is_alive():
@@ -776,6 +900,12 @@ def build_app(
             return status
 
         clear_marker(marker_path)
+        # `TERMINAL_PATHS["handover_without_reflection"]`: a handover is the
+        # end of this driver's involvement however it was reached - a
+        # `/release` from the lobby, a `/handover` from the Job's preStop,
+        # or the reflection branch above, which has already considered the
+        # review with the seat's own text and so deduplicates this call.
+        consider_ai_review(assignment, "", "handover_without_reflection")
         prepared: str | Exception
         try:
             resolved = outcome or ended_outcome(assignment) or "killed"
@@ -1175,24 +1305,19 @@ def build_app(
             if not already_handled:
                 post_reflection(assignment, reflection_text_value)
             if not already_handled:
-                # Registered BEFORE `start_handover` below, not after: that
+                # Considered BEFORE `start_handover` below, not after: that
                 # call is what creates and starts `run_handover`'s own
                 # background thread, which calls `retire` at its own end and
                 # joins `current["reviewThread"]` only if it is already set.
                 # A `run_handover` racing ahead fast enough used to reach
                 # `retire` before this ever ran, finding nothing to join and
                 # losing the review outright. `run_handover`'s thread cannot
-                # exist before `start_handover` creates it, so registering
+                # exist before `start_handover` creates it, so considering
                 # first makes the join possible on every ordering the OS
-                # scheduler could ever produce, not merely a lucky one.
-                review_thread = threading.Thread(
-                    target=post_ai_review,
-                    args=(assignment, reflection_text_value),
-                    daemon=True,
-                )
-                review_thread.start()
-                with lock:
-                    current["reviewThread"] = review_thread
+                # scheduler could ever produce, not merely a lucky one - and
+                # it is what makes this the path that supplies the seat's
+                # own reflection text, rather than the handover's empty one.
+                consider_ai_review(assignment, reflection_text_value, "reflection_turn")
             with lock:
                 ended = current["outcome"] or ""
             handover_status = start_handover(ended)
@@ -1223,6 +1348,10 @@ def build_app(
             # rather than hold an assignment that would 409 every future
             # dispatch against an agent that is already being replaced.
             log.error("game %s ended but the agent could not reflect: %s", assignment.game_id, exc)
+            # The game is over and there will be no reflection: the review
+            # is still worth filing, and `review_prompt` already renders a
+            # missing one as "(the seat left no reflection)".
+            consider_ai_review(assignment, "", "agent_unreachable")
             retire(assignment)
             return {"retired": True, "gameId": assignment.game_id, "reflected": False}
         with lock:
