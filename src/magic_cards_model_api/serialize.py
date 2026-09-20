@@ -1329,7 +1329,7 @@ def _state_view_on(
         "phase": phase.value if phase is not None else None,
         # What CR 103.5/CR 103.6 are waiting for, or `None` once the game has
         # reached its first turn - see `opening.pregame_view`.
-        "pregame": pregame_view(game),
+        "pregame": pregame_view(game, game_id),
         "active_player": active_player,
         "priority_holder": priority_holder,
         "players": [

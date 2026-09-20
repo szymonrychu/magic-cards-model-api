@@ -128,7 +128,7 @@ def _hand_ids(game: Game, username: str) -> list[str]:
     return [str(state.id) for state in game.player(username).hand]
 
 
-def pregame_view(game: Game) -> dict[str, Any] | None:
+def pregame_view(game: Game, game_id: str | None = None) -> dict[str, Any] | None:
     """What the game is waiting for in the pregame, or `None` once it is over.
 
     Everything here is the engine's own answer, read fresh: who still owes a
@@ -140,11 +140,25 @@ def pregame_view(game: Game) -> dict[str, Any] | None:
     `opening_hand_options` names cards in a hidden zone (CR 402.3: "a player
     can't look at the cards in another player's hand"), so `visibility.py`
     strips every seat's entry but the viewer's own.
+
+    `stalled` is the one entry here that is not an engine reading: it is
+    `ai_pregame.py`'s backstop reporting an obligation owed by a seat nothing
+    is playing that it REFUSED to answer, because the answer was a choice
+    rather than a forced move (`ai_pregame.is_forced`). Public - which seat
+    the table is waiting on, and why, is the visible half of a stalled
+    pregame - so `visibility._redact_pregame` leaves it alone. Empty for
+    every game that is waiting on nobody, and `[]` rather than absent so a
+    client never has to tell "no stalls" from "an older server".
+
+    `game_id` is what reads that ledger, and is optional only because this is
+    also called from responses built inside a game lock that already have the
+    game in hand; a caller that omits it gets `[]`.
     """
     if not game.in_pregame:
         return None
     assert game.turn is not None
     return {
+        "stalled": store.pregame_stalls(game_id) if game_id is not None else [],
         "step": game.turn.step.value,
         "awaiting_mulligan": list(game.awaiting_mulligan_declarations),
         "hand_kept": {player.username: player.hand_kept for player in game.players},
@@ -253,6 +267,10 @@ def declare_mulligan(
         raise
     if automatic:
         store.record_automatic_pregame(game_id, username, "mulligan")
+    # Whoever made it, the obligation the backstop refused to answer is
+    # answered now, so its notice goes - left up it would tell a human their
+    # game is held on a move that has already been made.
+    store.clear_pregame_stall(game_id, username, "mulligan")
     audit.record(
         game_id,
         "mulligan_declared",
@@ -273,7 +291,7 @@ def declare_mulligan(
         step=step.value,
         reasoning=reasoning,
     )
-    return {"declared": take, "step": step.value, "pregame": pregame_view(game)}
+    return {"declared": take, "step": step.value, "pregame": pregame_view(game, game_id)}
 
 
 def take_opening_hand_action(
@@ -298,7 +316,7 @@ def take_opening_hand_action(
     audit.record(
         game_id, "opening_hand_action", player=username, card=name, live=True, reasoning=reasoning
     )
-    return {"taken": name, "step": game.turn.step.value, "pregame": pregame_view(game)}
+    return {"taken": name, "step": game.turn.step.value, "pregame": pregame_view(game, game_id)}
 
 
 def finish_opening_hand_actions(
@@ -331,6 +349,7 @@ def finish_opening_hand_actions(
         raise
     if automatic:
         store.record_automatic_pregame(game_id, username, "opening_hand")
+    store.clear_pregame_stall(game_id, username, "opening_hand")
     audit.record(
         game_id,
         "opening_hand_done",
@@ -341,7 +360,7 @@ def finish_opening_hand_actions(
         reason=reason,
         reasoning=reasoning,
     )
-    result: dict[str, Any] = {"step": step.value, "pregame": pregame_view(game)}
+    result: dict[str, Any] = {"step": step.value, "pregame": pregame_view(game, game_id)}
     crossed = engine_api.settle_priorityless_steps(game)
     if crossed and game.turn is not None:
         result["step"] = game.turn.step.value
