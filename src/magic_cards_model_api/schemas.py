@@ -3,7 +3,14 @@
 loose: this is a self-test harness. Responses are not loose - `/openapi.json`
 is a contract three other repos will pin against by sha, so every one of
 these must be a named component FastAPI can put in `#/components/schemas`,
-not a bare `dict[str, Any]` that serialises to `{"type": "object"}`."""
+not a bare `dict[str, Any]` that serialises to `{"type": "object"}`.
+
+Adding a field to a view the browser reads is only half a change.
+`tests/test_ui_surface_coverage.py` is the drift guard for the other half: a
+field published on `ActionRow` (including one inherited from the engine's own
+`Action`), `CardView`/`_CardViewFields`, `PendingDecisionView` or the
+affordance views has to be read somewhere under `ui/` or written down there
+with a one-line reason. Six live bugs came from skipping that step."""
 
 from __future__ import annotations
 
@@ -1941,8 +1948,6 @@ class _CardViewFields(BaseModel):
     colors: list[str] | None = None
     """Color letters as the engine computes them right now
     (`serialize._current_colors`)."""
-    mana_value: float | None = None
-    """The engine's `CardState.mana_value`."""
     keywords: list[str] | None = None
     targets: list[str] | None = None
     target_refs: list[TargetRefView] | None = None
