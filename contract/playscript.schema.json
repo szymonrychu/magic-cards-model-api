@@ -16,6 +16,19 @@
           "title": "Answers",
           "type": "array"
         },
+        "discard": {
+          "default": null,
+          "oneOf": [
+            {
+              "const": "none",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/DiscardChoice"
+            }
+          ],
+          "title": "Discard"
+        },
         "kind": {
           "const": "activate",
           "title": "Kind",
@@ -64,9 +77,25 @@
       "title": "ActivateMove",
       "type": "object"
     },
+    "Affordable": {
+      "additionalProperties": false,
+      "description": "`{extra: n}` (O7): mana value <= untapped mana + `extra`. `extra` 0\nasks whether the card is affordable with untapped mana alone.",
+      "properties": {
+        "extra": {
+          "minimum": 0,
+          "title": "Extra",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "extra"
+      ],
+      "title": "Affordable",
+      "type": "object"
+    },
     "Answer": {
       "additionalProperties": false,
-      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; every other kind takes `pick`, `accept`,\n`to_graveyard` or `to_bottom`.",
+      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; `choice` (O6) is taken only by\n`CHOICE_DECISION_KINDS`; every other kind takes `pick`, `accept`,\n`to_graveyard`, `to_bottom`, `pile_one` or `players`.",
       "properties": {
         "accept": {
           "default": null,
@@ -87,12 +116,20 @@
           ],
           "title": "Amount"
         },
+        "choice": {
+          "default": null,
+          "pattern": "\\S",
+          "title": "Choice",
+          "type": "string"
+        },
         "decision": {
           "enum": [
             "assign_combat_damage",
             "choose_a_mode",
             "choose_a_quality",
             "choose_cards",
+            "choose_pile",
+            "choose_players",
             "choose_targets",
             "declare_attackers",
             "declare_blockers",
@@ -115,6 +152,24 @@
         "pick": {
           "$ref": "#/$defs/Pick",
           "default": null
+        },
+        "pile_one": {
+          "default": null,
+          "title": "Pile One",
+          "type": "boolean"
+        },
+        "players": {
+          "default": null,
+          "items": {
+            "enum": [
+              "me",
+              "opponent"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "title": "Players",
+          "type": "array"
         },
         "to_bottom": {
           "$ref": "#/$defs/Selector",
@@ -387,6 +442,41 @@
       "title": "CounterComparison",
       "type": "object"
     },
+    "DiscardChoice": {
+      "additionalProperties": false,
+      "description": "What an activation cost's own \"Discard a/N card(s)\" piece discards\n(CR 701.9): cards from the activating player's own HAND matching\n`select`, `count` of them (the cost's own number when left out), best\nfirst by `prefer`. Never the ability's own source - an off-zone\nactivation whose cost is \"Discard this card\" (CR 702.29a cycling,\nCR 702.53a transmute) has nothing here to name at all, since the source\nalready sits in hand and the cost spells the whole thing out; that case\nis `sacrifice`'s own \"source\" value, read the same way regardless of\nwhether the underlying CR 118.3 component is a sacrifice or a discard.",
+      "properties": {
+        "count": {
+          "default": null,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
+        }
+      },
+      "required": [
+        "select"
+      ],
+      "title": "DiscardChoice",
+      "type": "object"
+    },
     "InputCondition": {
       "additionalProperties": false,
       "description": "A fact only the agent knows: a declared input or `opposing_archetype`.",
@@ -431,8 +521,23 @@
     "LandCard": {
       "additionalProperties": false,
       "properties": {
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         }
       },
       "required": [
@@ -572,6 +677,12 @@
         },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         }
       },
       "required": [
@@ -647,6 +758,12 @@
         },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         }
       },
       "required": [
@@ -665,6 +782,10 @@
           "title": "Ability Text Has",
           "type": "string"
         },
+        "affordable": {
+          "$ref": "#/$defs/Affordable",
+          "default": null
+        },
         "colors_any": {
           "default": null,
           "items": {
@@ -679,6 +800,20 @@
           "$ref": "#/$defs/CounterComparison",
           "default": null
         },
+        "enters_any": {
+          "default": null,
+          "items": {
+            "enum": [
+              "untapped",
+              "tapped",
+              "untapped_if_paid"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Enters Any",
+          "type": "array"
+        },
         "keywords_any": {
           "default": null,
           "items": {
@@ -688,6 +823,11 @@
           "maxItems": 15,
           "title": "Keywords Any",
           "type": "array"
+        },
+        "land_face": {
+          "default": null,
+          "title": "Land Face",
+          "type": "boolean"
         },
         "mana_value": {
           "$ref": "#/$defs/Comparison",
@@ -706,6 +846,22 @@
         "power": {
           "$ref": "#/$defs/Comparison",
           "default": null
+        },
+        "searches_for_any": {
+          "default": null,
+          "items": {
+            "enum": [
+              "Plains",
+              "Island",
+              "Swamp",
+              "Mountain",
+              "Forest"
+            ],
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Searches For Any",
+          "type": "array"
         },
         "subtypes_any": {
           "default": null,
@@ -755,6 +911,21 @@
           "maxItems": 15,
           "title": "Types Any",
           "type": "array"
+        },
+        "unlocks": {
+          "default": null,
+          "title": "Unlocks",
+          "type": "boolean"
+        },
+        "unlocks_by_basic_search": {
+          "default": null,
+          "title": "Unlocks By Basic Search",
+          "type": "boolean"
+        },
+        "unlocks_by_search": {
+          "default": null,
+          "title": "Unlocks By Search",
+          "type": "boolean"
         }
       },
       "title": "Selector",
@@ -787,6 +958,41 @@
         "select"
       ],
       "title": "StackTopCondition",
+      "type": "object"
+    },
+    "TurnCondition": {
+      "additionalProperties": false,
+      "description": "The viewer's own `own_turns_taken` op `n`: how many of their own\nturns they have begun (`TurnMachine.own_turns_taken`, CR 500.7 extra\nturns included), so it reads my Nth turn on the play and on the draw\nalike, and an extra turn is its own turn - unlike `turn_number` (rounds\nof the table), it moves for one. 0 before the viewer's first turn,\npregame included - never null.",
+      "properties": {
+        "kind": {
+          "const": "turn",
+          "title": "Kind",
+          "type": "string"
+        },
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "op": {
+          "enum": [
+            ">=",
+            "<=",
+            "==",
+            "!=",
+            ">",
+            "<"
+          ],
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "op",
+        "n"
+      ],
+      "title": "TurnCondition",
       "type": "object"
     },
     "UntappedManaCondition": {
@@ -931,8 +1137,23 @@
     "ZonedCard": {
       "additionalProperties": false,
       "properties": {
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
         "select": {
           "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
         },
         "zone": {
           "enum": [
@@ -969,6 +1190,7 @@
             "land_drop_available": "#/$defs/LandDropCondition",
             "life": "#/$defs/LifeCondition",
             "stack_top": "#/$defs/StackTopCondition",
+            "turn": "#/$defs/TurnCondition",
             "untapped_mana": "#/$defs/UntappedManaCondition",
             "zone_size": "#/$defs/ZoneSizeCondition"
           },
@@ -992,6 +1214,9 @@
           },
           {
             "$ref": "#/$defs/UntappedManaCondition"
+          },
+          {
+            "$ref": "#/$defs/TurnCondition"
           },
           {
             "$ref": "#/$defs/InputCondition"
@@ -1088,6 +1313,7 @@
             "land_drop_available": "#/$defs/LandDropCondition",
             "life": "#/$defs/LifeCondition",
             "stack_top": "#/$defs/StackTopCondition",
+            "turn": "#/$defs/TurnCondition",
             "untapped_mana": "#/$defs/UntappedManaCondition",
             "zone_size": "#/$defs/ZoneSizeCondition"
           },
@@ -1111,6 +1337,9 @@
           },
           {
             "$ref": "#/$defs/UntappedManaCondition"
+          },
+          {
+            "$ref": "#/$defs/TurnCondition"
           },
           {
             "$ref": "#/$defs/InputCondition"

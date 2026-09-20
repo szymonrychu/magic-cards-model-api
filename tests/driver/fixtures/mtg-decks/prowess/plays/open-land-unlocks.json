@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "id": "open-land-unlocks",
+  "name": "Play a free untapped land that unlocks a hand card on turn 1-2",
+  "intent": "On turn 1 or 2, before anything else about the land drop is decided, play a land from hand that already enters untapped and makes some other hand card payable that is not payable now - a Mountain that lets Lightning Bolt or Monastery Swiftspear be cast. This never costs life and never asks the fetch machinery to run, so it goes first. Prefers a basic Mountain first, never a scarce fetch target; the spec's own second tier, a horizon land paying 1 life for its own colored mana (Fiery Islet's own '{T}, Pay 1 life: Add {U} or {R}.'), is restored right after it (item 3, 2026-09-14 review batch) - the sibling engine's own e1-land-helpers fix (magic-cards-model commit d8c0611) makes payability able to count a {T}+pay-life mana ability, and the api now surfaces it (hypothetical_facts commit 2b61382), so Fiery Islet's own unlocks reads true, confirmed empirically (prowess_islet_unlocks_preordain_t1). Only turns 1-2, only with the land drop still available, and only mine, precombat main, an empty stack. Does not ask about a shockland (open-shock-unlocks) or a fetch (open-fetch-unlocks); those pay something or need a search and rank below this.",
+  "priority": 74,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    }
+  ],
+  "false": [],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "unlocks": true,
+          "enters_any": [
+            "untapped"
+          ]
+        },
+        "prefer": [
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          },
+          {
+            "oracle_has": "Pay 1 life: Add"
+          }
+        ],
+        "ties": "any"
+      }
+    }
+  ],
+  "next": []
+}

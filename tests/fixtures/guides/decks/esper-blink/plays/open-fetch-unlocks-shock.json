@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "id": "open-fetch-unlocks-shock",
+  "name": "Crack a fetch on turn 1-2 for a shockland that unlocks a hand card, when no basic reaches it",
+  "intent": "Review item 3's fallback: once open-fetch-unlocks was narrowed to unlocks_by_basic_search (never cracking a fetch for nothing when the library holds no reachable basic), a hand fetch whose own search can reach an unlock only through a non-basic land - a shockland the library holds, no basic - needed a play of its own, or that unlock would go begging entirely. Plays a fetch from hand and cracks it for whatever library land unlocks some other hand card, paying life for both the fetch's own find (when it is itself a shock) and, if the found land also enters only untapped_if_paid, that land's own life cost too - strictly the most expensive of the fetch family, so it stands down whenever anything cheaper covers the same unlock: open-land-unlocks (a free untapped land), open-shock-unlocks (a hand shockland already reaches the unlock directly, one payment instead of two), and open-fetch-unlocks (the fetch can reach a basic instead, free). Same fetch-selection prefer as open-fetch-unlocks (a fetch whose other search target is Island, esper-blink's dead colour) and the same untapped-and-can-actually-reach-it restriction on the crack source, reading the broader unlocks_by_search since this play exists precisely for the fetch that cannot reach a basic. Its own choose_cards pick still prefers a basic first as a defensive no-op (the true condition already guarantees none is reachable, so this never actually resolves to one) then a shockland, paying life. Stands down at 7 life or less and once the library is down to 5 cards or fewer. Only turns 1-2, land drop available, mine, precombat main, empty stack. Stands down once two or more untapped mana is already up: the seat-admitted orchid-phantom-breaks-tron play (eldrazi-ramp only) needs that much to cast the two-mana flier, and this land-drop decision is judged before that turn's land is played, so on a genuine turn 1-2 board this key costs nothing here - untapped mana cannot reach 2 before the first or second land drop without a mana source this deck does not run.",
+  "priority": 66,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_search": true
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped_if_paid"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": "<=",
+      "n": 7
+    },
+    {
+      "kind": "zone_size",
+      "zone": "library",
+      "side": "me",
+      "op": "<=",
+      "n": 5
+    },
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 2
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "unlocks_by_search": true
+        },
+        "prefer": [
+          {
+            "searches_for_any": [
+              "Island"
+            ]
+          }
+        ],
+        "ties": "any"
+      }
+    },
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "tapped": false,
+          "unlocks_by_search": true
+        },
+        "ties": "any"
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "unlocks": true
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "supertypes_any": [
+                  "Basic"
+                ]
+              },
+              {
+                "oracle_has": "you may pay 2 life"
+              }
+            ],
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "pay_life",
+          "accept": true
+        }
+      ]
+    }
+  ],
+  "next": []
+}

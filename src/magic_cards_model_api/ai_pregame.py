@@ -91,6 +91,7 @@ from typing import Any
 from magic_cards_model.models import Game
 
 from . import ai_seat, opening
+from .repository import GameUnloadable
 from .store import store
 
 #: How long a bot seat must be *continuously gone* - no process, no live turn -
@@ -299,7 +300,13 @@ def watch(
                 if not game.in_pregame:
                     return
                 owed = obligation(game, ai_players)
-        except KeyError:  # the game was deleted out from under us
+        except (KeyError, GameUnloadable):
+            # KeyError: the game was deleted out from under us. GameUnloadable
+            # (repository.py's own module docstring): an engine schema bump
+            # left this row undecodable - a game nobody can read is a game
+            # nobody may act on either, so there is nothing left for this
+            # watcher to do. Either way, ending the watch cleanly is correct:
+            # left uncaught, this crashed the whole watcher thread instead.
             return
         now = time.monotonic()
         if owed is None:

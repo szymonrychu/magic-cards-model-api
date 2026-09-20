@@ -1,0 +1,106 @@
+{
+ "name": "45c aggro",
+ "meta_share": 2.002730996813837,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format and archetype, statistics_archetypes carries no winrate field, and this run's own fingerprint records winrate_vs_field as an empty map. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "A five-color domain aggro shell: Leyline of the Guildpact ('If this card is in your opening hand, you may begin the game with it on the battlefield. Each nonland permanent you control is all colors. Lands you control are every basic land type in addition to their other types.') turns every land into all five basic types for free, which discounts Scion of Draco to as little as {2} and grows Territorial Kavu ('power and toughness are each equal to the number of basic land types among lands you control') to a 5/5. Ragavan, Nimble Pilferer snowballs Treasures and free spells off combat damage, Phelia, Exuberant Shepherd blinks a permanent on attack, and Leyline Binding (flash, domain-discounted) is the removal suite. Stubborn Denial, Mystical Dispute and Consign to Memory protect the curve.",
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Ragavan on one, Territorial Kavu or a domain-discounted Scion of Draco on two or three, protected by Stubborn Denial and Mystical Dispute, is a faster clock than our turn four to six cascade.",
+  "key_cards": [
+   {
+    "card": "Ragavan, Nimble Pilferer",
+    "why": "a one-mana 2/1 that generates a Treasure and a free spell off combat damage, snowballing the mana and cards behind the rest of the curve"
+   },
+   {
+    "card": "Territorial Kavu",
+    "why": "power and toughness equal every basic land type among their lands, so Leyline of the Guildpact turns a two-drop into a 5/5"
+   },
+   {
+    "card": "Scion of Draco",
+    "why": "an artifact creature that costs less for each basic land type they control and grants their whole team a keyword, closing the game once the domain package is online"
+   },
+   {
+    "card": "Leyline Binding",
+    "why": "flash exile at domain-reduced cost, the removal that answers whatever we resolve after a cascade turn"
+   }
+  ]
+ },
+ "primary_gameplan": "Kill the domain-scaled bodies before they matter and destroy the two enchantments (Leyline of the Guildpact and, if resolved, Leyline Binding) that make the deck work: Dismember's -5/-5 kills Ragavan, Phelia and a full 5/5 Territorial Kavu outright, and Force of Vigor's free artifact/enchantment removal hits Scion of Draco (an Artifact Creature -- Dragon per resolve_cards) or either Leyline for no mana on their turn. Mystical Dispute is the third piece: the matchup is a counter war their maindeck Stubborn Denial and postboard Consign to Memory/Mystical Dispute force us into, same as every other blue-heavy row in this field.",
+ "pitfalls": [
+  "Racing instead of removing: their curve is a full turn ahead of our goldfish clock once Leyline of the Guildpact is online.",
+  "Committing Force of Vigor to a Leyline of the Guildpact instead of a resolved Leyline Binding when both are live -- the Binding is returning a permanent to us, which is the higher-value target.",
+  "Dismember does not kill a 4/6 Quantum Riddler; save it for the cheaper domain threats and let a cascade body trade with the Riddler instead."
+ ],
+ "stance": "counter",
+ "stance_rationale": "Ragavan (2/1) and Phelia, Exuberant Shepherd (2/2) die to a plain sweep, and domain-scaled Territorial Kavu tops out at 5/5 with all five basic land types online via Leyline of the Guildpact, so Dismember's -5/-5 (resolve_cards: '{B/P} can be paid with either {B} or 2 life') kills the whole curve except a 4/6 Quantum Riddler. Force of Vigor is the higher-leverage swap: Scion of Draco's type_line is 'Artifact Creature -- Dragon' and both Leyline Binding and Leyline of the Guildpact are Enchantments (resolve_cards), so Force of Vigor's 'Destroy up to two target artifacts and/or enchantments' hits their flying anthem body and either domain-enabling permanent for free on their turn, without costing us anything our own cascade needs (mv4, clear of the floor). Mystical Dispute (mv3, resolve_cards: {2}{U}, exactly on the cascade floor and never a collision) is added third because 10 of 10 pulled sideboards carry it plus Consign to Memory, so the matchup is decided by the same counter war every blue-heavy row in this field is.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Obsidian Charmaw",
+   "count": 2,
+   "why": "a two-for-one on our manabase (17 of 20 land slots nonbasic) that also presents a four-power flying body; 10/10 pulled lists",
+   "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+  },
+  {
+   "card": "Consign to Memory",
+   "count": 2,
+   "why": "counters the cascade trigger and, separately, our Endurance/Subtlety enters triggers; 10/10 pulled lists",
+   "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+  },
+  {
+   "card": "Mystical Dispute",
+   "count": 2,
+   "why": "one mana against our all-blue cascade spells and counter suite; 10/10 pulled lists",
+   "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+  },
+  {
+   "card": "Wrath of the Skies",
+   "count": 2,
+   "why": "X-cost energy sweeper for the board Living End resolves into; 9/10 pulled lists",
+   "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "2 Dismember",
+    "2 Force of Vigor",
+    "3 Mystical Dispute"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "2 Oliphaunt",
+    "2 Curator of Mysteries",
+    "1 Waker of Waves"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "2 Dismember",
+    "2 Force of Vigor",
+    "3 Mystical Dispute"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "2 Oliphaunt",
+    "2 Curator of Mysteries",
+    "1 Waker of Waves"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "2-3 lands with removal or Force of Negation; a pure goldfish hand loses to an unanswered Kavu or Scion of Draco.",
+  "goldfish_for": "Dismember or Force of Vigor before a cascade spell, aimed at whichever domain threat is down.",
+  "watch_for": "An early Leyline of the Guildpact means lands are already every basic type, so Kavu and Scion arrive at full size turn two.",
+  "posture": "disrupt_first",
+  "posture_why": "their curve is faster than our goldfish, so removing domain-scaled threats comes before racing them."
+ }
+}

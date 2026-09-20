@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "id": "fetch-untapped-shock",
-  "name": "Crack a fetch for an untapped shockland when no Mountain is up",
-  "intent": "Crack Arid Mesa, Flooded Strand or Marsh Flats on my precombat main for an untapped shockland carrying Mountain (red for Ragavan and Galvanic Discharge) when no untapped land of mine carries that type, paying 2 life because that colour is actually missing. If Mountain is up, fetch-untapped-shock-second-color checks Plains. It prefers a shock with Mountain, then a basic Mountain, then any basic, so with no such shock in reach it takes a free basic rather than paying for a colour that is up. Only at 8 life or more, because the fetch plus the shock costs 3 and this deck races, and only while a shock with Mountain is still in my library. With Mountain and Plains all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Arena of Glory's red, Dalkovan Encampment's white and mana creatures are not seen, and this can pay for a colour they already make; one play cannot say that any one of several colours is missing, hence one play per colour; and a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics.",
-  "priority": 60,
+  "name": "Crack a fetch for an untapped shockland when no Mountain is up, a red card is in hand and a second land is already down",
+  "intent": "Crack Arid Mesa, Flooded Strand or Marsh Flats on my precombat main for an untapped shockland carrying Mountain (red for Ragavan and Galvanic Discharge) when no untapped land of mine carries that type, paying 2 life because that colour is actually missing. Two conditions keep the 2 life from being spent on a colour the turn does not use. First, a red card must be in my hand: with no red card held, the shockland's colour buys nothing and the pick should take a free basic instead. Second, I must already control a second land besides the fetch itself. On one land only one spell gets cast, and a basic produces its colour just as well - a game on the draw paid 20 to 17 on turn one for a Sacred Foundry when the turn's only play was a one-mana white creature a basic Plains would have cast. From two lands on, the second colour is what lets a red card and a white card both be cast in the same turn, which is what makes the 2 life worth paying. If Mountain is up, fetch-untapped-shock-second-color checks Plains. It prefers a shock with Mountain, then a basic Mountain, then any basic, so with no such shock in reach it takes a free basic rather than paying for a colour that is up. Only at 8 life or more, because the fetch plus the shock costs 3 and this deck races, and only while a shock with Mountain is still in my library. With Mountain and Plains all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Arena of Glory's red, Dalkovan Encampment's white and mana creatures are not seen, and this can pay for a colour they already make; the vocabulary cannot join a card's mana value to the mana actually available, so 'a red card I could cast this turn' is approximated by a red card in hand beside a land count, and a red card too expensive to cast still counts; one play cannot say that any one of several colours is missing, hence one play per colour; and a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics.",
+  "priority": 65,
   "opposing_archetypes": [
     "*"
   ],
@@ -50,6 +50,30 @@
           "Mountain"
         ]
       }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "colors_any": [
+          "red"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 2,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
     }
   ],
   "false": [
@@ -80,6 +104,11 @@
           "Mountain"
         ]
       }
+    },
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
     }
   ],
   "moves": [

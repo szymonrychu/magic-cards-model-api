@@ -1943,6 +1943,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -2039,6 +2050,17 @@
             "additionalProperties": true,
             "title": "Body",
             "type": "object"
+          },
+          "drafted_at_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drafted At Seq"
           },
           "method": {
             "minLength": 1,
@@ -2231,7 +2253,7 @@
         "additionalProperties": false,
         "properties": {
           "effort": {
-            "default": "medium",
+            "default": "high",
             "enum": [
               "low",
               "medium",
@@ -2264,6 +2286,58 @@
           "model"
         ],
         "title": "AgentSettings",
+        "type": "object"
+      },
+      "AiReviewIn": {
+        "additionalProperties": false,
+        "description": "`POST /api/games/{game_id}/ai-review` - the post-game AI review\n(`audit.AI_REVIEW_ACTION`), a separate critique generated on Opus from a\nseat's own reflection plus the game's review record\n(`mtg_agent.driver.review`), never a seat's own account of what it did.\n\nShaped exactly like `ReflectionIn` and gated the same way (post-game\nonly, `uid` must open `player`'s own seat) - see that class's docstring\nfor why this is deliberately just one seat's credential and one block of\ntext, nothing structured.",
+        "properties": {
+          "player": {
+            "minLength": 1,
+            "title": "Player",
+            "type": "string"
+          },
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "uid": {
+            "minLength": 1,
+            "title": "Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player",
+          "uid",
+          "text"
+        ],
+        "title": "AiReviewIn",
+        "type": "object"
+      },
+      "AiReviewResponse": {
+        "description": "`POST .../ai-review`'s answer. No state view, for the same reason\n`ReflectionResponse` has none: this mutates no `Game`.",
+        "properties": {
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recorded",
+          "log_seq",
+          "player"
+        ],
+        "title": "AiReviewResponse",
         "type": "object"
       },
       "AlternativeCostView": {
@@ -2913,6 +2987,17 @@
       "CardFaceView": {
         "description": "One face of a double-faced card (`serialize._faces_view`), as printed.",
         "properties": {
+          "land_face": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Land Face"
+          },
           "mana_cost": {
             "anyOf": [
               {
@@ -4841,6 +4926,17 @@
             "title": "Pairs",
             "type": "array"
           },
+          "pile_one": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pile One"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -4887,6 +4983,13 @@
               }
             ],
             "title": "Top Order"
+          },
+          "usernames": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Usernames",
+            "type": "array"
           }
         },
         "required": [
@@ -5073,6 +5176,15 @@
             "title": "Board Read",
             "type": "string"
           },
+          "for_turn": {
+            "default": "current",
+            "enum": [
+              "current",
+              "next"
+            ],
+            "title": "For Turn",
+            "type": "string"
+          },
           "my_role": {
             "minLength": 1,
             "title": "My Role",
@@ -5114,6 +5226,15 @@
           "declared": {
             "title": "Declared",
             "type": "boolean"
+          },
+          "for_turn": {
+            "default": "current",
+            "enum": [
+              "current",
+              "next"
+            ],
+            "title": "For Turn",
+            "type": "string"
           },
           "log_seq": {
             "title": "Log Seq",
@@ -5826,6 +5947,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -6025,6 +6157,31 @@
           "protocol_version"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "HypotheticalFactsResponse": {
+        "description": "`GET .../playscripts/hypothetical-facts`'s response\n(`hypothetical_facts.build_hypothetical_facts`) - O4/O7's engine-computed\nper-card facts, keyed by card id (a string: JSON has no UUID keys).\n`cards[id]` is `{\"enters\"?: str, \"unlocks\"?: bool,\n\"unlocks_by_search\"?: bool, \"unlocks_by_basic_search\"?: bool}` - only the\nfacts that card actually has, the same shape `selectors.Hypo` reads.\n`notices` is every notice the engine\nraised while working any of them out (an unread enters-tapped line, a\nlethal optional payment, an unresolved trigger); it is not tied to one\ncard, since `selectors.matches` already applies the \"any notice fails\n`unlocks` closed\" rule per pair before this response is built - it is\nhere for a caller that wants to see why.",
+        "properties": {
+          "cards": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Cards",
+            "type": "object"
+          },
+          "notices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cards"
+        ],
+        "title": "HypotheticalFactsResponse",
         "type": "object"
       },
       "ImproviseCostView": {
@@ -7011,6 +7168,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -7450,6 +7618,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -7510,6 +7689,7 @@
           },
           "username": {
             "minLength": 1,
+            "pattern": "\\A[^\\x00-\\x1f\\x7f]+\\z",
             "title": "Username",
             "type": "string"
           }
@@ -7609,16 +7789,6 @@
       "NewUiPlayer": {
         "additionalProperties": false,
         "properties": {
-          "agent": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentSettings"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "ai": {
             "default": false,
             "title": "Ai",
@@ -7629,16 +7799,6 @@
             "title": "Buddy",
             "type": "boolean"
           },
-          "buddy_agent": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentSettings"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "decklist_text": {
             "minLength": 1,
             "title": "Decklist Text",
@@ -7646,6 +7806,7 @@
           },
           "username": {
             "minLength": 1,
+            "pattern": "\\A[^\\x00-\\x1f\\x7f]+\\z",
             "title": "Username",
             "type": "string"
           }
@@ -8480,6 +8641,17 @@
             ],
             "title": "Turn Number"
           },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          },
           "winner": {
             "anyOf": [
               {
@@ -9039,6 +9211,17 @@
             "title": "Maximum Hand Size",
             "type": "integer"
           },
+          "own_turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Own Turns Taken"
+          },
           "sideboard_count": {
             "title": "Sideboard Count",
             "type": "integer"
@@ -9376,6 +9559,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -9814,6 +10008,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -10316,6 +10521,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -10842,6 +11058,16 @@
               }
             ],
             "title": "Guides Revision"
+          },
+          "invoked_via": {
+            "default": "mcp",
+            "enum": [
+              "mcp",
+              "cli",
+              "armed"
+            ],
+            "title": "Invoked Via",
+            "type": "string"
           },
           "moves_done": {
             "anyOf": [
@@ -11571,6 +11797,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -12626,6 +12863,17 @@
               }
             ],
             "title": "Turn Number"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
           },
           "winner": {
             "anyOf": [
@@ -14548,7 +14796,7 @@
     },
     "/api/games/{game_id}/advice": {
       "post": {
-        "description": "Record one action an advisor thinks `req.player` should take\n(`schemas.AdviceIn`), and record nothing else.\n\n**This mutates no `Game`, exactly like `declare_plan`** - which is the\nprior art this is modelled on, down to the shape of this docstring. It\ncalls `audit.record` and nothing else: no `store.replace`, no\ncompare-and-swap, no version bump. A proposal is a statement *about* the\ngame, and the whole point of advise mode is that the advisor never moves\nit; a route that quietly committed one would hand a read-only credential\nthe authority its own gate exists to deny.\n\n**The summary is derived here, not taken from the caller.**\n`records.advice_summary` reads `req.body` against the live game - card\nids resolved to names, targets and cost spelled out - so what the human\nreads can never disagree with the request it describes. `schemas.AdviceIn`\nhas no `summary` field at all, so an advisor cannot try.\n\n**`based_on_seq` is read immediately before the row is written, under no\nlock.** A command landing in between makes this proposal born-stale, and\nthat is the safe direction: the human's own action carries its own\n`expected_seq` (`records.require_current_board`) and is refused against a\nboard that moved, so a stale proposal costs a refusal rather than a wrong\nmove. Taking the game's lock here would instead let a buddy pod's\nthinking block the seat it is advising.\n\n`legal_actions_before` is computed the same way every acting route\ncomputes it, for `req.player` - what *else* was legal at the moment the\nadvice was given, which is the comparison a retrospective needs and\ncannot reconstruct afterwards. It is hidden information (it names cards\nin that player's hand), which is why it rides in the row rather than the\nresponse, and `visibility.redact_log_entry` keeps it - and the whole\nproposal - out of the opponent's read of the same log.\n\nAuthorised on whoever may already *see* `req.player`'s hand: this game's\nadvisor for that seat (`visibility.resolve_viewer` resolves an advisor\nuid to its human's username), the seat itself, or the admin key. A\nproposal names hidden information, so nobody else may write one into that\nseat's name - the same rule, and the same 404, `declare_plan` enforces.",
+        "description": "Record one action an advisor thinks `req.player` should take\n(`schemas.AdviceIn`), and record nothing else.\n\n**This mutates no `Game`, exactly like `declare_plan`** - which is the\nprior art this is modelled on, down to the shape of this docstring. It\ncalls `audit.record` and nothing else: no `store.replace`, no\ncompare-and-swap, no version bump. A proposal is a statement *about* the\ngame, and the whole point of advise mode is that the advisor never moves\nit; a route that quietly committed one would hand a read-only credential\nthe authority its own gate exists to deny.\n\n**The summary is derived here, not taken from the caller.**\n`records.advice_summary` reads `req.body` against the live game - card\nids resolved to names, targets and cost spelled out - so what the human\nreads can never disagree with the request it describes. `schemas.AdviceIn`\nhas no `summary` field at all, so an advisor cannot try.\n\n**`based_on_seq` is read immediately before the row is written, under no\nlock.** A command landing in between makes this proposal born-stale, and\nthat is the safe direction: the human's own action carries its own\n`expected_seq` (`records.require_current_board`) and is refused against a\nboard that moved, so a stale proposal costs a refusal rather than a wrong\nmove. Taking the game's lock here would instead let a buddy pod's\nthinking block the seat it is advising.\n\n`legal_actions_before` is computed the same way every acting route\ncomputes it, for `req.player` - what *else* was legal at the moment the\nadvice was given, which is the comparison a retrospective needs and\ncannot reconstruct afterwards. It is hidden information (it names cards\nin that player's hand), which is why it rides in the row rather than the\nresponse, and `visibility.redact_log_entry` keeps it - and the whole\nproposal - out of the opponent's read of the same log.\n\nAuthorised on whoever may already *see* `req.player`'s hand: this game's\nadvisor for that seat (`visibility.resolve_viewer` resolves an advisor\nuid to its human's username), the seat itself, or the admin key. A\nproposal names hidden information, so nobody else may write one into that\nseat's name - the same rule, and the same 404, `declare_plan` enforces.\n\n`req.drafted_at_seq` (S2 A6) rides straight into `detail` unexamined - it\nis a metrics-only marker of when a staged draft was captured, and nothing\nhere reads it back.",
         "operationId": "record_advice_api_games__game_id__advice_post",
         "parameters": [
           {
@@ -14792,6 +15040,56 @@
           }
         },
         "summary": "Get Affordances"
+      }
+    },
+    "/api/games/{game_id}/ai-review": {
+      "post": {
+        "description": "File the post-game AI review (`mtg_agent.driver.review`, run on Opus\nfrom a seat's own reflection plus the game's review record) -\n`audit.AI_REVIEW_ACTION`, a row entirely separate from\n`audit.REFLECTION_ACTION`.\n\nMirrors `declare_reflection` exactly: same gate (post-game only, against\n`store.archived` so a soft-deleted lobby game still accepts one), same\nuid-owns-seat check, same \"mutates no `Game`\" shape. See that route's\ndocstring for the reasoning; nothing here differs beyond which action\nthe row is filed under and whose words it carries.\n\n**One check `declare_reflection` does not need: `req.player` must be a\nregistered AI seat of this game (`archived.ai_players`).** A reflection\nis legitimately a human's own words about their own game; an AI review\nis never that - it is only ever the output of an AI seat's own driver\ncritiquing that seat's play, so a human's own uid (which genuinely opens\ntheir own seat, and would otherwise pass the check above) must not be\nable to file one in anybody's name. Without this a human player could\nforge a review of themselves or of their opponent, since the uid check\nalone only proves \"this credential speaks for this seat\", not \"this\nseat is the kind that ever calls this route\" - the same distinction\n`AiReviewIn`'s docstring draws in words.",
+        "operationId": "declare_ai_review_api_games__game_id__ai_review_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiReviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Declare Ai Review"
       }
     },
     "/api/games/{game_id}/cards": {
@@ -15241,7 +15539,7 @@
     },
     "/api/games/{game_id}/plan": {
       "post": {
-        "description": "Declare, before acting, how this seat reads the turn it is about to\ntake: what it sees, its own role in the matchup, what it intends to do,\nand what it expects the opponent to do and why (`schemas.DeclarePlanIn`).\n\n**This mutates no `Game`.** It calls `audit.record` and nothing else - no\n`store.replace`, no compare-and-swap, no version bump - because a\ndeclaration is a statement *about* the game rather than a move in it. A\nroute that quietly committed one would make every plan something the\nopponent's client has to notice, and would put a CAS conflict in the way\nof an agent that is only trying to think out loud.\n\n`audit.record` stamps the game's own turn and step from the live game\n(its own docstring), and that stamping is what makes the post-game\npairing in `review.py` possible: the declaration and the opponent's\nlater rows are ordered by the same `seq`, from the same ledger, with no\nsecond clock to reconcile. `turns_taken` is written into the detail\nbeside them because `turn_number` counts rounds of the table rather than\nplayer-turns - see `records.require_plan`.\n\nAuthorised on the seat's own uid, carried in the body: a plan is hidden\ninformation about how a seat means to play, so nobody may write one into\nanother seat's name. An unrecognised uid, or one that opens a different\nseat, is a 404 - the same answer every other seat-scoped route gives,\nand one that does not confirm which uids exist.\n\nNothing stops a human seat declaring a plan; the gate only *requires* one\nof an agent seat (`records.require_plan`).",
+        "description": "Declare, before acting, how this seat reads the turn it is about to\ntake: what it sees, its own role in the matchup, what it intends to do,\nand what it expects the opponent to do and why (`schemas.DeclarePlanIn`).\n\n**This mutates no `Game`.** It calls `audit.record` and nothing else - no\n`store.replace`, no compare-and-swap, no version bump - because a\ndeclaration is a statement *about* the game rather than a move in it. A\nroute that quietly committed one would make every plan something the\nopponent's client has to notice, and would put a CAS conflict in the way\nof an agent that is only trying to think out loud.\n\n`audit.record` stamps the game's own turn and step from the live game\n(its own docstring), and that stamping is what makes the post-game\npairing in `review.py` possible: the declaration and the opponent's\nlater rows are ordered by the same `seq`, from the same ledger, with no\nsecond clock to reconcile. `turns_taken` is written into the detail\nbeside them because `turn_number` counts rounds of the table rather than\nplayer-turns - see `records.require_plan`.\n\nAuthorised on the seat's own uid, carried in the body: a plan is hidden\ninformation about how a seat means to play, so nobody may write one into\nanother seat's name. An unrecognised uid, or one that opens a different\nseat, is a 404 - the same answer every other seat-scoped route gives,\nand one that does not confirm which uids exist.\n\nNothing stops a human seat declaring a plan; the gate only *requires* one\nof an agent seat (`records.require_plan`).\n\n**`for_turn: \"next\"` plans ahead** (`schemas.DeclarePlanIn.for_turn`):\ncalled while it is NOT this seat's own turn, the row is written against\nthe turn `records.next_own_turn` computes - this seat's own next turn,\nCR 500.7 extra turns skipped over exactly as a real game would skip\nthem - rather than the turn under way right now. `declared_turns_taken`\nrecords what `turns_taken` stood at the moment of declaring, beside the\n`turns_taken` the row is actually filed under, so the ledger shows both\nwithout ambiguity. `for_turn: \"next\"` while this seat's own turn is\nalready in progress is refused - `records.OwnTurnInProgress`, 409.",
         "operationId": "declare_plan_api_games__game_id__plan_post",
         "parameters": [
           {
@@ -15403,6 +15701,62 @@
           }
         },
         "summary": "Set Mana Pool"
+      }
+    },
+    "/api/games/{game_id}/playscripts/hypothetical-facts": {
+      "get": {
+        "description": "O4's `enters_any` and O7's `unlocks`/`unlocks_by_search`/\n`unlocks_by_basic_search`: everything a play's selectors can ask about\n`uid`'s own hand and library lands and cards, computed once against the\nlive game (`hypothetical_facts.build_hypothetical_facts`) rather than\nread off a polled view.\n\nOnly a real seat may ask - `uid` must resolve to one of this game's own\nplayers, never the admin key and never nobody, since a fact here is\nalways \"what would happen for this specific player\", and every engine\ncall this makes (`predict_enters`/`payability`/`payability_matrix`, in\n`hypothetical_facts.py`) already refuses a card outside that player's own\nhand or library, so nothing about an opponent's cards is ever computed\nor returned - not merely redacted after the fact, as `get_game`'s view\nis, but never asked about in the first place.\n\nA pending `choose_cards` decision for `uid` itself (a fetch's own search,\nCR 701.23a) gets one thing more: `enters`/`unlocks` facts for every id\nthat decision's own `cards` offers, library lands included - never for\nany other library card, and never anything about the library's order.\nRead straight off the live paused command (`store.paused_command`, the\nsame source `serialize.state_view`'s own `pending_decision` reads) rather\nthan off a fetched view, so this never asks for a decision belonging to\nanother player or of any other kind. With no such decision pending, or\none pending for someone else, this withholds every library card's facts\nexactly as before.\n\nMeant to be called sparingly: `conditions.needs_hypothetical` tells a\ncaller when a play's conditions need this at all, and the runtime caches\nthe answer until the board changes rather than calling this once per\njudgement of every script it checks.",
+        "operationId": "get_hypothetical_facts_api_games__game_id__playscripts_hypothetical_facts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HypotheticalFactsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Hypothetical Facts"
       }
     },
     "/api/games/{game_id}/pregame/mulligan": {

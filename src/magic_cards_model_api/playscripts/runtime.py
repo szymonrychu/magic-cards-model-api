@@ -64,6 +64,7 @@ from ..seatkit import (
     AUTOPASS_STEPS,
     MAX_WAIT_SECONDS,
     POLL_SECONDS,
+    HypotheticalFactsUnavailable,
     Seat,
     _refused,
     _unknown_outcome,
@@ -73,14 +74,15 @@ from ..seatkit import (
 )
 from . import conditions
 from .inputs import BUILTIN_INPUT, input_catalog
-from .schema import AMOUNT_DECISION_KINDS, WILDCARD, Play
-from .selectors import Present, matches
+from .schema import AMOUNT_DECISION_KINDS, CHOICE_DECISION_KINDS, WILDCARD, Play
+from .selectors import Hypo, Present, matches
 
 #: The tool parameter each decision kind is answered on, by kind value - the
 #: fallback for a pending decision that does not name its `answer_field`.
 ANSWER_FIELDS = {kind.value: name for kind, name in TOOL_FIELD_FOR_KIND.items()}
 #: How many permanents an activation cost's "Sacrifice <n> ..." piece names.
 SACRIFICE_NUMBER = re.compile(r"\bsacrifice (an?|another|one|two|three|four|five|\d+)\b", re.I)
+DISCARD_NUMBER = re.compile(r"\bdiscard (an?|another|one|two|three|four|five|\d+)\b", re.I)
 NUMBER_WORDS = {"a": 1, "an": 1, "another": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
 MAX_SCRIPTS_PER_RUN = 3
@@ -108,6 +110,17 @@ WHOSE_TURN_FOR_AUTOPASS = {"mine": "mine", "theirs": "opponent", "either": "any"
 EMPTY_REASONING = (
     "run_script needs your own reasoning: every move it makes is sent with it, "
     "and an agent seat's action without one is refused"
+)
+
+#: The reasoning `script_tools._call_template`'s `call` string leaves for the
+#: seat to fill in - a run sent with this exact text still in it never wrote
+#: its own reasoning, and is refused the same as an empty one (S1 review
+#: finding 7).
+REASONING_PLACEHOLDER = "<say why>"
+PLACEHOLDER_REASONING = (
+    f"run_script needs your own reasoning, not the call template's placeholder "
+    f"text: replace {REASONING_PLACEHOLDER!r} with why you are running this "
+    "script now"
 )
 
 
@@ -271,6 +284,37 @@ class _Run:
         )
 
 
+class _HypotheticalCache:
+    """O4/O7's engine-computed facts (`Seat.hypothetical_facts`), fetched at
+    most once per distinct board - "call it once per judgement... cache per
+    (turns_taken, step, state seq)" (O7).
+
+    `turns_taken` (the engine's per-turn counter that moves on an extra turn
+    too, CR 500.7 - see `schema.TurnCondition`'s docstring for how it differs
+    from the view's own `turn_number`) is not a field `GameStateView` carries,
+    so there is no cheaper way to name "has the board moved" than reading the
+    view itself: this keys on `turn_number` and `step` for a readable cache
+    key, plus a hash of the whole fetched view standing in for "state seq" -
+    any mutation changes some field of it, so the hash changes with it, which
+    is the actual invalidation guarantee this cache needs. `turn_number`/
+    `step` are kept alongside the hash only because they make a hit or miss
+    legible in a debugger; the hash alone would already be correct.
+    """
+
+    def __init__(self) -> None:
+        self._fingerprint: tuple[Any, ...] | None = None
+        self._facts: dict[str, Any] = {}
+
+    def get(self, seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
+        digest = hashlib.sha256(json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()
+        fingerprint = (state.get("turn_number"), state.get("step"), digest)
+        if fingerprint != self._fingerprint:
+            fetched = seat.hypothetical_facts()
+            self._facts = dict(fetched.get("cards") or {}) if isinstance(fetched, dict) else {}
+            self._fingerprint = fingerprint
+        return self._facts
+
+
 @dataclass
 class _Context:
     seat: Seat
@@ -281,9 +325,18 @@ class _Context:
     deadline: float
     poll_seconds: float
     call_started: float
+    #: Who started this run - `"mcp"` (`mcp.run_script`) or `"cli"`
+    #: (`mcp-seat script run`) - carried onto both the start and the finish
+    #: row (`_run_fields`) so a seat, and `eval_report.py`, can tell its own
+    #: runs apart from one an operator staged from the CLI.
+    invoked_via: str = "mcp"
     #: The caller going away (an MCP call cancelled by an interrupt): read
     #: like the time cap, so a run waiting on the board stops at once.
     should_stop: Callable[[], bool] | None = None
+    #: O4/O7's per-run cache - see `_HypotheticalCache`. One per `_Context`,
+    #: so every condition check in one run (and its chained `next` plays)
+    #: shares it rather than re-fetching for an unmoved board.
+    hypothetical: _HypotheticalCache = field(default_factory=_HypotheticalCache)
 
     @property
     def me(self) -> str:
@@ -318,11 +371,17 @@ def run_script(
     max_seconds: float = RUN_CAP_SECONDS,
     poll_seconds: float = POLL_SECONDS,
     should_stop: Callable[[], bool] | None = None,
+    invoked_via: str = "mcp",
 ) -> RunResult:
     """Run one registered script (and whatever single `next` play applies
     after it) for `seat`. `inputs` is passed to every condition check in the
     chain; `declared_inputs` is the deck's `inputs.json` list, which says
-    which inputs are required. Advise seats get `Exit.ADVISED`."""
+    which inputs are required. Advise seats get `Exit.ADVISED`.
+
+    `invoked_via` is who started this run - `"mcp"`, `"cli"` or `"armed"`
+    (`playscripts.arming.arm`, firing a script on its own between a seat's
+    own moves) - carried onto the start and finish rows this run posts
+    (`schemas.ScriptRunIn.invoked_via`, required there)."""
     if not reasoning or not reasoning.strip():
         return RunResult(
             True,
@@ -330,6 +389,16 @@ def run_script(
                 Exit.REFUSED,
                 script_id=script_id,
                 refusal=EMPTY_REASONING,
+                refusal_source="runner",
+            ),
+        )
+    if reasoning.strip() == REASONING_PLACEHOLDER:
+        return RunResult(
+            True,
+            ScriptExit(
+                Exit.REFUSED,
+                script_id=script_id,
+                refusal=PLACEHOLDER_REASONING,
                 refusal_source="runner",
             ),
         )
@@ -355,6 +424,7 @@ def run_script(
         poll_seconds=poll_seconds,
         call_started=now,
         should_stop=should_stop,
+        invoked_via=invoked_via,
     )
     if resume:
         return _resume(ctx, script_id, resume)
@@ -393,11 +463,17 @@ def _resume(ctx: _Context, script_id: str, token: dict[str, Any]) -> RunResult:
         return RunResult(True, play)
     if run.started or run.move_index > 0:
         state = ctx.seat.fetch_state()
-        if (state.get("turn_number"), state.get("step")) != (run.turn, run.step):
+        # `turns_taken`, not `turn_number` (CR 500's own round counter,
+        # shared by both seats' turns in one round) - the same identity
+        # `_start`/`_guarded` stamp `run.turn` from below, and the one
+        # `records.py`'s own module docstring names as the rule for a
+        # per-turn identity check: `turn_number` would let this resume
+        # think the board had not moved across a same-round turn change.
+        if (state.get("turns_taken"), state.get("step")) != (run.turn, run.step):
             moved = _runner_refusal(
                 run.script_id,
                 f"cannot resume: the run was at turn {run.turn}, {run.step} and the game is "
-                f"now at turn {state.get('turn_number')}, {state.get('step')}",
+                f"now at turn {state.get('turns_taken')}, {state.get('step')}",
             )
             return _end(ctx, run, play, moved)
     return _guarded(ctx, run, play, wait=True)
@@ -409,8 +485,16 @@ def _guarded(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> R
     except _Unfinished:
         state = ctx.seat.fetch_state()
         if not run.started:
-            run.turn, run.step = state.get("turn_number"), state.get("step")
+            run.turn, run.step = state.get("turns_taken"), state.get("step")
         return RunResult(False, None, resume=run.token(ctx.elapsed_ms()), state=state)
+    except HypotheticalFactsUnavailable as exc:
+        # D2: wherever inside `_drive` a hypothetical-facts fetch failed
+        # (`_evaluate`, a move's own `ctx.hypothetical.get`, an answer's),
+        # the run ends here rather than an uncaught exception escaping past
+        # this point - `_end` posts the run's finish (and its start, if it
+        # never got one), so a run `_start` already recorded is never left
+        # open just because facts it needed later were unavailable.
+        return _end(ctx, run, play, ScriptExit(Exit.UNFORESEEN, stop_reason=str(exc)))
 
 
 # -- the lifecycle -------------------------------------------------------------
@@ -657,7 +741,9 @@ def _send_move(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | N
             )
         run.move_index, run.answer_index = index + 1, 0
         return None
-    built = _move_request(move, state, ctx.me, reasoning)
+    hypo = ctx.hypothetical.get(ctx.seat, state) if conditions.needs_hypothetical(move) else None
+    mana = conditions.untapped_mana(state, ctx.me)
+    built = _move_request(move, state, ctx.me, reasoning, hypo=hypo, mana=mana)
     if isinstance(built, ScriptExit):
         return built
     path, body = built
@@ -751,7 +837,13 @@ def _answer(
         card.get("type_line") is None for card in _decision_cards(pending, state, ctx.me)
     ):
         view = seat.fetch_state(include_contents=True)
-    body = decide_body(answers[found], pending, view, ctx.me, reasoning)
+    hypo = (
+        ctx.hypothetical.get(ctx.seat, view)
+        if conditions.needs_hypothetical(answers[found])
+        else None
+    )
+    mana = conditions.untapped_mana(view, ctx.me)
+    body = decide_body(answers[found], pending, view, ctx.me, reasoning, hypo=hypo, mana=mana)
     if isinstance(body, ScriptExit):
         return body
     run.answer_index = found + 1
@@ -878,19 +970,29 @@ def _missing_plan(outcome: Any) -> bool:
 
 
 def _move_request(
-    move: dict[str, Any], state: dict[str, Any], me: str, reasoning: str
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
 ) -> tuple[str, dict[str, Any]] | ScriptExit:
     kind = move["kind"]
     if kind == "activate":
-        return _activate_request(move, state, me, reasoning)
+        return _activate_request(move, state, me, reasoning, hypo=hypo, mana=mana)
     if kind == "cast":
-        body = cast_body(move, state, me, reasoning)
+        body = cast_body(move, state, me, reasoning, hypo=hypo, mana=mana)
         return body if isinstance(body, ScriptExit) else ("actions/cast", body)
     chosen = _pick(
         _zone_cards(state, "hand", me),
         move["card"]["select"],
         "the land to play",
+        move["card"].get("prefer"),
         present=conditions.presence(state, me),
+        ties=move["card"].get("ties"),
+        hypo=hypo,
+        mana=mana,
     )
     if isinstance(chosen, ScriptExit):
         return chosen
@@ -898,7 +1000,13 @@ def _move_request(
 
 
 def _activate_request(
-    move: dict[str, Any], state: dict[str, Any], me: str, reasoning: str
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
 ) -> tuple[str, dict[str, Any]] | ScriptExit:
     phrase = move["ability_text_has"]
     candidates = [
@@ -907,7 +1015,16 @@ def _activate_request(
         if _ability(card, phrase) is not None
     ]
     present = conditions.presence(state, me)
-    chosen = _pick(candidates, move["source"]["select"], "the source to activate", present=present)
+    chosen = _pick(
+        candidates,
+        move["source"]["select"],
+        "the source to activate",
+        move["source"].get("prefer"),
+        present=present,
+        ties=move["source"].get("ties"),
+        hypo=hypo,
+        mana=mana,
+    )
     if isinstance(chosen, ScriptExit):
         return chosen
     source = chosen[0]
@@ -918,14 +1035,32 @@ def _activate_request(
         "ability_index": ability.get("index"),
         "reasoning": reasoning,
     }
-    targets = _targets(move, state, me)
+    targets = _targets(move, state, me, hypo=hypo, mana=mana)
     if isinstance(targets, ScriptExit):
         return targets
     if targets:
         body["targets"] = targets
     sacrifice = move.get("sacrifice")
     if sacrifice == "source":
-        body["sacrificing"] = [source["id"]]
+        # "source" names the ability's own source as what its cost spends.
+        # Almost always a literal CR 701.21 sacrifice (or, when the cost text
+        # says "discard" instead, a discard - CR 118.3's `discarding`, never
+        # sacrificing what was never on the battlefield to begin with). But
+        # an off-zone cycling/unearth/transmute family (CR 702.29a/702.84a/
+        # 702.53a) spells its whole ability out as "[cost], Discard this
+        # card: ..." with nothing left to name - `off_zone_activation`
+        # refuses any `sacrificing`/`discarding` given at all for one of
+        # those, so "this card" in the ability's own cost text (never a
+        # phrase a battlefield "Sacrifice/Discard a/another ..." cost uses,
+        # which always names a selector instead) means send neither.
+        cost_text = str(ability.get("cost") or "").casefold()
+        if "this card" not in cost_text:
+            key = (
+                "discarding"
+                if "discard" in cost_text and "sacrifice" not in cost_text
+                else "sacrificing"
+            )
+            body[key] = [source["id"]]
     elif isinstance(sacrifice, dict):
         sacrificed = _pick(
             _zone_cards(state, "battlefield", me),
@@ -934,10 +1069,34 @@ def _activate_request(
             sacrifice.get("prefer"),
             sacrifice.get("count") or sacrifice_count(ability),
             present=present,
+            ties=sacrifice.get("ties"),
+            hypo=hypo,
+            mana=mana,
         )
         if isinstance(sacrificed, ScriptExit):
             return sacrificed
         body["sacrificing"] = [card["id"] for card in sacrificed]
+    discard = move.get("discard")
+    if isinstance(discard, dict):
+        # Unlike `sacrifice`, there is no "source" keyword to branch on here
+        # - CR 701.9's discard only ever reads from hand, so a `discard`
+        # dict always means "a hand card chosen by selector", never the
+        # ability's own source (that case, "Discard this card", is
+        # `sacrifice`'s own "source" value, handled above).
+        discarded = _pick(
+            _zone_cards(state, "hand", me),
+            discard["select"],
+            "the card to discard",
+            discard.get("prefer"),
+            discard.get("count") or discard_count(ability),
+            present=present,
+            ties=discard.get("ties"),
+            hypo=hypo,
+            mana=mana,
+        )
+        if isinstance(discarded, ScriptExit):
+            return discarded
+        body["discarding"] = [card["id"] for card in discarded]
     # B7-10 (B5-05 variant): a play never names its own mana sources, so the
     # request names none and lets the engine auto-pay (CR 601.2g) - matching
     # the CLI/MCP semantics of #32. Naming every untapped source here made an
@@ -955,7 +1114,25 @@ def sacrifice_count(ability: dict[str, Any]) -> int:
     return int(word) if word.isdigit() else NUMBER_WORDS[word]
 
 
-def _targets(move: dict[str, Any], state: dict[str, Any], me: str) -> list[str] | ScriptExit:
+def discard_count(ability: dict[str, Any]) -> int:
+    """How many cards the ability's cost discards: the number its
+    "Discard <n> ..." piece names (CR 701.9), one for `a`/`another` or no
+    such piece."""
+    found = DISCARD_NUMBER.search(str(ability.get("cost") or ""))
+    if found is None:
+        return 1
+    word = found.group(1).lower()
+    return int(word) if word.isdigit() else NUMBER_WORDS[word]
+
+
+def _targets(
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> list[str] | ScriptExit:
     """The route's `targets` for a move, in order: a card target is the id
     its selector picks on its side of the battlefield and stack, a player
     target that player's name. Both use `_pick`'s rules."""
@@ -974,7 +1151,14 @@ def _targets(move: dict[str, Any], state: dict[str, Any], me: str) -> list[str] 
                 if _on_side(card.get("controller"), target["side"], me)
             ]
             select = target["select"]
-        picked = _pick(pool, select, f"target {index + 1}", present=conditions.presence(state, me))
+        picked = _pick(
+            pool,
+            select,
+            f"target {index + 1}",
+            present=conditions.presence(state, me),
+            hypo=hypo,
+            mana=mana,
+        )
         if isinstance(picked, ScriptExit):
             return picked
         chosen.append(picked[0]["id"])
@@ -982,7 +1166,13 @@ def _targets(move: dict[str, Any], state: dict[str, Any], me: str) -> list[str] 
 
 
 def cast_body(
-    move: dict[str, Any], state: dict[str, Any], me: str, reasoning: str
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
 ) -> dict[str, Any] | ScriptExit:
     """`POST .../actions/cast`'s body for a `cast` move, read off the view.
     A `cost` other than `normal` is the alternative cost it is announced
@@ -993,11 +1183,15 @@ def cast_body(
         _zone_cards(state, zone, me),
         move["card"]["select"],
         "the card to cast",
+        move["card"].get("prefer"),
         present=conditions.presence(state, me),
+        ties=move["card"].get("ties"),
+        hypo=hypo,
+        mana=mana,
     )
     if isinstance(chosen, ScriptExit):
         return chosen
-    targets = _targets(move, state, me)
+    targets = _targets(move, state, me, hypo=hypo, mana=mana)
     if isinstance(targets, ScriptExit):
         return targets
     body: dict[str, Any] = {
@@ -1021,6 +1215,9 @@ def decide_body(
     state: dict[str, Any],
     me: str,
     reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
 ) -> dict[str, Any] | ScriptExit:
     """`POST .../decide`'s body for one answers item, carrying the pending
     decision's own `generation`."""
@@ -1031,6 +1228,22 @@ def decide_body(
     if kind in AMOUNT_DECISION_KINDS and "amount" in item:
         answer_field = pending.get("answer_field") or ANSWER_FIELDS[kind]
         body[answer_field] = pending.get("amount") if item["amount"] == "max" else item["amount"]
+        return body
+    if kind in CHOICE_DECISION_KINDS and "choice" in item:
+        # O6: choose_a_mode is always fully enumerated (`pending.options`);
+        # choose_a_quality sometimes is not (a creature type, a card name -
+        # CR 614.12a's open questions), and an empty `options` there means
+        # any legal value is accepted, left to the engine to judge.
+        options = pending.get("options") or []
+        if options and item["choice"] not in options:
+            return ScriptExit(
+                Exit.UNFORESEEN,
+                stop_reason=(
+                    f"{item['choice']!r} is not among the offered options for the "
+                    f"{kind} decision ({', '.join(options)})"
+                ),
+            )
+        body["choice"] = item["choice"]
         return body
     cards = _decision_cards(pending, state, me)
     present = conditions.presence(state, me)
@@ -1056,13 +1269,30 @@ def decide_body(
             pick.get("prefer"),
             pick.get("count", 1),
             present=present,
+            ties=pick.get("ties"),
+            hypo=hypo,
+            mana=mana,
         )
         if isinstance(chosen, ScriptExit):
             return chosen
         body[field_name] = [card["id"] for card in chosen]
         return body
     if "accept" in item:
-        body["accept"] = item["accept"]
+        # Item 1: a play's own `accept: True` for a MAY/PAY_LIFE/PAY_ENERGY/
+        # PAY_MANA decision (CR 608.2d) is illegal when the engine's own view
+        # says the yes branch is not legal (`affirmative_is_legal: False`,
+        # e.g. Ugin's Labyrinth's imprint with no colorless mv >= 7 card in
+        # hand). The engine always accepts "no" for these kinds, so answering
+        # no rather than sending the illegal yes keeps the run going instead
+        # of exiting REFUSED with the land already down.
+        accept = bool(item["accept"])
+        if (
+            accept
+            and kind in ("may", "pay_life", "pay_energy", "pay_mana")
+            and not pending.get("affirmative_is_legal", True)
+        ):
+            accept = False
+        body["accept"] = accept
         return body
     if kind in ("surveil", "scry"):
         moving = item.get("to_graveyard") if kind == "surveil" else item.get("to_bottom")
@@ -1070,14 +1300,42 @@ def decide_body(
         # and means "keep everything on top": `moved` is empty, not absent -
         # B7-07, the shape `fetch-surveil-land-keep` uses.
         body["moved"] = (
-            [card["id"] for card in cards if matches(moving, card, present)]
+            [
+                card["id"]
+                for card in cards
+                if matches(moving, card, present, untapped_mana=mana, hypo=hypo)
+            ]
             if moving is not None
             else []
         )
         body["top_order"] = None
         return body
     if kind == "put_on_top_or_bottom" and item.get("to_bottom") is not None and cards:
-        body["top"] = not matches(item["to_bottom"], cards[0], present)
+        body["top"] = not matches(
+            item["to_bottom"], cards[0], present, untapped_mana=mana, hypo=hypo
+        )
+        return body
+    if kind == "choose_pile" and "pile_one" in item:
+        # CR 700.3's pile primitive - a plain boolean, the same shape
+        # `put_on_top_or_bottom` already is: `True` for pile one
+        # (`pending_decision.cards`), `False` for its complement.
+        body["pile_one"] = bool(item["pile_one"])
+        return body
+    if kind == "choose_players" and "players" in item:
+        # CR 701.34a's own Proliferate player half: each "me"/"opponent"
+        # token resolves to a real username the same way `_targets`' own
+        # `PlayerTarget` already does, restricted to whoever the decision
+        # actually offered (`pending.players`) - a script naming a side
+        # nothing offered simply chooses nobody on that side, matching every
+        # other answer shape's "chosen must be a subset of offered" posture.
+        offered = {str(username) for username in pending.get("players") or ()}
+        all_names = [str(player.get("username")) for player in state.get("players") or []]
+        chosen_players: list[str] = []
+        for side in item["players"]:
+            for name in all_names:
+                if name in offered and name not in chosen_players and _on_side(name, side, me):
+                    chosen_players.append(name)
+        body["usernames"] = chosen_players
         return body
     return ScriptExit(
         Exit.UNFORESEEN,
@@ -1134,24 +1392,54 @@ def _pick(
     prefer: list[dict[str, Any]] | None = None,
     count: int = 1,
     present: Present | None = None,
+    ties: str | None = None,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
 ) -> list[dict[str, Any]] | ScriptExit:
     """`count` cards matching `select`, narrowed by each `prefer` that still
     leaves some. Same-named candidates are interchangeable; different names
-    left tied are `ambiguous`, and nothing matching is `unforeseen`. `present`
-    is the board a `missing_from` compares against."""
-    found = [card for card in cards if matches(select, card, present)]
+    left tied are `ambiguous`, unless `ties == "any"` (O2), which instead
+    takes the first `count` of them by sorted name. `present` is the board a
+    `missing_from` compares against; `hypo`/`mana` are O4/O7's engine facts
+    and untapped-mana count, for a `select`/`prefer` naming `enters_any`,
+    `unlocks`, `unlocks_by_search`, `unlocks_by_basic_search` or
+    `affordable` - the caller fetches
+    `hypo` only when the move actually needs it (`needs_hypothetical`)."""
+    found = [
+        card for card in cards if matches(select, card, present, untapped_mana=mana, hypo=hypo)
+    ]
     if not found:
         return ScriptExit(Exit.UNFORESEEN, stop_reason=f"nothing matched {what}")
     for preference in prefer or []:
-        narrowed = [card for card in found if matches(preference, card, present)]
+        narrowed = [
+            card
+            for card in found
+            if matches(preference, card, present, untapped_mana=mana, hypo=hypo)
+        ]
         if narrowed:
             found = narrowed
     names = sorted({str(card.get("name") or card.get("card_name")) for card in found})
     if len(found) > count and len(names) > 1:
+        if ties != "any":
+            return ScriptExit(
+                Exit.AMBIGUOUS,
+                ambiguous_names=names,
+                stop_reason=f"different cards tie for {what}",
+            )
+        found = sorted(found, key=lambda card: str(card.get("name") or card.get("card_name")))
+    if len(found) < count:
+        # `count` is a floor this pick must meet, not a ceiling `found[:count]`
+        # may silently truncate down to - the caller asked for `count` and
+        # building a request with fewer used to send an under-sized answer
+        # the engine could not always tell was wrong (Goblin Bombardment's
+        # own cost only ever needs 1 sacrifice, so a script's own `count: 2`
+        # picking just 1 still reads as a fully legal payment to the engine,
+        # silently downgrading the script's stated intent with no error
+        # anywhere). Fail closed here instead, before any request is built.
         return ScriptExit(
-            Exit.AMBIGUOUS,
-            ambiguous_names=names,
-            stop_reason=f"different cards tie for {what}",
+            Exit.UNFORESEEN,
+            stop_reason=f"only found {len(found)} of the {count} needed for {what}",
         )
     return found[:count]
 
@@ -1197,7 +1485,8 @@ def _on_side(controller: str | None, side: str, me: str) -> bool:
 
 def _evaluate(ctx: _Context, play: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     view = ctx.seat.fetch_state(include_contents=True) if conditions.needs_contents(play) else state
-    return conditions.evaluate(play, view, ctx.me, ctx.inputs, ctx.catalog)
+    hypo = ctx.hypothetical.get(ctx.seat, view) if conditions.needs_hypothetical(play) else None
+    return conditions.evaluate(play, view, ctx.me, ctx.inputs, ctx.catalog, hypothetical=hypo)
 
 
 def _condition_exit(result: dict[str, Any]) -> ScriptExit | None:
@@ -1275,7 +1564,15 @@ def _position(state: dict[str, Any]) -> dict[str, Any]:
 
 def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any]) -> ScriptExit:
     """Propose move 1 through `Seat._advise_answer` (a dry-run probe plus the
-    `/advice` record) and hand the rest back unvalidated."""
+    `/advice` record) and hand the rest back unvalidated.
+
+    `capture_draft=False` (S2 A6 review fix 3, 2026-09-14): an armed script
+    firing here is a proposal for right now, never the later window a
+    `stage_advice` call staged - capturing it into that empty slot would
+    swallow the script's own move (this function would read the resulting
+    `{"drafted": True, ...}` shape as `outcome.get("proposed")` missing, and
+    exit `REFUSED`) instead of posting it and leaving the staged window for
+    its own future moment."""
     seat = ctx.seat
     moves = play["moves"]
     first = moves[0]
@@ -1291,20 +1588,30 @@ def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any
             )
         if conditions.needs_contents(item):
             state = seat.fetch_state(include_contents=True)
-        body = decide_body(item, pending, state, ctx.me, reasoning)
+        hypo = (
+            ctx.hypothetical.get(ctx.seat, state) if conditions.needs_hypothetical(item) else None
+        )
+        mana = conditions.untapped_mana(state, ctx.me)
+        body = decide_body(item, pending, state, ctx.me, reasoning, hypo=hypo, mana=mana)
         built: tuple[str, dict[str, Any]] | ScriptExit = (
             body if isinstance(body, ScriptExit) else ("decide", body)
         )
     else:
         if conditions.needs_contents(first):
             state = seat.fetch_state(include_contents=True)
-        built = _move_request(first, state, ctx.me, reasoning)
+        hypo = (
+            ctx.hypothetical.get(ctx.seat, state) if conditions.needs_hypothetical(first) else None
+        )
+        mana = conditions.untapped_mana(state, ctx.me)
+        built = _move_request(first, state, ctx.me, reasoning, hypo=hypo, mana=mana)
     if isinstance(built, ScriptExit):
         return built
     path, request = built
     answer = run_action(
         seat,
-        lambda: seat.call_json("POST", f"/api/games/{seat.game_id()}/{path}", request),
+        lambda: seat.call_json(
+            "POST", f"/api/games/{seat.game_id()}/{path}", request, capture_draft=False
+        ),
         hold_priority=True,
         include_actions=False,
         reasoning=reasoning,
@@ -1343,7 +1650,15 @@ class _Unregistered(Exception):
 def _start(
     ctx: _Context, run: _Run, play: dict[str, Any] | None, state: dict[str, Any]
 ) -> ScriptExit | None:
-    run.turn, run.step = state.get("turn_number"), state.get("step")
+    # `turns_taken`, not `turn_number`: `TurnMachine.turn_number` counts
+    # rounds of the table and both seats' turns in one round share it, so a
+    # `whose_turn: "either"` script that legitimately runs once on this
+    # seat's own turn and again on the opponent's turn of the same round
+    # (`turn_number` unchanged, `turns_taken` up one) must not collide on
+    # the once-per-turn-and-step ledger slot (`records._SCRIPT_RUN_KEY`) -
+    # see that module's own docstring for the identical rule already
+    # applied to `require_plan`.
+    run.turn, run.step = state.get("turns_taken"), state.get("step")
     answer = _post_run(ctx, {**_run_fields(ctx, run, play), "phase": "start"})
     if isinstance(answer, dict) and answer.get("recorded") is True:
         run.started = True
@@ -1399,7 +1714,17 @@ def _end(
         return RunResult(True, out, state=state)
     reapplicable = None
     if play is not None:
-        reapplicable = "true" if _evaluate(ctx, play, state)["applies"] else "false"
+        # D2: this re-check itself needs hypothetical facts exactly when
+        # the run that is ending did - if they were unavailable then, they
+        # still are now, so the same failure must not raise a second time
+        # out of `_end` (which every path, including the one already
+        # handling that failure, calls to close the run out); treated as
+        # not reapplicable, the same "not applicable" verdict `_judged`
+        # gives a listing entry it cannot judge for the same reason.
+        try:
+            reapplicable = "true" if _evaluate(ctx, play, state)["applies"] else "false"
+        except HypotheticalFactsUnavailable:
+            reapplicable = "false"
     seat.recent_log()
     finish = {
         **_run_fields(ctx, run, play),
@@ -1435,6 +1760,7 @@ def _run_fields(ctx: _Context, run: _Run, play: dict[str, Any] | None) -> dict[s
         "turn": run.turn if isinstance(run.turn, int) else 0,
         "step": run.step or "unknown",
         "seq_start": run.seq_start,
+        "invoked_via": ctx.invoked_via,
     }
 
 
@@ -1446,18 +1772,88 @@ def _post_run(ctx: _Context, body: dict[str, Any]) -> Any:
 # -- corpus --------------------------------------------------------------------
 
 
+#: `_corpus`'s marker for "nothing is registered under this uid" - stashed in
+#: `corpora[key]` like a real corpus (S1 review finding 3) so a scriptless
+#: seat's every later call skips the HTTP GET too, not just a registered
+#: one's. `_UNREGISTERED_REASON` is carried alongside it so a cache hit and a
+#: cache miss refuse in the same words. `_UNREGISTERED_AT_KEY` is the
+#: `time.monotonic()` reading taken when the marker was written; a cache hit
+#: is trusted only for `_UNREGISTERED_TTL_SECONDS` past that (S1 review
+#: fix 1) - see `_UNREGISTERED_TTL_SECONDS`'s own docstring for why this must
+#: expire at all.
+_UNREGISTERED_MARKER = "_unregistered"
+_UNREGISTERED_REASON = "_unregistered_reason"
+_UNREGISTERED_AT_KEY = "_unregistered_at"
+
+#: How long a genuine 404 ("nothing registered under this uid") is trusted
+#: before the next call re-checks with a live GET, monotonic seconds (S1
+#: review fix 1). A seat Job can start before its own corpus PUT has landed,
+#: or race a retry of it; a permanent negative cache meant that seat never
+#: saw scripts for the rest of the game once the very first read lost that
+#: race. Only a genuine 404 sets `_UNREGISTERED_MARKER` at all (see below) -
+#: a 5xx or an ambiguous timeout is never cached, so this TTL only bounds how
+#: long a *real* "not registered" answer is trusted before asking again.
+_UNREGISTERED_TTL_SECONDS = 30.0
+
+#: Seat bookkeeping `_corpus`'s `fresh=True` refresh (every `resume`d run)
+#: carries forward from the corpus dict it is about to replace - an explicit
+#: allow-list, never every underscore-prefixed key (S1 review fix 2). The
+#: old blanket rule carried forward *any* private key, `script_tools.
+#: _PLAYS_CACHE_KEY` included - a derived cache of the scripts in the *old*
+#: corpus - so a seat that re-registered a different corpus and then resumed
+#: a run kept serving plays the server no longer had registered. These three
+#: names mirror `script_tools._LAST_ASSERTED_KEY`, `_LAST_INPUTS_KEY` and
+#: `_RECENT_RUNS_KEY` by hand: `script_tools` already imports this module, so
+#: importing the names themselves back here would be circular. Keep this set
+#: in sync with those three by hand if they ever change.
+_CARRIED_BOOKKEEPING_KEYS = frozenset(
+    {"_last_asserted_archetype", "_last_supplied_inputs", "_recent_runs"}
+)
+
+
 def _corpus(
     seat: Seat, corpora: dict[tuple[str, str], dict[str, Any]], *, fresh: bool
 ) -> dict[str, Any] | ScriptExit:
     key = (seat.game_id(), seat.uid)
     if not fresh and key in corpora:
-        return corpora[key]
-    read = seat.call_json("GET", f"/api/games/{key[0]}/seats/{seat.uid}/scripts")
+        cached = corpora[key]
+        if cached.get(_UNREGISTERED_MARKER):
+            cached_at = cached.get(_UNREGISTERED_AT_KEY)
+            age = time.monotonic() - cached_at if isinstance(cached_at, int | float) else None
+            if age is not None and age < _UNREGISTERED_TTL_SECONDS:
+                return _no_corpus_refusal(str(cached.get(_UNREGISTERED_REASON)))
+            # The TTL has passed: fall through to a live GET rather than
+            # trust a "not registered" answer that may be stale by now.
+        else:
+            return cached
+    previous = corpora.get(key)
+    path = f"/api/games/{key[0]}/seats/{seat.uid}/scripts"
+    status, read = seat._request_json("GET", path, None)
     if not isinstance(read, dict) or not isinstance(read.get("scripts"), list):
         reason = read.get("reason") if isinstance(read, dict) else read
-        return ScriptExit(Exit.REFUSED, refusal=str(reason), refusal_source="server")
+        if status == 404:
+            # A genuine "nothing registered under this uid" - the only
+            # outcome worth caching at all. A 5xx or an ambiguous timeout
+            # (`status` is `None`) is not this seat's own fact about
+            # itself, it is the transport's, and caching it would starve
+            # every later call of a corpus that really is registered
+            # (S1 review fix 1).
+            corpora[key] = {
+                _UNREGISTERED_MARKER: True,
+                _UNREGISTERED_REASON: str(reason),
+                _UNREGISTERED_AT_KEY: time.monotonic(),
+            }
+        return _no_corpus_refusal(str(reason))
+    if isinstance(previous, dict) and not previous.get(_UNREGISTERED_MARKER):
+        for name in _CARRIED_BOOKKEEPING_KEYS:
+            if name in previous and name not in read:
+                read[name] = previous[name]
     corpora[key] = read
     return read
+
+
+def _no_corpus_refusal(reason: str) -> ScriptExit:
+    return ScriptExit(Exit.REFUSED, refusal=reason, refusal_source="server")
 
 
 def _registered(corpus: dict[str, Any], script_id: str) -> dict[str, Any] | None:

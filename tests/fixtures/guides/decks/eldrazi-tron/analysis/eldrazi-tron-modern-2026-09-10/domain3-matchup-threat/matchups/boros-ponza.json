@@ -1,0 +1,139 @@
+{
+  "name": "boros ponza",
+  "meta_share": 3.379647014645137,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": null,
+  "winrate_basis": {
+    "kind": "absent",
+    "why": "The committed 2026-09-10 capture .protocol/raw-matchups.json returned fifty rows for eldrazi tron and none of them names boros ponza, nor any label this repository has validated as the same archetype. UNMEASURED rather than zero: the pairing did not come back, which is a fact about the response and not about the matchup."
+  },
+  "primary_gameplan": "They attack the manabase, so the answer is to stop needing it. Liquimetal Coating plus a resolved Karn, the Great Creator turns one of their lands into an artifact whose mana ability then cannot be activated, and Haywire Mite exiles The Legend of Roku or a boarded Blood Moon.",
+  "secondary_gameplan": "Expedition Map rebuilds the missing Tron piece, Sowing Mycospawn fetches it from the library for free on cast, and Cityscape Leveler destroys a land of theirs on every attack once the game has gone long.",
+  "opponent_gameplan": "Every one of the ten committed 2026-09-10 lists runs four Cleansing Wildfire, four Demolition Field, four Field of Ruin and four Erode: the deck is land destruction first and a Boros control deck second. Price of Freedom and Wrath of the Skies clean up permanents, Solitude answers a resolved Eldrazi, and Cori Mountain Monastery plus Sunken Citadel make their own mana resilient. Against a deck whose lands ARE its spells this is the most directly hostile mainboard in the field.",
+  "tournament_refs": [
+    {
+      "pilot": "Martin_Dominguez",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664813"
+    },
+    {
+      "pilot": "Boucha",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664792"
+    },
+    {
+      "pilot": "Reiam",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664814"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Disruptor Flute",
+      "count": 2,
+      "why": "8 of 10 committed 2026-09-10 lists; names Karn, the Great Creator or Expedition Map and shuts the activated ability off entirely",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Wear/Tear",
+      "count": 1,
+      "why": "10 of 10 committed lists; one red mana destroys any artifact we resolve, and everything we fetch is an artifact",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "High Noon",
+      "count": 4,
+      "why": "9 of 10 committed lists carry it at four copies; one spell per turn each is a hard cap on a deck that wants to cast an accelerant and a threat in the same turn",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Wrath of God",
+      "count": 2,
+      "why": "8 of 10 committed lists; answers the Devourer of Destiny and Sire of Seven Deaths bodies that close the game after the lands are gone",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "Liquimetal Coating, Haywire Mite, Cityscape Leveler and Extinguisher Battleship all attack their permanents without touching our own plan. Nothing fetched here taxes us, so the row is a straight counter even though the matchup is hostile.",
+  "opponent_plan": {
+    "posture": "disrupt_first",
+    "posture_why": "Sixteen mainboard land-destruction effects say the plan is to take our mana apart before ever presenting a clock.",
+    "key_cards": [
+      {
+        "card": "Cleansing Wildfire",
+        "why": "Named in the recorded gameplan; four copies that destroy a nonbasic land and replace themselves"
+      },
+      {
+        "card": "Demolition Field",
+        "why": "Named in the recorded gameplan; a land that destroys a nonbasic land, so their land destruction costs them no card"
+      },
+      {
+        "card": "Disruptor Flute",
+        "why": "Boarded answer that names Karn and turns the wish board off at the source",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "High Noon",
+        "why": "Boarded cap of one spell per turn, which is what stops us rebuilding faster than they tear down",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand with Expedition Map or Sowing Mycospawn and enough lands to survive two destruction effects.",
+    "goldfish_for": "Karn resolving with Liquimetal Coating available, which turns their untapped land off each turn.",
+    "watch_for": "Demolition Field and Field of Ruin, which need a land count check before we play the fourth Tron piece.",
+    "posture": "grind",
+    "posture_why": "They spend cards on our lands; we win by having more lands than they have destruction, not by racing."
+  },
+  "fetch_priority": [
+    "Liquimetal Coating",
+    "Haywire Mite",
+    "Cityscape Leveler",
+    "Extinguisher Battleship"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Liquimetal Coating",
+      "verdict": "SURVIVES",
+      "why": "Wear/Tear answers it, but the lock only needs one activation with Karn already on the battlefield, and Disruptor Flute cannot name both Coating and Karn."
+    },
+    {
+      "card": "Haywire Mite",
+      "verdict": "SURVIVES",
+      "why": "It sacrifices itself as part of its own cost, so Wear/Tear and Wrath of God both arrive too late; only a named Disruptor Flute stops the activation."
+    },
+    {
+      "card": "Cityscape Leveler",
+      "verdict": "SURVIVES",
+      "why": "The destroy trigger fires on cast, so Solitude or Wrath of God exiling the body afterwards still leaves a permanent destroyed."
+    },
+    {
+      "card": "Extinguisher Battleship",
+      "verdict": "SURVIVES",
+      "why": "Its enters trigger destroys a noncreature permanent and deals four damage to each creature, which answers Solitude and The Legend of Roku in one card; Wear/Tear is their only answer and it is a single copy."
+    }
+  ],
+  "notes": [
+    "The Karn plus Liquimetal Coating lock is the reason this row is playable: Karn's static clause reads 'Activated abilities of artifacts your opponents control can't be activated', and a land Coating has turned into an artifact is an artifact they control, so its mana ability cannot be activated for the rest of the turn. Point it at whichever land makes the colour their answer needs.",
+    "Do not fetch Cityscape Leveler while they still hold land destruction: eight mana behind four Cleansing Wildfire is a card that never gets cast. It is the fetch for the game that has stabilised.",
+    "High Noon at four copies means the turn we untap with Karn is the turn we get one activation, so fetch the card that wins on its own rather than the cheap one that needs a follow-up."
+  ],
+  "card_names": [
+    "Cleansing Wildfire",
+    "Demolition Field",
+    "Field of Ruin",
+    "Erode",
+    "Price of Freedom",
+    "Solitude",
+    "Wrath of the Skies",
+    "Cori Mountain Monastery",
+    "Avengers Disassembled",
+    "Relic of Progenitus"
+  ]
+}

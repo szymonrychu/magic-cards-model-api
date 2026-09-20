@@ -91,6 +91,23 @@ def test_script_run_prints_the_exit_and_the_whole_state(
     assert [row["exit"] for row in finished(board)] == ["chain_complete"]
 
 
+def test_script_run_records_invoked_via_cli(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """S1 T3: `mcp-seat script run` reports its own runs as `"cli"`, so a
+    seat (and `eval_report.py`) can tell a run it made itself apart from one
+    an operator staged from this same command."""
+    wire(monkeypatch)
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+
+    assert cli(board, alice, "run", "drop") == 0
+
+    [row] = finished(board)
+    assert row["invoked_via"] == "cli"
+
+
 def test_script_run_propagates_a_failing_condition(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:

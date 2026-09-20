@@ -1,0 +1,100 @@
+{
+  "name": "esper blink",
+  "meta_share": 7.660533233195643,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.5,
+  "winrate_basis": {
+    "kind": "data",
+    "n": 167,
+    "source": "statistics_matchups(format=modern, archetype_a='esper blink', limit=60), committed verbatim at .protocol/raw-matchups.json; row opponent='esper blink' winrate=0.5 over sample_size=167 matches. The mirror is the one row the feed returns once rather than twice, and 0.5 is what a mirror has to be"
+  },
+  "primary_gameplan": "Resolve Teferi, Time Raveler and hold the game at sorcery speed: their Solitude, their Ephemerate and their Consign to Memory all want to happen on our turn, and none of them can. Then grind on Overlord of the Balemurk, which returns a creature every attack and outlasts Wrath of the Skies because the copies come back.",
+  "secondary_gameplan": "If Teferi is stripped by Thoughtseize, win the Overlord war instead: Witch Enchanter destroys a resolved Overlord of the Balemurk because it is an enchantment creature, and Phelia, Exuberant Shepherd re-triggers the Enchanter every attack step.",
+  "opponent_gameplan": "The mirror is decided by which side keeps an Overlord of the Balemurk trigger going and which side spends its removal first. They open Thoughtseize, trade Fatal Push and evoked Solitude for our two-drops, and rebuild off Overlord of the Balemurk milling four and returning a creature every attack. Post-board they bring Consign to Memory to counter our enters triggers and Wrath of the Skies to reset the board at an X they choose.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Wrath of the Skies",
+      "count": 3,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; an energy sweeper whose X they choose after seeing our board",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Consign to Memory",
+      "count": 3,
+      "why": "10 of 10 pulled sideboards; counters the enters triggers this whole deck is built out of",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Clarion Conqueror",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; a flier that turns off Teferi's loyalty abilities and Emperor of Bones' adapt",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "High Noon",
+      "count": 2,
+      "why": "9 of 10 pulled sideboards; caps both sides at one spell a turn, which costs the Ephemerate-plus-creature turn",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "Consign to Memory and Teferi, Time Raveler attack the mirror's timing rather than its board. Every card that decides this matchup for them - evoked Solitude, Ephemerate, their own Consign to Memory - is an instant, and the two we bring in are the only cards in the seventy-five that punish that without slowing our own plan down.",
+  "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Neither side has a fast clock. The mirror is won on Overlord of the Balemurk triggers and on who runs out of removal first, not on damage.",
+    "key_cards": [
+      {
+        "card": "Overlord of the Balemurk",
+        "why": "Named verbatim in opponent_gameplan; mills four and returns a creature every attack, which is the mirror's whole card-advantage engine"
+      },
+      {
+        "card": "Consign to Memory",
+        "why": "Counters our enters triggers, which is where all of our value comes from",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Wrath of the Skies",
+        "why": "Resets a board we built out of two- and three-drops, at an X they pick",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Clarion Conqueror",
+        "why": "Shuts off Teferi's loyalty abilities and Emperor of Bones' adapt trigger",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand with a white source and a two-drop, not one that is all five-drops.",
+    "goldfish_for": "Turn three Teferi, Time Raveler, then Overlord of the Balemurk attacking.",
+    "watch_for": "Whether they hold UU open for Consign to Memory before we commit an enters trigger.",
+    "posture": "grind",
+    "posture_why": "Card advantage decides this, so trade one for one and let Overlord break the tie."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Consign to Memory",
+      "verdict": "SURVIVES",
+      "why": "Their own Consign to Memory counters a triggered ability or a colorless spell, and ours is a blue instant, so the mirror image of this card cannot answer it. Wrath of the Skies and High Noon do not touch an instant on the stack."
+    },
+    {
+      "card": "Teferi, Time Raveler",
+      "verdict": "SURVIVES",
+      "why": "Clarion Conqueror (10 of 10 pulled boards) stops Teferi's loyalty abilities, but the reason Teferi is boarded is the static ability that holds them to sorcery speed, and a static ability of a planeswalker is not an activated one. The minus is a bonus here, not the plan."
+    }
+  ],
+  "card_names": [
+    "Phelia, Exuberant Shepherd",
+    "Flickerwisp",
+    "Solitude",
+    "Overlord of the Balemurk",
+    "Witch Enchanter",
+    "Emperor of Bones",
+    "Quantum Riddler",
+    "Thoughtseize",
+    "Fatal Push",
+    "Teferi, Time Raveler"
+  ]
+}

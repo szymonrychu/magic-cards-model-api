@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "id": "open-fetch-unlocks-shock",
+  "name": "Crack a fetch on turn 1-2 for a non-basic land that unlocks a hand card",
+  "intent": "On turn 1 or 2, once open-land-unlocks, open-shock-unlocks and open-fetch-unlocks have all had first refusal, play a fetch from hand and crack it for a library land that unlocks some other hand card even though that land is not a basic - any of this deck's four basic-type fetches reaching Steam Vents (Island Mountain: its Mountain subtype alone is enough, so every fetch that can search for a Mountain reaches it, not only the ones that can also search for an Island) to unlock Preordain. Thundering Falls is never a target here - it has no such 'you may pay life' clause and always enters tapped (its own printed text carries no condition at all), so it can never flip a hand card's own `unlocks` fact to true regardless of what a fetch's search could find. Item 4 (2026-09-14 review batch): open-fetch-unlocks' own true key narrowed from unlocks_by_search to unlocks_by_basic_search, closing the boros-aggro known limit (a fetch that can only reach a shock should never be treated as a free unlock), but that leaves prowess with no play at all for a hand whose only blue route is a fetch reaching a non-basic Steam Vents - this deck's blue is genuinely scarce (only Steam Vents and Thundering Falls carry the Island subtype at all, and Thundering Falls never unlocks), unlike devoted-combo where every fetch can also reach a basic Forest. This lane closes that gap, priced correctly: it pays the fetch's own 1 life to crack plus the found land's own optional 2, strictly worse than either open-land-unlocks (free) or open-shock-unlocks (one payment only) - so it stands down whenever either of those, or open-fetch-unlocks itself (which would find a free basic instead), already would. The choose_cards pick shares open-fetch-unlocks' own missing-subtype-first prefer order (item 5) since the same reasoning applies once more than one non-basic land is reachable. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 71,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_search": true
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped_if_paid"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": "<=",
+      "n": 7
+    },
+    {
+      "kind": "zone_size",
+      "zone": "library",
+      "side": "me",
+      "op": "<=",
+      "n": 5
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "unlocks_by_search": true
+        },
+        "ties": "any"
+      }
+    },
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "tapped": false
+        },
+        "prefer": [
+          {
+            "unlocks_by_search": true
+          }
+        ],
+        "ties": "any"
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "unlocks": true
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "subtypes_any": [
+                  "Island"
+                ],
+                "missing_from": {
+                  "zones": [
+                    "battlefield"
+                  ],
+                  "side": "me",
+                  "by": "subtype"
+                }
+              },
+              {
+                "supertypes_any": [
+                  "Basic"
+                ]
+              },
+              {
+                "oracle_has": "you may pay 2 life"
+              }
+            ],
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "pay_life",
+          "accept": true
+        }
+      ]
+    }
+  ],
+  "next": []
+}

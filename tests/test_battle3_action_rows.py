@@ -269,6 +269,36 @@ def test_an_x_spell_under_a_flat_increase_carries_the_increase_for_every_x(clien
         assert dry_cast_cost(client, game, meltdown, x_value=x_value) == charged
 
 
+def test_a_repriced_x_row_is_judged_not_forced_unknown(client, game):
+    """The row's affordability used to be forced `unknown` for every X row a
+    cost modifier repriced (`with_charged_cost`), even though the row is
+    priced at X=0 like any other X row once the engine judges X spells that
+    way (`legal_actions.py` 2e3fedc). Walking Ballista under Sphere of
+    Resistance is charged {1} at X=0 (the flat increase alone, X folded to
+    nothing), and a real Mountain can pay it - a real `yes`, not a blanket
+    `unknown`."""
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Walking Ballista", "alice", "hand")
+    add_card(client, game, "Sphere of Resistance", "bob", "battlefield")
+    ballista = find(state(client, game)["hands"]["alice"], "Walking Ballista")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), ballista)
+    assert row["affordable"] == "yes", row
+    assert row["unaffordable_reason"] is None, row
+
+
+def test_a_repriced_x_row_with_no_source_to_pay_it_is_no_not_unknown(client, game):
+    """The same row with nothing on the battlefield to pay the {1} Sphere of
+    Resistance adds: a real `no`, still never the blanket `unknown` the row
+    used to be forced to for carrying an `x_range` at all."""
+    add_card(client, game, "Walking Ballista", "alice", "hand")
+    add_card(client, game, "Sphere of Resistance", "bob", "battlefield")
+    ballista = find(state(client, game)["hands"]["alice"], "Walking Ballista")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), ballista)
+    assert row["affordable"] == "no", row
+
+
 def test_an_x_spell_under_a_floor_lists_each_x_the_floor_raises(client, game):
     """Trinisphere reads the cost X has already left (CR 601.2f): Walking
     Ballista is {3} at X=0 and X=1, and {X}{X} from X=2 on."""
@@ -489,10 +519,14 @@ def test_the_row_names_each_mode_the_engine_cannot_read(client, game):
 
     (row,) = rows_for(legal_actions(client, game, "alice"), rig["charm"])
     unreadable = {entry["mode_number"]: entry for entry in row["unreadable_modes"]}
-    assert 1 in unreadable, row
-    assert 2 not in unreadable, row
-    assert unreadable[1]["text"].startswith("Thraben Charm deals damage"), unreadable
-    assert "CR 700.2a" in unreadable[1]["notice"], unreadable
+    # The Reality Fracture number sweep taught the engine to read mode 1's
+    # dynamic damage amount ("equal to twice the number of creatures you
+    # control") - mode 3's "any number of target players' graveyards" is the
+    # one this pool still cannot read, so it is the case this test now proves.
+    assert 1 not in unreadable, row
+    assert 3 in unreadable, row
+    assert unreadable[3]["text"].startswith("Exile any number of target players"), unreadable
+    assert "CR 700.2a" in unreadable[3]["notice"], unreadable
 
 
 def test_casting_an_unreadable_mode_is_refused_and_keeps_the_card(client, game):
@@ -503,13 +537,13 @@ def test_casting_an_unreadable_mode_is_refused_and_keeps_the_card(client, game):
         json={
             "player": "alice",
             "card_id": rig["charm"],
-            "modes": [1],
-            "targets": [rig["bears"]],
+            "modes": [3],
+            "targets": ["bob"],
             "mana_sources": rig["plains"],
         },
     ).json()
     assert answer["allowed"] is False, answer
-    assert "mode 1" in answer["reason"], answer
+    assert "mode 3" in answer["reason"], answer
     after = state(client, game)
     assert find(after["hands"]["alice"], "Thraben Charm")["id"] == rig["charm"]
     assert not any(card["tapped"] for card in after["battlefield"] if card["name"] == "Plains")

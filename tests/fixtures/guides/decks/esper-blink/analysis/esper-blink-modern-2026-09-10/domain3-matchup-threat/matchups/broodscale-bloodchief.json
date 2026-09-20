@@ -1,0 +1,105 @@
+{
+  "name": "broodscale bloodchief",
+  "meta_share": 6.947052196770559,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.479,
+  "winrate_basis": {
+    "kind": "data",
+    "n": 171,
+    "source": "statistics_matchups(format=modern, archetype_a='esper blink', limit=60), committed verbatim at .protocol/raw-matchups.json; row opponent='broodscale bloodchief' winrate=0.479 over sample_size=171 matches"
+  },
+  "primary_gameplan": "Attack the mana and the combo separately. White Orchid Phantom destroys Urza's Saga, Eldrazi Temple or Ugin's Labyrinth, and Phelia, Exuberant Shepherd re-triggers it every attack step so one copy is a land destruction engine rather than a single land. Clarion Conqueror turns off Basking Broodscale's adapt ability, which is the combo.",
+  "secondary_gameplan": "If the manabase holds, Consign to Memory counters Kozilek's Command outright - it is a colorless spell - and counters the Broodscale token trigger, and Witch Enchanter destroys Blade of the Bloodchief or Springleaf Drum on the way down.",
+  "opponent_gameplan": "Basking Broodscale plus Blade of the Bloodchief makes an arbitrarily large board: each adapt puts a counter on Broodscale, the counter trigger makes an Eldrazi Spawn, sacrificing the Spawn pays for the next adapt, and Blade of the Bloodchief adds a counter every time a token dies. Around it sit Urza's Saga, Ancient Stirrings and Malevolent Rumble for consistency, Sowing Mycospawn to kill a land, and Emrakul, the Promised End as the fair top end. Post-board they add Trinisphere to tax our one- and two-mana interaction.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Trinisphere",
+      "count": 2,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; taxes Fatal Push, Thoughtseize and Consign to Memory to three mana each",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Thief of Existence",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; its cast trigger exiles a noncreature nonland permanent of mana value 4 or less, which is Teferi, Time Raveler",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Nature's Claim",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; one green mana destroys Overlord of the Balemurk, which is an enchantment creature",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Dismember",
+      "count": 1,
+      "why": "10 of 10 pulled sideboards; -5/-5 for one mana and four life kills every creature in our seventy-five",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Their combo is an activated ability on a creature, and Clarion Conqueror is a blanket static answer to it rather than a piece of targeted removal they can play around. It taxes us too - Teferi's loyalty abilities stop working - which is why the stance is symmetric rather than a clean counter, and it is still correct because their engine is entirely activated and ours is entirely triggered.",
+  "opponent_plan": {
+    "posture": "lock",
+    "posture_why": "They assemble Basking Broodscale and Blade of the Bloodchief into an unbounded board and back it with Trinisphere, so the game ends on a combo rather than on a race.",
+    "key_cards": [
+      {
+        "card": "Basking Broodscale",
+        "why": "Named verbatim in opponent_gameplan; the adapt ability and its Eldrazi Spawn trigger are the combo itself"
+      },
+      {
+        "card": "Blade of the Bloodchief",
+        "why": "Named verbatim in opponent_gameplan; turns each dying Spawn into another counter, which is what makes the loop unbounded"
+      },
+      {
+        "card": "Trinisphere",
+        "why": "Prices our one-mana interaction at three, which is the tax that lets the combo resolve",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Nature's Claim",
+        "why": "One green mana answers a resolved Overlord of the Balemurk, our best grindy threat",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand with white mana by turn two and a way to interact with a land.",
+    "goldfish_for": "White Orchid Phantom on turn two, blinked with Phelia every attack after.",
+    "watch_for": "Whether Blade of the Bloodchief is already on the battlefield before Broodscale.",
+    "posture": "disrupt_first",
+    "posture_why": "Racing an unbounded board never works, so break the mana and the combo instead."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Consign to Memory",
+      "verdict": "SURVIVES",
+      "why": "Trinisphere prices it at three mana instead of one, which is real but not a blank: it still counters Kozilek's Command as a colorless spell and still counters the Broodscale counter trigger. Nothing else in their pulled board interacts with an instant."
+    },
+    {
+      "card": "Clarion Conqueror",
+      "verdict": "SURVIVES",
+      "why": "Dismember (10 of 10 pulled boards) answers it, which is removal rather than a structural blank: the static ability is live from the moment it resolves and forces them to hold a specific card. Grafdigger's Cage and Nature's Claim do not touch a creature on the battlefield."
+    },
+    {
+      "card": "White Orchid Phantom",
+      "verdict": "SURVIVES",
+      "why": "Their board answers it with Dismember only. The land it destroys - Urza's Saga, Eldrazi Temple, Ugin's Labyrinth or Cavern of Souls - is replaced by a basic Forest, which produces none of the colorless mana their Eldrazi spells and Kozilek's Command need."
+    }
+  ],
+  "card_names": [
+    "Basking Broodscale",
+    "Blade of the Bloodchief",
+    "Urza's Saga",
+    "Eldrazi Temple",
+    "Ugin's Labyrinth",
+    "Kozilek's Command",
+    "Ancient Stirrings",
+    "Malevolent Rumble",
+    "Sowing Mycospawn",
+    "Emrakul, the Promised End"
+  ],
+  "self_cost": "Clarion Conqueror stops activated abilities of artifacts, creatures and planeswalkers on both sides, so our two maindeck Teferi, Time Raveler lose their plus and minus while it is on the battlefield. Emperor of Bones' adapt is the other casualty and is boarded out here for that reason; Teferi is not, because its static ability is untouched."
+}

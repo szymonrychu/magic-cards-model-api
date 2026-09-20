@@ -201,6 +201,7 @@
         "spend_effects": []
       },
       "maximum_hand_size": 7,
+      "own_turns_taken": 1,
       "sideboard_count": 0,
       "username": "alice"
     },
@@ -219,6 +220,7 @@
         "spend_effects": []
       },
       "maximum_hand_size": 7,
+      "own_turns_taken": 0,
       "sideboard_count": 0,
       "username": "bob"
     }
@@ -228,6 +230,7 @@
   "stack": [],
   "step": "declare_attackers",
   "turn_number": 1,
+  "turns_taken": 1,
   "winner": null,
   "you": "alice"
 }

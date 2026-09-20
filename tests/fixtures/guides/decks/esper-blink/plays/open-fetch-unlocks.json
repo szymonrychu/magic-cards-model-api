@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "id": "open-fetch-unlocks",
+  "name": "Crack a fetch on turn 1-2 for a land that unlocks a hand card",
+  "intent": "On turn 1 or 2, once open-land-unlocks has had first refusal, play a fetch from hand and crack it for whatever land in the library would unlock some other hand card - Marsh Flats found for a library Swamp that lets Thoughtseize be cast. play_land's own prefer is three tiers: first, a fetch that both reaches a basic unlock (unlocks_by_basic_search) AND carries Island in its own search template - esper-blink has no basic Island at all, so that half of Flooded Strand's/Polluted Delta's template is always dead weight, and conserving Marsh Flats (the only fetch that reaches both of the deck's live basics, Plains and Swamp) for later is worth more than spending it now; second, any fetch that reaches a basic unlock at all, once the first tier narrows nothing; third, the bare Island-template tier as a last-resort fallback. Hands: Strand+Flats+Thoughtseize (library Swamp) - Strand cannot reach Swamp at all (select excludes it), so Flats is the only candidate regardless of prefer. Strand+Delta+Thoughtseize (library Swamp) - Strand is again excluded (Plains/Island template, no Swamp), so Delta - the fetch that actually reaches the unlocking basic - is the only candidate; Marsh Flats, the fetch this deck would rather conserve, is not even in this hand. Triggers on unlocks_by_basic_search, not the broader unlocks_by_search (review item 3): a fetch that can only reach a non-basic unlock (a shockland the library holds but no basic) never makes this play apply at all - open-fetch-unlocks-shock covers exactly that case instead, paying the shock's own 2 life on top of the fetch's. The crack itself is restricted to an untapped source that can actually reach a basic unlock (searches_for_any plus unlocks_by_basic_search), so a stale fetch already on the battlefield that cannot reach the needed basic is never cracked in place of the one that can. Its own choose_cards pick prefers a basic first (never spend life when a free basic unlocks the same thing), then a shockland, paying life only when the fetch's own find needs it. Stands down once open-land-unlocks would already fire (U's own key), at 7 life or less, and once the library is down to 5 cards or fewer - thinning this early is not worth decking risk later. Only turns 1-2, land drop available, mine, precombat main, empty stack. Stands down once two or more untapped mana is already up: the seat-admitted orchid-phantom-breaks-tron play (eldrazi-ramp only) needs that much to cast the two-mana flier, and this land-drop decision is judged before that turn's land is played, so on a genuine turn 1-2 board this key costs nothing here - untapped mana cannot reach 2 before the first or second land drop without a mana source this deck does not run.",
+  "priority": 72,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": "<=",
+      "n": 7
+    },
+    {
+      "kind": "zone_size",
+      "zone": "library",
+      "side": "me",
+      "op": "<=",
+      "n": 5
+    },
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 2
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "unlocks_by_basic_search": true
+        },
+        "prefer": [
+          {
+            "unlocks_by_basic_search": true,
+            "searches_for_any": [
+              "Island"
+            ]
+          },
+          {
+            "unlocks_by_basic_search": true
+          },
+          {
+            "searches_for_any": [
+              "Island"
+            ]
+          }
+        ],
+        "ties": "any"
+      }
+    },
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "tapped": false,
+          "unlocks_by_basic_search": true
+        },
+        "ties": "any"
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "unlocks": true
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "supertypes_any": [
+                  "Basic"
+                ]
+              },
+              {
+                "oracle_has": "you may pay 2 life"
+              }
+            ],
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "pay_life",
+          "accept": true
+        }
+      ]
+    }
+  ],
+  "next": []
+}

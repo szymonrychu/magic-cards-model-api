@@ -849,6 +849,7 @@ class PostgresRepository:
                     games.c.seats,
                     games.c.created_at,
                     games.c.archived_at,
+                    games.c.ai_players,
                 ).where(games.c.id == game_id)
             ).first()
         if row is None:
@@ -867,6 +868,7 @@ class PostgresRepository:
             created_at=_utc_isoformat(row.created_at),
             deleted_at=_utc_isoformat(row.archived_at),
             unloadable=unloadable,
+            ai_players=frozenset(row.ai_players or []),
         )
 
     def ids(self) -> list[str]:

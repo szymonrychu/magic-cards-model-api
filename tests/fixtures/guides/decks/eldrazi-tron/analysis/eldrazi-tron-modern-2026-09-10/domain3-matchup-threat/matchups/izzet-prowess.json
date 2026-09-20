@@ -1,0 +1,141 @@
+{
+  "name": "izzet prowess",
+  "meta_share": 2.778820878708224,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.5852,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='eldrazi tron', limit=60), committed verbatim at .protocol/raw-matchups.json; the deduplicated row for opponent='izzet prowess' reads winrate 0.5852 over sample_size 76 matches, and archetype_a is eldrazi tron so it is our winrate read directly rather than a complement.",
+    "n": 76
+  },
+  "primary_gameplan": "The same Chalice of the Void on one that answers the Cutter build answers this one: four Dragon's Rage Channeler, four Monastery Swiftspear, four Lightning Bolt, four Lava Dart, four Preordain, four Mishra's Bauble and four Mutagenic Growth are all mana value one.",
+  "secondary_gameplan": "Ensnaring Bridge stops the whole board once our hand empties, Engineered Explosives at two sweeps Cori-Steel Cutter and Violent Urge, and Walking Ballista at one trades with a Channeler before delirium turns it into a 3/3 flier.",
+  "opponent_gameplan": "The ten committed 2026-09-10 lists differ from the Cutter build mainly by running two Violent Urge and four Expressive Iteration in place of some burn: four Cori-Steel Cutter, four Slickshot Show-Off, four Dragon's Rage Channeler and four Monastery Swiftspear are still the threats. Slickshot Show-Off flies, has haste and gets +2/+0 on every noncreature spell, which is what turns a stalled board into lethal in one turn.",
+  "tournament_refs": [
+    {
+      "pilot": "Xsper",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6",
+      "source_deck_id": "videre-58664387"
+    },
+    {
+      "pilot": "Ares80",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5",
+      "source_deck_id": "videre-58663899"
+    },
+    {
+      "pilot": "JonDaBill",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6",
+      "source_deck_id": "videre-58664467"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 4,
+      "why": "10 of 10 committed 2026-09-10 lists; the format's answer to a colorless deck, and it counters cast triggers as well as spells",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Unholy Heat",
+      "count": 4,
+      "why": "10 of 10 committed lists; with delirium it is six damage for one mana, which covers every creature we play except Sire of Seven Deaths",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Spell Snare",
+      "count": 2,
+      "why": "10 of 10 committed lists; hard-counters our Talisman of Resilience, Trinisphere at two and a Chalice cast for X equals one",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Meltdown",
+      "count": 2,
+      "why": "8 of 10 committed lists; a scaling artifact sweeper aimed at exactly the wish targets we bring",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "The fetch order is the same four cards as ur cutter prowess because the two lists share thirty-plus cards; the two that tax us are also the two that answer the most of their deck.",
+  "self_cost": "Chalice on one counters our own Expedition Map and Giant's Boulder, and Ensnaring Bridge grounds Devourer of Destiny and Sire of Seven Deaths whenever our hand is empty. Both are correct here for the same reason as against the Cutter build: we win with Ugin, Eye of the Storms and Kozilek's Command rather than through combat.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Slickshot Show-Off and Cori-Steel Cutter turn a hand of cantrips into lethal in one attack step, so the deck is racing rather than trading.",
+    "key_cards": [
+      {
+        "card": "Cori-Steel Cutter",
+        "why": "Named in the recorded gameplan; makes a hasty prowess Monk on every second spell each turn"
+      },
+      {
+        "card": "Slickshot Show-Off",
+        "why": "Named in the recorded gameplan; a hasty flier that grows two power per noncreature spell"
+      },
+      {
+        "card": "Consign to Memory",
+        "why": "Boarded counter for our colorless spells, four copies",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      },
+      {
+        "card": "Meltdown",
+        "why": "Boarded artifact sweeper for the wish targets",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Any hand with a turn-two play and Dismember, or Eldrazi Temple into a turn-three Chalice.",
+    "goldfish_for": "Chalice of the Void on one by turn three; almost every card they draw is mana value one.",
+    "watch_for": "A plotted Slickshot Show-Off, which arrives from exile for free and can kill from eight life.",
+    "posture": "disrupt_first",
+    "posture_why": "Their clock is four turns and ours is seven, so nothing matters except stopping the board."
+  },
+  "fetch_priority": [
+    "Chalice of the Void",
+    "Ensnaring Bridge",
+    "Engineered Explosives",
+    "Walking Ballista"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Chalice of the Void",
+      "verdict": "SURVIVES",
+      "why": "Meltdown at two removes it and Spell Snare counters it on the way down, but a resolved Chalice on one blanks about half their deck, which is worth the two answers it invites."
+    },
+    {
+      "card": "Ensnaring Bridge",
+      "verdict": "SURVIVES",
+      "why": "Only Meltdown at three answers it in the recorded board; Unholy Heat, Consign to Memory and Spell Snare cannot touch a resolved Bridge."
+    },
+    {
+      "card": "Engineered Explosives",
+      "verdict": "SURVIVES",
+      "why": "Sacrificed to its own ability, so Meltdown catches it only before use; at two counters it destroys Cori-Steel Cutter and Violent Urge together."
+    },
+    {
+      "card": "Walking Ballista",
+      "verdict": "SURVIVES",
+      "why": "Unholy Heat answers it, but its counters can be removed for damage in response, so it always trades for at least the creature it was pointed at."
+    }
+  ],
+  "notes": [
+    "Chalice goes on one, not zero: Mishra's Bauble is mana value zero but is only a cantrip, and the sixteen one-mana cards are the deck.",
+    "Spell Snare is in ten of ten recorded boards, so cast Chalice for X equals one off four mana when possible rather than off two, and cast Talisman of Resilience only when a counter would cost them the turn.",
+    "Ensnaring Bridge before Engineered Explosives once our hand is two cards or fewer; Explosives first while we still hold five cards, because the Bridge does nothing then."
+  ],
+  "card_names": [
+    "Cori-Steel Cutter",
+    "Slickshot Show-Off",
+    "Dragon's Rage Channeler",
+    "Monastery Swiftspear",
+    "Violent Urge",
+    "Expressive Iteration",
+    "Lightning Bolt",
+    "Lava Dart",
+    "Mutagenic Growth",
+    "Preordain"
+  ]
+}

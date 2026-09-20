@@ -38,6 +38,37 @@ arguments.
   reading it is right rather than wasteful. Read it once when you arrive, and
   again when you need history a `wait` answer cannot give you - not on every
   wake, because nothing before your last look has changed.
+- **Arm it (S2).** `wait --arm SCRIPT_ID` (repeatable, priority order) plus
+  `--arm-reasoning "..."` fires a registered script the moment this `wait`
+  wakes for a real reason. From your advisor uid it proposes rather than
+  moves. Arming never adds a command of its own - it fires inside `wait`
+  itself.
+
+## Draft ahead while your human plays
+
+While your human is not yet holding priority, run `wait --wake-to-draft` in
+place of the plain `wait` above. It wakes you early - the moment the board
+changes and nothing is staged - so you can think ahead of the window rather
+than only once your human's own priority actually arrives.
+
+Woken to draft, run `stage-advice STEP --whose-turn WHOSE` for the window
+you expect next (the same `STEP`/`--whose-turn` `pass-until` takes; refused
+before the first turn - mulligans and opening-hand actions have no window to
+mean yet), then
+make your one committing command exactly as you always would - it is
+captured as the staged draft instead of posted right away. The next `wait`
+(or any other command) posts it on its own the instant your human's priority
+reaches that window and it still holds.
+
+Every command after that prints `"draft": {{"status": ...}}` while one is
+staged. Read it: `"held"` while it is not yet time; `"posted"` with a
+`log_seq` the moment it goes up; `"stale"` (with `failed`: `"window"`,
+`"board"`, `"legality"` or `"refused"`) the moment the board changed
+underneath it, the window already passed, the line stopped being legal, or
+the post itself was refused - think again and `stage-advice` another the
+next time you are woken; `"superseded_by_script"` means an armed script
+already proposed for that same window, so yours was dropped in its favour
+and there is nothing to redo.
 
 Seven subcommands take `--dry-run`, which asks "could this be done?" and
 changes nothing: `cast`, `cycle`, `activate`, `equip` and the three special
@@ -63,8 +94,15 @@ When plays conflict, resolve it by extending conditions, never by priority
 alone. Pass inputs, such as the opposing archetype or your preferences,
 explicitly.
 
-Your human's deck's play scripts are registered for you too. Check them on
-every wake, before working a line out by hand - it judges every script
+Your human's deck's play scripts are registered for you too. Every `wait`
+answer already carries a hint: `scripts.applicable` - `[{{id, name, call}}]` -
+when one of them applies right now, `call` already an `mcp-seat script
+run ...` command line naming the exact flags to pass, ready to propose
+verbatim. `scripts.armable` and `arm_call` are for arming ahead of the window
+instead - `arm_call` is already an `mcp-seat wait ...` command line (you are
+refused `pass-until`), ready to run as printed. Read the hint before working
+a line out by hand; call `script list` yourself only to check further ahead
+of time, or when nothing in the hint applies - it judges every script
 against the board right now, highest priority first, and runs nothing:
 
     ... script list --opposing-archetype KEY --input NAME=VALUE
@@ -82,13 +120,19 @@ reads. When `runtime_conflict` is true, more than one script applies right
 now: do not pick between them by priority - say it is close and propose the
 line you would take.
 
-- `--opposing-archetype KEY` asserts the matchup you have read, spelled as the
-  matchup card spells it; leave it at `*`, the default, only while you
-  genuinely do not know.
+- `--opposing-archetype KEY` asserts the matchup you have read. Once you have
+  committed to a read on the opponent's archetype (see "What good advice is
+  here" below), pass it - spelled as the matchup card spells it - on every
+  `script run`, `script list` and armed `wait` from then on: some plays pick
+  a different line by archetype, and leaving it out means `*`.
 - `--input NAME=VALUE` is one input the deck's scripts read that the board
   cannot show - repeat the flag once per input. VALUE is read as JSON where it
   is JSON (`true`, `3`) and as text otherwise. It is the CLI spelling of the
   `inputs` parameter `run_script` and `list_scripts` take over MCP.
+
+Scripts only run when you start them with `script run` or arm them with
+`--arm` on `wait`; a run you neither started nor armed was started by
+someone else.
 
 ## When you think, and when you stay quiet
 

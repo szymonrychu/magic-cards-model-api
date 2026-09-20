@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "id": "open-labyrinth-land",
+  "name": "Play a land on turn 1-2, preferring Ugin's Labyrinth when there is something to imprint",
+  "intent": "On turn 1 or 2, once a colorless card of mana value 7 or greater is in hand (an imprint target), play a land, preferring Ugin's Labyrinth first by its own printed 'mana value 7 or greater' imprint text, then a missing Urza's piece, then Eldrazi Temple, then a basic - the same three fallback tiers open-tron-land reads, reordered with Labyrinth promoted ahead of them. NOTES.md: 'Ugin's Labyrinth is the engine, not a Wastes... The correct play off a Labyrinth-plus-Devourer hand is Labyrinth exiling Devourer, not holding Devourer to cast'; hand case: T1 Eldrazi Temple + Ugin's Labyrinth + Emrakul, the Promised End (no two-mana rock in hand) plays Labyrinth. Its own hand-imprint-target count sits byte-identical in open-tron-land's own false list, so the two plays are provably exclusive (this deck has no archetype axis to partition the two lanes on, unlike eldrazi-tron's Temple/Tron/Labyrinth split): open-labyrinth-land takes over the whole land-drop decision, not only the Labyrinth preference, whenever there is something worth imprinting - its own fallback order otherwise matches open-tron-land's exactly, so no coverage is lost. Carries the same Ugin's Labyrinth may/choose_cards imprint answers, with the same mana_value >= 8 (Emrakul) then Creature (Devourer over Ugin/All Is Dust) imprint prefer. Chains into map-for-tron-missing-piece the same way. Stands down once two or more untapped mana is already up - the same key map-for-tron-missing-piece's own true condition reads, and once a two-mana artifact is also in hand: NOTES.md's own 'Opening-hand sequencing' section (a two-mana rock plus a one-land Labyrinth hand curving Labyrinth -> Mind Stone -> Expedition Map) is the seat-admitted imprint-big-colorless-on-land-drop's own true condition, so this play cedes the whole land-drop decision to it whenever that rock is present, the same take-over discipline this play already uses against open-tron-land. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 65,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "colors_any": [
+          "colorless"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 7
+        }
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 2
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Artifact"
+        ],
+        "mana_value": {
+          "op": "==",
+          "n": 2
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "types_all": [
+              "Land"
+            ],
+            "oracle_has": "mana value 7 or greater"
+          },
+          {
+            "subtypes_any": [
+              "Tower",
+              "Mine",
+              "Power-Plant"
+            ],
+            "missing_from": {
+              "zones": [
+                "battlefield"
+              ],
+              "side": "me",
+              "by": "subtype"
+            }
+          },
+          {
+            "oracle_has": "colorless Eldrazi"
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "may",
+          "accept": true
+        },
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "colors_any": [
+                "colorless"
+              ],
+              "mana_value": {
+                "op": ">=",
+                "n": 7
+              }
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "mana_value": {
+                  "op": ">=",
+                  "n": 8
+                }
+              },
+              {
+                "types_all": [
+                  "Creature"
+                ]
+              }
+            ],
+            "ties": "any"
+          }
+        }
+      ]
+    }
+  ],
+  "next": [
+    "map-for-tron-missing-piece"
+  ]
+}

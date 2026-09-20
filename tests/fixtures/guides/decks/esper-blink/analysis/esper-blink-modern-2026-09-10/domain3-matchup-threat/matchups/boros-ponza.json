@@ -1,0 +1,93 @@
+{
+  "name": "boros ponza",
+  "meta_share": 3.379647014645137,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": null,
+  "winrate_basis": {
+    "kind": "absent",
+    "why": "The committed capture at .protocol/raw-matchups.json holds no row for 'boros ponza' and no row whose name this pass can join to it. The two red-white rows the capture does hold - 'boros aggro' and 'boros energy' - are one archetype by the 2026-09-10 signature validation and neither of them is boros ponza, so nothing here is measured and no number is recorded."
+  },
+  "primary_gameplan": "Their deck attacks lands and ours has nineteen, so the plan is to spend nothing and get value. Witch Enchanter destroys High Noon or Rest in Peace off its enters trigger, and Phelia, Exuberant Shepherd re-triggers it, which is how a four-of maindeck answer beats a resolved enchantment lock rather than one copy of Prismatic Ending.",
+  "secondary_gameplan": "Teferi, Time Raveler bounces a resolved enchantment with its minus and draws a card, and its static ability stops Solitude and Orim's Chant on our turn. Overlord of the Balemurk cast for impending on turn two is a threat that does not care how many lands we have.",
+  "opponent_gameplan": "Cleansing Wildfire, Demolition Field, Field of Ruin and Erode take our lands apart while Price of Freedom and Path to Exile answer whatever we did resolve, and Avengers Disassembled and Wrath of the Skies sweep the rest. The Legend of Roku and Cori Mountain Monastery are the mana that outlasts a land-light board. Post-board Rest in Peace turns off Overlord of the Balemurk and Emperor of Bones together, and High Noon caps us at one spell a turn.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Wear/Tear",
+      "count": 1,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; a split answer to an artifact or an enchantment, which is Overlord of the Balemurk",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "High Noon",
+      "count": 4,
+      "why": "9 of 10 pulled sideboards; one spell a turn ends the Ephemerate-plus-creature turns this deck is built on",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Surgical Extraction",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; strips every copy of the card Overlord of the Balemurk just milled",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Rest in Peace",
+      "count": 1,
+      "why": "7 of 10 pulled sideboards; exiles all graveyards and keeps them exiled, which blanks Overlord's return and Emperor of Bones outright",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "The only card worth adding is a third Teferi, Time Raveler, because it answers the two things their board does to us at once: the minus bounces a resolved Rest in Peace or High Noon and replaces itself, and the static ability stops them holding up Path to Exile or Orim's Chant on our turn. Everything else in the fifteen is aimed at a deck this one is not.",
+  "opponent_plan": {
+    "posture": "lock",
+    "posture_why": "The plan is to take our lands away and then keep the board clear, so the win comes from us having no mana rather than from their damage.",
+    "key_cards": [
+      {
+        "card": "Cleansing Wildfire",
+        "why": "Named verbatim in opponent_gameplan; the cheap land destruction that starts the lock while replacing their own card"
+      },
+      {
+        "card": "Price of Freedom",
+        "why": "Named verbatim in opponent_gameplan; the removal that answers whatever we managed to resolve on a short manabase"
+      },
+      {
+        "card": "Rest in Peace",
+        "why": "Blanks Overlord of the Balemurk's return and Emperor of Bones in one card",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "High Noon",
+        "why": "Holds us to one spell a turn, which is the tax a land-light hand cannot pay",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Three lands with a white source, or two lands and Witch Enchanter.",
+    "goldfish_for": "Overlord of the Balemurk on turn two for impending, which needs no fourth land.",
+    "watch_for": "Whether they keep a hand that is all land destruction and no threat.",
+    "posture": "grind",
+    "posture_why": "They have no clock, so the game is long and every land we keep matters."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Teferi, Time Raveler",
+      "verdict": "SURVIVES",
+      "why": "Nothing in their pulled 2026-09-10 board answers a planeswalker: Wear/Tear hits artifacts and enchantments, Surgical Extraction acts on graveyards, and High Noon and Rest in Peace are static. Their maindeck Avengers Disassembled and Wrath of the Skies do not name planeswalkers either."
+    }
+  ],
+  "card_names": [
+    "Cleansing Wildfire",
+    "Demolition Field",
+    "Field of Ruin",
+    "Erode",
+    "Price of Freedom",
+    "Path to Exile",
+    "Avengers Disassembled",
+    "Wrath of the Skies",
+    "Solitude",
+    "The Legend of Roku"
+  ]
+}

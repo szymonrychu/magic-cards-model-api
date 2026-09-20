@@ -1,0 +1,103 @@
+{
+ "name": "esper control",
+ "meta_share": 2.151898734177215,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format and archetype, statistics_archetypes carries no winrate field, and this run's own fingerprint records winrate_vs_field as an empty map. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "A Ketramose engine deck: Relic of Progenitus, Prismatic Ending and Solitude exile everything they touch, and Ketramose, the New Dawn turns each exile on their turn into a drawn card. Psychic Frog and Quantum Riddler are the backup threats, Thoughtseize and Inquisition of Kozilek strip our answers, and their four maindeck Relic of Progenitus keep our graveyard too empty for a cascaded Living End to be worth casting.",
+ "opponent_plan": {
+  "posture": "grind",
+  "posture_why": "Every removal spell they cast draws a card through Ketramose, so they win long games on attrition while Relic of Progenitus keeps our graveyard too empty for Living End to punish them.",
+  "key_cards": [
+   {
+    "card": "Ketramose, the New Dawn",
+    "why": "indestructible engine; each card their removal exiles on their turn draws them one, so they out-card us the longer the game runs"
+   },
+   {
+    "card": "Relic of Progenitus",
+    "why": "four maindeck copies that exile our graveyard at instant speed, so a cascaded Living End brings back little or nothing"
+   },
+   {
+    "card": "Psychic Frog",
+    "why": "the evasive blue clock that closes the game once the Ketramose engine has buried us in cards"
+   },
+   {
+    "card": "Wrath of the Skies",
+    "why": "post-board energy sweeper for our reanimated board, though it must be paid up to our mv-five-plus bodies to sweep them",
+    "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+   }
+  ]
+ },
+ "primary_gameplan": "Treat this as a resource fight, not a race: Force of Vigor destroys the four maindeck Relic of Progenitus that keep our graveyard empty, free on their turn, so Living End is worth casting again, and Mystical Dispute protects the cascade turn and answers Psychic Frog and their blue counters. Ketramose dies to Dismember's -5/-5 despite indestructibility, but it is Relic, not their board, that we most need to remove.",
+ "pitfalls": [
+  "Cascading into an active Relic of Progenitus reset: with our graveyard exiled, Living End returns nothing and hands them the board.",
+  "Spending Force of Vigor early on one Relic when they hold a second; the four maindeck copies mean the free two-for-one is usually there.",
+  "Trying to grind through Ketramose with removal: every exile it sees draws them a card, so answer Relic and the counters instead."
+ ],
+ "stance": "counter",
+ "stance_rationale": "Nearly every disruptive card in their 75 is blue -- No More Lies, Spell Snare, Quantum Riddler, Psychic Frog and post-board Consign to Memory and Mystical Dispute -- so cheap countermagic that protects our cascade and answers their threats is the highest-leverage swap; three Mystical Dispute go in, and at mana value 3 (resolve_cards: {2}{U}) each sits exactly on the cascade floor, so none of them is ever a cascade collision -- the deck runs three purely because the matchup is decided by the counter war. Force of Vigor is the second half: mana value 4, clear of the cascade floor, free on their turn, and it destroys the four maindeck Relic of Progenitus (and any post-board Grafdigger's Cage) that keep our graveyard too empty for Living End to matter.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Consign to Memory",
+   "count": 4,
+   "why": "one mana with replicate; counters the cascade trigger and, separately, our Endurance/Subtlety/Wistfulness enters triggers",
+   "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+  },
+  {
+   "card": "Mystical Dispute",
+   "count": 2,
+   "why": "one mana against our all-blue cascade spells and counter suite",
+   "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+  },
+  {
+   "card": "Grafdigger's Cage",
+   "count": 1,
+   "why": "reflexive graveyard-hate slot; Living End enters its creatures from exile and cascade casts from exile, so the Cage is close to dead here and Force of Vigor kills it anyway",
+   "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+  },
+  {
+   "card": "Wrath of the Skies",
+   "count": 3,
+   "why": "X-cost energy sweeper for the board Living End resolves into, but our reanimated bodies are mana value five to seven, so it must be paid up far higher here than against a small-creature deck",
+   "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "3 Mystical Dispute",
+    "2 Force of Vigor"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "2 Oliphaunt",
+    "1 Waker of Waves"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "3 Mystical Dispute",
+    "2 Force of Vigor"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "2 Oliphaunt",
+    "1 Waker of Waves"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Two lands, a cascade spell, and Force of Negation or Subtlety; a fill-only hand loses to a Relic that empties the yard.",
+  "goldfish_for": "Force of Vigor on their Relic first, then a protected cascade behind Mystical Dispute.",
+  "watch_for": "Two open blue mana is No More Lies or Spell Snare; an active Relic makes Living End a blank.",
+  "posture": "grind",
+  "posture_why": "Relic hate and counters make this a resource fight, not a race, so out-grinding their engine beats a blind cascade."
+ }
+}

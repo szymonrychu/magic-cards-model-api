@@ -1,0 +1,108 @@
+{
+ "name": "ur cutter prowess",
+ "meta_share": 2.0253164556962027,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format and archetype, statistics_archetypes carries no winrate field, and this run's own fingerprint records winrate_vs_field as an empty map. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "Dragon's Rage Channeler and Monastery Swiftspear behind Mishra's Bauble and Lava Dart, with Cori-Steel Cutter turning every cheap spell into a body and Slickshot Show-Off plus Mutagenic Growth closing from six or more life.",
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Every card is one mana or free, so they are attacking on turn two and using Mutagenic Growth to push the last points through a blocker rather than trading with it.",
+  "key_cards": [
+   {
+    "card": "Cori-Steel Cutter",
+    "why": "a one-mana artifact that makes a Monk and equips itself every turn they cast two spells; removal on the creature does nothing."
+   },
+   {
+    "card": "Consign to Memory",
+    "why": "three copies at one mana, and Cori-Steel Cutter's trigger and our own colorless artifacts are both in range.",
+    "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+   },
+   {
+    "card": "Spell Snare",
+    "why": "our Psychic Frog, Orcish Bowmasters and Counterspell are all mana value two.",
+    "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+   },
+   {
+    "card": "Unholy Heat",
+    "why": "delirium is trivial for them, and six damage answers every creature we play.",
+    "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+   }
+  ]
+ },
+ "primary_gameplan": "Fatal Push on Dragon's Rage Channeler before it is delirious, Orcish Bowmasters on the Monk, and Toxic Deluge only once Cori-Steel Cutter has made more than one body. Psychic Frog blocks profitably and grows out of Lava Dart range.",
+ "pitfalls": [
+  "Lava Dart's flashback kills Orcish Bowmasters and Tamiyo for free, so neither is a safe block.",
+  "Slickshot Show-Off plus Mutagenic Growth is eight damage from an empty board; stop counting their hand as blanks at four life.",
+  "Mystical Dispute costs three against a deck whose only blue cards are Expressive Iteration and Preordain, so it is here for the counter war, not the threats."
+ ],
+ "stance": "symmetric_counter",
+ "stance_rationale": "Cori-Steel Cutter makes a Monk every time they cast their second spell, and Slickshot Show-Off ends games out of nowhere. One-for-one removal loses to the token half, so Toxic Deluge comes in - and it kills our own board with theirs.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Consign to Memory",
+   "count": 3,
+   "why": "one mana against triggered abilities and colorless spells - our Engineered Explosives and Nihil Spellbomb both die to it.",
+   "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+  },
+  {
+   "card": "Spell Snare",
+   "count": 2,
+   "why": "counters the entire two-drop half of our deck for one mana.",
+   "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+  },
+  {
+   "card": "Unholy Heat",
+   "count": 3,
+   "why": "one mana, six damage with delirium, which their Baubles and Lava Darts turn on by turn two.",
+   "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+  },
+  {
+   "card": "Surgical Extraction",
+   "count": 2,
+   "why": "free, and it strips the one card we are digging toward once a fetch has put something in our graveyard.",
+   "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "3 Mystical Dispute",
+    "2 Toxic Deluge"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "1 Sheoldred's Edict",
+    "1 Kaito, Bane of Nightmares",
+    "1 Quantum Riddler"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "3 Mystical Dispute",
+    "2 Toxic Deluge"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "1 Sheoldred's Edict",
+    "1 Kaito, Bane of Nightmares",
+    "1 Quantum Riddler"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Two lands and two pieces of one-mana removal; counters alone lose to Cori-Steel Cutter.",
+  "goldfish_for": "Toxic Deluge, held until Cori-Steel Cutter has made a second Monk.",
+  "watch_for": "Untapped red mana at four or fewer life is Slickshot Show-Off plus Mutagenic Growth.",
+  "posture": "disrupt_first",
+  "posture_why": "Their clock beats ours, so the Cutter has to be answered before we attack."
+ },
+ "self_cost": "Toxic Deluge for one or two takes Psychic Frog and Orcish Bowmasters along with their Monks and Dragon's Rage Channeler; Tamiyo, Inquisitive Student is a 0/3 and survives both numbers as a 0/2 or a 0/1. Against a deck that rebuilds off one Cutter trigger, losing Frog and Bowmasters is still a real cost."
+}

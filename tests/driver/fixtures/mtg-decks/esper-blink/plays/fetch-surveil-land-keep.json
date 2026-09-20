@@ -2,10 +2,23 @@
   "schema_version": 1,
   "id": "fetch-surveil-land-keep",
   "name": "Fetch a surveil land at their end step, lands stay on top",
-  "intent": "At the opponent's end step with fewer than five lands out, crack a fetch for a surveil land, Shadowy Backstreet first, then Meticulous Archive, then Undercity Sewers, and keep the surveilled card on top: the five-mana Overlord of the Balemurk and Quantum Riddler still need lands, a fetchland included. From five lands fetch-surveil-land bins lands instead. Only at 6 life or more and while fewer than two surveil lands are out.",
+  "intent": "At the opponent's end step with fewer than five lands out, crack a fetch for a surveil land, Shadowy Backstreet first, then Meticulous Archive, then Undercity Sewers, and keep the surveilled card on top: the five-mana Overlord of the Balemurk and Quantum Riddler still need lands, a fetchland included. From five lands fetch-surveil-land bins lands instead. Only at 6 life or more and while fewer than two surveil lands are out. Stands down against eldrazi-ramp only: that matchup is at the per-archetype active-play cap, and against a ramp deck a surveil land entering tapped at their end step is worth less than leaving ephemerate-protect-lone-creature armed. Every other matchup is unchanged.",
   "priority": 50,
   "opposing_archetypes": [
-    "*"
+    "45c-aggro",
+    "boros-aggro",
+    "boros-ponza",
+    "broodscale-bloodchief",
+    "devoted-combo",
+    "dimir-control",
+    "dimir-frog",
+    "esper-blink",
+    "goryos-vengeance",
+    "instant-reanimator",
+    "izzet-prowess",
+    "living-end",
+    "pinnacle-affinity",
+    "ur-cutter-prowess"
   ],
   "when": {
     "whose_turn": "theirs",

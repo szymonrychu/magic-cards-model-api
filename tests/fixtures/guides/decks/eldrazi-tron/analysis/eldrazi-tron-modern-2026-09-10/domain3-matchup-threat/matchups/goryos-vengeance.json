@@ -1,0 +1,141 @@
+{
+  "name": "goryos vengeance",
+  "meta_share": 2.290649643259482,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.4479,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='eldrazi tron', limit=60), committed verbatim at .protocol/raw-matchups.json; the deduplicated row for opponent='esper goryo' reads winrate 0.4479 over sample_size 43 matches, and archetype_a is eldrazi tron so it is our winrate read directly rather than a complement. The capture speaks 'esper goryo'; the join to 'goryos vengeance' is asserted in the capture's own `aliases` map on the 2026-09-10 archetype-signature validation, which classified ten field lists per label identically for instant reanimator, esper goryo and goryos vengeance. The capture also holds a separate row labelled 'goryos' at 0.5161 over 45 matches; that fourth label is NOT covered by the validation, so it is left unjoined and contributes nothing here.",
+    "n": 43
+  },
+  "primary_gameplan": "Grafdigger's Cage reads directly on Goryo's Vengeance - 'Creature cards in graveyards and libraries can't enter the battlefield' - and this build has no Psychic Frog to grind through it, so a resolved Cage is close to game over for their fast draw.",
+  "secondary_gameplan": "Disruptor Flute names Goryo's Vengeance for a three-mana tax their two-land turn cannot pay; Tormod's Crypt exiles the Griselbrand they discarded to Faithful Mending, and Trinisphere pushes the whole first three turns of their curve out of reach.",
+  "opponent_gameplan": "The ten committed 2026-09-10 lists are an Esper Ephemerate shell rather than the Frog one: four Ephemerate, four Faithful Mending, four Quantum Riddler, four Solitude, three Thoughtseize, two Prismatic Ending and a single Griselbrand. Faithful Mending puts Griselbrand into the graveyard, Goryo's Vengeance returns it with haste, and 'Pay 7 life: Draw seven cards' converts that one turn into the rest of the game. Ephemerate re-buys Solitude and Quantum Riddler when the fast draw does not come.",
+  "tournament_refs": [
+    {
+      "pilot": "SpiderSpace",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664804"
+    },
+    {
+      "pilot": "Ryan_39",
+      "tournament_date": "2026-09-07",
+      "tournament_id": "2059b453-ec7b-4c00-beef-fb14b547d06e",
+      "source_deck_id": "videre-58662821"
+    },
+    {
+      "pilot": "TheLengend90",
+      "tournament_date": "2026-09-06",
+      "tournament_id": "87159c19-aab8-4e02-8b29-6ed326dd8562",
+      "source_deck_id": "videre-58661815"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 4,
+      "why": "10 of 10 committed 2026-09-10 lists; counters a colorless spell or a triggered ability for one mana, which is nearly our whole deck",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Wrath of the Skies",
+      "count": 3,
+      "why": "10 of 10 committed lists; an X sweeper for the cheap artifacts and Eldrazi we resolve",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Teferi, Time Raveler",
+      "count": 1,
+      "why": "8 of 10 committed lists; his static clause makes Dismember and Kozilek's Command sorcery-speed, which is how the Goryo's turn is protected",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Spell Snare",
+      "count": 2,
+      "why": "9 of 10 committed lists; hard-counters our two-mana accelerants and a Chalice cast for X equals one",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Grafdigger's Cage, Disruptor Flute and Tormod's Crypt are one-sided - we never cast from a graveyard and our graveyard is empty. Trinisphere is the symmetric one and it is fetched last, which is what makes the row a symmetric counter rather than a straight one.",
+  "self_cost": "Trinisphere is the fetch that taxes us: Expedition Map, Giant's Boulder and Talisman of Resilience all become three-mana cards. It is the fourth fetch and only comes down on the play, when the tax lands before their second land drop rather than after it.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Faithful Mending on turn two into Goryo's Vengeance on turn three is a kill that draws seven cards, and the rest of the deck buys that turn.",
+    "key_cards": [
+      {
+        "card": "Goryo's Vengeance",
+        "why": "Named in the recorded gameplan; instant-speed reanimation of a legendary creature from the graveyard"
+      },
+      {
+        "card": "Griselbrand",
+        "why": "Named in the recorded gameplan; 'Pay 7 life: Draw seven cards' turns one attack step into their whole deck"
+      },
+      {
+        "card": "Consign to Memory",
+        "why": "Boarded counter aimed at colorless spells and triggered abilities, four copies",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Teferi, Time Raveler",
+        "why": "Boarded static that strips instant speed from our removal on the turn it matters",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Any hand with a turn-three Karn off Eldrazi Temple, or with Dismember and two lands.",
+    "goldfish_for": "Grafdigger's Cage on turn one or two, or a Karn that fetches it on turn three.",
+    "watch_for": "Faithful Mending on their second turn, which is the discard that sets up the kill.",
+    "posture": "disrupt_first",
+    "posture_why": "A recorded worst case at forty-five percent; only a hate permanent before turn three changes the result."
+  },
+  "fetch_priority": [
+    "Grafdigger's Cage",
+    "Disruptor Flute",
+    "Tormod's Crypt",
+    "Trinisphere"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Grafdigger's Cage",
+      "verdict": "SURVIVES",
+      "why": "Consign to Memory counters it on the way down but nothing in the recorded board destroys a resolved one-mana artifact; Wrath of the Skies would need one energy paid and is a sorcery, so it costs them the tempo the deck is built on."
+    },
+    {
+      "card": "Disruptor Flute",
+      "verdict": "SURVIVES",
+      "why": "Its tax is static rather than activated, so it keeps working under a resolved Teferi, Time Raveler or a Clarion Conqueror."
+    },
+    {
+      "card": "Tormod's Crypt",
+      "verdict": "SURVIVES",
+      "why": "Sacrificed in response to the Goryo's Vengeance cast, which exiles the target before the spell resolves; only a Consign to Memory on the activation stops it."
+    },
+    {
+      "card": "Trinisphere",
+      "verdict": "SURVIVES",
+      "why": "Spell Snare cannot hit a three-mana spell and their board carries no artifact removal, so a resolved Trinisphere stays; it makes Goryo's Vengeance a three-mana spell on a two-land board."
+    }
+  ],
+  "notes": [
+    "This row and the instant reanimator row share a winrate because they share a capture row: the vocabulary join is recorded in .protocol/raw-matchups.json's aliases map, not asserted here.",
+    "Grafdigger's Cage before Tormod's Crypt, for the same reason as against the Frog build: the Cage answers every copy of Goryo's Vengeance they will draw, the Crypt only answers the graveyard already built.",
+    "Trinisphere is fetched only on the play. On the draw their Faithful Mending has already resolved by the time three mana is available, and the tax then falls only on us."
+  ],
+  "card_names": [
+    "Goryo's Vengeance",
+    "Griselbrand",
+    "Ephemerate",
+    "Faithful Mending",
+    "Solitude",
+    "Quantum Riddler",
+    "Thoughtseize",
+    "Prismatic Ending",
+    "Consign to Memory",
+    "Wrath of the Skies"
+  ]
+}

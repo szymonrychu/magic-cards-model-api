@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "id": "open-land-unlocks",
+  "name": "Play a free untapped land that unlocks a hand card on turn 1-2",
+  "intent": "On turn 1 or 2, before anything else about the land drop is decided, play a land from hand that already enters untapped and makes some other hand card payable that is not payable now - a basic Forest that lets Ancient Stirrings be cast. This never costs life, so it goes first: a land this good is never worse than holding it. Prefers a basic Forest first (the only untapped green source Ancient Stirrings, Basking Broodscale and the rest actually need), then Urza's Saga (chapter III wants to resolve on turn 3), then Eldrazi Temple by its own 'colorless Eldrazi' text (its restricted second ability only ever matters once a colorless Eldrazi spell is in hand, so it ranks behind a plain green source and the Saga clock). Ugin's Labyrinth can be the land this selector actually picks (it always enters untapped; its own imprint trigger is answered may/choose_cards regardless of whether a legal exile target is in hand - the api treats a no-target may as no real choice, so the answer is simply unused then), and so can Cavern of Souls (untapped, unconditional creature-type choice), so both answers ride along on every play_land move that could reach either; the imprint pick itself prefers mana_value >= 8 (unique to Emrakul, the Promised End in this 60) over Devourer of Destiny (mv 7) - GAMEPLAN_GUIDE.md 'Combo or Eldrazi' mode 2: 'Ugin's Labyrinth imprinting Emrakul, the Promised End is the real win condition'. Stands down once four or more untapped mana is already up - the same key cast-trigger-land-search's own guard reads, so the two never overlap. Only turns 1-2, only with the land drop still available, and only mine, precombat main, an empty stack.",
+  "priority": 74,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 4
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "unlocks": true,
+          "enters_any": [
+            "untapped"
+          ]
+        },
+        "prefer": [
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          },
+          {
+            "subtypes_any": [
+              "Saga"
+            ]
+          },
+          {
+            "oracle_has": "colorless Eldrazi"
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "may",
+          "accept": true
+        },
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "colors_any": [
+                "colorless"
+              ],
+              "mana_value": {
+                "op": ">=",
+                "n": 7
+              }
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "mana_value": {
+                  "op": ">=",
+                  "n": 8
+                }
+              }
+            ],
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "choose_a_quality",
+          "choice": "Eldrazi"
+        }
+      ]
+    }
+  ],
+  "next": []
+}

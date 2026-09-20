@@ -331,18 +331,28 @@ against continuous agents at once means running against a cluster in
 
 ### Agent settings, per game
 
-`POST /api/ui/games` takes an optional `agent` object per AI player -
-`{model, effort, max_thinking_tokens}` (`AgentSettings` in
-`agent_settings.py`) - carried into whichever mode plays that seat (subprocess
-argv, the wrapper dispatch, or a Job's env), and shown back on `GET
-/api/games/{id}`'s player block and in the lobby list above.
+**2026-09-19 (owner direction, cost cutting): model, effort and thinking
+budget are a fixed server-side deployment choice, not a per-request one any
+more.** `POST /api/ui/games`'s `NewUiPlayer` carries no `agent`/`buddy_agent`
+field at all - a request that still sends one is refused (422, `extra=
+"forbid"`) - and every AI seat and buddy alike always runs
+`AgentSettings.default()` (`agent_settings.py`), shown back on `GET
+/api/games/{id}`'s player block and in the lobby list above exactly as
+before, just never chosen per game.
 
-- `model`: any non-empty string. The UI suggests `sonnet`, `opus`, `haiku`,
-  `fable`; the default when `agent` is omitted comes from `AGENT_DEFAULT_MODEL`
-  (env, default `opus`, for an AI seat and a buddy alike).
-- `effort`: one of `low`, `medium`, `high`, `xhigh`, `max`. Default `high`.
-- `max_thinking_tokens`: a non-negative integer, or `null`/omitted to leave
-  Claude Code's own default. `0` disables thinking where the model allows it.
+- `model`: `AGENT_DEFAULT_MODEL` (env, default `claude-sonnet-5`) - Sonnet,
+  for an AI seat and a buddy alike, since Opus at the old default cost more
+  than this deployment wants to spend on every turn of every game.
+- `effort`: `AGENT_DEFAULT_EFFORT` (env, default `high`) - affordable now
+  that play moved off Opus.
+- `max_thinking_tokens`: still `null` always (`AgentSettings.default` never
+  sets one) - a non-negative integer, or `null`, to leave Claude Code's own
+  default. `0` disables thinking where the model allows it, for any code path
+  that still constructs `AgentSettings` directly with one.
+- **The post-game review is a separate, fixed choice: `claude-opus-5` at
+  `high` effort, always** (`AgentSettings.review_default()`) - never read
+  from `AGENT_DEFAULT_MODEL`/`AGENT_DEFAULT_EFFORT`, since those name what a
+  seat *plays* with. See "Post-game AI review" below.
 
 In `wrapper` mode this is not just carried in a dispatch payload and ignored:
 the driver's `assign` reads the wrapper's current settings (`GET
@@ -361,6 +371,42 @@ exactly one series per `type` (grouping only `by (type)`, or reading
 `ccw_turn_tokens_total{type="output"}` expecting a single value) will now see
 one series per model/effort choice instead, and needs an explicit `sum by
 (type)` (or similar) to collapse back to the old shape.
+
+### Post-game AI review
+
+When a game ends, the winning/losing/drawing seat's own driver already ran a
+"reflection turn" (the seat's own Sonnet session writes a short account of
+the game to its memory and posts it to `POST /api/games/{id}/reflection`,
+`audit.REFLECTION_ACTION` - this is the "handoff", and it predates this
+feature). Right after that reflection is posted, and before the agent
+retires, the same driver now also generates a second, independent critique
+on Opus (`AgentSettings.review_default()`, fixed - never
+`AGENT_DEFAULT_MODEL`/`AGENT_DEFAULT_EFFORT`, which name the play default
+only) and files it separately.
+
+The mechanism (`mtg_agent/driver/review.py`, `mtg_agent/wrapper/oneshot.py`):
+
+1. The driver fetches the game's own `GET /api/games/{id}/review` body (the
+   same declarations/advice a human reviewer reads on the review page).
+2. It builds a prompt from that plus the reflection text just posted
+   (`review.review_prompt`), and POSTs it to the AGENT container's wrapper -
+   `POST /v1/review` - since the driver's own container (`Dockerfile`)
+   carries no `claude` binary; only the agent image
+   (`Dockerfile.agent`) does.
+3. The wrapper runs a single, bounded, non-PTY `claude --print` subprocess
+   (`REVIEW_TIMEOUT_SECONDS`, default 600s) - entirely separate from its
+   supervised interactive session, which stays on whatever it was playing
+   with and is never touched by this call.
+4. The result is filed under `POST /api/games/{id}/ai-review`
+   (`audit.AI_REVIEW_ACTION`), shown on the review page right after the
+   reflection (`ui/review_model.js`'s `aiReviewOf`, `ui/render/review.js`'s
+   `aiReviewNode`).
+
+Every step is best-effort: an unreachable game server, an unreachable
+wrapper, or a `claude` failure logs a warning and is simply skipped - never
+blocks the handover or retirement that follows it. Not deduplicated across
+seats (see `review.py`'s own module docstring for why); the review page
+reads the newest row of its kind rather than assuming exactly one exists.
 
 ### Seeing the Jobs (`kubernetes` mode)
 

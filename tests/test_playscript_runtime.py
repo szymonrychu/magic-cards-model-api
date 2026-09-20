@@ -26,11 +26,11 @@ import pytest
 from conftest import add_card, force_turn_position, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
-from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG
+from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG, state_view
 
 from magic_cards_model_api import audit, seatkit
 from magic_cards_model_api.main import app
-from magic_cards_model_api.playscripts import runtime
+from magic_cards_model_api.playscripts import runtime, script_tools
 from magic_cards_model_api.playscripts.runtime import Exit, run_script
 from magic_cards_model_api.repository import Advisor
 from magic_cards_model_api.seatkit import Seats
@@ -80,6 +80,9 @@ class Hooked:
 
     def get(self, path: str, **kwargs: Any) -> Any:
         self.sent.append(("GET", path, None))
+        replaced = self._answer("GET", path, None) if self._answer else None
+        if replaced is not None:
+            return replaced
         return self._inner.get(path, **kwargs)
 
     def posts(self, suffix: str) -> list[Any]:
@@ -106,9 +109,18 @@ def hooked_seat(seats: Seats, uid: str, **hooks: Any) -> tuple[seatkit.Seat, Hoo
 
 
 def register(
-    client: TestClient, game_id: str, uid: str, *scripts: dict[str, Any]
+    client: TestClient,
+    game_id: str,
+    uid: str,
+    *scripts: dict[str, Any],
+    inputs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    body = {"deck_slug": SLUG, "guides_revision": "rev0", "scripts": list(scripts)}
+    body = {
+        "deck_slug": SLUG,
+        "guides_revision": "rev0",
+        "scripts": list(scripts),
+        "inputs": inputs or [],
+    }
     response = client.put(
         f"/api/games/{game_id}/seats/{uid}/scripts", params={"uid": uid}, json=body
     )
@@ -325,6 +337,172 @@ def test_the_corpus_is_read_once_per_seats(
     assert len(reads) == 1, reads
 
 
+def test_no_registered_corpus_is_cached_after_the_first_404(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 3: `GET .../scripts` 404s when nothing is
+    registered, and only the found-a-corpus branch cached its answer - every
+    later call for a scriptless seat paid the same HTTP GET again. The "not
+    registered" outcome is cached per game+uid too, same as a real corpus,
+    and still bypassed by `fresh=True`."""
+    alice = seat_uid(board, "alice")
+    seats = wired(monkeypatch, board)
+
+    first, first_hook = hooked_seat(seats, alice)
+    run_script(first, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+    second, second_hook = hooked_seat(seats, alice)
+    run_script(second, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    reads = [
+        path
+        for hook in (first_hook, second_hook)
+        for method, path, _ in hook.sent
+        if method == "GET" and path.endswith("/scripts")
+    ]
+    assert len(reads) == 1, reads
+
+
+def test_a_5xx_reading_the_corpus_is_not_cached_and_the_next_call_succeeds(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review fix 1: a transient 5xx reading the corpus used to be cached
+    exactly like a genuine 404 - every later run for that seat read the
+    stale "not registered" refusal for the rest of the game, even once the
+    corpus GET itself recovered. A 5xx must never be cached; the very next
+    call re-checks and finds the real corpus."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+
+    hit = {"n": 0}
+
+    def answer(method: str, path: str, body: Any) -> Any:
+        if method == "GET" and path.endswith("/scripts") and hit["n"] == 0:
+            hit["n"] += 1
+            return FakeResponse(500, {"detail": "db hiccup"})
+        return None
+
+    first, first_hook = hooked_seat(seats, alice, answer=answer)
+    failed = run_script(first, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+    assert failed.script_exit is not None
+    assert failed.script_exit.exit is Exit.REFUSED, failed.to_dict()
+    assert failed.script_exit.refusal_source == "server"
+
+    second, second_hook = hooked_seat(seats, alice)
+    result = run_script(second, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert result.script_exit is not None
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    reads = [
+        path
+        for hook in (first_hook, second_hook)
+        for method, path, _ in hook.sent
+        if method == "GET" and path.endswith("/scripts")
+    ]
+    assert len(reads) == 2, reads
+
+
+def test_a_404_corpus_read_expires_after_the_ttl_and_sees_a_late_registration(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review fix 1: the "not registered" cache used to be permanent - a
+    seat Job started before its own corpus PUT landed, or racing a retry,
+    never saw a later registration for the rest of the game. The negative
+    cache now expires after `runtime._UNREGISTERED_TTL_SECONDS`: within the
+    TTL a 404 is still served from cache (one GET), but the call after the
+    TTL re-checks and sees the late registration."""
+    alice = seat_uid(board, "alice")
+    seats = wired(monkeypatch, board)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: clock["t"])
+
+    first, first_hook = hooked_seat(seats, alice)
+    first_result = run_script(
+        first, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora
+    )
+    assert first_result.script_exit is not None
+    assert first_result.script_exit.exit is Exit.REFUSED, first_result.to_dict()
+
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+
+    # Still within the TTL: the stale 404 is served from cache, no new GET.
+    second, second_hook = hooked_seat(seats, alice)
+    still_refused = run_script(
+        second, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora
+    )
+    assert still_refused.script_exit is not None
+    assert still_refused.script_exit.exit is Exit.REFUSED, still_refused.to_dict()
+
+    clock["t"] += runtime._UNREGISTERED_TTL_SECONDS + 1
+
+    third, third_hook = hooked_seat(seats, alice)
+    result = run_script(third, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert result.script_exit is not None
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    reads = [
+        path
+        for hook in (first_hook, second_hook, third_hook)
+        for method, path, _ in hook.sent
+        if method == "GET" and path.endswith("/scripts")
+    ]
+    assert len(reads) == 2, reads
+
+
+def test_a_fresh_corpus_refresh_preserves_the_hints_own_bookkeeping(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 4d: `_corpus(fresh=True)` (every `resume`d run)
+    replaces the cached corpus dict wholesale - but `script_tools` stashes
+    its own bookkeeping (the archetype/inputs last asserted, recently-run
+    scripts) onto that same dict, under private keys nothing else writes. A
+    refresh must carry those forward rather than silently reset the hint to
+    `*` with no memory."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    seats = wired(monkeypatch, board)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    corpus = runtime._corpus(seat, seats.script_corpora, fresh=False)
+    corpus["_last_asserted_archetype"] = "dimir-frog"
+    corpus["_last_supplied_inputs"] = {"prefer_tempo": True}
+    corpus["_recent_runs"] = [["drop", 3, "precombat_main"]]
+
+    refreshed = runtime._corpus(seat, seats.script_corpora, fresh=True)
+
+    assert refreshed["_last_asserted_archetype"] == "dimir-frog"
+    assert refreshed["_last_supplied_inputs"] == {"prefer_tempo": True}
+    assert refreshed["_recent_runs"] == [["drop", 3, "precombat_main"]]
+
+
+def test_a_fresh_corpus_refresh_drops_the_stale_normalised_plays_cache(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review fix 2: `_corpus(fresh=True)` used to carry forward *every*
+    underscore-prefixed key from the previous cached dict, including
+    `script_tools._PLAYS_CACHE_KEY` - a derived cache of the *old* corpus's
+    scripts. After a re-registration, a fresh refresh must drop it (never
+    carry it forward) so `script_tools._plays` recomputes against the corpus
+    actually just read, rather than silently serving plays that are no
+    longer registered."""
+    from magic_cards_model_api.playscripts import script_tools
+
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("old-play"))
+    seats = wired(monkeypatch, board)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    corpus = runtime._corpus(seat, seats.script_corpora, fresh=False)
+    corpus[script_tools._PLAYS_CACHE_KEY] = "stale-cache-sentinel"
+
+    register(client, board, alice, land_script("new-play"))
+    refreshed = runtime._corpus(seat, seats.script_corpora, fresh=True)
+
+    assert script_tools._PLAYS_CACHE_KEY not in refreshed, refreshed
+
+
 def test_moves_re_arm_expected_seq_and_hold_priority_between_them(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -457,6 +635,49 @@ def test_a_bare_scry_answer_keeps_everything_on_top(
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
     body = hook.posts("/decide")[-1]
     assert body["moved"] == [] and body["top_order"] is None
+
+
+def test_a_may_whose_yes_is_illegal_is_answered_no_even_when_the_play_says_yes(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ugin's Labyrinth (item 1): "you may exile a colorless card with mana
+    value 7 or greater from your hand" is a `MAY` the engine asks with
+    `affirmative_is_legal = bool(candidates)`. With no such card in hand,
+    saying yes is not a legal answer (CR 608.2d) and the engine refuses it -
+    but a play written before the deck always held a 7-drop still answers
+    `accept: True`. The runner must answer `accept: False` regardless of what
+    the play's own answer says, and the run must still reach
+    `chain_complete` rather than exit `REFUSED` with the land already down."""
+    alice = seat_uid(board, "alice")
+    script = land_script(
+        "labyrinth",
+        moves=[
+            {
+                "kind": "play_land",
+                "card": {"select": {"types_all": ["Land"], "oracle_has": "mana value 7"}},
+                "answers": [{"decision": "may", "accept": True}],
+            }
+        ],
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Ugin's Labyrinth", "alice", "hand")
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.finished is True, result.to_dict()
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    may_answers = [body for body in hook.posts("/decide") if "accept" in body]
+    assert may_answers and may_answers[-1]["accept"] is False, may_answers
+    after = state(client, board)
+    labyrinth = cards_named(after["battlefield"], "Ugin's Labyrinth")
+    assert labyrinth, "the land is still down"
+    assert after.get("exile") in (None, []), "nothing was exiled: there was no legal candidate"
 
 
 # -- conditions, archetypes, inputs -------------------------------------------
@@ -822,6 +1043,29 @@ def test_an_empty_reasoning_is_refused_before_any_call(
     assert hook.sent == []
 
 
+def test_reasoning_left_as_the_call_templates_placeholder_is_refused(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 review finding 7: `script_tools._call_template` leaves `reasoning`
+    at `runtime.REASONING_PLACEHOLDER` for the seat to fill in - a run sent
+    with that placeholder still in it never wrote its own reasoning, and is
+    refused before any call, the same as an empty one."""
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, seat_uid(board, "alice"))
+
+    result = run_script(
+        seat,
+        script_id="anything",
+        reasoning=runtime.REASONING_PLACEHOLDER,
+        corpora=seats.script_corpora,
+    )
+
+    assert result.script_exit.exit is Exit.REFUSED
+    assert result.script_exit.refusal_source == "runner"
+    assert runtime.REASONING_PLACEHOLDER in (result.script_exit.refusal or "")
+    assert hook.sent == []
+
+
 def test_an_engine_refusal_is_passed_through(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -969,6 +1213,7 @@ def test_already_ran_from_the_start_route_is_surfaced(
             "script_id": "drop",
             "turn": now["turn_number"],
             "step": now["step"],
+            "invoked_via": "mcp",
         },
     )
     assert earlier.status_code == 200, earlier.text
@@ -1491,7 +1736,7 @@ def test_resume_after_the_start_record_is_refused_when_the_turn_moved(
     [start] = started(board)
     assert (token["turn"], token["step"]) == (start["turn"], start["step"])
 
-    store.get(board).turn.turn_number += 1
+    store.get(board).turn.turns_taken += 1
     seat, hook = hooked_seat(seats, alice)
     result = run_script(
         seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora, resume=token
@@ -1704,6 +1949,40 @@ def test_advise_mode_proposes_move_one_and_returns_the_rest_unvalidated(
     assert start["role"] == finish["role"] == "advisor"
     assert start["advise"] is True and finish["exit"] == "advised"
     assert hook.posts("/actions/pass-priority") == []
+
+
+def test_an_armed_scripts_proposal_is_not_swallowed_by_an_empty_staged_draft(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 A6 review fix 3 (2026-09-14): `stage_advice` arms an empty window
+    (`entry["action"] is None`) for the advisor's NEXT committing call - and
+    an armed script firing through `_advise` is itself a committing call
+    (`seat.call_json`), so before this fix it was captured into that empty
+    slot instead of posted: the script's own `run_action` outcome came back
+    `{"drafted": True, ...}`, never `{"proposed": True, ...}`, and the
+    runtime read that as a refusal (`REFUSED "None"`, `outcome.get("reason")`
+    on a dict with no `reason` key). The script's move for now must post now;
+    the staged window is for a later moment and stays staged, untouched."""
+    advisor = "advisor-uid"
+    store.register_advisors(board, {advisor: Advisor(player="alice")})
+    register(client, board, advisor, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, advisor)
+    assert seat.advise is True
+
+    staged = seat.stage_advice("end_step", "mine")
+    assert staged["staged"] is True
+
+    result = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    out = result.script_exit
+    assert out.exit is Exit.ADVISED, result.to_dict()
+    assert out.proposal is not None and out.proposal.get("proposed") is True
+    assert len(rows(board, "advice")) == 1
+    entry = seat._advice_drafts[advisor]
+    assert entry["action"] is None, "the staged window must still be empty, not swallowed"
+    assert entry["window"]["step"] == "end_step"
 
 
 def test_the_exit_vocabulary_is_closed() -> None:
@@ -2035,6 +2314,38 @@ def test_a_sacrifice_choice_matching_nothing_exits_unforeseen(
     assert hook.posts("/actions/activate") == []
 
 
+def test_a_pick_short_of_its_own_count_exits_unforeseen_rather_than_truncating(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_pick`'s own `count` is a floor, not a ceiling `found[:count]` may
+    silently truncate down to: asking for 2 candidates when only 1 matches
+    used to return that 1 with no error at all, so a sacrifice/discard/pick
+    two short of its own count sent an under-sized list the engine would
+    then refuse for a different, less clear reason - or, worse, accept as a
+    legal but wrong-sized answer for a cost that reads its own count
+    elsewhere. This must fail closed in the runtime itself, with its own
+    stop_reason, before any request is ever built."""
+    alice = seat_uid(board, "alice")
+    register(
+        client,
+        board,
+        alice,
+        bombard({"player": "opponent"}, {"select": {"types_all": ["Creature"]}, "count": 2}),
+    )
+    add_card(client, board, "Goblin Bombardment", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="bombard", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert result.script_exit.stop_reason
+    assert hook.posts("/actions/activate") == []
+
+
 def test_a_sacrifice_choice_tied_between_different_cards_exits_ambiguous_unless_preferred(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2062,6 +2373,309 @@ def test_a_sacrifice_choice_tied_between_different_cards_exits_ambiguous_unless_
     assert chosen.script_exit.exit is Exit.CHAIN_COMPLETE, chosen.to_dict()
     lions = cards_named(state(client, board)["graveyards"]["alice"], "Savannah Lions")
     assert lions and hook.posts("/actions/activate")[0]["sacrificing"] == [lions[0]["id"]]
+
+
+# -- activate.discard: mirrors sacrifice's own selector-choice shape, CR ------
+# -- 701.9's own discard cost always reading from hand alone -----------------
+
+
+def frog_pump(discard: Any) -> dict[str, Any]:
+    """Psychic Frog's own "Discard a card: Put a +1/+1 counter on this
+    creature." - a real CR 701.9 discard cost with no "this card"
+    self-reference (that shape is `sacrifice`'s own "source" value, tested
+    elsewhere), so `discard` always means "a hand card chosen by selector"."""
+    move: dict[str, Any] = {
+        "kind": "activate",
+        "source": {"zone": "battlefield", "select": {"subtypes_any": ["Frog"]}},
+        "ability_text_has": "Discard a card",
+    }
+    if discard is not None:
+        move["discard"] = discard
+    return one_move_script("frog_pump", move)
+
+
+def test_an_activation_discards_by_selector(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, frog_pump({"select": {"types_all": ["Land"]}}))
+    add_card(client, board, "Psychic Frog", "alice", "battlefield")
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    island_id = state(client, board)["hands"]["alice"][0]["id"]
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="frog_pump", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/activate")
+    assert body["discarding"] == [island_id]
+    assert "sacrificing" not in body
+
+
+def test_discard_none_names_nothing_and_the_engine_refuses_the_cost(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, frog_pump("none"))
+    add_card(client, board, "Psychic Frog", "alice", "battlefield")
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="frog_pump", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.REFUSED, result.to_dict()
+    assert "discard needs 1 card(s) chosen, 0 given" in result.script_exit.refusal
+    [body] = hook.posts("/actions/activate")
+    assert "discarding" not in body
+
+
+def test_a_discard_choice_matching_nothing_exits_unforeseen(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, frog_pump({"select": {"types_all": ["Land"]}}))
+    add_card(client, board, "Psychic Frog", "alice", "battlefield")
+    add_card(client, board, "Lightning Bolt", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="frog_pump", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert "discard" in result.script_exit.stop_reason
+    assert hook.posts("/actions/activate") == []
+
+
+def test_a_discard_choice_tied_between_different_cards_exits_ambiguous_unless_preferred(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    choice: dict[str, Any] = {"select": {"types_all": ["Land"]}}
+    register(client, board, alice, frog_pump(choice))
+    add_card(client, board, "Psychic Frog", "alice", "battlefield")
+    add_card(client, board, "Island", "alice", "hand")
+    add_card(client, board, "Forest", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    tied = run_script(
+        seat, script_id="frog_pump", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert tied.script_exit.exit is Exit.AMBIGUOUS, tied.to_dict()
+    assert tied.script_exit.ambiguous_names == ["Forest", "Island"]
+    assert hook.posts("/actions/activate") == []
+
+    store.get(board).turn.turn_number += 1
+    preferred = {**choice, "prefer": [{"subtypes_any": ["Forest"]}]}
+    register(client, board, alice, frog_pump(preferred))
+    seat, hook = hooked_seat(seats, alice)
+    with opponent_passes(board):
+        chosen = run_script(seat, script_id="frog_pump", reasoning=REASONING, corpora={})
+    assert chosen.script_exit.exit is Exit.CHAIN_COMPLETE, chosen.to_dict()
+    forest_id = next(
+        c["id"] for c in state(client, board)["graveyards"]["alice"] if c["name"] == "Forest"
+    )
+    assert hook.posts("/actions/activate")[0]["discarding"] == [forest_id]
+
+
+def test_cavern_of_souls_played_with_eldrazi_answers_choose_a_quality_with_choice(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O6: `Answer.choice`, "for choose_a_quality and choose_a_mode only",
+    proved against the real "As this land enters, choose a creature type"
+    replacement (CR 614.12a) on a real Cavern of Souls, played from hand
+    through play_land."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Cavern of Souls", "alice", "hand")
+    script = land_script(
+        "cavern",
+        moves=[
+            {
+                "kind": "play_land",
+                "card": {"select": {}},
+                "answers": [{"decision": "choose_a_quality", "choice": "Eldrazi"}],
+            }
+        ],
+    )
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(seat, script_id="cavern", reasoning=REASONING, corpora=seats.script_corpora)
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    (decided,) = hook.posts("/decide")
+    assert decided["choice"] == "Eldrazi"
+
+    cavern = cards_named(state(client, board)["battlefield"], "Cavern of Souls")[0]
+    assert cavern["choice"] == {"kind": "creature_type", "value": "Eldrazi"}
+
+
+def test_play_land_ties_any_takes_the_first_by_sorted_name_instead_of_ambiguous(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O2: `prefer` (up to 4) and `ties: "any"` on `play_land.card`. Two
+    differently-named lands tied under a plain `{types_all: [Land]}` selector
+    are `ambiguous` without `ties`; with `ties: "any"` the runner takes the
+    first by sorted name instead."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Sacred Foundry", "alice", "hand")
+    add_card(client, board, "Steam Vents", "alice", "hand")
+    register(client, board, alice, land_script("drop"))
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    tied = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+    assert tied.script_exit.exit is Exit.AMBIGUOUS, tied.to_dict()
+    assert tied.script_exit.ambiguous_names == ["Sacred Foundry", "Steam Vents"]
+    assert hook.posts("/actions/play-land") == []
+
+    any_land_move = {
+        "kind": "play_land",
+        "card": {"select": {}, "ties": "any"},
+        "answers": [{"decision": "pay_life", "accept": False}],
+    }
+    register(
+        client,
+        board,
+        alice,
+        land_script("drop", moves=[any_land_move]),
+        land_script("drop-any", moves=[any_land_move]),
+    )
+    seat, hook = hooked_seat(seats, alice)
+    chosen = run_script(seat, script_id="drop-any", reasoning=REASONING, corpora={})
+    assert chosen.script_exit.exit is Exit.CHAIN_COMPLETE, chosen.to_dict()
+    foundry = cards_named(state(client, board)["battlefield"], "Sacred Foundry")
+    assert foundry, "the alphabetically-first tied land was played"
+    assert hook.posts("/actions/play-land")[0]["card_id"] == foundry[0]["id"]
+
+
+def test_a_choice_not_among_the_offered_options_exits_unforeseen() -> None:
+    """O6: choose_a_mode is always fully enumerated (`pending.options`), so
+    a `choice` naming something else can never be sent to the engine - it
+    is `unforeseen`, the same as `_pick` finding nothing to match."""
+    pending = {
+        "player": "alice",
+        "kind": "choose_a_mode",
+        "prompt": "choose one",
+        "generation": 1,
+        "options": ["Create a 3/3 green Beast creature token.", "You gain 3 life.", "Draw a card."],
+    }
+    item = {"decision": "choose_a_mode", "choice": "Destroy target creature."}
+    built = runtime.decide_body(item, pending, {}, "alice", "reasoning")
+    assert isinstance(built, runtime.ScriptExit)
+    assert built.exit is Exit.UNFORESEEN
+    assert "Destroy target creature." in built.stop_reason
+
+
+def test_play_land_plays_an_mdfcs_land_face_by_the_cards_own_id() -> None:
+    """O5: "play_land plays that face by card_id; confirm the route does
+    this." Confirmed by reading, not assumed: `_move_request`'s play_land
+    branch (below) sends only `card_id`, no separate face id, for every
+    land pick alike; the engine's own `Game.play_land` (magic_cards_model/
+    models/game.py) already resolves an MDFC's back face from that one id
+    via `Card.land_face` - "There is no separate 'playing an MDFC's land
+    face' special action in the rules - it is the same CR 305.1 land drop."
+    No live MDFC-land card is cached in tests/fixtures/scryfall (checked),
+    so this proves the runner's half directly against a hand-built view in
+    the same shape `serialize.state_view` emits, the way most of
+    `test_playscript_selectors.py`'s double-faced-card tests already do."""
+    witch = {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "name": "Witch Enchanter",
+        "card_name": "Witch Enchanter // Witch-Blessed Meadow",
+        "zone": "hand",
+        "controller": "alice",
+        "type_line": "Creature — Human Warlock",
+        "oracle_text": None,
+        "faces": [
+            {
+                "name": "Witch Enchanter",
+                "mana_cost": "{3}{W}",
+                "type_line": "Creature — Human Warlock",
+                "oracle_text": "When this creature enters, destroy target artifact or enchantment.",
+            },
+            {
+                "name": "Witch-Blessed Meadow",
+                "mana_cost": "",
+                "type_line": "Land",
+                "oracle_text": "As this land enters, you may pay 3 life.",
+                "land_face": True,
+            },
+        ],
+    }
+    state = state_view(hands={"alice": [witch]})
+    move = {"kind": "play_land", "card": {"select": {"land_face": True}}}
+    built = runtime._move_request(move, state, "alice", "reasoning")
+    assert built == (
+        "actions/play-land",
+        {"player": "alice", "card_id": witch["id"], "reasoning": "reasoning"},
+    )
+
+
+def test_an_off_zone_ability_activates_from_the_hand(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O3: "hand views carry that ability" was unverified - proved here
+    against the live serializer with a real card. `list_abilities` reads a
+    zone other than the battlefield through `off_zone_abilities`
+    (`machines/keywords.py`), which synthesizes a Cycling/Landcycling card's
+    activated ability whether or not it is printed - Angelsong's plain
+    Cycling {2} exercises the same code path a landcycling card's
+    `searches_for_any` selector would (O3's own selector-matching tests
+    cover the search-template parsing with fabricated fetch/landcycling
+    text; the live cache carries no landcycling card)."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Angelsong", "alice", "hand")
+    add_card(client, board, "Island", "alice", "battlefield")
+    add_card(client, board, "Island", "alice", "battlefield")
+    before = state(client, board)
+    angelsong = cards_named(before["hands"]["alice"], "Angelsong")[0]
+    cycling = next(a for a in angelsong["abilities"] if "Discard this card" in a["text"])
+    assert cycling["text"] == "{2}, Discard this card: Draw a card."
+
+    script = {
+        "schema_version": 1,
+        "id": "cycle",
+        "name": "Cycle Angelsong",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [
+            {
+                "kind": "activate",
+                "source": {"zone": "hand", "select": {}},
+                "ability_text_has": "Discard this card",
+            }
+        ],
+        "next": [],
+    }
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="cycle", reasoning=REASONING, corpora=seats.script_corpora
+        )
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    (activated,) = hook.posts("/actions/activate")
+    assert activated["player"] == "alice"
+    assert activated["card_id"] == angelsong["id"]
+    assert activated["ability_index"] == cycling["index"]
+    sha8 = runtime.script_sha(script)[:8]
+    assert activated["reasoning"] == f"{REASONING} | script cycle@{sha8} move 1/1 (activate)"
 
 
 def test_the_fetch_sacrifices_its_own_source(
@@ -2351,6 +2965,74 @@ def test_an_answer_naming_no_split_keeps_every_card_on_top(kind: str) -> None:
     }
 
 
+def test_choose_pile_answer_sends_pile_one_bool() -> None:
+    """CR 700.3's pile primitive - `pile_one` goes out exactly as given,
+    the same shape `put_on_top_or_bottom`'s `top` already is."""
+    pending = {
+        "kind": "choose_pile",
+        "player": "bob",
+        "generation": 5,
+        "cards": ["00000000-0000-4000-8000-000000000001"],
+    }
+
+    body = runtime.decide_body(
+        {"decision": "choose_pile", "pile_one": True}, pending, {}, "bob", REASONING
+    )
+
+    assert body == {
+        "player": "bob",
+        "reasoning": REASONING,
+        "generation": 5,
+        "pile_one": True,
+    }
+
+
+def test_choose_players_resolves_me_and_opponent_to_real_usernames() -> None:
+    """CR 701.34a's own Proliferate player half - each `me`/`opponent` token
+    resolves to that player's real username, `_targets`' own `PlayerTarget`
+    shape."""
+    pending = {
+        "kind": "choose_players",
+        "player": "alice",
+        "generation": 2,
+        "players": ["alice", "bob"],
+    }
+    state_view = {"players": [{"username": "alice"}, {"username": "bob"}]}
+
+    body = runtime.decide_body(
+        {"decision": "choose_players", "players": ["me", "opponent"]},
+        pending,
+        state_view,
+        "alice",
+        REASONING,
+    )
+
+    assert body == {
+        "player": "alice",
+        "reasoning": REASONING,
+        "generation": 2,
+        "usernames": ["alice", "bob"],
+    }
+
+
+def test_choose_players_only_names_players_the_decision_actually_offered() -> None:
+    """A `me`/`opponent` token whose real username the decision never
+    offered chooses nobody on that side - the same "chosen must be a subset
+    of offered" posture every other answer shape already keeps."""
+    pending = {"kind": "choose_players", "player": "alice", "generation": 1, "players": []}
+    state_view = {"players": [{"username": "alice"}, {"username": "bob"}]}
+
+    body = runtime.decide_body(
+        {"decision": "choose_players", "players": ["me", "opponent"]},
+        pending,
+        state_view,
+        "alice",
+        REASONING,
+    )
+
+    assert body["usernames"] == []
+
+
 def test_the_active_opponent_passing_after_the_runs_resolution_does_not_interrupt(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2406,3 +3088,191 @@ def test_the_active_opponent_passing_after_the_runs_resolution_does_not_interrup
     assert cards_named(after_state["battlefield"], "Undercity Sewers")
     assert cards_named(after_state["graveyards"]["alice"], "Island"), "the surveil was answered"
     assert passed_after, "bob never held priority after the resolution, so nothing was tested"
+
+
+# -- O4/O7: hypothetical facts, fetched only when needed, cached per position ----
+
+
+def _hypothetical_gets(hook: Hooked) -> list[str]:
+    return [
+        path
+        for method, path, _ in hook.sent
+        if method == "GET" and path.endswith("/playscripts/hypothetical-facts")
+    ]
+
+
+def test_a_play_with_no_o4_o7_selector_never_fetches_hypothetical_facts(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    script = land_script("drop")
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert _hypothetical_gets(hook) == []
+
+
+def _unlocks_land_script(script_id: str, **over: Any) -> dict[str, Any]:
+    """A land-drop play whose own condition needs O4/O7 facts: at least one
+    hand land the engine says `unlocks` something, entering untapped."""
+    doc = land_script(script_id)
+    doc["true"] = [
+        {
+            "kind": "count",
+            "zone": "hand",
+            "side": "me",
+            "op": ">=",
+            "n": 1,
+            "select": {"types_all": ["Land"], "unlocks": True, "enters_any": ["untapped"]},
+        }
+    ]
+    doc.update(over)
+    return doc
+
+
+def test_a_play_with_an_o4_o7_selector_fetches_hypothetical_facts_per_position(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two fetches here are both genuine: one before the land is played (is
+    the play's own condition true now?), one after (`reapplicable_after` -
+    does it still hold on the changed board?) - two different board
+    positions, never the same one asked twice."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    add_card(client, board, "Preordain", "alice", "hand")
+    script = _unlocks_land_script("drop-unlocks")
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert len(_hypothetical_gets(hook)) == 2
+
+
+def test_listing_fetches_hypothetical_facts_once_for_every_script_at_one_position(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`script_tools.listing` judges every registered script against the one
+    board it fetched - a single position, so one fetch must serve all of
+    them, however many scripts read `enters_any`/`unlocks`."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    add_card(client, board, "Preordain", "alice", "hand")
+    scripts = [_unlocks_land_script(f"drop-unlocks-{i}", priority=50 - i) for i in range(3)]
+    register(client, board, alice, *scripts)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = script_tools.listing(seat, seats.script_corpora)
+
+    assert isinstance(result, dict), result
+    assert len(_hypothetical_gets(hook)) == 1
+
+
+class _StubSeat:
+    """A bare stand-in for `hypothetical_facts()` call counting - the cache
+    under test (`runtime._HypotheticalCache`) reads nothing else off a seat."""
+
+    def __init__(self, cards: dict[str, Any]) -> None:
+        self.calls = 0
+        self._cards = cards
+
+    def hypothetical_facts(self) -> dict[str, Any]:
+        self.calls += 1
+        return {"cards": self._cards, "notices": []}
+
+
+def test_hypothetical_cache_reuses_the_answer_at_an_unchanged_position() -> None:
+    seat = _StubSeat({"x": {"enters": "untapped"}})
+    cache = runtime._HypotheticalCache()
+    state1 = {"turn_number": 1, "step": "precombat_main", "hands": {"alice": []}}
+
+    first = cache.get(seat, state1)
+    second = cache.get(seat, dict(state1))  # a fresh dict, same content
+    assert first == second == {"x": {"enters": "untapped"}}
+    assert seat.calls == 1, "the second call at the same position must not refetch"
+
+
+def test_hypothetical_cache_refetches_once_the_position_changes() -> None:
+    seat = _StubSeat({"x": {"enters": "untapped"}})
+    cache = runtime._HypotheticalCache()
+    state1 = {"turn_number": 1, "step": "precombat_main", "hands": {"alice": []}}
+    state2 = {"turn_number": 1, "step": "precombat_main", "hands": {"alice": [{"id": "y"}]}}
+
+    cache.get(seat, state1)
+    cache.get(seat, state2)
+    assert seat.calls == 2, "a changed board must be refetched, never served stale"
+
+
+# -- the once-per-turn ledger key's own identity ------------------------------
+
+
+class _StubSeatForStart:
+    player = "alice"
+    advise = False
+
+
+def test_start_stamps_run_turn_from_turns_taken_not_turn_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_SCRIPT_RUN_KEY` (`records.py`) keys the once-per-turn-and-step
+    ledger slot on `run.turn`, and `records.py`'s own module docstring
+    states the rule: match on `turns_taken`, never `turn_number` -
+    `TurnMachine.turn_number` counts rounds of the table, shared by both
+    seats' turns in one round, so a `whose_turn: "either"` script that
+    legitimately runs once on alice's own turn and again on bob's turn of
+    the SAME round collided on that stale identity and was refused
+    `already_ran` for a turn it never actually ran on.
+
+    `_start` used to stamp `run.turn` from `state["turn_number"]`; this
+    pins it to `state["turns_taken"]` instead, the identity the state view
+    already carries (`serialize.py`'s own `turns_taken` field) and the one
+    every other per-turn ledger check in this repo already uses
+    (`records.py:205-213`, `script_tools.py:534-540`)."""
+    captured: dict[str, Any] = {}
+
+    def fake_post_run(ctx: Any, body: dict[str, Any]) -> dict[str, Any]:
+        captured.update(body)
+        return {"recorded": True}
+
+    monkeypatch.setattr(runtime, "_post_run", fake_post_run)
+
+    ctx = runtime._Context(
+        seat=_StubSeatForStart(),
+        reasoning="test",
+        corpus={},
+        inputs={},
+        catalog={},
+        deadline=0.0,
+        poll_seconds=0.1,
+        call_started=0.0,
+    )
+    run = runtime._Run(
+        run_id="r1",
+        script_id="s1",
+        script_sha="sha1",
+        parent_run_id=None,
+        scripts_run=[],
+        moves_run=0,
+    )
+    # A same-round turn change: `turn_number` unchanged (both seats' turns
+    # in one round share it), `turns_taken` up one - exactly the shape a
+    # real alice-then-bob turn rollover within one round produces.
+    state = {"turn_number": 1, "turns_taken": 5, "step": "precombat_main"}
+
+    out = runtime._start(ctx, run, play=None, state=state)
+
+    assert out is None
+    assert run.turn == 5, "run.turn must be stamped from turns_taken, not turn_number"
+    assert captured["turn"] == 5

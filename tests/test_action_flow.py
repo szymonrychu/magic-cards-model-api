@@ -520,7 +520,13 @@ def test_the_mcp_tool_threads_max_seconds_to_block_until_wake(client, game, monk
     """`mcp.wait_for_priority`'s own `max_seconds` parameter has to actually
     reach `seatkit.block_until_wake` - spied here rather than timed again,
     since the wait mechanics themselves are already pinned above; what is
-    new here is only that this transport passes the value through at all."""
+    new here is only that this transport passes the value through at all.
+
+    S2: the tool now calls `seatkit.wait_and_arm` (a thin wrapper that calls
+    `block_until_wake` and then, only with a non-empty `arm`, fires armed
+    scripts) rather than `block_until_wake` directly - the spy still reaches
+    it because `wait_and_arm` calls the module-global name, which this
+    monkeypatch replaces in `seatkit`'s own namespace."""
     from magic_cards_model_api import seatkit as seatkit_module
 
     seen: list[float] = []
@@ -540,18 +546,22 @@ def test_the_mcp_tool_threads_max_seconds_to_block_until_wake(client, game, monk
 
 def test_seat_cli_wait_threads_max_seconds_to_block_until_wake(client, game, monkeypatch, capsys):
     """The same wiring, on the `seat_cli` transport - `wait --max-seconds`.
-    `seat_cli.py` imports `block_until_wake` as a bare name (`from .seatkit
-    import ... block_until_wake`), so the spy has to replace that name in
-    `seat_cli`'s own module namespace - patching `seatkit.block_until_wake`
-    itself would not be seen by `seat_cli`'s already-bound reference."""
-    real = seat_cli.block_until_wake
+
+    S2: `seat_cli.py`'s `wait` command now calls `seatkit.wait_and_arm`
+    (imported as a bare name) rather than `block_until_wake` directly, so the
+    spy replaces `block_until_wake` in `seatkit`'s own module namespace -
+    `wait_and_arm`, defined there, resolves the bare name through it at call
+    time regardless of which module called `wait_and_arm` itself."""
+    from magic_cards_model_api import seatkit as seatkit_module
+
+    real = seatkit_module.block_until_wake
     seen: list[float] = []
 
     def spy(seat: Any, before: Any = None, max_seconds: float = 0.0, **kwargs: Any) -> Any:
         seen.append(max_seconds)
         return real(seat, before, max_seconds=0.0, **kwargs)
 
-    monkeypatch.setattr(seat_cli, "block_until_wake", spy)
+    monkeypatch.setattr(seatkit_module, "block_until_wake", spy)
     seats, uids = wired_seats(monkeypatch, game)
 
     seat_cli.run(["--uid", uids["alice"], "--game", game, "wait", "--max-seconds", "7.5"])

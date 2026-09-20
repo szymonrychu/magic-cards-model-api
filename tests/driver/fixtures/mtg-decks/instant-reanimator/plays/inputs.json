@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "inputs": [
+    {
+      "name": "opposing_interaction",
+      "type": "enum",
+      "values": [
+        "graveyard-hate",
+        "permanent-exile",
+        "counterspells",
+        "creature-removal",
+        "unknown"
+      ],
+      "description": "Which piece of my combo the opponent's interaction actually attacks, as read from what they have shown or what their list is known to run. 'graveyard-hate' is a card that answers the fatty once it is in the yard (Grafdigger's Cage, Relic of Progenitus, Endurance, Nihil Spellbomb, Surgical Extraction): against it the discard is held until the turn Goryo's Vengeance can be cast in the same window, so no hate window is ever opened. 'permanent-exile' is a card that answers the discard outlet itself on the battlefield (a Tron Ugin, Eye of the Storms whose cast trigger and colorless-cast trigger each exile up to one target permanent that's one or more colors, Karn Liberated, a March of Otherworldly Light or Leyline Binding pointed at the Frog): every permanent this deck plays is coloured, so those triggers always have a legal target and the outlet is the fragile piece, not the graveyard. 'counterspells' and 'creature-removal' are the ordinary cases; 'unknown' is the honest answer before they have shown anything, and it is also the answer for an opponent whose deck matches none of the analysis run's matchup stems.",
+      "required": false
+    }
+  ]
+}

@@ -1,0 +1,191 @@
+{
+  "schema_version": 1,
+  "id": "open-land-idle",
+  "name": "Play a land on turn 1-2 when nothing in hand unlocks anything",
+  "intent": "On turn 1 or 2, once none of open-land-unlocks, open-shock-unlocks, open-fetch-unlocks or open-fetch-unlocks-shock apply and no other hand card is already affordable, still play the land drop - any land in hand beats holding it back with nothing to protect. Prefers a surveil land (Elegant Parlor) first and keeps the surveilled card, since it was entering tapped regardless and the scry is free value; then a shockland with life declined (Sacred Foundry), since this move always declines the payment and so it enters exactly as tapped as any other land that would enter tapped anyway - and, unlike a merely-tapped conditional land, it is a Mountain-or-Plains source from here on, which is what lets Arena of Glory or Dalkovan Encampment enter untapped on a later turn instead of this one; then any other land that would enter tapped anyway (Arena of Glory or Dalkovan Encampment without their condition met), since playing it now costs no tempo it would not already lose; then a fetch, held everywhere else for a target-rich turn but taken here since nothing else is better and it can still crack for the end-step surveil play later. False now carries both open-fetch-unlocks' own true key (unlocks_by_basic_search, narrowed 2026-09-14) and open-fetch-unlocks-shock's own broader unlocks_by_search - the two are no longer byte-identical since the main fetch play narrowed, so both are named explicitly to keep this play provably exclusive from either rather than relying on the (still true, but no longer syntactically provable) fact that a basic reach implies a broader one. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped_if_paid"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_any": [
+          "Creature",
+          "Instant",
+          "Sorcery",
+          "Artifact",
+          "Enchantment",
+          "Planeswalker"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 1
+        },
+        "affordable": {
+          "extra": 1
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "keywords_any": [
+              "Surveil"
+            ]
+          },
+          {
+            "types_all": [
+              "Land"
+            ],
+            "oracle_has": "you may pay 2 life"
+          },
+          {
+            "enters_any": [
+              "tapped"
+            ]
+          },
+          {
+            "types_all": [
+              "Land"
+            ],
+            "searches_for_any": [
+              "Plains",
+              "Island",
+              "Swamp",
+              "Mountain",
+              "Forest"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "pay_life",
+          "accept": false
+        },
+        {
+          "decision": "surveil"
+        }
+      ]
+    }
+  ],
+  "next": []
+}

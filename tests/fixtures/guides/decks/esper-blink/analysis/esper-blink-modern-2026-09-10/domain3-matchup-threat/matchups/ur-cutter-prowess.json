@@ -1,0 +1,100 @@
+{
+  "name": "ur cutter prowess",
+  "meta_share": 3.2294404806609087,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.4587,
+  "winrate_basis": {
+    "kind": "data",
+    "n": 322,
+    "source": "statistics_matchups(format=modern, archetype_a='esper blink', limit=60), committed verbatim at .protocol/raw-matchups.json; row opponent='izzet prowess' winrate=0.4587 over sample_size=322 matches, joined to 'ur cutter prowess' in that file's `aliases` map on the 2026-09-10 signature validation that the prowess labels are one archetype"
+  },
+  "primary_gameplan": "High Noon blanks Cori-Steel Cutter, which is the card the build is named for: its Flurry trigger only fires on the second spell they cast in a turn, and under High Noon there is no second spell. Wrath of the Skies then sweeps the one-toughness board at X=1 or X=2 without ever needing to connect.",
+  "secondary_gameplan": "Fatal Push and Solitude answer Slickshot Show-Off and Dragon's Rage Channeler on the spot, and Witch Enchanter destroys a resolved Cori-Steel Cutter, which is an artifact, and comes back every time Phelia attacks.",
+  "opponent_gameplan": "Monastery Swiftspear and Dragon's Rage Channeler come down on turn one and grow every noncreature spell; Cori-Steel Cutter makes a prowess Monk each time they cast their second spell in a turn and equips it for free. Mishra's Bauble, Preordain, Lava Dart and Mutagenic Growth are the cheap spells that make all of that add up, and Lightning Bolt closes. Post-board Consign to Memory answers our enters triggers and Meltdown answers nothing we play, which is why they lean on Unholy Heat and Spell Snare instead.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 4,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; counters the enters triggers on Solitude, Flickerwisp and Overlord",
+      "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+    },
+    {
+      "card": "Unholy Heat",
+      "count": 3,
+      "why": "9 of 10 pulled sideboards; two damage, or six with delirium, at a deck of one- and two-toughness bodies",
+      "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+    },
+    {
+      "card": "Spell Snare",
+      "count": 2,
+      "why": "8 of 10 pulled sideboards; one mana counters Phelia, Emperor of Bones and our own High Noon",
+      "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+    },
+    {
+      "card": "Spell Pierce",
+      "count": 2,
+      "why": "8 of 10 pulled sideboards; taxes High Noon and Wrath of the Skies on the turn they matter",
+      "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Cori-Steel Cutter and prowess both key off spell COUNT, not on any one card, so a symmetric cap costs them more than it costs us: they are casting three spells a turn off Preordain and Mishra's Bauble and we are casting one. Wrath of the Skies is the clean counter beside it, sweeping a one-toughness board at an X we pick.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "One-mana creatures that grow on every spell, plus Cori-Steel Cutter tokens and Lightning Bolt reach, means they are counting to twenty rather than trading resources.",
+    "key_cards": [
+      {
+        "card": "Cori-Steel Cutter",
+        "why": "Named verbatim in opponent_gameplan; makes a prowess Monk on their second spell each turn and equips it for free"
+      },
+      {
+        "card": "Monastery Swiftspear",
+        "why": "Named verbatim in opponent_gameplan; a hasty one-drop that grows on every noncreature spell they cast"
+      },
+      {
+        "card": "Unholy Heat",
+        "why": "Kills any creature in our seventy-five for one mana once delirium is on",
+        "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+      },
+      {
+        "card": "Spell Pierce",
+        "why": "Taxes the High Noon or Wrath of the Skies turn we have to have",
+        "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Two lands, a white source and a one- or two-mana answer, never a slow hand.",
+    "goldfish_for": "Turn two High Noon on the play, or Wrath of the Skies at X=1 on turn three.",
+    "watch_for": "Blue open for Spell Pierce before committing the sweeper.",
+    "posture": "disrupt_first",
+    "posture_why": "Their damage compounds, so the first sweeper matters more than any threat we deploy."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Wrath of the Skies",
+      "verdict": "SURVIVES",
+      "why": "Spell Pierce taxes it two and Consign to Memory cannot counter it - Wrath of the Skies is a white spell, not a colorless one, and its energy payment is a cost rather than a triggered ability. At X=1 it sweeps Monastery Swiftspear, Dragon's Rage Channeler and every Monk token."
+    },
+    {
+      "card": "High Noon",
+      "verdict": "SURVIVES",
+      "why": "Spell Snare counters it on the stack, which is removal rather than a blank, and once resolved nothing in their pulled 2026-09-10 board destroys an enchantment - Meltdown names artifacts and Into the Flood Maw bounces a creature. A resolved copy turns Cori-Steel Cutter's Flurry trigger off permanently."
+    }
+  ],
+  "card_names": [
+    "Cori-Steel Cutter",
+    "Monastery Swiftspear",
+    "Dragon's Rage Channeler",
+    "Slickshot Show-Off",
+    "Mishra's Bauble",
+    "Preordain",
+    "Lava Dart",
+    "Mutagenic Growth",
+    "Lightning Bolt",
+    "Expressive Iteration"
+  ],
+  "self_cost": "High Noon caps both players at one spell each turn. That costs us the Ephemerate-plus-creature turn and the evoked-Solitude-plus-two-drop turn, which are two of the three lines this deck wants on turns three and four, and it makes a hand of cheap interaction much worse. It is correct anyway because their curve is one mana and ours is two."
+}

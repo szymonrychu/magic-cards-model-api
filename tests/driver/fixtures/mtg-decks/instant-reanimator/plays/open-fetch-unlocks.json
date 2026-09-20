@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "id": "open-fetch-unlocks",
+  "name": "Crack a fetch on turn 1-2 for a land that unlocks a hand card",
+  "intent": "On turn 1 or 2, once open-land-unlocks has had first refusal, play a fetch from hand and crack it for whatever land in the library would unlock some other hand card - Marsh Flats found for a library Swamp that lets Thoughtseize be cast. instant-reanimator carries exactly one copy each of Island, Plains and Swamp, so every fetch (Flooded Strand, Marsh Flats, Polluted Delta) reaches two of the three, equally live - no fetch is more precious than another the way a scarcer basic makes one elsewhere in this pass (dimir-frog, esper-blink, boros-aggro), so which one is played is left to ties: any, by sorted name. Triggers on unlocks_by_basic_search, not the broader unlocks_by_search (review item 3): a fetch that can only reach a non-basic unlock (a shockland the library holds but no basic) never makes this play apply at all - open-fetch-unlocks-shock covers exactly that case instead, paying the shock's own 2 life on top of the fetch's. The crack itself is restricted to an untapped source that can actually reach a basic unlock (searches_for_any plus unlocks_by_basic_search), so a stale fetch already on the battlefield that cannot reach the needed basic is never cracked in place of the one that can. Its own choose_cards pick prefers a shockland with a Plains subtype first - this deck's own dual-colour fixing (Godless Shrine, Hallowed Fountain both carry Plains) outweighs the 2 life this early, ahead of even a free basic (hand Marsh Flats+Polluted Delta+Thoughtseize+Faithful Mending+Goryo's Vengeance+Atraxa with a library Godless Shrine and Swamp both reachable: takes the Shrine) - then a bare basic, then any other shockland, paying life only when the fetch's own find needs it. Stands down once open-land-unlocks would already fire (U's own key), at 7 life or less, and once the library is down to 5 cards or fewer - thinning this early is not worth decking risk later. Only turns 1-2, land drop available, mine, precombat main, empty stack. Stands down once the discard outlet (a creature with an own +1/+1-counter-put ability, Psychic Frog in this 60) is already on the battlefield: that fact is byte-identical to the seat-admitted bin-fatty-vs-permanent-exile play's own battlefield-outlet true key, and it can never hold on a genuine turn 1-2 board anyway - the outlet costs two mana and has to survive a turn cycle before that play reads it as safe to fire, so this key costs this play nothing here and only prevents the two plays overlapping later in the game.",
+  "priority": 72,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": "<=",
+      "n": 7
+    },
+    {
+      "kind": "zone_size",
+      "zone": "library",
+      "side": "me",
+      "op": "<=",
+      "n": 5
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Creature"
+        ],
+        "ability_text_has": "Put a +1/+1 counter on"
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "unlocks_by_basic_search": true
+        },
+        "prefer": [],
+        "ties": "any"
+      }
+    },
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "tapped": false,
+          "unlocks_by_basic_search": true
+        },
+        "ties": "any"
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "unlocks": true
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "oracle_has": "you may pay 2 life",
+                "subtypes_any": [
+                  "Plains"
+                ]
+              },
+              {
+                "supertypes_any": [
+                  "Basic"
+                ]
+              },
+              {
+                "oracle_has": "you may pay 2 life"
+              }
+            ],
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "pay_life",
+          "accept": true
+        }
+      ]
+    }
+  ],
+  "next": []
+}

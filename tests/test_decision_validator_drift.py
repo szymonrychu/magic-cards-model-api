@@ -427,6 +427,46 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
         [True, False, "top", None],
     )
 
+    # CR 700.3's pile primitive (Liliana of the Veil's own `-6`, Do or Die):
+    # a plain boolean, the same shape `PUT_ON_TOP_OR_BOTTOM` above already
+    # is - `cards` names pile one's own contents, so it carries real ids the
+    # same way that kind's own case leaves them off (nothing here checks
+    # them, `Game.ask`'s CHOOSE_PILE branch never reads `decision.cards` at
+    # all).
+    cases[DecisionKind.CHOOSE_PILE] = (
+        Decision(
+            kind=DecisionKind.CHOOSE_PILE,
+            player="bob",
+            prompt="choose a pile to sacrifice",
+            cards=(bears_id,),
+        ),
+        [True, False, "pile one", None],
+    )
+
+    # CR 701.34a's own "and/or players" half of Proliferate - `CHOOSE_CARDS`'s
+    # own twin over usernames rather than card ids, so its candidates mirror
+    # that case's shape: a legal subset, the full offer, an empty decline (a
+    # real answer for this kind's `exact=False`), a stray username never
+    # offered, a duplicate, and a malformed shape.
+    cases[DecisionKind.CHOOSE_PLAYERS] = (
+        Decision(
+            kind=DecisionKind.CHOOSE_PLAYERS,
+            player="alice",
+            prompt="choose any number of players to proliferate",
+            amount=2,
+            players=("alice", "bob"),
+            exact=False,
+        ),
+        [
+            ("alice",),
+            ("alice", "bob"),
+            (),
+            ("carol",),
+            ("alice", "alice"),
+            ["not", "a", "tuple"],
+        ],
+    )
+
     # CR 508.1's declaration. The engine side is `ask_attackers` (by way of
     # `_ask_declaration`), not `Game.ask` - see `_engine_ask`. Only shape is
     # checked on either side (`validate_answer`'s own docstring): full attack

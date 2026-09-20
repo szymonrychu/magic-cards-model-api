@@ -5,71 +5,41 @@
 // `lobbyViewModel` joins `GET /api/lobby/games`'s server rows with the browser's
 // own saved seats (`mcm.games.v1`, see the storage helpers below) into one
 // row per game: the opponent's name, where the game currently sits, its AI
-// opponent's model/effort, and the two uids `handlers.startGame`/`DELETE`
-// need. `agentFrom` turns the AI deck picker's three raw fields (`#ai-model`,
-// `#ai-effort`, `#ai-thinking`) into the `agent` body `POST /api/lobby/games`
-// sends for the AI player, the same shape `AgentSettings` (the API's pydantic
-// model) accepts. `seatEntry` builds each `players[]` entry of that request,
-// including the human seat's opt-in buddy (`buddy` plus `buddy_agent`, read
-// from `#you-buddy-*` through the same `agentFrom`), and `buddyControlState`
-// says which buddy controls a seat may use.
-
-export const MODEL_SUGGESTIONS = ["sonnet", "opus", "haiku", "fable"];
-export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
-
-/** Whether a trimmed `#ai-thinking` value is acceptable: empty (meaning "let
- * the agent decide" - `agentFrom` sends `null` for that) or a whole,
- * non-negative number. `AgentSettings.max_thinking_tokens` (the API's
- * pydantic field) is `int | None = Field(ge=0)` - a fraction ("5.5") or a
- * negative number is not a legal value for it, so both must be rejected
- * here rather than silently become `null` and start the game anyway with
- * the model's default budget. `Number.parseInt` alone is not enough for
- * this: `Number.parseInt("5.5", 10)` is `5`, truncating instead of
- * rejecting - `Number()` plus `Number.isInteger` catches the fraction
- * `parseInt` would silently swallow. */
-export function thinkingTokensAreValid(raw) {
-  const trimmed = String(raw === undefined || raw === null ? "" : raw).trim();
-  if (trimmed === "") return true;
-  const parsed = Number(trimmed);
-  return Number.isInteger(parsed) && parsed >= 0;
-}
-
-/** The model a blank model field means - the same spelling, and the same
- * default, as the server's own `AgentSettings.default`. */
-export const DEFAULT_MODEL = "opus";
-
-export function agentFrom(fields) {
-  const model = (fields.model || "").trim() || DEFAULT_MODEL;
-  const effort = EFFORTS.includes(fields.effort) ? fields.effort : "medium";
-  const thinking = String(fields.thinking === undefined || fields.thinking === null ? "" : fields.thinking).trim();
-  const max_thinking_tokens = thinkingTokensAreValid(thinking) && thinking !== "" ? Number(thinking) : null;
-  return { model, effort, max_thinking_tokens };
-}
+// opponent's model/effort (server-reported, read-only - see `archivedRow`/
+// `lobbyViewModel` below), and the two uids `handlers.startGame`/`DELETE`
+// need. `seatEntry` builds each `players[]` entry of the create-game
+// request, including the human seat's opt-in buddy (`buddy`), and
+// `buddyControlState` says whether a seat's buddy toggle may be used.
+//
+// 2026-09-19 (owner direction, cost cutting): model, effort and thinking
+// budget are no longer a per-game choice. `NewUiPlayer` (the API's request
+// model) carries no field for any of them any more - the server always runs
+// `AgentSettings.default()`, fixed to Sonnet at high effort, for an AI seat
+// and a buddy alike. The picker this module used to build request bodies
+// from (`agentFrom`, `MODEL_SUGGESTIONS`, `EFFORTS`, `DEFAULT_MODEL`,
+// `thinkingTokensAreValid`) is gone with it; `seatEntry` sends `agent`/
+// `buddy_agent` for nothing, ever.
 
 /** One `players[]` entry of `POST /api/lobby/games`, decided by whether the
  * seat is an AI seat - never by which controls happen to exist on the page.
- * An AI seat carries `agent` and nothing else: the server refuses a buddy on
- * one (`decks_api.NewUiPlayer.buddy`), since it plays through its own uid and
- * never reads advice, so a `buddy` asked for on an AI seat is dropped here
- * rather than sent to be refused. A human seat carries `buddy: true` plus
- * its `buddy_agent` only when opted in, and neither field otherwise - the
- * server also refuses `buddy_agent` without `buddy`. */
-export function seatEntry({ username, decklistText, ai, agent, buddy, buddyAgent }) {
+ * Carries no `agent`/`buddy_agent` (2026-09-19: model is a server-side
+ * choice, not a request field). An AI seat carries nothing beyond `ai`
+ * itself: the server refuses a buddy on one (`decks_api.NewUiPlayer.buddy`),
+ * since it plays through its own uid and never reads advice, so a `buddy`
+ * asked for on an AI seat is dropped here rather than sent to be refused. A
+ * human seat carries `buddy: true` only when opted in. */
+export function seatEntry({ username, decklistText, ai, buddy }) {
   const entry = { username, decklist_text: decklistText, ai: Boolean(ai) };
-  if (entry.ai) {
-    entry.agent = agentFrom(agent || {});
-  } else if (buddy) {
+  if (!entry.ai && buddy) {
     entry.buddy = true;
-    entry.buddy_agent = agentFrom(buddyAgent || {});
   }
   return entry;
 }
 
-/** Which buddy controls are usable for a seat: on an AI seat neither is,
- * whatever the toggle says; on a human seat the toggle is, and the buddy's
- * settings are only while it is on. */
-export function buddyControlState({ ai, buddy }) {
-  return { toggleDisabled: Boolean(ai), settingsDisabled: Boolean(ai) || !buddy };
+/** Whether a seat's buddy toggle is usable: never on an AI seat, whatever
+ * the toggle says; always on a human seat. */
+export function buddyControlState({ ai }) {
+  return { toggleDisabled: Boolean(ai) };
 }
 
 /** The first 8 hex chars of a `game_id` (a bare `uuid4().hex`, `app.py`'s

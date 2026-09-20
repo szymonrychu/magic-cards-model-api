@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "id": "ephemerate-protect-lone-creature",
+  "name": "Blink my only creature in response to an opponent's spell or ability",
+  "intent": "With an opponent's spell or triggered ability on top of the stack and exactly one creature of mine on the battlefield, cast the one-mana instant that exiles a creature I control and returns it, targeting that creature. The creature becomes a new object, so a spell or ability whose only target was it loses that target and is countered on resolution for having none, and the blink re-triggers the creature's enters ability (Phelia's, Flickerwisp's, Solitude's, Witch Enchanter's) for free. Rebound then hands back a second blink on my next upkeep. This is the line that beat an Ugin, Eye of the Storms cast trigger aimed at Phelia, and the line that was missing when a Kozilek's Command exiled an Ocelot Pride while I was tapped out: the {W} has to be left up. Only while I control exactly one creature. That restriction is the point and not a convenience: nothing a condition can read says which permanent the object on the stack is aimed at, so with a second creature out this could blink the wrong one and lose both the creature and the card. With exactly one creature of mine out, the only creature of mine their spell could be targeting is that one. It needs the instant in hand, one untapped mana source, and it never runs on an empty stack, so it cannot collide with the five fetchland plays, every one of which requires an empty stack. Limits: an opponent's object on the stack may be targeting nothing of mine at all - a creature spell, a burn spell aimed at my face - and no readable condition can tell, so the pilot runs this when the object on the stack is aimed at that creature, and the conditions only guarantee the play is safe to make when it is. Untapped mana is counted as sources, not colors, so a board of untapped lands that make no white satisfies it and the cast is refused by the engine rather than by this play. It names every matchup key but eldrazi-ramp, and not because the play is bad there - the Ugin, Eye of the Storms trigger it beat was an eldrazi-ramp card. Six plays with a priority above zero may apply against any one key, and against Against eldrazi-ramp this is the play that beat a seven-mana Ugin turn in game 176d95ceb28b49308ea99e01065566b6: their cast trigger targeted my only creature, blinking it in response made it a new object and the trigger was countered for want of a legal target. The per-archetype active cap is paid for by fetch-surveil-land-keep standing down against eldrazi-ramp instead, because a surveil land entering tapped at their end step is worth less there than one white source held up.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "45c-aggro",
+    "boros-aggro",
+    "boros-ponza",
+    "broodscale-bloodchief",
+    "devoted-combo",
+    "dimir-control",
+    "dimir-frog",
+    "eldrazi-ramp",
+    "esper-blink",
+    "goryos-vengeance",
+    "instant-reanimator",
+    "izzet-prowess",
+    "living-end",
+    "pinnacle-affinity",
+    "ur-cutter-prowess"
+  ],
+  "when": {
+    "whose_turn": "either",
+    "steps": [
+      "precombat_main",
+      "beginning_of_combat",
+      "postcombat_main",
+      "end_step"
+    ],
+    "stack": "any"
+  },
+  "true": [
+    {
+      "kind": "stack_top",
+      "controller": "opponent",
+      "select": {}
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Instant"
+        ],
+        "oracle_has": "return it to the battlefield",
+        "mana_value": {
+          "op": "==",
+          "n": 1
+        }
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Creature"
+        ]
+      }
+    },
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 1
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 2,
+      "select": {
+        "types_all": [
+          "Creature"
+        ]
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "cast",
+      "card": {
+        "zone": "hand",
+        "select": {
+          "types_all": [
+            "Instant"
+          ],
+          "oracle_has": "return it to the battlefield",
+          "mana_value": {
+            "op": "==",
+            "n": 1
+          }
+        }
+      },
+      "cost": "normal",
+      "mana": "auto",
+      "targets": [
+        {
+          "side": "me",
+          "select": {
+            "types_all": [
+              "Creature"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "next": []
+}

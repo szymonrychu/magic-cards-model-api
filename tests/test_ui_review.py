@@ -491,6 +491,100 @@ def test_the_reflection_is_last_and_labelled_as_written_after_the_result() -> No
     assert "her removal was all sorcery speed" in result["lastText"]
 
 
+def test_the_ai_review_is_last_after_the_reflection() -> None:
+    reviewed = {
+        **REVIEW,
+        "entries": [
+            *REVIEW["entries"],
+            entry(
+                109,
+                "game_reflection",
+                detail={"player": "claude", "text": "her removal was all sorcery speed"},
+            ),
+            entry(
+                110,
+                "ai_review",
+                detail={
+                    "player": "claude",
+                    "text": "claude's turn 4 attack was correct given the open mana",
+                },
+            ),
+        ],
+    }
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          const kids = els.body.children;
+          return {
+            lastClass: kids[kids.length - 1].className,
+            lastText: kids[kids.length - 1].textContent,
+            secondLastClass: kids[kids.length - 2].className,
+            count: findAll(els.body, "ai-review").length,
+          };
+        })()
+        """,
+        review=reviewed,
+        card=CARD_ANSWER,
+    )
+    assert result["count"] == 1
+    assert "ai-review" in result["lastClass"]
+    assert "claude's turn 4 attack was correct" in result["lastText"]
+    assert "reflection" in result["secondLastClass"]
+
+
+def test_an_aivai_game_draws_one_ai_review_section_per_seat() -> None:
+    reviewed = {
+        **REVIEW,
+        "entries": [
+            *REVIEW["entries"],
+            entry(
+                109,
+                "ai_review",
+                detail={"player": "claude", "text": "claude's own review text"},
+            ),
+            entry(
+                110,
+                "ai_review",
+                detail={"player": "alice", "text": "alice's own review text"},
+            ),
+        ],
+    }
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          const nodes = findAll(els.body, "ai-review");
+          return { count: nodes.length, texts: nodes.map((n) => n.textContent) };
+        })()
+        """,
+        review=reviewed,
+        card=CARD_ANSWER,
+    )
+    assert result["count"] == 2
+    joined = " ".join(result["texts"])
+    assert "claude's own review text" in joined
+    assert "alice's own review text" in joined
+
+
 def test_back_returns_to_the_lobby() -> None:
     result = drive(
         """

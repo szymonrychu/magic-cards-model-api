@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "id": "open-land-idle",
+  "name": "Play a colorless land on turn 1-2 when nothing in hand unlocks anything",
+  "intent": "On turn 1 or 2, once none of open-land-unlocks, open-shock-unlocks, open-fetch-unlocks or open-fetch-unlocks-shock apply and no other hand card is already affordable, still play the land drop - any land beats holding it back with nothing to protect. The select and true count both carry colors_any:[colorless], excluding Dryad Arbor: Arbor never unlocks anything (summoning sick the turn it enters, so open-land-unlocks already leaves it alone), but 'Dryad Arbor' sorts before every other land in this deck by name, and this play's own prefer order is already at the 4-tier cap with no room for a fifth 'Arbor last' tier - so ties any would hand it Arbor first on a tied board unless the candidate pool excludes Arbor outright. An Arbor-only hand (no other land at all) is left to the seat rather than forced to play Arbor. Prefers a surveil land (Underground Mortuary) first and keeps the surveilled card; then a shockland, life declined - a paid shock is real mana this turn, strictly better to hold open than an already-untapped fetch that produces nothing until cracked (item 9, 2026-09-14 review batch: tiers 2/3 swapped from the original FETCH-then-SHOCK order); then a fetch, held everywhere else for a target-rich turn but taken here since nothing else is better; then a basic. The false list's own fetch key narrows from unlocks_by_search to unlocks_by_basic_search (item 4), matching open-fetch-unlocks' own narrowed true key exactly, so this play only stands down for F when F would actually fire; a second entry names the broader unlocks_by_search key too (item 4, 2026-09-14), matching open-fetch-unlocks-shock's own true key now that the two fetch plays no longer share one selector. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 70,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "colors_any": [
+          "colorless"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped_if_paid"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_search": true
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_any": [
+          "Creature",
+          "Instant",
+          "Sorcery",
+          "Artifact",
+          "Enchantment",
+          "Planeswalker"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 1
+        },
+        "affordable": {
+          "extra": 1
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "colors_any": [
+            "colorless"
+          ]
+        },
+        "prefer": [
+          {
+            "types_all": [
+              "Land"
+            ],
+            "keywords_any": [
+              "Surveil"
+            ]
+          },
+          {
+            "oracle_has": "you may pay 2 life"
+          },
+          {
+            "types_all": [
+              "Land"
+            ],
+            "searches_for_any": [
+              "Plains",
+              "Island",
+              "Swamp",
+              "Mountain",
+              "Forest"
+            ]
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "pay_life",
+          "accept": false
+        },
+        {
+          "decision": "surveil"
+        }
+      ]
+    }
+  ],
+  "next": []
+}

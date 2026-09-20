@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "id": "open-land-idle-mdfc",
+  "name": "Play a modal double-faced land face on turn 1-2 when no ordinary land is in hand",
+  "intent": "On turn 1 or 2, with no ordinary land at all in hand but a modal double-faced card's land face available (Sink into Stupor // Soporific Springs), play that land face instead of holding both halves back - the land drop is otherwise wasted entirely. Declines the land face's own 3-life payment (it reads 'you may pay 3 life', unlike a shockland's 2): a tapped land costs no tempo this turn either way, so there is nothing this turn's life buys. Stands down against this deck's own aggro matchups (45c-aggro, boros-aggro, boros-energy, ur-cutter-prowess) - against a fast clock, spending the land drop on a card that is otherwise a real spell (Sink into Stupor bounces a permanent) is worth more held back than a tapped land is, so the seat keeps the choice there instead. The false list also repeats U/P/F's own true-count keys (already logically unreachable here, since each of them requires a Land in hand and this play's own true already requires zero) so the plays-check lint can see the exclusivity syntactically rather than needing subset reasoning across differently-shaped selects. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 69,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": "==",
+      "n": 0,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "land_face": true
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "input",
+      "name": "opposing_archetype",
+      "op": "in",
+      "value": [
+        "45c-aggro",
+        "boros-aggro",
+        "boros-energy",
+        "ur-cutter-prowess"
+      ]
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped_if_paid"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "land_face": true
+        },
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "pay_life",
+          "accept": false
+        }
+      ]
+    }
+  ],
+  "next": []
+}

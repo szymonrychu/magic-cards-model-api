@@ -210,8 +210,16 @@ def test_a_natural_end_reflects_then_posts_then_hands_over_then_retires(world, e
     finish(world, "turn-2", "wrote")
     turn_id = handover_turn_id(world)
     assert outcome in handover_turns(world)[0]["text"]
-    assert world.events.index("reflection") < len(world.events) - 1
-    assert world.events[-1] == "message"
+    # The AI review (`review`/`ai_review` events) now runs in its own
+    # background thread, started only after the handover, precisely so it
+    # never delays or reorders the handover push - so it can legitimately
+    # land its events before, after, or interleaved with "message" below.
+    # Filtered out here because this assertion is about the SYNCHRONOUS
+    # reflect-then-hand-over ordering `turn_done` itself still guarantees,
+    # not about when the independent background review happens to finish.
+    synchronous_events = [e for e in world.events if e not in ("review", "ai_review")]
+    assert synchronous_events.index("reflection") < len(synchronous_events) - 1
+    assert synchronous_events[-1] == "message"
     assert world.state["deleted"] == 0
 
     finish(world, turn_id)

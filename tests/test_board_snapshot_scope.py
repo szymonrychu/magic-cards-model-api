@@ -49,6 +49,7 @@ from test_action_answer_size import BOARD, GRAVE, stage_card
 from magic_cards_model_api import commands, engine_api, serialize
 from magic_cards_model_api.board_scope import one_board
 from magic_cards_model_api.main import app
+from magic_cards_model_api.playscripts import hypothetical_facts
 from magic_cards_model_api.store import store
 
 #: A read may compute the layered board this many times, whatever the size of
@@ -63,7 +64,13 @@ BOARDS_PER_READ = 4
 #: after it.
 BOARDS_PER_ACTION = 12
 
-READS = ("get_state", "legal_actions", "legal_actions_candidates", "affordances")
+READS = (
+    "get_state",
+    "legal_actions",
+    "legal_actions_candidates",
+    "affordances",
+    "hypothetical_facts",
+)
 
 #: The hand every board here holds, so the only thing that differs between the
 #: small board and the large one is the battlefield.
@@ -104,6 +111,35 @@ def boards_for(call: Callable[[], httpx.Response]) -> int:
     return board_computations() - before
 
 
+def api_boards_for_hypothetical_facts(client, game_id: str, uid: str) -> int:
+    """Boards GET hypothetical-facts computes in the api itself: the route's
+    total less what the engine's `payability_matrix` computes inside. That
+    matrix evaluates each land on its own decoded copy of the game and plays
+    the land onto it, so its boards belong to those copies and no scope the
+    api opens on the live game can share them."""
+    inside = 0
+    engine_matrix = hypothetical_facts.payability_matrix
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        nonlocal inside
+        before = board_computations()
+        try:
+            return engine_matrix(*args, **kwargs)
+        finally:
+            inside += board_computations() - before
+
+    hypothetical_facts.payability_matrix = counted
+    try:
+        total = boards_for(
+            lambda: client.get(
+                f"/api/games/{game_id}/playscripts/hypothetical-facts", params={"uid": uid}
+            )
+        )
+    finally:
+        hypothetical_facts.payability_matrix = engine_matrix
+    return total - inside
+
+
 def new_game(client) -> str:
     response = client.post(
         "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
@@ -142,6 +178,7 @@ def request_counts(client, game_id: str) -> dict[str, int]:
                 f"/api/games/{game_id}/affordances/{bolt.id}", params={"player": "alice"}
             )
         ),
+        "hypothetical_facts": api_boards_for_hypothetical_facts(client, game_id, alice),
         "play_land": boards_for(
             lambda: client.post(
                 f"/api/games/{game_id}/actions/play-land",

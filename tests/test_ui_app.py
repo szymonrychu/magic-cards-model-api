@@ -4365,3 +4365,159 @@ def test_a_notice_free_log_entry_toasts_nothing() -> None:
         """
     )
     assert result is True, "an ordinary log entry must never toast"
+
+
+# -- every other engine-gap notice kind toasts its own message too -----------
+
+
+@pytest.mark.parametrize(
+    "kind,expected_phrase",
+    [
+        ("layer_remainder_notices", "resolving text"),
+        ("search_description_notices", "search"),
+        ("unreadable_copy_exception_notices", "copy"),
+        ("unreadable_counter_amount_notices", "counter"),
+        ("keyword_line_notices", "keyword"),
+    ],
+)
+def test_each_wired_notice_kind_toasts_its_own_engine_gap_message(
+    kind: str, expected_phrase: str
+) -> None:
+    """`layer_remainder_notices` (wired into `commands._NOTICE_LIST_NAMES` in
+    the same pass that added `CHOOSE_PILE`/`CHOOSE_PLAYERS`, but its own
+    toast forgotten) and the four notice lists the Reality Fracture bump
+    exposed as unwired entirely (`search_description_notices`,
+    `unreadable_copy_exception_notices`, `unreadable_counter_amount_notices`,
+    `keyword_line_notices`) each get their own line in
+    `ENGINE_GAP_NOTICE_MESSAGES` now, the same reason
+    `test_an_unread_spell_notice_from_the_log_toasts_the_engine_gap` pins
+    `unmodeled_trigger_effect_notices`'s own message: a fail-closed refusal
+    with no toast is one a human playing through the browser never learns
+    about at all."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          body: {
+            classList: { toggle: () => {} },
+            setAttribute: () => {},
+            removeAttribute: () => {},
+          },
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        const board = {
+          you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+          active_player: "bob", priority_holder: "alice", battlefield: [],
+          hands: { alice: [] }, stack: [], combat: { attacks: [] },
+          winner: null, drawn: false, pregame: null,
+        };
+        globalThis.fetch = (path) => {
+          if (path.includes("/log")) {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                log: [
+                  {
+                    seq: 1,
+                    action: "pass_priority",
+                    detail: {
+                      notices: [
+                        {
+                          kind: KIND,
+                          source_id: "s1",
+                          source_name: "Echoing Deeps",
+                          text: "some unread clause",
+                          zone: "graveyard",
+                          controller: "alice",
+                        },
+                      ],
+                    },
+                  },
+                ],
+                last_seq: 1,
+              }),
+            });
+          }
+          return Promise.resolve({ ok: true, json: async () => board });
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null, busy: 0,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: board, log: { entries: [], lastSeq: 0 },
+          });
+          await m.poll();
+          return { toast: globalThis.__toast.textContent, hidden: globalThis.__toast.hidden };
+        })()
+        """,
+        KIND=kind,
+    )
+    assert result["hidden"] is False, f"{kind} never reached the player at all"
+    assert "Echoing Deeps" in result["toast"]
+    assert expected_phrase in result["toast"].lower(), result["toast"]
+    assert "engine gap" in result["toast"].lower()
+
+
+def test_an_unwired_notice_kind_toasts_nothing() -> None:
+    """A notice `kind` with no entry in `ENGINE_GAP_NOTICE_MESSAGES` (a
+    notice this UI genuinely does not know how to phrase, or one that is not
+    an engine-gap shape at all) must not throw and must not toast - the
+    negative case `test_a_notice_free_log_entry_toasts_nothing` proves for no
+    notices at all, proven here for a real, just unrecognised, one."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          body: {
+            classList: { toggle: () => {} },
+            setAttribute: () => {},
+            removeAttribute: () => {},
+          },
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        const board = {
+          you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+          active_player: "bob", priority_holder: "alice", battlefield: [],
+          hands: { alice: [] }, stack: [], combat: { attacks: [] },
+          winner: null, drawn: false, pregame: null,
+        };
+        globalThis.fetch = (path) => {
+          if (path.includes("/log")) {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                log: [
+                  {
+                    seq: 1,
+                    action: "pass_priority",
+                    detail: {
+                      notices: [
+                        {
+                          kind: "opening_hand_notices",
+                          card_name: "Leyline of the Void",
+                          text: "some text",
+                          zone: "hand",
+                          controller: null,
+                        },
+                      ],
+                    },
+                  },
+                ],
+                last_seq: 1,
+              }),
+            });
+          }
+          return Promise.resolve({ ok: true, json: async () => board });
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null, busy: 0,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: board, log: { entries: [], lastSeq: 0 },
+          });
+          await m.poll();
+          return globalThis.__toast.hidden;
+        })()
+        """
+    )
+    assert result is True, "a notice kind with no toast message must not toast"

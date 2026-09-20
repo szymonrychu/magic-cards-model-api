@@ -1,0 +1,102 @@
+{
+ "name": "esper blink",
+ "meta_share": 4.219409282700422,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format, statistics_archetypes carries no winrate field, and this run's own fingerprint records winrate_vs_field as all-zero. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "Blink Solitude, Witch Enchanter and Overlord of the Balemurk with Ephemerate and Phelia for incremental value, with Thoughtseize stripping the cascade spell before it is cast.",
+ "opponent_plan": {
+  "posture": "grind",
+  "posture_why": "Ephemerate loops on Solitude and Overlord of the Balemurk accrue cards rather than tempo; the dossier records their pressure as too slow to punish a slow start, so they win on value.",
+  "key_cards": [
+   {
+    "card": "Overlord of the Balemurk",
+    "why": "recurs cards out of the graveyard every turn, which is the engine the card advantage actually comes from"
+   },
+   {
+    "card": "Ephemerate",
+    "why": "one mana that repeats an enters trigger twice, turning each blink target into a two-for-one"
+   },
+   {
+    "card": "Solitude",
+    "why": "free removal with lifegain that answers our returned bodies one at a time without spending a card in tempo"
+   },
+   {
+    "card": "Thoughtseize",
+    "why": "strips the cascade spell so the value engine never has to race anything"
+   }
+  ]
+ },
+ "primary_gameplan": "Hold the graveyard hate for their engine rather than their yard, protect one cascade, and present four bodies faster than their blink value accrues.",
+ "pitfalls": [
+  "Committing everything to one Living End into three open mana and Wrath of the Skies.",
+  "Cycling Street Wraith into Thoughtseize range while holding both cascade spells.",
+  "Using Subtlety on a blinked Solitude, which is a trigger from a permanent already on the battlefield, not a creature spell."
+ ],
+ "stance": "counter",
+ "stance_rationale": "Overlord of the Balemurk and Emperor of Bones make their graveyard the engine, and Consign to Memory is the card that beats the cascade, so both answers earn a slot.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Consign to Memory",
+   "count": 3,
+   "why": "one mana for the cascade trigger, the cheapest answer anyone has to this deck",
+   "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+  },
+  {
+   "card": "Mystical Dispute",
+   "count": 2,
+   "why": "taxes Shardless Agent and both free blue pitch spells",
+   "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+  },
+  {
+   "card": "Ashiok, Dream Render",
+   "count": 1,
+   "why": "mills and exiles our graveyard every turn, which is a permanent answer rather than a one-shot",
+   "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+  },
+  {
+   "card": "Wrath of the Skies",
+   "count": 3,
+   "why": "an X sweeper that scales to exile the Living End board at instant-speed-relevant timing",
+   "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "2 Tormod's Crypt",
+    "2 Mystical Dispute"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "1 Waker of Waves",
+    "1 Oliphaunt"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "2 Tormod's Crypt",
+    "2 Mystical Dispute"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "1 Waker of Waves",
+    "1 Oliphaunt"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Two cyclers plus a cascade spell; their clock is slow enough that setup keeps are fine here.",
+  "goldfish_for": "One protected cascade - Dispute mana first, graveyard second.",
+  "watch_for": "Phelia exiling on attack means our returned bodies are not safe; Solitude means the biggest one is gone.",
+  "posture": "grind",
+  "posture_why": "their pressure is too slow to punish a slow start."
+ }
+}

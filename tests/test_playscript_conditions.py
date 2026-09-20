@@ -28,9 +28,14 @@ from playscript_testkit import (
     state_view,
 )
 
-from magic_cards_model_api.playscripts.conditions import ContentsRequired, evaluate, needs_contents
+from magic_cards_model_api.playscripts.conditions import (
+    ContentsRequired,
+    evaluate,
+    needs_contents,
+    needs_hypothetical,
+)
 from magic_cards_model_api.playscripts.inputs import input_catalog
-from magic_cards_model_api.playscripts.selectors import matches
+from magic_cards_model_api.playscripts.selectors import HypotheticalRequired, matches
 from magic_cards_model_api.serialize import state_view as live_state_view
 from magic_cards_model_api.store import store
 from magic_cards_model_api.visibility import redact_view
@@ -365,6 +370,131 @@ def test_untapped_mana_counts_untapped_mana_sources_i_control():
         battlefield=[mountain(), mountain(tapped=True), mountain(controller="bob"), fetchland()]
     )
     assert seen({"kind": "untapped_mana", "op": ">=", "n": 99}, view) == 1
+
+
+# -- turn ---------------------------------------------------------------------
+
+
+def turn(op: str, n: int) -> dict[str, Any]:
+    return {"kind": "turn", "op": op, "n": n}
+
+
+def test_turn_reads_the_viewers_own_turns_taken():
+    assert holds(turn("==", 1), state_view(own_turns_taken={"alice": 1}))
+    assert not holds(turn("==", 2), state_view(own_turns_taken={"alice": 1}))
+    assert seen(turn("<=", 2), state_view(own_turns_taken={"alice": 5})) == 5
+
+
+def test_turn_reads_own_turns_taken_not_turn_number():
+    # own_turns_taken (TurnMachine.own_turns_taken, CR 500.7) is what `turn`
+    # reads, never turn_number (rounds of the table) - the two happen to
+    # coincide before any extra turn, so this pins them apart on purpose.
+    # See test_own_turns_taken_reaches_the_view_and_the_turn_condition below
+    # for the live-engine proof that they are the same on the play and on
+    # the draw, and differ after an extra turn.
+    view = state_view(turn_number=5, own_turns_taken={"alice": 1})
+    assert holds(turn("==", 1), view)
+    assert not holds(turn("==", 5), view)
+
+
+def test_turn_condition_advances_on_an_extra_turn():
+    # Unlike turn_number (which CR 500.7's extra turn does not move -
+    # test_turn_number_matches_the_engines_turnmachine_semantics below),
+    # own_turns_taken counts the extra turn as the player's own next turn.
+    view = state_view(turn_number=2, own_turns_taken={"alice": 3})
+    assert holds(turn("==", 3), view)
+    assert not holds(turn("==", 2), view)
+
+
+def test_a_missing_own_turns_taken_never_holds():
+    view = state_view()
+    view["players"][0]["own_turns_taken"] = None
+    for op in ("<", "<=", "==", "!=", ">", ">="):
+        assert not holds(turn(op, 0), view)
+    assert seen(turn(">=", 0), view) is None
+
+
+def test_pregame_own_turns_taken_is_zero_and_can_hold():
+    # CR 103.8: the pregame precedes turn 1, and own_turns_taken reads 0 for
+    # every player then - a real int, never null - so turn <= 0 / turn == 0
+    # hold in the pregame, and turn >= 1 does not.
+    view = state_view(turn_number=0, own_turns_taken={"alice": 0})
+    assert holds(turn("==", 0), view)
+    assert holds(turn("<=", 0), view)
+    assert not holds(turn(">=", 1), view)
+
+
+def test_turn_number_matches_the_engines_turnmachine_semantics(game):
+    """Verifies the view's turn_number against the live engine's own
+    TurnMachine (not just the condition's reading of it): turn_number counts
+    rounds of the table, so it stays 1 for both seats' first turns and only
+    becomes 2 once the rotation wraps back to the starting seat; an extra
+    turn (CR 500.7) is spliced in without moving it at all."""
+    live = store.get(game)
+    turn_machine = live.turn
+    turn_machine.begin_first_turn()
+    assert (turn_machine.active_player, turn_machine.turn_number) == ("alice", 1)
+    while turn_machine.active_player == "alice":
+        turn_machine.advance()
+    assert (turn_machine.active_player, turn_machine.turn_number) == ("bob", 1), (
+        "bob's first turn, on the draw, is turn_number 1 too"
+    )
+    while turn_machine.active_player == "bob":
+        turn_machine.advance()
+    assert (turn_machine.active_player, turn_machine.turn_number) == ("alice", 2)
+
+    turn_machine.grant_extra_turn("alice")
+    turns_taken = turn_machine.turns_taken
+    while turn_machine.turns_taken == turns_taken:
+        turn_machine.advance()
+    assert (turn_machine.active_player, turn_machine.turn_number) == ("alice", 2), (
+        "the extra turn does not advance turn_number"
+    )
+
+
+def test_own_turns_taken_reaches_the_view_and_the_turn_condition(game):
+    """The fix for O1's "turn repeats on an extra turn": `serialize._player_
+    view`'s `own_turns_taken` (`TurnMachine.own_turns_taken`, CR 500.7) is
+    what the `turn` condition actually reads (test_turn_condition_advances_
+    on_an_extra_turn above), proven end to end - live engine, the real
+    serializer, and `evaluate` - on the play, on the draw, and across an
+    extra turn."""
+    live = store.get(game)
+    turn_machine = live.turn
+    turn_machine.begin_first_turn()
+
+    def own_turns(name: str) -> int | None:
+        players = live_state_view(live, game)["players"]
+        return next(p["own_turns_taken"] for p in players if p["username"] == name)
+
+    def turn_condition_holds(n: int, viewer: str) -> bool:
+        view = redact_view(live_state_view(live, game), viewer)
+        return evaluate(script(true=[turn("==", n)]), view, viewer) == HOLDS
+
+    assert own_turns("alice") == 1, "on the play: alice's own first turn"
+    assert own_turns("bob") == 0
+    assert turn_condition_holds(1, "alice")
+    assert not turn_condition_holds(2, "alice")
+
+    while turn_machine.active_player == "alice":
+        turn_machine.advance()
+    assert own_turns("bob") == 1, "on the draw: bob's own first turn too"
+    assert own_turns("alice") == 1
+    assert turn_condition_holds(1, "bob")
+
+    while turn_machine.active_player == "bob":
+        turn_machine.advance()
+    assert own_turns("alice") == 2
+
+    turn_machine.grant_extra_turn("alice")
+    turns_taken = turn_machine.turns_taken
+    while turn_machine.turns_taken == turns_taken:
+        turn_machine.advance()
+    assert own_turns("alice") == 3, "the extra turn is alice's own third turn"
+    assert turn_condition_holds(3, "alice")
+    assert not turn_condition_holds(2, "alice"), (
+        "the extra turn must not repeat as alice's second turn (O1)"
+    )
 
 
 # -- input conditions -------------------------------------------------------------
@@ -752,3 +882,78 @@ def test_needs_contents_reads_only_what_the_caller_is_about_to_evaluate():
     assert needs_contents(move["answers"][0])
     assert not needs_contents(move)
     assert not needs_contents(play(moves=[move]))
+
+
+# -- O4/O7: needs_hypothetical, and evaluate() threading hypo/untapped_mana -------
+
+
+def test_needs_hypothetical_tells_the_caller_a_selector_reads_enters_or_unlocks():
+    assert not needs_hypothetical(FETCH_SHOCK)
+    assert needs_hypothetical(
+        play(true=[count("hand", "me", ">=", 1, {"enters_any": ["untapped"]})])
+    )
+    assert needs_hypothetical(play(true=[count("hand", "me", ">=", 1, {"unlocks": True})]))
+    assert needs_hypothetical(
+        play(true=[count("hand", "me", ">=", 1, {"unlocks_by_search": True})])
+    )
+    assert needs_hypothetical(
+        play(true=[count("hand", "me", ">=", 1, {"unlocks_by_basic_search": True})])
+    )
+    assert needs_hypothetical(
+        play(true=[count("hand", "me", ">=", 1, {"affordable": {"extra": 0}})])
+    ), "item 3: affordable now reads castable_now too"
+    assert not needs_hypothetical(play(true=[count("hand", "me", ">=", 1, {"tapped": False})]))
+
+
+def test_needs_hypothetical_reads_a_stack_top_selector_too():
+    top = {
+        "kind": "stack_top",
+        "controller": "opponent",
+        "select": {"unlocks": True},
+    }
+    assert needs_hypothetical(play(true=[top]))
+
+
+def test_needs_hypothetical_reads_only_what_the_caller_is_about_to_evaluate():
+    move = copy.deepcopy(FETCH_SHOCK["moves"][0])
+    move["answers"][0]["pick"]["prefer"] = [{"unlocks": True}]
+    assert needs_hypothetical(move["answers"][0])
+    assert not needs_hypothetical(move)
+    assert not needs_hypothetical(play(moves=[move]))
+
+
+def test_needs_contents_is_also_true_for_unlocks_by_search():
+    assert needs_contents(play(true=[count("hand", "me", ">=", 1, {"unlocks_by_search": True})]))
+    assert not needs_contents(play(true=[count("hand", "me", ">=", 1, {"unlocks": True})]))
+
+
+def test_needs_contents_is_also_true_for_unlocks_by_basic_search():
+    assert needs_contents(
+        play(true=[count("hand", "me", ">=", 1, {"unlocks_by_basic_search": True})])
+    )
+
+
+def test_a_selector_reading_enters_or_unlocks_cannot_be_evaluated_without_hypothetical_facts():
+    view = state_view(hands={"alice": [mountain(zone="hand")]})
+    doc = play(true=[count("hand", "me", ">=", 1, {"enters_any": ["untapped"]})])
+    with pytest.raises(HypotheticalRequired):
+        evaluate(doc, view, "alice")
+
+
+def test_evaluate_passes_hypothetical_facts_through_to_matches():
+    land = mountain(zone="hand")
+    view = state_view(hands={"alice": [land]})
+    doc = play(true=[count("hand", "me", ">=", 1, {"enters_any": ["untapped"]})])
+    holding = evaluate(doc, view, "alice", hypothetical={land["id"]: {"enters": "untapped"}})
+    assert holding["applies"]
+    not_holding = evaluate(doc, view, "alice", hypothetical={land["id"]: {"enters": "tapped"}})
+    assert not not_holding["applies"]
+
+
+def test_evaluate_computes_untapped_mana_for_affordable_selectors():
+    spell = bolt(zone="hand")
+    source = mountain()
+    view = state_view(hands={"alice": [spell]}, battlefield=[source])
+    doc = play(true=[count("hand", "me", ">=", 1, {"affordable": {"extra": 0}})])
+    hypo = {spell["id"]: {"castable_now": True}}
+    assert evaluate(doc, view, "alice", hypothetical=hypo)["applies"]

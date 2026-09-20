@@ -1,0 +1,104 @@
+{
+ "name": "boros aggro",
+ "meta_share": 3.291139240506329,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format and archetype, statistics_archetypes carries no winrate field, and this run's own fingerprint records winrate_vs_field as an empty map. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "Curve Ocelot Pride or Ragavan into Guide of Souls energy and Ajani, Nacatl Pariah, then convert the board with Goblin Bombardment or a Voice of Victory turn where we are not allowed to respond.",
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Every threat is one or two mana and Voice of Victory stops us casting anything on their turn, so the game is decided before our five-drops are live.",
+  "key_cards": [
+   {
+    "card": "Voice of Victory",
+    "why": "our opponents cannot cast spells during their turn - it turns off every counterspell and every flash creature we hold."
+   },
+   {
+    "card": "Obsidian Charmaw",
+    "why": "destroys a nonbasic land for two mana against a manabase that is seventeen nonbasics deep.",
+    "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+   },
+   {
+    "card": "Wrath of the Skies",
+    "why": "their own sweeper, brought in because our Frogs outclass their tokens in a long game.",
+    "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+   },
+   {
+    "card": "High Noon",
+    "why": "one spell each turn caps a deck built to deploy a threat and hold up an answer.",
+    "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+   }
+  ]
+ },
+ "primary_gameplan": "Trade one-for-one early with Fatal Push and Orcish Bowmasters, then reset with Toxic Deluge once they have committed. Psychic Frog blocks a Ragavan all day and eats the cards Deluge would have wasted.",
+ "pitfalls": [
+  "Force of Negation counters nothing in the maindeck worth countering: their threats are creatures.",
+  "Toxic Deluge for three kills our own Psychic Frog; cast it before deploying, not after.",
+  "Thoughtseize costs two life against a deck that wins at exactly that margin - it stays in only because Goblin Bombardment and Ajani are worth taking."
+ ],
+ "stance": "symmetric_counter",
+ "stance_rationale": "Their board is wide and cheap - Ocelot Pride, Guide of Souls, Ragavan and Ajani tokens - so the answer is a sweeper rather than one-for-one removal. Toxic Deluge is that sweeper and it kills our own Psychic Frog and Orcish Bowmasters with it.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Obsidian Charmaw",
+   "count": 2,
+   "why": "{2}{R} 4/3 that destroys a nonbasic land on entry; we run seventeen and three basics.",
+   "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+  },
+  {
+   "card": "High Noon",
+   "count": 2,
+   "why": "one spell per turn, which is the tax a hold-up-interaction deck cannot pay.",
+   "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+  },
+  {
+   "card": "Wrath of the Skies",
+   "count": 2,
+   "why": "sweeps our Psychic Frog and Orcish Bowmasters after they have committed to a board.",
+   "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+  },
+  {
+   "card": "Vexing Bauble",
+   "count": 2,
+   "why": "counters Force of Negation and evoked Subtlety, the two cards that let us interact while tapped out.",
+   "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "2 Toxic Deluge",
+    "2 Engineered Explosives"
+   ],
+   "out_cards": [
+    "3 Force of Negation",
+    "1 Drown in the Loch"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "2 Toxic Deluge",
+    "2 Engineered Explosives"
+   ],
+   "out_cards": [
+    "3 Force of Negation",
+    "1 Thoughtseize"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Two lands and two pieces of one-mana interaction; a threat-only hand loses on turn four.",
+  "goldfish_for": "Toxic Deluge, cast for two after they have committed the second wave.",
+  "watch_for": "Voice of Victory means our counters are dead on their turn - use the mana on our own.",
+  "posture": "disrupt_first",
+  "posture_why": "Their curve ends before ours starts, so surviving to turn five is the whole game."
+ },
+ "self_cost": "Toxic Deluge for two or three takes every creature we control except a Psychic Frog that has already eaten cards, and except Tamiyo, Inquisitive Student, whose 0/3 body only dies to the three; Engineered Explosives at one still kills our own Tamiyo, since its destroy effect keys off mana value one rather than toughness."
+}

@@ -50,6 +50,8 @@ def script_run(
     wall_ms: int | None = 100,
     priority: int | None = 50,
     reapplicable_after: str | None = None,
+    invoked_via: str = "mcp",
+    moves_done: int | None = 1,
 ) -> dict[str, Any]:
     """One finished run's `script_run` row, every `ScriptRunIn` field set."""
     return row(
@@ -71,7 +73,7 @@ def script_run(
         step="precombat_main",
         seq_start=seq,
         seq_end=seq + 1,
-        moves_done=1,
+        moves_done=moves_done,
         moves_total=1,
         exit=exit,
         stop_reason=None,
@@ -79,6 +81,7 @@ def script_run(
         resumes=resumes,
         wall_ms=wall_ms,
         reapplicable_after=reapplicable_after,
+        invoked_via=invoked_via,
     )
 
 
@@ -124,6 +127,169 @@ def test_no_script_runs_renders_as_a_named_absence():
 
 def test_an_empty_ledger_reports_an_empty_tally():
     assert eval_report.build_report([])["scripts"] == []
+
+
+# -- S1 T3: by_invoker, per seat -----------------------------------------------
+
+
+def test_a_seat_with_no_runs_reports_an_empty_by_invoker():
+    report = eval_report.build_report([ledger_game("g1", [], winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["by_invoker"] == {}
+
+
+def test_by_invoker_tallies_mcp_and_cli_separately_per_seat():
+    runs = [
+        script_run(2, "g1", "fetch-shock", invoked_via="mcp"),
+        script_run(3, "g1", "fetch-shock", invoked_via="mcp"),
+        script_run(4, "g1", "float", invoked_via="cli"),
+    ]
+    report = eval_report.build_report([ledger_game("g1", runs, winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["by_invoker"] == {"cli": 1, "mcp": 2}
+
+
+def test_by_invoker_keeps_each_seat_apart():
+    runs = [
+        script_run(2, "g1", "fetch-shock", seat="alice", invoked_via="mcp"),
+        script_run(3, "g1", "fetch-shock", seat="bob", invoked_via="cli"),
+    ]
+    report = eval_report.build_report([ledger_game("g1", runs, winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["by_invoker"] == {"mcp": 1}
+    assert report["seats"]["bob"]["scripts"]["by_invoker"] == {"cli": 1}
+
+
+def test_by_invoker_accumulates_across_games():
+    games = [
+        ledger_game("g1", [script_run(2, "g1", "s", invoked_via="cli")], winner="alice"),
+        ledger_game("g2", [script_run(2, "g2", "s", invoked_via="cli")], winner="alice"),
+    ]
+
+    report = eval_report.build_report(games)
+
+    assert report["seats"]["alice"]["scripts"]["by_invoker"] == {"cli": 2}
+
+
+def test_a_row_with_no_invoked_via_recorded_falls_back_to_unknown():
+    """A ledger row from before S1 carries no `invoked_via` at all."""
+    detail_row = script_run(2, "g1", "s")
+    del detail_row["payload"]["detail"]["invoked_via"]
+
+    report = eval_report.build_report([ledger_game("g1", [detail_row], winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["by_invoker"] == {"unknown": 1}
+
+
+def test_the_rendered_report_shows_by_invoker_on_the_seats_own_lines():
+    runs = [
+        script_run(2, "g1", "fetch-shock", seat="alice", invoked_via="mcp"),
+        script_run(3, "g1", "float", seat="alice", invoked_via="cli"),
+    ]
+    text = eval_report.render(eval_report.build_report([ledger_game("g1", runs, winner="alice")]))
+
+    assert "scripts by invoker cli=1, mcp=1" in text
+
+
+# -- S2 A5: armed_fired, per seat -----------------------------------------------
+
+
+def test_armed_counts_in_by_invoker_alongside_mcp_and_cli():
+    runs = [
+        script_run(2, "g1", "fetch-shock", invoked_via="mcp"),
+        script_run(3, "g1", "float", invoked_via="armed"),
+    ]
+    report = eval_report.build_report([ledger_game("g1", runs, winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["by_invoker"] == {"armed": 1, "mcp": 1}
+
+
+def test_a_seat_with_no_armed_runs_reports_zero_armed_fired():
+    report = eval_report.build_report([ledger_game("g1", [], winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["armed_fired"] == 0
+
+
+def test_an_armed_seat_run_that_moved_the_board_counts_as_armed_fired():
+    runs = [script_run(2, "g1", "float", invoked_via="armed", moves_done=1)]
+    report = eval_report.build_report([ledger_game("g1", runs, winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["armed_fired"] == 1
+
+
+def test_an_armed_seat_run_with_no_moves_does_not_count():
+    """`not_applicable`/`needs_input`/etc: fired the batch, moved nothing."""
+    runs = [script_run(2, "g1", "float", invoked_via="armed", exit="not_applicable", moves_done=0)]
+    report = eval_report.build_report([ledger_game("g1", runs, winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["armed_fired"] == 0
+
+
+def test_a_non_armed_run_with_moves_does_not_count_as_armed_fired():
+    runs = [script_run(2, "g1", "float", invoked_via="mcp", moves_done=1)]
+    report = eval_report.build_report([ledger_game("g1", runs, winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["armed_fired"] == 0
+
+
+def test_an_advisors_armed_advised_run_counts_as_armed_fired_for_the_advised_seat():
+    """An advisor's `advised` exit proposes a move rather than moving the
+    board itself (`moves_done` is 0 for advice), so it needs its own rule:
+    an armed advise run counts when its exit is `advised`."""
+    runs = [
+        script_run(2, "g1", "float", invoked_via="armed", advise=True, exit="advised", moves_done=0)
+    ]
+    report = eval_report.build_report([ledger_game("g1", runs, winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["armed_fired"] == 1
+
+
+def test_an_advisors_armed_run_that_is_not_advised_does_not_count():
+    runs = [
+        script_run(
+            2, "g1", "float", invoked_via="armed", advise=True, exit="not_applicable", moves_done=0
+        )
+    ]
+    report = eval_report.build_report([ledger_game("g1", runs, winner="alice")])
+
+    assert report["seats"]["alice"]["scripts"]["armed_fired"] == 0
+
+
+def test_armed_fired_accumulates_across_games():
+    games = [
+        ledger_game(
+            "g1", [script_run(2, "g1", "float", invoked_via="armed", moves_done=1)], winner="alice"
+        ),
+        ledger_game(
+            "g2", [script_run(2, "g2", "float", invoked_via="armed", moves_done=1)], winner="alice"
+        ),
+    ]
+    report = eval_report.build_report(games)
+
+    assert report["seats"]["alice"]["scripts"]["armed_fired"] == 2
+
+
+def test_the_rendered_report_shows_armed_fired_on_the_seats_own_lines():
+    runs = [script_run(2, "g1", "float", invoked_via="armed", moves_done=1)]
+    text = eval_report.render(eval_report.build_report([ledger_game("g1", runs, winner="alice")]))
+
+    assert "armed fired" in text
+    assert "1" in text.split("armed fired")[1].splitlines()[0]
+
+
+def test_json_output_carries_armed_fired(tmp_path: Path, capsys: Any) -> None:
+    games = [
+        ledger_game(
+            "g1", [script_run(2, "g1", "float", invoked_via="armed", moves_done=1)], winner="alice"
+        )
+    ]
+    path = tmp_path / "ledger.json"
+    path.write_text(json.dumps([game.to_json() for game in games]))
+
+    assert eval_report.main(["--ledger", str(path), "--json"]) == 0
+
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["seats"]["alice"]["scripts"]["armed_fired"] == 1
 
 
 # -- one script ---------------------------------------------------------------

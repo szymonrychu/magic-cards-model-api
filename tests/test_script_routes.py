@@ -58,6 +58,7 @@ RUN_FIELDS = {
     "resumes",
     "wall_ms",
     "reapplicable_after",
+    "invoked_via",
 }
 
 
@@ -97,6 +98,7 @@ def run(**over: Any) -> dict[str, Any]:
         "script_id": FETCH_SHOCK["id"],
         "turn": 3,
         "step": "precombat_main",
+        "invoked_via": "mcp",
     }
     body.update(over)
     return body
@@ -602,6 +604,74 @@ def test_a_zero_move_finish_does_not_burn_the_already_ran_slot(
     assert again.status_code == 200, again.text
 
 
+def test_a_finish_with_no_moves_done_at_all_still_burns_the_slot(
+    client: TestClient, game: str
+) -> None:
+    """S2 arming re-review finding 3: `moves_done` is optional at the schema
+    (`schemas.py`'s own `Field(default=None, ge=0)`) - a finish that omits it
+    entirely is not the same as one that confirms zero moves, and must not
+    be read as one. `prior.get("moves_done") or 0` used to conflate the two
+    (`None or 0` is `0`), releasing a slot a genuine, still-untold run might
+    still be sitting on; `releases_slot`'s own `moves_done=None` now blocks
+    it - the conservative read, since this function cannot tell whether it
+    moved anything."""
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    no_moves_done = finish(moves_done=None, moves_total=1, exit="refused")
+    assert post_run(client, game, no_moves_done, uid=alice).status_code == 200
+
+    again = post_run(client, game, run(run_id="run-2"), uid=alice)
+
+    assert again.status_code == 409, again.text
+    assert again.json()["exit"] == "already_ran"
+
+
+def test_a_freed_already_ran_collision_no_longer_blocks_a_later_start(
+    client: TestClient, game: str
+) -> None:
+    """S2 arming re-review finding 3: start A, start B collides with it
+    (`already_ran`, since A has not finished yet); B's own finish posts
+    `exit: already_ran, moves_done: 0` (it never got to run at all); A's own
+    finish then posts zero moves too, genuinely touching nothing, and is
+    released on its own terms (`test_a_zero_move_finish_...` above). A fresh
+    start C must now succeed - B's row only ever recorded "I collided with
+    A", never a genuine attempt of its own, and once A's own row is released
+    there is nothing real left on the ledger to block C. Before this fix,
+    `already_ran` was excluded from release outright (S2 arming re-review
+    finding 4, an earlier round), so B's collision row kept blocking C even
+    though the run underneath it, A, was already gone."""
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+
+    a = post_run(client, game, run(run_id="A", turn=300), uid=alice)
+    assert a.status_code == 200, a.text
+
+    b = post_run(client, game, run(run_id="B", turn=300), uid=alice)
+    assert b.status_code == 409, b.text
+    assert b.json()["exit"] == "already_ran"
+    assert (
+        post_run(
+            client, game, finish(run_id="B", turn=300, moves_done=0, exit="already_ran"), uid=alice
+        ).status_code
+        == 200
+    )
+
+    assert (
+        post_run(
+            client, game, finish(run_id="A", turn=300, moves_done=0, exit="refused"), uid=alice
+        ).status_code
+        == 200
+    )
+
+    c = post_run(client, game, run(run_id="C", turn=300), uid=alice)
+
+    assert c.status_code == 200, c.text
+
+    again = post_run(client, game, run(run_id="run-2"), uid=alice)
+
+    assert again.status_code == 200, again.text
+
+
 def test_a_started_run_that_finished_with_zero_moves_does_not_burn_the_slot(
     client: TestClient, game: str
 ) -> None:
@@ -636,6 +706,60 @@ def test_a_zero_move_finish_with_an_unknown_outcome_still_burns_the_slot(
     assert again.json()["exit"] == "already_ran"
 
 
+def test_a_failed_advise_finish_does_not_burn_the_already_ran_slot(
+    client: TestClient, game: str
+) -> None:
+    """S2 arming review: `_prior_script_run`'s release rule excludes every
+    advise finish because a *successful* one always reports zero moves by
+    design (it only ever proposes) - but that same exclusion also caught a
+    FAILED advise attempt (refused, interrupted, or the like - also always
+    zero moves, for an entirely different reason: it never got the chance to
+    move at all). An armed advisor whose first attempt is blocked by
+    something outside its own script - the human's own pending decision, an
+    unrelated refusal - must not be locked out of ever proposing that same
+    script again at this turn and step. Only a genuinely successful
+    `advised` finish should still burn the slot."""
+    advisor = advisor_uid(game, "alice")
+    assert register(client, game, advisor, uid=advisor).status_code == 200
+    assert post_run(client, game, run(role="advisor", advise=True), uid=advisor).status_code == 200
+    failed = finish(
+        role="advisor",
+        advise=True,
+        moves_done=0,
+        moves_total=1,
+        exit="refused",
+        reapplicable_after="true",
+    )
+    assert post_run(client, game, failed, uid=advisor).status_code == 200
+
+    again = post_run(client, game, run(run_id="run-2", role="advisor", advise=True), uid=advisor)
+
+    assert again.status_code == 200, again.text
+
+
+def test_a_successful_advise_finish_still_burns_the_slot(client: TestClient, game: str) -> None:
+    """The other half: a real `advised` proposal still locks the slot, so an
+    armed advisor does not repeat the same suggestion within one turn and
+    step."""
+    advisor = advisor_uid(game, "alice")
+    assert register(client, game, advisor, uid=advisor).status_code == 200
+    assert post_run(client, game, run(role="advisor", advise=True), uid=advisor).status_code == 200
+    advised = finish(
+        role="advisor",
+        advise=True,
+        moves_done=0,
+        moves_total=1,
+        exit="advised",
+        reapplicable_after="true",
+    )
+    assert post_run(client, game, advised, uid=advisor).status_code == 200
+
+    again = post_run(client, game, run(run_id="run-2", role="advisor", advise=True), uid=advisor)
+
+    assert again.status_code == 409, again.text
+    assert again.json()["exit"] == "already_ran"
+
+
 def test_a_finish_that_did_move_still_burns_the_slot(client: TestClient, game: str) -> None:
     """The other half of B8-04's fix: a finish naming at least one move done
     still blocks a retry, exactly as before."""
@@ -647,6 +771,123 @@ def test_a_finish_that_did_move_still_burns_the_slot(client: TestClient, game: s
 
     assert again.status_code == 409, again.text
     assert again.json()["exit"] == "already_ran"
+
+
+#: `(moves_done, exit, advise)` for every shape `_prior_script_run`/
+#: `script_tools.releases_slot` treat the SAME way, regardless of
+#: `already_ran_releases` - a real move, each zero-move exit that IS
+#: released, and each zero-move exit that is NOT (`unknown_outcome` and a
+#: successful `advised` proposal). `already_ran` is deliberately not among
+#: these any more (S2 arming re-review finding 3) - see
+#: `test_the_ledger_and_the_hint_deliberately_differ_on_already_ran`, below,
+#: for that one intended difference.
+SHARED_RELEASE_SEQUENCE: tuple[tuple[int, str, bool], ...] = (
+    (1, "chain_complete", False),
+    (0, "refused", False),
+    (0, "needs_input", False),
+    (0, "unknown_outcome", False),
+    (0, "advised", True),
+    (0, "refused", True),
+)
+
+
+def test_the_hint_cache_and_the_ledger_apply_the_same_release_rule(
+    client: TestClient, game: str
+) -> None:
+    """S2 arming re-review finding 4: the ledger's own already-ran gate
+    (`records._prior_script_run`) and the hint's in-process cache
+    (`playscripts.script_tools._record_run`, via the shared
+    `script_tools.releases_slot`) must release the once-per-turn-and-step
+    slot on exactly the same shapes for every case `SHARED_RELEASE_SEQUENCE`
+    names - walk it through both and check every one lands on the same
+    verdict. A fresh `(turn, step)` per case keeps them from interfering
+    with each other. `already_ran` is excluded on purpose (S2 arming
+    re-review finding 3) - both calls pass `already_ran_releases=False`
+    here, the value neither of them ever disagrees on."""
+    from magic_cards_model_api.playscripts import script_tools
+
+    alice = seat_uid(game, "alice")
+    advisor = advisor_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    assert register(client, game, advisor, uid=advisor).status_code == 200
+
+    for index, (moves_done, exit_name, advise) in enumerate(SHARED_RELEASE_SEQUENCE):
+        role = "advisor" if advise else "seat"
+        uid = advisor if advise else alice
+        run_id = f"case-{index}"
+        started = post_run(
+            client,
+            game,
+            run(run_id=run_id, turn=100 + index, role=role, advise=advise),
+            uid=uid,
+        )
+        assert started.status_code == 200, started.text
+        attempt = finish(
+            run_id=run_id,
+            turn=100 + index,
+            role=role,
+            advise=advise,
+            moves_done=moves_done,
+            moves_total=1,
+            exit=exit_name,
+        )
+        assert post_run(client, game, attempt, uid=uid).status_code == 200
+
+        retry = post_run(
+            client,
+            game,
+            run(run_id=f"{run_id}-retry", turn=100 + index, role=role, advise=advise),
+            uid=uid,
+        )
+        ledger_released = retry.status_code == 200
+
+        hint_released = script_tools.releases_slot(
+            moves_done, exit_name, advise=advise, chained=False, already_ran_releases=False
+        )
+
+        assert ledger_released == hint_released, (
+            f"case {index} (moves_done={moves_done}, exit={exit_name!r}, advise={advise}): "
+            f"ledger released={ledger_released} ({retry.status_code}), "
+            f"hint released={hint_released}"
+        )
+
+
+def test_the_ledger_and_the_hint_deliberately_differ_on_already_ran(
+    client: TestClient, game: str
+) -> None:
+    """S2 arming re-review finding 3: the one decision `releases_slot`'s two
+    callers make differently, on purpose. A finish whose own `exit` is
+    `already_ran` never recorded a genuine attempt - it only ever names some
+    OTHER run that already held the slot - so the ledger
+    (`records._prior_script_run`, `already_ran_releases=True`) releases it:
+    once the run it collided with is itself released, nothing real is left
+    to block a fresh start on. The hint's own in-process cache
+    (`script_tools._record_run`, `already_ran_releases=False`) keeps it
+    locked regardless - it exists only to stop this one process re-offering,
+    to itself, a script that just collided at this exact position."""
+    from magic_cards_model_api.playscripts import script_tools
+
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    assert post_run(client, game, run(), uid=alice).status_code == 200
+    collided = finish(moves_done=0, moves_total=1, exit="already_ran")
+    assert post_run(client, game, collided, uid=alice).status_code == 200
+
+    retry = post_run(client, game, run(run_id="run-2"), uid=alice)
+
+    assert retry.status_code == 200, (
+        "the ledger must release an already_ran row: it never recorded a genuine attempt"
+    )
+    hint_released = script_tools.releases_slot(0, "already_ran", advise=False, chained=False)
+    assert hint_released is False, (
+        "the hint's own default keeps locking it, to avoid re-suggesting a collided script"
+    )
+    assert (
+        script_tools.releases_slot(
+            0, "already_ran", advise=False, chained=False, already_ran_releases=True
+        )
+        is True
+    ), "already_ran_releases=True is exactly the ledger's own choice"
 
 
 def test_a_start_or_finish_after_game_over_is_refused_with_no_record(
@@ -695,6 +936,65 @@ def test_a_finish_needs_an_exit(client: TestClient, game: str) -> None:
     del body["exit"]
 
     assert post_run(client, game, body, uid=alice).status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# S1 T3: invoked_via - who started this run, mcp or cli
+# ---------------------------------------------------------------------------
+
+
+def test_a_start_without_invoked_via_defaults_to_mcp(client: TestClient, game: str) -> None:
+    """A seat Job already in flight at deploy time was built before
+    `invoked_via` existed, and never sends it. Refusing that run with 422
+    would leave a bare `start` row with no matching `finish`, blocking that
+    turn and step slot for good (`already_ran` never clears without a
+    `finish`) - defaulting to `"mcp"` keeps a run built before this field
+    existed working exactly as it did before the field was added."""
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    body = run()
+    del body["invoked_via"]
+
+    assert post_run(client, game, body, uid=alice).status_code == 200
+
+
+def test_a_finish_without_invoked_via_defaults_to_mcp_and_is_recorded(
+    client: TestClient, game: str
+) -> None:
+    alice = seat_uid(game, "alice")
+    body = finish()
+    del body["invoked_via"]
+
+    assert post_run(client, game, body, uid=alice).status_code == 200
+
+    [row] = script_rows(audit.entries(game))
+    assert row["detail"]["invoked_via"] == "mcp"
+
+
+def test_an_unknown_invoked_via_is_refused(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+
+    assert post_run(client, game, run(invoked_via="operator"), uid=alice).status_code == 422
+    assert post_run(client, game, finish(invoked_via="webhook"), uid=alice).status_code == 422
+
+
+@pytest.mark.parametrize("value", ["mcp", "cli"])
+def test_mcp_and_cli_are_both_accepted(client: TestClient, game: str, value: str) -> None:
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+
+    assert post_run(client, game, run(invoked_via=value), uid=alice).status_code == 200
+    assert post_run(client, game, finish(invoked_via=value), uid=alice).status_code == 200
+
+
+def test_a_finish_row_records_its_invoked_via(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+
+    assert post_run(client, game, finish(invoked_via="cli"), uid=alice).status_code == 200
+
+    [row] = script_rows(audit.entries(game))
+    assert row["detail"]["invoked_via"] == "cli"
 
 
 def test_an_unknown_phase_is_refused(client: TestClient, game: str) -> None:
@@ -986,7 +1286,8 @@ def test_script_runs_is_not_a_mutating_game_action() -> None:
 
 def test_the_seatkit_19_paragraph_names_the_script_routes() -> None:
     source = Path(seatkit.__file__).read_text()
-    paragraph = source.split("PROTOCOL_VERSION = ", 1)[1].split("`seatkit-18`", 1)[0]
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-19`", 1)[1].split("`seatkit-18`", 1)[0]
     for term in (
         "/seats/{uid}/scripts",
         "/script-runs",

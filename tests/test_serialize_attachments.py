@@ -126,3 +126,25 @@ def test_an_exile_pile_with_no_linked_permanent_says_nothing_about_one(client, g
     view = serialize.state_view(engine, game)
     pile = find(view["exile"], "Lightning Bolt")["exile_pile"]
     assert "linked_permanent_id" not in pile
+
+
+def test_a_prepared_permanent_reports_prepared(client, game):
+    """`CardState.prepared` (CR 722.3a, the Reality Fracture bump) reaches
+    the wire as `prepared` on a battlefield card's view - the point under
+    test is the serializer, not the prepare-spell effect that sets the
+    field, so the flag is set directly the same way the exile link above is."""
+    add_card(client, game, "Sol Ring", "alice", "battlefield")
+    engine = store.get(game)
+    ring = next(c for c in engine.shared_zones[Zone.BATTLEFIELD] if c.name == "Sol Ring")
+    ring.prepared = True
+
+    view = serialize.state_view(engine, game)
+    assert find(view["battlefield"], "Sol Ring")["prepared"] is True
+
+
+def test_an_unprepared_permanent_carries_no_prepared_field(client, game):
+    add_card(client, game, "Sol Ring", "alice", "battlefield")
+    engine = store.get(game)
+
+    view = serialize.state_view(engine, game)
+    assert "prepared" not in find(view["battlefield"], "Sol Ring")

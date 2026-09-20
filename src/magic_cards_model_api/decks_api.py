@@ -42,7 +42,7 @@ from .agent_settings import AgentSettings
 from .api_client import ApiClient, InProcessApiClient
 from .decks import load_deck_into_game
 from .repository import RECENT_RECORDS_WINDOW, Advisor, GameUnloadable
-from .schemas import RequestModel
+from .schemas import RequestModel, Username
 from .store import known_players, new_seat_uids, player_for_advisor_uid, store
 
 router = APIRouter(prefix="/api/lobby", tags=["lobby"], route_class=game_access.GameAccessRoute)
@@ -63,15 +63,12 @@ def max_live_games() -> int:
 
 
 class NewUiPlayer(RequestModel):
-    username: str = Field(min_length=1)
+    username: Username
     decklist_text: str = Field(min_length=1)
     ai: bool = False
     """Whether this seat is meant to be driven by the AI-seat runner - a UI
     hint only (`ai_seat.py` is a separate, opt-in call); carried here so the
     response can tell the UI which uid to auto-start without a second lookup."""
-    agent: AgentSettings | None = None
-    """How the AI seat runs (model, effort, thinking). Only with `ai: true`;
-    absent, the server's defaults apply (`AgentSettings.default`)."""
     buddy: bool = False
     """Whether this seat gets a **buddy** - an advisor (`repository.Advisor`)
     watching this player's own view, proposing plays and never making one
@@ -84,19 +81,6 @@ class NewUiPlayer(RequestModel):
     **Only with `ai: false`.** A buddy advises a human; an AI seat acts
     through its own seat uid and never reads the advice ledger, so the pair
     is refused rather than minting an advisor nothing would read."""
-    buddy_agent: AgentSettings | None = None
-    """How the buddy runs. Only with `buddy: true`; absent, the server's
-    defaults apply, exactly as for `agent`.
-
-    **These settings are stored inside the advisor's own entry, never in
-    `store.register_agent_settings`.** That map is keyed by *username*, and
-    the lobby decides which seat is the human's by looking for the seat with
-    no entry in it (`ui/lobby_model.js`'s `seatsFromRow`) - so a buddy's
-    settings filed under the human's name would make the browser read the
-    human as the AI seat and hand them the wrong uid. `repository.Advisor`'s
-    own docstring gives the other half of the reason (two advisors on one
-    seat, and an advisor on a seat that is itself an AI seat, both collide in
-    a name-keyed map)."""
 
 
 class NewUiGame(RequestModel):
@@ -110,8 +94,10 @@ class NewUiGameResponse(BaseModel):
     admin_key: str | None = None
     ai_players: list[str]
     agents: dict[str, AgentSettings]
-    """Every AI seat's chosen (or defaulted) model, effort and thinking
-    budget - `AgentSettings.default` when the request left it unset."""
+    """Every AI seat's model, effort and thinking budget - always
+    `AgentSettings.default` (2026-09-19: model/effort/thinking budget are a
+    fixed server-side deployment choice, not a per-request one any more, so
+    this is never anything else)."""
     advisor_uids: dict[str, str] = {}
     """player name -> that player's buddy uid, for every seat the request
     asked a buddy for. A credential, handed back exactly as `seat_uids` is:
@@ -151,10 +137,6 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
         raise ValueError(f"decklist(s) failed validation: {problems}")
 
     for player in req.players:
-        if player.agent is not None and not player.ai:
-            raise ValueError(f"{player.username}: agent settings are only for an ai seat")
-        if player.buddy_agent is not None and not player.buddy:
-            raise ValueError(f"{player.username}: buddy agent settings are only for a buddy")
         if player.buddy and player.ai:
             # A buddy advises a human. An AI seat acts through its own seat
             # uid and never reads the advice ledger, so an advisor minted
@@ -166,18 +148,19 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
                 f"{player.username}: a buddy advises a human seat - an ai seat plays "
                 "through its own uid and never reads the advice its buddy would write"
             )
+    # Always `AgentSettings.default(os.environ)` (2026-09-19): model, effort
+    # and thinking budget are a fixed server-side deployment choice now, for
+    # an AI seat and a buddy alike - `NewUiPlayer` carries no field a request
+    # could use to ask for anything else.
     agents = {
-        player.username: player.agent or AgentSettings.default(os.environ)
-        for player in req.players
-        if player.ai
+        player.username: AgentSettings.default(os.environ) for player in req.players if player.ai
     }
-    # Keyed by uid, never by name - see `NewUiPlayer.buddy_agent` for why
-    # this must not go through `register_agent_settings`.
+    # Keyed by uid, never by name - `repository.Advisor`'s own docstring
+    # gives the reason (two advisors on one seat, and an advisor on a seat
+    # that is itself an AI seat, both collide in a name-keyed map), which is
+    # also why this does not go through `register_agent_settings`.
     advisors = {
-        uuid4().hex: Advisor(
-            player=player.username,
-            agent=player.buddy_agent or AgentSettings.default(os.environ),
-        )
+        uuid4().hex: Advisor(player=player.username, agent=AgentSettings.default(os.environ))
         for player in req.players
         if player.buddy
     }

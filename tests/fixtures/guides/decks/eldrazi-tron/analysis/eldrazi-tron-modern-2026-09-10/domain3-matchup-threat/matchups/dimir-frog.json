@@ -1,0 +1,139 @@
+{
+  "name": "dimir frog",
+  "meta_share": 1.9902365752910252,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": null,
+  "winrate_basis": {
+    "kind": "absent",
+    "why": "The committed 2026-09-10 capture .protocol/raw-matchups.json holds a 'dimir control' row but no 'dimir frog' row, and this repository has validated no join between those two labels - the two 2026-09-10 captures are visibly different decks, one built on Psychic Frog and Tamiyo and the other on Snapcaster Mage and Wan Shi Tong. UNMEASURED rather than borrowed: reading the dimir control number onto this row would be an assertion the evidence does not support."
+  },
+  "primary_gameplan": "Cursed Totem is unusually good here and the reason is Psychic Frog: both 'Discard a card: Put a +1/+1 counter on this creature' and 'Exile three cards from your graveyard: This creature gains flying' are activated abilities of a creature, so a resolved Totem turns their best card into a 1/3 that cannot fly and cannot grow.",
+  "secondary_gameplan": "Engineered Explosives at two counters destroys Psychic Frog, Tamiyo, Inquisitive Student and Orcish Bowmasters in one card; Cityscape Leveler's cast trigger gets value through their counterspells, and Walking Ballista picks off a Tamiyo before it flips.",
+  "opponent_gameplan": "The ten committed 2026-09-10 lists are the tempo build: four Psychic Frog, four Thoughtseize, four Fatal Push, three Orcish Bowmasters, three Subtlety, three Force of Negation, two Tamiyo, Inquisitive Student and a Murktide Regent, on eighteen lands. The plan is to strip a card, counter the follow-up and win with a Frog that grows every time they discard a spare land. It interacts more cheaply than dimir control does and pressures faster.",
+  "tournament_refs": [
+    {
+      "pilot": "oinkmage22",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6",
+      "source_deck_id": "videre-58664415"
+    },
+    {
+      "pilot": "swff",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5",
+      "source_deck_id": "videre-58663905"
+    },
+    {
+      "pilot": "TeamGreed",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6",
+      "source_deck_id": "videre-58664417"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 2,
+      "why": "10 of 10 committed 2026-09-10 lists; one blue mana counters a colorless spell or a cast trigger",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Harbinger of the Seas",
+      "count": 2,
+      "why": "9 of 10 committed lists; 'Nonbasic lands are Islands' shuts off twenty-one of our twenty-four lands",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Engineered Explosives",
+      "count": 2,
+      "why": "9 of 10 committed lists; the scaling answer to the cheap artifacts we fetch",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Toxic Deluge",
+      "count": 1,
+      "why": "8 of 10 committed lists; a life-paid sweeper that gets under Sire of Seven Deaths' ward",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "Cursed Totem, Engineered Explosives, Cityscape Leveler and Walking Ballista are all one-sided here: we activate no creature abilities except Walking Ballista's own, and every fetch answers a card their deck cannot function without.",
+  "opponent_plan": {
+    "posture": "disrupt_first",
+    "posture_why": "Thoughtseize and cheap permission come before the clock; the Frog only has to survive after the hand has already been taken apart.",
+    "key_cards": [
+      {
+        "card": "Psychic Frog",
+        "why": "Named in the recorded gameplan; a two-mana threat that draws a card on damage and grows on every spare card discarded"
+      },
+      {
+        "card": "Thoughtseize",
+        "why": "Named in the recorded gameplan; four copies that take the Karn before it can fetch anything"
+      },
+      {
+        "card": "Harbinger of the Seas",
+        "why": "Boarded body that turns our nonbasic manabase into Islands",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      },
+      {
+        "card": "Consign to Memory",
+        "why": "Boarded counter aimed at our colorless spells and our cast triggers",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand that still functions after one Thoughtseize and reaches four mana on its own.",
+    "goldfish_for": "Karn into Cursed Totem, which turns Psychic Frog into a 1/3 that cannot fly.",
+    "watch_for": "Two open mana on our turn three, which is Force of Negation or Spell Snare.",
+    "posture": "grind",
+    "posture_why": "They trade one for one from an eighteen-land deck; Tron out-resources that if the Frog is answered."
+  },
+  "fetch_priority": [
+    "Cursed Totem",
+    "Engineered Explosives",
+    "Cityscape Leveler",
+    "Walking Ballista"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Cursed Totem",
+      "verdict": "SURVIVES",
+      "why": "Engineered Explosives at two answers it, but a resolved Totem has already removed both of Psychic Frog's activated abilities, which is most of the card."
+    },
+    {
+      "card": "Engineered Explosives",
+      "verdict": "SURVIVES",
+      "why": "It sacrifices itself to its own ability, so their own Explosives cannot two-for-one it; two counters is reachable off Talisman of Resilience plus Giant's Boulder."
+    },
+    {
+      "card": "Cityscape Leveler",
+      "verdict": "SURVIVES",
+      "why": "The destroy trigger is on cast, so Force of Negation and Consign to Memory still leave a permanent of theirs destroyed."
+    },
+    {
+      "card": "Walking Ballista",
+      "verdict": "SURVIVES",
+      "why": "Fatal Push and Toxic Deluge answer it, but its counters can be removed for damage in response, so it kills a Tamiyo or an Orcish Bowmasters on the way out."
+    }
+  ],
+  "notes": [
+    "Cursed Totem is not a hoser here, it is removal: Psychic Frog without its discard and its graveyard-exile abilities is a 1/3 ground creature with no evasion and no growth.",
+    "Consign to Memory counters triggered abilities as well as colorless spells, so a Devourer of Destiny cast into two open mana can lose its exile trigger and still resolve as a 5/5 - cast it when the trigger matters least.",
+    "Their Harbinger of the Seas is a creature, so Dismember and Walking Ballista both answer it; the maindeck Dismember should be saved for it once we have seen a board."
+  ],
+  "card_names": [
+    "Psychic Frog",
+    "Tamiyo, Inquisitive Student",
+    "Murktide Regent",
+    "Orcish Bowmasters",
+    "Thoughtseize",
+    "Force of Negation",
+    "Subtlety",
+    "Sink into Stupor",
+    "Quantum Riddler",
+    "Fatal Push"
+  ]
+}

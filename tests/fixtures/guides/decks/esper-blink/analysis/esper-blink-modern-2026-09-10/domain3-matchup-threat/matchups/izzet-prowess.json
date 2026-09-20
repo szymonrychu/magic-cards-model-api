@@ -1,0 +1,100 @@
+{
+  "name": "izzet prowess",
+  "meta_share": 2.778820878708224,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.4587,
+  "winrate_basis": {
+    "kind": "data",
+    "n": 322,
+    "source": "statistics_matchups(format=modern, archetype_a='esper blink', limit=60), committed verbatim at .protocol/raw-matchups.json; row opponent='izzet prowess' winrate=0.4587 over sample_size=322 matches, read directly - this row needs no alias"
+  },
+  "primary_gameplan": "Wrath of the Skies at X=1 or X=2 answers the entire board at once: Monastery Swiftspear, Dragon's Rage Channeler, Slickshot Show-Off and every Monk token are one or two mana. High Noon behind it stops the second spell each turn, which is what Cori-Steel Cutter and prowess both need.",
+  "secondary_gameplan": "Solitude at instant speed for its evoke cost is a free answer to a grown Swiftspear mid-combat, and Fatal Push handles the one-drops on the turn they land. Quantum Riddler blocks a flier and refills once the board is stable.",
+  "opponent_gameplan": "Monastery Swiftspear and Dragon's Rage Channeler come down on turn one and grow on every noncreature spell, backed by Preordain, Mishra's Bauble and Expressive Iteration to keep the spell count up and Lightning Bolt and Lava Dart to finish. Cori-Steel Cutter makes a prowess Monk on the second spell each turn. Post-board they lean on Consign to Memory to counter our enters triggers, Unholy Heat as removal that scales with delirium, and Surgical Extraction to strip a key card.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 4,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; counters Solitude's, Flickerwisp's and Overlord's enters triggers",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Unholy Heat",
+      "count": 4,
+      "why": "10 of 10 pulled sideboards; two damage, six with delirium, for one mana at our whole curve",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Spell Snare",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; one mana counters Phelia, Emperor of Bones and our own two-mana enchantment",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "card": "Surgical Extraction",
+      "count": 2,
+      "why": "8 of 10 pulled sideboards; strips every copy of a card Overlord of the Balemurk just milled",
+      "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Wrath of the Skies is the clean counter - a one-sided sweeper at X=1 against a board of one-toughness creatures - and High Noon is the symmetric one, because it turns off the spell-count engine rather than any single card. Their recorded 0.4587 over 322 matches is the largest sample in this capture, so the number this row is graded on is the most reliable one in the plan.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Cheap creatures that grow on every spell plus burn reach means they are counting damage on a three- or four-turn clock rather than trading cards with us.",
+    "key_cards": [
+      {
+        "card": "Monastery Swiftspear",
+        "why": "Named verbatim in opponent_gameplan; a hasty one-drop whose prowess triggers turn a cantrip into damage"
+      },
+      {
+        "card": "Lightning Bolt",
+        "why": "Named verbatim in opponent_gameplan; the reach that finishes a race our lifelink was winning"
+      },
+      {
+        "card": "Unholy Heat",
+        "why": "One mana answers whichever blocker we resolved, at six damage once delirium is on",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      },
+      {
+        "card": "Consign to Memory",
+        "why": "Counters the enters triggers that are our only cheap removal in this matchup",
+        "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Two lands, a white source and a one- or two-mana interactive card.",
+    "goldfish_for": "Wrath of the Skies at X=1 on turn three, or High Noon on turn two.",
+    "watch_for": "Delirium coming on, which turns Unholy Heat into six damage.",
+    "posture": "disrupt_first",
+    "posture_why": "Their damage compounds, so the sweeper comes before any threat of ours."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Wrath of the Skies",
+      "verdict": "SURVIVES",
+      "why": "Consign to Memory counters triggered abilities and colorless spells and Wrath of the Skies is neither, so their most-played board card does not apply. Unholy Heat and Surgical Extraction do not touch a sorcery on the stack, and at X=1 it kills every creature they have deployed."
+    },
+    {
+      "card": "High Noon",
+      "verdict": "SURVIVES",
+      "why": "Spell Snare counters it on the stack for one, which is removal rather than a blank; once resolved nothing in their pulled 2026-09-10 board destroys an enchantment - Meltdown names artifacts only - and Cori-Steel Cutter's Flurry trigger cannot fire again."
+    }
+  ],
+  "card_names": [
+    "Monastery Swiftspear",
+    "Dragon's Rage Channeler",
+    "Slickshot Show-Off",
+    "Cori-Steel Cutter",
+    "Preordain",
+    "Mishra's Bauble",
+    "Lightning Bolt",
+    "Lava Dart",
+    "Expressive Iteration",
+    "Mutagenic Growth"
+  ],
+  "self_cost": "High Noon holds us to one spell a turn as well, which costs the Ephemerate-plus-creature turn and any turn where we want to evoke Solitude and then deploy. Against a deck whose average spell costs one and ours costs two, the cap is still a bigger tax on them than on us."
+}

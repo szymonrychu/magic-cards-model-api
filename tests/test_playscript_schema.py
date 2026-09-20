@@ -18,10 +18,12 @@ from pydantic import ValidationError
 
 from magic_cards_model_api.playscripts.schema import (
     AMOUNT_DECISION_KINDS,
+    BASIC_LAND_TYPES,
     CAST_COSTS,
     CODES,
     CONDITION_KINDS,
     DECISION_KINDS,
+    ENTERS_STATES,
     FORBIDDEN_DECISION_KINDS,
     MAX_ARCHETYPES,
     MAX_INPUT_VALUES,
@@ -50,7 +52,7 @@ def test_both_worked_examples_validate():
         assert model.id == example["id"]
 
 
-def test_the_vocabulary_is_closed_at_seven_conditions_and_four_moves():
+def test_the_vocabulary_is_closed_at_eight_conditions_and_four_moves():
     assert CONDITION_KINDS == (
         "count",
         "zone_size",
@@ -58,6 +60,7 @@ def test_the_vocabulary_is_closed_at_seven_conditions_and_four_moves():
         "stack_top",
         "land_drop_available",
         "untapped_mana",
+        "turn",
         "input",
     )
     assert MOVE_KINDS == ("activate", "cast", "play_land", "answer")
@@ -172,6 +175,7 @@ MALFORMED = [
         ),
     ),
     ("sacrifice-unknown", mutate("moves.0.sacrifice", "other")),
+    ("discard-unknown", mutate("moves.0.discard", "other")),
     (
         "input-op-unknown",
         mutate("true", [{"kind": "input", "name": "plan", "op": "contains", "value": "a"}]),
@@ -211,8 +215,23 @@ def test_a_move_outside_the_closed_four_is_forbidden(kind):
 
 
 @pytest.mark.parametrize("kind", ["graveyard_order", "library_top", "turn_number"])
-def test_a_condition_outside_the_closed_seven_is_forbidden(kind):
+def test_a_condition_outside_the_closed_eight_is_forbidden(kind):
     assert codes(mutate("true", [{"kind": kind}])) == ["forbidden-kind"]
+
+
+def test_a_turn_condition_validates():
+    condition = {"kind": "turn", "op": "<=", "n": 2}
+    doc = play(true=[condition], false=[])
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.true[0].op == "<=" and model.true[0].n == 2
+
+
+def test_a_turn_condition_negative_n_is_bounds_exceeded():
+    doc = mutate("true", [{"kind": "turn", "op": ">=", "n": -1}])
+    assert codes(doc) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
 
 
 @pytest.mark.parametrize("zone", ["hand", "library", "sideboard"])
@@ -329,8 +348,163 @@ def test_no_selector_field_takes_a_card_name():
         "counters",
         "ability_text_has",
         "oracle_has",
+        "searches_for_any",
+        "land_face",
         "missing_from",
+        "enters_any",
+        "unlocks",
+        "unlocks_by_search",
+        "unlocks_by_basic_search",
+        "affordable",
     }
+
+
+# -- O3: searches_for_any -----------------------------------------------------
+
+
+def test_searches_for_any_is_the_five_basic_land_types():
+    assert BASIC_LAND_TYPES == ("Plains", "Island", "Swamp", "Mountain", "Forest")
+
+
+def test_searches_for_any_validates_with_basic_land_type_words():
+    doc = mutate("true.0.select", {"searches_for_any": ["Island", "Swamp"]})
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.true[0].select.searches_for_any == ["Island", "Swamp"]
+
+
+@pytest.mark.parametrize("word", ["Elf", "Wastes", "Eldrazi", "plains"])
+def test_a_word_outside_the_five_basic_land_types_is_malformed(word):
+    doc = mutate("true.0.select", {"searches_for_any": [word]})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_searches_for_any_is_bounded_at_the_five_basic_land_types():
+    doc = mutate("true.0.select", {"searches_for_any": list(BASIC_LAND_TYPES)})
+    assert play_errors(doc) == []
+    over = mutate("true.0.select", {"searches_for_any": [*BASIC_LAND_TYPES, "Plains"]})
+    assert codes(over) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(over)
+
+
+# -- O5: land_face ------------------------------------------------------------
+
+
+def test_land_face_validates_as_a_bool():
+    doc = mutate("true.0.select", {"land_face": True})
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).true[0].select.land_face is True
+
+
+def test_land_face_non_bool_is_malformed():
+    doc = mutate("true.0.select", {"land_face": "yes"})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+# -- O4: enters_any -------------------------------------------------------------
+
+
+def test_enters_any_is_the_three_enters_states():
+    assert ENTERS_STATES == ("untapped", "tapped", "untapped_if_paid")
+
+
+def test_enters_any_validates_with_enters_state_words():
+    doc = mutate("true.0.select", {"enters_any": ["untapped", "untapped_if_paid"]})
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.true[0].select.enters_any == ["untapped", "untapped_if_paid"]
+
+
+@pytest.mark.parametrize("word", ["tap", "Untapped", "sideways", ""])
+def test_a_word_outside_the_three_enters_states_is_malformed(word):
+    doc = mutate("true.0.select", {"enters_any": [word]})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_enters_any_is_bounded_at_the_three_enters_states():
+    doc = mutate("true.0.select", {"enters_any": list(ENTERS_STATES)})
+    assert play_errors(doc) == []
+    over = mutate("true.0.select", {"enters_any": [*ENTERS_STATES, "tapped"]})
+    assert codes(over) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(over)
+
+
+# -- O7: unlocks, unlocks_by_search, affordable ----------------------------------
+
+
+def test_unlocks_validates_as_a_bool():
+    doc = mutate("true.0.select", {"unlocks": True})
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).true[0].select.unlocks is True
+
+
+def test_unlocks_non_bool_is_malformed():
+    doc = mutate("true.0.select", {"unlocks": "yes"})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_unlocks_by_search_validates_as_a_bool():
+    doc = mutate("true.0.select", {"unlocks_by_search": True})
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).true[0].select.unlocks_by_search is True
+
+
+def test_unlocks_by_search_non_bool_is_malformed():
+    doc = mutate("true.0.select", {"unlocks_by_search": "yes"})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_unlocks_by_basic_search_validates_as_a_bool():
+    doc = mutate("true.0.select", {"unlocks_by_basic_search": True})
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).true[0].select.unlocks_by_basic_search is True
+
+
+def test_unlocks_by_basic_search_non_bool_is_malformed():
+    doc = mutate("true.0.select", {"unlocks_by_basic_search": "yes"})
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_affordable_validates_with_a_non_negative_extra():
+    doc = mutate("true.0.select", {"affordable": {"extra": 2}})
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).true[0].select.affordable.extra == 2
+
+
+def test_affordable_extra_zero_is_valid():
+    doc = mutate("true.0.select", {"affordable": {"extra": 0}})
+    assert play_errors(doc) == []
+
+
+def test_affordable_negative_extra_is_bounds_exceeded():
+    # `extra` is `AtLeastZero`, the same field type `Comparison.n` uses - a
+    # negative value is `bounds-exceeded`, not `malformed-play`, matching
+    # every other `AtLeastZero` field in this schema.
+    doc = mutate("true.0.select", {"affordable": {"extra": -1}})
+    assert codes(doc) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_affordable_unknown_field_is_refused():
+    doc = mutate("true.0.select", {"affordable": {"extra": 1, "bonus": 1}})
+    assert codes(doc) == ["unknown-field"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
 
 
 def test_an_input_condition_is_usable_in_true_and_false():
@@ -348,6 +522,40 @@ def test_an_input_condition_is_usable_in_true_and_false():
         assert play_errors(play(true=[condition], false=[condition])) == [], op
 
 
+# -- O6: Answer.choice ---------------------------------------------------------
+
+
+def test_choice_validates_for_choose_a_mode_and_choose_a_quality():
+    from magic_cards_model_api.playscripts.schema import CHOICE_DECISION_KINDS
+
+    assert set(CHOICE_DECISION_KINDS) == {"choose_a_mode", "choose_a_quality"}
+    for decision in CHOICE_DECISION_KINDS:
+        doc = mutate(
+            "moves", [{"kind": "answer", "answers": [{"decision": decision, "choice": "Eldrazi"}]}]
+        )
+        assert play_errors(doc) == []
+        model = Play.model_validate(doc)
+        assert model.moves[0].answers[0].choice == "Eldrazi"
+
+
+@pytest.mark.parametrize("decision", ["may", "pay_life", "choose_cards", "surveil"])
+def test_choice_elsewhere_is_answer_shape_mismatch(decision):
+    doc = mutate(
+        "moves", [{"kind": "answer", "answers": [{"decision": decision, "choice": "Eldrazi"}]}]
+    )
+    assert codes(doc) == ["answer-shape-mismatch"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_an_amount_decision_never_takes_a_choice():
+    doc = mutate(
+        "moves",
+        [{"kind": "answer", "answers": [{"decision": "pay_life_amount", "choice": "Eldrazi"}]}],
+    )
+    assert codes(doc) == ["answer-shape-mismatch"]
+
+
 def test_the_answer_item_takes_to_bottom_for_scry():
     doc = mutate(
         "moves",
@@ -361,6 +569,49 @@ def test_the_answer_item_takes_to_bottom_for_scry():
     assert play_errors(doc) == []
     model = Play.model_validate(doc)
     assert model.moves[0].answers[0].to_bottom is not None
+
+
+def test_the_answer_item_takes_pile_one_for_choose_pile():
+    doc = mutate(
+        "moves",
+        [{"kind": "answer", "answers": [{"decision": "choose_pile", "pile_one": True}]}],
+    )
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.moves[0].answers[0].pile_one is True
+
+
+def test_the_answer_item_takes_players_for_choose_players():
+    doc = mutate(
+        "moves",
+        [
+            {
+                "kind": "answer",
+                "answers": [{"decision": "choose_players", "players": ["me", "opponent"]}],
+            }
+        ],
+    )
+    assert play_errors(doc) == []
+    model = Play.model_validate(doc)
+    assert model.moves[0].answers[0].players == ["me", "opponent"]
+
+
+def test_players_answer_is_bounded_to_two_and_a_closed_vocabulary():
+    too_many = mutate(
+        "moves",
+        [
+            {
+                "kind": "answer",
+                "answers": [{"decision": "choose_players", "players": ["me", "opponent", "me"]}],
+            }
+        ],
+    )
+    assert codes(too_many) == ["bounds-exceeded"]
+    bad_token = mutate(
+        "moves",
+        [{"kind": "answer", "answers": [{"decision": "choose_players", "players": ["carol"]}]}],
+    )
+    assert codes(bad_token) == ["malformed-play"]
 
 
 def test_every_move_kind_validates_in_its_documented_shape():
@@ -381,6 +632,149 @@ def test_every_move_kind_validates_in_its_documented_shape():
         },
     ]
     assert play_errors(play(moves=moves)) == []
+
+
+# -- O2: prefer (up to 4) and ties: "any" on play_land.card, cast.card, -----------
+# -- activate.source, Pick and SacrificeChoice -------------------------------
+
+
+def test_play_land_card_takes_prefer_and_ties():
+    doc = play(
+        moves=[
+            {
+                "kind": "play_land",
+                "card": {
+                    "select": {"types_all": ["Land"]},
+                    "prefer": [{"subtypes_any": ["Mountain"]}],
+                    "ties": "any",
+                },
+            }
+        ]
+    )
+    assert play_errors(doc) == []
+    move = Play.model_validate(doc).moves[0]
+    assert move.card.ties == "any" and len(move.card.prefer) == 1
+
+
+def test_cast_card_takes_prefer_and_ties():
+    doc = play(
+        moves=[
+            cast_move(
+                card={
+                    "zone": "hand",
+                    "select": {"types_any": ["Creature"]},
+                    "prefer": [{"colors_any": ["R"]}],
+                    "ties": "any",
+                }
+            )
+        ]
+    )
+    assert play_errors(doc) == []
+    move = Play.model_validate(doc).moves[0]
+    assert move.card.ties == "any"
+
+
+def test_activate_source_takes_prefer_and_ties():
+    doc = play(
+        moves=[
+            {
+                "kind": "activate",
+                "source": {
+                    "zone": "battlefield",
+                    "select": {"types_all": ["Land"]},
+                    "prefer": [{"subtypes_any": ["Island"]}],
+                    "ties": "any",
+                },
+                "ability_text_has": "Search your library for",
+            }
+        ]
+    )
+    assert play_errors(doc) == []
+    move = Play.model_validate(doc).moves[0]
+    assert move.source.ties == "any"
+
+
+def test_pick_and_sacrifice_choice_take_ties():
+    doc = mutate("moves.0.answers.0.pick.ties", "any")
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).moves[0].answers[0].pick.ties == "any"
+    sac_doc = mutate("moves.0.sacrifice", {"select": {"types_all": ["Creature"]}, "ties": "any"})
+    assert play_errors(sac_doc) == []
+    discard_doc = mutate("moves.0.discard", {"select": {"types_all": ["Land"]}, "ties": "any"})
+    assert play_errors(discard_doc) == []
+    assert Play.model_validate(discard_doc).moves[0].discard.ties == "any"
+
+
+def test_discard_takes_none_or_a_selector_choice_the_same_shape_sacrifice_does():
+    """`Discard` mirrors `Sacrifice` with no "source" value (CR 701.9's own
+    discard cost only ever reads from hand - there is no "discard this
+    card" self-reference the way "sacrifice this card" is a real cost
+    shape) - `none` and a selector choice are the two the schema accepts."""
+    none_doc = mutate("moves.0.discard", "none")
+    assert play_errors(none_doc) == []
+    assert Play.model_validate(none_doc).moves[0].discard == "none"
+    choice_doc = mutate("moves.0.discard", {"select": {"types_all": ["Land"]}, "count": 2})
+    assert play_errors(choice_doc) == []
+    move = Play.model_validate(choice_doc).moves[0]
+    assert move.discard.select.types_all == ["Land"]
+    assert move.discard.count == 2
+
+
+def test_discard_source_is_unknown_field_unlike_sacrifice():
+    """Unlike `Sacrifice`, `Discard` has no `"source"` keyword at all - CR
+    701.9's discard cost always reads from hand, so "discard this card" (the
+    ability's own source) is a self-contained off-zone activation cost with
+    nothing here left to name (`runtime.py`'s own `_activate_request`
+    docstring), never `discard: "source"`."""
+    doc = mutate("moves.0.discard", "source")
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_ties_outside_any_is_malformed_on_play_land_card():
+    doc = play(moves=[{"kind": "play_land", "card": {"select": {}, "ties": "all"}}])
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_ties_outside_any_is_malformed_on_activate_source():
+    doc = play(
+        moves=[
+            {
+                "kind": "activate",
+                "source": {"zone": "battlefield", "select": {}, "ties": "all"},
+                "ability_text_has": "Search your library for",
+            }
+        ]
+    )
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_ties_outside_any_is_malformed_on_pick():
+    doc = mutate("moves.0.answers.0.pick.ties", "all")
+    assert codes(doc) == ["malformed-play"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_land_card_and_zoned_card_prefer_are_bounded():
+    over = [{}] * (MAX_PREFER + 1)
+    play_land_doc = play(moves=[{"kind": "play_land", "card": {"select": {}, "prefer": over}}])
+    assert codes(play_land_doc) == ["bounds-exceeded"]
+    activate_doc = play(
+        moves=[
+            {
+                "kind": "activate",
+                "source": {"zone": "battlefield", "select": {}, "prefer": over},
+                "ability_text_has": "Search your library for",
+            }
+        ]
+    )
+    assert codes(activate_doc) == ["bounds-exceeded"]
 
 
 def test_items_beyond_a_too_long_list_are_still_judged():

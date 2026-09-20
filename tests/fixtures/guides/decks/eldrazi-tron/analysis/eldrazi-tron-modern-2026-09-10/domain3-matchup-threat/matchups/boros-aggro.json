@@ -1,0 +1,141 @@
+{
+  "name": "boros aggro",
+  "meta_share": 2.2906496432594814,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.4817,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='eldrazi tron', limit=60), committed verbatim at .protocol/raw-matchups.json; the deduplicated row for opponent='boros aggro' reads winrate 0.4817 over sample_size 251 matches, and archetype_a is eldrazi tron so it is our winrate read directly rather than a complement. This is the largest sample in the capture at 251 matches. The capture also holds a separate 'boros energy' row at 0.5073 over 98 matches, and the 2026-09-10 archetype-signature validation showed the two labels are one archetype; no alias is asserted for it because a direct row for 'boros aggro' already exists and joining a second row to the same sidecar would double-count the same field.",
+    "n": 251
+  },
+  "primary_gameplan": "Ensnaring Bridge is the card that turns their whole board off: a wide low-power board cannot attack once our hand is empty, which it is by turn five. Engineered Explosives at one counter clears the Ocelot Pride and Guide of Souls half first.",
+  "secondary_gameplan": "Extinguisher Battleship's enters trigger deals four damage to each creature, which is a one-card sweeper for their entire curve, and Walking Ballista plus Dismember handle the single Ragavan or Ajani that has to die immediately.",
+  "opponent_gameplan": "The ten committed 2026-09-10 lists are the energy curve: four Ocelot Pride, four Guide of Souls, four Ragavan, Nimble Pilferer, four Ajani, Nacatl Pariah, four Voice of Victory and three Seasoned Pyromancer, with Galvanic Discharge as removal. Guide of Souls converts every creature that enters into life and energy, and three energy puts two counters and flying on an attacker. Voice of Victory also reads 'Your opponents can't cast spells during your turn', which takes our instant-speed Dismember and Kozilek's Command away on the turn they attack.",
+  "tournament_refs": [
+    {
+      "pilot": "Aced5",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664709"
+    },
+    {
+      "pilot": "jayrod115",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6",
+      "source_deck_id": "videre-58664316"
+    },
+    {
+      "pilot": "KillerWhale01",
+      "tournament_date": "2026-09-07",
+      "tournament_id": "a48e3549-0e22-4683-b9c9-cb38223f9c6c",
+      "source_deck_id": "videre-58663803"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Wrath of the Skies",
+      "count": 2,
+      "why": "10 of 10 committed 2026-09-10 lists; an X sweeper that answers our cheap artifacts and our Eldrazi from the same card",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Vexing Bauble",
+      "count": 2,
+      "why": "10 of 10 committed lists; counters any spell cast without paying mana, which is aimed at Ugin, Eye of the Storms' minus eleven",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Wear/Tear",
+      "count": 2,
+      "why": "10 of 10 committed lists; one red mana destroys any artifact, and every card we fetch is one",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Obsidian Charmaw",
+      "count": 2,
+      "why": "8 of 10 committed lists; it costs one less for each land we control that could produce colorless, so it is a two-mana 4/3 flier that destroys a Tron piece",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Engineered Explosives, Extinguisher Battleship and Walking Ballista are one-sided; Ensnaring Bridge is the symmetric one and it is the first fetch anyway, because their clock is what loses us the game and our own attackers are not what wins it.",
+  "self_cost": "Ensnaring Bridge stops Devourer of Destiny and Sire of Seven Deaths attacking on every turn our hand is empty, which is the normal state of a Tron board. We accept it because the matchup is a recorded 48.2 percent over 251 matches and the only way it improves is by removing combat from the game entirely.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Sixteen one and two mana creatures backed by Guide of Souls energy is a turn-four clock, and Obsidian Charmaw punishes the manabase on the way.",
+    "key_cards": [
+      {
+        "card": "Guide of Souls",
+        "why": "Named in the recorded gameplan; turns each creature entering into life and energy, and three energy makes an attacker fly"
+      },
+      {
+        "card": "Ocelot Pride",
+        "why": "Named in the recorded gameplan; converts that lifegain into a widening token board every end step"
+      },
+      {
+        "card": "Obsidian Charmaw",
+        "why": "Boarded two-mana flier against a colorless manabase that also destroys a Tron piece",
+        "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+      },
+      {
+        "card": "Vexing Bauble",
+        "why": "Boarded counter for anything cast without paying mana, aimed at Ugin's minus eleven",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand with Dismember or a turn-two Talisman of Resilience into a turn-three answer; slow hands lose.",
+    "goldfish_for": "Ensnaring Bridge by turn four, or Extinguisher Battleship once Tron is assembled.",
+    "watch_for": "Voice of Victory, which stops us casting Dismember during their attack.",
+    "posture": "disrupt_first",
+    "posture_why": "This is the biggest recorded sample in the field and it is under fifty percent; the board has to stop attacking."
+  },
+  "fetch_priority": [
+    "Ensnaring Bridge",
+    "Engineered Explosives",
+    "Extinguisher Battleship",
+    "Walking Ballista"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Ensnaring Bridge",
+      "verdict": "SURVIVES",
+      "why": "Wear/Tear at two copies is their only answer to it in the recorded board; while it stands, an entire board of one and two power creatures cannot attack."
+    },
+    {
+      "card": "Engineered Explosives",
+      "verdict": "SURVIVES",
+      "why": "It sacrifices itself to its own ability, so Wear/Tear only catches it before use; one counter destroys Ocelot Pride, Guide of Souls and Ragavan together."
+    },
+    {
+      "card": "Extinguisher Battleship",
+      "verdict": "SURVIVES",
+      "why": "Four damage to each creature clears their whole curve, and nothing in the recorded board answers an eight-mana artifact before it resolves; Wrath of the Skies would need eight energy paid."
+    },
+    {
+      "card": "Walking Ballista",
+      "verdict": "SURVIVES",
+      "why": "Galvanic Discharge answers it, but its counters can be removed for damage in response, so it always kills something first."
+    }
+  ],
+  "notes": [
+    "Ensnaring Bridge is the first fetch even at four mana, because Engineered Explosives kills the current board and the Bridge kills every board they draw afterwards.",
+    "Hold Dismember for Ajani, Nacatl Pariah rather than for a Guide of Souls: Ajani flips into a planeswalker when another Cat dies, and the flip is what makes their board lethal through a sweeper.",
+    "Obsidian Charmaw costs one less for each of our lands that could produce colorless, which in this deck means it is routinely a two-mana 4/3; count that into whether the fourth Tron piece is safe to play."
+  ],
+  "card_names": [
+    "Ocelot Pride",
+    "Guide of Souls",
+    "Ragavan, Nimble Pilferer",
+    "Ajani, Nacatl Pariah",
+    "Voice of Victory",
+    "Seasoned Pyromancer",
+    "Galvanic Discharge",
+    "Wrath of the Skies",
+    "Obsidian Charmaw",
+    "Vexing Bauble"
+  ]
+}

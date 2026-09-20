@@ -1,0 +1,147 @@
+{
+  "name": "pinnacle affinity",
+  "meta_share": 3.1543372136687946,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.6224,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='eldrazi tron', limit=60), committed verbatim at .protocol/raw-matchups.json; the deduplicated row for opponent='pinnacle affinity' reads winrate 0.6224 over sample_size 47 matches, and archetype_a is eldrazi tron so it is our winrate read directly rather than a complement.",
+    "n": 47
+  },
+  "primary_gameplan": "Their whole board is cheap artifacts, so Engineered Explosives at one or two counters is a one-card sweeper, and Haywire Mite exiles Weapons Manufacturing or Urza's Saga - both noncreature enchantments - for a single green mana.",
+  "secondary_gameplan": "The Stone Brain naming Kappa Cannoneer removes the only threat that beats an Ensnaring Bridge, since Cannoneer's own trigger makes it unblockable; Liquimetal Coating turns a Mox Opal or a land into an artifact so Haywire Mite can exile that instead.",
+  "opponent_gameplan": "The ten committed 2026-09-10 lists are an Izzet artifact deck: four Mox Opal, four Mishra's Bauble, four Urza's Saga, four Engineered Explosives and four Tormod's Crypt as free artifact count, with Weapons Manufacturing turning every nontoken artifact into a Munitions token that deals two damage when it leaves. Kappa Cannoneer has ward four and gets a counter and unblockability from every artifact that enters, and Pinnacle Emissary makes a flying Drone on every artifact spell. Metallic Rebuke taxes our first real threat.",
+  "tournament_refs": [
+    {
+      "pilot": "Varo",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5",
+      "source_deck_id": "videre-58663898"
+    },
+    {
+      "pilot": "sidisi",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6",
+      "source_deck_id": "videre-58664385"
+    },
+    {
+      "pilot": "littesir095",
+      "tournament_date": "2026-09-07",
+      "tournament_id": "a48e3549-0e22-4683-b9c9-cb38223f9c6c",
+      "source_deck_id": "videre-58663765"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Damping Sphere",
+      "count": 2,
+      "why": "10 of 10 committed 2026-09-10 lists; 'If a land is tapped for two or more mana, it produces {C} instead of any other type and amount' turns Urza's Tower into a one-mana land, which is the single most damaging card in the field against this manabase",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    },
+    {
+      "card": "Consign to Memory",
+      "count": 3,
+      "why": "10 of 10 committed lists; counters our colorless spells and our cast triggers for one mana",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    },
+    {
+      "card": "Blood Moon",
+      "count": 1,
+      "why": "8 of 10 committed lists; turns our nonbasic lands into Mountains, which leaves twenty-one of our twenty-four lands producing red mana we cannot spend",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    },
+    {
+      "card": "Galvanic Blast",
+      "count": 3,
+      "why": "10 of 10 committed lists; four damage with metalcraft answers Walking Ballista and Haywire Mite before they are used",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Engineered Explosives, Haywire Mite, The Stone Brain and Liquimetal Coating are one-sided; Ensnaring Bridge is not, and it is the fifth fetch rather than the first for that reason.",
+  "self_cost": "Ensnaring Bridge stops Devourer of Destiny and Sire of Seven Deaths attacking on the turns our hand is empty, which is most of them once Tron is assembled. It is fetched here anyway because Kappa Cannoneer with ward four and a growing unblockable body is the fastest clock in the matchup and Bridge is the only card in the pool that stops it without targeting.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A metalcraft deck with a turn-three Kappa Cannoneer is trying to kill before our fifth land, and its interaction is a single Metallic Rebuke.",
+    "key_cards": [
+      {
+        "card": "Kappa Cannoneer",
+        "why": "Named in the recorded gameplan; ward four, grows on every artifact and cannot be blocked the turn it grows"
+      },
+      {
+        "card": "Urza's Saga",
+        "why": "Named in the recorded gameplan; a land that makes Construct tokens and then tutors a zero or one mana artifact"
+      },
+      {
+        "card": "Damping Sphere",
+        "why": "Boarded card that reduces Urza's Tower to one mana and taxes our second spell each turn",
+        "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+      },
+      {
+        "card": "Blood Moon",
+        "why": "Boarded enchantment that turns twenty-one of our twenty-four lands into Mountains",
+        "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "A hand with an answer to a turn-two Mox Opal start, or Boseiju, Who Endures for a boarded Blood Moon.",
+    "goldfish_for": "Engineered Explosives at one counter on turn two, off a single coloured source.",
+    "watch_for": "Metalcraft turning on, which makes Galvanic Blast four damage and Mox Opal live.",
+    "posture": "disrupt_first",
+    "posture_why": "Their board grows faster than ours; sweeping the cheap half early is what buys the turns Tron needs."
+  },
+  "fetch_priority": [
+    "Engineered Explosives",
+    "Haywire Mite",
+    "The Stone Brain",
+    "Ensnaring Bridge",
+    "Liquimetal Coating"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Engineered Explosives",
+      "verdict": "SURVIVES",
+      "why": "It sacrifices itself to its own ability, so Galvanic Blast cannot answer it profitably; a single counter already destroys Mox Opal, Mishra's Bauble and Claws of Gix."
+    },
+    {
+      "card": "Haywire Mite",
+      "verdict": "SURVIVES",
+      "why": "Galvanic Blast kills it, but the sacrifice is part of its own cost so the ability can be activated in response and Urza's Saga or Weapons Manufacturing is exiled anyway."
+    },
+    {
+      "card": "The Stone Brain",
+      "verdict": "SURVIVES",
+      "why": "Nothing in the recorded board answers a resolved two-mana artifact except a Consign to Memory on the way down; the activation exiles it as a cost."
+    },
+    {
+      "card": "Ensnaring Bridge",
+      "verdict": "SURVIVES",
+      "why": "Their board holds no artifact removal at all - Galvanic Blast targets creatures or planeswalkers - so a resolved Bridge is permanent unless they draw the maindeck Engineered Explosives at three."
+    },
+    {
+      "card": "Liquimetal Coating",
+      "verdict": "SURVIVES",
+      "why": "Galvanic Blast cannot target it and nothing else in the recorded board removes an artifact; with Karn out it also turns a land off each turn."
+    }
+  ],
+  "notes": [
+    "Engineered Explosives at one counter is the correct first fetch even though two is reachable: Mox Opal, Mishra's Bauble and Claws of Gix are the artifacts that turn metalcraft on, and one counter costs one coloured source instead of two.",
+    "Haywire Mite exiles Urza's Saga because Urza's Saga is an Enchantment Land, which is a noncreature enchantment; that is the only answer in the pool to the Saga chapter three tutor.",
+    "Boseiju, Who Endures in the maindeck is the answer to a boarded Blood Moon and should not be Expedition Mapped away early in this matchup."
+  ],
+  "card_names": [
+    "Kappa Cannoneer",
+    "Urza's Saga",
+    "Mox Opal",
+    "Pinnacle Emissary",
+    "Weapons Manufacturing",
+    "Metallic Rebuke",
+    "Engineered Explosives",
+    "Tormod's Crypt",
+    "Claws of Gix",
+    "Mishra's Bauble"
+  ]
+}

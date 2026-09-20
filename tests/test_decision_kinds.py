@@ -258,6 +258,115 @@ def test_the_opponent_cannot_see_the_pay_life_prompt_beyond_kind_and_player(clie
     )
 
 
+# -- may + choose_cards: a reveal land's own CR 614.12a choice (Port Town) --
+#
+# Item C: the engine's newer reveal-land replacement effect (092792d) raises
+# the same MAY, then CHOOSE_CARDS, chain test_may_shares_the_same_bool_
+# answer_path_as_pay_life already proves for a resolving spell's own "you
+# may" - but that one is asked mid-resolution (CR 608.2d), never as a land
+# enters the battlefield (CR 614.12a, from inside Game.put_onto_battlefield's
+# replacement-effect handling). No test answered that chain through a live
+# seat before; these do, end to end through POST /decide, the same way
+# play_steam_vents above proves pay_life for a land's own choice.
+
+
+def play_land(game_id: str, land_id: str, player: str = "alice") -> dict[str, Any]:
+    response = TestClient(app).post(
+        f"/api/games/{game_id}/actions/play-land",
+        json={"player": player, "card_id": land_id},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_reveal_land_asks_may_then_choose_cards_and_enters_untapped(client, game):
+    """Port Town: "As this land enters, you may reveal a Plains or Island
+    card from your hand. If you don't, this land enters tapped." Answering
+    both questions yes reveals the named card - which stays in hand
+    (CR 701.20a-b, a reveal cost never moves what it reveals) - and the
+    land enters untapped."""
+    add_card(client, game, "Port Town", "alice", "hand")
+    add_card(client, game, "Plains", "alice", "hand")
+    uids = seats_for(client, game)
+    hand = state(client, game, uid=uids["alice"])["hands"]["alice"]
+    port_town = find(hand, "Port Town")
+    plains = find(hand, "Plains")
+
+    played = play_land(game, port_town["id"])
+    assert played["paused"] is True
+    pending = played["pending_decision"]
+    assert pending["kind"] == "may"
+    assert pending["player"] == "alice"
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True},
+    )
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert body["accepted"] is True
+    assert body["paused"] is True
+    next_pending = body["pending_decision"]
+    assert next_pending["kind"] == "choose_cards"
+    assert plains["id"] in next_pending["cards"]
+
+    chosen = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_ids": [plains["id"]]},
+    )
+    assert chosen.status_code == 200, chosen.text
+    assert chosen.json()["accepted"] is True
+
+    final = state(client, game, uid=uids["alice"])
+    town = find(final["battlefield"], "Port Town")
+    assert town["tapped"] is False
+    assert final.get("pending_decision") is None
+    assert plains["id"] in [card["id"] for card in final["hands"]["alice"]]
+
+
+def test_a_reveal_land_declined_enters_tapped(client, game):
+    """The opposite answer to the same choice: declining leaves the hand
+    untouched and the land enters tapped - no second decision follows."""
+    add_card(client, game, "Port Town", "alice", "hand")
+    add_card(client, game, "Plains", "alice", "hand")
+    uids = seats_for(client, game)
+    port_town = find(state(client, game, uid=uids["alice"])["hands"]["alice"], "Port Town")
+
+    played = play_land(game, port_town["id"])
+    assert played["pending_decision"]["kind"] == "may"
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": False},
+    )
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["accepted"] is True
+
+    final = state(client, game, uid=uids["alice"])
+    town = find(final["battlefield"], "Port Town")
+    assert town["tapped"] is True
+    assert final.get("pending_decision") is None
+
+
+def test_a_reveal_land_with_no_qualifying_card_enters_tapped_without_asking(client, game):
+    """CR 118.3: nothing to reveal is nobody's choice at all - with no
+    Plains or Island in hand, the land just enters tapped, no MAY asked."""
+    add_card(client, game, "Port Town", "alice", "hand")
+    uids = seats_for(client, game)
+    port_town = find(state(client, game, uid=uids["alice"])["hands"]["alice"], "Port Town")
+
+    played = play_land(game, port_town["id"])
+    assert played.get("paused") is not True
+    assert played.get("pending_decision") is None
+
+    final = state(client, game, uid=uids["alice"])
+    town = find(final["battlefield"], "Port Town")
+    assert town["tapped"] is True
+
+
 # -- scry / surveil: which cards move, which stay, in what order ------------
 
 
@@ -2109,6 +2218,7 @@ def test_the_two_field_tables_genuinely_differ():
         "pay_energy_amount",
         "pay_life_amount",
         "put_on_top_or_bottom",
+        "choose_pile",
         "order_triggers",
         "declare_attackers",
         "declare_blockers",

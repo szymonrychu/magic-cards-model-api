@@ -522,16 +522,25 @@ def _faces_view(state: CardState) -> list[dict[str, Any]] | None:
     """Each face of a double-faced card, front first, or None for any other
     card. A play-script selector picks the face a card has in its zone from
     this list (CR 712.8a, 712.8f) - `type_line` off the battlefield is the
-    printing's combined `Front // Back` line, which is neither face."""
+    printing's combined `Front // Back` line, which is neither face.
+
+    One face may carry `land_face: True` (`playscripts.selectors._has_land_
+    face`, O5): the engine's own `Card.land_face` (CR 712.12), which reads
+    only a modal double-faced card - a transform or meld card's land back
+    (Treasure Map // Treasure Cove) is reached only by transforming or
+    melding (CR 712.2), never a land drop, so it is never marked here even
+    though it is one of the `faces` below like any other."""
     faces = state.card.card_faces or []
     if state.card.layout not in _DOUBLE_FACED_LAYOUTS or len(faces) < 2:
         return None
+    land_face = state.card.land_face
     return [
         {
             "name": face.name,
             "mana_cost": face.mana_cost,
             "type_line": face.type_line,
             "oracle_text": face.oracle_text,
+            **({"land_face": True} if face is land_face else {}),
         }
         for face in faces
     ]
@@ -655,6 +664,13 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         # anywhere else the key would only ever be absent anyway.
         if state.attachment is not None:
             view["attached_to"] = _target_refs(game, [state.attachment])[0]
+        if state.prepared:
+            # CR 722.3a's "prepared" designation - a marker a permanent with
+            # a prepare spell carries after its own preparation card cast
+            # from exile, surfaced only on the battlefield the same way
+            # `attached_to` is: the field the engine clears the moment the
+            # permanent leaves is one a client need never see stale.
+            view["prepared"] = True
         printed_type_line = state.card.type_line
         # The printing plus counters, never the layer engine: a bound card's
         # `power`/`toughness` already answer with the computed board (CR 613.5).
@@ -725,6 +741,15 @@ def _player_view(
         # left" is read, never re-derived (`Game.why_cannot_play_land`).
         "lands_played": game.lands_played.get(player.username, 0),
         "land_allowance": game.land_allowance(player.username),
+        # How many of this player's own turns have begun, extra turns
+        # included (CR 500.7) - the engine's own count
+        # (`TurnMachine.own_turns_taken`), never `turn_number` (rounds of
+        # the table, blind to an extra turn). 0, never null, whenever `turn`
+        # is set at all (pregame included); null only for the no-turn-
+        # machine-at-all case a fresh `Game` before setup could carry.
+        "own_turns_taken": game.turn.own_turns_taken(player.username)
+        if game.turn is not None
+        else None,
     }
 
 
@@ -1156,6 +1181,7 @@ def _paused_overlay(game_id: str, game: Game, paused: Any) -> dict[str, Any]:
                     if isinstance(card, CardState)
                 },
                 "turn_number": turn.turn_number if turn is not None else None,
+                "turns_taken": turn.turns_taken if turn is not None else None,
                 "step": turn.step if turn is not None else None,
                 "active_player": turn.players[turn.active_index] if turn is not None else None,
                 "priority_holder": board.priority.holder if board.priority is not None else None,
@@ -1252,11 +1278,13 @@ def _state_view_on(
     turn = game.turn
     step = turn.step if turn is not None else Step.UNTAP
     turn_number = turn.turn_number if turn is not None else None
+    turns_taken = turn.turns_taken if turn is not None else None
     active_player = turn.players[turn.active_index] if turn is not None else None
     priority_holder = game.priority.holder if game.priority is not None else None
     if overlay:
         step = overlay["step"] or step
         turn_number = overlay["turn_number"]
+        turns_taken = overlay["turns_taken"]
         active_player = overlay["active_player"]
         priority_holder = overlay["priority_holder"]
     # The pending decision a paused command is waiting to resume, if any -
@@ -1290,6 +1318,13 @@ def _state_view_on(
         "game_id": game_id,
         "pending_decision": pending.to_view() if pending is not None else None,
         "turn_number": turn_number,
+        # S1 review fix 3: `turn_number` counts rounds of the table and
+        # deliberately does not move for an extra turn (CR 500.7,
+        # `machines/turn.py`'s own `TurnMachine.turns_taken` docstring) - a
+        # client that needs "did the turn actually change, extra turns
+        # included" (the play-script already-ran filter, `script_tools.
+        # _record_run`/`applicable_hint`) must read this instead.
+        "turns_taken": turns_taken,
         "step": step.value,
         "phase": phase.value if phase is not None else None,
         # What CR 103.5/CR 103.6 are waiting for, or `None` once the game has

@@ -3,10 +3,20 @@ over.
 
 `script_run_table` reads the `script_run` rows `POST .../script-runs` writes
 (`records.record_script_run_finish`) and prints one line per script: how
-often it ran, how each run ended, and how many runs ended with the script
-still applying. A handover prompt carries it whole, so it is bounded at
+often it ran, how each run ended, how many runs ended with the script still
+applying, and who started each run - `invoked_via`, `"mcp"`, `"cli"` or (S2)
+`"armed"` (`playscripts.arming.arm`, firing a script on its own between this
+seat's own moves). A handover prompt carries it whole, so it is bounded at
 `TABLE_LIMIT_BYTES`; past that the lowest-priority rows are cut and a
 `TRUNCATION_MARKER` line says how many.
+
+A `"cli"` count in the `invoked_via` column is flagged `(not started by
+you)`: a seat's own runs are always `"mcp"` (`mcp.run_script`) or `"armed"`
+(fired for this seat, between its own moves), so any `cli` count on its row
+is a run the ledger recorded that this seat did not make itself - an
+operator staging one from `mcp-seat script run` during development, most
+often. `"armed"` never gets the flag: it is this seat's own arming, not an
+operator's.
 """
 
 from __future__ import annotations
@@ -26,7 +36,11 @@ TRUNCATION_MARKER = "... table cut at 4 KB:"
 #: What the runner posts as `reapplicable_after` when the re-check still applies.
 REAPPLICABLE = "true"
 
-HEADER = "script | priority | runs | exits | reapplicable_after"
+HEADER = "script | priority | runs | exits | reapplicable_after | invoked_via"
+
+#: `invoked_via` value a row with no runs reporting one falls back to - a
+#: ledger row from before S1, when nothing recorded who started a run.
+_UNKNOWN_INVOKER = "unknown"
 
 
 @dataclass
@@ -36,11 +50,17 @@ class _ScriptRow:
     runs: int = 0
     exits: dict[str, int] = field(default_factory=dict)
     reapplicable: int = 0
+    invoked_via: dict[str, int] = field(default_factory=dict)
 
     def line(self) -> str:
         exits = " ".join(f"{name}={count}" for name, count in sorted(self.exits.items()))
         priority = "-" if self.priority is None else str(self.priority)
-        return f"{self.label} | {priority} | {self.runs} | {exits} | {self.reapplicable}"
+        invoker = " ".join(f"{name}={count}" for name, count in sorted(self.invoked_via.items()))
+        if self.invoked_via.get("cli"):
+            invoker = f"{invoker} (not started by you)"
+        return (
+            f"{self.label} | {priority} | {self.runs} | {exits} | {self.reapplicable} | {invoker}"
+        )
 
 
 def _payload(record: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -81,6 +101,8 @@ def script_run_table(records: Iterable[Mapping[str, Any]], game_id: str, seat: s
             row.priority = int(detail["priority"])
         if detail.get("reapplicable_after") == REAPPLICABLE:
             row.reapplicable += 1
+        invoker = str(detail.get("invoked_via") or _UNKNOWN_INVOKER)
+        row.invoked_via[invoker] = row.invoked_via.get(invoker, 0) + 1
 
     if not rows:
         return f"no script runs recorded for {seat} in {game_id}"

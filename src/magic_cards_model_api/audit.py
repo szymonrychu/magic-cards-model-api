@@ -69,6 +69,22 @@ GAME_OVER_ACTION = "game_over"
 #: starts reaching the ledger rather than needing the page changed again.
 REFLECTION_ACTION = "game_reflection"
 
+#: The post-game AI review (`POST /api/games/{id}/ai-review`), filed once
+#: per game by whichever seat's driver generates it first
+#: (`mtg_agent.driver.review`) - a separate, Opus-generated critique built
+#: from the seat's own reflection (the "handoff") plus the game's own
+#: review record (`review.build_review`'s declarations/advice), never a
+#: seat's own account of what it did (that is `REFLECTION_ACTION`). Gated
+#: post-game exactly like a reflection (`app.declare_ai_review` mirrors
+#: `app.declare_reflection`'s gate). Not deduplicated server-side: in an
+#: AIvAI game both seats' drivers could in principle reach `turn_done`'s
+#: reflection branch and each generate one - deliberately accepted (see
+#: `mtg_agent.driver.review`'s own docstring), the same way multiple
+#: `REFLECTION_ACTION` rows already are, and for the same reason: the UI
+#: reads the last one, and a second review is not a defect, only a rare
+#: extra API call.
+AI_REVIEW_ACTION = "ai_review"
+
 #: An advisor's proposal: one action it says its human should take, validated
 #: against the engine where the request shape allowed it, recorded but never
 #: performed (`POST /api/games/{id}/advice`, `schemas.AdviceIn`). The row
@@ -215,11 +231,11 @@ def record(
     given, fill in the payload of the `records` row `store.replace` already
     wrote at that `seq`), then print one console line.
 
-    The entry carries the game's turn number, step, phase, and stack size at the
-    moment of recording, plus a full-information snapshot: board, both hands,
-    stack with targets, graveyards, exile, life, pools. A game that is no longer
-    in the store (or was never in it) still gets its entry, with those fields
-    None.
+    The entry carries the game's turn number, step, phase, stack size,
+    active player and priority holder at the moment of recording, plus a
+    full-information snapshot: board, both hands, stack with targets,
+    graveyards, exile, life, pools. A game that is no longer in the store (or
+    was never in it) still gets its entry, with those fields None.
 
     **T10's two additions**, both optional and both `None` for the many
     callers that have neither: `reasoning` is the acting seat's own stated
@@ -272,6 +288,53 @@ def record(
     turn = game.turn if game is not None else None
     turn_number = turn.turn_number if turn is not None else None
     step = turn.step if turn is not None else None
+    # S2 A7: whose turn this row was written in, who held priority the
+    # moment after it landed, and how many turns had actually begun - all
+    # three read off the live `game` at write time, exactly like `turn_
+    # number`/`step` above, so they are as honest as those already are about
+    # a game this build cannot decode (`None`, same as every other
+    # board-derived field on such a row).
+    #
+    # `active_player` is what `scripts/eval_report.py`'s `own_turn_first_
+    # action_ms` groups rows by: a plan-ahead row (`declare_plan`,
+    # `for_turn: "next"`) is written *during the opponent's turn* for a
+    # *future* turn of the declaring seat, and this stamps the row with the
+    # turn it was actually written in - never the turn `detail.turns_taken`
+    # names it is *about* - which is exactly what keeps that row out of the
+    # seat's own-turn bucket it is not yet in.
+    #
+    # `turns_taken` (`TurnMachine.turns_taken`) is the count that goes up
+    # once per turn that actually begins, extra turns (CR 500.7) included -
+    # unlike `turn_number`, which CR 500.7 leaves alone for one. A seat's
+    # ordinary turn and an extra turn granted to that same seat right after
+    # it therefore share one `(turn_number, active_player)` pair but never
+    # one `turns_taken`, which is exactly the signal `eval_report._turn_
+    # instances` needs to keep the two apart instead of collapsing them into
+    # a single instance (and losing whatever happened at the real start of
+    # the extra turn - the HIGH defect a review of this change's first
+    # version found: a 30s stall at an extra turn's start read back as 0ms).
+    # Stamped from the live game the same as `active_player`, so a
+    # plan-ahead row reads the *write-time* value here too, same reasoning
+    # as `active_player` above: it is never mistaken for its target turn.
+    #
+    # `priority_holder` is the sound signal `advice.latency_ms` measures
+    # from: rather than guessing "the human's window" from an action's name
+    # and outcome (a pass, a resolution, ...), each row already carries the
+    # one fact that answers it directly, the same way `turn`/`step` already
+    # do for the turn position. The row whose own `priority_holder` first
+    # reads as a given player - after a row where it read otherwise, or the
+    # game's first row - is the row that gave them the window an advice row
+    # is timed from.
+    #
+    # All three are `None` on every row recorded before this change, exactly
+    # like `stale`/`offered` before P4/T11 added those: a reader must treat
+    # a missing key as "not known", never as "no active player" - see
+    # `_UNRECORDED_DEFAULTS` and `eval_report.py`'s own fallback.
+    active_player = turn.players[turn.active_index] if turn is not None else None
+    turns_taken = turn.turns_taken if turn is not None else None
+    priority_holder = (
+        game.priority.holder if game is not None and game.priority is not None else None
+    )
     # The step the action was taken in, not the one the committed board has
     # moved on to since (`records.note_action_board`, battle 3 B3-11).
     noted = action_board(game_id)
@@ -294,6 +357,9 @@ def record(
         "phase": phase.value if step is not None and (phase := PHASE_OF.get(step)) else None,
         "stack_size": len(game.stack) if game is not None else None,
         "snapshot": snapshot(game) if game is not None else None,
+        "active_player": active_player,
+        "priority_holder": priority_holder,
+        "turns_taken": turns_taken,
         "reasoning": reasoning,
         # Two keys, written from one object or not at all: the actions
         # and the single seat they belong to. `visibility.redact_log_
@@ -344,6 +410,9 @@ _UNRECORDED_DEFAULTS: dict[str, Any] = {
     "phase": None,
     "stack_size": None,
     "snapshot": None,
+    "active_player": None,
+    "priority_holder": None,
+    "turns_taken": None,
     "reasoning": None,
     "legal_actions_before": None,
     "legal_actions_for": None,

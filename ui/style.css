@@ -1232,6 +1232,18 @@ h3 { font-size: 14px; }
   font-size: 9px;
   padding: 2px 5px;
 }
+/* CR 722.3a's prepared designation - top-center, the one corner-badge
+   pattern here leaves free (counters top-left, sickness/abilities
+   top-right, P/T/damage/loyalty along the bottom). */
+.badge-prepared {
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-radius: 999px;
+  padding: 2px 6px;
+}
 
 /* ------------------------------------------------------ mana symbols ---- */
 
@@ -2005,6 +2017,18 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
   white-space: pre-wrap;
 }
 .reflection-who { color: var(--ink-faint); font-size: 12px; }
+
+/* The post-game AI review: a separate, Opus-generated critique, set apart
+   the same way `.reflection` is and for the same reason - written after
+   the result, so nothing above it may rest on it. */
+.ai-review {
+  margin-top: 20px;
+  border: 1px dashed var(--line-bright);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.015);
+  padding: 16px 18px;
+}
+.ai-review h2 { font-size: 15px; }
 
 @media (max-width: 900px) {
   .pairing { grid-template-columns: 1fr; }

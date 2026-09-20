@@ -63,8 +63,25 @@ class RequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+#: A player's own display name (`NewPlayer.username` here, `decks_api.py`'s
+#: `NewUiPlayer.username`) - free text otherwise, but never a control
+#: character or a newline. A username reaches the AI review prompt
+#: (`mtg_agent.driver.review.review_prompt`) verbatim, outside its own
+#: BEGIN/END markers (it names who is playing, before the untrusted data
+#: block even starts) - a newline lets it fabricate a whole new "line"
+#: there, and a control character more broadly could disguise itself as
+#: driver-authored structure rather than the untrusted data it actually is.
+#: `\A`/`\z` (pydantic-core's Rust `regex` crate, not Python's `re`: lowercase
+#: `\z`, `\Z` is not valid there), not `^`/`$`: unlike Rust's, Python's own
+#: `$` also matches just before a trailing newline, which would let exactly
+#: the one character this exists to block slip through at the end of the
+#: string - `\A`/`\z` name "start/end of the whole string" unambiguously in
+#: either engine.
+Username = Annotated[str, StringConstraints(min_length=1, pattern=r"\A[^\x00-\x1f\x7f]+\z")]
+
+
 class NewPlayer(RequestModel):
-    username: str = Field(min_length=1)
+    username: Username
     life: int = 20
     is_agent: bool = False
     """T10: this seat's kind, recorded once at game creation - `POST
@@ -291,6 +308,19 @@ class DeclarePlanIn(RequestModel):
     above."""
     prediction: OpponentPrediction
     """What you expect the opponent to do in response, and why."""
+    for_turn: Literal["current", "next"] = "current"
+    """Which turn this declaration is about. `"current"` (the default) is
+    the turn already under way - the only shape this ever took before this
+    field existed. `"next"`, given while it is NOT this seat's own turn,
+    plans ahead: the row is written against this seat's own *next* turn
+    (`records.next_own_turn`, which asks the engine's own `TurnMachine.
+    begin_next_turn` rather than re-deriving turn order here), so an agent
+    can think during the opponent's turn instead of holding priority in its
+    own upkeep to do it - the failure this field exists to fix (live game
+    2026-09-14: a ~110s plan written in upkeep with the human waiting on
+    it). `"next"` while this seat's own turn is already in progress is
+    refused - `app.declare_plan` answers 409 `own_turn_in_progress`; one
+    plan per turn, and `"current"` is how that turn gets its own."""
 
 
 class DeclarePlanResponse(BaseModel):
@@ -304,7 +334,13 @@ class DeclarePlanResponse(BaseModel):
     every action response carries."""
     player: str
     turn_number: int | None = None
-    """The turn this plan is for, as the ledger stamped it."""
+    """The turn this plan covers, as the ledger stamped it - the current
+    turn's own `turn_number` for `for_turn: "current"`, or the computed
+    target turn's `turn_number` for `for_turn: "next"` (`records.
+    next_own_turn`'s own `TurnMachine.turn_number`, which is `None` only
+    when there is no turn under way at all to plan against)."""
+    for_turn: Literal["current", "next"] = "current"
+    """Which turn `turn_number` above names - see `DeclarePlanIn.for_turn`."""
 
 
 class ReflectionIn(RequestModel):
@@ -339,6 +375,35 @@ class ReflectionResponse(BaseModel):
     recorded: bool
     log_seq: int
     """The `records` row this reflection became."""
+    player: str
+
+
+class AiReviewIn(RequestModel):
+    """`POST /api/games/{game_id}/ai-review` - the post-game AI review
+    (`audit.AI_REVIEW_ACTION`), a separate critique generated on Opus from a
+    seat's own reflection plus the game's review record
+    (`mtg_agent.driver.review`), never a seat's own account of what it did.
+
+    Shaped exactly like `ReflectionIn` and gated the same way (post-game
+    only, `uid` must open `player`'s own seat) - see that class's docstring
+    for why this is deliberately just one seat's credential and one block of
+    text, nothing structured."""
+
+    player: Stated
+    uid: Stated
+    """The seat whose driver generated this review - its own credential, so
+    nobody may write one into another seat's name."""
+    text: Stated
+    """The review itself, in Opus's own words."""
+
+
+class AiReviewResponse(BaseModel):
+    """`POST .../ai-review`'s answer. No state view, for the same reason
+    `ReflectionResponse` has none: this mutates no `Game`."""
+
+    recorded: bool
+    log_seq: int
+    """The `records` row this review became."""
     player: str
 
 
@@ -396,6 +461,14 @@ class AdviceIn(RequestModel):
     `False` says "nobody has checked this" - the honest answer for the other
     5, whose shapes have no way to ask, and which an advisor therefore must
     not send at all."""
+    drafted_at_seq: int | None = None
+    """S2 A6: the ledger position this proposal was drafted at
+    (`stage_advice`/`seatkit.resolve_advice_draft`), when it was staged ahead
+    of the human's own priority rather than proposed the moment it was
+    probed. `None` for an ordinary proposal, which was never staged at all.
+    Recorded verbatim into the `advice` row's `detail` so a metrics reader can
+    measure how long a draft sat staged before it posted - never read or
+    interpreted here, and never required."""
 
 
 class AdviceResponse(BaseModel):
@@ -560,6 +633,24 @@ class ScriptRunIn(RequestModel):
     wall_ms: int | None = Field(default=None, ge=0)
     reapplicable_after: str | None = None
     """When the runner may try this script again."""
+    invoked_via: Literal["mcp", "cli", "armed"] = "mcp"
+    """Which front end started this run: the MCP `run_script` tool,
+    `mcp-seat script run`, or `"armed"` for one `playscripts.arming.arm`
+    fired on its own between a seat's own moves (S2). Recorded on both
+    `start` and `finish` - S1: a live seat cracked every fetch land by hand
+    because nothing told it a script applied, and a stale memory line
+    claiming scripts "auto-fire" traced back to runs a human had staged from
+    the CLI during development. Recording who actually started a run is what
+    lets a seat (and `eval_report.py`) tell its own runs apart from one an
+    operator staged, or one arming fired for it.
+
+    Defaults to `"mcp"` rather than being required: a seat Job already in
+    flight at deploy time was built before this field existed and never
+    sends it, and refusing that run's `start`/`finish` with 422 would leave
+    a bare `start` row with no matching `finish` ever able to land,
+    permanently blocking that turn and step slot (`already_ran` only clears
+    on a `finish`). `"mcp"` is the front end every run predating this field
+    was in fact started from."""
 
     @model_validator(mode="after")
     def _a_finish_names_its_exit(self) -> ScriptRunIn:
@@ -1223,6 +1314,21 @@ class DecideRequest(BoardRead):
     `pending_decision.player`. Not `accept`: this is a top/bottom choice, not
     a yes/no, even though both happen to be booleans. `None` (the default) is
     refused, matching `accept`/`choice`/`energy_amount`."""
+    pile_one: bool | None = None
+    """The `choose_pile` kind's answer (CR 700.3's pile primitive, Liliana of
+    the Veil's own `-6`, Do or Die) - `True` for pile one
+    (`pending_decision.cards`), `False` for its complement. Not `accept`,
+    the same reason `top` is not: this is a two-way pile choice, not a
+    yes/no, even though both are booleans. `None` (the default) is refused,
+    matching `top`."""
+    usernames: list[str] = Field(default_factory=list)
+    """The `choose_players` kind's answer (CR 701.34a's own Proliferate
+    player half) - `card_ids`' own twin, a subset of
+    `pending_decision.players` named by username rather than by id, since a
+    player has no id of their own. Empty is a real answer: every printed
+    proliferate in the pool offers "any number", so declining every player is
+    the legal decline, the same as an empty `card_ids` is for a
+    `choose_cards` question with `exact=False`."""
     order: list[str] = Field(default_factory=list)
     """The `order_triggers` kind's answer (CR 603.3b) - the order this
     player's simultaneously triggered abilities go on the stack, "in any order
@@ -1595,6 +1701,12 @@ class CardFaceView(BaseModel):
     mana_cost: str | None = None
     type_line: str | None = None
     oracle_text: str | None = None
+    land_face: bool | None = None
+    """True on the one face a modal double-faced card plays as a land
+    (CR 712.12, `Card.land_face`) - never set on a transform or meld card's
+    faces, whichever of them types as a Land: that land is reached only by
+    transforming or melding (CR 712.2), never a land drop. Absent (not
+    False) on every other face."""
 
 
 class _CardViewFields(BaseModel):
@@ -1783,6 +1895,11 @@ class PlayerView(BaseModel):
     only so a snapshot recorded before the field existed still reads."""
     land_allowance: int | None = None
     """How many lands this player may play this turn (`Game.land_allowance`)."""
+    own_turns_taken: int | None = None
+    """How many of this player's own turns have begun, extra turns included
+    (CR 500.7, `TurnMachine.own_turns_taken`) - 0 before their first turn,
+    pregame included. Optional only so a snapshot recorded before this field
+    existed (schema < 17) still reads; a live view always carries it."""
 
 
 class PlayPermissionView(BaseModel):
@@ -1928,6 +2045,10 @@ class GameStateView(BaseModel):
     game_id: str
     pending_decision: PendingDecisionView | None = None
     turn_number: int | None = None
+    turns_taken: int | None = None
+    """S1: counts every turn, extra ones (CR 500.7) included - unlike
+    `turn_number`, which counts rounds of the table and does not move for an
+    extra turn. The play-script already-ran filter keys on this instead."""
     step: str
     phase: str | None = None
     pregame: PregameView | None = None
@@ -2154,6 +2275,24 @@ class GameLogResponse(BaseModel):
 
     log: list[dict[str, Any]]
     last_seq: int
+
+
+class HypotheticalFactsResponse(BaseModel):
+    """`GET .../playscripts/hypothetical-facts`'s response
+    (`hypothetical_facts.build_hypothetical_facts`) - O4/O7's engine-computed
+    per-card facts, keyed by card id (a string: JSON has no UUID keys).
+    `cards[id]` is `{"enters"?: str, "unlocks"?: bool,
+    "unlocks_by_search"?: bool, "unlocks_by_basic_search"?: bool}` - only the
+    facts that card actually has, the same shape `selectors.Hypo` reads.
+    `notices` is every notice the engine
+    raised while working any of them out (an unread enters-tapped line, a
+    lethal optional payment, an unresolved trigger); it is not tied to one
+    card, since `selectors.matches` already applies the "any notice fails
+    `unlocks` closed" rule per pair before this response is built - it is
+    here for a caller that wants to see why."""
+
+    cards: dict[str, dict[str, Any]]
+    notices: list[str] = Field(default_factory=list)
 
 
 class ReviewEntry(BaseModel):

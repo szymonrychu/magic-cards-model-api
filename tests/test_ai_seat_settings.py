@@ -217,3 +217,83 @@ def test_creation_starts_the_ai_seat_in_subprocess_mode(monkeypatch, client: Tes
     )
     assert started.status_code == 200
     assert ai_seat.registry._runners[bot_uid] is runner
+
+
+def test_resolving_a_seat_uses_the_current_default_not_the_stored_one(client: TestClient) -> None:
+    """A game created before 2026-09-19 could have `opus`/`max` stored
+    against its AI seat (the old per-request default, or a request-chosen
+    value from before the picker was removed) - `store.register_agent_
+    settings` still accepts any value, and reads of it (`GET .../seats`,
+    the review page) must still show that old value verbatim. But
+    `ai_seat_api._resolve` - the one lookup `start`/`stop` share to decide
+    what to actually DISPATCH the runner with - is a *dispatch* decision,
+    not a history lookup: `AiSeatRegistry` is process-local (`ai_seat.py`'s
+    own docstring), so every server restart forgets which seats were
+    running, and the next `POST .../ai-seat/start` for an old game must run
+    it on the CURRENT deployment default, never resurrect whatever cost the
+    stored row happens to name."""
+    from magic_cards_model_api.ai_seat_api import _resolve
+    from magic_cards_model_api.store import store
+
+    response = client.post(
+        "/api/lobby/games",
+        json={
+            "players": [
+                {"username": "alice", "decklist_text": LEGAL_DECK},
+                {"username": "bob", "decklist_text": LEGAL_DECK_B, "ai": True},
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    game_id, bot_uid = body["game_id"], body["seat_uids"]["bob"]
+
+    # Simulate an old game: overwrite the stored settings the way a
+    # pre-2026-09-19 create request could have.
+    store.register_agent_settings(game_id, {"bob": AgentSettings(model="opus", effort="max")})
+
+    from magic_cards_model_api.ai_seat_api import StartAiSeat
+
+    _uid, _role, player, agent = _resolve(game_id, StartAiSeat(uid=bot_uid))
+    assert player == "bob"
+    assert agent.model == "claude-sonnet-5"
+    assert agent.effort == "high"
+    # The stored row itself is untouched - resolving what to dispatch with
+    # is not a rewrite of what the seat shows as.
+    assert store.agent_settings(game_id)["bob"] == AgentSettings(model="opus", effort="max")
+
+
+def test_resolving_a_buddy_also_uses_the_current_default_not_the_stored_one(
+    client: TestClient,
+) -> None:
+    from magic_cards_model_api.ai_seat import ROLE_ADVISOR
+    from magic_cards_model_api.ai_seat_api import StartAiSeat, _resolve
+    from magic_cards_model_api.store import store
+
+    response = client.post(
+        "/api/lobby/games",
+        json={
+            "players": [
+                {"username": "alice", "decklist_text": LEGAL_DECK, "buddy": True},
+                {"username": "bob", "decklist_text": LEGAL_DECK_B, "ai": True},
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    game_id, advisor_uid = body["game_id"], body["advisor_uids"]["alice"]
+
+    # An old advisor entry, the way it would have looked before 2026-09-19.
+    from dataclasses import replace
+
+    old_advisor = store.advisor_uids(game_id)[advisor_uid]
+    store.register_advisors(
+        game_id,
+        {advisor_uid: replace(old_advisor, agent=AgentSettings(model="opus", effort="max"))},
+    )
+
+    _uid, role, player, agent = _resolve(game_id, StartAiSeat(advisor_uid=advisor_uid))
+    assert role == ROLE_ADVISOR
+    assert player == "alice"
+    assert agent.model == "claude-sonnet-5"
+    assert agent.effort == "high"

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "id": "fetch-untapped-shock-second-color",
-  "name": "Crack a fetch for an untapped shockland when no Swamp is up",
-  "intent": "Crack Flooded Strand, Marsh Flats or Polluted Delta on my precombat main for an untapped shockland carrying Swamp (black for Fatal Push and Thoughtseize) when no untapped land of mine carries that type, while Island is already up, paying 2 life because that colour is actually missing. It prefers a shock with Swamp, then a basic Swamp, then any basic, so with no such shock in reach it takes a free basic rather than paying for a colour that is up. Only at 8 life or more, since Orcish Bowmasters mirrors and aggro punish the 3 life, and only while a shock with Swamp is still in my library. With Island and Swamp all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Gloomlake Verge and Otawara, Soaring City and mana creatures are not seen, and this can pay for a colour they already make; one play cannot say that any one of several colours is missing, hence one play per colour; and a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics.",
+  "name": "Crack a fetch for an untapped black source when no Swamp is up",
+  "intent": "Crack Flooded Strand, Marsh Flats or Polluted Delta on my precombat main for an untapped land carrying Swamp (black for Fatal Push and Thoughtseize) when no untapped land of mine carries that type, while Island is already up. It prefers a basic Swamp first, then a shock with Swamp, then any basic: a basic supplies the same untapped black for zero life, and after a game where this play cracked Polluted Delta on turn one for an untapped shockland at 2 life - 15 life on turn one against Boros energy, whose whole plan is that margin - the 2 life is only worth paying when no basic Swamp is left in the library to supply the colour. Only at 8 life or more, since Orcish Bowmasters mirrors and aggro punish the 3 life, and only while a shock with Swamp is still in my library. With Island and Swamp all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Gloomlake Verge and Otawara, Soaring City and mana creatures are not seen, and this can pay for a colour they already make; one play cannot say that any one of several colours is missing, hence one play per colour; a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics; and the pick cannot know which colour the turn's spells want, so it fixes the missing colour rather than the one a spell in hand needs.",
   "priority": 60,
   "opposing_archetypes": [
     "*"
@@ -96,6 +96,11 @@
           "Swamp"
         ]
       }
+    },
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
     }
   ],
   "moves": [
@@ -125,15 +130,15 @@
             "count": 1,
             "prefer": [
               {
-                "oracle_has": "you may pay 2 life",
+                "supertypes_any": [
+                  "Basic"
+                ],
                 "subtypes_any": [
                   "Swamp"
                 ]
               },
               {
-                "supertypes_any": [
-                  "Basic"
-                ],
+                "oracle_has": "you may pay 2 life",
                 "subtypes_any": [
                   "Swamp"
                 ]

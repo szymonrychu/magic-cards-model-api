@@ -66,6 +66,12 @@ class Settings:
     permission_mode: str = "bypassPermissions"
     hook_command: str = "cc-stop-hook"
     turn_timeout: float = 1800.0
+    #: How long the post-game AI review's one-shot `claude --print` call
+    #: (`POST /v1/review`, `oneshot.py`) may run before it is killed and
+    #: reported as a timeout - separate from `turn_timeout`, which bounds a
+    #: turn of the supervised *interactive* session, not this independent,
+    #: non-PTY subprocess.
+    review_timeout: float = 600.0
     boot_timeout: float = 60.0
     submit_delay: float = 0.4
     #: How long an interrupted turn gets to end on its own before the wrapper
@@ -111,6 +117,7 @@ class Settings:
             permission_mode=_str(env, "PERMISSION_MODE", "bypassPermissions"),
             hook_command=_str(env, "HOOK_COMMAND", "cc-stop-hook"),
             turn_timeout=_float(env, "TURN_TIMEOUT_SECONDS", 1800.0),
+            review_timeout=_float(env, "REVIEW_TIMEOUT_SECONDS", 600.0),
             boot_timeout=_float(env, "BOOT_TIMEOUT_SECONDS", 60.0),
             submit_delay=_float(env, "SUBMIT_DELAY_SECONDS", 0.4),
             interrupt_settle=_float(env, "INTERRUPT_SETTLE_SECONDS", 20.0),

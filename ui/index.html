@@ -50,24 +50,6 @@
         <input type="checkbox" id="you-buddy" />
         Buddy - an AI advisor that watches your seat and proposes plays you approve
       </label>
-      <fieldset id="you-buddy-settings" class="buddy-settings" disabled>
-        <legend>Buddy agent</legend>
-        <label>Model
-          <input type="text" id="you-buddy-model" list="ai-model-suggestions" placeholder="opus" />
-        </label>
-        <label>Effort
-          <select id="you-buddy-effort">
-            <option value="low">low</option>
-            <option value="medium" selected>medium</option>
-            <option value="high">high</option>
-            <option value="xhigh">xhigh</option>
-            <option value="max">max</option>
-          </select>
-        </label>
-        <label>Thinking budget (tokens, optional)
-          <input type="number" id="you-buddy-thinking" min="0" step="1" placeholder="model default" />
-        </label>
-      </fieldset>
     </div>
 
     <div class="deck-picker" id="picker-ai">
@@ -82,30 +64,6 @@
       </label>
       <button id="ai-validate">Validate</button>
       <div class="validation" id="ai-validation"></div>
-      <label>Model
-        <input type="text" id="ai-model" list="ai-model-suggestions" placeholder="opus" />
-        <datalist id="ai-model-suggestions">
-          <option value="sonnet"></option>
-          <option value="opus"></option>
-          <option value="haiku"></option>
-          <option value="fable"></option>
-        </datalist>
-      </label>
-      <label>Effort
-        <select id="ai-effort">
-          <option value="low">low</option>
-          <option value="medium" selected>medium</option>
-          <option value="high">high</option>
-          <option value="xhigh">xhigh</option>
-          <option value="max">max</option>
-        </select>
-      </label>
-      <label>Thinking budget (tokens, optional)
-        <input type="number" id="ai-thinking" min="0" step="1" placeholder="model default" />
-      </label>
-      <p class="hint">Only applies to a model with a fixed thinking budget. The
-        default model uses adaptive reasoning and ignores this - use Effort
-        above instead.</p>
     </div>
   </div>
 

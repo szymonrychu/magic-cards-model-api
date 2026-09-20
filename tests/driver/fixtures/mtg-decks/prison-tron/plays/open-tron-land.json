@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "id": "open-tron-land",
+  "name": "Play a land toward assembling Tron on turn 1-2",
+  "intent": "On turn 1 or 2, against any opponent - this deck's own spec names no Temple-matchup split, so one play covers every archetype - play a land toward completing Tron: prefers a missing Urza's piece (Tower, Mine or Power-Plant whose subtype is not already on the battlefield, via missing_from), then Eldrazi Temple by its own 'colorless Eldrazi' text, then a basic (Swamp or Wastes - Wastes is a Basic Land with no subtype, so supertypes_any: [Basic] matches both). A missing piece goes down before Chalice of the Void is ever cast; that sequencing is left to the seat, not scripted here. Ugin's Labyrinth can be the land actually picked once neither tier narrows anything (it always enters untapped; its own imprint trigger is answered may/choose_cards regardless of whether a legal exile target is in hand), so that answer rides along - its own imprint pick prefers mana_value >= 8 (unique to Emrakul, the Promised End in this 60) then a Creature (Devourer of Destiny, over Ugin, Eye of the Storms and All Is Dust) - NOTES.md: 'exiling Emrakul over Devourer costs the Devourer cast trigger and buys the better late game', and Devourer 'is also the most common Labyrinth imprint'. Stands down once two or more untapped mana is already up - the same key map-for-tron-missing-piece's own true condition reads - and once a colorless mv>=7 card is in hand, open-labyrinth-land's own gate, byte-identical here, since that play takes over the whole land-drop decision (Labyrinth-first, same fallback tiers) whenever there is something worth imprinting. Chains into map-for-tron-missing-piece: if the land just played brings untapped mana to 2 or more, the search fires in the same window. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 65,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 2
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "colors_any": [
+          "colorless"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 7
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "subtypes_any": [
+              "Tower",
+              "Mine",
+              "Power-Plant"
+            ],
+            "missing_from": {
+              "zones": [
+                "battlefield"
+              ],
+              "side": "me",
+              "by": "subtype"
+            }
+          },
+          {
+            "oracle_has": "colorless Eldrazi"
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "may",
+          "accept": true
+        },
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "colors_any": [
+                "colorless"
+              ],
+              "mana_value": {
+                "op": ">=",
+                "n": 7
+              }
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "mana_value": {
+                  "op": ">=",
+                  "n": 8
+                }
+              },
+              {
+                "types_all": [
+                  "Creature"
+                ]
+              }
+            ],
+            "ties": "any"
+          }
+        }
+      ]
+    }
+  ],
+  "next": [
+    "map-for-tron-missing-piece"
+  ]
+}

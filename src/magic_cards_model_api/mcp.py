@@ -103,6 +103,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import logging
 import sys
 from collections.abc import Callable
 from typing import Any
@@ -332,6 +333,8 @@ _READ_THE_BOARD_WITH = (
     "further."
 )
 
+
+logger = logging.getLogger("mcm.mcp")
 
 #: How many bytes the battlefield digest may take before the WHOLE thing is
 #: replaced by a pointer at `battlefield_state`. At the measured ~62 bytes a
@@ -674,6 +677,70 @@ def build_server(seats: Seats) -> MCPServer:
     def resolve(player_uid: str) -> Seat | None:
         return seats.seat_for(player_uid)
 
+    def _attach_script_hint(answer: dict[str, Any], seat: Seat, state: dict[str, Any]) -> None:
+        """S1: bolt `scripts: {"applicable": [...]}` onto `answer` when at
+        least one of `seat`'s registered play scripts applies right now
+        (`script_tools.applicable_hint`) - the same treatment `wake_reason`/
+        `recent_log` already get on a bare state view, over `state` this
+        answer already carries rather than a second board fetch.
+
+        S1 review finding 2: an HTTP error, or anything
+        `conditions.evaluate`/`static_conflicts`/`lint` can raise, must never
+        replace or break an answer whose action already landed - it is
+        caught here, logged once, and `scripts` is simply left off."""
+        try:
+            hint = script_tools.applicable_hint(seat, seats.script_corpora, state)
+        except Exception:
+            logger.warning(
+                "computing the script hint for %s raised - answer sent without `scripts`",
+                seat.uid,
+                exc_info=True,
+            )
+            return
+        if hint is not None:
+            answer["scripts"] = hint
+
+    def _attach_draft(answer: dict[str, Any], seat: Seat, state: dict[str, Any]) -> None:
+        """S2 A6: bolt `draft: {"status": ...}` onto `answer` for an advisor
+        with a staged draft (`seatkit.draft_status_for_answer`) - checked on
+        every advisor answer that reaches `_tool_result`, action tools and
+        `wait_for_priority`/`pass_until` alike, which is what lets a draft get
+        posted the moment the human's own poll notices the window (within one
+        `wait_for_priority` call's own internal poll, not only on the next
+        separate one) rather than only when the buddy happens to call
+        something else afterward. `state` carries `armed` whenever this same
+        call also fired an armed script (`wait_for_priority`'s own splice),
+        which is what lets `draft_status_for_answer` catch the two colliding
+        in one answer (review fix 4) before either ever reaches `resolve_
+        advice_draft`.
+
+        `None` for a seat, or an advisor with nothing staged - `draft` is left
+        off the answer entirely rather than invented as some idle status.
+
+        `answer.get("script_exit")` (review fix 2, 2026-09-14) is threaded
+        through too - a MANUAL `run_script` call's own `script_exit` is this
+        very answer's own proposal, exactly as `state["armed"]` is for an
+        armed script `wait_for_priority` fires inside its own poll. Every
+        other tool's `answer` simply has no `script_exit` key, so this is a
+        no-op for them.
+
+        Same failure discipline as `_attach_script_hint`: an exception here
+        must never break the tool answer whose action already landed, so it
+        is caught, logged once, and `draft` is simply left off."""
+        try:
+            result = seatkit.draft_status_for_answer(
+                seat, state, script_exit=answer.get("script_exit")
+            )
+        except Exception:
+            logger.warning(
+                "resolving %s's staged advice draft raised - answer sent without `draft`",
+                seat.uid,
+                exc_info=True,
+            )
+            return
+        if result is not None:
+            answer["draft"] = result
+
     def _tool_result(
         seat: Seat, payload: dict[str, Any], protocol_version: str | None
     ) -> str | InputRequiredResult:
@@ -734,9 +801,15 @@ def build_server(seats: Seats) -> MCPServer:
             # character 13,724, behind the whole legal-action list, in the
             # very answer a stuck seat was trying to read the refusal out of.
             answer = _action_answer(payload)
+            raw_state = payload.get("state")
+            state_view = raw_state if isinstance(raw_state, dict) else {}
+            _attach_script_hint(answer, seat, state_view)
+            _attach_draft(answer, seat, state_view)
             pending = answer.get("pending_decision")
             text = json.dumps(answer, indent=1)
         else:
+            _attach_script_hint(payload, seat, payload)
+            _attach_draft(payload, seat, payload)
             pending = payload.get("pending_decision")
             text = json.dumps(payload, indent=1, sort_keys=True)
         modern = protocol_version is None or protocol_version in MODERN_PROTOCOL_VERSIONS
@@ -761,7 +834,14 @@ def build_server(seats: Seats) -> MCPServer:
     @server.tool()
     @_guarded(seats)
     def wait_for_priority(
-        player_uid: str, max_seconds: float = 0.0, ctx: Context | None = None
+        player_uid: str,
+        max_seconds: float = 0.0,
+        arm: str | list[str] = "",
+        arm_reasoning: str = "",
+        opposing_archetype: str = "*",
+        inputs: dict[str, Any] | None = None,
+        wake_to_draft: bool = False,
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Check whether it is your moment to act, then hand you the board.
 
@@ -826,15 +906,66 @@ def build_server(seats: Seats) -> MCPServer:
                 is fetched only when a wake condition holds: an answer saying
                 `nothing new yet` carries no list. A seat's own wait carries
                 none either - its list rides the actions it takes.
+
+        **`arm` (S2)**: a list of registered script ids (or a comma-separated
+                string of them), in priority order, to fire on their own the moment this wait wakes
+                for a real reason - "wait until you could require picking scripts
+                to run: if the situation still matches a script's conditions, it
+                fires automatically". Never mandatory: left empty (the default),
+                this behaves exactly as it always has. Judged the same way
+                `run_script`/the hint judge; two armed scripts applying at once
+                is a conflict and neither fires (`armed_conflict` names them).
+                `arm_reasoning` is required whenever `arm` is non-empty - every
+                fire is judged and recorded with it. `opposing_archetype` and
+                `inputs` mean what they mean for `run_script`. An advisor here
+                fires in advise mode: the first applicable armed script proposes
+                a move (`advised`) and the batch stops there.
+
+        **`wake_to_draft` (S2 A6, advisor only)**: also wake when the board
+                changes while it is not yet your human's priority, provided you
+                have no draft staged right now - the cue to look ahead and
+                `stage_advice` for the window you expect next, so a proposal is
+                ready to post the instant priority actually reaches them, rather
+                than drafted from scratch only once it does. Left false (the
+                default), this behaves exactly as it always has. Refused outright
+                for a seat: a seat already wakes for its own real moments, and
+                there is no draft for it to prepare.
+
+                Every answer here, and every action tool's, also carries `draft`
+                once you have one staged: `{"status": "held"}` while it is not yet
+                your human's turn at that window, `{"status": "posted", "log_seq":
+                ...}` the moment it is and everything still holds up, or
+                `{"status": "stale", "failed": "window"|"board"|"legality"}` the
+                moment any one of those three does not - the board changed
+                underneath it, or the window itself has already passed. A stale
+                draft is dropped; this wait wakes you to draft another the next
+                time the board moves and you asked for `wake_to_draft`.
         """
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        woken = seatkit.block_until_wake(
-            seat, before=None, max_seconds=max_seconds, should_stop=cancel_probe(ctx)
+        if wake_to_draft and not seat.advise:
+            return seatkit.WAKE_TO_DRAFT_ADVISOR_ONLY
+        staged = seats.advice_drafts.get(seat.uid)
+        draft_staged = staged is not None and staged.get("action") is not None
+        woken = seatkit.wait_and_arm(
+            seat,
+            before=None,
+            max_seconds=max_seconds,
+            should_stop=cancel_probe(ctx),
+            corpora=seats.script_corpora,
+            arm=_parse_ids(arm),
+            arm_reasoning=arm_reasoning,
+            opposing_archetype=opposing_archetype,
+            inputs=inputs,
+            wake_to_draft=wake_to_draft and seat.advise,
+            draft_staged=draft_staged,
         )
         woken["state"]["wake_reason"] = woken["wake_reason"]
         woken["state"]["recent_log"] = woken["recent_log"]
+        for field_name in seatkit.ARMED_RESULT_FIELDS:
+            if field_name in woken:
+                woken["state"][field_name] = woken[field_name]
         if seat.advise and woken["wake_reason"] != seatkit.NOTHING_NEW_YET:
             # The advisor's legal plays, on the one answer that wakes it
             # (`pass_until` is refused to an advise seat). A GET, like every
@@ -1787,6 +1918,8 @@ def build_server(seats: Seats) -> MCPServer:
         life_amount: int | None = None,
         choice: str = "",
         top: bool | None = None,
+        pile_one: bool | None = None,
+        usernames: str = "",
         order: str = "",
         damage: str = "",
         generation: int | None = None,
@@ -2000,6 +2133,29 @@ def build_server(seats: Seats) -> MCPServer:
           the *targeted spell's owner* here, not Subtlety's controller
           (CR 108.3) - check it before answering, since in a two-player game
           it is easy to assume it is always the caster.
+        - `choose_pile` (CR 700.3's pile primitive - Liliana of the Veil's
+          own `-6`, "Separate all permanents target player controls into two
+          piles. That player sacrifices all permanents in the pile of their
+          choice."; Do or Die is the same shape): `pile_one` is `True` to
+          choose pile one, `False` for the other pile. `pending_decision
+          .cards` names pile one's own contents (the divider's earlier
+          choice, a separate `choose_cards` question you already answered or
+          the engine already asked someone else); the complement of it,
+          among whatever the target player controls, is pile two. Not
+          `accept` - a two-way pile choice, not a yes/no, even though both
+          are booleans.
+        - `choose_players` (CR 701.34a's own "and/or players" half of
+          Proliferate - "choose any number of permanents and/or players,
+          then give each one a counter"): `usernames` is a comma-separated
+          list chosen from `pending_decision.players`. Every printed
+          proliferate in the pool offers "any number" (CR 107.1c), so this
+          is `exact=False` in practice - leaving `usernames` empty declines
+          every player, which is a real, legal answer, not a missing one.
+          `choose_players`'s own twin question, a `choose_cards` decision
+          over the same resolution's eligible permanents, is asked
+          alongside it (CR 701.34a proliferates both halves together) - answer
+          both, since proliferating nobody at all only skips the effect
+          entirely when neither offers a real choice.
         - `order_triggers` (CR 603.3b: "if multiple abilities have triggered
           since the last time a player received priority ... each player, in
           APNAP order, puts each triggered ability they control on the stack
@@ -2117,6 +2273,10 @@ def build_server(seats: Seats) -> MCPServer:
             body["choice"] = choice
         if top is not None:
             body["top"] = top
+        if pile_one is not None:
+            body["pile_one"] = pile_one
+        if usernames:
+            body["usernames"] = _parse_ids(usernames)
         if order:
             body["order"] = _parse_ids(order)
         if damage:
@@ -2230,6 +2390,10 @@ def build_server(seats: Seats) -> MCPServer:
         stop_when_you_can_attack: bool = True,
         reasoning: str = "",
         max_seconds: float = 0.0,
+        arm: str | list[str] = "",
+        arm_reasoning: str = "",
+        opposing_archetype: str = "*",
+        inputs: dict[str, Any] | None = None,
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Keep passing priority - one `pass` after another, automatically -
@@ -2359,7 +2523,21 @@ def build_server(seats: Seats) -> MCPServer:
 
         `reasoning`: why you are giving up this whole stretch, in your own
         words - said once, for the run, and threaded onto every pass it
-        makes."""
+        makes.
+
+        ## Arming (S2)
+
+        `arm`: a list of registered script ids (or a comma-separated string of
+        them), in priority order, to fire on their own the instant this run finishes here - or
+        hits its own `MAX_PASSES_PER_CALL` hand-back - never on a plain
+        "waiting for the opponent" hand-back, which is not this seat's moment.
+        Judged the same way `run_script`/the hint judge; two armed scripts
+        applying at once is a conflict and neither fires (`armed_conflict`
+        names them). `arm_reasoning` is required whenever `arm` is non-empty.
+        `opposing_archetype` and `inputs` mean what they mean for
+        `run_script`. Never mandatory - left empty (the default), this call
+        behaves exactly as it always has. Refused outright to an advisor, same
+        as this whole tool."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -2398,6 +2576,11 @@ def build_server(seats: Seats) -> MCPServer:
                 reasoning=reasoning or None,
                 max_seconds=max_seconds,
                 should_stop=cancel_probe(ctx),
+                corpora=seats.script_corpora,
+                arm=_parse_ids(arm),
+                arm_reasoning=arm_reasoning,
+                opposing_archetype=opposing_archetype,
+                inputs=inputs,
             ),
             ctx.protocol_version if ctx is not None else None,
         )
@@ -2474,6 +2657,7 @@ def build_server(seats: Seats) -> MCPServer:
             max_seconds=max_seconds,
             inputs=inputs,
             should_stop=cancel_probe(ctx),
+            invoked_via="mcp",
         )
         if isinstance(answer, str):
             return answer
@@ -2489,8 +2673,10 @@ def build_server(seats: Seats) -> MCPServer:
 
         Each script says whether it `applies`, and when it does not, its
         `failing_condition`: the `list` that stopped it (`priority` for a
-        disabled script, `opposing_archetypes`, `when`, `true` or `false`),
-        the `index` within it, and what it `seen`. `needs_input` names a
+        disabled script, `opposing_archetypes`, `when`, `true`, `false`, or
+        `hypothetical` for a script whose selectors need engine-computed
+        facts this listing could not fetch - `seen` then says why), the
+        `index` within it, and what it `seen`. `needs_input` names a
         required input you did not supply. `conflicts` are the
         `play-conflict`/`next-conflict` warnings `plays check` raises that
         involve it - scripts that could both apply at one decision point.
@@ -2582,6 +2768,7 @@ def build_server(seats: Seats) -> MCPServer:
         expecting: str,
         because: str,
         confidence: str = "medium",
+        for_turn: str = "current",
     ) -> str:
         """Declare, before you act, how you read the turn you are about to
         take (`POST .../plan`). Call this once at the top of every one of
@@ -2598,6 +2785,16 @@ def build_server(seats: Seats) -> MCPServer:
         your opponent to do in response, and the read that supports it - the
         part that makes this evidence rather than commentary.
 
+        `for_turn` (`"current"`, the default, or `"next"`): plan ahead.
+        Call this with `for_turn="next"` during your OPPONENT's turn to
+        declare for your own next turn, rather than waiting until your
+        upkeep and holding priority there to write one - your opponent is
+        not waiting on you while you do this, and should not have to. Called
+        with `for_turn="next"` while your own turn is already under way,
+        this is refused (409, `own_turn_in_progress`): declare once per
+        turn, and use the default `"current"` for the turn already in front
+        of you.
+
         This is written to an append-only ledger before your opponent's next
         move, and cannot be edited afterward to fit whatever they actually
         did. After the game, a human reads it next to what your opponent
@@ -2608,9 +2805,9 @@ def build_server(seats: Seats) -> MCPServer:
         cannot be wrong proves nothing either way; an honest wrong read is
         worth far more than a hedge.
 
-        Mutates no `Game` and never blocks. Every field is required and
-        stripped of surrounding whitespace - blank is refused the same as
-        missing."""
+        Mutates no `Game` and never blocks. Every field but `for_turn` is
+        required and stripped of surrounding whitespace - blank is refused
+        the same as missing."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -2621,7 +2818,44 @@ def build_server(seats: Seats) -> MCPServer:
             expecting=expecting,
             because=because,
             confidence=confidence,
+            for_turn=for_turn,
         )
+        return json.dumps(result, indent=1, sort_keys=True)
+
+    @server.tool()
+    @_guarded(seats)
+    def stage_advice(player_uid: str, step: str, whose_turn: str = "mine") -> str:
+        """S2 A6: arm your *next* committing action call to be captured as a
+        draft for the window `(step, whose_turn)`, instead of posted as a
+        proposal right away - so you can think and act now, while your human
+        does not yet hold priority, and have it posted for them the instant
+        they do, rather than starting from scratch only once they hold it.
+
+        `step`/`whose_turn` mean exactly what they mean for `pass_until`: one
+        of `upkeep, draw, precombat_main, beginning_of_combat,
+        declare_attackers, declare_blockers, combat_damage, end_of_combat,
+        postcombat_main, end_step`, and `"mine"` (default), `"opponent"`, or
+        `"any"`. Naming the step your human is standing in right now means its
+        NEXT occurrence, never this one - the same next-occurrence rule
+        `pass_until` follows.
+
+        The very next committing call you make (`cast`, `activate`, `pass`,
+        ...) after this is what gets captured - probed exactly as an ordinary
+        proposal is, just held back rather than posted. Every one of your
+        calls after that (this one included, and `wait_for_priority`'s own
+        wait) carries `draft: {"status": ...}` while one is staged, and it
+        posts on its own the moment your human's priority reaches that window
+        - see `wait_for_priority`'s own docstring for the three ways a stale
+        draft is dropped instead.
+
+        Staging again before the armed slot is filled in replaces it outright;
+        there is only ever one draft in flight. Refused outright for a seat
+        (there is no proposal for it to hold back) and for a step/whose_turn
+        `pass_until` would also refuse. Mutates no `Game` and never blocks."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        result = seat.stage_advice(step, whose_turn)
         return json.dumps(result, indent=1, sort_keys=True)
 
     @server.tool()

@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "id": "landcycle-shock",
+  "name": "Landcycle a Forest- or Mountain-cycling creature into a shockland at their end step",
+  "intent": "At the opponent's end step, with no untapped fetch already on the battlefield to crack instead and at least 1 untapped mana of my own available, discard Generous Ent or Oliphaunt for its own Forestcycling/Mountaincycling {1} ability, searching the library for whatever land it finds. The {1} cost is real mana, not a free discard, so this play stands down without an untapped source to pay it - the same reason open-land-unlocks/open-shock-unlocks/open-fetch-unlocks never fire with no mana to spend. Against the aggressive matchups this play is keyed to (boros-aggro, boros-energy, ur-cutter-prowess - all of which race hard), the search prefers a shockland (Breeding Pool, Steam Vents, Stomping Ground) over a surveil land, since these decks want an untapped land ready to swing back with sooner than the scry is worth; the land only reaches hand here (landcycling puts it into hand, never the battlefield), so no pay_life decision is asked - that choice is the seat's own next turn. Falls back to open-fetch-unlocks/fetch-surveil-land[-keep] whenever an untapped fetch is already out. Never restricted to turns 1-2: a landcycling creature is a fine late-game draw smoothing tool too. Priority 44, alongside landcycle-surveil's 45 and below every turn 1-2 opening play (70-74) and every other pre-openings play in this deck's own corpus (40-65) that is keyed to a specific archetype rather than the wildcard - this play's own `when` fires only on the opponent's end step, never contending with the mine/precombat_main openings for the same land drop.",
+  "priority": 44,
+  "opposing_archetypes": [
+    "boros-aggro",
+    "boros-energy",
+    "ur-cutter-prowess"
+  ],
+  "when": {
+    "whose_turn": "theirs",
+    "steps": [
+      "end_step"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Creature"
+        ],
+        "searches_for_any": [
+          "Forest",
+          "Mountain"
+        ]
+      }
+    },
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 1
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "ability_text_has": "Search your library for"
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "hand",
+        "select": {
+          "types_all": [
+            "Creature"
+          ],
+          "searches_for_any": [
+            "Forest",
+            "Mountain"
+          ]
+        },
+        "ties": "any"
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ]
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "oracle_has": "you may pay 2 life"
+              }
+            ],
+            "ties": "any"
+          }
+        }
+      ]
+    }
+  ],
+  "next": []
+}

@@ -96,6 +96,11 @@ export function badges(card) {
       )
     );
   }
+  if (card.prepared) {
+    // CR 722.3a's "prepared" designation - a marker on a permanent with a
+    // prepare spell, after its own preparation card cast from exile.
+    bits.push(h("span", { class: "badge badge-prepared", title: "prepared (CR 722.3a)" }, "P"));
+  }
   if (card.choice) {
     bits.push(
       h(

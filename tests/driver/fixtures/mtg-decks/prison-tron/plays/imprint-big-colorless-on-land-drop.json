@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "id": "imprint-big-colorless-on-land-drop",
+  "name": "Play the imprint land as my land drop and exile the huge colorless card so it taps for two",
+  "intent": "Applies on a mana-poor turn - one untapped source or none before the land drop - when my hand holds the land whose imprint trigger exiles a colorless card with mana value 7 or greater, at least one such card, and a two-mana artifact rock. Playing the land and accepting the imprint makes it add {C}{C} instead of {C}, which is the only way a two-mana rock is deployed off a single land. The imprint answer selects colorless, mana value 7 or greater, and prefers the largest first - 13, then 10 or more, then 8 or more, then any 7 - because the point is to bank the card that stays uncastable longest; the land's third ability returns it to hand later, so nothing is lost. The caveat the hand-played line obeyed is encoded twice: mana value 7 or greater is by itself uncastable this turn or next at one or two lands, and the two-mana artifact condition means the extra {C} is actually spent this turn rather than floated. The untapped_mana ceiling of 1 is also what keeps this play and the land-search artifact play disjoint - that one requires two untapped mana to crack, this one requires at most one - so at most one of the two applies at any single decision point.",
+  "priority": 55,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "untapped_mana",
+      "op": "<=",
+      "n": 1
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "oracle_has": "mana value 7 or greater"
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "colors_any": [
+          "colorless"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 7
+        }
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Artifact"
+        ],
+        "mana_value": {
+          "op": "==",
+          "n": 2
+        }
+      }
+    }
+  ],
+  "false": [],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "oracle_has": "mana value 7 or greater"
+        }
+      },
+      "answers": [
+        {
+          "decision": "may",
+          "accept": true
+        },
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "colors_any": [
+                "colorless"
+              ],
+              "mana_value": {
+                "op": ">=",
+                "n": 7
+              }
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "mana_value": {
+                  "op": ">=",
+                  "n": 13
+                }
+              },
+              {
+                "mana_value": {
+                  "op": ">=",
+                  "n": 10
+                }
+              },
+              {
+                "mana_value": {
+                  "op": ">=",
+                  "n": 8
+                }
+              },
+              {
+                "mana_value": {
+                  "op": ">=",
+                  "n": 7
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "next": []
+}

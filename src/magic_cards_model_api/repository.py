@@ -147,6 +147,14 @@ class ArchivedGame:
     unloadable: str | None = None
     """The decoder's own refusal (`GameUnloadable.reason`), verbatim, or
     `None` for the ordinary case where `game` is there."""
+    ai_players: frozenset[str] = frozenset()
+    """The usernames registered as bot-driven (`register_ai_players`), as of
+    whenever this game was last live - here for the same reason `admin_key`/
+    `seat_uids` are: a post-game route (`app.declare_ai_review`) has to
+    authorise "is this player an AI seat of this game" against a game that
+    may already be soft-deleted by the time the call lands, and `ai_players`
+    itself (unlike this field) answers `set()` for an archived game, same as
+    every other plain accessor built on the live rows."""
 
 
 @dataclass(frozen=True)
@@ -1110,6 +1118,7 @@ class InMemoryRepository:
                     seat_uids=dict(self._seats.get(game_id, {})),
                     created_at=self._created_at.get(game_id),
                     deleted_at=datetime.now(UTC).isoformat(),
+                    ai_players=frozenset(self._ai_players.get(game_id, set())),
                 )
             self._seats.pop(game_id, None)
             self._advisors.pop(game_id, None)
@@ -1156,6 +1165,7 @@ class InMemoryRepository:
                 created_at=self._created_at.get(game_id),
                 deleted_at=None,
                 unloadable=unloadable,
+                ai_players=frozenset(self._ai_players.get(game_id, set())),
             )
 
     def _append_record_locked(self, game_id: str, payload: dict[str, Any]) -> int:

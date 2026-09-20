@@ -1,0 +1,104 @@
+{
+  "name": "goryos vengeance",
+  "meta_share": 2.290649643259482,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.5117,
+  "winrate_basis": {
+    "kind": "data",
+    "n": 91,
+    "source": "statistics_matchups(format=modern, archetype_a='esper blink', limit=60), committed verbatim at .protocol/raw-matchups.json; row opponent='goryos vengeance' winrate=0.5117 over sample_size=91 matches, read directly. The capture also holds an 'esper goryo' row at 0.5285 and a 'goryos' row at 0.5073; only the exact-name row grades this dossier"
+  },
+  "primary_gameplan": "Teferi, Time Raveler turns Goryo's Vengeance into a sorcery, which is the whole trick: their line is to discard Atraxa, Grand Unifier to Faithful Mending and reanimate it on our end step. With Teferi out they have to do it on their own turn, into our untapped mana and an evokable Solitude.",
+  "secondary_gameplan": "Consign to Memory counters Atraxa's enters trigger so a reanimated body is only a body, Mystical Dispute costs one mana against a deck that is blue in every protective slot, and Emperor of Bones exiles the target out of their graveyard at the beginning of our combat.",
+  "opponent_gameplan": "Faithful Mending or a discard outlet puts Atraxa, Grand Unifier or Griselbrand in the graveyard and Goryo's Vengeance returns it with haste at instant speed, exiling it at end of turn - which is enough, because Atraxa's enters trigger refills their hand and Griselbrand draws seven. Psychic Frog is the fair clock, Force of Negation and Thoughtseize protect the turn, and Solitude and Prismatic Ending answer whatever we resolve. Post-board Consign to Memory and Mystical Dispute defend the same turn.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 4,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; counters our enters triggers, which are the only free interaction we have",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Mystical Dispute",
+      "count": 3,
+      "why": "10 of 10 pulled sideboards; one mana against our blue cards and three against their own",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Wrath of the Skies",
+      "count": 3,
+      "why": "10 of 10 pulled sideboards; an energy sweeper against the two- and three-drop board we build",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Teferi, Time Raveler",
+      "count": 1,
+      "why": "8 of 10 pulled sideboards; their own copy stops us holding up instant-speed answers on their combo turn",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "counter",
+  "stance_rationale": "Every card added attacks the combo's timing or its payoff without touching our own curve: Teferi makes the reanimation a sorcery, Mystical Dispute is a one-mana counter against a deck whose protection is entirely blue, and Consign to Memory answers Atraxa's enters trigger, which is the half of the card that beats us even after the body is exiled at end of turn.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Goryo's Vengeance puts a 7/7 flier onto the battlefield at instant speed with haste, so the clock is two swings and it can begin on our end step.",
+    "key_cards": [
+      {
+        "card": "Goryo's Vengeance",
+        "why": "Named verbatim in opponent_gameplan; the instant-speed reanimation that makes this a two-card kill"
+      },
+      {
+        "card": "Atraxa, Grand Unifier",
+        "why": "Named verbatim in opponent_gameplan; the 7/7 flying lifelink body whose enters trigger refills their hand"
+      },
+      {
+        "card": "Mystical Dispute",
+        "why": "Protects the combo turn and taxes every blue answer we brought in",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Teferi, Time Raveler",
+        "why": "Their copy stops us holding instant-speed interaction for their combo turn",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Thoughtseize or a white source on turn one, and a second land.",
+    "goldfish_for": "Teferi, Time Raveler on turn three with Consign to Memory held for Atraxa.",
+    "watch_for": "A discard outlet used on their own turn, which usually means the kill is next.",
+    "posture": "disrupt_first",
+    "posture_why": "The combo happens at instant speed, so the enabler is the only safe thing to answer."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Consign to Memory",
+      "verdict": "SURVIVES",
+      "why": "Their Mystical Dispute taxes ours by three; it still counters Atraxa, Grand Unifier's enters trigger and Psychic Frog's draw trigger, which is what it is here for. Wrath of the Skies and their Teferi do not answer an instant already on the stack."
+    },
+    {
+      "card": "Mystical Dispute",
+      "verdict": "SURVIVES",
+      "why": "Their maindeck is blue in every protective slot - Force of Negation, Faithful Mending, Psychic Frog, Quantum Riddler - so ours costs one and theirs costs three against it. Nothing in their pulled board removes an instant from the stack."
+    },
+    {
+      "card": "Teferi, Time Raveler",
+      "verdict": "SURVIVES",
+      "why": "Their own Teferi, Time Raveler is legendary only per player, so both can be on the battlefield; nothing else in their pulled 2026-09-10 board removes a planeswalker, since Wrath of the Skies names artifacts, creatures and enchantments and the rest act on the stack."
+    }
+  ],
+  "card_names": [
+    "Goryo's Vengeance",
+    "Atraxa, Grand Unifier",
+    "Griselbrand",
+    "Faithful Mending",
+    "Psychic Frog",
+    "Force of Negation",
+    "Thoughtseize",
+    "Solitude",
+    "Prismatic Ending",
+    "Teferi, Time Raveler"
+  ]
+}

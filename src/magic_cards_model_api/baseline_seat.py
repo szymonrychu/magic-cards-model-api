@@ -642,6 +642,8 @@ _DEFAULTED_KINDS = frozenset(
         "scry",
         "surveil",
         "assign_combat_damage",
+        "choose_pile",
+        "choose_players",
     }
 )
 
@@ -698,6 +700,14 @@ def decide_body(pending: dict[str, Any], player: str) -> dict[str, Any]:
         body["life_amount"] = 0
     elif kind == "put_on_top_or_bottom":
         body["top"] = True
+    elif kind == "choose_pile":
+        # CR 700.3's pile primitive - neither pile is more "destructive" than
+        # the other (both name the same consequence), so this is
+        # `put_on_top_or_bottom`'s own arbitrary-but-consistent default:
+        # pile one, matching `machines/decisions.default_answer`.
+        body["pile_one"] = True
+    elif kind == "choose_players":
+        body["usernames"] = _choose_players_answer(pending)
     elif kind == "order_triggers":
         # CR 603.3b's "in any order they choose" with nobody choosing: the
         # order they triggered in.
@@ -778,6 +788,23 @@ def _choose_cards_answer(pending: dict[str, Any], cards: list[str]) -> list[str]
     if amount <= 0:
         return []
     return cards[len(cards) - amount :]
+
+
+def _choose_players_answer(pending: dict[str, Any]) -> list[str]:
+    """`_choose_cards_answer`'s own twin for `choose_players`
+    (CR 701.34a's own Proliferate player half), read off the public
+    `pending_decision` fields the identical way `machines/decisions
+    .default_answer` computes it off `Decision.players`/`.exact`/`.amount` -
+    no `default_cards`-shaped deviation exists for this kind."""
+    if not pending.get("exact", True):
+        # CR 107.1c's "any number": nobody at all is the least-destructive
+        # answer, matching `_choose_cards_answer`'s own reasoning.
+        return []
+    amount = int(pending.get("amount") or 0)
+    if amount <= 0:
+        return []
+    players = [str(username) for username in pending.get("players") or ()]
+    return players[len(players) - amount :]
 
 
 # -- the policy --------------------------------------------------------------

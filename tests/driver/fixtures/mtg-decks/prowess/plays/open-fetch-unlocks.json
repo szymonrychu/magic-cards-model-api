@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "id": "open-fetch-unlocks",
+  "name": "Crack a fetch on turn 1-2 for a land that unlocks a hand card",
+  "intent": "On turn 1 or 2, once open-land-unlocks has had first refusal, play a fetch from hand (Arid Mesa, Bloodstained Mire, Scalding Tarn, Wooded Foothills) and crack it for whatever library land would unlock some other hand card - a library Mountain unlocking Lightning Bolt, or a library Island-subtype dual (this deck runs no basic Island, only Steam Vents and Thundering Falls carry the subtype) unlocking Preordain. This play's own true key and the move's own play_land.card/activate.source selects now read unlocks_by_basic_search rather than the broader unlocks_by_search (item 4, 2026-09-14 review batch): this deck's own library carries no basic Island at all, so unlocks_by_basic_search can never be true for a blue-only need - Wooded Foothills or Bloodstained Mire (both of which also reach the deck's Mountain-subtype Steam Vents/Thundering Falls, not just a plain Mountain) still fire this play for a Mountain-based unlock, and a hand that needs blue and only has Scalding Tarn to reach it is served by the new open-fetch-unlocks-shock lane instead. The choose_cards pick's own prefer order gains a new first tier (item 5): subtypes_any:[Island] missing_from battlefield-by-subtype, ahead of BASIC - without it, the BASIC tier would grab a plain library Mountain over Steam Vents/Thundering Falls (both of which also carry the Mountain subtype, so a Mountain-searching fetch can reach either) even on a hand that specifically needed the blue the basic can never give, since this deck runs no basic Island for BASIC to ever ranking correctly on its own. Deviates from the spec's literal 'F search prefer: [Island] (Tarn)' on the outer play_land.card select: Scalding Tarn is this deck's only fetch that ever reaches blue, so unconditionally preferring it there would crack the deck's sole blue source even on a hand that only needs a Mountain-based unlock the other three fetches already cover for free - unlocks_by_basic_search's own narrowing plus the choose_cards tier above already steer correctly without it. No prefer tier is set on the outer card select at all; ties any then sorts by name, which favours Arid Mesa over Scalding Tarn whenever both would unlock something, and falls back to Scalding Tarn only when its own blue-only reach is what the unlock actually needs - the sole-route fetch is spent only when nothing else can substitute for it. Its own choose_cards pick prefers the missing-subtype tier first, then a basic, then a shockland, paying life only when the fetch's own find needs it. Stands down once open-land-unlocks would already fire, at 7 life or less, and once the library is down to 5 cards or fewer. Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 72,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": "<=",
+      "n": 7
+    },
+    {
+      "kind": "zone_size",
+      "zone": "library",
+      "side": "me",
+      "op": "<=",
+      "n": 5
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "unlocks_by_basic_search": true
+        },
+        "ties": "any"
+      }
+    },
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "tapped": false
+        },
+        "prefer": [
+          {
+            "unlocks_by_basic_search": true
+          }
+        ],
+        "ties": "any"
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "unlocks": true
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "subtypes_any": [
+                  "Island"
+                ],
+                "missing_from": {
+                  "zones": [
+                    "battlefield"
+                  ],
+                  "side": "me",
+                  "by": "subtype"
+                }
+              },
+              {
+                "supertypes_any": [
+                  "Basic"
+                ]
+              },
+              {
+                "oracle_has": "you may pay 2 life"
+              }
+            ],
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "pay_life",
+          "accept": true
+        }
+      ]
+    }
+  ],
+  "next": []
+}

@@ -16,6 +16,10 @@ def test_defaults_when_env_is_empty():
     assert s.webhook_retries == 3
     assert s.shared_secret == ""
     assert s.enable_all_mcp is True
+    # The post-game AI review's one-shot `claude --print` bound (`POST
+    # /v1/review`, `oneshot.py`) - separate from `turn_timeout`, which
+    # bounds the supervised interactive session's own turns.
+    assert s.review_timeout == 600.0
 
 
 def test_env_overrides_scalars_and_paths():
@@ -25,6 +29,7 @@ def test_env_overrides_scalars_and_paths():
             "MODEL": "sonnet",
             "WORKSPACE": "/tmp/ws",
             "TURN_TIMEOUT_SECONDS": "60",
+            "REVIEW_TIMEOUT_SECONDS": "45",
             "WRAPPER_SHARED_SECRET": "hunter2",
             "MCP_OVERLAY_DIR": "/etc/wrapper/mcp.d",
             "SKILLS_DIRS": "/templates/skills:/etc/wrapper/skills",
@@ -34,6 +39,7 @@ def test_env_overrides_scalars_and_paths():
     assert s.model == "sonnet"
     assert s.workspace == Path("/tmp/ws")
     assert s.turn_timeout == 60.0
+    assert s.review_timeout == 45.0
     assert s.shared_secret == "hunter2"
     assert s.mcp_overlay_dir == Path("/etc/wrapper/mcp.d")
     assert s.skills_dirs == [Path("/templates/skills"), Path("/etc/wrapper/skills")]

@@ -236,6 +236,7 @@ WITCH_FACES = [
         "mana_cost": "",
         "type_line": "Land",
         "oracle_text": "As this land enters, you may pay 3 life.",
+        "land_face": True,
     },
 ]
 
@@ -272,6 +273,197 @@ def test_a_double_faced_permanent_reads_its_computed_type_line_and_up_face_text(
     assert matches({"types_any": ["Land"]}, meadow)
     assert not matches({"types_any": ["Creature"]}, meadow)
     assert matches({"oracle_has": "pay 3 life"}, meadow)
+
+
+# -- land_face (O5) ----------------------------------------------------------
+
+#: Jwari Disruption // Jwari Ruins (ZNR modal double-faced card), real
+#: printed text (`magic-cards-model`'s `data/printings/jwari_disruption.
+#: json`) - O3/O5's selector tests take card text from the engine's real
+#: printings rather than invent it, so a fixture reads exactly what the
+#: engine would serialize.
+JWARI_FACES = [
+    {
+        "name": "Jwari Disruption",
+        "mana_cost": "{1}{U}",
+        "type_line": "Instant",
+        "oracle_text": "Counter target spell unless its controller pays {1}.",
+    },
+    {
+        "name": "Jwari Ruins",
+        "mana_cost": "",
+        "type_line": "Land",
+        "oracle_text": "This land enters tapped.\n{T}: Add {U}.",
+        "land_face": True,
+    },
+]
+
+
+def _jwari(zone: str) -> dict:
+    view = card("Jwari Disruption", type_line="Instant // Land", zone=zone, oracle_text=None)
+    view["card_name"] = "Jwari Disruption // Jwari Ruins"
+    view["faces"] = [dict(face) for face in JWARI_FACES]
+    return view
+
+
+def test_land_face_matches_an_mdfc_with_a_land_back_face_in_hand():
+    assert matches({"land_face": True}, _jwari("hand"))
+    assert matches({"land_face": True}, _dfc("hand", "Witch Enchanter"))
+
+
+def test_land_face_false_matches_a_card_with_no_land_face():
+    assert matches({"land_face": False}, bolt())
+    assert not matches({"land_face": True}, bolt())
+
+
+def test_a_plain_types_all_land_does_not_match_an_mdfc_whose_front_face_is_not_a_land():
+    assert not matches({"types_all": ["Land"]}, _jwari("hand"))
+    assert not matches({"types_all": ["Land"]}, _dfc("hand", "Witch Enchanter"))
+    selector = {"land_face": True, "types_all": ["Land"]}
+    assert not matches(selector, _jwari("hand")), "types_all still reads the up face"
+
+
+def test_land_face_matches_a_plain_land_too():
+    assert matches({"land_face": True}, fetchland())
+    assert matches({"land_face": True}, mountain())
+
+
+def test_land_face_does_not_match_a_transform_cards_land_back():
+    """O5's fix: only a modal double-faced card's face is marked `land_face`
+    - a transform card's land back (Treasure Map // Treasure Cove, real
+    printed text from `data/printings/treasure_map.json`) is reached only by
+    transforming (CR 712.2), never a land drop, so it must never match even
+    though its own face plainly types as a Land."""
+    view = card("Treasure Map", type_line="Artifact // Land", zone="hand", oracle_text=None)
+    view["card_name"] = "Treasure Map // Treasure Cove"
+    view["faces"] = [
+        {
+            "name": "Treasure Map",
+            "mana_cost": "{2}",
+            "type_line": "Artifact",
+            "oracle_text": (
+                "{1}, {T}: Scry 1. Put a landmark counter on this artifact. Then if there "
+                "are three or more landmark counters on it, remove those counters, "
+                "transform this artifact, and create three Treasure tokens. (They're "
+                'artifacts with "{T}, Sacrifice this token: Add one mana of any color.")'
+            ),
+        },
+        {
+            "name": "Treasure Cove",
+            "mana_cost": "",
+            "type_line": "Land",
+            "oracle_text": (
+                "(Transforms from Treasure Map.)\n{T}: Add {C}.\n"
+                "{T}, Sacrifice a Treasure: Draw a card."
+            ),
+        },
+    ]
+    assert not matches({"land_face": True}, view)
+    assert matches({"land_face": False}, view)
+
+
+# -- searches_for_any (O3) --------------------------------------------------------
+
+FETCH_TEMPLATE = (
+    "{T}, Pay 1 life, Sacrifice this land: Search your library for %s card, "
+    "put it onto the battlefield, then shuffle."
+)
+
+
+#: The machine-readable ability text `machines/keywords.py`'s
+#: `off_zone_abilities`/`_synthetic_ability` actually synthesizes for a
+#: typecycling keyword - not the printed reminder text, the expansion CR
+#: 702.29e means: `<cost>, Discard this card: Search your library for a
+#: <type> card, reveal it, and put it into your hand. Then shuffle.`
+def typecycling_ability(cost: str, type_name: str) -> str:
+    return (
+        f"{cost}, Discard this card: Search your library for a {type_name} card, "
+        f"reveal it, and put it into your hand. Then shuffle."
+    )
+
+
+def strand() -> dict[str, Any]:
+    # Flooded Strand: search for a Plains or Island card.
+    return card(
+        "Flooded Strand", type_line="Land", oracle_text=FETCH_TEMPLATE % "a Plains or Island"
+    )
+
+
+def delta() -> dict[str, Any]:
+    # Polluted Delta: search for an Island or Swamp card.
+    return card(
+        "Polluted Delta", type_line="Land", oracle_text=FETCH_TEMPLATE % "an Island or Swamp"
+    )
+
+
+def tarn() -> dict[str, Any]:
+    # Scalding Tarn: search for an Island or Mountain card.
+    return card(
+        "Scalding Tarn", type_line="Land", oracle_text=FETCH_TEMPLATE % "an Island or Mountain"
+    )
+
+
+def generous_ent() -> dict[str, Any]:
+    # Generous Ent's real printed text (magic-cards-model's data/printings/
+    # generous_ent.json): Reach, a Food-token ETB, and Forestcycling {1} -
+    # no attack trigger at all. The typecycling ability searches for a
+    # Forest card in hand; the engine synthesizes the machine-readable
+    # ability off the printed Forestcycling keyword
+    # (machines/keywords.py off_zone_abilities), so it is on `abilities`.
+    reach = "Reach"
+    food = (
+        "When this creature enters, create a Food token. (It's an artifact with "
+        '"{2}, {T}, Sacrifice this token: You gain 3 life.")'
+    )
+    reminder = (
+        "Forestcycling {1} ({1}, Discard this card: Search your library for a "
+        "Forest card, reveal it, put it into your hand, then shuffle.)"
+    )
+    ability = typecycling_ability("{1}", "Forest")
+    return card(
+        "Generous Ent",
+        type_line="Creature — Treefolk",
+        zone="hand",
+        oracle_text=f"{reach}\n{food}\n{reminder}",
+        abilities=(ability,),
+    )
+
+
+def expedition_map() -> dict[str, Any]:
+    # No basic land type is named at all - "a land card" is generic.
+    return card(
+        "Expedition Map",
+        type_line="Artifact",
+        oracle_text=(
+            "{2}, {T}, Sacrifice Expedition Map: Search your library for a land card, "
+            "reveal it, put it into your hand, then shuffle."
+        ),
+    )
+
+
+def test_searches_for_any_matches_dual_fetches():
+    assert matches({"searches_for_any": ["Plains", "Island"]}, strand())
+    assert matches({"searches_for_any": ["Island"]}, strand())
+    assert not matches({"searches_for_any": ["Forest"]}, strand())
+    assert matches({"searches_for_any": ["Swamp"]}, delta())
+    assert matches({"searches_for_any": ["Mountain"]}, tarn())
+
+
+def test_searches_for_any_matches_a_landcycling_ability_in_hand():
+    assert matches({"searches_for_any": ["Forest"]}, generous_ent())
+    assert not matches({"searches_for_any": ["Mountain"]}, generous_ent())
+
+
+def test_searches_for_any_does_not_match_a_generic_land_search():
+    ex_map = expedition_map()
+    for word in ("Plains", "Island", "Swamp", "Mountain", "Forest"):
+        assert not matches({"searches_for_any": [word]}, ex_map)
+
+
+def test_searches_for_any_combines_with_other_fields():
+    selector = {"types_all": ["Land"], "searches_for_any": ["Island"]}
+    assert matches(selector, strand())
+    assert not matches(selector, generous_ent()), "Generous Ent's front face is a Creature"
 
 
 # -- missing_from ----------------------------------------------------------------
@@ -384,3 +576,113 @@ def test_missing_from_over_my_own_library_reads_the_contents_and_needs_them():
 def test_a_selector_with_missing_from_cannot_be_matched_without_the_board():
     with pytest.raises(ValueError, match="missing_from"):
         matches(missing(), mountain())
+
+
+# -- enters_any (O4) --------------------------------------------------------------
+
+
+def test_enters_any_matches_the_hypothetical_facts_state():
+    land = mountain()
+    hypo = {land["id"]: {"enters": "untapped"}}
+    assert matches({"enters_any": ["untapped"]}, land, hypo=hypo)
+    assert not matches({"enters_any": ["tapped"]}, land, hypo=hypo)
+    assert matches({"enters_any": ["tapped", "untapped"]}, land, hypo=hypo)
+
+
+def test_enters_any_never_matches_a_card_absent_from_hypothetical_facts():
+    land = mountain()
+    assert not matches({"enters_any": ["untapped"]}, land, hypo={})
+
+
+def test_enters_any_without_hypothetical_facts_raises():
+    from magic_cards_model_api.playscripts.selectors import HypotheticalRequired
+
+    with pytest.raises(HypotheticalRequired):
+        matches({"enters_any": ["untapped"]}, mountain())
+
+
+# -- unlocks, unlocks_by_search (O7) -----------------------------------------------
+
+
+def test_unlocks_matches_the_hypothetical_facts_bool():
+    land = mountain()
+    assert matches({"unlocks": True}, land, hypo={land["id"]: {"unlocks": True}})
+    assert not matches({"unlocks": True}, land, hypo={land["id"]: {"unlocks": False}})
+    assert matches({"unlocks": False}, land, hypo={land["id"]: {"unlocks": False}})
+    assert not matches({"unlocks": True}, land, hypo={})
+
+
+def test_unlocks_by_search_matches_the_hypothetical_facts_bool():
+    spell = bolt()
+    hot = {spell["id"]: {"unlocks_by_search": True}}
+    cold = {spell["id"]: {"unlocks_by_search": False}}
+    assert matches({"unlocks_by_search": True}, spell, hypo=hot)
+    assert not matches({"unlocks_by_search": True}, spell, hypo=cold)
+    assert not matches({"unlocks_by_search": True}, spell, hypo={})
+
+
+def test_unlocks_by_basic_search_matches_the_hypothetical_facts_bool():
+    spell = bolt()
+    hot = {spell["id"]: {"unlocks_by_search": True, "unlocks_by_basic_search": True}}
+    shock_only = {spell["id"]: {"unlocks_by_search": True, "unlocks_by_basic_search": False}}
+    assert matches({"unlocks_by_basic_search": True}, spell, hypo=hot)
+    assert not matches({"unlocks_by_basic_search": True}, spell, hypo=shock_only)
+    assert not matches({"unlocks_by_basic_search": True}, spell, hypo={})
+
+
+def test_unlocks_without_hypothetical_facts_raises():
+    from magic_cards_model_api.playscripts.selectors import HypotheticalRequired
+
+    with pytest.raises(HypotheticalRequired):
+        matches({"unlocks": True}, mountain())
+    with pytest.raises(HypotheticalRequired):
+        matches({"unlocks_by_search": True}, bolt())
+    with pytest.raises(HypotheticalRequired):
+        matches({"unlocks_by_basic_search": True}, bolt())
+
+
+# -- affordable (O7, item 3: castable_now too) ------------------------------------
+
+
+def test_affordable_compares_mana_value_to_untapped_mana_plus_extra():
+    spell = bolt()  # mana_value 1.0
+    hypo = {spell["id"]: {"castable_now": True}}
+    assert matches({"affordable": {"extra": 0}}, spell, untapped_mana=1, hypo=hypo)
+    assert not matches({"affordable": {"extra": 0}}, spell, untapped_mana=0, hypo=hypo)
+    assert matches({"affordable": {"extra": 1}}, spell, untapped_mana=0, hypo=hypo)
+
+
+def test_affordable_without_a_mana_value_never_matches():
+    land = mountain()  # mana_value 0.0 by the testkit default, but a land has none in play
+    no_mv = dict(land, mana_value=None)
+    hypo = {no_mv["id"]: {"castable_now": True}}
+    assert not matches({"affordable": {"extra": 5}}, no_mv, untapped_mana=5, hypo=hypo)
+
+
+def test_affordable_with_no_untapped_mana_given_never_matches():
+    spell = bolt()
+    hypo = {spell["id"]: {"castable_now": True}}
+    assert not matches({"affordable": {"extra": 5}}, spell, hypo=hypo)
+
+
+def test_affordable_with_no_legal_target_never_matches():
+    """Item 3: a 1-drop with no legal target (Fatal Push with no opposing
+    creature) must not count as affordable even though its mana value fits -
+    `castable_now` (from `hypothetical_facts.py`, `legal_actions`'s own
+    target candidates) is read alongside the mana comparison."""
+    spell = bolt()
+    assert not matches(
+        {"affordable": {"extra": 0}},
+        spell,
+        untapped_mana=1,
+        hypo={spell["id"]: {"castable_now": False}},
+    )
+    assert not matches({"affordable": {"extra": 0}}, spell, untapped_mana=1, hypo={})
+
+
+def test_affordable_without_hypothetical_facts_raises():
+    from magic_cards_model_api.playscripts.selectors import HypotheticalRequired
+
+    spell = bolt()
+    with pytest.raises(HypotheticalRequired):
+        matches({"affordable": {"extra": 0}}, spell, untapped_mana=1)

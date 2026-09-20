@@ -228,5 +228,14 @@ def configured_database_url(env: Mapping[str, str] | None = None) -> str | None:
 def make_engine(database_url: str) -> Engine:
     """One `Engine` for `database_url` - `future=True` is the 2.0-style
     default already, kept explicit since this is the one place a repository
-    instance's connection pool gets born."""
-    return create_engine(database_url, future=True)
+    instance's connection pool gets born.
+
+    `pool_pre_ping=True`: a repository built here is built once and kept for
+    the process's whole lifetime (`store.py`'s own pattern), so a pooled
+    connection can easily outlive the far side of it - Postgres closing an
+    idle connection, or a proxy in front of it dropping one. Without a
+    pre-ping the pool only discovers that on the request that gets handed
+    the dead connection, surfacing as a request failure; the pre-ping tests
+    each connection with a cheap round trip before handing it out and
+    transparently gets a fresh one instead."""
+    return create_engine(database_url, future=True, pool_pre_ping=True)

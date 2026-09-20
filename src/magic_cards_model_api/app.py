@@ -54,6 +54,7 @@ from . import (
 )
 from .action_rows import legal_action_rows
 from .board_scope import read_on_one_board
+from .playscripts.hypothetical_facts import build_hypothetical_facts
 from .repository import RECENT_RECORDS_WINDOW, ArchivedGame, GameUnloadable
 from .repository_postgres import VersionConflict
 from .schemas import (
@@ -67,6 +68,8 @@ from .schemas import (
     AdviceIn,
     AdviceResponse,
     AffordancesResponse,
+    AiReviewIn,
+    AiReviewResponse,
     AttackRequest,
     CardLookupResponse,
     CardNamesResponse,
@@ -88,6 +91,7 @@ from .schemas import (
     GameStateView,
     GameSummariesResponse,
     HealthResponse,
+    HypotheticalFactsResponse,
     LegalActionsResponse,
     ListGamesResponse,
     ManaPoolUpdate,
@@ -228,6 +232,19 @@ def _missing_plan(_: Request, exc: records.MissingPlan) -> JSONResponse:
     return JSONResponse(
         status_code=422,
         content={"detail": [{"loc": ["body", "plan"], "msg": str(exc), "type": "missing"}]},
+    )
+
+
+@app.exception_handler(records.OwnTurnInProgress)
+def _own_turn_in_progress(_: Request, exc: records.OwnTurnInProgress) -> JSONResponse:
+    """409 with `code: own_turn_in_progress`: `for_turn: "next"` was given
+    while the declaring seat's own turn is already under way. The same
+    coded-409 shape `ScriptsDisabled` gets - `allowed`/`reason` are the
+    refusal shape `seatkit._normalise_non_2xx` hands on unchanged, and `code`
+    is what a runner branches on rather than this sentence."""
+    return JSONResponse(
+        status_code=409,
+        content={"detail": str(exc), "allowed": False, "reason": str(exc), "code": exc.code},
     )
 
 
@@ -1370,6 +1387,55 @@ def get_game(game_id: str, uid: str | None = None, include: str | None = None) -
     viewer = visibility.resolve_viewer(game_id, uid)
     view = state_view(game, game_id, include_contents="contents" in included)
     return visibility.redact_view(view, viewer)
+
+
+@app.get(
+    "/api/games/{game_id}/playscripts/hypothetical-facts",
+    response_model=HypotheticalFactsResponse,
+    response_model_exclude_unset=True,
+)
+def get_hypothetical_facts(game_id: str, uid: str | None = None) -> dict[str, Any]:
+    """O4's `enters_any` and O7's `unlocks`/`unlocks_by_search`/
+    `unlocks_by_basic_search`: everything a play's selectors can ask about
+    `uid`'s own hand and library lands and cards, computed once against the
+    live game (`hypothetical_facts.build_hypothetical_facts`) rather than
+    read off a polled view.
+
+    Only a real seat may ask - `uid` must resolve to one of this game's own
+    players, never the admin key and never nobody, since a fact here is
+    always "what would happen for this specific player", and every engine
+    call this makes (`predict_enters`/`payability`/`payability_matrix`, in
+    `hypothetical_facts.py`) already refuses a card outside that player's own
+    hand or library, so nothing about an opponent's cards is ever computed
+    or returned - not merely redacted after the fact, as `get_game`'s view
+    is, but never asked about in the first place.
+
+    A pending `choose_cards` decision for `uid` itself (a fetch's own search,
+    CR 701.23a) gets one thing more: `enters`/`unlocks` facts for every id
+    that decision's own `cards` offers, library lands included - never for
+    any other library card, and never anything about the library's order.
+    Read straight off the live paused command (`store.paused_command`, the
+    same source `serialize.state_view`'s own `pending_decision` reads) rather
+    than off a fetched view, so this never asks for a decision belonging to
+    another player or of any other kind. With no such decision pending, or
+    one pending for someone else, this withholds every library card's facts
+    exactly as before.
+
+    Meant to be called sparingly: `conditions.needs_hypothetical` tells a
+    caller when a play's conditions need this at all, and the runtime caches
+    the answer until the board changes rather than calling this once per
+    judgement of every script it checks."""
+    game = game_or_404(game_id)
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if not isinstance(viewer, str):
+        raise KeyError("that uid is no seat in this game")
+    candidate_ids = None
+    paused = store.paused_command(game_id)
+    if paused is not None:
+        decision = paused[2].decision
+        if decision.player == viewer and decision.kind is DecisionKind.CHOOSE_CARDS:
+            candidate_ids = frozenset(str(c) for c in decision.cards)
+    return build_hypothetical_facts(game, viewer, candidate_ids=candidate_ids)
 
 
 @app.get(
@@ -2715,11 +2781,13 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
         game_id, "pass_priority", req.expected_seq, player=req.player, reasoning=req.reasoning
     )
     records.require_reasoning(game_id, req.player, req.reasoning, pass_shaped=True)
-    # Exempt from `reasoning`, NOT from the plan: passing can perfectly well
-    # be the first thing a seat does on its own turn, and "I had nothing to
-    # do this turn" is a claim a reviewer should be able to check against a
-    # plan that was declared before it.
-    records.require_plan(game_id, req.player)
+    # Exempt from `reasoning` always, and from the plan itself ONLY in the
+    # beginning phase (`pass_shaped=True` - upkeep and draw, see `records.
+    # require_plan`'s own docstring): passing in a main phase, combat, or
+    # the end step can perfectly well be the first thing a seat does on its
+    # own turn, and "I had nothing to do this turn" is a claim a reviewer
+    # should be able to check against a plan that was declared before it.
+    records.require_plan(game_id, req.player, pass_shaped=True)
     try:
         result, _, legal_before, seq_hint = _run_command(game_id, "pass_priority", req)
     except ValueError as exc:  # not this player's decision to make
@@ -3130,17 +3198,47 @@ def declare_plan(game_id: str, req: DeclarePlanIn) -> dict[str, Any]:
 
     Nothing stops a human seat declaring a plan; the gate only *requires* one
     of an agent seat (`records.require_plan`).
+
+    **`for_turn: "next"` plans ahead** (`schemas.DeclarePlanIn.for_turn`):
+    called while it is NOT this seat's own turn, the row is written against
+    the turn `records.next_own_turn` computes - this seat's own next turn,
+    CR 500.7 extra turns skipped over exactly as a real game would skip
+    them - rather than the turn under way right now. `declared_turns_taken`
+    records what `turns_taken` stood at the moment of declaring, beside the
+    `turns_taken` the row is actually filed under, so the ledger shows both
+    without ambiguity. `for_turn: "next"` while this seat's own turn is
+    already in progress is refused - `records.OwnTurnInProgress`, 409.
     """
     game = game_or_404(game_id)
     if store.player_for_uid(game_id, req.uid) != req.player:
         raise KeyError("that uid is not that seat in this game")
     game.player(req.player)  # 400 for a player who is not in this game at all
     turn = game.turn
+    declared_at = turn.turns_taken if turn is not None else None
+    if req.for_turn == "next":
+        target = records.next_own_turn(game, req.player)  # OwnTurnInProgress -> 409
+        plan_turns_taken: int | None = target.turns_taken
+        response_turn_number: int | None = target.turn_number
+    else:
+        plan_turns_taken = declared_at
+        response_turn_number = turn.turn_number if turn is not None else None
     seq = audit.record(
         game_id,
         audit.PLAN_ACTION,
         player=req.player,
-        turns_taken=turn.turns_taken if turn is not None else None,
+        turns_taken=plan_turns_taken,
+        # The turn this row is ABOUT, never the turn it was written in - the
+        # two diverge exactly for `for_turn: "next"`. `audit.record` still
+        # stamps the row's own top-level `turn`/`step`/`phase` from the live
+        # board, honestly recording when the declaration was made; this is
+        # the separate fact `review.py`'s `_declarations` and `ui/review_
+        # model.js`'s `reviewTurns` read to attribute the row to its target
+        # turn wherever it is displayed or grouped, in a 3+ player game where
+        # `turn_number` can otherwise land the row in a different player's
+        # turn entirely (a live-game repro, 2026-09-14).
+        turn_number=response_turn_number,
+        for_turn=req.for_turn,
+        declared_turns_taken=declared_at,
         board_read=req.board_read,
         my_role=req.my_role,
         plan=req.plan,
@@ -3150,7 +3248,8 @@ def declare_plan(game_id: str, req: DeclarePlanIn) -> dict[str, Any]:
         "declared": True,
         "log_seq": seq,
         "player": req.player,
-        "turn_number": turn.turn_number if turn is not None else None,
+        "turn_number": response_turn_number,
+        "for_turn": req.for_turn,
     }
 
 
@@ -3196,6 +3295,10 @@ def record_advice(game_id: str, req: AdviceIn, uid: str | None = None) -> dict[s
     uid to its human's username), the seat itself, or the admin key. A
     proposal names hidden information, so nobody else may write one into that
     seat's name - the same rule, and the same 404, `declare_plan` enforces.
+
+    `req.drafted_at_seq` (S2 A6) rides straight into `detail` unexamined - it
+    is a metrics-only marker of when a staged draft was captured, and nothing
+    here reads it back.
     """
     game = game_or_404(game_id)
     viewer = visibility.resolve_viewer(game_id, uid)
@@ -3219,6 +3322,7 @@ def record_advice(game_id: str, req: AdviceIn, uid: str | None = None) -> dict[s
         based_on_seq=based_on_seq,
         validated=req.validated,
         legal_actions_before=legal_before,
+        drafted_at_seq=req.drafted_at_seq,
     )
     return {
         "proposed": True,
@@ -3348,6 +3452,59 @@ def declare_reflection(game_id: str, req: ReflectionIn) -> dict[str, Any]:
     seq = audit.record(
         game_id,
         audit.REFLECTION_ACTION,
+        player=req.player,
+        text=req.text,
+    )
+    return {"recorded": True, "log_seq": seq, "player": req.player}
+
+
+@app.post(
+    "/api/games/{game_id}/ai-review",
+    response_model=AiReviewResponse,
+    response_model_exclude_unset=True,
+)
+def declare_ai_review(game_id: str, req: AiReviewIn) -> dict[str, Any]:
+    """File the post-game AI review (`mtg_agent.driver.review`, run on Opus
+    from a seat's own reflection plus the game's review record) -
+    `audit.AI_REVIEW_ACTION`, a row entirely separate from
+    `audit.REFLECTION_ACTION`.
+
+    Mirrors `declare_reflection` exactly: same gate (post-game only, against
+    `store.archived` so a soft-deleted lobby game still accepts one), same
+    uid-owns-seat check, same "mutates no `Game`" shape. See that route's
+    docstring for the reasoning; nothing here differs beyond which action
+    the row is filed under and whose words it carries.
+
+    **One check `declare_reflection` does not need: `req.player` must be a
+    registered AI seat of this game (`archived.ai_players`).** A reflection
+    is legitimately a human's own words about their own game; an AI review
+    is never that - it is only ever the output of an AI seat's own driver
+    critiquing that seat's play, so a human's own uid (which genuinely opens
+    their own seat, and would otherwise pass the check above) must not be
+    able to file one in anybody's name. Without this a human player could
+    forge a review of themselves or of their opponent, since the uid check
+    alone only proves "this credential speaks for this seat", not "this
+    seat is the kind that ever calls this route" - the same distinction
+    `AiReviewIn`'s docstring draws in words."""
+    archived = store.archived(game_id)
+    if archived is None:
+        raise KeyError(f"no game {game_id}")
+    if archived.seat_uids.get(req.uid) != req.player:
+        raise KeyError("that uid is not that seat in this game")
+    if req.player not in archived.ai_players:
+        raise KeyError("that seat is not an AI seat in this game")
+    if not _post_game(archived, _gate_entries(archived)):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "this game is still in progress - the AI review is written "
+                "after the result is known, so it cannot be filed for a "
+                "game that has not ended"
+            ),
+        )
+    seq = audit.record(
+        game_id,
+        audit.AI_REVIEW_ACTION,
         player=req.player,
         text=req.text,
     )
@@ -3723,6 +3880,20 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["top"] = req.top
+    elif kind is DecisionKind.CHOOSE_PILE:
+        # CR 700.3's pile primitive - a plain boolean, the same shape
+        # `PUT_ON_TOP_OR_BOTTOM` already is: `True` for pile one
+        # (`pending_decision.cards`), `False` for its complement.
+        try:
+            answer_value = decisions.pile_answer(req.pile_one)
+        except ValueError as exc:
+            return refuse(str(exc), **detail)
+        detail["pile_one"] = req.pile_one
+    elif kind is DecisionKind.CHOOSE_PLAYERS:
+        # CR 701.34a's own Proliferate player half - `CHOOSE_CARDS`'s own
+        # twin over usernames rather than card ids.
+        answer_value = decisions.usernames_answer(req.usernames)
+        detail["usernames"] = req.usernames
     elif kind in (DecisionKind.SCRY, DecisionKind.SURVEIL):
         try:
             answer_value = decisions.card_split_answer(req.moved, req.top_order)

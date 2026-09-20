@@ -26,7 +26,14 @@ from uuid import UUID
 
 import pytest
 from conftest import add_card
+from magic_cards_model.machines.combat import KeywordLineNotice
+from magic_cards_model.machines.effects import (
+    LayerRemainderNotice,
+    SearchDescriptionNotice,
+    UnreadableCounterAmountNotice,
+)
 from magic_cards_model.machines.opening_hand import OpeningHandNotice
+from magic_cards_model.machines.replacement import UnreadableCopyExceptionNotice
 from magic_cards_model.machines.triggers import TargetingNotice, TargetingNoticeKind
 from magic_cards_model.models import Game, Zone
 
@@ -322,6 +329,224 @@ def test_an_opening_hand_notice_is_captured_as_hand_with_no_controller(monkeypat
     assert notice["kind"] == "opening_hand_notices"
     assert notice["zone"] == "hand"
     assert notice["controller"] is None
+
+
+def test_a_layer_remainder_notice_reaches_the_seats_own_result(monkeypatch, client, game):
+    """`LayerRemainderNotice` (the Reality Fracture bump, engine 03a891c) is
+    `Game`'s newest fail-closed list - `_compose_layer_effect_with_remainder`
+    records it when a resolving spell's layer effect reads fine but a sibling
+    sentence beside it (Academic Ascent's own "Empower Jace 2.") does not,
+    the same "unreadable is not the same as no effect" record every other
+    list already keeps. `commands._NOTICE_LIST_NAMES` has to name the field
+    for `_new_notices`'s generic diff to ever see one - this is the
+    regression test for that wiring, built the same white-box way
+    `test_a_notice_naming_a_card_in_hand_is_captured_with_that_zone_and_controller`
+    proves `targeting_notices`'s own capture, since no printing in the pool
+    is guaranteed to stay unreadable as the engine's own parsers keep
+    improving."""
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    live = store.get(game)
+    bears = next(
+        state for state in live.shared_zones[Zone.BATTLEFIELD] if state.name == "Grizzly Bears"
+    )
+
+    def _probe(g: Game, payload: dict) -> dict:
+        g.layer_remainder_notices.append(
+            LayerRemainderNotice(
+                source_id=bears.id, source_name="Grizzly Bears", text="Empower Jace 2."
+            )
+        )
+        return {}
+
+    monkeypatch.setitem(commands.COMMAND_HANDLERS, "test_layer_remainder_probe", _probe)
+    result = run_command(live, Command(kind="test_layer_remainder_probe", payload={}))
+
+    assert result.status is RunStatus.COMPLETED
+    (notice,) = result.outcome["notices"]
+    assert notice["kind"] == "layer_remainder_notices"
+    assert notice["text"] == "Empower Jace 2."
+    assert notice["zone"] == "battlefield"
+    assert notice["controller"] == "alice"
+
+
+# -- the four notice lists that predated the Reality Fracture bump but were --
+# -- never wired into commands._NOTICE_LIST_NAMES at all ---------------------
+
+
+def test_a_search_description_notice_reaches_the_seats_own_result(monkeypatch, client, game):
+    """`SearchDescriptionNotice` (Moonsilver Key's "an artifact card with a
+    mana ability" - CR 701.23a's description the engine cannot read, so the
+    search does not run at all) predates this bump but was never named in
+    `commands._NOTICE_LIST_NAMES` - a live search silently refused with no
+    record anywhere this api surfaces. Built the same white-box way
+    `test_a_layer_remainder_notice_reaches_the_seats_own_result` proves
+    `layer_remainder_notices`'s own capture."""
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    live = store.get(game)
+    bears = next(
+        state for state in live.shared_zones[Zone.BATTLEFIELD] if state.name == "Grizzly Bears"
+    )
+
+    def _probe(g: Game, payload: dict) -> dict:
+        g.search_description_notices.append(
+            SearchDescriptionNotice(
+                source_id=bears.id,
+                source_name="Grizzly Bears",
+                text="an artifact card with a mana ability",
+            )
+        )
+        return {}
+
+    monkeypatch.setitem(commands.COMMAND_HANDLERS, "test_search_description_probe", _probe)
+    result = run_command(live, Command(kind="test_search_description_probe", payload={}))
+
+    assert result.status is RunStatus.COMPLETED
+    (notice,) = result.outcome["notices"]
+    assert notice["kind"] == "search_description_notices"
+    assert notice["text"] == "an artifact card with a mana ability"
+    assert notice["zone"] == "battlefield"
+    assert notice["controller"] == "alice"
+
+
+def test_an_unreadable_copy_exception_notice_reaches_the_seats_own_result(
+    monkeypatch, client, game
+):
+    """`UnreadableCopyExceptionNotice` (Mockingbird's "... and it has flying"
+    copy-exception tail, CR 707.9b) - the permanent enters as itself rather
+    than guessing the exception, and this is the only record of why."""
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    live = store.get(game)
+    bears = next(
+        state for state in live.shared_zones[Zone.BATTLEFIELD] if state.name == "Grizzly Bears"
+    )
+
+    def _probe(g: Game, payload: dict) -> dict:
+        g.unreadable_copy_exception_notices.append(
+            UnreadableCopyExceptionNotice(
+                source_id=bears.id, source_name="Grizzly Bears", text="... and it has flying"
+            )
+        )
+        return {}
+
+    monkeypatch.setitem(commands.COMMAND_HANDLERS, "test_unreadable_copy_exception_probe", _probe)
+    result = run_command(live, Command(kind="test_unreadable_copy_exception_probe", payload={}))
+
+    assert result.status is RunStatus.COMPLETED
+    (notice,) = result.outcome["notices"]
+    assert notice["kind"] == "unreadable_copy_exception_notices"
+    assert notice["text"] == "... and it has flying"
+    assert notice["zone"] == "battlefield"
+    assert notice["controller"] == "alice"
+
+
+def test_an_unreadable_counter_amount_notice_reaches_the_seats_own_result(
+    monkeypatch, client, game
+):
+    """`UnreadableCounterAmountNotice` - a "put a number of counters equal to
+    <expr>" whose expression this wave cannot evaluate, so no counters are
+    placed at all (a fail-closed skip) rather than a guessed amount."""
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    live = store.get(game)
+    bears = next(
+        state for state in live.shared_zones[Zone.BATTLEFIELD] if state.name == "Grizzly Bears"
+    )
+
+    def _probe(g: Game, payload: dict) -> dict:
+        g.unreadable_counter_amount_notices.append(
+            UnreadableCounterAmountNotice(
+                source_id=bears.id,
+                source_name="Grizzly Bears",
+                text="put a number of +1/+1 counters on it equal to the difference",
+                expression="the difference",
+            )
+        )
+        return {}
+
+    monkeypatch.setitem(commands.COMMAND_HANDLERS, "test_unreadable_counter_amount_probe", _probe)
+    result = run_command(live, Command(kind="test_unreadable_counter_amount_probe", payload={}))
+
+    assert result.status is RunStatus.COMPLETED
+    (notice,) = result.outcome["notices"]
+    assert notice["kind"] == "unreadable_counter_amount_notices"
+    assert notice["expression"] == "the difference"
+    assert notice["zone"] == "battlefield"
+    assert notice["controller"] == "alice"
+
+
+def test_a_keyword_line_notice_reaches_the_seats_own_result(monkeypatch, client, game):
+    """`KeywordLineNotice` (Extinguisher Battleship's conditional "5+ |
+    Flying, trample" - CR 721.2a) records which tokens on a computed ability
+    line matched no keyword in the reading vocabulary, rather than granting
+    the ones that did and silently dropping the rest."""
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    live = store.get(game)
+    bears = next(
+        state for state in live.shared_zones[Zone.BATTLEFIELD] if state.name == "Grizzly Bears"
+    )
+
+    def _probe(g: Game, payload: dict) -> dict:
+        g.keyword_line_notices.append(
+            KeywordLineNotice(
+                source_id=bears.id,
+                source_name="Grizzly Bears",
+                text="5+ | Flying, trample",
+                unread=("5+",),
+            )
+        )
+        return {}
+
+    monkeypatch.setitem(commands.COMMAND_HANDLERS, "test_keyword_line_probe", _probe)
+    result = run_command(live, Command(kind="test_keyword_line_probe", payload={}))
+
+    assert result.status is RunStatus.COMPLETED
+    (notice,) = result.outcome["notices"]
+    assert notice["kind"] == "keyword_line_notices"
+    assert notice["unread"] == ["5+"]
+    assert notice["zone"] == "battlefield"
+    assert notice["controller"] == "alice"
+
+
+def test_every_game_notice_list_is_wired() -> None:
+    """The drift guard for `commands._NOTICE_LIST_NAMES`, mirroring
+    `test_decision_kinds.py`'s `test_every_decision_kind_is_answerable`:
+    reflects over every field `Game` itself declares and requires each
+    `list[<...Notice>]` field - one of the engine's own fail-closed records,
+    `models/game.py`'s own naming convention for every one of them - to be
+    named in `commands._NOTICE_LIST_NAMES`.
+
+    This is the regression test for the exact shape of gap that let
+    `search_description_notices`, `unreadable_copy_exception_notices`,
+    `unreadable_counter_amount_notices`, and `keyword_line_notices` sit
+    unwired: each was a real notice list `Game` already populated, appended
+    to and never cleared like every other one, and nothing anywhere in this
+    api's test suite failed until now - `_new_notices`'s generic diff simply
+    never looked at those four fields, so a live seat's own refusal there
+    never reached a `decide` response, `GET .../log`, or an agent's
+    `notices` read. `continuous_effects.layer_notices` is deliberately not
+    swept here - it lives one field down, on `ContinuousEffects` rather than
+    `Game` itself, so it never appears in `Game`'s own field reflection, and
+    `commands.py`'s own `_LAYER_NOTICE_KIND` already handles it by hand."""
+    from typing import get_args, get_origin, get_type_hints
+
+    hints = get_type_hints(Game)
+    notice_fields = {
+        name
+        for name, hint in hints.items()
+        if get_origin(hint) is list
+        and get_args(hint)
+        and isinstance(get_args(hint)[0], type)
+        and get_args(hint)[0].__name__.endswith("Notice")
+    }
+    assert notice_fields, "the reflection itself found nothing - the guard would pass vacuously"
+    missing = notice_fields - set(commands._NOTICE_LIST_NAMES)
+    assert not missing, (
+        f"Game field(s) {sorted(missing)} are fail-closed notice lists (their "
+        f"item type's name ends in 'Notice') but are not named in "
+        f"commands._NOTICE_LIST_NAMES, so _new_notices's generic diff never sees "
+        f"an entry appended to one of them - a live seat's own refusal there "
+        f"never reaches a decide response, GET .../log, or an agent's own read. "
+        f"Fix: add the field name to _NOTICE_LIST_NAMES."
+    )
 
 
 # -- reaching an AI seat ------------------------------------------------------

@@ -10,6 +10,9 @@ def test_create_game(client, game):
     assert state["active_player"] == "alice"
     assert state["priority_holder"] == "alice"
     assert state["turn_number"] == 1
+    # S1 review fix 3: `turns_taken` counts every turn including extra ones
+    # (CR 500.7), unlike `turn_number`, which counts rounds of the table.
+    assert state["turns_taken"] == 1
 
 
 def test_create_game_with_custom_start(client):

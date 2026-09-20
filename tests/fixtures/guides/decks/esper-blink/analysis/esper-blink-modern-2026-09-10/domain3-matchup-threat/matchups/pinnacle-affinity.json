@@ -1,0 +1,105 @@
+{
+  "name": "pinnacle affinity",
+  "meta_share": 3.1543372136687946,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.4278,
+  "winrate_basis": {
+    "kind": "data",
+    "n": 88,
+    "source": "statistics_matchups(format=modern, archetype_a='esper blink', limit=60), committed verbatim at .protocol/raw-matchups.json; row opponent='pinnacle affinity' winrate=0.4278 over sample_size=88 matches. This is the lowest number the capture records against any archetype in this boarding field"
+  },
+  "primary_gameplan": "Wrath of the Skies is the sweeper their deck is built to lose to: Mox Opal, Springleaf Drum, Mishra's Bauble, Welding Jar and the Urza's Saga Construct are all mana value one or less, so X=1 takes the board apart while leaving Overlord of the Balemurk alive. White Orchid Phantom destroys Urza's Saga before it makes anything.",
+  "secondary_gameplan": "Clarion Conqueror shuts off Mox Opal's mana ability and Urza's Saga's Construct-making chapter ability at once, and Witch Enchanter is four maindeck copies of destroy target artifact that Phelia re-triggers every attack.",
+  "opponent_gameplan": "Mox Opal, Springleaf Drum and Mishra's Bauble make the mana free, Urza's Saga tutors a zero- or one-mana artifact and makes a Construct that scales with the board, and Kappa Cannoneer turns into an unblockable ward-4 threat that grows on every artifact. Weapons Manufacturing and Pinnacle Emissary are the payoff, and Metallic Rebuke is countermagic their own artifacts help pay for. Post-board Galvanic Blast kills anything of ours for one mana with metalcraft on, and Consign to Memory counters our enters triggers.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Consign to Memory",
+      "count": 3,
+      "why": "10 of 10 pulled 2026-09-10 sideboards; counters the enters triggers our removal and value both run on",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    },
+    {
+      "card": "Galvanic Blast",
+      "count": 3,
+      "why": "10 of 10 pulled sideboards; four damage for one mana with metalcraft, which kills every creature in our list bar Overlord",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    },
+    {
+      "card": "Whipflare",
+      "count": 1,
+      "why": "10 of 10 pulled sideboards; two damage to each nonartifact creature, which is all of ours and none of theirs",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    },
+    {
+      "card": "Damping Sphere",
+      "count": 2,
+      "why": "10 of 10 pulled sideboards; each spell costs more for each other spell cast that turn, taxing the Ephemerate turns",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Their deck is the one place in the field where a static lock on activated abilities and a cheap symmetrical sweeper both bite: Mox Opal and Springleaf Drum are activated mana abilities, and Wrath of the Skies at X=1 answers seven or more permanents at once. Conqueror taxes our own planeswalkers, which is why the stance is symmetric, and their recorded 0.4278 is the worst number this pass measured.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Free mana into Kappa Cannoneer and an Urza's Saga Construct puts a large unblockable body down early, so the game is a clock rather than a grind.",
+    "key_cards": [
+      {
+        "card": "Kappa Cannoneer",
+        "why": "Named verbatim in opponent_gameplan; ward 4 and unblockable on every artifact trigger makes it nearly unanswerable once resolved"
+      },
+      {
+        "card": "Urza's Saga",
+        "why": "Named verbatim in opponent_gameplan; a land that makes a scaling Construct and then tutors the cheap artifact they are missing"
+      },
+      {
+        "card": "Galvanic Blast",
+        "why": "One mana for four damage with metalcraft, which answers every blocker we can deploy",
+        "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+      },
+      {
+        "card": "Whipflare",
+        "why": "Two damage to each nonartifact creature is one-sided against our entirely nonartifact board",
+        "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Two lands and a white source with a turn-two or turn-three interactive card.",
+    "goldfish_for": "Wrath of the Skies at X=1 on turn three, before Kappa Cannoneer lands.",
+    "watch_for": "Metalcraft coming on, which turns Galvanic Blast into four damage.",
+    "posture": "disrupt_first",
+    "posture_why": "This is the worst recorded matchup in the field, so break the mana before racing."
+  },
+  "survives_opposing_board": [
+    {
+      "card": "Wrath of the Skies",
+      "verdict": "SURVIVES",
+      "why": "Consign to Memory counters a triggered ability or a colorless spell and Wrath of the Skies is a white sorcery, so their most-played answer does not apply. At X=1 it destroys Mox Opal, Springleaf Drum, Mishra's Bauble, Welding Jar and the Urza's Saga Construct together."
+    },
+    {
+      "card": "Clarion Conqueror",
+      "verdict": "SURVIVES",
+      "why": "Galvanic Blast with metalcraft on deals four and kills it; Whipflare deals two and a 3/3 Conqueror survives it, which is why this is the better of the two bodies to resolve here. Either way that is removal rather than a structural blank, and the static ability stops Mox Opal, Pithing Needle and the Urza's Saga Construct ability from the moment it lands."
+    },
+    {
+      "card": "White Orchid Phantom",
+      "verdict": "SURVIVES",
+      "why": "Whipflare kills the body, but the enters trigger has already destroyed Urza's Saga or Spirebluff Canal, and the basic Island they may fetch does not replace a Saga. Nothing in their pulled board stops the trigger itself."
+    }
+  ],
+  "card_names": [
+    "Kappa Cannoneer",
+    "Urza's Saga",
+    "Mox Opal",
+    "Mishra's Bauble",
+    "Weapons Manufacturing",
+    "Pinnacle Emissary",
+    "Metallic Rebuke",
+    "Engineered Explosives",
+    "Emry, Lurker of the Loch",
+    "Tormod's Crypt"
+  ],
+  "self_cost": "Clarion Conqueror stops activated abilities of artifacts, creatures and planeswalkers on both sides, so our two Teferi, Time Raveler keep only their static ability and Emperor of Bones' adapt stops working. Emperor is boarded out here in both modes, so Teferi is the whole cost, and it is worth paying because Mox Opal and the Urza's Saga Construct are both activated."
+}

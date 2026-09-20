@@ -1,0 +1,141 @@
+{
+  "name": "living end",
+  "meta_share": 3.0792339466766805,
+  "meta_basis": {
+    "kind": "current"
+  },
+  "winrate": 0.6111,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='eldrazi tron', limit=60), committed verbatim at .protocol/raw-matchups.json; the deduplicated row for opponent='living end' reads winrate 0.6111 over sample_size 46 matches, and archetype_a is eldrazi tron so it is our winrate read directly rather than a complement.",
+    "n": 46
+  },
+  "primary_gameplan": "Chalice of the Void on zero is a hard lock on their deck: Living End has no printed mana cost, so it is mana value zero, and a cascade cast is still a cast. Fetch it first and the three copies in their 75 stop resolving.",
+  "secondary_gameplan": "Trinisphere makes the free Living End cost three, which their cascade turn cannot pay; Disruptor Flute naming Living End taxes it by another three and The Stone Brain exiles all of them from hand, graveyard and library outright.",
+  "opponent_gameplan": "All ten committed 2026-09-10 lists are the classic cascade shell: four Street Wraith, four Generous Ent and the evoke Incarnations cycle bodies into the graveyard for one or two turns, then Violent Outburst or Shardless Agent cascades into Living End, which reads 'Each player exiles all creature cards from their graveyard, then sacrifices all creatures they control, then puts all cards they exiled this way onto the battlefield'. Force of Negation and evoked Endurance, Subtlety and Wistfulness protect the turn for free.",
+  "tournament_refs": [
+    {
+      "pilot": "MeninoNey",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664674"
+    },
+    {
+      "pilot": "bcs8995",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71",
+      "source_deck_id": "videre-58664794"
+    },
+    {
+      "pilot": "RNicoF",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6",
+      "source_deck_id": "videre-58664296"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Force of Vigor",
+      "count": 2,
+      "why": "10 of 10 committed 2026-09-10 lists; free on our turn and destroys two artifacts, which is the only clean answer to a resolved Chalice",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Inevitable Betrayal",
+      "count": 2,
+      "why": "10 of 10 committed lists; a suspend spell with no other cost that takes our best creature, and it is another mana value zero card a Chalice on zero also stops",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Brotherhood's End",
+      "count": 1,
+      "why": "9 of 10 committed lists; the artifact-sweeper mode answers every cheap wish target at once",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Clarion Conqueror",
+      "count": 4,
+      "why": "5 of 10 committed lists carry it at four copies; turns off Karn's minus two and every activated artifact we fetch",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Chalice on zero and Trinisphere are both taxes that hit free spells, which is what makes them one-sided in effect even though Trinisphere is symmetric on paper; Disruptor Flute and The Stone Brain are free for us. Note that Grafdigger's Cage is NOT in this row: Living End exiles the creature cards first and then puts them onto the battlefield FROM EXILE, so the Cage's graveyard-and-library clause never applies.",
+  "self_cost": "Trinisphere turns Expedition Map, Giant's Boulder and Talisman of Resilience into three-mana cards, and Chalice on zero costs us nothing but Chalice on one - the number we would want against most of the field - is not available in the same game. The tax is acceptable because their whole deck casts spells for free.",
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Cycle for two turns, cascade on turn three, and win with a board of five bodies before Tron is assembled.",
+    "key_cards": [
+      {
+        "card": "Living End",
+        "why": "Named in the recorded gameplan; the mana value zero sorcery the whole deck is built to cast for free"
+      },
+      {
+        "card": "Violent Outburst",
+        "why": "Named in the recorded gameplan; the instant-speed cascade that casts it on their third turn"
+      },
+      {
+        "card": "Force of Vigor",
+        "why": "Boarded free answer to a resolved Chalice or Trinisphere on our own turn",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Clarion Conqueror",
+        "why": "Boarded body that switches off Karn and every activated artifact in the pool",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Any hand that casts Chalice of the Void on zero by turn two, or holds Trinisphere with three lands.",
+    "goldfish_for": "Chalice on zero before their third turn, which is when the first cascade comes.",
+    "watch_for": "Two cycled cards and an untapped Steam Vents, which is the Violent Outburst turn.",
+    "posture": "lock",
+    "posture_why": "One resolved permanent turns their entire deck off; there is nothing else worth spending mana on."
+  },
+  "fetch_priority": [
+    "Chalice of the Void",
+    "Trinisphere",
+    "Disruptor Flute",
+    "The Stone Brain"
+  ],
+  "survives_opposing_board": [
+    {
+      "card": "Chalice of the Void",
+      "verdict": "SURVIVES",
+      "why": "Force of Vigor is their only clean answer and it costs them a card from hand on our turn; while Chalice on zero is out, Living End and Inevitable Betrayal both stop resolving."
+    },
+    {
+      "card": "Trinisphere",
+      "verdict": "SURVIVES",
+      "why": "Force of Vigor and Brotherhood's End answer it; until one arrives it makes every free cast cost three, which their three-land board cannot pay on the cascade turn."
+    },
+    {
+      "card": "Disruptor Flute",
+      "verdict": "SURVIVES",
+      "why": "Its tax is a static effect rather than an activated ability, so Clarion Conqueror does not switch it off; naming Living End adds three to a cast they intend to make for nothing."
+    },
+    {
+      "card": "The Stone Brain",
+      "verdict": "SURVIVES",
+      "why": "Clarion Conqueror stops the activation, which is why it is the fourth fetch; against every other configuration it removes all three copies of Living End from the game."
+    }
+  ],
+  "notes": [
+    "Chalice on zero, not on three. Living End's printed cost is empty and its mana value is zero; the cascade spells at three are replaceable and the sorcery is not.",
+    "Grafdigger's Cage is deliberately absent from this fetch order. Living End exiles the creature cards from graveyards first and then returns them from EXILE, so 'Creature cards in graveyards and libraries can't enter the battlefield' never applies to it.",
+    "Inevitable Betrayal is also mana value zero with no printed cost, so the same Chalice answers their boarded plan B as well as their plan A."
+  ],
+  "card_names": [
+    "Living End",
+    "Violent Outburst",
+    "Shardless Agent",
+    "Street Wraith",
+    "Generous Ent",
+    "Endurance",
+    "Subtlety",
+    "Wistfulness",
+    "Force of Negation",
+    "Inevitable Betrayal"
+  ]
+}

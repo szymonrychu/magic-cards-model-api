@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "id": "open-fetch-unlocks",
+  "name": "Crack a fetch on turn 1-2 for a land that unlocks a hand card",
+  "intent": "On turn 1 or 2, once open-land-unlocks has had first refusal, play a fetch from hand (Misty Rainforest, Scalding Tarn) and crack it for whatever library land would unlock some other hand card - a library Island (or an Island-subtype dual) unlocking Curator of Mysteries' Cycling {U}. Both fetches reach Island equally, so which one gets cracked decides which fetch's OTHER reach survives for later: Misty Rainforest is this deck's only route to Forest (this deck's most important colour, per fetch-untapped-shock's own colour order Forest, Island, Mountain) and Scalding Tarn its only route to Mountain (the least important); the prefer tier searches_for_any:[Mountain] matches Scalding Tarn alone (Misty Rainforest's own template never names Mountain), spending the less valuable reach and reserving Misty Rainforest for a future Forest need. The activate move's own source carries a prefer:[{unlocks_by_basic_search:true}] tier of its own, so a second untapped fetch left over from an earlier turn's open-land-idle is never the one cracked in place of the fetch this turn's own land drop just played, and a source whose only reach is a non-basic is never preferred over one that reaches a free basic. Its own choose_cards pick prefers a basic first, then a shockland, paying life only when the fetch's own find needs it. This play's own true key now reads unlocks_by_basic_search rather than the broader unlocks_by_search: a fetch whose only reach is a non-basic shockland no longer fires this play at all (it would pay the fetch's own life cost on top of the found shock's), matching open-shock-unlocks' own narrowed false key. That leaves one gap: a hand with no direct shock AND a fetch reaching only a non-basic - neither P nor F applies; open-land-idle does still apply though, since its own I tier 3 (FETCH) has no `unlocks`/`unlocks_by_search` gate at all - the fetch still gets played, just not cracked productively the same turn, so the land drop itself is never lost, only the crack; documented as a known limit in docs/DECK-PIPELINE.md rather than worked around (living-end sits at the 12-play cap, with no room for a dedicated fetch-for-a-shock play). Stands down once open-land-unlocks would already fire, at 7 life or less, once the library is down to 5 cards or fewer, and whenever a tapped-entering land is also in hand (U's own new false key). Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 72,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "searches_for_any": [
+          "Plains",
+          "Island",
+          "Swamp",
+          "Mountain",
+          "Forest"
+        ],
+        "unlocks_by_basic_search": true
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "unlocks": true,
+        "enters_any": [
+          "untapped"
+        ]
+      }
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "enters_any": [
+          "tapped"
+        ]
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": "<=",
+      "n": 7
+    },
+    {
+      "kind": "zone_size",
+      "zone": "library",
+      "side": "me",
+      "op": "<=",
+      "n": 5
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "unlocks_by_basic_search": true
+        },
+        "prefer": [
+          {
+            "searches_for_any": [
+              "Mountain"
+            ]
+          }
+        ],
+        "ties": "any"
+      }
+    },
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "searches_for_any": [
+            "Plains",
+            "Island",
+            "Swamp",
+            "Mountain",
+            "Forest"
+          ],
+          "tapped": false
+        },
+        "prefer": [
+          {
+            "unlocks_by_basic_search": true
+          }
+        ],
+        "ties": "any"
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "unlocks": true
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "supertypes_any": [
+                  "Basic"
+                ]
+              },
+              {
+                "oracle_has": "you may pay 2 life"
+              }
+            ],
+            "ties": "any"
+          }
+        },
+        {
+          "decision": "pay_life",
+          "accept": true
+        }
+      ]
+    }
+  ],
+  "next": []
+}

@@ -660,6 +660,9 @@ def test_the_worst_case_run_script_answer_still_fits(client, game, monkeypatch):
         {"index": index, "kind": "cast"} for index in range(2, schema.MAX_MOVES + 1)
     ]
     assert WORST_PHRASE not in json.dumps(out), "script_exit echoed a move back"
+    # S1 T4c: this process just ran `worst-case` (advised, but still a run
+    # through `run_script`), so its own hint does not re-offer it at this
+    # same turn and step - see test_script_hint.py's suppression tests.
     assert set(payload) == {"script_exit", "board"}, list(payload)
     assert payload["board"]["battlefield_digest"]
     assert len(text) < MAX_ANSWER_BYTES, f"{len(text)} bytes"

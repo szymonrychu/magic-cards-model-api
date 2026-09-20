@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "id": "open-labyrinth-lane-no-imprint",
+  "name": "Play a land on turn 1-2 against a Labyrinth-lane opponent, with nothing to imprint yet",
+  "intent": "On turn 1 or 2, against the Labyrinth lane (broodscale-bloodchief, devoted-combo, dimir-frog, goryos-vengeance, instant-reanimator, living-end), once open-labyrinth-land's own hand-imprint-target count does NOT hold (no colorless mana value 7 or greater card in hand yet), play a land using the same fallback order open-tron-land reads against every other lane: a missing Urza's piece, then Eldrazi Temple by its own 'colorless Eldrazi' text, then a basic - no Labyrinth-first tier, since there is nothing worth imprinting on it this turn and ranking it ahead of Tron progress would cost tempo for no upside. Hand case: T1 Ugin's Labyrinth + Urza's Tower + Urza's Mine + Expedition Map, no 7-drop, against living-end - this play takes over from open-labyrinth-land, which used to wrongly rank Labyrinth first here with nothing to imprint (see decks/eldrazi-tron/NOTES.md 'Known limits (opening plays)', fixed 2026-09-14). Ugin's Labyrinth can still be the land actually picked once neither fallback tier narrows anything (it always enters untapped; its own imprint trigger is answered may/choose_cards regardless of whether a legal exile target is in hand, riding along the same as open-tron-land's own). Same archetype gate as open-labyrinth-land, and its own hand-imprint-target count sits byte-identical in this play's false list, so the two are provably exclusive - together they cover the whole Labyrinth lane exactly the way open-labyrinth-land alone used to, with no coverage gap. Excludes the Temple lane and the Tron lane the same way its sibling does. Chains into map-for-tron-missing-piece the same way. Stands down once two or more untapped mana is already up, or once an imprint target is in hand (open-labyrinth-land's own true key). Only turns 1-2, land drop available, mine, precombat main, empty stack.",
+  "priority": 65,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "turn",
+      "op": "<=",
+      "n": 2
+    },
+    {
+      "kind": "land_drop_available",
+      "value": true
+    },
+    {
+      "kind": "input",
+      "name": "opposing_archetype",
+      "op": "in",
+      "value": [
+        "broodscale-bloodchief",
+        "devoted-combo",
+        "dimir-frog",
+        "goryos-vengeance",
+        "instant-reanimator",
+        "living-end"
+      ]
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
+    }
+  ],
+  "false": [
+    {
+      "kind": "untapped_mana",
+      "op": ">=",
+      "n": 2
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "colors_any": [
+          "colorless"
+        ],
+        "mana_value": {
+          "op": ">=",
+          "n": 7
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "kind": "play_land",
+      "card": {
+        "select": {
+          "types_all": [
+            "Land"
+          ]
+        },
+        "prefer": [
+          {
+            "subtypes_any": [
+              "Tower",
+              "Mine",
+              "Power-Plant"
+            ],
+            "missing_from": {
+              "zones": [
+                "battlefield"
+              ],
+              "side": "me",
+              "by": "subtype"
+            }
+          },
+          {
+            "oracle_has": "colorless Eldrazi"
+          },
+          {
+            "supertypes_any": [
+              "Basic"
+            ]
+          }
+        ],
+        "ties": "any"
+      },
+      "answers": [
+        {
+          "decision": "may",
+          "accept": true
+        },
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "colors_any": [
+                "colorless"
+              ],
+              "mana_value": {
+                "op": ">=",
+                "n": 7
+              }
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "types_all": [
+                  "Planeswalker"
+                ]
+              },
+              {
+                "oracle_has": "Ward"
+              }
+            ],
+            "ties": "any"
+          }
+        }
+      ]
+    }
+  ],
+  "next": [
+    "map-for-tron-missing-piece"
+  ]
+}

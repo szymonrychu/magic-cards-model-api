@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -166,6 +167,67 @@ def test_a_card_name_in_a_type_field_is_refused_when_it_is_not_a_common_type_wor
     assert "card-name-in-field" in error_codes(root)
 
 
+def test_a_basic_land_type_word_on_three_cards_is_not_a_card_name_in_searches_for_any(root):
+    # "Mountain" is a type-line word on 4 cached cards (Mountain, Sacred
+    # Foundry, Blood Crypt, Stomping Ground), the same exemption O3's
+    # searches_for_any gets that types_any/subtypes_any already had.
+    doc = play()
+    doc["false"][1]["select"] = {"searches_for_any": ["Mountain"]}
+    put(root, doc)
+    assert check_report(root) == ([], [])
+
+
+def test_a_basic_land_type_word_in_searches_for_any_is_refused_when_not_a_common_type_word(
+    tmp_path,
+):
+    cards = {k: v for k, v in CARDS.items() if k not in ("Blood Crypt", "Stomping Ground")}
+    root = make_root(tmp_path, cards=cards)
+    doc = play()
+    doc["false"][1]["select"] = {"searches_for_any": ["Mountain"]}
+    put(root, doc)
+    assert "card-name-in-field" in error_codes(root)
+
+
+# -- O6: Answer.choice --------------------------------------------------------
+
+
+def test_a_type_line_word_in_choice_is_not_a_card_name(tmp_path):
+    # A creature type such as Eldrazi (a type-line word on >= 3 cached cards)
+    # is allowed in an answer's choice, the same type-line-word exemption
+    # types_any/subtypes_any/searches_for_any already get.
+    cards = dict(CARDS)
+    cards["Thought-Knot Seer"] = {
+        "type_line": "Creature — Eldrazi",
+        "oracle_text": "When Thought-Knot Seer enters, target opponent reveals their hand.",
+    }
+    cards["Reality Smasher"] = {
+        "type_line": "Creature — Eldrazi",
+        "oracle_text": "Reality Smasher can't be blocked by more than one creature.",
+    }
+    cards["Endless One"] = {
+        "type_line": "Creature — Eldrazi",
+        "oracle_text": "Endless One enters with X +1/+1 counters on it.",
+    }
+    root = make_root(tmp_path, cards=cards)
+    doc = play(
+        moves=[
+            {"kind": "answer", "answers": [{"decision": "choose_a_quality", "choice": "Eldrazi"}]}
+        ]
+    )
+    put(root, doc)
+    assert check_report(root) == ([], [])
+
+
+def test_a_choice_that_is_a_card_name_and_not_a_common_type_word_is_card_name_in_field(root):
+    doc = play(
+        moves=[
+            {"kind": "answer", "answers": [{"decision": "choose_a_quality", "choice": "Arid Mesa"}]}
+        ]
+    )
+    put(root, doc)
+    assert "card-name-in-field" in error_codes(root)
+
+
 def test_phrase_too_narrow(root):
     doc = play()
     doc["false"][1]["select"] = {"oracle_has": "deals 3 damage to any target"}
@@ -250,6 +312,78 @@ def test_a_disabled_play_does_not_count_as_active(root):
     for i in range(6):
         put(root, play(id=f"p{i}", priority=10))
     put(root, play(id="off", priority=0))
+    assert check_report(root)[0] == []
+
+
+# -- O8: too-many-active-for-archetype counts the live-together group --------
+
+
+def turn_condition(op: str, n: int) -> dict[str, Any]:
+    return {"kind": "turn", "op": op, "n": n}
+
+
+def test_5_plays_turn_ge_3_plus_3_plays_turn_le_2_pass_the_cap(root):
+    # Turn-range-disjoint plays can never both be live, so the cap compares
+    # the largest of the two groups (5), not their sum (8), against 6.
+    for i in range(5):
+        put(root, play(id=f"late{i}", priority=10, true=[turn_condition(">=", 3)], false=[]))
+    for i in range(3):
+        put(root, play(id=f"early{i}", priority=10, true=[turn_condition("<=", 2)], false=[]))
+    assert check_report(root)[0] == []
+
+
+def test_7_overlapping_plays_at_the_same_turn_range_fail_the_cap(root):
+    for i in range(7):
+        put(root, play(id=f"p{i}", priority=10, true=[turn_condition(">=", 3)], false=[]))
+    errors = [e for e in check_report(root)[0] if e.code == "too-many-active-for-archetype"]
+    assert len(errors) == 1
+    assert "7 " in errors[0].message
+
+
+def test_the_live_together_search_is_skipped_past_too_many_plays(root):
+    """`_max_live_together` is Bron-Kerbosch without a pivot (its own
+    docstring: "a deck carries at most MAX_PLAYS plays, so the search space
+    is always tiny") - an assumption `too-many-plays` alone does not enforce.
+    30 plays that are all live together at once (same `when`, no turn/step
+    exclusivity at all - the worst case for a pivotless search, empirically
+    ~7 minutes before this fix) must never reach that search once
+    `too-many-plays` has already fired for the deck."""
+    for i in range(30):
+        put(
+            root,
+            play(
+                id=f"p{i}",
+                priority=10,
+                when={"whose_turn": "mine", "steps": ["upkeep"], "stack": "empty"},
+            ),
+        )
+    start = time.monotonic()
+    codes = error_codes(root)
+    elapsed = time.monotonic() - start
+    assert "too-many-plays" in codes
+    assert "too-many-active-for-archetype" not in codes
+    assert elapsed < 3.0, f"took {elapsed}s - the live-together search must be skipped"
+
+
+def test_the_live_together_cap_is_also_proven_by_whose_turn_and_steps(root):
+    for i in range(4):
+        put(
+            root,
+            play(
+                id=f"mine{i}",
+                priority=10,
+                when={"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+            ),
+        )
+    for i in range(4):
+        put(
+            root,
+            play(
+                id=f"theirs{i}",
+                priority=10,
+                when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+            ),
+        )
     assert check_report(root)[0] == []
 
 
@@ -680,6 +814,10 @@ def mana(op: str, n: int) -> dict[str, Any]:
     return {"kind": "untapped_mana", "op": op, "n": n}
 
 
+def turn(op: str, n: int) -> dict[str, Any]:
+    return {"kind": "turn", "op": op, "n": n}
+
+
 def clock(op: str, value: Any) -> dict[str, Any]:
     return {"kind": "input", "name": "clock", "op": op, "value": value}
 
@@ -712,6 +850,7 @@ def lands(op: str, n: int, *, reordered: bool = False) -> dict[str, Any]:
         ([lands(">=", 3)], [lands(">", 1, reordered=True)], "true[0]", "false[0]"),
         ([clock("in", [1, 2])], [clock("<", 4)], "true[0]", "false[0]"),
         ([], [mana("<", 4), mana(">=", 2)], "false[0]", "false[1]"),
+        ([turn("<=", 2), turn(">=", 3)], [], "true[0]", "true[1]"),
     ],
     ids=[
         "life-ge-and-le",
@@ -721,6 +860,7 @@ def lands(op: str, n: int, *, reordered: bool = False) -> dict[str, Any]:
         "count-same-selector-reordered",
         "int-input-in-and-negated-lt",
         "two-false-conditions",
+        "turn-le-2-and-ge-3",
     ],
 )
 def test_never_applicable_for_numeric_ranges_that_cannot_overlap(root, true, false, first, second):
@@ -746,6 +886,7 @@ def test_never_applicable_for_numeric_ranges_that_cannot_overlap(root, true, fal
         ([clock(">=", 3), clock("<=", 5)], []),
         ([lands(">=", 3)], [{**lands(">", 1), "select": {"types_all": ["Creature"]}}]),
         ([life("me", ">=", 5), life("me", "<=", 5)], []),
+        ([turn("<=", 2)], [turn(">=", 2)]),
     ],
     ids=[
         "life-5-to-10",
@@ -754,6 +895,7 @@ def test_never_applicable_for_numeric_ranges_that_cannot_overlap(root, true, fal
         "int-input-3-to-5",
         "different-selectors",
         "one-point-range",
+        "turn-touching",
     ],
 )
 def test_numeric_ranges_that_overlap_can_apply(root, true, false):

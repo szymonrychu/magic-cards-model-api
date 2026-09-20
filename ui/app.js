@@ -483,33 +483,57 @@ function boardIsNewest(seq) {
  * between a poll's reads and this seat's own action, so a test of it has to
  * drive the real poll rather than a restatement of it. */
 
-const UNMODELED_TRIGGER_NOTICE_KIND = "unmodeled_trigger_effect_notices";
+/** Every fail-closed "the engine recognised this but could not read it well
+ * enough to act on it" notice kind this UI knows how to toast, mapped to the
+ * human-readable line for one of its own entries. Each of `Game`'s ~20 notice
+ * lists (`commands._NOTICE_LIST_NAMES`) is this same shape - CR text the
+ * engine refused rather than guessed at - but only the kinds actually
+ * reachable through a played card's real text are named here; a kind added
+ * here with no matching entry in `commands._NOTICE_LIST_NAMES` would toast
+ * for a notice the server never sends, and `test_notices.py`'s own drift
+ * guard is what catches the far more damaging direction (a notice list the
+ * server sends that nothing here, or any other surface, ever names).
+ *
+ * `unmodeled_trigger_effect_notices` was first: `Game.resolve` files it when
+ * a spell's whole printed text had no reader and it resolved as a silent
+ * no-op (Stock Up, in the live game this exists for). The rest are the
+ * Reality Fracture bump's four previously-unwired notice lists plus
+ * `layer_remainder_notices` (wired into `commands._NOTICE_LIST_NAMES` first,
+ * this UI's own toast forgotten alongside it in the same pass) - each is the
+ * identical "recognised, refused, recorded" shape over its own clause. */
+const ENGINE_GAP_NOTICE_MESSAGES = {
+  unmodeled_trigger_effect_notices: (notice) =>
+    `${notice.source_name || "A card"}: the engine could not read this card's text, so it did nothing. Reported as an engine gap.`,
+  layer_remainder_notices: (notice) =>
+    `${notice.source_name || "A card"}: part of its resolving text could not be read, so that part did nothing. Reported as an engine gap.`,
+  search_description_notices: (notice) =>
+    `${notice.source_name || "A card"}: a search's card description could not be read, so the search did not run at all. Reported as an engine gap.`,
+  unreadable_copy_exception_notices: (notice) =>
+    `${notice.source_name || "A card"}: a copy's "except ..." clause could not be read, so it entered as a plain copy. Reported as an engine gap.`,
+  unreadable_counter_amount_notices: (notice) =>
+    `${notice.source_name || "A card"}: a counter amount could not be evaluated, so no counters were placed. Reported as an engine gap.`,
+  keyword_line_notices: (notice) =>
+    `${notice.source_name || "A card"}: part of a computed ability line could not be read as a keyword. Reported as an engine gap.`,
+};
 
-/** A human-readable line for one `unmodeled_trigger_effect_notices` entry -
- * the notice `Game.resolve` files when a spell's whole printed text had no
- * reader and it resolved as a silent no-op (Stock Up, in the live game this
- * exists for). */
-function engineGapMessage(notice) {
-  const name = notice.source_name || "A card";
-  return `${name}: the engine could not read this card's text, so it did nothing. Reported as an engine gap.`;
-}
-
-/** Toasts one message per newly-polled log entry carrying an
- * `unmodeled_trigger_effect_notices` notice - the human otherwise has no way
- * to know a spell resolved as a silent no-op: the game log panel is gone
- * (`ui/render/panels.js`), `app.log` is read only by `advice_model.js`'s
- * staleness check, and the resolving pass is routinely the OPPONENT's, not
- * this seat's own - the notice rides `outcome.detail["notices"]` on
- * whoever's request resolved the stack (`commands._attach_notices`), so a
- * human polling only her own command responses never sees it. `GET .../log`
- * carries it too, already redacted for this viewer server-side
- * (`visibility.redact_log_entry`), and both `poll()` and `refresh()` already
- * read it every tick - so that is the path this toasts from instead. */
+/** Toasts one message per newly-polled log entry carrying any
+ * `ENGINE_GAP_NOTICE_MESSAGES` notice - the human otherwise has no way to
+ * know a spell resolved as a silent (or partial) no-op: the game log panel
+ * is gone (`ui/render/panels.js`), `app.log` is read only by
+ * `advice_model.js`'s staleness check, and the resolving pass is routinely
+ * the OPPONENT's, not this seat's own - the notice rides
+ * `outcome.detail["notices"]` on whoever's request resolved the stack
+ * (`commands._attach_notices`), so a human polling only her own command
+ * responses never sees it. `GET .../log` carries it too, already redacted
+ * for this viewer server-side (`visibility.redact_log_entry`), and both
+ * `poll()` and `refresh()` already read it every tick - so that is the path
+ * this toasts from instead. */
 function toastEngineGapNotices(entries) {
   for (const entry of entries || []) {
     const notices = (entry.detail && entry.detail.notices) || [];
     for (const notice of notices) {
-      if (notice.kind === UNMODELED_TRIGGER_NOTICE_KIND) toast(engineGapMessage(notice));
+      const message = ENGINE_GAP_NOTICE_MESSAGES[notice.kind];
+      if (message) toast(message(notice));
     }
   }
 }

@@ -68,12 +68,17 @@ Two commands are not seat actions at all, and need no `--uid`:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
+import logging
 import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
+from . import seatkit
 from .playscripts import admit as playscripts_admit
 from .playscripts import guides_propose as playscripts_guides
 from .playscripts import lint as playscripts_lint
@@ -83,18 +88,294 @@ from .seatkit import (
     AUTOPASS_STEPS,
     AUTOPASS_WHOSE_TURN,
     DEFAULT_API,
+    Seat,
     Seats,
     _parse_ids,
     _parse_pairs,
     api_trouble,
     autopass_target_error,
-    block_until_wake,
     card_reference,
     parse_convoke,
     parse_optional_costs,
     pass_until,
     run_action,
+    wait_and_arm,
 )
+
+logger = logging.getLogger("mcm.seat_cli")
+
+#: `seat_cli.py`'s own root, for the dev-checkout fallback below - the same
+#: `Path(__file__).resolve().parents[N]` idiom `scryfall.cache_dir` uses for
+#: its own default.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: S2 A6 review fix 2 (2026-09-14): env override for where the CLI persists a
+#: staged advisor draft between separate CLI invocations - see `_cli_drafts_
+#: dir`'s own docstring for why this exists at all.
+CLI_DRAFTS_DIR_ENV = "MCM_CLI_DRAFTS_DIR"
+
+
+def _cli_drafts_dir() -> Path:
+    """Where a staged advisor draft is persisted between CLI invocations.
+
+    Each `run()` call is a fresh process with a fresh `Seats()`, so `Seat.
+    _advice_drafts` (an in-process dict, shared only by reference within one
+    `Seats` instance - see its own docstring) never survives past the one
+    command that populated it: `stage-advice` printed "staged" and the next
+    CLI `cast` posted immediately, and CLI `wait` never resolved a draft at
+    all, because there was nowhere for one to have been carried from.
+
+    `CLI_DRAFTS_DIR_ENV` names the directory outright. Otherwise: the
+    continuous PTY-wrapped agent's own per-seat workspace - `WORKSPACE`
+    (`Dockerfile.agent`, `docker-compose.yml` and `deploy/seat-job.yaml` all
+    set it to `/workspace`, the same directory `/workspace/memory` already
+    lives under) is this seat's own container's place for exactly this kind
+    of cross-call state. A dev checkout with neither set falls back to a
+    repo-relative directory, the same fallback `scryfall.cache_dir` uses for
+    its own cache.
+
+    Review fix 3 (2026-09-14): the `mkdir` is best-effort, its own `OSError`
+    swallowed here rather than raised - this used to run unguarded on every
+    single advisor CLI command, before the command's own action ever ran, so
+    an unwritable directory (a read-only workspace, or `CLI_DRAFTS_DIR_ENV`
+    pointed at a plain file) crashed every one of them with a bare traceback
+    instead of the action's own answer. Every operation that actually reads
+    or writes a file under this directory (`_load_cli_draft`, `_save_cli_
+    draft`, `_cli_draft_lock`) catches its own `OSError` and reports a note
+    instead of raising, so a directory that could not be made here is simply
+    one more thing for those to fail gracefully on."""
+    env = os.environ.get(CLI_DRAFTS_DIR_ENV)
+    if env:
+        base = Path(env)
+    else:
+        workspace = os.environ.get("WORKSPACE")
+        base = Path(workspace) / "cli-drafts" if workspace else _REPO_ROOT / ".cli-drafts"
+    with contextlib.suppress(OSError):
+        base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _cli_draft_path(game_id: str, uid: str) -> Path:
+    """The file one uid's staged draft for one game lives at - keyed by both,
+    same as `Seats.advice_drafts` is keyed by uid alone within one game's own
+    process (a CLI process only ever pins one game at a time, but the file
+    system is shared across every game this seat's workspace has ever
+    touched)."""
+    return _cli_drafts_dir() / f"{game_id}__{uid}.json"
+
+
+def _tuplify(value: Any) -> Any:
+    """Reverse a JSON round trip's list-ification of every tuple, recursively.
+
+    `opponent_board_signature` builds its answer out of nested tuples, and
+    `resolve_advice_draft`'s board check compares one against a freshly
+    computed one with plain `==` - `[1, 2] != (1, 2)` in Python, so a draft
+    read back from a JSON file would fail that comparison on shape alone
+    (every list, not on what it actually holds), reading every draft as
+    stale on its very first poll after a restart. Only `entry["opponent_
+    signature"]` needs this - every other JSON-round-tripped field
+    (`window`, `action`) is compared field by field or not compared at all."""
+    if isinstance(value, list):
+        return tuple(_tuplify(item) for item in value)
+    return value
+
+
+def _load_cli_draft(game_id: str, uid: str) -> tuple[dict[str, Any] | None, str | None]:
+    """`(entry, note)`: `entry` is the draft a previous CLI invocation left
+    staged for `uid`, or `None` for no file, one that is not valid UTF-8
+    (a stray binary write, a different encoding), one that is not valid
+    JSON, or one that is not a JSON object - all four read the same as
+    "nothing staged", never an error a command run fails on.
+
+    `note` (review fix 3, 2026-09-14) is `None` for every one of those
+    ordinary cases - a missing or malformed file is not a problem worth
+    telling a human about, and turning it into a note on every ordinary
+    advisor command with nothing staged would bury the one that matters. It
+    is a short message only when the file genuinely could not be read for a
+    reason that says something is wrong with the directory itself (an
+    `OSError` from `path.is_file()` or `path.read_text()` - a permissions
+    problem, most likely). The caller folds a non-`None` note into the
+    printed JSON's own `draft` field."""
+    path = _cli_draft_path(game_id, uid)
+    try:
+        is_file = path.is_file()
+    except OSError as exc:
+        return None, f"could not check for a staged advisor draft: {exc}"
+    if not is_file:
+        return None, None
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        return None, f"could not read the staged advisor draft: {exc}"
+    except UnicodeDecodeError:
+        # A `UnicodeDecodeError` is a `ValueError`, not an `OSError` -
+        # `path.read_text()` raises it for a file that cannot be decoded
+        # (a stray binary write, a different encoding), and it was falling
+        # straight through the `except OSError` above uncaught, aborting the
+        # seat's whole command. Read the same way `json.loads` failing does
+        # just below: the file's bytes are malformed, not the directory, so
+        # this is "nothing staged", silently - not a problem worth a note.
+        return None, None
+    try:
+        loaded = json.loads(text)
+    except ValueError:
+        return None, None
+    if not isinstance(loaded, dict):
+        return None, None
+    if "opponent_signature" in loaded:
+        loaded["opponent_signature"] = _tuplify(loaded["opponent_signature"])
+    return loaded, None
+
+
+def _cli_draft_lock_path(game_id: str, uid: str) -> Path:
+    """The lock file `_cli_draft_lock` holds for `uid`'s draft file - a
+    sibling of it, never the draft file itself (an `fcntl.flock` on the file
+    a reader also `open()`s for a plain read would work, but a dedicated
+    lock file keeps the draft file's own content - the thing `_load_cli_
+    draft` parses as JSON - untouched by anything to do with locking)."""
+    return _cli_draft_path(game_id, uid).with_suffix(".lock")
+
+
+@contextlib.contextmanager
+def _cli_draft_lock(game_id: str, uid: str) -> Any:
+    """Hold an OS-level exclusive lock (`fcntl.flock`) on `uid`'s draft file
+    for one draft read-modify-write critical section - review fix 1
+    (2026-09-14), narrowed by re-review round 2 fix 3 (2026-09-14) to stop
+    wrapping a whole command.
+
+    Each CLI invocation is a separate OS process (`_cli_drafts_dir`'s own
+    docstring), so the in-process `threading.Lock` `resolve_advice_draft`
+    already claims (review fix 5) guards nothing between two of them: a
+    background `wait` and a foreground `pass` each mint their own `Seats()`
+    and could both read the same ready draft, both find it still legal, and
+    both `POST .../advice` - two ledger rows for the one proposal a human
+    approves once. A background `wait` that started with nothing staged
+    could just as easily delete a draft a foreground command staged in the
+    few milliseconds between the two processes' own reads.
+
+    `fcntl.flock` on a POSIX system (the pods and every dev machine this
+    project runs on - see `mise.toml`) blocks a second process outright until
+    the first releases; there is no cross-process equivalent of `Lock.
+    acquire(blocking=False)`'s clean "already held" answer here, so this
+    simply waits.
+
+    Round 2 fix 3 (2026-09-14): NEVER held across a genuine network wait.
+    This used to wrap one whole `seat_cli` command in `run()`, on the theory
+    that a CLI command is a handful of HTTP round trips, never a long-held
+    resource - true for every committing action (`run_action`'s advise
+    short-circuit returns before `block_until_wake` is ever reached, and
+    `pass_until`/a script's own `_wait` both refuse or no-op outright for an
+    advise seat), but false for `wait` itself: `wait_and_arm`/`block_until_
+    wake` genuinely sleep-polls for up to `--max-seconds` (capped at
+    `seatkit.MAX_WAIT_SECONDS`, 25s) when nothing wakes it early. A buddy's
+    background `mcp-seat wait --max-seconds 25` held this very lock the
+    whole time, so a human's foreground `stage-advice` or action command -
+    racing for the same uid's lock file - sat blocked behind it for up to 25
+    seconds, and two back-to-back background waits could starve the
+    foreground seat entirely. `_dispatch`'s own `locked()` helper now claims
+    this lock only around loading/re-reading the draft, installing a
+    captured one, and resolving (claim/post/token-guarded delete) plus
+    persisting it - never around `wait_and_arm`, `pass_until` or `script_
+    tools.run`'s own call, each of which runs unlocked and re-reads the
+    draft fresh, under a freshly claimed lock, only once it returns. See
+    `_dispatch`'s own docstring for the exact split.
+
+    Review fix 3 (2026-09-14): a lock file this cannot even open (the same
+    unwritable-directory case `_cli_drafts_dir` already tolerates) is caught
+    here too and reported to stderr rather than raised - draft bookkeeping is
+    a layer on top of a seat's real job, and must never be the reason a
+    `cast` or a `pass` never reaches the wire at all. The command still runs,
+    simply without the cross-process guarantee this lock exists to give -
+    the same trade a completely unwritable drafts directory already forces
+    on every other draft operation in this file."""
+    lock_path = _cli_draft_lock_path(game_id, uid)
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        # Ruff's SIM115 wants a context manager here, but the whole point of
+        # this line is catching its OWN `OSError` to fall back to running
+        # unlocked - a `with open(...)` statement raises out of the `with`
+        # itself the same way, so there is no context-manager form of "open,
+        # and if that fails, do something other than raise".
+        handle = open(lock_path, "a+")  # noqa: SIM115
+    except OSError as exc:
+        print(f"could not lock the staged advisor draft file: {exc}", file=sys.stderr)
+        yield
+        return
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+def _save_cli_draft(
+    game_id: str,
+    uid: str,
+    entry: dict[str, Any] | None,
+    *,
+    expected_token: str | None = None,
+) -> str | None:
+    """Write `uid`'s current draft for the next CLI invocation to pick up, or
+    remove the file outright when `entry` is `None` (nothing staged any
+    more - `resolve_advice_draft` posted or dropped it, or this uid never
+    staged one to begin with). Returns `None` on success, or a short note
+    describing what went wrong (review fix 3, 2026-09-14) - a filesystem
+    problem here (an unwritable drafts directory, most likely) must never
+    raise past this function; the caller (`persist_draft`) logs the note to
+    stderr once and folds it into the printed JSON's own `draft` field
+    instead of losing the command's own answer to an uncaught exception.
+
+    Review fix 1 (2026-09-14), two more changes:
+
+    - **Atomic write.** A plain `path.write_text` is not atomic - a reader
+      landing mid-write (`_load_cli_draft`, in another process) could catch a
+      half-written file, and it once read that as "not a JSON object" rather
+      than "nothing staged", which is at least survivable, but there is no
+      guarantee a shorter write always fails to parse. Written to a sibling
+      temp file (this process's own pid in the name, so two processes racing
+      to write never collide with each other's temp file) and moved into
+      place with `os.replace`, which POSIX guarantees is atomic - a reader
+      always sees either the old content whole or the new content whole,
+      never a mixture.
+    - **A token-guarded delete.** `expected_token` is the `_cli_token` this
+      call itself read off disk when it started (`run()`'s own `loaded_
+      token`), or `None` for a call that read nothing staged at all. Deleting
+      only when the file's current token still matches is what stops a
+      command that never itself touched the draft (an ordinary `wait` that
+      started with nothing staged, say) from deleting a draft a *different*
+      process wrote in the meantime - without this, an unconditional delete
+      on `entry is None` would remove a draft this call never even knew
+      about. Every entry gets a fresh token here if it does not already carry
+      one (`stage_advice`, in `seatkit.py`, has no reason to know CLI drafts
+      exist at all, so it never stamps one); a loaded entry already has
+      whichever token it was written with.
+
+    Called only while `uid`'s `_cli_draft_lock` is held (`_dispatch`'s own
+    `locked()` critical section), so there is no race between the read this
+    compares against and the write or delete itself - the token is a second,
+    explicit guard for exactly what the read stood for, not a substitute for
+    holding the lock."""
+    path = _cli_draft_path(game_id, uid)
+    try:
+        if entry is None:
+            current, _load_note = _load_cli_draft(game_id, uid)
+            if current is None:
+                return None
+            if current.get("_cli_token") != expected_token:
+                return None
+            path.unlink(missing_ok=True)
+            return None
+        stamped = dict(entry)
+        stamped.setdefault("_cli_token", uuid.uuid4().hex)
+        tmp = path.with_name(f"{path.name}.tmp{os.getpid()}")
+        tmp.write_text(json.dumps(stamped))
+        os.replace(tmp, path)
+        return None
+    except OSError as exc:
+        return f"could not persist the staged advisor draft to disk: {exc}"
 
 
 def split_destinations(state: dict[str, Any] | None) -> str:
@@ -157,6 +438,36 @@ def parse_inputs(values: list[str] | None) -> dict[str, Any] | None:
     return parsed
 
 
+def _attach_script_hint(
+    answer: dict[str, Any],
+    seat: Seat,
+    corpora: dict[tuple[str, str], dict[str, Any]],
+    state: dict[str, Any],
+) -> None:
+    """`mcp._attach_script_hint`'s own treatment, for the CLI transport:
+    bolt `scripts: {"applicable": [...]}`/`{"armable": [...], "arm_call":
+    ...}` onto `answer` when at least one of `seat`'s registered play
+    scripts applies right now or is worth arming for the wait ahead
+    (`script_tools.applicable_hint`, `cli=True` so `call`/`arm_call` render
+    as `mcp-seat` command lines rather than MCP call syntax).
+
+    Same failure discipline as `mcp.py`'s own version: an HTTP error, or
+    anything `conditions.evaluate`/`static_conflicts`/`lint` can raise, must
+    never replace or break an answer whose action or wait already landed -
+    it is caught here, logged once, and `scripts` is simply left off."""
+    try:
+        hint = script_tools.applicable_hint(seat, corpora, state, cli=True)
+    except Exception:
+        logger.warning(
+            "computing the script hint for %s raised - answer sent without `scripts`",
+            seat.uid,
+            exc_info=True,
+        )
+        return
+    if hint is not None:
+        answer["scripts"] = hint
+
+
 #: `cast`'s and `activate`'s `--sources`. Only the sources named are sent, so a
 #: log row never names a land offered to a cost with no mana in it (B5-05).
 NAMED_SOURCES_HELP = (
@@ -211,6 +522,68 @@ def build_parser() -> argparse.ArgumentParser:
             "check-and-return it has always been"
         ),
     )
+    wait_cmd.add_argument(
+        "--wake-to-draft",
+        dest="wake_to_draft",
+        action="store_true",
+        help=(
+            "S2 A6, advisor only: also wake when the board changes while it "
+            "is not yet your human's priority, provided nothing is staged - "
+            "the cue to look ahead and run stage-advice for the window you "
+            "expect next, so a proposal is ready to post the instant "
+            "priority actually reaches your human rather than drafted from "
+            "scratch only once it does. Left off (the default), this is the "
+            "plain wait it has always been. Refused for a seat: a seat "
+            "already wakes for its own real moments, and there is no draft "
+            "for it to prepare"
+        ),
+    )
+
+    def arm_flags(command: Any) -> None:
+        """S2: `--arm`/`--arm-reasoning`/`--opposing-archetype`/`--input`,
+        shared by `wait` and `pass-until` - the same `playscripts.arming.arm`
+        arguments `mcp.wait_for_priority`/`mcp.pass_until` take. Arming fires
+        only once this command is about to return with a real stop: after
+        `wait`'s own check wakes for a real reason, or when `pass-until`
+        finishes (or hits its own pass cap) - never on a retryable hand-back
+        where the opponent still holds priority."""
+        command.add_argument(
+            "--arm",
+            dest="arm",
+            action="append",
+            default=None,
+            metavar="SCRIPT_ID",
+            help=(
+                "a registered script id to arm, in priority order; repeat for each. "
+                "If it already applies the moment this command is about to return, it "
+                "fires on its own (playscripts.arming.arm) - never mandatory, and never "
+                "a reason to wait longer than this command already would"
+            ),
+        )
+        command.add_argument(
+            "--arm-reasoning",
+            dest="arm_reasoning",
+            default="",
+            metavar="TEXT",
+            help="why you are arming these, in your own words - required whenever --arm is given",
+        )
+        command.add_argument(
+            "--opposing-archetype",
+            dest="opposing_archetype",
+            default="*",
+            metavar="KEY",
+            help="the opponent's archetype as you read it, judged the same as run_script's own",
+        )
+        command.add_argument(
+            "--input",
+            dest="arm_inputs",
+            action="append",
+            default=None,
+            metavar="NAME=VALUE",
+            help="one input an armed script's conditions read; repeat for each (see script run)",
+        )
+
+    arm_flags(wait_cmd)
 
     def priority_flag(command: Any) -> None:
         """The one flag every action shares: keep priority instead of
@@ -823,6 +1196,7 @@ def build_parser() -> argparse.ArgumentParser:
             "'I am not attacking this turn'"
         ),
     )
+    arm_flags(until)
 
     # CR 103.5 and CR 103.6. A game booted from decklists *rests* in these two
     # steps before turn 1, and nothing on the board can happen until every seat
@@ -873,6 +1247,65 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=None,
         help="the report; omit it to read the report from stdin instead",
+    )
+
+    plan = sub.add_parser(
+        "plan",
+        help=(
+            "declare, before you act, how you read the turn (POST .../plan) - "
+            "the same five fields and the same for-turn choice mcp.py's "
+            "declare_plan tool takes"
+        ),
+    )
+    plan.add_argument("--board-read", required=True, help="what you see on the board right now")
+    plan.add_argument(
+        "--my-role", required=True, help="your role in this matchup - beatdown, control, ..."
+    )
+    plan.add_argument(
+        "--plan", dest="plan_text", required=True, help="what you intend to do this turn, and why"
+    )
+    plan.add_argument("--expecting", required=True, help="what you expect the opponent to do")
+    plan.add_argument("--because", required=True, help="the read that supports that expectation")
+    plan.add_argument(
+        "--confidence",
+        choices=["low", "medium", "high"],
+        default="medium",
+        help="how strongly you hold that prediction; default medium",
+    )
+    plan.add_argument(
+        "--for-turn",
+        dest="for_turn",
+        choices=["current", "next"],
+        default="current",
+        help=(
+            "which turn this declares for - 'current' (default) is the turn "
+            "already under way; 'next', called on the opponent's turn, plans "
+            "ahead for your own next turn instead of waiting until your "
+            "upkeep to write one there"
+        ),
+    )
+
+    stage_advice = sub.add_parser(
+        "stage-advice",
+        help=(
+            "arm your next committing call to be captured as a draft for a "
+            "window, instead of posted right away (mcp stage_advice)"
+        ),
+    )
+    stage_advice.add_argument(
+        "step",
+        metavar="STEP",
+        help=(
+            f"one of: {', '.join(AUTOPASS_STEPS)}. Naming the step your human "
+            "is standing in right now means its NEXT occurrence, never this "
+            "one - the same rule pass-until follows"
+        ),
+    )
+    stage_advice.add_argument(
+        "--whose-turn",
+        default="mine",
+        metavar="WHOSE",
+        help=f"one of: {', '.join(AUTOPASS_WHOSE_TURN)}; default 'mine'",
     )
 
     script = sub.add_parser(
@@ -1094,398 +1527,724 @@ def run(argv: list[str] | None = None) -> int:
         return 1
     gid = seat.game_id()
 
-    # "no --sources given means offer every untapped source" is one rule, and
-    # it lives in `seatkit` so this file and `mcp.py` cannot drift on it - they
-    # already had: this used to branch on the raw string, so `--sources ","`
-    # offered the engine nothing at all while the MCP tool, branching on the
-    # parsed list, offered everything.
-    def sources_or_all(value: str) -> list[str]:
-        return seat.sources_or_all(value)
+    def _dispatch() -> int:
+        """Round 2 fix 3 (2026-09-14): NOT one lock held for the whole call
+        any more. `uid`'s on-disk advisor draft is locked (`_cli_draft_lock`)
+        only around the specific read-modify-write critical sections below -
+        loading or re-reading it, installing a draft an action command just
+        built (capture), and claiming/posting/token-deleting a ready one
+        (resolve), each immediately followed by writing it back out
+        (persist). `locked()`, right below, is that one claim, taken fresh
+        for each section rather than once for the whole command.
 
-    #: CR 116.3: "If a player takes a special action, that player receives
-    #: priority afterward." So these must NOT release priority - a seat that
-    #: plays a land and then passes has thrown away the rest of its own main
-    #: phase, which is what a live game showed: a Forest in precombat main and
-    #: the Amulet of Vigor it should have paid for stranded until postcombat.
-    #: A special action does not use the stack at all (CR 116.1), so there is
-    #: nothing releasing priority would let resolve.
-    #:
-    #: Four of these five really are special actions: playing a land
-    #: (CR 116.2a), suspend (CR 116.2f), plot (CR 116.2k, CR 702.170b) and
-    #: foretell (CR 116.2h, CR 702.143b). `cycle` is NOT - CR 702.29a makes
-    #: cycling an ordinary activated ability, and it belongs here on CR 117.3c
-    #: instead ("if a player has priority when they cast a spell, activate an
-    #: ability, or take a special action, that player receives priority
-    #: afterward"). The name of the set is a shorthand, not a claim; keep it
-    #: in step with `mcp.py`'s per-tool defaults, which say the same.
-    SPECIAL_ACTIONS = {"play-land", "suspend", "plot", "foretell", "cycle"}
+        The one thing this must never wrap is a genuine network wait:
+        `wait_and_arm`/`block_until_wake` (the `wait` command), `pass_until`
+        (`pass-until`) and `script_tools.run` (`script run`) can each sit
+        polling for up to `seatkit.MAX_WAIT_SECONDS` (25s) when nothing wakes
+        them early - and did, under the old whole-command lock, holding a
+        human's foreground `stage-advice` or action command hostage to a
+        buddy's background `mcp-seat wait` for that whole time. Every command
+        below that can genuinely wait calls that wait UNLOCKED, then enters
+        `locked()` only once it returns, to resolve/persist against the
+        board the wait actually woke to - never against a snapshot taken
+        before it. (In practice `pass_until` and a script's own wait both
+        refuse or no-op outright for an advise seat, so only `wait` ever
+        really blocks here - but all three are written the same way, since
+        none of them promise not to wait.)
+        """
+        # S2 A6 review fix 2 / review fix 1 (2026-09-14): carry whatever a
+        # PRIOR CLI invocation left staged into this process's own `Seat.
+        # _advice_drafts` - the one thing an in-process dict alone could
+        # never do across separate processes. `seat.advise` guards it: a
+        # seat's own dict never holds anything and there is nothing on disk
+        # for one to load either (`stage_advice` itself already refuses a
+        # seat outright).
+        loaded_token: str | None = None
+        draft_note: str | None = None
 
-    def note(state: dict[str, Any] | None) -> None:
-        """Say a pending look-then-split's two destinations out loud, on
-        stderr, after the JSON that carries them."""
-        line = split_destinations(state)
-        if line:
-            print(line, file=sys.stderr)
+        def reload_draft() -> None:
+            """(Re-)read `uid`'s draft fresh off disk and mirror it into
+            `seat._advice_drafts`, updating `loaded_token`/`draft_note` to
+            match. Called only from inside `locked()`, immediately after the
+            lock is claimed - round 2 fix 3 (2026-09-14): never from a
+            snapshot taken before the lock was held, or, for `wait`/`pass-
+            until`/`script run`, from one taken before their own network wait
+            - a different process may have staged, captured, posted or
+            deleted in the meantime, and trusting an older read here is
+            exactly the lost-draft race the whole-command lock used to
+            prevent by brute force."""
+            nonlocal loaded_token, draft_note
+            if not seat.advise:
+                return
+            persisted_draft, note = _load_cli_draft(gid, seat.uid)
+            if persisted_draft is not None:
+                seat._advice_drafts[seat.uid] = persisted_draft
+                loaded_token = persisted_draft.get("_cli_token")
+            else:
+                seat._advice_drafts.pop(seat.uid, None)
+                loaded_token = None
+            if note:
+                draft_note = note
+                print(note, file=sys.stderr)
 
-    def act(perform: Any, dry_run: bool = False) -> None:
-        """Every non-dry-run action shares this: perform it, then run the
-        shared release-and-wait flow, printing the combined answer.
+        @contextlib.contextmanager
+        def locked() -> Any:
+            """One draft read-modify-write critical section: claim `uid`'s
+            cross-process flock, re-read the draft fresh under it, run the
+            caller's own body (a capture, a resolve, or both back to back -
+            none of which ever waits on the network for long), and release.
+            A no-op context for a seat, which never has a draft to guard."""
+            if seat.advise:
+                with _cli_draft_lock(gid, seat.uid):
+                    reload_draft()
+                    yield
+            else:
+                yield
 
-        `--hold` forces holding; a special action holds by default under
-        CR 116.3 whether it was asked for or not."""
-        if dry_run:
-            print(json.dumps(perform(), indent=1, sort_keys=True))
-            return
-        hold = args.hold or args.command in SPECIAL_ACTIONS
-        result = run_action(seat, perform, hold_priority=hold, reasoning=args.reasoning)
-        print(json.dumps(result, indent=1, sort_keys=True))
-        note(result.get("state") if isinstance(result, dict) else None)
+        def persist_draft() -> str | None:
+            """Write this uid's current draft back out for the next CLI
+            invocation - called after every command that could have mutated
+            it (staged one, captured one, or had `resolve_advice_draft` post
+            or drop one). A no-op for a seat, and cheap enough for a
+            read-only command to call unconditionally rather than have to
+            know which commands need it. Returns `None` on success (or for a
+            seat), or `_save_cli_draft`'s own note on failure.
 
-    if args.command == "state":
-        current = seat.fetch_state()
-        print(json.dumps(current, indent=1, sort_keys=True))
-        note(current)
-    elif args.command == "wait":
-        woken = block_until_wake(seat, before=None, max_seconds=args.max_seconds)
-        woken["state"]["wake_reason"] = woken["wake_reason"]
-        print(json.dumps(woken["state"], indent=1, sort_keys=True))
-        note(woken["state"])
-    elif args.command == "cast":
-        body: dict[str, Any] = {"player": seat.player, "dry_run": args.dry_run}
-        body.update(card_reference(args.card))
-        if args.spell_face.strip():
-            body["spell_face"] = args.spell_face.strip()
-        if args.target:
-            body["targets"] = _parse_ids(args.target)
-        sources = _parse_ids(args.sources)
-        if sources:
-            body["mana_sources"] = sources
-        if args.modes:
-            body["modes"] = [int(mode) for mode in _parse_ids(args.modes)]
-        if args.x is not None:
-            body["x_value"] = args.x
-        if args.keyword:
-            body["keyword"] = args.keyword
-        if args.alternative_cost:
-            body["alternative_cost"] = (
-                int(args.alternative_cost)
-                if args.alternative_cost.strip().isdigit()
-                else args.alternative_cost
+            Review fix 1 (2026-09-14): `expected_token` is `loaded_token`
+            above - what this call itself saw on disk when it started, or
+            `None` for a call that saw nothing staged at all. `_save_cli_
+            draft` only ever deletes the file when the entry standing there
+            right now still carries that same token, which is what stops a
+            background `wait` that started with nothing (`loaded_token`
+            stays `None`) from deleting a draft a foreground `stage-advice`
+            wrote in the handful of milliseconds since - the whole point of
+            re-reading fresh under the lock rather than trusting a startup
+            snapshot.
+
+            Review fix 3 (2026-09-14): a failure here (an unwritable drafts
+            directory, most likely) is never raised - logged to stderr once,
+            right here, and handed back so a caller with a JSON answer still
+            to print (`emit`) can fold it in as a `draft` note too."""
+            if not seat.advise:
+                return None
+            trouble = _save_cli_draft(
+                gid,
+                seat.uid,
+                seat._advice_drafts.get(seat.uid),
+                expected_token=loaded_token,
             )
-        for field, value in (
-            ("choosing", args.choosing),
-            ("sacrificing", args.sacrificing),
-            ("discarding", args.discarding),
-            ("exiling", args.exiling),
-            ("tapping", args.tapping),
-            ("delve", args.delve),
-            ("improvise", args.improvise),
-        ):
-            if value:
-                body[field] = _parse_ids(value)
-        if args.convoke:
-            body["convoke"] = parse_convoke(args.convoke)
-        if args.optional_costs:
-            body["optional_costs"] = parse_optional_costs(args.optional_costs)
-        if args.reasoning:
-            body["reasoning"] = args.reasoning
-        act(
-            lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cast", body),
-            dry_run=args.dry_run,
-        )
-    elif args.command in ("suspend", "plot", "foretell"):
-        body = {"player": seat.player, "dry_run": args.dry_run}
-        body.update(card_reference(args.card))
-        sources = sources_or_all(args.sources)
-        if sources:
-            body["mana_sources"] = sources
-        if args.reasoning:
-            body["reasoning"] = args.reasoning
-        act(
-            lambda: seat.call_json("POST", f"/api/games/{gid}/actions/{args.command}", body),
-            dry_run=args.dry_run,
-        )
-    elif args.command == "cycle":
-        body = {"player": seat.player, "ability_index": args.index, "dry_run": args.dry_run}
-        body.update(card_reference(args.card))
-        sources = sources_or_all(args.sources)
-        if sources:
-            body["mana_sources"] = sources
-        if args.reasoning:
-            body["reasoning"] = args.reasoning
-        act(
-            lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cycle", body),
-            dry_run=args.dry_run,
-        )
-    elif args.command == "equip":
-        body = {
-            "player": seat.player,
-            "card_id": args.card_id,
-            "target": args.target,
-            "dry_run": args.dry_run,
-        }
-        sources = sources_or_all(args.sources)
-        if sources:
-            body["mana_sources"] = sources
-        if args.reasoning:
-            body["reasoning"] = args.reasoning
-        act(
-            lambda: seat.call_json("POST", f"/api/games/{gid}/actions/equip", body),
-            dry_run=args.dry_run,
-        )
-    elif args.command == "play-land":
-        body = {"player": seat.player}
-        body.update(card_reference(args.card))
-        if args.reasoning:
-            body["reasoning"] = args.reasoning
-        act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/play-land", body))
-    elif args.command == "activate":
-        body = {
-            "player": seat.player,
-            "card_id": args.card_id,
-            "ability_index": args.index,
-            "dry_run": args.dry_run,
-        }
-        if args.target:
-            body["targets"] = _parse_ids(args.target)
-        sources = _parse_ids(args.sources)
-        if sources:
-            body["mana_sources"] = sources
-        if args.sacrificing:
-            body["sacrificing"] = _parse_ids(args.sacrificing)
-        if args.discarding:
-            body["discarding"] = _parse_ids(args.discarding)
-        if args.exiling:
-            body["exiling"] = _parse_ids(args.exiling)
-        if args.x is not None:
-            body["x_value"] = args.x
-        if args.color:
-            body["color"] = args.color
-        if args.reasoning:
-            body["reasoning"] = args.reasoning
-        act(
-            lambda: seat.call_json("POST", f"/api/games/{gid}/actions/activate", body),
-            dry_run=args.dry_run,
-        )
-    elif args.command == "attackers":
-        # No `player` - see `mcp.py`'s `declare_attackers`: the route
-        # resolves the declaring seat from the uid and `AttackRequest` has no
-        # such field to put it in.
-        body = {
-            "attackers": [
-                {"card_id": pair["card"], "defender": pair["defender"]}
-                for pair in _parse_pairs(args.pairs)
-            ],
-        }
-        if args.reasoning:
-            body["reasoning"] = args.reasoning
-        act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/attack", body))
-    elif args.command == "blockers":
-        body = {
-            "player": seat.player,
-            "blocks": [
-                {"blocker": pair["blocker"], "blocked": pair["blocked"]}
-                for pair in _parse_pairs(args.pairs)
-            ],
-        }
-        if args.reasoning:
-            body["reasoning"] = args.reasoning
-        act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/declare-blockers", body))
-    elif args.command == "pass-until":
-        # The shared loop and the shared validator, not a second copy of
-        # either: `mcp.pass_until` calls the same two functions with the same
-        # defaults, so the two front ends cannot stop in different places or
-        # disagree about what a legal destination is. See `seatkit.pass_until`.
-        problem = autopass_target_error(args.step, args.whose_turn)
-        if problem:
-            print(problem)
-            return 1
-        result = pass_until(
-            seat,
-            until_step=args.step,
-            whose_turn=args.whose_turn,
-            stop_on_stack=not args.no_stop_on_stack,
-            stop_when_attacked=not args.no_stop_when_attacked,
-            stop_when_you_can_attack=not args.no_stop_when_you_can_attack,
-            resume=json.loads(args.resume) if args.resume else None,
-            reasoning=args.reasoning,
-            max_seconds=args.max_seconds,
-        )
-        print(json.dumps(result, indent=1, sort_keys=True))
-        note(result.get("state"))
-    elif args.command == "pass":
-        pass_body: dict[str, Any] = {"player": seat.player}
-        if args.reasoning:
-            pass_body["reasoning"] = args.reasoning
-        result = run_action(
-            seat,
-            lambda: seat.call_json("POST", f"/api/games/{gid}/actions/pass-priority", pass_body),
-            hold_priority=False,
-            release=False,
-        )
-        print(json.dumps(result, indent=1, sort_keys=True))
-    elif args.command == "decide":
-        # `--decline` and an omitted `card_ids` post the identical request -
-        # the empty answer, which for a CR 701.23b search ("that player isn't
-        # required to find some or all of those cards even if they're present
-        # in that zone") is a real answer and not a missing one. The flag adds
-        # no contract the API did not already have; it exists so that a
-        # deliberate decline is distinguishable from a forgotten argument in a
-        # transcript, which is the whole ambiguity of a defaulted positional.
-        # Giving both is a seat saying two different things at once, so it is
-        # refused here rather than silently resolved one way.
-        if args.decline and _parse_ids(args.card_ids):
-            print(
-                "--decline names no cards, so it cannot be combined with card_ids. "
-                "Drop one: --decline alone is the empty answer (CR 701.23b's "
-                "decline, legal only where pending_decision.exact is false)."
-            )
-            return 1
+            if trouble:
+                print(trouble, file=sys.stderr)
+            return trouble
 
-        def perform_decide() -> Any:
-            body: dict[str, Any] = {
-                "player": seat.player,
-                "card_ids": _parse_ids(args.card_ids),
-                "targets": _parse_ids(args.targets),
-                "moved": _parse_ids(args.moved),
-            }
-            if args.accept is not None:
-                body["accept"] = args.accept == "yes"
+        def emit(
+            result: dict[str, Any],
+            *,
+            state_for_draft: Any = None,
+            script_exit: dict[str, Any] | None = None,
+            **json_kwargs: Any,
+        ) -> None:
+            """Print `result` as JSON, after folding in this seat's own staged-
+            draft status exactly as `mcp._tool_result`'s `_attach_draft` does for
+            the matching MCP tool (`cast`/`activate`/.../`decide`/`pass` via
+            `act()`, `wait`, `pass-until`, `script run`) - CLI parity with the
+            MCP transport, not a CLI-only feature. Every other CLI command skips
+            this the same way its own MCP tool does (`mulligan`, `opening-hand-
+            *`, `report`, `plan`, `log`, `script list`, `state`, `stage-advice`
+            itself - none of those route through `_tool_result` on the MCP side
+            either), though `persist_draft()` still runs for the ones among them
+            that can mutate a draft (a committing call can still be captured into
+            one - `mulligan`/`opening-hand-action`/`opening-hand-done` call it
+            directly rather than through `emit`).
+
+            `script_exit` (review fix 2, 2026-09-14) is the CLI `script run`
+            command's own `script_exit`, threaded through to `seatkit.draft_
+            status_for_answer` exactly as `mcp._attach_draft` threads `answer.
+            get("script_exit")` - see `seatkit._script_already_advised` for
+            why a manual run's own proposal has to be checked alongside an
+            armed one, not only the latter.
+
+            Same failure discipline as `mcp._attach_draft`: an exception reading
+            the draft must never break the command's own answer, which already
+            landed by the time this runs. Review fix 3 (2026-09-14): neither
+            must a filesystem problem persisting it, or one hit loading it at
+            the top of this call (`draft_note`) - both are folded into this
+            answer's own `draft.note` rather than ever raising past this
+            function, so the command's own JSON always reaches stdout."""
+            note = draft_note
+            if seat.advise:
+                view = state_for_draft if isinstance(state_for_draft, dict) else {}
+                try:
+                    draft = seatkit.draft_status_for_answer(seat, view, script_exit=script_exit)
+                except Exception:
+                    draft = None
+                if draft is not None:
+                    result["draft"] = draft
+                trouble = persist_draft()
+                note = note or trouble
+                if note:
+                    if not isinstance(result.get("draft"), dict):
+                        result["draft"] = {}
+                    result["draft"]["note"] = note
+            print(json.dumps(result, **json_kwargs))
+
+        # "no --sources given means offer every untapped source" is one rule, and
+        # it lives in `seatkit` so this file and `mcp.py` cannot drift on it - they
+        # already had: this used to branch on the raw string, so `--sources ","`
+        # offered the engine nothing at all while the MCP tool, branching on the
+        # parsed list, offered everything.
+        def sources_or_all(value: str) -> list[str]:
+            return seat.sources_or_all(value)
+
+        #: CR 116.3: "If a player takes a special action, that player receives
+        #: priority afterward." So these must NOT release priority - a seat that
+        #: plays a land and then passes has thrown away the rest of its own main
+        #: phase, which is what a live game showed: a Forest in precombat main and
+        #: the Amulet of Vigor it should have paid for stranded until postcombat.
+        #: A special action does not use the stack at all (CR 116.1), so there is
+        #: nothing releasing priority would let resolve.
+        #:
+        #: Four of these five really are special actions: playing a land
+        #: (CR 116.2a), suspend (CR 116.2f), plot (CR 116.2k, CR 702.170b) and
+        #: foretell (CR 116.2h, CR 702.143b). `cycle` is NOT - CR 702.29a makes
+        #: cycling an ordinary activated ability, and it belongs here on CR 117.3c
+        #: instead ("if a player has priority when they cast a spell, activate an
+        #: ability, or take a special action, that player receives priority
+        #: afterward"). The name of the set is a shorthand, not a claim; keep it
+        #: in step with `mcp.py`'s per-tool defaults, which say the same.
+        SPECIAL_ACTIONS = {"play-land", "suspend", "plot", "foretell", "cycle"}
+
+        def note(state: dict[str, Any] | None) -> None:
+            """Say a pending look-then-split's two destinations out loud, on
+            stderr, after the JSON that carries them."""
+            line = split_destinations(state)
+            if line:
+                print(line, file=sys.stderr)
+
+        def act(perform: Any, dry_run: bool = False) -> None:
+            """Every non-dry-run action shares this: perform it, then run the
+            shared release-and-wait flow, printing the combined answer.
+
+            `--hold` forces holding; a special action holds by default under
+            CR 116.3 whether it was asked for or not."""
+            if dry_run:
+                emit(perform(), indent=1, sort_keys=True)
+                return
+            hold = args.hold or args.command in SPECIAL_ACTIONS
+            result = run_action(seat, perform, hold_priority=hold, reasoning=args.reasoning)
+            if isinstance(result, dict):
+                state_view = result.get("state")
+                _attach_script_hint(
+                    result,
+                    seat,
+                    seats.script_corpora,
+                    state_view if isinstance(state_view, dict) else {},
+                )
+            emit(
+                result,
+                state_for_draft=result.get("state") if isinstance(result, dict) else None,
+                indent=1,
+                sort_keys=True,
+            )
+            note(result.get("state") if isinstance(result, dict) else None)
+
+        if args.command == "state":
+            current = seat.fetch_state()
+            print(json.dumps(current, indent=1, sort_keys=True))
+            note(current)
+        elif args.command == "wait":
+            try:
+                arm_inputs = parse_inputs(args.arm_inputs)
+            except ValueError as exc:
+                print(exc)
+                return 1
+            if args.wake_to_draft and not seat.advise:
+                # Mirrors `mcp.wait_for_priority`'s own plain-string refusal for
+                # the same misuse - not a CLI failure (exit 0), just as `stage-
+                # advice` answers a seat with a refusal rather than an error.
+                print(seatkit.WAKE_TO_DRAFT_ADVISOR_ONLY)
+                return 0
+            # A fresh, unlocked read straight off disk (never the in-process
+            # `seat._advice_drafts`, which `_dispatch`'s own `locked()` only
+            # populates inside a critical section - nothing has entered one
+            # yet at this point in the command): `draft_staged` is only ever
+            # an input to the wait about to start below, so a snapshot taken
+            # right as that wait begins is exactly the semantics it wants,
+            # same as the "read fresh before an unlocked wait" rule the
+            # `_dispatch` docstring lays out for `wait`/`pass-until`/`script
+            # run` generally.
+            draft_staged = False
+            if seat.advise:
+                staged, _load_note = _load_cli_draft(gid, seat.uid)
+                draft_staged = staged is not None and staged.get("action") is not None
+            woken = wait_and_arm(
+                seat,
+                before=None,
+                max_seconds=args.max_seconds,
+                corpora=seats.script_corpora,
+                arm=args.arm,
+                arm_reasoning=args.arm_reasoning,
+                opposing_archetype=args.opposing_archetype,
+                inputs=arm_inputs,
+                wake_to_draft=args.wake_to_draft and seat.advise,
+                draft_staged=draft_staged,
+            )
+            woken["state"]["wake_reason"] = woken["wake_reason"]
+            for field_name in seatkit.ARMED_RESULT_FIELDS:
+                if field_name in woken:
+                    woken["state"][field_name] = woken[field_name]
+            _attach_script_hint(woken["state"], seat, seats.script_corpora, woken["state"])
+            # `wait_and_arm` above already did every bit of waiting this
+            # command will do, fully unlocked - `locked()` here only covers
+            # resolving/persisting the draft against the board it woke to.
+            with locked():
+                emit(woken["state"], state_for_draft=woken["state"], indent=1, sort_keys=True)
+            note(woken["state"])
+        elif args.command == "cast":
+            body: dict[str, Any] = {"player": seat.player, "dry_run": args.dry_run}
+            body.update(card_reference(args.card))
+            if args.spell_face.strip():
+                body["spell_face"] = args.spell_face.strip()
+            if args.target:
+                body["targets"] = _parse_ids(args.target)
             sources = _parse_ids(args.sources)
             if sources:
                 body["mana_sources"] = sources
-            if args.top_order:
-                body["top_order"] = _parse_ids(args.top_order)
-            if args.energy_amount is not None:
-                body["energy_amount"] = args.energy_amount
-            if args.life_amount is not None:
-                body["life_amount"] = args.life_amount
-            if args.choice:
-                body["choice"] = args.choice
-            if args.top is not None:
-                body["top"] = args.top == "top"
-            if args.order:
-                body["order"] = _parse_ids(args.order)
-            if args.damage:
-                body["damage"] = [
-                    {"target": entry["target"], "amount": entry["amount"]}
-                    for entry in _parse_pairs(args.damage)
-                ]
-            if args.generation is not None:
-                body["generation"] = args.generation
+            if args.modes:
+                body["modes"] = [int(mode) for mode in _parse_ids(args.modes)]
+            if args.x is not None:
+                body["x_value"] = args.x
+            if args.keyword:
+                body["keyword"] = args.keyword
+            if args.alternative_cost:
+                body["alternative_cost"] = (
+                    int(args.alternative_cost)
+                    if args.alternative_cost.strip().isdigit()
+                    else args.alternative_cost
+                )
+            for field, value in (
+                ("choosing", args.choosing),
+                ("sacrificing", args.sacrificing),
+                ("discarding", args.discarding),
+                ("exiling", args.exiling),
+                ("tapping", args.tapping),
+                ("delve", args.delve),
+                ("improvise", args.improvise),
+            ):
+                if value:
+                    body[field] = _parse_ids(value)
+            if args.convoke:
+                body["convoke"] = parse_convoke(args.convoke)
+            if args.optional_costs:
+                body["optional_costs"] = parse_optional_costs(args.optional_costs)
             if args.reasoning:
                 body["reasoning"] = args.reasoning
-            answer = seat.call_json("POST", f"/api/games/{gid}/decide", body)
-            if isinstance(answer, dict) and answer.get("accepted") is False:
-                return {"allowed": False, **answer}
-            return {"allowed": True, **answer} if isinstance(answer, dict) else answer
-
-        act(perform_decide)
-    elif args.command == "mulligan":
-        # Deliberately NOT through `act`: the pregame endpoints answer
-        # immediately and block on nothing (see `opening.py`), so there is no
-        # priority to release and nothing to wait for. Wrapping them in the
-        # release-and-wait flow would make a seat sit waiting for a priority
-        # that cannot arrive until the pregame it is trying to finish is over.
-        body: dict[str, Any] = {"player": seat.player, "take": bool(args.take)}
-        if args.bottom:
-            body["bottom"] = _parse_ids(args.bottom)
-        if args.reasoning:
-            body["reasoning"] = args.reasoning
-        print(
-            json.dumps(
-                seat.call_json("POST", f"/api/games/{gid}/pregame/mulligan", body),
-                indent=1,
-                sort_keys=True,
-            )
-        )
-    elif args.command == "opening-hand-action":
-        oha_body: dict[str, Any] = {"player": seat.player, "card_id": args.card.strip()}
-        if args.reasoning:
-            oha_body["reasoning"] = args.reasoning
-        print(
-            json.dumps(
-                seat.call_json(
-                    "POST",
-                    f"/api/games/{gid}/pregame/opening-hand/action",
-                    oha_body,
-                ),
-                indent=1,
-                sort_keys=True,
-            )
-        )
-    elif args.command == "opening-hand-done":
-        ohd_body: dict[str, Any] = {"player": seat.player}
-        if args.reasoning:
-            ohd_body["reasoning"] = args.reasoning
-        print(
-            json.dumps(
-                seat.call_json(
-                    "POST",
-                    f"/api/games/{gid}/pregame/opening-hand/finish",
-                    ohd_body,
-                ),
-                indent=1,
-                sort_keys=True,
-            )
-        )
-    elif args.command == "log":
-        # `uid` here, not the bare debugger's-eye default: a real seat reading
-        # its own log must not see the opponent's hidden-zone card names any
-        # more than the state endpoint shows them.
-        answer = seat.http.get(f"/api/games/{gid}/log", params={"uid": seat.uid})
-        try:
-            entries = answer.json().get("log", [])[-args.limit :]
-        except ValueError:
-            # Same tolerance `mcp.py`'s `game_log` has: a non-JSON body (an
-            # error page from something in front of the API) is shown rather
-            # than raised as a traceback out of a player's command.
-            print(answer.text)
-            return 1
-        print(json.dumps(entries, indent=1, sort_keys=True))
-    elif args.command == "script":
-        # `playscripts.script_tools` is `mcp.run_script`/`list_scripts` too, so
-        # the two front ends differ only in what they print.
-        try:
-            inputs = parse_inputs(args.inputs)
-        except ValueError as exc:
-            print(exc)
-            return 1
-        if args.script_command == "run":
-            answer = script_tools.run(
+            with locked():
+                act(
+                    lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cast", body),
+                    dry_run=args.dry_run,
+                )
+        elif args.command in ("suspend", "plot", "foretell"):
+            body = {"player": seat.player, "dry_run": args.dry_run}
+            body.update(card_reference(args.card))
+            sources = sources_or_all(args.sources)
+            if sources:
+                body["mana_sources"] = sources
+            if args.reasoning:
+                body["reasoning"] = args.reasoning
+            with locked():
+                act(
+                    lambda: seat.call_json(
+                        "POST", f"/api/games/{gid}/actions/{args.command}", body
+                    ),
+                    dry_run=args.dry_run,
+                )
+        elif args.command == "cycle":
+            body = {"player": seat.player, "ability_index": args.index, "dry_run": args.dry_run}
+            body.update(card_reference(args.card))
+            sources = sources_or_all(args.sources)
+            if sources:
+                body["mana_sources"] = sources
+            if args.reasoning:
+                body["reasoning"] = args.reasoning
+            with locked():
+                act(
+                    lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cycle", body),
+                    dry_run=args.dry_run,
+                )
+        elif args.command == "equip":
+            body = {
+                "player": seat.player,
+                "card_id": args.card_id,
+                "target": args.target,
+                "dry_run": args.dry_run,
+            }
+            sources = sources_or_all(args.sources)
+            if sources:
+                body["mana_sources"] = sources
+            if args.reasoning:
+                body["reasoning"] = args.reasoning
+            with locked():
+                act(
+                    lambda: seat.call_json("POST", f"/api/games/{gid}/actions/equip", body),
+                    dry_run=args.dry_run,
+                )
+        elif args.command == "play-land":
+            body = {"player": seat.player}
+            body.update(card_reference(args.card))
+            if args.reasoning:
+                body["reasoning"] = args.reasoning
+            with locked():
+                act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/play-land", body))
+        elif args.command == "activate":
+            body = {
+                "player": seat.player,
+                "card_id": args.card_id,
+                "ability_index": args.index,
+                "dry_run": args.dry_run,
+            }
+            if args.target:
+                body["targets"] = _parse_ids(args.target)
+            sources = _parse_ids(args.sources)
+            if sources:
+                body["mana_sources"] = sources
+            if args.sacrificing:
+                body["sacrificing"] = _parse_ids(args.sacrificing)
+            if args.discarding:
+                body["discarding"] = _parse_ids(args.discarding)
+            if args.exiling:
+                body["exiling"] = _parse_ids(args.exiling)
+            if args.x is not None:
+                body["x_value"] = args.x
+            if args.color:
+                body["color"] = args.color
+            if args.reasoning:
+                body["reasoning"] = args.reasoning
+            with locked():
+                act(
+                    lambda: seat.call_json("POST", f"/api/games/{gid}/actions/activate", body),
+                    dry_run=args.dry_run,
+                )
+        elif args.command == "attackers":
+            # No `player` - see `mcp.py`'s `declare_attackers`: the route
+            # resolves the declaring seat from the uid and `AttackRequest` has no
+            # such field to put it in.
+            body = {
+                "attackers": [
+                    {"card_id": pair["card"], "defender": pair["defender"]}
+                    for pair in _parse_pairs(args.pairs)
+                ],
+            }
+            if args.reasoning:
+                body["reasoning"] = args.reasoning
+            with locked():
+                act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/attack", body))
+        elif args.command == "blockers":
+            body = {
+                "player": seat.player,
+                "blocks": [
+                    {"blocker": pair["blocker"], "blocked": pair["blocked"]}
+                    for pair in _parse_pairs(args.pairs)
+                ],
+            }
+            if args.reasoning:
+                body["reasoning"] = args.reasoning
+            with locked():
+                act(
+                    lambda: seat.call_json(
+                        "POST", f"/api/games/{gid}/actions/declare-blockers", body
+                    )
+                )
+        elif args.command == "pass-until":
+            # The shared loop and the shared validator, not a second copy of
+            # either: `mcp.pass_until` calls the same two functions with the same
+            # defaults, so the two front ends cannot stop in different places or
+            # disagree about what a legal destination is. See `seatkit.pass_until`.
+            problem = autopass_target_error(args.step, args.whose_turn)
+            if problem:
+                print(problem)
+                return 1
+            try:
+                arm_inputs = parse_inputs(args.arm_inputs)
+            except ValueError as exc:
+                print(exc)
+                return 1
+            result = pass_until(
                 seat,
-                seats.script_corpora,
-                script=args.script,
-                reasoning=args.reasoning or "",
-                opposing_archetype=args.opposing_archetype,
-                resume=args.resume,
-                wait=args.wait,
+                until_step=args.step,
+                whose_turn=args.whose_turn,
+                stop_on_stack=not args.no_stop_on_stack,
+                stop_when_attacked=not args.no_stop_when_attacked,
+                stop_when_you_can_attack=not args.no_stop_when_you_can_attack,
+                resume=json.loads(args.resume) if args.resume else None,
+                reasoning=args.reasoning,
                 max_seconds=args.max_seconds,
-                inputs=inputs,
-            )
-        else:
-            answer = script_tools.listing(
-                seat,
-                seats.script_corpora,
+                corpora=seats.script_corpora,
+                arm=args.arm,
+                arm_reasoning=args.arm_reasoning,
                 opposing_archetype=args.opposing_archetype,
-                inputs=inputs,
+                inputs=arm_inputs,
             )
-        if isinstance(answer, str):
-            print(answer)
-            return 1
-        print(json.dumps(answer, indent=1, sort_keys=args.script_command == "run"))
-        note(answer.get("state"))
-    elif args.command == "report":
-        # A report is long prose full of quotes, braces and backticks. Passing
-        # it as an argument means the shell sees it first, and command
-        # substitution has already silently blanked parts of a real report -
-        # so stdin is offered as the way to hand it over untouched.
-        text = args.text if args.text is not None else sys.stdin.read()
-        if not text.strip():
-            print("refusing to file an empty report")
-            return 1
-        print(seat.call("POST", f"/api/games/{gid}/report", {"player": seat.player, "text": text}))
-    return 0
+            # `pass_until` above already did every bit of waiting this
+            # command will do, fully unlocked (and refuses outright for an
+            # advise seat before it would ever wait at all) - `locked()`
+            # here only covers resolving/persisting the draft afterward.
+            with locked():
+                emit(result, state_for_draft=result.get("state"), indent=1, sort_keys=True)
+            note(result.get("state"))
+        elif args.command == "pass":
+            pass_body: dict[str, Any] = {"player": seat.player}
+            if args.reasoning:
+                pass_body["reasoning"] = args.reasoning
+            with locked():
+                result = run_action(
+                    seat,
+                    lambda: seat.call_json(
+                        "POST", f"/api/games/{gid}/actions/pass-priority", pass_body
+                    ),
+                    hold_priority=False,
+                    release=False,
+                )
+                emit(
+                    result,
+                    state_for_draft=result.get("state") if isinstance(result, dict) else None,
+                    indent=1,
+                    sort_keys=True,
+                )
+        elif args.command == "decide":
+            # `--decline` and an omitted `card_ids` post the identical request -
+            # the empty answer, which for a CR 701.23b search ("that player isn't
+            # required to find some or all of those cards even if they're present
+            # in that zone") is a real answer and not a missing one. The flag adds
+            # no contract the API did not already have; it exists so that a
+            # deliberate decline is distinguishable from a forgotten argument in a
+            # transcript, which is the whole ambiguity of a defaulted positional.
+            # Giving both is a seat saying two different things at once, so it is
+            # refused here rather than silently resolved one way.
+            if args.decline and _parse_ids(args.card_ids):
+                print(
+                    "--decline names no cards, so it cannot be combined with card_ids. "
+                    "Drop one: --decline alone is the empty answer (CR 701.23b's "
+                    "decline, legal only where pending_decision.exact is false)."
+                )
+                return 1
+
+            def perform_decide() -> Any:
+                body: dict[str, Any] = {
+                    "player": seat.player,
+                    "card_ids": _parse_ids(args.card_ids),
+                    "targets": _parse_ids(args.targets),
+                    "moved": _parse_ids(args.moved),
+                }
+                if args.accept is not None:
+                    body["accept"] = args.accept == "yes"
+                sources = _parse_ids(args.sources)
+                if sources:
+                    body["mana_sources"] = sources
+                if args.top_order:
+                    body["top_order"] = _parse_ids(args.top_order)
+                if args.energy_amount is not None:
+                    body["energy_amount"] = args.energy_amount
+                if args.life_amount is not None:
+                    body["life_amount"] = args.life_amount
+                if args.choice:
+                    body["choice"] = args.choice
+                if args.top is not None:
+                    body["top"] = args.top == "top"
+                if args.order:
+                    body["order"] = _parse_ids(args.order)
+                if args.damage:
+                    body["damage"] = [
+                        {"target": entry["target"], "amount": entry["amount"]}
+                        for entry in _parse_pairs(args.damage)
+                    ]
+                if args.generation is not None:
+                    body["generation"] = args.generation
+                if args.reasoning:
+                    body["reasoning"] = args.reasoning
+                answer = seat.call_json("POST", f"/api/games/{gid}/decide", body)
+                if isinstance(answer, dict) and answer.get("accepted") is False:
+                    return {"allowed": False, **answer}
+                return {"allowed": True, **answer} if isinstance(answer, dict) else answer
+
+            with locked():
+                act(perform_decide)
+        elif args.command == "mulligan":
+            # Deliberately NOT through `act`: the pregame endpoints answer
+            # immediately and block on nothing (see `opening.py`), so there is no
+            # priority to release and nothing to wait for. Wrapping them in the
+            # release-and-wait flow would make a seat sit waiting for a priority
+            # that cannot arrive until the pregame it is trying to finish is over.
+            body: dict[str, Any] = {"player": seat.player, "take": bool(args.take)}
+            if args.bottom:
+                body["bottom"] = _parse_ids(args.bottom)
+            if args.reasoning:
+                body["reasoning"] = args.reasoning
+            # No `draft` on this answer - `mcp.mulligan` does not route through
+            # `_tool_result` either (pregame endpoints answer immediately, never
+            # `wait_for_priority`'s own poll), so there is nothing for a CLI-only
+            # attach to add here that the MCP tool does not already give. The
+            # committing call itself can still capture a staged, empty window
+            # (`Seat._advise_answer`), so `persist_draft` still runs.
+            with locked():
+                print(
+                    json.dumps(
+                        seat.call_json("POST", f"/api/games/{gid}/pregame/mulligan", body),
+                        indent=1,
+                        sort_keys=True,
+                    )
+                )
+                persist_draft()
+        elif args.command == "opening-hand-action":
+            oha_body: dict[str, Any] = {"player": seat.player, "card_id": args.card.strip()}
+            if args.reasoning:
+                oha_body["reasoning"] = args.reasoning
+            with locked():
+                print(
+                    json.dumps(
+                        seat.call_json(
+                            "POST",
+                            f"/api/games/{gid}/pregame/opening-hand/action",
+                            oha_body,
+                        ),
+                        indent=1,
+                        sort_keys=True,
+                    )
+                )
+                persist_draft()
+        elif args.command == "opening-hand-done":
+            ohd_body: dict[str, Any] = {"player": seat.player}
+            if args.reasoning:
+                ohd_body["reasoning"] = args.reasoning
+            with locked():
+                print(
+                    json.dumps(
+                        seat.call_json(
+                            "POST",
+                            f"/api/games/{gid}/pregame/opening-hand/finish",
+                            ohd_body,
+                        ),
+                        indent=1,
+                        sort_keys=True,
+                    )
+                )
+                persist_draft()
+        elif args.command == "log":
+            # `uid` here, not the bare debugger's-eye default: a real seat reading
+            # its own log must not see the opponent's hidden-zone card names any
+            # more than the state endpoint shows them.
+            answer = seat.http.get(f"/api/games/{gid}/log", params={"uid": seat.uid})
+            try:
+                entries = answer.json().get("log", [])[-args.limit :]
+            except ValueError:
+                # Same tolerance `mcp.py`'s `game_log` has: a non-JSON body (an
+                # error page from something in front of the API) is shown rather
+                # than raised as a traceback out of a player's command.
+                print(answer.text)
+                return 1
+            print(json.dumps(entries, indent=1, sort_keys=True))
+        elif args.command == "script":
+            # `playscripts.script_tools` is `mcp.run_script`/`list_scripts` too, so
+            # the two front ends differ only in what they print.
+            try:
+                inputs = parse_inputs(args.inputs)
+            except ValueError as exc:
+                print(exc)
+                return 1
+            if args.script_command == "run":
+                answer = script_tools.run(
+                    seat,
+                    seats.script_corpora,
+                    script=args.script,
+                    reasoning=args.reasoning or "",
+                    opposing_archetype=args.opposing_archetype,
+                    resume=args.resume,
+                    wait=args.wait,
+                    max_seconds=args.max_seconds,
+                    inputs=inputs,
+                    invoked_via="cli",
+                )
+            else:
+                answer = script_tools.listing(
+                    seat,
+                    seats.script_corpora,
+                    opposing_archetype=args.opposing_archetype,
+                    inputs=inputs,
+                )
+            if isinstance(answer, str):
+                print(answer)
+                return 1
+            if args.script_command == "run":
+                # `script_tools.run` above already did every bit of waiting
+                # this command will do (`--wait`/`--max-seconds`), fully
+                # unlocked - `locked()` here only covers resolving/
+                # persisting the draft afterward. Matches `mcp.run_script`,
+                # which routes through `_tool_result` - `list_scripts` does
+                # not (a listing judges scripts, it runs nothing, so there is
+                # never anything here for a draft to be captured by).
+                # `script_exit=answer.get("script_exit")` (review fix 2,
+                # 2026-09-14): this run's own proposal, so a reached staged
+                # draft is superseded rather than double-posted alongside it -
+                # see `emit`'s own docstring.
+                with locked():
+                    emit(
+                        answer,
+                        state_for_draft=answer.get("state"),
+                        script_exit=answer.get("script_exit"),
+                        indent=1,
+                        sort_keys=True,
+                    )
+            else:
+                print(json.dumps(answer, indent=1, sort_keys=False))
+            note(answer.get("state"))
+        elif args.command == "report":
+            # A report is long prose full of quotes, braces and backticks. Passing
+            # it as an argument means the shell sees it first, and command
+            # substitution has already silently blanked parts of a real report -
+            # so stdin is offered as the way to hand it over untouched.
+            text = args.text if args.text is not None else sys.stdin.read()
+            if not text.strip():
+                print("refusing to file an empty report")
+                return 1
+            print(
+                seat.call("POST", f"/api/games/{gid}/report", {"player": seat.player, "text": text})
+            )
+        elif args.command == "plan":
+            # Mutates no `Game` and never blocks - `seat.declare_plan` goes
+            # straight through `call_json`, the same as `report` above, rather
+            # than `act()`'s release-and-wait flow.
+            result = seat.declare_plan(
+                board_read=args.board_read,
+                my_role=args.my_role,
+                plan=args.plan_text,
+                expecting=args.expecting,
+                because=args.because,
+                confidence=args.confidence,
+                for_turn=args.for_turn,
+            )
+            print(json.dumps(result, indent=1, sort_keys=True))
+        elif args.command == "stage-advice":
+            # Mutates no `Game` and never blocks - `seat.stage_advice` only arms
+            # this seat's own next committing call, the same shared function
+            # `mcp.stage_advice` calls.
+            with locked():
+                result = seat.stage_advice(args.step, args.whose_turn)
+                print(json.dumps(result, indent=1, sort_keys=True))
+                # S2 A6 review fix 2: persisted so the NEXT `seat_cli.run()`
+                # call - a fresh process with a fresh `Seats()` - can pick this
+                # armed window back up. `persist_draft` (not `emit`, which also
+                # attaches `draft` to the answer - `mcp.stage_advice` never
+                # does that on its own answer either) is exactly the save half
+                # of that.
+                persist_draft()
+        return 0
+
+    # Round 2 fix 3 (2026-09-14): no lock wrapped around `_dispatch()` as a
+    # whole any more - `_dispatch`'s own `locked()` claims `_cli_draft_lock`
+    # only around each draft read-modify-write critical section, never
+    # around a command's own genuine network wait. See `_dispatch`'s and
+    # `_cli_draft_lock`'s own docstrings.
+    return _dispatch()
 
 
 if __name__ == "__main__":
