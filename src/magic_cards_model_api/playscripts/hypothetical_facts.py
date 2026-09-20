@@ -1,7 +1,9 @@
 """O4/O7's engine-computed facts: `enters_any`, `unlocks`, `unlocks_by_search`,
-`unlocks_by_basic_search`.
+`unlocks_by_basic_search`, and - only when the caller asks for the next-turn
+horizon, `build_hypothetical_facts(..., next_turn=True)` - `payable_any` and
+`unlocks_next`.
 
-`selectors.matches` cannot answer any of these four fields from a redacted
+`selectors.matches` cannot answer any of these six fields from a redacted
 view alone - they read what a land would do if it entered, and what casting
 would be possible with it there, which only the live `Game` and
 `magic_cards_model.machines.hypothetical` can say. This module is the one
@@ -9,7 +11,10 @@ place that gap is closed: `build_hypothetical_facts(game, player,
 candidate_ids)` runs `payability_matrix` exactly once and turns its answer
 into a plain, JSON-able mapping keyed by card id - the shape `selectors.Hypo`
 expects, and the shape the `.../playscripts/hypothetical-facts` route
-(`app.py`) hands back to a seat.
+(`app.py`) hands back to a seat. `next_turn=True` adds a second
+`payability_matrix` pass, `assuming_untapped=True`, and nothing else: with
+the flag unset the mapping returned is byte for byte the one this module
+returned before the horizon existed, and the second pass never runs.
 
 Visibility (O7's "only the viewer's own hand and library"): every fact here
 comes from `player`'s own hand and library, the only zones `predict_enters`/
@@ -106,18 +111,121 @@ search finish and priority returns.
   `library_basic_land_types` (the same `library_land_types` map, narrowed)
   rather than a second search over the library.
 
+- `payable_any` (the `next_turn` horizon only) is one hand card's answer to
+  "how soon could this be paid for at all", in a closed four-word
+  vocabulary, earliest wins:
+
+  - `"now"` - `payable` in `matrix.now` **and** carrying a payable option
+    whose every mandatory target slot is filled
+    (`_has_a_payable_targeted_option`). Deliberately not `castable_now`:
+    that one is the colour-blind read - it asks `legal_actions` whether a
+    row with legal targets exists and never whether the mana is there - so a
+    Fatal Push with a Mountain up and a creature to kill is `castable_now`
+    and still not payable. The sibling gates on `Affordability.YES`, which
+    is the whole question here.
+  - `"with_a_land"` - `payable` in some **hand** land's own column of the
+    real matrix, **and** `player` still has a land drop to make this turn.
+
+    D-3, and the reason the gate is there: `playscripts.schema`'s own
+    `PAYABLE_STATES` contract - the definition a play is written against,
+    mirrored verbatim into `mtg-decks`' `scripts/check_plays.py` - reads
+    "`with_a_land` once the land drop still available this turn is made".
+    An ungated fact would make that sentence false in two repos at once: a
+    play written against the documented meaning would match on a turn whose
+    drop is already spent, and act on a land it cannot play. So the word is
+    gated on exactly what the sentence says, `_land_drop_available`: CR
+    305.3's "if it isn't their turn", and CR 305.2a's comparison of
+    `Game.land_allowance` (CR 305.2's continuous-effect increases included)
+    against `Game.lands_played`.
+
+    The gate reads only that **durable** half. CR 305.1's own half - a main
+    phase, an empty stack, priority in hand - is this instant's timing,
+    satisfied again later in the same turn, and never satisfied at all while
+    a `candidate_ids` caller asks mid-resolution (CR 608.2d), where reading
+    it would collapse every `"with_a_land"` a search's own answer depends
+    on. That half is named out loud instead: whenever `Game.
+    why_cannot_play_land` refuses while the drop itself is still there, its
+    own words go into `notices`. The drop being gone is recorded there too,
+    naming which of CR 305.3 / CR 305.2a withheld the word.
+
+    This is deliberately the one place `payable_any` and `unlocks` answer
+    differently about the same land on the same board: `unlocks` asks "would
+    this land entering turn something on", a question with no land drop in
+    it (nothing in its own contract mentions one), while `"with_a_land"`
+    claims the drop outright. A card only a hand land could pay for reads
+    `"no"` rather than `"with_a_land"` once the drop is spent - next turn's
+    own drop is outside this four-word vocabulary, which reaches no further
+    than the untap step `"next_turn"` models.
+  - `"next_turn"` - `payable` in the `assuming_untapped` pass's own `now`
+    row: the board with `player`'s untap step already taken. That pass
+    models the mana and nothing else - no draw, no upkeep trigger, no turn
+    advancing, nothing the opponent does in between - and says so in every
+    row's own notices.
+  - `"no"` - none of the three.
+
+  Only `"now"` asks about targets. The later three are claims about when the
+  cost could be paid, not about a spell that could be cast this instant, so
+  a Fatal Push with the {B} up and no creature anywhere reads
+  `"with_a_land"` (or `"next_turn"`) rather than `"now"` - "now" is the one
+  word a seat may act on without checking anything else.
+
+  A hand card whose printed mana cost carries `{X}` gets **no**
+  `payable_any` key at all, not `"no"`: the same fail-closed rule `unlocks`
+  already applies through `_has_x`, since `payability_matrix` only ever
+  judges an X spell at X=0 (CR 107.1b's cheapest legal announcement) and a
+  "yes" there says nothing about the X a play actually wants. Omitting the
+  key is the honest answer; `"no"` would be a claim.
+
+  D-6: `payable_any` does not distinguish a life-paid unlock from a free
+  one. A card payable only by activating a "{T}, Pay N life: Add ..." mana
+  ability the player chooses themselves (CR 605.3a) reads exactly the same
+  word as one paid for with a plain tap. The life is not lost - it is
+  `Payability.life_paid` on the very row that answered, the same field
+  `unlocks_life_paid` already surfaces for `unlocks` - so a future field
+  wanting the distinction reads it there rather than widening this
+  vocabulary.
+- `unlocks_next` (the `next_turn` horizon only) is `unlocks`' own
+  before/after comparison, read off the `assuming_untapped` matrix instead
+  of the real one: true when, in that land's column of that pass, some hand
+  card other than the land itself is payable that was not payable in that
+  same pass's `now` row. `_newly_payable` is the one read behind both, so
+  every rule `unlocks` fails closed on applies here unchanged - an X-cost
+  card never counts, a pair the engine flagged with a notice of its own is
+  left out, and the newly-payable option must have its mandatory targets
+  filled. The one adjustment is that the `assuming_untapped` pass stamps
+  every row it answers with notices *about the question* rather than about
+  an incomplete answer ("assuming untapped: ..."); those are stepped over
+  (`_engine_notices`), or the fact would fail closed to `False` everywhere.
+  CR 704.5a is applied consistently with `enters`: a land whose only
+  untapped option is a lethal optional payment is read as entering tapped,
+  never reported as `unlocks_next` on the strength of that option, and a
+  notice saying so is recorded for a hand land exactly as the `enters`
+  substitution's own notice already is. `unlocks_next` is offered on
+  exactly the lands `unlocks` is offered on - hand lands always, plus any id
+  the caller named in `candidate_ids`, never any other library card - so the
+  CR 401.2 argument above stays true verbatim.
+
 `payability_matrix` is called once per `build_hypothetical_facts` call, over
 every hand card and every candidate land (hand lands, library lands): "use
 payability_matrix once per condition evaluation, never one payability call
-per pair" (O7).
+per pair" (O7). `next_turn=True` makes that exactly twice - the same batch
+again with `assuming_untapped=True` - and never more: both new facts are
+read off those two answers, never out of a third call.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any
+from uuid import UUID
 
-from magic_cards_model.machines.hypothetical import EntersState, Payability, payability_matrix
+from magic_cards_model.machines.hypothetical import (
+    EntersState,
+    LandPayability,
+    Payability,
+    PayabilityMatrix,
+    payability_matrix,
+)
 from magic_cards_model.models import Action, Affordability, CardState, Game, Zone
 
 from ..board_scope import on_one_board
@@ -249,6 +357,64 @@ def _life_paid_notices_only(notices: tuple[str, ...]) -> bool:
     return bool(notices) and all(_LIFE_PAID_SUCCESS_CITATION in notice for notice in notices)
 
 
+#: Every notice `payability_matrix(..., assuming_untapped=True)` adds of its
+#: own - the hypothetical's disclaimer and the line naming what untapped
+#: (engine `machines.hypothetical._ASSUMING_UNTAPPED_NOTICE` and
+#: `_untapped_copy`) - begins with this, on every row that pass answers.
+#: They describe the *question*, not an answer the engine flagged as
+#: incomplete, so the fail-closed rule below steps over them; without that,
+#: `unlocks_next` would read every row of the second pass as untrustworthy
+#: and fail closed to `False` on every land.
+_ASSUMING_UNTAPPED_PREFIX = "assuming untapped: "
+
+
+def _engine_notices(notices: tuple[str, ...]) -> tuple[str, ...]:
+    """`notices` less the ones the `assuming_untapped` pass stamps on every
+    row it answers - a no-op on the ordinary pass, which carries none."""
+    return tuple(notice for notice in notices if not notice.startswith(_ASSUMING_UNTAPPED_PREFIX))
+
+
+def _newly_payable(
+    column: LandPayability,
+    now_payable: dict[UUID, Payability],
+    x_cost_ids: set[UUID],
+    land_notices: list[str],
+) -> Payability | None:
+    """The first card in `column.cards` this land turns on, or `None` when it
+    turns nothing on: `payable` in the land's own column, not `payable` in
+    the same matrix's own `now` row, and carrying a payable option whose
+    every mandatory target slot is filled.
+
+    The one read behind both `unlocks` (given the real matrix's rows) and
+    `unlocks_next` (given the `assuming_untapped` pass's), so the two cannot
+    drift apart. Every fail-closed rule in the module docstring lives here:
+    an X-cost card never counts (`x_cost_ids`, item 2), a pair carrying any
+    notice the engine raised - the land's own prediction, the assumed-land
+    answer, or the `now` answer - is left out rather than trusted, and the
+    newly-payable option must have its mandatory targets filled
+    (`_has_a_payable_targeted_option`, the D-fix) rather than merely being
+    priced. The one exception is the life-paid-success citation, which
+    documents a payable answer rather than an incomplete one.
+    """
+    for payability in column.cards:
+        if payability.card_id == column.land_id:
+            continue
+        if payability.card_id in x_cost_ids:
+            # Item 2: `payability_matrix` only ever judges an X spell at
+            # X=0 - a newly-payable X=0 announcement is not a real unlock.
+            continue
+        now = now_payable.get(payability.card_id)
+        if land_notices or (now is not None and _engine_notices(now.notices)):
+            continue
+        card_notices = _engine_notices(payability.notices)
+        if card_notices and not _life_paid_notices_only(card_notices):
+            continue
+        was_payable = now is not None and now.payable
+        if payability.payable and not was_payable and _has_a_payable_targeted_option(payability):
+            return payability
+    return None
+
+
 def _is_basic(card: CardState) -> bool:
     """CR 205.4a's `Basic` supertype, read off the card the same way
     `_land_subtypes` already reads its subtypes - never a name."""
@@ -274,13 +440,175 @@ def _reaches_an_unlocking_land(
     )
 
 
+def _unlocks_next(
+    untapped: PayabilityMatrix,
+    hand_ids: set[str],
+    x_cost_ids: set[UUID],
+) -> tuple[dict[str, bool], list[str]]:
+    """`{land id: unlocks_next}` for every land in the `assuming_untapped`
+    pass, and the notices a hand land's own lethal optional payment earns.
+
+    The same before/after comparison `unlocks` performs (`_newly_payable`),
+    read off that pass instead of the real matrix: true when, in this land's
+    own column there, some hand card other than the land itself is payable
+    that was not payable in that pass's own `now` row.
+
+    CR 704.5a is applied exactly as `enters` applies it: a land whose only
+    untapped option is a lethal optional payment is read as entering tapped,
+    so the column's own notice list is non-empty and `_newly_payable` fails
+    closed - the land is never reported as unlocking anything next turn on
+    the strength of an option taking it would lose the game for.
+    """
+    now_rows = {payability.card_id: payability for payability in untapped.now}
+    unlocks_next: dict[str, bool] = {}
+    notices: list[str] = []
+    for column in untapped.lands:
+        prediction = column.prediction
+        land_notices = list(prediction.notices)
+        if prediction.lethal_if_paid:
+            land_notices.append(
+                f"{prediction.name}: the optional payment is lethal (CR 704.5a), so "
+                "unlocks_next reads this land as entering tapped next turn rather than "
+                "untapped_if_paid, and fails closed"
+            )
+        land_id = str(column.land_id)
+        if land_id in hand_ids:
+            notices.extend(land_notices)
+        unlocked = _newly_payable(column, now_rows, x_cost_ids, land_notices)
+        unlocks_next[land_id] = unlocked is not None
+    return unlocks_next, notices
+
+
+def _land_drop_available(game: Game, player: str) -> bool:
+    """Whether `player` still has a land drop to make this turn - the
+    **durable** half of CR 305, and the whole of what `"with_a_land"` claims.
+
+    Two reads, both of them facts about the turn rather than about this
+    instant:
+
+    - CR 305.3, "A player can't play a land, for any reason, if it isn't
+      their turn."
+    - CR 305.2a, "To determine whether a player can play a land, compare the
+      number of lands the player can play this turn with the number of lands
+      they have already played this turn ... If the number of lands the
+      player can play is greater, the play is legal." `Game.land_allowance`
+      is that first number (CR 305.2's "continuous effects may increase this
+      number" included, so an extra land play grant is honoured rather than
+      a hardcoded 1), `Game.lands_played` the second.
+
+    CR 305.1's own half - "A player who has priority may play a land card
+    from their hand during a main phase of their turn when the stack is
+    empty" - is deliberately **not** read. That half is this instant's
+    timing: the stack empties, the phase comes round, and it is satisfied
+    again inside the same turn. Worse, it is never satisfied while a
+    `candidate_ids` caller asks (CR 608.2d - the asking ability is still on
+    the stack until this very question is answered), so reading it would
+    collapse every `"with_a_land"` for a seat reading a script mid-search.
+    `_land_drop_notices` names that half out loud instead.
+    """
+    turn = game.turn
+    if turn is None or game.is_over or player != turn.active_player:
+        return False
+    return game.lands_played.get(player, 0) < game.land_allowance(player)
+
+
+def _land_drop_notices(game: Game, player: str, available: bool) -> list[str]:
+    """What `payable_any` says out loud about the land drop behind
+    `"with_a_land"` (D-3), in the engine's own words wherever it has them:
+    why the word was withheld when the drop is gone, and - when the drop is
+    there but CR 305.1's timing refuses right now - that the fact did not
+    read that timing and why."""
+    refusal = (
+        game.why_cannot_play_land(player) if game.turn is not None and not game.is_over else None
+    )
+    if not available:
+        if game.turn is None:
+            reason = "no turn is in progress"
+        elif game.is_over:
+            reason = game.why_game_is_over() or "the game is over"
+        elif player != game.turn.active_player:
+            reason = f"it is {game.turn.active_player}'s turn (CR 305.3)"
+        else:
+            reason = (
+                f"{game.lands_played.get(player, 0)} of the "
+                f"{game.land_allowance(player)} lands {player} may play this turn are "
+                "already played (CR 305.2a, CR 305.2b)"
+            )
+        return [
+            'payable_any: "with_a_land" is withheld from every hand card - no land drop '
+            f"remains for {player} this turn (CR 305.2a, CR 305.3): {reason}"
+        ]
+    if refusal is not None:
+        return [
+            'payable_any: "with_a_land" reads this turn\'s remaining land drop (CR '
+            "305.2a, CR 305.3) and never CR 305.1's own timing - a main phase, an empty "
+            f"stack, priority in hand - which right now refuses: {refusal}"
+        ]
+    return []
+
+
+def _payable_any(
+    matrix: PayabilityMatrix,
+    untapped: PayabilityMatrix,
+    hand: list[CardState],
+    hand_ids: set[str],
+    now_payable: dict[UUID, Payability],
+    x_cost_ids: set[UUID],
+    land_drop_available: bool,
+) -> dict[str, str]:
+    """`{card id: "now" | "with_a_land" | "next_turn" | "no"}` for every hand
+    card, earliest wins - less every X-cost card, which gets no entry at all
+    (item 2's fail-closed rule, `_has_x`). See the module docstring for what
+    each word claims, D-3's land-drop gate (`land_drop_available`, the
+    caller's `_land_drop_available` read) and D-6's life-paid unlocks, which
+    this does not distinguish (`Payability.life_paid` is where that lives)."""
+    #: Hand cards some *hand* land's own column of the real matrix makes
+    #: payable - but only while `player` still has a land drop to make this
+    #: turn (D-3): with no drop left, no land in hand can enter at all, so
+    #: the word claims something the board cannot deliver and is withheld.
+    with_a_land = (
+        {
+            payability.card_id
+            for column in matrix.lands
+            if str(column.land_id) in hand_ids
+            for payability in column.cards
+            if payability.payable
+        }
+        if land_drop_available
+        else set()
+    )
+    later = {payability.card_id for payability in untapped.now if payability.payable}
+    verdicts: dict[str, str] = {}
+    for card in hand:
+        if card.id in x_cost_ids:
+            continue
+        now = now_payable.get(card.id)
+        if now is not None and now.payable and _has_a_payable_targeted_option(now):
+            # Not `castable_now`: that one reads legal targets and never
+            # colour, which is why `affordable` stayed colour-blind.
+            verdict = "now"
+        elif card.id in with_a_land:
+            verdict = "with_a_land"
+        elif card.id in later:
+            verdict = "next_turn"
+        else:
+            verdict = "no"
+        verdicts[str(card.id)] = verdict
+    return verdicts
+
+
 @on_one_board
 def build_hypothetical_facts(
-    game: Game, player: str, candidate_ids: frozenset[str] | None = None
+    game: Game,
+    player: str,
+    candidate_ids: frozenset[str] | None = None,
+    *,
+    next_turn: bool = False,
 ) -> dict[str, Any]:
     """`{"cards": {card_id: {"enters"?, "unlocks"?, "unlocks_by_search"?,
-    "unlocks_by_basic_search"?}}, "notices": [...]}` for every hand land,
-    every hand card, every land named in `candidate_ids`, and every one of
+    "unlocks_by_basic_search"?, "payable_any"?, "unlocks_next"?}}, "notices":
+    [...]}` for every hand land, every hand card, every land named in
+    `candidate_ids`, and every one of
     `player`'s own battlefield permanents whose search reads
     `unlocks_by_search`/`unlocks_by_basic_search` - see the module
     docstring. `game` is read, never mutated (the same guarantee
@@ -297,7 +625,21 @@ def build_hypothetical_facts(
     `candidate_ids` carves out. Only the per-hand-card results, a candidate
     land's own facts, and `unlocks_by_search` on the hand card whose search
     reads them are ever returned, and both `cards` and `notices` are sorted
-    so the bytes returned do not depend on hand order either."""
+    so the bytes returned do not depend on hand order either.
+
+    `next_turn` is the horizon flag. Unset (the default), this answers byte
+    for byte what it answered before the horizon existed and
+    `payability_matrix` runs exactly once. Set, it runs a second time over
+    the same hand and the same lands with `assuming_untapped=True` - the
+    board with `player`'s untap step already taken - and two facts are added
+    off that answer: `payable_any` on each hand card (`"now"` /
+    `"with_a_land"` / `"next_turn"` / `"no"`, earliest wins, and absent
+    entirely for an X-cost card) and `unlocks_next` on exactly the lands
+    `unlocks` is already offered on. See the module docstring for what each
+    one does and does not claim - in particular D-3's land-drop gate behind
+    `"with_a_land"` (CR 305.2a/CR 305.3, the word withheld outright once the
+    drop is gone, with CR 305.1's timing named in `notices` instead of read)
+    and D-6's life-paid unlocks, which `payable_any` does not distinguish."""
     me = game.player(player)
     hand = list(me.hand)
     hand_ids = {str(card.id) for card in hand}
@@ -334,6 +676,14 @@ def build_hypothetical_facts(
         )
     matrix = payability_matrix(matrix_game, player, hand, lands)
     now_payable = {payability.card_id: payability for payability in matrix.now}
+    #: The `next_turn` horizon's second pass, over the same hand and the same
+    #: lands on the board `player`'s untap step has already been taken on -
+    #: `None`, and never called at all, unless the caller asked for it.
+    untapped = (
+        payability_matrix(matrix_game, player, hand, lands, assuming_untapped=True)
+        if next_turn
+        else None
+    )
     #: Item 2: hand cards an X-cost mana cost - excluded from every
     #: `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search` judgement, see
     #: `_has_x`.
@@ -365,6 +715,12 @@ def build_hypothetical_facts(
     #: amount, not just whether it unlocks, to fail closed when a hand
     #: card's own search cost would already have been paid first.
     unlocking_land_ids: dict[str, int] = {}
+    #: The lands whose facts reach the return value: a hand land always, plus
+    #: any id the caller named in `candidate_ids`. `unlocks_next` is written
+    #: onto exactly these and no others, so the CR 401.2 argument in the
+    #: module docstring holds for it exactly as it already holds for
+    #: `enters`/`unlocks`.
+    offered_land_ids: list[str] = []
     for column in matrix.lands:
         prediction = column.prediction
         state = prediction.state.value
@@ -384,43 +740,44 @@ def build_hypothetical_facts(
         if is_hand_land:
             notices.extend(land_notices)
         if is_offered:
+            offered_land_ids.append(land_id)
             entry = cards.setdefault(land_id, {})
             entry["enters"] = state
 
-        unlocks = False
+        unlocked = _newly_payable(column, now_payable, x_cost_ids, land_notices)
+        unlocks = unlocked is not None
         #: Item 4: the life `payability.life_paid` says the unlocking card's
         #: own cheapest payable option costs through this land's "{T}, Pay N
         #: life" mana ability (CR 605.3a) - 0 when the unlock needed none.
         #: Read off the very payability that flipped `unlocks` to True, so a
         #: play can see the cost rather than treating every unlock as free.
-        life_paid = 0
-        for payability in column.cards:
-            if payability.card_id == column.land_id:
-                continue
-            if payability.card_id in x_cost_ids:
-                # Item 2: `payability_matrix` only ever judges an X spell at
-                # X=0 - a newly-payable X=0 announcement is not a real
-                # unlock, so it never flips `unlocks` to True.
-                continue
-            now = now_payable.get(payability.card_id)
-            if land_notices or (now is not None and now.notices):
-                continue
-            if payability.notices and not _life_paid_notices_only(payability.notices):
-                continue
-            was_payable = now is not None and now.payable
-            if (
-                payability.payable
-                and not was_payable
-                and _has_a_payable_targeted_option(payability)
-            ):
-                unlocks = True
-                life_paid = payability.life_paid
-                break
+        life_paid = unlocked.life_paid if unlocked is not None else 0
         if is_offered:
             entry["unlocks"] = unlocks
             entry["unlocks_life_paid"] = life_paid
         if unlocks:
             unlocking_land_ids[land_id] = _optional_payment_life(prediction.optional_costs)
+
+    if untapped is not None:
+        unlocks_next, next_turn_notices = _unlocks_next(untapped, hand_ids, x_cost_ids)
+        for land_id in offered_land_ids:
+            cards[land_id]["unlocks_next"] = unlocks_next[land_id]
+        # A hand land's lethal-payment notice, recorded the same way the
+        # `enters` substitution's own already is - skipping any line the
+        # first pass has already said in the same words, so the second pass
+        # adds what it alone knows rather than a duplicate.
+        notices.extend(notice for notice in next_turn_notices if notice not in notices)
+        # D-3: `"with_a_land"` is gated on this turn's own remaining land
+        # drop (CR 305.2a/CR 305.3) - the word `playscripts.schema` defines
+        # as "once the land drop still available this turn is made" - and on
+        # nothing else. CR 305.1's timing is named in a notice rather than
+        # read; see `_land_drop_available`.
+        land_drop_available = _land_drop_available(game, player)
+        for card_id, verdict in _payable_any(
+            matrix, untapped, hand, hand_ids, now_payable, x_cost_ids, land_drop_available
+        ).items():
+            cards.setdefault(card_id, {})["payable_any"] = verdict
+        notices.extend(_land_drop_notices(game, player, land_drop_available))
 
     library_land_types: dict[str, set[str]] = {
         str(card.id): _land_subtypes(card) for card in library if card.card.is_land
