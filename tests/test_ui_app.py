@@ -4458,12 +4458,88 @@ def test_each_wired_notice_kind_toasts_its_own_engine_gap_message(
     assert "engine gap" in result["toast"].lower()
 
 
-def test_an_unwired_notice_kind_toasts_nothing() -> None:
-    """A notice `kind` with no entry in `ENGINE_GAP_NOTICE_MESSAGES` (a
-    notice this UI genuinely does not know how to phrase, or one that is not
-    an engine-gap shape at all) must not throw and must not toast - the
-    negative case `test_a_notice_free_log_entry_toasts_nothing` proves for no
-    notices at all, proven here for a real, just unrecognised, one."""
+# -- the drift guard: nothing the server can emit is dropped on the floor -----
+
+
+def _server_notice_kinds() -> list[str]:
+    """Every `kind` string `commands._new_notices` can stamp on a payload -
+    the engine's own 23 `Game`-level notice lists plus
+    `continuous_effects.layer_notices`, read from the server module itself
+    rather than restated here, so this guard follows the engine instead of a
+    copy of it."""
+    from magic_cards_model_api import commands
+
+    return [*commands._NOTICE_LIST_NAMES, commands._LAYER_NOTICE_KIND]
+
+
+def test_every_notice_kind_the_server_can_emit_renders_a_human_line() -> None:
+    """The cross-surface drift guard, the shape `tests/test_notices.py`'s
+    `test_every_game_notice_list_is_wired` has on the server side and
+    `tests/test_ui_decision_coverage.py` has for decisions: every notice kind
+    `commands._new_notices` can put on the wire must come back out of
+    `ui/app.js`'s `noticeMessage` as a line a human can read.
+
+    This is the regression test for the defect itself. The server published
+    all 24 kinds; `ENGINE_GAP_NOTICE_MESSAGES` was a hand-written table of
+    six, and the other eighteen - `mode_notices`, `cost_modifier_notices`,
+    `conditional_clause_notices`, `targeting_notices`,
+    `suspend_redirect_notices`, `imprint_notices`, `undefined_power_notices`,
+    `opening_hand_notices`, `layer_notices` among them - were looked up,
+    missed, and silently dropped. A loud, deliberate refusal nobody renders
+    is a silent failure with extra steps.
+
+    The fix is not a longer table: `noticeMessage` falls back to a line built
+    from the kind's own name and whichever of the notice's text fields is
+    populated, so a twenty-fifth list the engine adds tomorrow is rendered
+    the day it ships rather than the day somebody remembers this file. This
+    test would still fail the moment that fallback is removed or narrowed
+    back to a lookup, which is the failure mode it exists to catch."""
+    kinds = _server_notice_kinds()
+    assert len(kinds) >= 24, kinds
+    messages = run_app(
+        "Object.fromEntries(KINDS.map((kind) => [kind, m.noticeMessage("
+        '{ kind, source_id: "s1", source_name: "Echoing Deeps", card_name: "Echoing Deeps",'
+        ' text: "some unread clause" })]))',
+        KINDS=kinds,
+    )
+    for kind in kinds:
+        line = messages.get(kind)
+        assert isinstance(line, str) and line.strip(), (
+            f"{kind} renders nothing - the server can emit it, so a human playing "
+            f"through the browser is the one person who never learns the engine "
+            f"refused. Fix: give ui/app.js's noticeMessage a line for it, or (better) "
+            f"leave the generic fallback in place so the next kind needs no fix at all."
+        )
+        assert "Echoing Deeps" in line, (kind, line)
+
+
+def test_every_notice_kind_names_its_own_gap_rather_than_one_shared_line() -> None:
+    """A fallback that rendered the same sentence for all 24 would pass the
+    guard above while telling a human nothing - so each kind's line has to be
+    distinguishable from every other kind's. The generic half earns that by
+    naming the kind ("cost modifier", "opening hand") in the line it builds;
+    the six specific lines were already distinct."""
+    kinds = _server_notice_kinds()
+    messages = run_app(
+        "Object.fromEntries(KINDS.map((kind) => [kind, m.noticeMessage("
+        '{ kind, source_id: "s1", source_name: "Echoing Deeps", card_name: "Echoing Deeps",'
+        ' text: "some unread clause" })]))',
+        KINDS=kinds,
+    )
+    by_line: dict[str, list[str]] = {}
+    for kind, line in messages.items():
+        by_line.setdefault(line, []).append(kind)
+    collisions = {line: names for line, names in by_line.items() if len(names) > 1}
+    assert not collisions, f"these kinds render an identical, useless line: {collisions}"
+
+
+def test_a_notice_kind_this_ui_has_never_seen_still_reaches_the_player() -> None:
+    """The twenty-fifth list, tested before it exists: a `kind` that is in no
+    table anywhere in this UI still toasts, through the real `poll()` path,
+    naming both the card and the kind. This replaces
+    `test_an_unwired_notice_kind_toasts_nothing`, which pinned the defect as
+    if it were the design - an unrecognised notice used to be dropped, which
+    is exactly how eighteen real ones were."""
     result = run_app(
         """
         globalThis.__toast = { textContent: "", hidden: true };
@@ -4493,11 +4569,12 @@ def test_an_unwired_notice_kind_toasts_nothing() -> None:
                     detail: {
                       notices: [
                         {
-                          kind: "opening_hand_notices",
-                          card_name: "Leyline of the Void",
-                          text: "some text",
-                          zone: "hand",
-                          controller: null,
+                          kind: "future_widget_notices",
+                          source_id: "s1",
+                          source_name: "Echoing Deeps",
+                          text: "a clause no parser reads yet",
+                          zone: "graveyard",
+                          controller: "alice",
                         },
                       ],
                     },
@@ -4516,8 +4593,64 @@ def test_an_unwired_notice_kind_toasts_nothing() -> None:
             state: board, log: { entries: [], lastSeq: 0 },
           });
           await m.poll();
-          return globalThis.__toast.hidden;
+          return { toast: globalThis.__toast.textContent, hidden: globalThis.__toast.hidden };
         })()
         """
     )
-    assert result is True, "a notice kind with no toast message must not toast"
+    assert result["hidden"] is False, "a notice kind nothing names is still a refusal"
+    assert "Echoing Deeps" in result["toast"]
+    assert "future widget" in result["toast"].lower(), result["toast"]
+
+
+def test_a_redacted_notice_toasts_without_naming_the_hidden_card() -> None:
+    """`visibility.redact_notices` blanks a hidden-zone notice's card to
+    `<hidden>` before it ever reaches this seat - the generic line has to
+    stay readable on that shape rather than printing a bare `<hidden>:` or
+    leaking the text field it just blanked."""
+    line = run_app(
+        'm.noticeMessage({ kind: "imprint_notices", source_id: null,'
+        ' source_name: "<hidden>", text: "<hidden>", zone: "hand", controller: "bob" })'
+    )
+    assert isinstance(line, str) and line.strip()
+    assert "imprint" in line.lower(), line
+
+
+def test_a_targeting_notice_that_is_not_an_engine_gap_does_not_claim_to_be_one() -> None:
+    """`targeting_notices` is the one list carrying two genuinely different
+    meanings in its own `kind` field (`commands._new_notices` keeps it as
+    `notice_kind`): `unparsed_targets` is an engine gap, `no_legal_targets`
+    is CR 608.2d working exactly as written. Rendering the legal one as an
+    engine gap would train a player to distrust a correct board."""
+    gap = run_app(
+        'm.noticeMessage({ kind: "targeting_notices", notice_kind: "unparsed_targets",'
+        ' source_name: "White Orchid Phantom", text: "up to one target nonbasic land" })'
+    )
+    legal = run_app(
+        'm.noticeMessage({ kind: "targeting_notices", notice_kind: "no_legal_targets",'
+        ' source_name: "White Orchid Phantom", text: "up to one target nonbasic land" })'
+    )
+    assert "engine gap" in gap.lower(), gap
+    assert "engine gap" not in legal.lower(), legal
+    assert "White Orchid Phantom" in legal
+
+
+def test_the_six_already_wired_kinds_keep_their_own_specific_wording() -> None:
+    """Clause (d) of the brief, pinned: the generic fallback must never
+    swallow a message that already said something more useful. Each of these
+    six phrases appears only in that kind's own `ENGINE_GAP_NOTICE_MESSAGES`
+    line, never in the line the fallback builds."""
+    specific = {
+        "unmodeled_trigger_effect_notices": "could not read this card's text",
+        "layer_remainder_notices": "part of its resolving text",
+        "search_description_notices": "a search's card description",
+        "unreadable_copy_exception_notices": "entered as a plain copy",
+        "unreadable_counter_amount_notices": "no counters were placed",
+        "keyword_line_notices": "computed ability line",
+    }
+    messages = run_app(
+        "Object.fromEntries(KINDS.map((kind) => [kind, m.noticeMessage("
+        '{ kind, source_id: "s1", source_name: "Echoing Deeps", text: "some clause" })]))',
+        KINDS=list(specific),
+    )
+    for kind, phrase in specific.items():
+        assert phrase in messages[kind], (kind, messages[kind])

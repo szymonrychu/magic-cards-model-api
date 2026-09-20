@@ -664,12 +664,40 @@ def _notice_source(game: Game, source_id: UUID | None) -> tuple[str | None, str 
     return card.zone.value, card.controller_or_owner
 
 
+def _notice_payload(kind: str, item: Any) -> dict[str, Any]:
+    """One notice's own fields, under the engine's list name as `"kind"`.
+
+    The list name wins over anything the notice model itself calls `kind`.
+    `TargetingNotice` is the one model that has such a field
+    (`TargetingNoticeKind`: `unparsed_targets`, an engine gap, against
+    `no_legal_targets`, CR 608.2d working as printed), and the obvious
+    `{"kind": kind, **item.model_dump()}` let that dump overwrite the list
+    name - so one list out of twenty-four reached every consumer labelled
+    `no_legal_targets` instead of `targeting_notices`, which is the key
+    `visibility.redact_notices`'s tests pin, `ui/app.js` renders on, and an
+    agent groups by.
+
+    Nothing is dropped: a notice's own `kind` is kept beside it as
+    `notice_kind`, because "the parser has a gap" against "there is genuinely
+    nothing to target" is exactly the distinction a reader of that notice
+    needs. Generic - no per-model knowledge, and a future notice model that
+    grows its own `kind` field behaves the same way without a change here.
+    """
+    fields = item.model_dump(mode="json")
+    own_kind = fields.pop("kind", None)
+    payload: dict[str, Any] = {"kind": kind, **fields}
+    if own_kind is not None:
+        payload["notice_kind"] = own_kind
+    return payload
+
+
 def _new_notices(game: Game, before: dict[str, int]) -> list[dict[str, Any]]:
     """Every notice appended to any of `game`'s 24 lists since `before` was
-    taken, as `{"kind": <the engine's own list name>, **notice.model_dump
-    (mode="json"), "zone": ..., "controller": ...}` - the engine's own record
-    passed straight through, plus the two bookkeeping keys `_notice_source`
-    computes and `visibility.redact_notices` reads later. No explanatory
+    taken, as `{"kind": <the engine's own list name>, <the notice's own
+    fields>, "zone": ..., "controller": ...}` (`_notice_payload`) - the
+    engine's own record passed straight through, plus the two bookkeeping
+    keys `_notice_source` computes and `visibility.redact_notices` reads
+    later. No explanatory
     sentence is authored here - what a notice *means* belongs in the MCP
     tool docstring and `driver/prompt.py`, not in this data.
 
@@ -681,7 +709,7 @@ def _new_notices(game: Game, before: dict[str, int]) -> list[dict[str, Any]]:
     for name in _NOTICE_LIST_NAMES:
         items = getattr(game, name)
         for item in items[before[name] :]:
-            payload = {"kind": name, **item.model_dump(mode="json")}
+            payload = _notice_payload(name, item)
             if name == "opening_hand_notices":
                 # `OpeningHandNotice` (`machines/opening_hand.py`) carries no
                 # `source_id` at all to look up - but CR 103.6's whole
@@ -697,7 +725,7 @@ def _new_notices(game: Game, before: dict[str, int]) -> list[dict[str, Any]]:
             payload["controller"] = controller
             notices.append(payload)
     for item in game.continuous_effects.layer_notices[before[_LAYER_NOTICE_KIND] :]:
-        payload = {"kind": _LAYER_NOTICE_KIND, **item.model_dump(mode="json")}
+        payload = _notice_payload(_LAYER_NOTICE_KIND, item)
         zone, controller = _notice_source(game, item.source_id)
         payload["zone"] = zone
         payload["controller"] = controller

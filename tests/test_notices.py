@@ -673,3 +673,45 @@ def test_redact_notices_never_touches_a_public_zone():
     notices = [_public_notice()]
     for viewer in ("alice", "bob", None, visibility.ADMIN):
         assert visibility.redact_notices(notices, viewer) == notices
+
+
+def test_a_targeting_notices_payload_keeps_the_engines_own_list_name_as_its_kind(
+    monkeypatch, client, game
+):
+    """`TargetingNotice` is the one notice model carrying a field of its own
+    called `kind` (`TargetingNoticeKind`: `unparsed_targets`, the engine gap,
+    vs `no_legal_targets`, a perfectly legal CR 608.2d board). `commands.
+    _new_notices` builds every payload as `{"kind": <list name>, **notice.
+    model_dump()}`, so that dump used to overwrite the list name and a
+    targeting notice reached every consumer labelled `no_legal_targets`
+    instead of `targeting_notices` - `visibility.redact_notices`'s own
+    `kind` round-trip test asserts the list name, `ui/app.js` dispatches its
+    rendering on it, and an agent reading `notices` groups by it, so one
+    list out of twenty-four silently spoke a different language.
+
+    The list name wins, and the notice's own `kind` is kept beside it under
+    `notice_kind` - nothing is dropped, because `unparsed_targets` vs
+    `no_legal_targets` is exactly the distinction a human reading the toast
+    needs (an engine gap, or nothing legal to point at)."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    live = store.get(game)
+    forest = next(state for state in live.shared_zones[Zone.BATTLEFIELD] if state.name == "Forest")
+
+    def _probe(g: Game, payload: dict) -> dict:
+        g.targeting_notices.append(
+            TargetingNotice(
+                kind=TargetingNoticeKind.NO_LEGAL_TARGET,
+                source_id=forest.id,
+                source_name="Forest",
+                text="up to one target nonbasic land",
+            )
+        )
+        return {}
+
+    monkeypatch.setitem(commands.COMMAND_HANDLERS, "test_targeting_kind_probe", _probe)
+    result = run_command(live, Command(kind="test_targeting_kind_probe", payload={}))
+
+    assert result.status is RunStatus.COMPLETED
+    (notice,) = result.outcome["notices"]
+    assert notice["kind"] == "targeting_notices"
+    assert notice["notice_kind"] == "no_legal_targets"
