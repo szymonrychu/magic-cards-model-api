@@ -44,6 +44,17 @@ container, because "free again once that game ends" is a promise only this
 release keeps. So it delegates here too, and the `action` argument is how the
 ended game's own transcript still says which of the two routes ended it.
 
+**A game that ends on its own retires itself, through `retire_game`.** Every
+bullet above except the delete, run from `app._record_game_over` the moment a
+committed command leaves `Game.is_over` true - a concession (CR 104.3a), a
+lethal-damage sweep, a draw, any of them. That used to be nobody's job: the
+board said the game was over and the lobby stopped counting it live, but the
+watcher kept polling it and the seat's runner kept running, because End game
+was the only thing that ever let go of either. The game itself is not deleted,
+which is the whole difference between the two: a finished game is still there
+to read, still refuses every action, and still has a review; an ended one is
+gone.
+
 Nothing here resets a game nobody asked about. `store.register_ui_game` is set
 by `POST /api/lobby/games` alone; a game booted by `serve.py --match` or by
 `POST /api/games` is somebody else's, and both routes reach this function only
@@ -60,6 +71,105 @@ from .store import known_players, store
 
 DEFAULT_REASON = "ended from the lobby"
 DEFAULT_ACTION = "game_reset"
+
+#: What `retire_game` records itself under, and why. A separate name from
+#: `game_reset`/`delete_game` on purpose: those three words all mean "a human
+#: took this game away", and this one means "the game itself finished and the
+#: runners were let go with it", which is a different fact about a different
+#: ledger position. `scripts/eval_report.py` lists it beside them.
+RETIRE_ACTION = "game_retired"
+RETIRE_REASON = "the game is over"
+
+
+def _release_runners(game_id: str) -> dict[str, Any]:
+    """Let go of every live thing this api holds *beside* `game_id`'s board -
+    the pregame watcher thread, whatever the registry holds for each seat uid,
+    and the same for each buddy - and report what was covered.
+
+    Split out of `reset_game` for `retire_game`, which needs exactly this and
+    must not delete the game. Nothing here reads the board, which is what
+    makes it work unchanged on a game this build cannot decode.
+    """
+    seats = store.seat_uids(game_id)  # uid -> username
+    advisors = store.advisor_uids(game_id)  # uid -> repository.Advisor
+
+    watcher_stopped = ai_pregame.stop(game_id)
+    # Every uid is released, not only the ones flagged `ai: true`: the flag
+    # says what the lobby *meant* a seat to be, and the registry is what
+    # actually holds a process or a dispatch. A uid it knows nothing about
+    # releases to nothing, cheaply and without touching the driver, so
+    # covering the human's seat too costs nothing and leaves no uid behind.
+    released = [
+        entry | {"player": name}
+        for uid, name in seats.items()
+        if (entry := ai_seat.registry.release(uid))["mechanism"] is not None
+    ]
+    # The buddies, in the same pass and through the same registry call. Same
+    # reasoning as the seats above: the advisor map is what actually holds
+    # the credential, the registry is what holds the process or dispatch
+    # behind it, and a uid the registry knows nothing about releases to
+    # nothing, cheaply. `role` is stamped on the advisor entries alone, the
+    # same convention the Job labels and the dispatch payload follow: a seat
+    # entry stays byte-identical to what it always was, and absence means
+    # seat.
+    released += [
+        entry | {"player": advisor.player, "role": ai_seat.ROLE_ADVISOR}
+        for uid, advisor in advisors.items()
+        if (entry := ai_seat.registry.release(uid))["mechanism"] is not None
+    ]
+    return {
+        "seats_invalidated": len(seats),
+        "advisors_invalidated": len(advisors),
+        "watcher_stopped": watcher_stopped,
+        "ai_seats_released": released,
+    }
+
+
+def retire_game(game_id: str) -> dict[str, Any]:
+    """The game ended on its own, so let its runners go with it - and leave
+    the game itself exactly where it is.
+
+    Called from `app._record_game_over`, the one place both `_run_command`
+    and `_resume` funnel a committed ending through, so this covers every way
+    a game reaches CR 104.1 and not just the one that was reported. A
+    concession (CR 104.3a) is the case the owner hit: the board was over and
+    the winner was recorded, but the watcher kept polling a finished game and
+    the seat's runner kept running, because until this the only thing that
+    ever released either was a human pressing End game.
+
+    **It does not delete the game.** `reset_game` deletes because a human
+    asked for the game to go away; here nobody did. A finished game stays
+    readable, keeps refusing every action with `commands.GameOverError`, and
+    keeps its review reachable - End game remains the one thing that clears
+    the row.
+
+    **What the AI seat gets is End game's handover, not its own reflection
+    turn.** Releasing a `wrapper`/`kubernetes` dispatch POSTs the driver's
+    `/release`, which is `TERMINAL_PATHS["handover_without_reflection"]`: the
+    agent still gets its handover turn, and the post-game AI review is still
+    filed, but with no reflection text if the agent had not already taken its
+    reflection turn by the time this ran. That is the same trade End game has
+    always made, and matching End game is the point - the alternative is a
+    driver left assigned to a finished game, which `lobby.py`'s own docstring
+    calls permanent: it 409s every later dispatch for the life of that
+    container.
+
+    Recorded only when something was actually released. A game with no
+    watcher and no runner behind any uid - every harness game, every
+    `POST /api/games` game nobody started a seat for - has nothing to say
+    here, and the `game_over` row already ends its transcript honestly.
+    """
+    covered = _release_runners(game_id)
+    if not (covered["watcher_stopped"] or covered["ai_seats_released"]):
+        return covered
+    audit.record(
+        game_id,
+        RETIRE_ACTION,
+        reason=RETIRE_REASON,
+        note=_note(covered, RETIRE_REASON),
+        **covered,
+    )
+    return covered
 
 
 def reset_game(
@@ -94,40 +204,10 @@ def reset_game(
         players = known_players(game_id)
     else:
         players = []
-    seats = store.seat_uids(game_id)  # uid -> username
-    advisors = store.advisor_uids(game_id)  # uid -> repository.Advisor
-
-    watcher_stopped = ai_pregame.stop(game_id)
-    # Every uid is released, not only the ones flagged `ai: true`: the flag
-    # says what the lobby *meant* a seat to be, and the registry is what
-    # actually holds a process or a dispatch. A uid it knows nothing about
-    # releases to nothing, cheaply and without touching the driver, so
-    # covering the human's seat too costs nothing and leaves no uid behind.
-    released = [
-        entry | {"player": name}
-        for uid, name in seats.items()
-        if (entry := ai_seat.registry.release(uid))["mechanism"] is not None
-    ]
-    # The buddies, in the same pass and through the same registry call. Same
-    # reasoning as the seats above: the advisor map is what actually holds
-    # the credential, the registry is what holds the process or dispatch
-    # behind it, and a uid the registry knows nothing about releases to
-    # nothing, cheaply. `role` is stamped on the advisor entries alone, the
-    # same convention the Job labels and the dispatch payload follow: a seat
-    # entry stays byte-identical to what it always was, and absence means
-    # seat.
-    released += [
-        entry | {"player": advisor.player, "role": ai_seat.ROLE_ADVISOR}
-        for uid, advisor in advisors.items()
-        if (entry := ai_seat.registry.release(uid))["mechanism"] is not None
-    ]
     covered: dict[str, Any] = {
         "game_id": game_id,
         "players": players,
-        "seats_invalidated": len(seats),
-        "advisors_invalidated": len(advisors),
-        "watcher_stopped": watcher_stopped,
-        "ai_seats_released": released,
+        **_release_runners(game_id),
     }
     if game is not None or unloadable is not None:
         # Recorded *before* the delete, so the entry still carries this game's
@@ -143,10 +223,10 @@ def reset_game(
             action,
             reason=reason,
             note=_note(covered, reason),
-            seats_invalidated=len(seats),
-            advisors_invalidated=len(advisors),
-            watcher_stopped=watcher_stopped,
-            ai_seats_released=released,
+            seats_invalidated=covered["seats_invalidated"],
+            advisors_invalidated=covered["advisors_invalidated"],
+            watcher_stopped=covered["watcher_stopped"],
+            ai_seats_released=covered["ai_seats_released"],
             **({"unloadable": unloadable} if unloadable is not None else {}),
         )
     covered["deleted"] = store.delete(game_id)
@@ -154,7 +234,8 @@ def reset_game(
 
 
 def _note(covered: dict[str, Any], reason: str) -> str:
-    """The one console line a reset gets, saying what it covered."""
+    """The one console line a reset or a retirement gets, saying what it
+    covered."""
     seats = ", ".join(
         f"{entry['player']}:{entry['mechanism'] or 'nothing'}"
         for entry in covered["ai_seats_released"]
@@ -168,4 +249,4 @@ def _note(covered: dict[str, Any], reason: str) -> str:
     )
 
 
-__all__ = ["reset_game"]
+__all__ = ["reset_game", "retire_game"]

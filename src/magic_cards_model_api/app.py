@@ -946,6 +946,18 @@ def _record_game_over(game_id: str, game: Game) -> None:
     enforced by looking: the same bounded window `records.require_plan`
     reads, scanned for an ending already written. Bounded for the same
     reason - this is on the action path too.
+
+    **And the game retires here too** (`lobby.retire_game`). The row above
+    says the game ended; the retirement is what makes that true of everything
+    this api was holding for it - the `ai_pregame` watcher thread, each seat
+    uid's runner or dispatch, each buddy's. Until this, only a human pressing
+    End game ever released any of them, so a conceded game (the reported
+    bug - CR 104.3a) left a watcher polling a finished game and an AI seat
+    still running, and in `wrapper` mode a driver still assigned to it. It
+    hangs off this function rather than off `action_concede` precisely
+    because this is the one place every committed ending funnels through, so
+    a lethal-damage sweep and a draw retire on the same line a concession
+    does. The game is not deleted - see `lobby.retire_game`.
     """
     if not game.is_over:
         return
@@ -959,6 +971,7 @@ def _record_game_over(game_id: str, game: Game) -> None:
         drawn=game.drawn,
         note=(f"{game.winner} wins" if game.winner else "the game is a draw"),
     )
+    lobby.retire_game(game_id)
 
 
 def _paused_on(result: commands.RunResult) -> dict[str, str]:

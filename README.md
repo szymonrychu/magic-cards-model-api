@@ -137,6 +137,15 @@ ends with the reset rather than trailing off. What the continuous agent has
 learned is untouched: that lives in `./memory`, and nothing in the reset
 writes there. See `lobby.py`.
 
+**A game that ends retires itself.** Conceding is the obvious way to do that
+(CR 104.3a - the Concede button, two clicks), and a lethal-damage sweep or a
+draw is the same thing arrived at differently: the moment the game is over,
+everything End game releases is released - the pregame watcher, the seat's
+subprocess or its wrapper/kubernetes dispatch, the buddy's - and a
+`game_retired` row says so. The game itself is **not** deleted: it is still
+there to open, still refuses every action with "the game is over", and still
+has a review. Only End game clears the row.
+
 ## Play against a continuous agent
 
 `docker compose up --build` brings up three containers, running the
@@ -320,10 +329,12 @@ against continuous agents at once means running against a cluster in
   `{gameId, uid, aiUid}` entries - one per game, not one for the whole
   browser any more).
 - **End game**: `DELETE /api/ui/games/{id}?uid=` (or `?key=` with the game's
-  admin key) is the only reset. It stops that game's AI seat - subprocess
-  terminated, wrapper dispatch handed back to the driver, or kubernetes Job
-  deleted - and deletes the game, freeing a slot under the cap. It never
-  touches `./memory`.
+  admin key) is the only thing that deletes a game. It stops that game's AI
+  seat - subprocess terminated, wrapper dispatch handed back to the driver,
+  or kubernetes Job deleted - and deletes the game, freeing a slot under the
+  cap. It never touches `./memory`. A game that reaches its own ending (a
+  concession included) releases all the same runners by itself and keeps the
+  row.
 - **The cap**: `MAX_LIVE_GAMES` (env, default 4) counts lobby games that are
   not yet over; starting a new one past the cap is refused with a 409 naming
   the count. A finished game does not count against it; only End game frees a

@@ -117,9 +117,9 @@ INTERVAL_SAMPLES = 4000
 
 #: Every audited action that is a *move in a game*, as opposed to board setup
 #: (`add_card`, `patch_card`, `tap`, `move_card`, `step`, `mana_pool`),
-#: bookkeeping (`create_game`, `delete_game`, `game_reset`, `ai_seat`), or a
-#: statement about the game rather than a move in it (`plan_declared`,
-#: `game_reflection`, `report_problem`, `game_over`).
+#: bookkeeping (`create_game`, `delete_game`, `game_reset`, `game_retired`,
+#: `ai_seat`), or a statement about the game rather than a move in it
+#: (`plan_declared`, `game_reflection`, `report_problem`, `game_over`).
 #:
 #: A positive list rather than a deny list, so a row this scorecard does not
 #: understand is never silently counted as play - and never silently dropped
@@ -163,6 +163,7 @@ NOT_PLAY = frozenset(
         "game_over",
         "game_reflection",
         "game_reset",
+        "game_retired",
         "hands_drawn",
         "mana_pool",
         "move_card",
