@@ -21,6 +21,8 @@ from mtg_agent.driver.guides import (
 from mtg_agent.driver.matchup_card import CARD_HARD_CAP_BYTES
 from mtg_agent.driver.prompt import (
     HANDOVER_OPENING,
+    NOTES_ROUTING,
+    NOTES_ROUTING_DURING_GAME,
     Assignment,
     advisor_turn_zero,
     handover_nudge,
@@ -1404,3 +1406,88 @@ def test_buddy_brief_scripts_section_ties_archetype_to_its_own_read():
     assert "committed to a read" in section
     assert '"What good advice is here"' in section
     assert "## What good advice is here" in text
+
+
+# -- T37: where a sentence written after the game goes --------------------------
+
+#: The routing rule's own load-bearing sentences. Asserted against BOTH
+#: write-back prompts (the handover turn here, the reviewer's own prompt in
+#: `tests/driver/test_review_prompt.py`) off the one shared constant, so the
+#: two cannot state two different rules about the same files.
+NOTES_ROUTING_SENTENCES = (
+    "Deck guide content is PLAY REVIEW ONLY.",
+    "would this sentence still be true and useful to a human pilot playing this "
+    "deck with paper cards and no software at all?",
+    "does the remedy involve changing code, a tool argument, or a deployment?",
+)
+
+#: Both destinations, named the way a seat has to type them.
+NOTES_ROUTING_DESTINATIONS = (
+    "`decks/<slug>/NOTES.md`",
+    "`matchups[].play_plan`",
+    "`matchups[].notes`",
+    "mcp-seat guides propose",
+    "`report_problem`",
+)
+
+
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+@pytest.mark.parametrize("sentence", NOTES_ROUTING_SENTENCES)
+def test_the_handover_states_the_play_content_versus_system_problem_rule(guide, role, sentence):
+    assert sentence in _flat(_handover(guide, role))
+
+
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+@pytest.mark.parametrize("destination", NOTES_ROUTING_DESTINATIONS)
+def test_the_handover_names_both_destinations(guide, role, destination):
+    assert destination in _flat(_handover(guide, role))
+
+
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+def test_the_handover_carries_the_worked_example_without_making_it_the_rule(guide, role):
+    """The fetchland-priority note is an EXAMPLE of the classification test,
+    not the rule: the rule above it must be readable without it, and the
+    example must say what it is an example of - a true observation whose
+    remedy is a tool argument."""
+    text = _flat(_handover(guide, role))
+    assert "hold_priority=true" in text
+    assert "Worked example" in text
+    assert text.index("Deck guide content is PLAY REVIEW ONLY.") < text.index("Worked example")
+
+
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+def test_the_handover_says_a_problem_spotted_during_the_game_is_reported_then(guide, role):
+    text = _flat(_handover(guide, role))
+    assert _flat(NOTES_ROUTING_DURING_GAME) in text
+    assert "when it is spotted" in text
+
+
+def test_the_routing_rule_is_one_constant_both_prompts_read():
+    """Clause (a): the same rule, in the same words, in both write-back
+    prompts - which is only guaranteed if there is one copy of it."""
+    from mtg_agent.driver import review
+
+    assert review.NOTES_ROUTING is NOTES_ROUTING
+
+
+def test_the_seat_brief_links_the_two_destinations_to_each_other():
+    """The two places a seat already reads about each destination point at
+    each other, so the routing rule is discoverable from either end. Only
+    the seat brief has a problem-report section; the buddy brief's handover
+    half is covered below."""
+    text = (BRIEFS / "ai_seat_brief.md").read_text()
+    filing = _flat(_section(text, "## Filing a problem report"))
+    handover = _flat(_section(text, "## Play scripts and guides, for handover"))
+    assert "NOTES.md" in filing, "the problem-report section never names the guide"
+    assert "`report`" in handover, "the handover section never names the report subcommand"
+
+
+@pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
+def test_both_briefs_keep_system_problems_out_of_the_guide(brief):
+    handover = _flat(
+        _section((BRIEFS / brief).read_text(), "## Play scripts and guides, for handover")
+    )
+    assert "paper cards and no software at all" in handover, (
+        f"{brief}'s handover section never states the classification test"
+    )
+    assert "`report`" in handover, f"{brief}'s handover section never names the report subcommand"
