@@ -324,7 +324,7 @@ def test_a_slow_review_never_delays_the_handover_response(world):
     """The bug: `post_ai_review` used to run inline, in `turn_done`, before
     the handover was even started - a slow (or merely not-instant) review
     generation delayed the handover response by exactly as long as the
-    review took, up to `REVIEW_HTTP_TIMEOUT` (650s). It must now run in the
+    review took, up to `REVIEW_HTTP_TIMEOUT`. It must now run in the
     background, started only after `start_handover`, so a slow review never
     delays retirement at all."""
     client = world.client

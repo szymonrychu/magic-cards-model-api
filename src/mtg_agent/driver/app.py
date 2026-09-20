@@ -94,11 +94,19 @@ from .revision import guides_revision
 
 log = logging.getLogger("driver")
 
-#: Headroom over the wrapper's own `Settings.review_timeout` default (600s,
-#: `oneshot.run_review`'s bound on the subprocess itself) - the driver's own
-#: client timeout for `POST /v1/review` must outlast it, or a review that
-#: was about to succeed reads here as an unreachable wrapper instead.
-REVIEW_HTTP_TIMEOUT = 650.0
+#: Headroom over the wrapper's own `Settings.review_timeout` default
+#: (1200s, `oneshot.run_review`'s bound on the subprocess itself) - the
+#: driver's own client timeout for `POST /v1/review` must outlast it, or a
+#: review that was about to succeed reads here as an unreachable wrapper
+#: instead.
+#:
+#: It moved with that bound rather than being re-chosen: the review is a
+#: tool-using call now (it edits a deck's guide and takes the change to
+#: mtg-decks through `mcp-seat`, waiting on the `/guides` checkout lock
+#: first), so 1200s is what the wrapper allows and this has to sit above it.
+#: `tests/wrapper/test_oneshot.py` pins the ordering against
+#: `Settings.review_timeout` itself, so neither number can be moved alone.
+REVIEW_HTTP_TIMEOUT = 1260.0
 
 #: How long `retire` waits for the AI review's background thread
 #: (`post_ai_review`, spawned by `turn_done`'s reflection branch) before
@@ -113,6 +121,11 @@ REVIEW_HTTP_TIMEOUT = 650.0
 #: return well before its own timeout on every call that succeeds, and to
 #: hit it only on the same failures that would have made the review
 #: unreachable anyway.
+#:
+#: Derived, so it follows `REVIEW_HTTP_TIMEOUT` up without a second edit,
+#: and it still has to fit inside the driver container's own preStop wait
+#: (1740s, `deploy/seat-job.yaml`): past that the kubelet cuts the join
+#: short anyway and the bound stops meaning anything.
 RETIRE_REVIEW_JOIN_TIMEOUT = REVIEW_HTTP_TIMEOUT + 70.0
 
 #: How much of the agent's own account of a turn goes into the container log.

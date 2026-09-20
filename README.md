@@ -405,9 +405,15 @@ The mechanism (`mtg_agent/driver/review.py`, `mtg_agent/wrapper/oneshot.py`):
    carries no `claude` binary; only the agent image
    (`Dockerfile.agent`) does.
 3. The wrapper runs a single, bounded, non-PTY `claude --print` subprocess
-   (`REVIEW_TIMEOUT_SECONDS`, default 600s) - entirely separate from its
+   (`REVIEW_TIMEOUT_SECONDS`, default 1200s) - entirely separate from its
    supervised interactive session, which stays on whatever it was playing
-   with and is never touched by this call.
+   with and is never touched by this call. It runs in the agent's own
+   workspace and HOME with a tool allowlist (`wrapper/oneshot.py`'s
+   `REVIEW_TOOLS`/`REVIEW_ALLOWED_TOOLS`: the file tools, and Bash only for
+   four `mcp-seat` subcommands), so the review can take play content back
+   to the deck's guide the same way the seat's handover turn does. The two
+   really do run at once, and `playscripts.gitwork.checkout_lock`
+   serializes them on the `/guides` clone.
 4. The result is filed under `POST /api/games/{id}/ai-review`
    (`audit.AI_REVIEW_ACTION`), shown on the review page right after the
    reflection (`ui/review_model.js`'s `aiReviewOf`, `ui/render/review.js`'s

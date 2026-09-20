@@ -8,55 +8,81 @@ diverges on skills, hooks and permissions, and the whole point of that
 component is that the agent plays in the harness a human gets. That
 constraint is about the play session specifically; it says nothing about
 this module, which exists for an unrelated, one-time job the play session
-was never meant to do: read a finished game's own reflection and record, and
-write a critique. Nothing here touches `session.Manager`, the turn state
-machine, or the PTY at all - this is a plain blocking subprocess call,
-bounded by `Settings.review_timeout`.
+was never meant to do: read a finished game's own reflection and record,
+write a critique, and file what of it is play content back into the deck's
+guide. Nothing here touches `session.Manager`, the turn state machine, or
+the PTY at all - this is a plain blocking subprocess call, bounded by
+`Settings.review_timeout`.
 
-**Fully isolated from the play session, on purpose - this is load-bearing,
-not incidental.** `bootstrap.write_settings_json` writes `settings.home_dir /
-".claude" / "settings.json"` with the play session's own Stop hook
-(`hooks.Stop[0].hooks[0].command = settings.hook_command`, normally
-`cc-stop-hook`). A `claude --print` invoked with that SAME `HOME` would read
-that same file and fire that same hook the moment it finishes - and
-`cc-stop-hook` (`wrapper/stop_hook.py`) reports a turn completion to
-`CCW_INTERNAL_URL`, hardcoded-defaulting to this wrapper's OWN internal
-`/internal/turn-complete` listener even with that env var unset, since the
-default happens to match `Settings.internal_addr`'s own default. A review's
-"turn" has no real turn id behind it, and an out-of-band completion call
-with an empty or wrong one can be mistaken for the completion of whatever
-turn - possibly the handover turn - actually is in flight
-(`session.Manager.complete`). So this never reuses `settings.home_dir`,
-never reuses `settings.workspace` as `cwd` (which can carry its own
-project-level `.mcp.json` from `bootstrap.merge_mcp`), and never inherits
-`HOOK_COMMAND`/`CCW_INTERNAL_URL`/`CCW_RESULT_JSON` from this process's own
-environment: `_isolated_home` makes a fresh, empty temp directory per call
-(removed again once the call returns, success or failure), and `_env_for`
-builds the child's env from nothing rather than `dict(os.environ)`, naming
-only what a one-shot `claude --print` genuinely needs (`PATH`, the isolated
-`HOME`, and whichever auth credential this deployment carries).
+**No longer isolated from the play session, and that is a deliberate
+reduction (defect D-2) rather than an oversight.** This module used to run
+in a fresh `tempfile.mkdtemp` HOME with `cwd` nowhere near the workspace, so
+that a `claude --print` could not read the play session's own
+`.claude/settings.json`, its `.mcp.json` or anything else the agent
+container carries. That isolation also made the review unable to do the job
+it is now asked to do: `~/.gitconfig` - the credential helper for
+github.com and `safe.directory = /guides`, written by
+`bootstrap.write_gitconfig` - lives in `settings.home_dir`, the seat's MCP
+servers live in `settings.workspace / ".mcp.json"` (written by
+`bootstrap.merge_mcp`), and no `mcp-seat` run outside them could push a
+branch or open a pull request. So the review now runs with `cwd =
+settings.workspace` and `HOME = settings.home_dir`, as the agent.
 
-**No tools, no MCP servers, no permission bypass.** The review reads a
-finished game's own record and reflection and writes a critique - it never
-needs to touch a file, run a command, or call an MCP server, and the game
-record can contain opponent-written or AI-generated text (a declared plan, a
-piece of advice). `--tools ""` disables every built-in tool (`claude
---help`'s own words: 'Use "" to disable all tools' - verified against the
-installed CLI, not assumed), `--strict-mcp-config` with no `--mcp-config`
-loads zero MCP servers, and with nothing left to ask permission for,
-`--dangerously-skip-permissions` is not passed at all - unlike `ai_seat.py`'s
-own one-shot invocation, which plays an actual seat through the `Bash` tool
-and genuinely needs it.
+What that costs, and what pays for it:
+
+- **The `/guides` checkout is now worked by two processes at once.** The
+  review runs on a background thread while the handover turn - whose own
+  step 2 is `mcp-seat plays admit` - is pushed into the interactive session.
+  The mitigation is T14's `playscripts.gitwork.checkout_lock`, a real
+  `flock` on the checkout that `plays admit` and `guides propose` each hold
+  for the whole of their git phase. It is a FILE lock precisely because
+  these are separate processes in one container. That is why every Bash rule
+  on the allowlist below names an `mcp-seat` subcommand and none of them
+  names `git`: a raw `git` would walk straight past the lock.
+- **The play session's Stop hook is now inside this process's HOME.**
+  `bootstrap.write_settings_json` writes `settings.home_dir /
+  ".claude/settings.json"` with `hooks.Stop[0].hooks[0].command =
+  settings.hook_command` (normally `cc-stop-hook`), and a `claude --print`
+  that loaded that file would fire that hook when it finished.
+  `wrapper/stop_hook.py` then POSTs a turn completion to `CCW_INTERNAL_URL`,
+  which it reads straight off its own environment and DEFAULTS to this
+  wrapper's own internal listener - so simply not inheriting the variable
+  guards nothing. A completion with no turn id of its own is trusted by
+  `session.Manager.complete` and would end whatever turn - possibly the
+  handover turn - is actually in flight. Two guards, because one of them
+  depends on a CLI flag behaving as documented: `--setting-sources ""` loads
+  no settings file at all, so the hook is never registered; and
+  `CCW_INTERNAL_URL` is NAMED in the child's environment, pointed at
+  `REVIEW_STOP_HOOK_SINK`, so a hook that somehow still fires cannot reach
+  the listener that matters.
+
+**A tool allowlist, not "no tools" and not "all tools".** The review reads a
+finished game's record and reflection - which can contain opponent-written
+or AI-generated text - and then writes play content back into the deck's
+guide. `REVIEW_TOOLS` is the built-in set it gets, `REVIEW_ALLOWED_TOOLS` is
+what may run without a prompt, `bootstrap.DENY_TOOLS` stays denied, and
+`--permission-prompts none` means anything outside that is refused rather
+than stalling a headless process for ever. `--strict-mcp-config` stays, now
+paired with an explicit `--mcp-config` so the seat's own MCP servers are
+exactly what loads and nothing from any other source can.
+
+**What the reviewer still cannot do, stated rather than left to be
+discovered.** `NOTES_ROUTING` (the routing rule `driver/review.py`
+interpolates into the prompt) sends system problems to the `report_problem`
+tool - an MCP tool of the `mtg` server that takes a live `player_uid`. The
+review runs after the game is over and is given no seat uid, so that half of
+the routing is not reachable from here and `report_problem` is deliberately
+not on the allowlist; a reviewer that finds a system problem says so in its
+critique, which is filed either way.
 """
 
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
+from .bootstrap import DENY_TOOLS
 from .config import Settings
 
 #: A generous ceiling on the prompt this call ever sends as a bare argv
@@ -68,31 +94,169 @@ from .config import Settings
 #: of this module's own, clearer `ReviewFailed`.
 MAX_PROMPT_CHARS = 200_000
 
-#: Never passed through from this process's own environment - see the
-#: module docstring's isolation section. `HOOK_COMMAND` configures which
-#: script the Stop hook runs; `CCW_INTERNAL_URL`/`CCW_RESULT_JSON` are only
-#: `cc-stop-hook`'s own targets, read straight off `os.environ` by that
-#: script (`wrapper/stop_hook.py`), never through `Settings`.
-_NEVER_INHERITED = ("HOOK_COMMAND", "CCW_INTERNAL_URL", "CCW_RESULT_JSON")
+#: The built-in tools the review is given (`--tools`), and why each one is
+#: here. This is an ALLOWLIST: a built-in tool not named here does not exist
+#: for this process, so it is never a permission question in the first
+#: place.
+#:
+#: - `Read` - `matchups[].play_plan`/`notes` in the deck's newest
+#:   `boarding-plan.json` and `decks/<slug>/NOTES.md` have to be read before
+#:   either can be changed; `guides propose` compares the result against
+#:   HEAD and refuses every other key, so a blind edit is a refusal.
+#: - `Edit` - the in-place change to those same two files. This is the one
+#:   tool the write-back half of the review cannot be done without.
+#: - `Write` - a deck whose `NOTES.md` does not exist yet. `guides propose`
+#:   allows that exact path whether or not it is already tracked, and `Edit`
+#:   cannot create a file.
+#: - `Glob` - `boarding-plan.json` lives under `decks/<slug>/analysis/<run>/
+#:   domain3-matchup-threat/`, and which run is newest is not known ahead of
+#:   time. Without it the reviewer would need a shell just to look.
+#: - `Grep` - finding the matchup entry to change inside a plan that carries
+#:   every matchup.
+#: - `Bash` - the only way to run `mcp-seat`. Scoped to four subcommands by
+#:   `REVIEW_BASH_RULES` below; nothing else may run through it.
+#:
+#: Everything absent is absent on purpose. `WebFetch`/`WebSearch` would let
+#: text from the game record - which is untrusted, and marked as such in the
+#: prompt - reach the network. `Task` would spawn subagents inside a bounded
+#: one-shot process. `NotebookEdit` has nothing here to edit.
+REVIEW_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep", "Bash")
+
+#: The `mcp-seat` subcommands the review may run, as `Bash(<prefix>:*)`
+#: permission rules.
+#:
+#: **These four, and no `git`.** T14's `playscripts.gitwork.checkout_lock`
+#: is taken INSIDE `plays admit` and `guides propose`, so it serializes the
+#: review against the concurrent handover turn only for as long as every
+#: write to the checkout goes through one of those commands. A rule allowing
+#: `git` (or `gh`, or a shell that could reach either) would let the review
+#: commit, rebase or push with the lock held by somebody else - which does
+#: not lose a race, it corrupts the other writer's fetch-rebase-push
+#: sequence, since the index, HEAD and the working tree are shared state
+#: that neither sequence re-reads between its steps.
+#:
+#: - `mcp-seat plays check` - the read-only listing: it lints the checkout's
+#:   play scripts offline and reports the corpus and its conflicts. It is
+#:   the corpus view the review can actually use; the `mtg` MCP server's own
+#:   `list_scripts` needs a live seat uid and a live board, and by review
+#:   time the game is over.
+#: - `mcp-seat plays priority` - the one bounded edit to a play's priority
+#:   (at most 5 per call and per game), recorded for `admit`.
+#: - `mcp-seat plays admit` - takes those play-script changes to mtg-decks
+#:   main, gate included.
+#: - `mcp-seat guides propose` - the matchup-plan and NOTES.md edit, as a
+#:   pull request the owner merges by hand.
+REVIEW_BASH_RULES = (
+    "Bash(mcp-seat plays check:*)",
+    "Bash(mcp-seat plays priority:*)",
+    "Bash(mcp-seat plays admit:*)",
+    "Bash(mcp-seat guides propose:*)",
+)
+
+#: What may run without asking (`--allowedTools`): the file tools above, and
+#: Bash only through `REVIEW_BASH_RULES`. Bare `"Bash"` is deliberately NOT
+#: here - an unscoped Bash rule would make the scoping above decoration.
+#: Paired with `--permission-prompts none`, anything outside this list is
+#: denied automatically rather than prompting a process with nobody at the
+#: terminal to answer.
+REVIEW_ALLOWED_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep", *REVIEW_BASH_RULES)
+
+#: Where a Stop hook that fires in this process anyway is sent instead of
+#: the wrapper's own internal listener - see the module docstring. Port 1 on
+#: loopback: nothing listens there, the connection is refused immediately
+#: rather than hanging, and `cc-stop-hook` gives up after its own retries
+#: and exits 0 (it always does: "a lost result is recoverable, a wedged
+#: agent is not").
+REVIEW_STOP_HOOK_SINK = "http://127.0.0.1:1/internal/turn-complete"
+
+#: The variables `mcp-seat`'s guides commands read off their own
+#: environment, each named here rather than inherited - see `_env_for`.
+#:
+#: - `MTG_GAME_ID` - `plays priority`'s `--game-id` default, which is how
+#:   the per-game priority bound is attributed.
+#: - `MTG_GITHUB_REPO` / `MTG_GITHUB_API` - `gitwork.github_repo` and
+#:   `open_pull_request`: which repository the pull request is opened
+#:   against, and which API host answers.
+#: - `GH_PAT_FILE` - where the mounted token file is, when it is not at
+#:   `bootstrap.GH_TOKEN_FILE`. `gitwork.github_token` reads the file, never
+#:   an env var, so the token itself never enters this environment.
+#: - `GIT_COMMITTER_NAME` / `GIT_COMMITTER_EMAIL` - who the commits in the
+#:   checkout are committed by (the AUTHOR is `gitwork.identity`, which
+#:   derives from `MTG_ROLE` below).
+#:
+#: `MTG_ROLE` is NOT in this list: it is set, not passed through, because
+#: the container's own value is the seat's.
+PASSED_THROUGH = (
+    "MTG_GAME_ID",
+    "MTG_GITHUB_REPO",
+    "MTG_GITHUB_API",
+    "GH_PAT_FILE",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+)
+
+#: Never passed through from this process's own environment. `HOOK_COMMAND`
+#: configures which script the play session's Stop hook runs;
+#: `CCW_RESULT_JSON` is `cc-stop-hook`'s own target, read straight off
+#: `os.environ` by that script (`wrapper/stop_hook.py`), never through
+#: `Settings`. `CCW_INTERNAL_URL` is the third of that family and is not
+#: merely withheld - it is overridden with `REVIEW_STOP_HOOK_SINK`, because
+#: `cc-stop-hook` defaults to the real listener when it is unset.
+_NEVER_INHERITED = ("HOOK_COMMAND", "CCW_RESULT_JSON")
 
 
 class ReviewFailed(Exception):
     """`claude` exited non-zero, could not be found, could not be executed,
-    or ran past `Settings.review_timeout` - the one exception `run_review`
-    raises, so `api.py`'s route has one thing to catch rather than four."""
+    ran past `Settings.review_timeout`, or the container it was asked to run
+    in was never rendered - the one exception `run_review` raises, so
+    `api.py`'s route has one thing to catch rather than several."""
 
 
-def _env_for(settings: Settings, home: Path) -> dict[str, str]:
-    """A minimal env, built from nothing rather than `dict(os.environ)`:
-    `PATH` (to find `claude` and whatever it shells out to), the isolated
-    `home` as `HOME`, and whichever auth credential this deployment carries
-    - the same precedence `pty_proc.spawn_claude` applies (OAuth token wins
-    over an API key). Everything else this process's own environment
-    carries, `_NEVER_INHERITED` included, is deliberately left out rather
-    than filtered after the fact - a future env var added to the wrapper's
-    own process has to be named here to reach the child at all, not merely
-    remembered to be stripped."""
-    env: dict[str, str] = {"HOME": str(home)}
+def _env_for(settings: Settings) -> dict[str, str]:
+    """A minimal env, built from nothing rather than `dict(os.environ)`.
+
+    The discipline is unchanged and load-bearing: every variable the child
+    gets is NAMED here, and a variable this wrapper's own process happens to
+    carry does not reach the review unless it appears in this function. A
+    future env var added to the wrapper has to be named to reach the child
+    at all, rather than merely remembered to be stripped - which is why
+    `PASSED_THROUGH` reads `os.environ` one key at a time instead of copying
+    it and deleting the rest.
+
+    What is named, and why:
+
+    - `HOME` - `settings.home_dir`, so `~/.gitconfig`'s credential helper
+      and `safe.directory = /guides` are the ones `bootstrap` wrote.
+    - `PATH` - to find `claude`, `mcp-seat`, `git` and whatever they shell
+      out to.
+    - the auth credential, at the same precedence `pty_proc.spawn_claude`
+      applies: an OAuth token from `claude setup-token` is NOT an API key,
+      the CLI reads them from different variables, and one placed in the
+      other's name is sent as the wrong kind of credential and gets a 401.
+    - `WORKSPACE` - `seat_cli` reads it for the drafts directory. Taken from
+      `Settings`, not from the environment: it is the wrapper's own setting.
+    - `MTG_ROLE` - forced to `gitwork.REVIEWER_ROLE`. The container's own
+      value is the SEAT's, and the review is a third proposer for the same
+      game and the same deck: sharing the role means sharing
+      `seat/<game>-<deck>-<role>-guides`, and two proposers on one branch
+      lose one of the two proposals.
+    - `CCW_INTERNAL_URL` - `REVIEW_STOP_HOOK_SINK`, see the module
+      docstring.
+    - `PASSED_THROUGH` - the rest of what `mcp-seat` reads, one named key at
+      a time, left out entirely when unset rather than set to "".
+    """
+    # Local, not module-level: `magic_cards_model_api.__init__` builds the
+    # whole game FastAPI app on import, and the wrapper's own api module
+    # must not drag that in just to learn one string. The same pattern
+    # `driver/handover.py` uses for this package.
+    from magic_cards_model_api.playscripts.gitwork import REVIEWER_ROLE  # noqa: PLC0415
+
+    env: dict[str, str] = {
+        "HOME": str(settings.home_dir),
+        "WORKSPACE": str(settings.workspace),
+        "MTG_ROLE": REVIEWER_ROLE,
+        "CCW_INTERNAL_URL": REVIEW_STOP_HOOK_SINK,
+    }
     path = os.environ.get("PATH")
     if path:
         env["PATH"] = path
@@ -100,7 +264,54 @@ def _env_for(settings: Settings, home: Path) -> dict[str, str]:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = settings.claude_code_oauth_token
     elif settings.anthropic_api_key:
         env["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
+    for name in PASSED_THROUGH:
+        value = os.environ.get(name, "").strip()
+        if value:
+            env[name] = value
     return env
+
+
+def _argv(settings: Settings, prompt: str, model: str, effort: str, mcp_config: Path) -> list[str]:
+    """The argv `claude` is spawned with - see the module docstring for the
+    allowlist and the two isolation guards.
+
+    `--` is load-bearing: `--tools`, `--allowedTools` and the rest are
+    variadic flags, and without it a prompt beginning with a dash is read as
+    more tool names (the same reason `ai_seat.command_for` carries one)."""
+    return [
+        settings.claude_path,
+        "--print",
+        "--model",
+        model,
+        "--effort",
+        effort,
+        # The tool surface: which built-ins exist, which may run unasked,
+        # which stay denied, and that nothing may prompt.
+        "--tools",
+        ",".join(REVIEW_TOOLS),
+        "--allowedTools",
+        ",".join(REVIEW_ALLOWED_TOOLS),
+        "--disallowed-tools",
+        ",".join(DENY_TOOLS),
+        "--permission-prompts",
+        "none",
+        # The guides checkout sits outside `cwd`, so the file tools are only
+        # allowed to reach it by naming it.
+        "--add-dir",
+        str(settings.guides_dir),
+        # No settings file loads: HOME is the play session's own now, and
+        # its settings.json carries the play session's Stop hook.
+        "--setting-sources",
+        "",
+        # Exactly the seat's own MCP servers, and nothing from any other
+        # source - `--strict-mcp-config` is what makes `--mcp-config` the
+        # only one that counts.
+        "--strict-mcp-config",
+        "--mcp-config",
+        str(mcp_config),
+        "--",
+        _capped(prompt),
+    ]
 
 
 def _capped(prompt: str) -> str:
@@ -109,51 +320,52 @@ def _capped(prompt: str) -> str:
     return prompt[:MAX_PROMPT_CHARS] + "\n\n[truncated: the game record was too large]"
 
 
-def run_review(settings: Settings, prompt: str, model: str, effort: str) -> str:
-    """Run a bounded, isolated, tool-less `claude --print` and return its
-    stdout, stripped.
+def _preflight(settings: Settings) -> Path:
+    """The two paths `run_review` names on the command line and cannot make
+    itself, checked before anything is spawned so each is an operator's own
+    sentence rather than whatever the CLI says about a missing path."""
+    mcp_config = settings.workspace / ".mcp.json"
+    if not mcp_config.is_file():
+        raise ReviewFailed(
+            f"{mcp_config} is missing: the wrapper's bootstrap (merge_mcp) has not rendered "
+            f"the workspace, so the review has no MCP configuration to run against"
+        )
+    if not settings.guides_dir.is_dir():
+        raise ReviewFailed(
+            f"the guides checkout {settings.guides_dir} is missing: deploy/guides-clone.sh "
+            f"has not run, so the review has nothing to write its play content back into"
+        )
+    return mcp_config
 
-    Raises `ReviewFailed` for every way this can go wrong - a nonzero exit
-    (stderr's tail in the message), the timeout, `claude` missing from
-    `PATH`, or any other `OSError` spawning it (permission denied on the
-    binary is the seen-in-production case, but this covers the class rather
-    than that one instance) - so the caller (`api.post_review`) has one
-    exception to turn into a 502/504 rather than four call sites each
-    guessing which failure mode it is looking at."""
-    home = Path(tempfile.mkdtemp(prefix="mtg-review-home-"))
+
+def run_review(settings: Settings, prompt: str, model: str, effort: str) -> str:
+    """Run a bounded `claude --print` with the review's tool allowlist, in
+    the agent's own workspace and HOME, and return its stdout, stripped.
+
+    Raises `ReviewFailed` for every way this can go wrong - an unrendered
+    workspace or a missing guides checkout (before anything is spawned), a
+    nonzero exit (the tail of BOTH streams in the message), the timeout,
+    `claude` missing from `PATH`, or any other `OSError` spawning it
+    (permission denied on the binary is the seen-in-production case, but
+    this covers the class rather than that one instance) - so the caller
+    (`api.post_review`) has one exception to turn into a 502/504 rather than
+    several call sites each guessing which failure mode it is looking at."""
+    mcp_config = _preflight(settings)
     try:
-        argv = [
-            settings.claude_path,
-            "--print",
-            "--model",
-            model,
-            "--effort",
-            effort,
-            "--tools",
-            "",
-            "--strict-mcp-config",
-            "--",
-            _capped(prompt),
-        ]
-        try:
-            result = subprocess.run(
-                argv,
-                cwd=home,
-                env=_env_for(settings, home),
-                capture_output=True,
-                text=True,
-                timeout=settings.review_timeout,
-            )
-        except FileNotFoundError as exc:
-            raise ReviewFailed(f"{settings.claude_path} is not on PATH") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise ReviewFailed(
-                f"the review did not finish within {settings.review_timeout}s"
-            ) from exc
-        except OSError as exc:
-            raise ReviewFailed(f"could not run {settings.claude_path}: {exc}") from exc
-    finally:
-        shutil.rmtree(home, ignore_errors=True)
+        result = subprocess.run(
+            _argv(settings, prompt, model, effort, mcp_config),
+            cwd=settings.workspace,
+            env=_env_for(settings),
+            capture_output=True,
+            text=True,
+            timeout=settings.review_timeout,
+        )
+    except FileNotFoundError as exc:
+        raise ReviewFailed(f"{settings.claude_path} is not on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ReviewFailed(f"the review did not finish within {settings.review_timeout}s") from exc
+    except OSError as exc:
+        raise ReviewFailed(f"could not run {settings.claude_path}: {exc}") from exc
     if result.returncode != 0:
         # The real `claude` CLI writes some failures - an auth error among
         # them - to STDOUT, not stderr; building this from stderr alone left
