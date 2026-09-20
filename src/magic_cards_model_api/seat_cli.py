@@ -750,7 +750,9 @@ def build_parser() -> argparse.ArgumentParser:
             "chooses every mode (list them in --modes too, CR 702.42a); escalate "
             "is charged per mode beyond the first (CR 702.120a) and "
             "'Escalate:<card id>' names what it discards; a --keyword Harmonize "
-            "cast taps 'Harmonize:<creature id>' to cut its cost (CR 702.180a)"
+            "cast taps 'Harmonize:<creature id>' to cut its cost (CR 702.180a). "
+            "A row entry reading understood: false is a printed cost this engine "
+            "cannot charge - listed rather than hidden, and refused if named"
         ),
     )
     priority_flag(cast)

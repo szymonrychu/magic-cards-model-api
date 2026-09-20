@@ -92,7 +92,7 @@ from typing import Any
 from uuid import UUID
 
 from magic_cards_model.machines import AbilityOnStack
-from magic_cards_model.machines.casting import Casting
+from magic_cards_model.machines.casting import Casting, optional_additional_costs
 from magic_cards_model.machines.cost import spend_restriction
 from magic_cards_model.machines.modes import modal_profile
 from magic_cards_model.machines.targeting import (
@@ -290,6 +290,37 @@ def cast_hints(state: CardState) -> dict[str, Any]:
         "needs_x": _needs_x(mana_cost),
         "targeting": _profile_view(targeting_profile(card)),
     }
+    printed = optional_additional_costs(card)
+    if printed:
+        # CR 601.2b's optional additional costs, read off the printing the same
+        # way `needs_x` and `modes` are - which is what lets the browser offer
+        # the choice at the moment the player picks the card up, before any
+        # `Casting`, affordance or legal-actions row exists. The reported
+        # defect was exactly that gap: the option was on the row and in the
+        # request model, and the one surface a human actually clicks never
+        # read either, so a kicker card fired at its unkicked price the
+        # instant it became legal.
+        #
+        # `machines/casting.optional_additional_costs` is the engine's own
+        # single enumeration (`Action.additional_cost_options` is the same
+        # answer on a row), so a mechanic it learns arrives here for free.
+        # `understood: false` is carried through rather than dropped - a
+        # printed option this engine cannot charge is shown, and said to be
+        # uncharged, instead of being silently absent.
+        hints["additional_costs"] = [
+            {
+                # The spelling `CastRequest.optional_costs[].keyword` takes
+                # back and `ActionRow.optional_costs` prints; `None` for a
+                # cost printed as a sentence with no keyword on it, which is
+                # also the case this engine cannot charge.
+                "keyword": option.keyword.capitalize() if option.keyword else None,
+                "cost": option.cost,
+                "rule": option.rule,
+                "repeatable": option.repeatable,
+                "understood": option.understood,
+            }
+            for option in printed
+        ]
     if modal is not None:
         hints["modes"] = {
             "instruction": modal.instruction,

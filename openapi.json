@@ -120,6 +120,14 @@
             ],
             "title": "Ability Index"
           },
+          "additional_cost_options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AdditionalCostOption"
+            },
+            "title": "Additional Cost Options",
+            "type": "array"
+          },
           "affordable": {
             "$ref": "#/components/schemas/Affordability",
             "default": "unknown"
@@ -528,6 +536,14 @@
               }
             ],
             "title": "Activate First"
+          },
+          "additional_cost_options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AdditionalCostOption"
+            },
+            "title": "Additional Cost Options",
+            "type": "array"
           },
           "affordable": {
             "$ref": "#/components/schemas/Affordability",
@@ -984,6 +1000,14 @@
               }
             ],
             "title": "Activate First"
+          },
+          "additional_cost_options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AdditionalCostOption"
+            },
+            "title": "Additional Cost Options",
+            "type": "array"
           },
           "affordable": {
             "$ref": "#/components/schemas/Affordability",
@@ -1594,6 +1618,87 @@
           "modern_status"
         ],
         "title": "AddedCardInfo",
+        "type": "object"
+      },
+      "AdditionalCostHintView": {
+        "description": "One optional additional cost this card may be cast with (CR 601.2b,\nCR 118.8b) - `affordances.cast_hints`' own reading of the engine's\n`machines/casting.optional_additional_costs`, the same enumeration\n`Action.additional_cost_options` carries on a row.\n\nOn the card view rather than only on a row because this is what the\nbrowser holds the moment the player picks the card up, before any\nlegal-actions row or affordance has been fetched - and a choice that is\nnot on screen before the cast is committed is a choice the player never\nhad.",
+        "properties": {
+          "cost": {
+            "title": "Cost",
+            "type": "string"
+          },
+          "keyword": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword"
+          },
+          "repeatable": {
+            "default": false,
+            "title": "Repeatable",
+            "type": "boolean"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "understood": {
+            "default": true,
+            "title": "Understood",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cost",
+          "rule"
+        ],
+        "title": "AdditionalCostHintView",
+        "type": "object"
+      },
+      "AdditionalCostOption": {
+        "description": "One optional additional cost this `CAST` action's spell may be cast\nwith (CR 601.2b, CR 118.8b) - Sowing Mycospawn's `Kicker {1}{C}`,\nEverflowing Chalice's `Multikicker {2}`, Gigadrowse's `Replicate {U}`.\n\nCR 601.2b: \"If the spell has alternative or additional costs that will\nbe paid as it's being cast such as buyback or kicker costs ..., the\nplayer announces their intentions to pay any or all of those costs\".\nCR 118.8b: \"Some additional costs are optional.\"\n\nLike `SpliceOption`, and unlike `spell_face`/`alternative_cost`, this is\nnot a family of mutually exclusive `Action`s: CR 118.8a lets any number\nof additional costs apply to one cast, so the row carries the whole\nspace a seat may announce from and the announcement itself is made on\nthe cast (`Game.cast(kicker=..., offspring=..., ...)`).\n\nIt is deliberately *not* folded into `Action.cost`. CR 118.8d: \"Additional\ncosts don't change a spell's mana cost, only what its controller has to\npay to cast it\" - and nobody has announced this one yet, so adding it to\nthe displayed cost would claim a choice that has not been made, exactly\nthe reason an unannounced `{X}` is left alone there too.",
+        "properties": {
+          "cost": {
+            "title": "Cost",
+            "type": "string"
+          },
+          "keyword": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword"
+          },
+          "repeatable": {
+            "default": false,
+            "title": "Repeatable",
+            "type": "boolean"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "understood": {
+            "default": true,
+            "title": "Understood",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "keyword",
+          "cost",
+          "rule"
+        ],
+        "title": "AdditionalCostOption",
         "type": "object"
       },
       "AdvanceRequest": {
@@ -3670,8 +3775,22 @@
         "type": "object"
       },
       "CastHintsView": {
-        "description": "What casting this hand/exile card asks for - X, modes, targets\n(`affordances.cast_hints`).",
+        "description": "What casting this hand/exile card asks for - X, modes, targets, and\nthe optional additional costs it may be announced with\n(`affordances.cast_hints`).",
         "properties": {
+          "additional_costs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AdditionalCostHintView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Additional Costs"
+          },
           "mana_cost": {
             "anyOf": [
               {
@@ -8298,8 +8417,15 @@
             "title": "Cost"
           },
           "keyword": {
-            "title": "Keyword",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword"
           },
           "repeatable": {
             "title": "Repeatable",
@@ -8319,10 +8445,14 @@
               }
             ],
             "title": "Unaffordable Reason"
+          },
+          "understood": {
+            "default": true,
+            "title": "Understood",
+            "type": "boolean"
           }
         },
         "required": [
-          "keyword",
           "rule",
           "repeatable",
           "affordable"

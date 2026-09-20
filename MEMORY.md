@@ -7,6 +7,31 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- 2026-09-20 kicker reaching a human (the owner's "Sowing Mycospawn, cast with
+  kicker didn't work. I simply wasn't presented with option to pay the
+  kicker"): every server layer already had it - `ActionRow.optional_costs`,
+  `CastRequest.optional_costs` with `times`, the seat CLI's `--optional-costs`
+  and the MCP tool's `optional_costs`, all landed in battle 2 - and the one
+  surface that never read any of them was `ui/`. `beginCast` asks
+  `needsChoices`, which only knew about X, modes, targeting and `cast_options`,
+  so a kicker card fired on the click that opened its own menu. The option is
+  published on `affordances.cast_hints` (`card.cast.additional_costs`), NOT on
+  the affordance endpoint or only on the legal-actions row: it is a printed
+  fact needing no `Casting`, it rides the board poll the browser already has,
+  and `needsChoices` runs before any affordance fetch - sourcing it from the
+  row would mean the browser fetching legal actions before every cast. The
+  row's own `optional_costs` stays the board-aware answer (affordability,
+  entwine/escalate/harmonize) and is now reconciled against the engine's
+  `Action.additional_cost_options` rather than being a second free-running
+  enumeration: anything the engine prints that this api's keyword table does
+  not know is appended with `understood: false` and the engine's rule, which
+  is how a printed cost the engine cannot charge (March of Otherworldly
+  Light's "you may exile any number of white cards from your hand") reaches a
+  seat and the strip at all instead of reading like a card with no option.
+  Counts, never booleans, end to end - `optionalCosts` is a keyword->times map
+  on the in-flight action, and the repeatable ones get a number input keyed
+  `optional-cost:<keyword>` so `castingStripEditInProgress` protects a
+  half-typed count the way it already protects X.
 - 2026-09-14 script-dsl O1/O2/O3/O5/O6/O8 (opening plays DSL groundwork, O4/O7
   deferred - they need engine feasibility/enters-tapped helpers that do not
   exist yet): `turn` reads `turn_number`, verified live against

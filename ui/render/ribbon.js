@@ -52,7 +52,13 @@ import { flatten } from "../targeting.js";
 import { colorOptions } from "../mana.js";
 import { anchoredPosition } from "../menus.js";
 import { withSymbols, restrictedManaRows } from "../symbols.js";
-import { needsExplicitFire, readyToFire, targetSlotIndex } from "../actions.js";
+import {
+  additionalCosts,
+  needsExplicitFire,
+  optionalCostTimes,
+  readyToFire,
+  targetSlotIndex,
+} from "../actions.js";
 import { VERB_LABELS, STEPS, passButtonsFor, advanceOffered } from "../priority.js";
 import { renderDecision } from "./decision_controls.js";
 import { windowSubject } from "./decision_window.js";
@@ -490,6 +496,94 @@ function renderAltCosts(action, handlers) {
   return step;
 }
 
+/**
+ * CR 601.2b's optional additional costs, announced before the cast is fired -
+ * the step the reported defect was missing entirely ("Sowing Mycospawn, cast
+ * with kicker didn't work. I simply wasn't presented with option to pay the
+ * kicker"). Read off `card.cast.additional_costs`
+ * (`affordances.cast_hints`), which is the engine's own enumeration
+ * (`machines/casting.optional_additional_costs`) - never a keyword list of
+ * this file's own, so a mechanic the engine learns is drawn here for free.
+ *
+ * Three shapes, each following a pattern already in this strip:
+ *
+ * - a cost paid once (CR 702.33a's kicker, offspring, gift) is a chip that
+ *   toggles, exactly like `renderAltCosts`' own;
+ * - a cost paid "any number of times" (CR 702.33c's multikicker,
+ *   CR 702.56a's replicate) is the same `<input type=number>` `Announce X`
+ *   and the division steppers use, because a toggle would silently cap it
+ *   at one;
+ * - a cost this engine cannot charge (`understood: false`) is not offered at
+ *   all - it is drawn as `renderRestrictedMana`'s own note, the printed
+ *   sentence in full rather than a tooltip, so the player learns the card
+ *   has an option the program cannot take instead of being shown nothing.
+ */
+function renderAdditionalCosts(card, action, handlers) {
+  const options = action.kind === "cast" ? additionalCosts(card) : [];
+  if (!options.length) return null;
+  const step = h(
+    "div",
+    { class: "tray-step additional-costs" },
+    h("div", { class: "label" }, "Additional cost (CR 601.2b) - optional")
+  );
+  const row = h("div", { class: "chip-row" });
+  for (const option of options) {
+    const printed = option.cost ? `: ${option.cost}` : "";
+    if (!option.understood || !option.keyword) {
+      row.appendChild(
+        h(
+          "div",
+          { class: "restricted-note unusable" },
+          h("span", { class: "n" }, "!"),
+          h(
+            "span",
+            { class: "sentence" },
+            `${option.cost} (${option.rule}) - this engine cannot charge this ` +
+              "printed optional cost, so it cannot be announced here"
+          )
+        )
+      );
+      continue;
+    }
+    const times = optionalCostTimes(action, option.keyword);
+    if (option.repeatable) {
+      row.appendChild(
+        h(
+          "label",
+          { class: "share-stepper" },
+          `${option.keyword}${printed}`,
+          h("input", {
+            type: "number",
+            min: "0",
+            value: String(times),
+            title: option.rule,
+            // Keyed like the X box and the share steppers, so
+            // `castingStripEditInProgress` can tell a live, uncommitted count
+            // apart from the rest of the strip's inputs.
+            dataset: { field: `optional-cost:${option.keyword}` },
+            onChange: (e) =>
+              handlers.onSetOptionalCost(option.keyword, Number(e.target.value) || 0),
+          })
+        )
+      );
+      continue;
+    }
+    row.appendChild(
+      h(
+        "button",
+        {
+          class: `chip ${times ? "on" : ""}`,
+          title: option.rule,
+          onClick: () => handlers.onSetOptionalCost(option.keyword, times ? 0 : 1),
+        },
+        `${option.keyword}${printed}`
+      )
+    );
+  }
+  step.appendChild(row);
+  return step;
+}
+
 function renderObjectCostStep(action, offer, field, label, onToggle) {
   const body = offer.candidates.length
     ? h(
@@ -607,7 +701,9 @@ function renderShareSteppers(action, handlers) {
  * `#prompt-box`'s controls have no notion of "already in sync"), this also
  * checks whether the input's live value has actually diverged from what
  * `action` says it should be: `renderXInput`/`renderShareSteppers` tag their
- * input with `dataset.field` (`"x"`, or `"share:<id>"`) precisely so this can
+ * input with `dataset.field` (`"x"`, `"share:<id>"`, or
+ * `"optional-cost:<keyword>"` for a repeatable CR 601.2b announcement)
+ * precisely so this can
  * ask "does this field's live text still match the store" rather than
  * "is any input here focused at all". Once an `onChange` has landed and the
  * two agree again, the guard steps aside - continuing to block on focus
@@ -631,6 +727,11 @@ function castingStripEditInProgress(el, action) {
   if (field.startsWith("share:")) {
     const id = field.slice("share:".length);
     const expected = action ? String((action.shares && action.shares[id]) || 1) : "";
+    return live !== expected;
+  }
+  if (field.startsWith("optional-cost:")) {
+    const keyword = field.slice("optional-cost:".length);
+    const expected = action ? String(optionalCostTimes(action, keyword)) : "";
     return live !== expected;
   }
   return false;
@@ -678,6 +779,9 @@ function renderCastingStrip(el, app, handlers) {
 
   const altStep = renderAltCosts(action, handlers);
   if (altStep) el.appendChild(altStep);
+
+  const additionalStep = renderAdditionalCosts(card, action, handlers);
+  if (additionalStep) el.appendChild(additionalStep);
 
   const xStep = renderXInput(card, action, handlers);
   if (xStep) el.appendChild(xStep);

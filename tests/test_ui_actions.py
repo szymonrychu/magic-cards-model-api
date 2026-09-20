@@ -1050,3 +1050,177 @@ def test_a_mana_abilitys_own_source_is_still_dropped_when_it_names_an_index() ->
         land=land,
     )
     assert body["mana_sources"] == ["m1"]
+
+
+# -- CR 601.2b's optional additional costs -------------------------------------
+#
+# The reported defect (2026-09-20): "Sowing Mycospawn, cast with kicker didn't
+# work. I simply wasn't presented with option to pay the kicker." A kicker card
+# targets nothing, has no X and no modes, so `needsChoices` read false, the
+# affordance was never fetched, `needsExplicitFire` read false, and the cast
+# fired at its unkicked price on the click that opened the menu. Fixtures are
+# real hand-card views (`affordances.cast_hints`' `additional_costs`), and not
+# the reported card: Mold Shambler prints `Kicker {1}{G}`, Consign to Memory
+# prints the repeatable `Replicate {1}` (CR 702.56a's "any number of times"),
+# and March of Otherworldly Light prints a cost this engine cannot charge.
+
+MOLD_SHAMBLER = {
+    "id": "ms",
+    "name": "Mold Shambler",
+    "mana_cost": "{3}{G}",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Creature - Fungus Beast",
+    "cast": {
+        "mana_cost": "{3}{G}",
+        "needs_x": False,
+        "modes": None,
+        "targeting": {
+            "targets_anything": False,
+            "understood": True,
+            "minimum": 0,
+            "maximum": 0,
+            "requirements": [],
+        },
+        "additional_costs": [
+            {
+                "keyword": "Kicker",
+                "cost": "{1}{G}",
+                "rule": "CR 702.33a",
+                "repeatable": False,
+                "understood": True,
+            }
+        ],
+    },
+    "abilities": [],
+}
+CONSIGN_TO_MEMORY = {
+    **MOLD_SHAMBLER,
+    "id": "ctm",
+    "name": "Consign to Memory",
+    "mana_cost": "{U}",
+    "cast": {
+        **MOLD_SHAMBLER["cast"],
+        "mana_cost": "{U}",
+        "additional_costs": [
+            {
+                "keyword": "Replicate",
+                "cost": "{1}",
+                "rule": "CR 702.56a",
+                "repeatable": True,
+                "understood": True,
+            }
+        ],
+    },
+}
+MARCH_OF_OTHERWORLDLY_LIGHT = {
+    **MOLD_SHAMBLER,
+    "id": "march",
+    "name": "March of Otherworldly Light",
+    "mana_cost": "{X}{W}",
+    "cast": {
+        **MOLD_SHAMBLER["cast"],
+        "mana_cost": "{X}{W}",
+        "additional_costs": [
+            {
+                "keyword": None,
+                "cost": "you may exile any number of white cards from your hand",
+                "rule": "CR 118.8b",
+                "repeatable": False,
+                "understood": False,
+            }
+        ],
+    },
+}
+
+
+def test_a_printed_optional_cost_is_a_choice_worth_stopping_for() -> None:
+    """`needsChoices` is what decides whether `beginCast` opens the casting
+    strip at all, and `needsExplicitFire` is what keeps it open until the
+    player clicks Cast - the two gates the reported cast walked straight
+    past."""
+    assert run_module(
+        "actions.js",
+        """(() => {
+          const a = m.begin('cast', shambler, {});
+          return [
+            m.needsChoices(shambler, null),
+            m.needsExplicitFire(a),
+            m.needsChoices(bolt, null) && m.needsExplicitFire(m.begin('cast', memnite, {})),
+          ];
+        })()""",
+        shambler=MOLD_SHAMBLER,
+        bolt=BOLT,
+        memnite=MEMNITE,
+    ) == [True, True, False]
+
+
+def test_an_optional_cost_the_engine_cannot_charge_still_stops_the_cast() -> None:
+    """Failing closed out loud: the player is shown the printed option and
+    told the engine cannot charge it, rather than the card firing as though
+    it printed nothing."""
+    assert run_module(
+        "actions.js",
+        "[m.needsChoices(march, null), m.needsExplicitFire(m.begin('cast', march, {}))]",
+        march=MARCH_OF_OTHERWORLDLY_LIGHT,
+    ) == [True, True]
+
+
+def test_a_kicked_cast_says_so_in_its_body() -> None:
+    assert run_module(
+        "actions.js",
+        """(() => {
+          let a = m.begin('cast', shambler, {});
+          a = m.setOptionalCost(a, 'Kicker', 1);
+          return m.bodyFor(a, 'alice', ['f1']);
+        })()""",
+        shambler=MOLD_SHAMBLER,
+    ) == {
+        "player": "alice",
+        "card_id": "ms",
+        "optional_costs": [{"keyword": "Kicker", "times": 1}],
+        "mana_sources": ["f1"],
+    }
+
+
+def test_an_unkicked_cast_says_nothing_about_optional_costs() -> None:
+    """Zero is not "kicked nothing times": the key is left off entirely, the
+    same shape every cast written before the field existed sends."""
+    assert run_module(
+        "actions.js",
+        """(() => {
+          let a = m.begin('cast', shambler, {});
+          a = m.setOptionalCost(a, 'Kicker', 1);
+          a = m.setOptionalCost(a, 'Kicker', 0);
+          return m.bodyFor(a, 'alice', []);
+        })()""",
+        shambler=MOLD_SHAMBLER,
+    ) == {"player": "alice", "card_id": "ms"}
+
+
+def test_a_repeatable_cost_carries_the_count_the_player_chose() -> None:
+    """CR 702.56a's replicate is announced "any number of times" - a boolean
+    here would silently cap it at one."""
+    assert run_module(
+        "actions.js",
+        """(() => {
+          let a = m.begin('cast', consign, {});
+          a = m.setOptionalCost(a, 'Replicate', 3);
+          return m.bodyFor(a, 'alice', []).optional_costs;
+        })()""",
+        consign=CONSIGN_TO_MEMORY,
+    ) == [{"keyword": "Replicate", "times": 3}]
+
+
+def test_a_cost_the_engine_cannot_charge_is_never_announced() -> None:
+    """There is no keyword to hand back for it, and announcing one the engine
+    refuses would turn a visible notice into a refused cast."""
+    assert run_module(
+        "actions.js",
+        """(() => {
+          let a = m.begin('cast', march, {});
+          a = m.setOptionalCost(a, null, 1);
+          return m.bodyFor(a, 'alice', []);
+        })()""",
+        march=MARCH_OF_OTHERWORLDLY_LIGHT,
+    ) == {"player": "alice", "card_id": "march"}
