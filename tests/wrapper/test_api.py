@@ -1,3 +1,5 @@
+import inspect
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -385,6 +387,29 @@ def test_post_review_surfaces_a_runner_failure_as_502(monkeypatch):
         )
         assert response.status_code == 502
         assert "claude exited 1" in response.json()["detail"]
+    finally:
+        manager.shutdown()
+
+
+def test_the_default_review_runner_is_the_real_one_shot_call(monkeypatch):
+    """Every test above substitutes a fake runner, which is exactly why the
+    wiring itself needs a test of its own: nothing else here would notice
+    `build_public_app` losing its default, and the review route would then
+    500 in production while the whole suite stayed green.
+
+    It matters more now that the runner is not harmless. The real
+    `oneshot.run_review` works this container's own workspace, HOME and
+    `/guides` checkout - a test that accidentally reached it would commit
+    and push, not merely be slow - so the default is asserted by identity
+    and never called."""
+    from mtg_agent.wrapper import oneshot
+    from mtg_agent.wrapper.api import build_public_app as builder
+
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc)
+    try:
+        signature = inspect.signature(builder)
+        assert signature.parameters["review_runner"].default is oneshot.run_review
     finally:
         manager.shutdown()
 

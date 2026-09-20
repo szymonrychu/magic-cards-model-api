@@ -26,7 +26,10 @@ from .session import BusyError, DeadError, Manager, NotReadyError
 #: `(settings, prompt, model, effort) -> text`, raising `ReviewFailed` on
 #: any failure. A parameter rather than a hardcoded call so tests substitute
 #: a fake and never spawn a real `claude` subprocess (see
-#: `tests/wrapper/test_api.py`'s `review_wired` fixture).
+#: `tests/wrapper/test_api.py`'s `review_wired` fixture) - which matters
+#: more now than it did: the real runner works this container's own
+#: workspace, HOME and `/guides` checkout, so a test that reached it would
+#: not merely be slow, it would commit.
 ReviewRunner = Callable[[Settings, str, str, str], str]
 
 
@@ -199,9 +202,18 @@ def build_public_app(
         `mtg_agent.driver.review` for who calls this and why the game is
         already over by the time anything does.
 
+        **Separate from the session, NOT isolated from the container.** The
+        reviewer runs in this container's own workspace and HOME with a tool
+        allowlist and the `/guides` checkout, so it really can be running
+        `mcp-seat plays admit` while the handover turn this same wrapper is
+        supervising runs it too. Nothing in this route arbitrates that -
+        `playscripts.gitwork.checkout_lock` does, inside the commands
+        themselves. See `oneshot.py` for the whole of that argument.
+
         Blocking, bounded by `Settings.review_timeout` inside
         `review_runner` - the caller (the driver) is expected to use a
-        client timeout at least that long."""
+        client timeout at least that long, and
+        `driver.app.REVIEW_HTTP_TIMEOUT` is pinned above it by a test."""
         if not body.prompt.strip():
             raise HTTPException(status_code=400, detail="prompt is required")
         try:

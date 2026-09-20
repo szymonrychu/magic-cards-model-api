@@ -63,6 +63,15 @@ class Settings:
     max_thinking_tokens: int | None = None
     workspace: Path = Path("/workspace")
     home_dir: Path = Path("/root")
+    #: The writable deck-guides checkout `deploy/guides-clone.sh` clones and
+    #: both deployment targets mount at `/guides`. The same directory as
+    #: `bootstrap.GUIDES_DIR` (which `~/.gitconfig`'s `safe.directory` names)
+    #: and as `playscripts.gitwork.GUIDES_ROOT` (every `mcp-seat` guides
+    #: command's own default `--root`) - spelled here rather than imported
+    #: from either, because `bootstrap` imports THIS module and the
+    #: playscripts package pulls the whole game app in with it. A test pins
+    #: that the three agree rather than leaving the duplication unguarded.
+    guides_dir: Path = Path("/guides")
     permission_mode: str = "bypassPermissions"
     hook_command: str = "cc-stop-hook"
     turn_timeout: float = 1800.0
@@ -71,7 +80,24 @@ class Settings:
     #: reported as a timeout - separate from `turn_timeout`, which bounds a
     #: turn of the supervised *interactive* session, not this independent,
     #: non-PTY subprocess.
-    review_timeout: float = 600.0
+    #:
+    #: **1200s, re-justified for a review that uses tools.** 600 was the
+    #: bound on a tool-less call: one model round trip, nothing else. The
+    #: review now reads and edits a deck's guide and takes its changes to
+    #: mtg-decks through `mcp-seat`, and that is slower in a way that is not
+    #: a guess: the FIRST thing `plays admit` / `guides propose` do is wait
+    #: for the `/guides` checkout (`playscripts.gitwork.checkout_lock`),
+    #: bounded at `CHECKOUT_LOCK_TIMEOUT` = 300s, because the handover turn
+    #: is working the same clone concurrently (defect D-1). A budget that
+    #: could be half-spent before any work starts has to leave room for the
+    #: work: 1200 is that wait plus a model call plus a fetch, a rebase, up
+    #: to three push attempts and a pull request.
+    #:
+    #: Every timeout stacked on top of this one must outlast it -
+    #: `driver.app.REVIEW_HTTP_TIMEOUT` (the driver's own client timeout for
+    #: `POST /v1/review`) and `RETIRE_REVIEW_JOIN_TIMEOUT` over that, both
+    #: pinned by a test against this number.
+    review_timeout: float = 1200.0
     boot_timeout: float = 60.0
     submit_delay: float = 0.4
     #: How long an interrupted turn gets to end on its own before the wrapper
@@ -114,10 +140,14 @@ class Settings:
             max_thinking_tokens=_int_or_none(env, "MAX_THINKING_TOKENS"),
             workspace=Path(_str(env, "WORKSPACE", "/workspace")),
             home_dir=Path(_str(env, "HOME_DIR", "/root")),
+            # GUIDES_ROOT, the same name the driver container reads it under
+            # (deploy/seat-job.yaml); unset in the agent container, where the
+            # mount path is fixed.
+            guides_dir=Path(_str(env, "GUIDES_ROOT", "/guides")),
             permission_mode=_str(env, "PERMISSION_MODE", "bypassPermissions"),
             hook_command=_str(env, "HOOK_COMMAND", "cc-stop-hook"),
             turn_timeout=_float(env, "TURN_TIMEOUT_SECONDS", 1800.0),
-            review_timeout=_float(env, "REVIEW_TIMEOUT_SECONDS", 600.0),
+            review_timeout=_float(env, "REVIEW_TIMEOUT_SECONDS", 1200.0),
             boot_timeout=_float(env, "BOOT_TIMEOUT_SECONDS", 60.0),
             submit_delay=_float(env, "SUBMIT_DELAY_SECONDS", 0.4),
             interrupt_settle=_float(env, "INTERRUPT_SETTLE_SECONDS", 20.0),

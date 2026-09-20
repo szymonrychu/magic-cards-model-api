@@ -663,3 +663,69 @@ def test_the_ask_still_sits_outside_the_untrusted_game_record() -> None:
     text = review_prompt(_assignment(), "notes", _ledger())
     end = next(line for line in text.splitlines() if line.startswith("=== END GAME RECORD"))
     assert text.index("TIMING AND INSTANT SPEED") > text.index(end)
+# -- T13-r1.2: the system-problem half of the routing is reachable --------------
+
+
+def test_the_review_prompt_tells_the_reviewer_how_to_reach_report_problem() -> None:
+    """`NOTES_ROUTING` names `report_problem` as where a system problem
+    goes, and the reviewer is not a seat: it has to be told which credential
+    the tool takes, or the destination is named but not reachable."""
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "report_problem(player_uid=" in text
+    assert "secret-uid" in text, "the reviewer cannot call report_problem without the uid"
+    assert "g-1" in text, "and the row is filed in this game's own ledger"
+
+
+def test_the_after_game_clause_is_one_constant_the_prompt_module_owns() -> None:
+    """The same discipline `NOTES_ROUTING` itself is under: one statement of
+    the rule, in one place, read by whoever needs it."""
+    from mtg_agent.driver import prompt as prompt_module
+    from mtg_agent.driver import review
+
+    assert review.notes_routing_after_game is prompt_module.notes_routing_after_game
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert _flat(prompt_module.notes_routing_after_game(_assignment())) in text
+
+
+def test_the_after_game_clause_sits_outside_the_untrusted_game_record() -> None:
+    """It is an instruction, not data - and it carries a live credential, so
+    it must never land inside the block the reviewer was told to ignore."""
+    text = review_prompt(_assignment(), "r", _record())
+    end = next(line for line in text.splitlines() if line.startswith("=== END GAME RECORD"))
+    assert text.index("report_problem(player_uid=") > text.index(end)
+
+
+def test_the_reviewers_clause_is_not_the_seats_during_game_one() -> None:
+    """The handover's extra clause tells a seat that is still playing to file
+    the moment it sees a problem. The reviewer's says how a finished game's
+    reviewer reaches the same tool. Neither stands in for the other."""
+    from mtg_agent.driver.prompt import NOTES_ROUTING_DURING_GAME
+
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert _flat(NOTES_ROUTING_DURING_GAME) not in text
+
+
+def test_the_tool_the_prompt_names_is_the_tool_the_reviewer_may_call() -> None:
+    """The gap this closes, asserted across the two modules that had it: the
+    driver's prompt names a destination, and the wrapper process that runs
+    the prompt is allowed to reach it."""
+    from mtg_agent.wrapper.oneshot import REVIEW_ALLOWED_TOOLS
+
+    text = review_prompt(_assignment(), "r", _record())
+    assert "report_problem" in text
+    assert "mcp__mtg__report_problem" in REVIEW_ALLOWED_TOOLS
+
+
+def test_a_worst_case_long_game_stays_under_the_ceiling_with_the_clause() -> None:
+    """The after-game clause is appended after the ledger has been fitted,
+    so it has to be part of the budget the ledger is fitted against - the
+    same reason `_ROUTING_SIZE` exists at all."""
+    from mtg_agent.driver.review import PROMPT_BUDGET_CHARS
+    from mtg_agent.wrapper.oneshot import MAX_PROMPT_CHARS
+
+    record = _record(
+        entries=[_row(seq, reasoning="y" * 3000) for seq in range(1, 2001)],
+    )
+    text = review_prompt(_assignment(uid="u" * 400, game_id="g" * 400), "r" * 5000, record)
+    assert len(text) <= PROMPT_BUDGET_CHARS
+    assert len(text) < MAX_PROMPT_CHARS

@@ -18,8 +18,26 @@ def test_defaults_when_env_is_empty():
     assert s.enable_all_mcp is True
     # The post-game AI review's one-shot `claude --print` bound (`POST
     # /v1/review`, `oneshot.py`) - separate from `turn_timeout`, which
-    # bounds the supervised interactive session's own turns.
-    assert s.review_timeout == 600.0
+    # bounds the supervised interactive session's own turns. 1200 rather
+    # than the tool-less 600: the review now waits on the `/guides` checkout
+    # lock (300s of the budget in the worst case) before it runs a single
+    # `mcp-seat` command. See the field's own docstring.
+    assert s.review_timeout == 1200.0
+    assert s.guides_dir == Path("/guides")
+
+
+def test_the_guides_checkout_is_one_directory_under_three_names():
+    """`Settings.guides_dir` is spelled out rather than imported (the import
+    would be a cycle, and the playscripts package builds the whole game app
+    on import), so the duplication is pinned here instead of trusted."""
+    from magic_cards_model_api.playscripts.gitwork import GUIDES_ROOT
+    from mtg_agent.wrapper.bootstrap import GUIDES_DIR
+
+    assert Settings.from_env({}).guides_dir == Path(GUIDES_DIR) == GUIDES_ROOT
+
+
+def test_the_guides_checkout_can_be_moved_for_a_test_or_a_new_mount():
+    assert Settings.from_env({"GUIDES_ROOT": "/tmp/guides"}).guides_dir == Path("/tmp/guides")
 
 
 def test_env_overrides_scalars_and_paths():
