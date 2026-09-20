@@ -91,8 +91,16 @@ def forbidden_plan_changes(before: Any, after: Any) -> list[str]:
 
 
 def propose(root: Path, deck: str, game_id: str) -> dict[str, Any]:
+    """One proposal, with the checkout held exclusively for the whole of it.
+
+    D-1: the review's own write channel and this one work the same single
+    clone, so the git phase is serialized by `gitwork.checkout_lock` rather
+    than by a comment about the risk - see that function for why a file lock
+    and not a `threading.Lock`."""
+    root = Path(root).resolve()
     try:
-        return _propose(Path(root).resolve(), deck, game_id)
+        with gitwork.checkout_lock(root):
+            return _propose(root, deck, game_id)
     except Outcome as outcome:
         return outcome.result
 

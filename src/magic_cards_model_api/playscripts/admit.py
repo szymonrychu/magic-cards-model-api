@@ -210,8 +210,18 @@ def _set_priority(
 
 
 def admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
+    """One admit, with the checkout held exclusively for the whole of it.
+
+    D-1: `_admit`'s fetch-and-rebase-and-push sequence shares the index,
+    HEAD and the working tree between its steps and re-reads none of them, so
+    a second committer arriving inside it corrupts the sequence rather than
+    merely losing a race. `gitwork.checkout_lock` is what makes "one writer
+    in this checkout at a time" true across processes - the handover turn's
+    subagents and the reviewer's own write channel included."""
+    root = Path(root).resolve()
     try:
-        return _admit(Path(root).resolve(), deck, game_id)
+        with gitwork.checkout_lock(root):
+            return _admit(root, deck, game_id)
     except Outcome as outcome:
         return outcome.result
 

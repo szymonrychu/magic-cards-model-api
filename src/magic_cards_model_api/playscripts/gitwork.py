@@ -11,14 +11,19 @@ never written to `.git/config`.
 
 from __future__ import annotations
 
+import contextlib
+import errno
+import fcntl
 import json
 import os
 import re
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -37,8 +42,95 @@ GAME_PRIORITY_FILE = "mtg-plays-priority-games.json"
 #: How far one `plays priority` call, and one game, may move a priority.
 PRIORITY_STEP_LIMIT = 5
 PRIORITY_MIN, PRIORITY_MAX = 0, 100
+#: The post-game reviewer's own role. It is a THIRD proposer for the same
+#: game and the same deck as the seat that played it and the buddy that
+#: watched it, so it needs a role of its own: two proposers sharing a
+#: `seat/<game>-<deck>-<role>-guides` branch name is a collision that loses
+#: one of the two proposals, not a cosmetic clash.
+REVIEWER_ROLE = "reviewer"
+
 #: MTG_ROLE -> the name a commit is authored under.
-ROLE_NAMES = {"seat": "seat", "advisor": "buddy"}
+ROLE_NAMES = {"seat": "seat", "advisor": "buddy", REVIEWER_ROLE: "reviewer"}
+
+#: How long a writer waits for the `/guides` checkout before giving up
+#: (`checkout_lock`). Generous enough to cover a whole `plays admit` -
+#: fetch, rebase, the in-pod gate, up to three push attempts - and far
+#: inside `handover.HANDOVER_BUDGET_SECONDS`, so a handover turn that finds
+#: the checkout busy still has time to say so rather than being killed
+#: mid-wait with no result at all.
+CHECKOUT_LOCK_TIMEOUT = 300.0
+
+#: The lock file, inside the checkout it guards: one file per checkout, so
+#: two unrelated clones never contend, and inside `.git/` so it can never be
+#: mistaken for a tracked change by `git.changed_paths()` (which is exactly
+#: how a lock file at the checkout root would have made every `admit` refuse
+#: itself with "plays admit only takes changes under decks/*/plays/").
+CHECKOUT_LOCK_NAME = "mcm-checkout.lock"
+
+
+@contextlib.contextmanager
+def checkout_lock(root: Path | str, timeout: float | None = None) -> Iterator[None]:
+    """Hold the `/guides` checkout exclusively for the body of the `with`.
+
+    **Defect D-1.** Both write channels run against the same single clone:
+    `plays admit` does a fetch-and-rebase and then pushes `HEAD:main` with up
+    to three attempts, and `guides propose` commits onto its own branch and
+    pushes that. A second committer inside the same working tree during
+    either sequence does not merely lose a race - it corrupts it, because the
+    index, HEAD and the working tree are shared state that neither sequence
+    re-reads between its steps. The post-game AI review runs on a background
+    thread while the handover turn is pushed into the interactive session
+    concurrently, and the handover turn's step 2 is `mcp-seat plays admit`,
+    so the two really can arrive together.
+
+    **Why a file lock and not a `threading.Lock`.** The writers are separate
+    PROCESSES in one container - the reviewer's own `claude --print` tool
+    call and `mcp-seat` - so an in-process lock would guard nothing. `flock`
+    is held by the open file description and released by the kernel when the
+    holder exits, so a `mcp-seat` that is killed mid-admit does not leave the
+    checkout locked for ever.
+
+    **Bounded.** A wedged holder must not hang a handover inside its own time
+    budget, so the wait gives up after `CHECKOUT_LOCK_TIMEOUT` and raises
+    `Outcome("error", ...)` naming the checkout - an infrastructure failure,
+    never a verdict on the change, which is exactly what `error` means here.
+    """
+    root = Path(root)
+    limit = CHECKOUT_LOCK_TIMEOUT if timeout is None else timeout
+    # Inside `.git/` when there is one, so `git status` never sees it; beside
+    # the checkout otherwise, which is the case in a test tmpdir and for a
+    # root that is not a clone at all.
+    holder = root / ".git" if (root / ".git").is_dir() else root
+    path = holder / CHECKOUT_LOCK_NAME
+    try:
+        holder.mkdir(parents=True, exist_ok=True)
+        handle = path.open("a+")
+    except OSError as exc:
+        raise Outcome("error", f"could not open the guides checkout lock {path}: {exc}") from exc
+    deadline = time.monotonic() + limit
+    try:
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                    raise Outcome(
+                        "error", f"could not lock the guides checkout {root}: {exc}"
+                    ) from exc
+                if time.monotonic() >= deadline:
+                    raise Outcome(
+                        "error",
+                        f"the guides checkout {root} was still held by another writer after "
+                        f"{limit:g}s; nothing was changed",
+                    ) from exc
+                time.sleep(0.02)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
 
 #: The results a command prints. `error` is an infrastructure failure (no
 #: token, GitHub refused, git itself broke), never a verdict on the change.

@@ -296,3 +296,224 @@ def test_the_same_seat_proposing_again_reuses_its_own_branch(
     assert first["branch"] == again["branch"] == BRANCH
     assert [p["body"]["head"] for p in github.pulls()] == [BRANCH, BRANCH]
     assert branches(bare) == {"main", BRANCH}
+
+
+# -- T14 (defect D-1): the /guides checkout is entered by one writer at a time --
+
+REVIEWER_BRANCH = f"seat/{GAME}-{SLUG}-reviewer-guides"
+
+
+def test_the_reviewer_gets_a_role_whose_branch_cannot_collide():
+    """The reviewer is a THIRD proposer for the same game and the same deck.
+    Two proposers sharing a branch name is the collision this exists to
+    prevent, so its branch must differ from the seat's and from the
+    buddy's."""
+    from magic_cards_model_api.playscripts.gitwork import REVIEWER_ROLE, ROLE_NAMES
+    from magic_cards_model_api.playscripts.guides_propose import guides_branch
+
+    assert REVIEWER_ROLE in ROLE_NAMES
+    reviewer = guides_branch(GAME, SLUG, REVIEWER_ROLE)
+    seat = guides_branch(GAME, SLUG, "seat")
+    buddy = guides_branch(GAME, SLUG, "advisor")
+    assert reviewer == REVIEWER_BRANCH
+    assert len({reviewer, seat, buddy}) == 3
+
+
+def test_the_reviewer_role_is_accepted_by_the_container_role_read(monkeypatch):
+    from magic_cards_model_api.playscripts.gitwork import REVIEWER_ROLE, identity, role
+
+    monkeypatch.setenv("MTG_ROLE", REVIEWER_ROLE)
+    assert role() == REVIEWER_ROLE
+    name, email = identity(SLUG)
+    assert name.startswith("mtg-reviewer")
+    assert email == "mtg-reviewer@mtg-trainer.invalid"
+
+
+def test_an_unknown_role_is_still_refused(monkeypatch):
+    from magic_cards_model_api.playscripts.gitwork import Outcome, role
+
+    monkeypatch.setenv("MTG_ROLE", "coach")
+    with pytest.raises(Outcome):
+        role()
+
+
+def test_the_checkout_lock_serializes_two_writers(tmp_path):
+    """Clause (d): with one writer in its git phase, the other waits and is
+    ordered after it - never interleaved. The writers here stand in for the
+    review's own tool call and the handover turn's `plays admit`; what is
+    being proved is the lock, not either command's git work."""
+    import threading
+    import time
+
+    from magic_cards_model_api.playscripts.gitwork import checkout_lock
+
+    root = tmp_path / "guides"
+    root.mkdir()
+    order: list[str] = []
+    first_inside = threading.Event()
+    release_first = threading.Event()
+
+    def reviewer() -> None:
+        with checkout_lock(root):
+            order.append("reviewer in")
+            first_inside.set()
+            release_first.wait(5.0)
+            order.append("reviewer out")
+
+    def handover() -> None:
+        first_inside.wait(5.0)
+        with checkout_lock(root):
+            order.append("handover in")
+            order.append("handover out")
+
+    threads = [threading.Thread(target=reviewer), threading.Thread(target=handover)]
+    for thread in threads:
+        thread.start()
+    first_inside.wait(5.0)
+    # The second writer has had its chance and must still be outside.
+    time.sleep(0.2)
+    assert order == ["reviewer in"]
+    release_first.set()
+    for thread in threads:
+        thread.join(5.0)
+    assert order == ["reviewer in", "reviewer out", "handover in", "handover out"]
+
+
+def test_the_checkout_lock_is_held_across_processes(tmp_path):
+    """An in-process `threading.Lock` would not do: the reviewer's own tool
+    call and `mcp-seat plays admit` are separate processes in one container,
+    which is exactly the shape that corrupts a fetch-and-rebase."""
+    import subprocess
+    import sys
+    import threading
+
+    from magic_cards_model_api.playscripts.gitwork import checkout_lock
+
+    root = tmp_path / "guides"
+    root.mkdir()
+    script = (
+        "import sys, time\n"
+        f"sys.path.insert(0, {str(Path('src').resolve())!r})\n"
+        "from magic_cards_model_api.playscripts.gitwork import checkout_lock\n"
+        "start = time.monotonic()\n"
+        f"with checkout_lock({str(root)!r}):\n"
+        "    print(round(time.monotonic() - start, 2))\n"
+    )
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold() -> None:
+        with checkout_lock(root):
+            held.set()
+            release.wait(5.0)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    held.wait(5.0)
+    child = subprocess.Popen(
+        [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True
+    )
+    try:
+        assert child.poll() is None
+        release.set()
+        out, _ = child.communicate(timeout=10)
+        assert child.returncode == 0, out
+        assert float(out.strip()) >= 0.0
+    finally:
+        release.set()
+        holder.join(5.0)
+
+
+def test_propose_takes_the_checkout_lock(capsys, root, bare, github, render_log, monkeypatch):
+    """`guides propose` does its git work under the lock, so the reviewer's
+    own write channel cannot be inside the same checkout at the same time."""
+    from magic_cards_model_api.playscripts import gitwork
+
+    taken: list[str] = []
+    real = gitwork.checkout_lock
+
+    def watched(where, timeout: float | None = None):
+        taken.append(str(where))
+        return real(where, timeout)
+
+    monkeypatch.setattr(gitwork, "checkout_lock", watched)
+    edit_plan(root, good_edit)
+    rc, body, _, _ = propose(capsys, root)
+    assert (rc, body["result"]) == (0, "awaiting_owner_review"), body
+    assert taken == [str(root.resolve())]
+
+
+def test_the_checkout_lock_gives_up_rather_than_waiting_for_ever(tmp_path):
+    """A wedged holder must not hang a handover turn inside its time budget:
+    the wait is bounded and the refusal names the checkout."""
+    import threading
+
+    from magic_cards_model_api.playscripts.gitwork import Outcome, checkout_lock
+
+    root = tmp_path / "guides"
+    root.mkdir()
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold() -> None:
+        with checkout_lock(root):
+            held.set()
+            release.wait(5.0)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    held.wait(5.0)
+    try:
+        with pytest.raises(Outcome) as refusal, checkout_lock(root, timeout=0.2):
+            pass
+        assert refusal.value.result["result"] == "error"
+        assert "guides" in refusal.value.result["message"]
+    finally:
+        release.set()
+        holder.join(5.0)
+
+
+def test_a_handover_write_waits_for_a_review_in_flight_and_never_interleaves(
+    capsys, root, bare, github, render_log
+):
+    """Clause (d), at the command level rather than the primitive's: with the
+    reviewer's own write channel inside the checkout, the handover turn's
+    `guides propose` does not start its git phase - it waits, and runs
+    afterwards, with nothing of the two overlapping."""
+    import threading
+    import time
+
+    from magic_cards_model_api.playscripts.gitwork import checkout_lock
+
+    order: list[str] = []
+    reviewer_in = threading.Event()
+    release = threading.Event()
+    outcome: list[dict] = []
+
+    def reviewer() -> None:
+        with checkout_lock(root):
+            order.append("review in")
+            reviewer_in.set()
+            release.wait(10.0)
+            order.append("review out")
+
+    def handover() -> None:
+        reviewer_in.wait(10.0)
+        order.append("handover asked")
+        rc, body, _, _ = propose(capsys, root)
+        order.append("handover done")
+        outcome.append({"rc": rc, **body})
+
+    edit_plan(root, good_edit)
+    threads = [threading.Thread(target=reviewer), threading.Thread(target=handover)]
+    for thread in threads:
+        thread.start()
+    reviewer_in.wait(10.0)
+    time.sleep(0.3)
+    assert order == ["review in", "handover asked"], order
+    release.set()
+    for thread in threads:
+        thread.join(30.0)
+
+    assert order == ["review in", "handover asked", "review out", "handover done"], order
+    assert outcome and outcome[0]["result"] == "awaiting_owner_review", outcome
