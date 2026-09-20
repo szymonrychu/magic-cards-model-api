@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from playscript_testkit import FETCH_SHOCK, SLUG
 from test_unloadable_games import engine_refusal
 from test_unloadable_games import unloadable as unloadable  # noqa: PLC0414 - a fixture, re-exported
+from ui_node import requires_node, run_module
 
 from magic_cards_model_api import audit, review
 from magic_cards_model_api.repository import Advisor, ArchivedGame
@@ -772,6 +773,68 @@ def test_the_review_failure_action_is_not_loud(client: TestClient) -> None:
     `LOUD_ACTIONS`'s banner names a seat as the actor. The durable row plus
     the driver's own warning line carry it instead."""
     assert audit.AI_REVIEW_FAILED_ACTION not in audit.LOUD_ACTIONS
+
+
+# ---------------------------------------------------------------------------
+# T36: the body this route answers with is the one the review PAGE reads
+# ---------------------------------------------------------------------------
+#
+# Every assertion above is about the row being in the ledger. None of them
+# says the page can find it, and that is the half the live deployment
+# actually lost: a key or a shape that drifted on either side of this seam
+# renders no `section.ai-review` at all - not an empty one, none - which is
+# indistinguishable from "no review was ever filed". So these run
+# `ui/review_model.js`'s own `aiReviewsOf` (the function `ui/render/review.
+# js` builds each section from) against the real body, under Node.
+
+
+@requires_node
+def test_the_review_page_reads_a_filed_review_out_of_this_bodys_own_shape(
+    client: TestClient,
+) -> None:
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        assert _ai_review(client, info).status_code == 200
+        body = _review(client, game_id, key=info["admin_key"]).json()
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+    found = run_module("review_model.js", "m.aiReviewsOf(rev)", rev=body)
+    assert len(found) == 1, found
+    assert found[0]["player"] == "bob"
+    assert "mainboard removal" in found[0]["text"]
+    # The seat's own words are a different row and a different reader: this
+    # game has no reflection, and the page must not borrow the AI's.
+    assert run_module("review_model.js", "m.reflectionOf(rev)", rev=body) is None
+
+
+@requires_node
+def test_a_review_that_failed_and_one_that_was_filed_are_different_bodies(
+    client: TestClient,
+) -> None:
+    """The two outcomes T35 exists to tell apart, judged by what a reader
+    actually gets: the failed game's body makes `aiReviewsOf` return nothing
+    and says why in `ai_review_failures`; the filed game's does the
+    opposite. Neither is the silent "no rows at all" that a pod-killed game
+    leaves behind (`UNREACHABLE_TERMINAL_PATH`)."""
+    failed = _played_out(client)
+    filed = _played_out(client)
+    try:
+        assert _ai_review_failure(client, failed).status_code == 200
+        assert _ai_review(client, filed).status_code == 200
+        failed_body = _review(client, failed["game_id"], key=failed["admin_key"]).json()
+        filed_body = _review(client, filed["game_id"], key=filed["admin_key"]).json()
+    finally:
+        for info in (failed, filed):
+            client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})
+
+    assert run_module("review_model.js", "m.aiReviewsOf(rev)", rev=failed_body) == []
+    assert [row["stage"] for row in failed_body["ai_review_failures"]] == ["generate"]
+    assert failed_body["ai_review_failures"][0]["invoked"] is True
+
+    assert len(run_module("review_model.js", "m.aiReviewsOf(rev)", rev=filed_body)) == 1
+    assert filed_body["ai_review_failures"] == []
 
 
 # ---------------------------------------------------------------------------

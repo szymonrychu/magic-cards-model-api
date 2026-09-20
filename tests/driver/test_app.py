@@ -1484,3 +1484,70 @@ def test_a_path_that_cannot_file_a_review_records_why(world, caplog):
     )
     assert world.review_requests == []
     assert world.ai_review_posts == []
+
+
+# -- T36: the ordering that made D-7 invisible -------------------------------
+#
+# `turn_done` answers a turn that lands during a handover on the handover
+# branch and RETURNS THERE - above the reflection check, above the
+# game-ended check, above everything that used to be the only way a review
+# was ever filed. That is not an edge case on the live-observed path, it is
+# the path: the lobby releases the seat, the driver hands over first, and the
+# turn the agent was in the middle of reports back into a handover that has
+# already started. Pinning the ordering here, on the fake world, keeps the
+# cheap structural guard beside the end-to-end proof in
+# `tests/driver/test_review_filing.py`, which drives the same ordering
+# through the real api and the real wrapper review route.
+
+
+def test_the_turn_that_lands_during_a_release_returns_on_the_handover_branch(world):
+    """The in-flight turn's callback never reaches the reflection check -
+    and the review is filed anyway, which is the whole of D-7."""
+    client = world.client
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/release", json={"uid": "secret-uid", "reason": "lobby reset"})
+
+    answered = client.post(
+        "/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "I attack"}
+    ).json()
+    # The handover status, and nothing else: no `reflectionTurnId`, no
+    # `reflected`, no `retired` - none of the keys the branches below it
+    # answer with were ever reached.
+    assert set(answered) == {"handover"}
+    assert answered["handover"]["outcome"] == "released"
+
+    complete_handover(client, world.submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    # No reflection was ever pushed to the agent, or posted to the game
+    # server: this game's review is the only post-game artifact it has. The
+    # agent got turn zero and then, straight away, the handover turn.
+    assert world.reflection_posts == []
+    assert len(world.submitted) == 2
+    assert world.submitted[1]["text"].startswith(HANDOVER_OPENING)
+
+
+def test_a_release_files_the_review_before_the_session_is_torn_down(world):
+    """Ordering again, one step further on: `retire` joins the review thread
+    before `DELETE /v1/session`, so the review is filed while the agent
+    container is still up rather than racing its shutdown. The event tape is
+    the evidence - `ai_review` before `delete`, on the path that has no
+    reflection to slow anything down.
+
+    The generation is deliberately slow here: a review that answers instantly
+    wins that race whether or not anything waits for it, so the assertion
+    would hold for the wrong reason and a join that was removed again would
+    go unnoticed."""
+    client = world.client
+    state = world.state
+    state["wrapper_review_delay"] = 0.3
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/release", json={"uid": "secret-uid", "reason": "lobby reset"})
+    complete_handover(client, world.submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+
+    assert "ai_review" in world.events and "delete" in world.events
+    assert world.events.index("ai_review") < world.events.index("delete")
