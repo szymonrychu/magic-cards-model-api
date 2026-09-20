@@ -63,8 +63,25 @@ class RequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+#: A player's own display name (`NewPlayer.username` here, `decks_api.py`'s
+#: `NewUiPlayer.username`) - free text otherwise, but never a control
+#: character or a newline. A username reaches the AI review prompt
+#: (`mtg_agent.driver.review.review_prompt`) verbatim, outside its own
+#: BEGIN/END markers (it names who is playing, before the untrusted data
+#: block even starts) - a newline lets it fabricate a whole new "line"
+#: there, and a control character more broadly could disguise itself as
+#: driver-authored structure rather than the untrusted data it actually is.
+#: `\A`/`\z` (pydantic-core's Rust `regex` crate, not Python's `re`: lowercase
+#: `\z`, `\Z` is not valid there), not `^`/`$`: unlike Rust's, Python's own
+#: `$` also matches just before a trailing newline, which would let exactly
+#: the one character this exists to block slip through at the end of the
+#: string - `\A`/`\z` name "start/end of the whole string" unambiguously in
+#: either engine.
+Username = Annotated[str, StringConstraints(min_length=1, pattern=r"\A[^\x00-\x1f\x7f]+\z")]
+
+
 class NewPlayer(RequestModel):
-    username: str = Field(min_length=1)
+    username: Username
     life: int = 20
     is_agent: bool = False
     """T10: this seat's kind, recorded once at game creation - `POST

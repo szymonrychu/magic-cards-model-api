@@ -42,7 +42,7 @@ from .agent_settings import AgentSettings
 from .api_client import ApiClient, InProcessApiClient
 from .decks import load_deck_into_game
 from .repository import RECENT_RECORDS_WINDOW, Advisor, GameUnloadable
-from .schemas import RequestModel
+from .schemas import RequestModel, Username
 from .store import known_players, new_seat_uids, player_for_advisor_uid, store
 
 router = APIRouter(prefix="/api/lobby", tags=["lobby"], route_class=game_access.GameAccessRoute)
@@ -63,7 +63,7 @@ def max_live_games() -> int:
 
 
 class NewUiPlayer(RequestModel):
-    username: str = Field(min_length=1)
+    username: Username
     decklist_text: str = Field(min_length=1)
     ai: bool = False
     """Whether this seat is meant to be driven by the AI-seat runner - a UI

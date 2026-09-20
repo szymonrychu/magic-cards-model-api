@@ -141,8 +141,20 @@ def review_prompt(
     it is interpolated, so none of them can fabricate a marker lookalike of
     its own and escape the block early (`_MARKER_LOOKALIKE_RE`'s own
     docstring)."""
-    players = review_record.get("players") or [assignment.player, assignment.opponent]
+    # `players`/`winner` are usernames off the game record - the api's own
+    # `Username` field (`schemas.py`) rejects a control character or a
+    # newline at creation time now, but this text still reaches the model
+    # BEFORE `record_begin` even opens the untrusted data block (it names
+    # who is playing, in the trusted preamble), so it is sanitized here too:
+    # a row written before that model-level fix landed, or any other path
+    # that ever bypasses it, must not get a second, earlier chance to
+    # fabricate a marker lookalike just because it sits outside the markers.
+    players = [_sanitize(str(name)) for name in (review_record.get("players") or ())] or [
+        assignment.player,
+        assignment.opponent,
+    ]
     winner = review_record.get("winner")
+    winner = _sanitize(str(winner)) if winner else winner
     drawn = review_record.get("drawn")
     if drawn:
         outcome = "the game was a draw"
