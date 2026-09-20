@@ -1510,6 +1510,13 @@ h3 { font-size: 14px; }
    instead of wrapping across it, and each keeps the marker glyph the board's
    pool readout gave the same mana. */
 .restricted-mana > .chip-row { flex-direction: column; align-items: stretch; }
+/* CR 601.2b's optional additional costs. Chips and count steppers wrap across
+   the 340px ribbon like any other step, but the note for a printed cost this
+   engine cannot charge takes a whole line of its own - it is a sentence, not a
+   control, and it reuses `.restricted-note.unusable` so an unreadable kicker
+   and an unreadable mana restriction read the same way. */
+.additional-costs > .chip-row { align-items: center; }
+.additional-costs .restricted-note { flex: 1 1 100%; }
 .restricted-note {
   display: flex;
   align-items: baseline;

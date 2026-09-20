@@ -1272,6 +1272,9 @@ def build_server(seats: Seats) -> MCPServer:
                   discards; a `keyword="Harmonize"` cast taps the creature
                   named by `"Harmonize:<creature id>"` to cut its cost by that
                   creature's power (CR 702.180a). Leave it empty to pay none.
+                  A row entry reading `understood: false` is a cost the card
+                  prints and this engine cannot charge - it is listed rather
+                  than hidden, and naming it is refused, so plan without it.
                 - `delve` - graveyard cards exiled to pay generic mana
                   (CR 702.66a), one per generic symbol.
                 - `convoke` - your untapped creatures tapped to pay (CR 702.51a).

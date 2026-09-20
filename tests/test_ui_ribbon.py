@@ -1330,3 +1330,273 @@ def test_the_casting_tray_says_nothing_about_restrictions_when_there_are_none() 
     assert "Kozilek's Command" in result["text"]
     assert "estricted" not in result["text"]
     assert "unusable" not in result["text"].lower()
+
+
+# -- CR 601.2b's optional additional costs in the casting strip ---------------
+#
+# The reported defect (2026-09-20): "Sowing Mycospawn, cast with kicker didn't
+# work. I simply wasn't presented with option to pay the kicker." The strip is
+# the one surface that asks a human anything before a cast is committed, so
+# this is where the option has to appear. Fixtures are not the reported card:
+# Mold Shambler prints `Kicker {1}{G}`, Consign to Memory the repeatable
+# `Replicate {1}`, and March of Otherworldly Light a cost this engine cannot
+# charge.
+
+SHAMBLER = {
+    "id": "ms",
+    "name": "Mold Shambler",
+    "mana_cost": "{3}{G}",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Creature - Fungus Beast",
+    "cast": {
+        "mana_cost": "{3}{G}",
+        "needs_x": False,
+        "modes": None,
+        "targeting": {
+            "targets_anything": False,
+            "understood": True,
+            "minimum": 0,
+            "maximum": 0,
+            "requirements": [],
+        },
+        "additional_costs": [
+            {
+                "keyword": "Kicker",
+                "cost": "{1}{G}",
+                "rule": "CR 702.33a",
+                "repeatable": False,
+                "understood": True,
+            }
+        ],
+    },
+    "abilities": [],
+}
+CONSIGN = {
+    **SHAMBLER,
+    "id": "ctm",
+    "name": "Consign to Memory",
+    "mana_cost": "{U}",
+    "cast": {
+        **SHAMBLER["cast"],
+        "mana_cost": "{U}",
+        "additional_costs": [
+            {
+                "keyword": "Replicate",
+                "cost": "{1}",
+                "rule": "CR 702.56a",
+                "repeatable": True,
+                "understood": True,
+            }
+        ],
+    },
+}
+MARCH = {
+    **SHAMBLER,
+    "id": "march",
+    "name": "March of Otherworldly Light",
+    "mana_cost": "{X}{W}",
+    "cast": {
+        **SHAMBLER["cast"],
+        "mana_cost": "{X}{W}",
+        "needs_x": True,
+        "additional_costs": [
+            {
+                "keyword": None,
+                "cost": "you may exile any number of white cards from your hand",
+                "rule": "CR 118.8b",
+                "repeatable": False,
+                "understood": False,
+            }
+        ],
+    },
+}
+
+OPTIONAL_COST_ACTION = """
+function castOf(card, optionalCosts) {
+  return {
+    kind: "cast", cardId: card.id, card, abilityIndex: null, keyword: null,
+    modes: [], xValue: null, color: null, altCost: null,
+    optionalCosts: optionalCosts || {},
+    choosing: [], convoke: [], delve: [], crewing: [], slots: [], shares: [],
+    pinned: [], freeTargets: [], pendingTargets: [], focusSlot: null,
+    affordance: null, error: null, holdPriority: false, done: false,
+  };
+}
+function stripFor(card, optionalCosts, handlers) {
+  const state = baseState({ hands: { alice: [card] } });
+  const store = makeStore(baseApp(state, { action: castOf(card, optionalCosts) }));
+  m.mountRibbon(document, store, handlers || HANDLERS);
+  store.set({});
+  return document.querySelector("#casting-strip");
+}
+"""
+
+
+def test_a_kicker_is_offered_before_the_cast_is_committed() -> None:
+    strip = run_module(
+        "render/ribbon.js",
+        FAKE_DOM + OPTIONAL_COST_ACTION + "stripFor(shambler).textContent",
+        shambler=SHAMBLER,
+    )
+    assert "Kicker" in strip
+    assert "{1}{G}" in strip
+    # The Cast button is there, because `needsExplicitFire` now holds the
+    # announcement open - the reported cast fired without one.
+    assert "Cast" in strip
+
+
+def test_clicking_the_kicker_announces_it_once() -> None:
+    calls = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + OPTIONAL_COST_ACTION
+        + """
+        (() => {
+          const calls = [];
+          const handlers = { ...HANDLERS, onSetOptionalCost: (k, n) => calls.push([k, n]) };
+          const strip = stripFor(shambler, {}, handlers);
+          click(findByText(strip, "button", "Kicker"));
+          return calls;
+        })()
+        """,
+        shambler=SHAMBLER,
+    )
+    assert calls == [["Kicker", 1]]
+
+
+def test_clicking_an_announced_kicker_takes_it_back() -> None:
+    calls = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + OPTIONAL_COST_ACTION
+        + """
+        (() => {
+          const calls = [];
+          const handlers = { ...HANDLERS, onSetOptionalCost: (k, n) => calls.push([k, n]) };
+          const strip = stripFor(shambler, { Kicker: 1 }, handlers);
+          click(findByText(strip, "button", "Kicker"));
+          return calls;
+        })()
+        """,
+        shambler=SHAMBLER,
+    )
+    assert calls == [["Kicker", 0]]
+
+
+def test_a_repeatable_cost_gets_a_count_to_choose() -> None:
+    """CR 702.56a's replicate is announced "any number of times", so a
+    toggle would silently cap it at one - it gets the same number input
+    `Announce X` and the division steppers already use."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + OPTIONAL_COST_ACTION
+        + """
+        (() => {
+          const calls = [];
+          const handlers = { ...HANDLERS, onSetOptionalCost: (k, n) => calls.push([k, n]) };
+          const strip = stripFor(consign, { Replicate: 2 }, handlers);
+          const input = findByField(strip, "input", "optional-cost:Replicate");
+          const value = input ? input.attrs.value ?? input.value : null;
+          if (input && input.listeners.change) input.listeners.change({ target: { value: "3" } });
+          return { text: strip.textContent, value: String(value), calls };
+        })()
+        """,
+        consign=CONSIGN,
+    )
+    assert "Replicate" in result["text"]
+    assert result["value"] == "2"
+    assert result["calls"] == [["Replicate", 3]]
+
+
+def test_a_cost_the_engine_cannot_charge_says_so_in_full() -> None:
+    """Failing closed out loud, the same shape an unread CR 106.6 mana
+    restriction already gets: the printed sentence is shown in the strip, not
+    only in a tooltip, and there is no button offering to announce it."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + OPTIONAL_COST_ACTION
+        + """
+        (() => {
+          const strip = stripFor(march);
+          return {
+            text: strip.textContent,
+            button: Boolean(findByText(strip, "button", "exile any number of white cards")),
+          };
+        })()
+        """,
+        march=MARCH,
+    )
+    assert "you may exile any number of white cards from your hand" in result["text"]
+    assert "cannot" in result["text"]
+    assert result["button"] is False
+
+
+def test_a_card_with_no_optional_cost_gets_no_step() -> None:
+    strip = run_module(
+        "render/ribbon.js",
+        FAKE_DOM + OPTIONAL_COST_ACTION + "stripFor(koz).textContent",
+        koz=KOZILEK,
+    )
+    assert "Additional cost" not in strip
+
+
+def test_a_half_typed_replicate_count_survives_a_poll_tick() -> None:
+    """The same guard the X box gets, for the same reason: the strip repaints
+    on every store update (a ~1.2s poll tick included) and rebuilds its nodes
+    wholesale, so a count typed but not yet committed would be wiped out from
+    under the player mid-keystroke."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + OPTIONAL_COST_ACTION
+        + """
+        (() => {
+          const state = baseState({ hands: { alice: [consign] } });
+          const store = makeStore(baseApp(state, { action: castOf(consign, { Replicate: 1 }) }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          const strip = document.querySelector("#casting-strip");
+          const input = findByField(strip, "input", "optional-cost:Replicate");
+          // Typed but never committed - the store still says 1.
+          document.activeElement = input;
+          input.value = "4";
+          store.set({});
+          const repainted = document.querySelector("#casting-strip");
+          const after = findByField(repainted, "input", "optional-cost:Replicate");
+          return [after === input, after.value];
+        })()
+        """,
+        consign=CONSIGN,
+    )
+    assert result == [True, "4"]
+
+
+def test_a_committed_replicate_count_lets_the_strip_repaint() -> None:
+    """The other half: once the input agrees with the store there is nothing
+    uncommitted to protect, and holding focus must not freeze the rest of the
+    strip - a refused dry run's message still has to appear."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + OPTIONAL_COST_ACTION
+        + """
+        (() => {
+          const action = castOf(consign, { Replicate: 2 });
+          const state = baseState({ hands: { alice: [consign] } });
+          const store = makeStore(baseApp(state, { action }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          const strip = document.querySelector("#casting-strip");
+          const input = findByField(strip, "input", "optional-cost:Replicate");
+          document.activeElement = input;
+          input.value = "2";
+          store.set({ action: { ...action, error: "no combination of sources can pay this" } });
+          return document.querySelector("#casting-strip").textContent;
+        })()
+        """,
+        consign=CONSIGN,
+    )
+    assert "no combination of sources can pay this" in result

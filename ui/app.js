@@ -1967,6 +1967,14 @@ async function main() {
       store.set((s) => ({ action: A.togglePitch(s.action, id) }));
       previewAndMaybeFire();
     },
+    // CR 601.2b's optional additional costs, as a count rather than a tick:
+    // multikicker (CR 702.33c) and replicate (CR 702.56a) are announced "any
+    // number of times". The dry run below re-prices the cast with it, so the
+    // strip shows what the kicked spell actually costs before it is fired.
+    onSetOptionalCost: (keyword, times) => {
+      store.set((s) => ({ action: A.setOptionalCost(s.action, keyword, times) }));
+      previewAndMaybeFire();
+    },
     onToggleConvoke: (id) => {
       store.set((s) => ({ action: A.toggleConvoke(s.action, id) }));
       previewAndMaybeFire();

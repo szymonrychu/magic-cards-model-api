@@ -1594,14 +1594,52 @@ class ModalHintsView(BaseModel):
     options: list[ModeOptionView]
 
 
+class AdditionalCostHintView(BaseModel):
+    """One optional additional cost this card may be cast with (CR 601.2b,
+    CR 118.8b) - `affordances.cast_hints`' own reading of the engine's
+    `machines/casting.optional_additional_costs`, the same enumeration
+    `Action.additional_cost_options` carries on a row.
+
+    On the card view rather than only on a row because this is what the
+    browser holds the moment the player picks the card up, before any
+    legal-actions row or affordance has been fetched - and a choice that is
+    not on screen before the cast is committed is a choice the player never
+    had.
+    """
+
+    keyword: str | None = None
+    """What `CastRequest.optional_costs[].keyword` takes back (`Kicker`,
+    `Multikicker`, `Replicate`, `Offspring`, `Gift`, `Blight`). `None` for a
+    cost printed as an "As an additional cost to cast this spell, you may
+    ..." sentence carrying no keyword - there is nothing to name back, which
+    is also why `understood` is false for one."""
+    cost: str
+    """The cost exactly as printed: `{1}{C}`, or the whole "you may ..."
+    phrase for a sentence-printed one."""
+    rule: str
+    """The CR rule that defines it, in the engine's own citation."""
+    repeatable: bool = False
+    """CR 702.33c's multikicker and CR 702.56a's replicate are announced "any
+    number of times", so they take a count (`OptionalCostChoice.times`);
+    plain kicker and offspring are not."""
+    understood: bool = True
+    """`False` is the loud case: the cost is printed and optional, and this
+    engine cannot charge it. Shown and said so, never silently omitted - the
+    same shape `ManaRestriction.understood` already gets on the mana pool."""
+
+
 class CastHintsView(BaseModel):
-    """What casting this hand/exile card asks for - X, modes, targets
+    """What casting this hand/exile card asks for - X, modes, targets, and
+    the optional additional costs it may be announced with
     (`affordances.cast_hints`)."""
 
     mana_cost: str | None = None
     needs_x: bool
     targeting: TargetingProfileView
     modes: ModalHintsView | None = None
+    additional_costs: list[AdditionalCostHintView] | None = None
+    """CR 601.2b's optional additional costs, absent (never empty) for a card
+    that prints none."""
 
 
 class LoyaltyHintView(BaseModel):
@@ -2753,7 +2791,10 @@ class OptionalCostView(BaseModel):
     `action_rows.legal_action_rows`. Its `keyword` is what
     `CastRequest.optional_costs[].keyword` takes back."""
 
-    keyword: str
+    keyword: str | None = None
+    """`None` only for an option `understood: false` names: a cost printed as
+    an "As an additional cost to cast this spell, you may ..." sentence with
+    no keyword on it, which there is nothing to hand back for."""
     rule: str
     cost: str | None = None
     """The cost as printed after the keyword (`{4}` for Burst Lightning's
@@ -2762,6 +2803,13 @@ class OptionalCostView(BaseModel):
     repeatable: bool
     """Whether it may be paid more than once (multikicker, replicate) -
     `OptionalCostChoice.times`."""
+    understood: bool = True
+    """Whether this api can actually announce it. `False` is the loud case
+    and the reason the entry is listed at all: the engine's own
+    `Action.additional_cost_options` says the printing carries an optional
+    cost it cannot charge, and a row that simply omitted it would read
+    exactly like a card with no optional cost. Failing closed out loud, never
+    a silent omission - `unaffordable_reason` says so in words."""
     affordable: str
     """`yes`/`no`/`unknown` for this row's cost with this one added, in the
     engine's own `Affordability` words."""

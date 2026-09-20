@@ -592,6 +592,7 @@ class _Rows:
                 "rule": rule,
                 "cost": ability.cost,
                 "repeatable": repeatable,
+                **_UNDERSTOOD,
             }
             if ability.canonical.lower() == "gift":
                 # CR 702.174a: the cost is choosing an opponent - nothing to pay.
@@ -614,6 +615,7 @@ class _Rows:
                     "rule": "CR 701.68a",
                     "cost": f"blight {match.group('n')}",
                     "repeatable": False,
+                    **_UNDERSTOOD,
                     "affordable": Affordability.UNKNOWN.value,
                     "unaffordable_reason": (
                         "the creature blighted is named as the spell is cast (CR 701.68a) - "
@@ -621,6 +623,7 @@ class _Rows:
                     ),
                 }
             )
+        offers.extend(_unreadable_offers(action, offers))
         if offers:
             view["optional_costs"] = offers
 
@@ -881,3 +884,59 @@ class _Rows:
                 step["color"] = color.value
             steps.append(step)
         return probe, steps
+
+
+#: The offer rows above carry `understood: True` by construction: each one is
+#: a mechanic this api knows how to hand back (`engine_api.
+#: _announce_optional_costs` has a door for every keyword in
+#: `_OPTIONAL_COST_KEYWORDS`, and for blight's own sentence).
+_UNDERSTOOD = {"understood": True}
+
+
+def _unreadable_offers(action: Action, offers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The CR 601.2b optional additional costs the engine printed on this
+    action that the loop above did not offer - `Action.additional_cost_options`
+    minus what this api already knows how to announce.
+
+    What is left is the loud case, and the reason this exists: a printed
+    optional cost this engine cannot charge (March of Otherworldly Light's
+    "you may exile any number of white cards from your hand" - no keyword to
+    name back, `understood: false` off the engine's own enumeration). Dropping
+    it would show a seat a cast row that reads exactly like a card with no
+    optional cost at all, and the standing preference here is failing closed
+    with a notice over a silent omission - the same shape
+    `Action.restriction_understood` already gets for an unread CR 106.6
+    sentence.
+
+    Matched by keyword, case-insensitively, so the moment the engine learns a
+    new optional cost keyword it arrives on the row whether or not this api's
+    own `_OPTIONAL_COST_KEYWORDS` has caught up; a keyword-less entry is
+    matched on its printed phrase instead.
+    """
+    named = {str(offer["keyword"]).lower() for offer in offers}
+    printed = {str(offer.get("cost") or "").lower() for offer in offers}
+    extra: list[dict[str, Any]] = []
+    for option in action.additional_cost_options:
+        if option.keyword is not None:
+            if option.keyword.lower() in named:
+                continue
+        elif option.cost.lower() in printed:
+            continue
+        extra.append(
+            {
+                "keyword": option.keyword.capitalize() if option.keyword else None,
+                "rule": option.rule,
+                "cost": option.cost,
+                "repeatable": option.repeatable,
+                "understood": option.understood,
+                "affordable": Affordability.UNKNOWN.value,
+                "unaffordable_reason": (
+                    "this engine cannot charge this printed optional additional cost "
+                    f"({option.rule}) - it is listed rather than hidden, but naming it on "
+                    "a cast is not available here"
+                )
+                if not option.understood
+                else None,
+            }
+        )
+    return extra

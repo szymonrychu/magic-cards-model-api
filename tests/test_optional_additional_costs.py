@@ -488,3 +488,123 @@ def test_the_mcp_cast_tool_kicks(client, game, monkeypatch):
     body = json.loads(answer.content[0].text)
     assert body["outcome"]["allowed"] is True, body
     assert body["outcome"]["cost"] == "{4}{R}"
+
+
+# -- what the seat and the human are SHOWN --------------------------------------
+#
+# The reported defect a second time (2026-09-20): "Sowing Mycospawn, cast with
+# kicker didn't work. I simply wasn't presented with option to pay the kicker."
+# The row above already named the cost; the browser never read that row before
+# casting, and neither the row nor the hand card said anything about a printed
+# optional cost the engine cannot charge. `Action.additional_cost_options` is
+# the engine's own single enumeration of CR 601.2b's optional additional costs
+# (`machines/casting.optional_additional_costs`) - these pin it reaching both
+# surfaces. Proved on cards that are NOT the reported one: Mold Shambler
+# (`Kicker {1}{G}`), Consign to Memory (`Replicate {1}`, repeatable) and March
+# of Otherworldly Light (a printed "you may ..." sentence with no keyword,
+# which the engine reports `understood: false`).
+
+
+def hand_card(client, game: str, name: str) -> dict:
+    return find(state(client, game)["hands"]["alice"], name)
+
+
+def test_the_engines_own_enumeration_reaches_the_cast_row(client, game):
+    add_card(client, game, "Mold Shambler", "alice", "hand")
+    row = cast_row(client, game, "Mold Shambler")
+    (option,) = row["additional_cost_options"]
+    assert option == {
+        "keyword": "kicker",
+        "cost": "{1}{G}",
+        "rule": "CR 702.33a",
+        "repeatable": False,
+        "understood": True,
+    }
+
+
+def test_a_hand_card_says_what_it_may_be_cast_with(client, game):
+    """`cast_hints` is what the browser reads when the player picks the card
+    up, before any legal-actions row or affordance is fetched - so it is
+    where a kicker has to be visible for the option to be offered at all."""
+    add_card(client, game, "Mold Shambler", "alice", "hand")
+    card = hand_card(client, game, "Mold Shambler")
+    assert card["cast"]["additional_costs"] == [
+        {
+            "keyword": "Kicker",
+            "cost": "{1}{G}",
+            "rule": "CR 702.33a",
+            "repeatable": False,
+            "understood": True,
+        }
+    ]
+
+
+def test_a_repeatable_optional_cost_says_so_to_the_human(client, game):
+    """CR 702.56a's replicate is announced "any number of times", so the hand
+    card carries a count to choose rather than a yes/no."""
+    add_card(client, game, "Consign to Memory", "alice", "hand")
+    (replicate,) = hand_card(client, game, "Consign to Memory")["cast"]["additional_costs"]
+    assert (replicate["keyword"], replicate["cost"], replicate["repeatable"]) == (
+        "Replicate",
+        "{1}",
+        True,
+    )
+
+
+def test_a_card_with_no_optional_cost_carries_no_additional_costs(client, game):
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    assert "additional_costs" not in hand_card(client, game, "Lightning Bolt")["cast"]
+
+
+def test_an_optional_cost_the_engine_cannot_charge_is_shown_not_swallowed(client, game):
+    """March of Otherworldly Light prints its optional additional cost as a
+    sentence the engine cannot charge. Failing closed out loud: the card says
+    the option exists and that announcing it is not available here, rather
+    than showing nothing at all."""
+    add_card(client, game, "March of Otherworldly Light", "alice", "hand")
+    (option,) = hand_card(client, game, "March of Otherworldly Light")["cast"]["additional_costs"]
+    assert option["understood"] is False
+    assert option["keyword"] is None
+    assert option["cost"] == "you may exile any number of white cards from your hand"
+    assert option["rule"] == "CR 118.8b"
+
+
+def test_a_row_says_which_optional_costs_it_cannot_charge(client, game):
+    add_card(client, game, "March of Otherworldly Light", "alice", "hand")
+    row = cast_row(client, game, "March of Otherworldly Light")
+    (option,) = row["optional_costs"]
+    assert option["understood"] is False
+    assert option["keyword"] is None
+    assert option["affordable"] == "unknown"
+    assert "cannot" in option["unaffordable_reason"]
+
+
+def test_a_row_the_engine_can_charge_says_so_too(client, game):
+    add_card(client, game, "Mold Shambler", "alice", "hand")
+    (kicker,) = cast_row(client, game, "Mold Shambler")["optional_costs"]
+    assert kicker["keyword"] == "Kicker"
+    assert kicker["understood"] is True
+
+
+def test_a_repeatable_cost_is_paid_the_named_number_of_times(client, game):
+    """CR 702.56a: replicate is paid "any number of times", so the count has
+    to survive the whole way to the engine - a boolean anywhere in the chain
+    would cap it at one."""
+    sources = lands(client, game, "Island", 4)
+    add_card(client, game, "Consign to Memory", "alice", "hand")
+    add_card(client, game, "Sol Ring", "bob", "stack")
+    spell = hand_card(client, game, "Consign to Memory")["id"]
+    sol = find(state(client, game)["stack"], "Sol Ring")["id"]
+
+    body = cast(
+        client,
+        game,
+        spell,
+        targets=[sol],
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Replicate", "times": 3}],
+    )
+    assert body["allowed"] is True, body
+    # {U} plus three replicate {1}s - times=1 would read {1}{U}, which is
+    # what a boolean anywhere in the chain would have produced.
+    assert body["cost"] == "{3}{U}"

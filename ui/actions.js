@@ -15,6 +15,26 @@ function castHints(card) {
   return (card && card.cast) || {};
 }
 
+/**
+ * CR 601.2b's optional additional costs this card prints - kicker,
+ * multikicker, replicate, offspring, gift, blight, and a printed "As an
+ * additional cost to cast this spell, you may ..." sentence - as
+ * `affordances.cast_hints` publishes them on every hand and exile card.
+ * The engine's own single enumeration
+ * (`machines/casting.optional_additional_costs`), never a keyword list of
+ * this module's own: a mechanic the engine learns arrives here for free.
+ */
+export function additionalCosts(card) {
+  return castHints(card).additional_costs || [];
+}
+
+/** The ones a cast can actually announce. An entry with `understood: false`
+ * is printed and optional and this engine cannot charge it, so it is drawn
+ * as a notice (`render/ribbon.js`) and never named in a request. */
+function announceable(card) {
+  return additionalCosts(card).filter((option) => option.understood && option.keyword);
+}
+
 function abilityOf(card, abilityIndex) {
   return abilityIndex === null || abilityIndex === undefined
     ? null
@@ -33,6 +53,13 @@ export function needsChoices(card, abilityIndex) {
   const hints = castHints(card);
   const modes = hints.modes && hints.modes.options && hints.modes.options.length;
   if (modes || (hints.targeting && hints.targeting.targets_anything) || hints.needs_x) return true;
+  // CR 601.2b's optional additional costs. The reported defect: Sowing
+  // Mycospawn targets nothing, has no X and no modes, so every check above
+  // read false and `beginCast` fired the cast on the spot - at its unkicked
+  // price, with the kicker never offered. An entry the engine cannot charge
+  // counts too: the player is owed the notice before the cast is committed,
+  // not after.
+  if (additionalCosts(card).length) return true;
   // CR 118.9 alternative costs (evoke, dash, morph, ...) live entirely on an
   // enter-the-battlefield trigger line for a card like Wistfulness or
   // Solitude, which the engine's `_spell_text` strips before it ever builds
@@ -61,6 +88,12 @@ export function begin(kind, card, extra) {
     // `pending_decision` instead.
     fromZone: extra.fromZone || null,
     modes: [],
+    // CR 601.2b's optional additional costs, keyed by the keyword
+    // `CastRequest.optional_costs[].keyword` takes back, valued by how many
+    // times it is announced - a COUNT, because CR 702.33c's multikicker and
+    // CR 702.56a's replicate are each paid "any number of times". A boolean
+    // here would cap either at one.
+    optionalCosts: {},
     xValue: null,
     color: null,
     altCost: null,
@@ -144,6 +177,27 @@ export function setX(action, n) {
     // into it.
     pendingTargets: [],
   };
+}
+
+/**
+ * Announce `keyword` `times` times, or drop it entirely at 0 - CR 601.2b's
+ * announcement, made before the cast is fired rather than as a separate
+ * round trip. `keyword` is the row's own spelling (`Kicker`, `Replicate`);
+ * a `null` keyword names an option this engine cannot charge and is
+ * ignored, since there is nothing to hand back for one.
+ */
+export function setOptionalCost(action, keyword, times) {
+  if (!keyword) return action;
+  const next = { ...action.optionalCosts };
+  const count = Number(times);
+  if (!count || count < 0 || Number.isNaN(count)) delete next[keyword];
+  else next[keyword] = count;
+  return { ...action, optionalCosts: next };
+}
+
+/** How many times `keyword` is currently announced - 0 when it is not. */
+export function optionalCostTimes(action, keyword) {
+  return (action.optionalCosts || {})[keyword] || 0;
 }
 
 export function chooseColor(action, color) {
@@ -314,7 +368,15 @@ export function needsExplicitFire(action) {
     action.pinned.length > 0 ||
       (action.affordance && action.affordance.division) ||
       action.slots.some(isUnboundedSlot) ||
-      hasChoosableAltCost(action)
+      hasChoosableAltCost(action) ||
+      // CR 601.2b: a printed optional additional cost is an unmade decision
+      // of exactly the same shape as an unchosen alternative cost - firing
+      // the spell unkicked the instant it becomes legal is the player never
+      // being asked. It holds whether or not a count has already been
+      // entered (a kicker already ticked is still one the player might have
+      // meant to take back), and whether or not the engine can charge it:
+      // an `understood: false` notice is worth reading before the cast.
+      (action.kind === "cast" && additionalCosts(action.card).length > 0)
   );
 }
 
@@ -413,6 +475,15 @@ export function bodyFor(action, you, untapped) {
     if (action.delve.length) body.delve = action.delve;
     if (action.altCost !== null) body.alternative_cost = action.altCost;
     if (action.choosing.length) body.choosing = action.choosing;
+    // CR 601.2b's announcement, as counts - `CastRequest.optional_costs`.
+    // Only what the card actually offers and the engine can actually charge
+    // is ever named, and an announcement of 0 is left off entirely rather
+    // than sent as "kicked zero times", which is the same body every cast
+    // written before this field existed sends.
+    const announced = announceable(action.card)
+      .map((option) => ({ keyword: option.keyword, times: optionalCostTimes(action, option.keyword) }))
+      .filter((entry) => entry.times > 0);
+    if (announced.length) body.optional_costs = announced;
     // CR 601.3's dynamic play permissions (a flashback grant, an exiled card
     // made playable "this turn"): `CastRequest.from_zone` (`schemas.py`)
     // defaults to "hand", so this is only sent when the cast began from
