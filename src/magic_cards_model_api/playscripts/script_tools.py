@@ -1106,6 +1106,23 @@ def applicable_hint(
             # `entries.sort` gave it, and moving the armed ones to the front
             # must never reshuffle anyone else relative to one another.
             applying = sorted(applying, key=lambda entry: str(entry["id"]) not in armed_ids)
+        # S2 A3 re-review finding 2: `conflict` used to be "more than one
+        # play applies at all", which stripped `call` from an armed play the
+        # instant any unarmed play also applied - even though the seat
+        # already resolved that ambiguity by arming it specifically (Req 3:
+        # an armed applying play keeps its `call` ready regardless of what
+        # else applies alongside it). An armed entry's own conflict is now
+        # judged only against `armed_conflict` - two or more ARMED plays
+        # applying at once - which in practice `playscript_arming.arm`
+        # already resolves before `armed_ids` ever reaches this function (a
+        # real conflict there empties `armed_applying` and reports
+        # `armed_conflict` instead), so this is defensive rather than a path
+        # normally taken. Every other (unarmed) entry keeps the old
+        # behaviour unchanged: `conflict` over the full `applying` count,
+        # armed or not - an unarmed alternative alongside an armed play is
+        # still not the play the seat chose, so it still carries no `call`.
+        armed_applying_count = sum(1 for entry in applying if str(entry["id"]) in armed_ids)
+        armed_conflict = armed_applying_count > 1
         conflict = len(applying) > 1
         for entry in applying:
             item: dict[str, Any] = {
@@ -1113,9 +1130,11 @@ def applicable_hint(
                 "name": _truncated_name(entry.get("name")),
                 "why": _hint_why(_play_for(plays_by_id, entry["id"])),
             }
-            if str(entry["id"]) in armed_ids:
+            entry_armed = str(entry["id"]) in armed_ids
+            if entry_armed:
                 item["armed"] = True
-            if conflict:
+            entry_conflict = armed_conflict if entry_armed else conflict
+            if entry_conflict:
                 item["conflict"] = True
             else:
                 item["call"] = _call_template(seat, str(entry["id"]), asserted, remembered, cli=cli)

@@ -213,11 +213,14 @@ def test_an_armed_play_sorts_first_among_conflicting_applying_plays(
 ) -> None:
     """The armed id sorts first in `scripts.applicable` even when it is the
     LOWER-priority one of two plays the full corpus finds applying at once -
-    "ahead of every other applying play regardless of priority" - proven
-    here under a genuine corpus-wide conflict (S1's own `runtime_conflict`,
-    unrelated to arming's own, narrower conflict check over just the `arm`
-    list): neither entry gets a `call` (an unarmed conflict is still a
-    conflict), but the armed one is still first and still marked."""
+    "ahead of every other applying play regardless of priority" (Req 3) - AND
+    keeps its own `call` ready despite the unarmed play also applying
+    alongside it (S2 A3 re-review finding 2): the seat already resolved the
+    ambiguity by arming `drop-b` specifically, so its `call` must not be
+    withheld just because another, unarmed play also applies. The unarmed
+    play is still a genuine conflict on its own (S1's own `runtime_conflict`,
+    unrelated to arming's own, narrower `armed_conflict` check over just the
+    `arm` list) and keeps no `call`."""
     force_precombat_main(game)
     alice = seat_uid(game, "alice")
     register(client, game, alice, land_script("drop-a"), land_script("drop-b", priority=45))
@@ -236,10 +239,11 @@ def test_an_armed_play_sorts_first_among_conflicting_applying_plays(
     applicable = answer["scripts"]["applicable"]
     assert [entry["id"] for entry in applicable] == ["drop-b", "drop-a"], applicable
     assert applicable[0]["armed"] is True
-    assert applicable[0]["conflict"] is True
+    assert "conflict" not in applicable[0], applicable
+    assert applicable[0]["call"], applicable
     assert "armed" not in applicable[1]
-    for entry in applicable:
-        assert "call" not in entry
+    assert applicable[1]["conflict"] is True
+    assert "call" not in applicable[1]
 
 
 def test_two_conflicting_plays_are_flagged_and_carry_no_call(

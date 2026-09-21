@@ -252,6 +252,65 @@ def test_a_theirs_end_step_script_is_offered_once_the_opponent_passes_priority_t
     assert result["state"]["step"] == "end_step"
 
 
+def test_something_armed_before_the_destination_stops_the_run_there_not_at_the_destination(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 A3 re-review finding 1: every other fixture in this file arms a
+    play whose own `when` matches only at the run's destination itself, so
+    the outer, post-run judge in `pass_until` (which only ever looks at the
+    board the run finally stopped on) reports the exact same thing whether
+    or not `_pass_until_once`'s own inner hook - the one that judges arming
+    *before* passing this seat's priority, on every lap of its own loop, not
+    only on the last one - ever ran at all. Disabling the inner hook left
+    every existing test green.
+
+    This one arms a play whose window is alice's own upkeep, a full priority
+    pass before the run's destination (her precombat main). If the inner
+    hook is disabled, the run has nothing to stop it at upkeep (the
+    destination is precombat_main), so it sails straight through and only
+    ever stops at precombat_main - where the armed play's own `when`
+    (`steps: ["upkeep"]`) no longer matches at all, so the outer judge would
+    report `armed_applying == []` and the run would finish having quietly
+    passed through the exact window it was armed for."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    alice = seat_uid(game, "alice")
+    force_turn_position(game, Step.END_STEP, "bob")
+    register(
+        client,
+        game,
+        alice,
+        tap_island_script(
+            "float-upkeep",
+            when={"whose_turn": "mine", "steps": ["upkeep"], "stack": "empty"},
+        ),
+    )
+    add_card(client, game, "Island", "alice", "battlefield")
+    stock_libraries(client, game)
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    with Opponent(game, "bob"):
+        result = pass_until(
+            seat,
+            until_step="precombat_main",
+            whose_turn="mine",
+            corpora=seats.script_corpora,
+            arm=["float-upkeep"],
+            arm_reasoning=ARM_REASONING,
+            max_seconds=10.0,
+        )
+
+    assert result["finished"] is True, result
+    assert result.get("armed_conflict") is None, result
+    assert result["armed_applying"] == ["float-upkeep"]
+    assert "float-upkeep" in result["stopped_because"], result
+    assert result["state"]["step"] == "upkeep", (
+        "the run must stop at the armed play's own window rather than pass "
+        f"through it on the way to precombat_main: {result}"
+    )
+    assert hook.posts("/actions/activate") == [], "arm() must never run anything (API-7)"
+
+
 def test_nothing_is_judged_on_a_retryable_hand_back(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
