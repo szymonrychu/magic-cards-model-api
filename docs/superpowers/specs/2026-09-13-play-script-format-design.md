@@ -13,18 +13,21 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   pydantic model with `extra="forbid"` and `strict=True`, every union
   discriminated on `kind`. An optional field is left out, never `null`.
 - Top level: `schema_version` (1), `id` (equals the file stem), `name`,
-  `intent?` (prose, ignored by machines), `priority` (0-100, higher tried
-  first, 0 = disabled - at most 6 plays with priority > 0 may be *live
-  together* per archetype key, O8: the largest subset of the plays applying
-  to that key no two of which are provably exclusive by `whose_turn`,
-  `steps` or turn range, not the plain count that apply, so two groups a
-  deck's own turn guards already prove disjoint are never summed),
+  `intent?` (prose, ignored by machines), `note?` (prose too, but for a
+  different reader and a different bound - see `note` below), `priority`
+  (0-100, higher tried first, 0 = disabled - at most 6 plays with priority > 0
+  may be *live together* per archetype key, O8: the largest subset of the
+  plays applying to that key no two of which are provably exclusive by
+  `whose_turn`, `steps` or turn range, not the plain count that apply, so two
+  groups a deck's own turn guards already prove disjoint are never summed;
+  an advice-only play is never counted here - see "Advice-only plays" below),
   `opposing_archetypes` (1-32: `["*"]` alone, or matchup
   label slugs; `*` beside a key is `wildcard-with-keys`),
   `when {whose_turn: mine|theirs|either, steps: [1-4 distinct autopass steps,
   not declare_attackers/declare_blockers], stack: empty|any}` (a repeated step
   is `duplicate-step`), `true` (0-8 conditions), `false` (0-8 conditions, each
-  must NOT hold), `moves` (1-4), `next` (0-3 ids).
+  must NOT hold), `moves` (0-4 - empty or absent is advice-only, see
+  "Advice-only plays" below), `next` (0-3 ids).
 - Changing `priority` after a game goes through `mcp-seat plays priority`,
   and `plays admit` records each change as a `Script-Priority` trailer.
   Change a script's priority only for scripts that actually ran this game,
@@ -48,6 +51,25 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
 - Colors: `white`, `blue`, `black`, `red`, `green`, `colorless`
 - Condition kinds (8): `count`, `zone_size`, `life`, `stack_top`, `land_drop_available`, `untapped_mana`, `turn`, `input`
   (an `in`/`not_in` value list holds 0-32 values).
+
+### `note`
+
+`note?` is prose too, like `name` and `intent`, but it is written for a
+different reader and so carries a bound `intent` does not. `intent` is
+written for a human reading a diff of the deck's own plays repo: free-form,
+unbounded, and long in practice - the corpus's own `intent` strings measure a
+1443-character median and a 3110-character max at the time of writing.
+`note` is written for the agent playing the game, mid-game: the moment a
+play's own hint surfaces it, the agent is mid-decision and has to read it in
+passing, not study it, so it is bounded at `MAX_NOTE_LENGTH` (240) characters
+- room for one sentence of reasoning for why this play is a good choice right
+now, never the deck-design essay `intent` is free to be.
+
+`note` joins `PROSE_KEYS` (`name`, `intent`, `note`) and so it may name cards
+- the top-level-only `card-name-in-field` exemption exists for exactly this
+reason: a `note` that could not say "answers their Tarmogoyf" or "holds up
+Fatal Push" would fail at the one job it has, which is explaining a decision
+to whoever, or whatever, reads it next.
 
 ### `untapped_mana`
 
@@ -426,6 +448,73 @@ mulligan.
 - Decision kinds: `assign_combat_damage`, `choose_a_mode`, `choose_a_quality`, `choose_cards`, `choose_pile`, `choose_players`, `choose_targets`, `declare_attackers`, `declare_blockers`, `may`, `mulligan`, `opening_hand_action`, `order_triggers`, `pay_energy`, `pay_energy_amount`, `pay_life`, `pay_life_amount`, `pay_mana`, `put_on_top_or_bottom`, `scry`, `surveil`
 - Never answered: `assign_combat_damage`, `declare_attackers`, `declare_blockers`, `mulligan`
 
+## Advice-only plays
+
+`moves` is 0-4, not 1-4: a play may carry no moves at all. A play with no
+moves is advice-only. It commits nothing to the game - no cast, no
+activation, no land drop, no answer - and exists only to explain a decision
+the seat should reach on its own: it is how "hold" is expressed, a shape the
+DSL had no way to say at all before `note` and an empty `moves` landed
+(API-1). An advice-only play's `note` (or, until a deck's `note`s are
+written, its `intent`) is the whole of what it has to say - naming one
+"hold up Fatal Push for their Tarmogoyf" *is* the play.
+
+An advice-only play is outside `too-many-active-for-archetype`'s
+live-together count and outside the `play-conflict`/`next-conflict` proofs
+by construction, not by an exemption layered on top of them: every one of
+those is a proof about what can *commit* at one decision point, and a play
+with no moves has no move to commit, so there is nothing about it for the
+proof to be. `lint._advice_only` docs draws the same line - an advice-only
+play never reaches `active`, priority or not, because the proofs' own
+dimensions (`whose_turn`, `steps`, `opposing_archetypes`, `stack`, `input`,
+`true_false`, `numeric_range`) are never asked about it in the first place,
+not because a carve-out excuses it after the fact.
+
+### The two play caps
+
+`too-many-plays` counts move-bearing plays only: at most 12 per deck. A play
+whose `moves` is empty or absent (advice-only) is never counted toward it.
+`too-many-advice` counts exactly what `too-many-plays` leaves out: at most 6
+advice-only plays per deck, counted and capped separately, reported against
+the same `plays/` directory path `too-many-plays` uses.
+`too-many-active-for-archetype` (O8) skips advice-only plays the same way:
+its own 6-play live-together cap over priority > 0 plays never adds an
+advice-only play to an archetype's `active` set - see "Advice-only plays"
+above for why.
+
+### `advice-only-chained`
+
+An advice-only play commits nothing, so it can neither chain further nor be
+chained into. `advice-only-chained` refuses both directions, one error per
+offending `next` entry, naming both play ids:
+
+- An advice-only play whose own `next` is non-empty is refused: there is
+  nothing for it to chain further *from* - it took no action for a follow-up
+  play to build on.
+- Any play (advice-only or not) naming an advice-only play in its own `next`
+  is refused: there is nothing for the target to be chained *into* - an
+  advice-only play has no move of its own to try when reached that way.
+
+## Arming: there is no autofire
+
+By owner decision (2026-09-21), nothing a play describes ever fires on its
+own - there is no autofire, and there never was a promotion path toward one.
+`arm()` (`playscripts.arming.arm`) does not watch the board between calls and
+does not run anything the agent did not just ask for in that same call:
+arming only wakes the wait (`pass_until`/`wait_for_priority`) with the
+already-armed call ready, and judges every armed id fresh against the board
+only once that wait is about to return with a real stop - never on a
+retryable hand-back where the opponent still holds priority. That judgement
+runs only because the agent supplied its own `arm_reasoning` for it; an empty
+one is refused. The extra agent turn this costs - the call that supplies
+`arm`/`arm_reasoning`, once per armed play, every time a seat wants the same
+scripts armed again - is permanent and deliberate, not a transitional cost of
+an unfinished feature: arming is preferred, never mandatory, and its own
+lifetime is one call. There is no promotion path from "armed" to "fires
+without an agent turn": no field, no lint rule and no firing path exist for a
+play to describe itself as self-triggering, and `autofire` as a top-level key
+is refused outright as `unknown-field` if a play ever carries one.
+
 ## How the runner builds a move
 
 `playscripts/runtime.py` turns each move into the request a seat would send,
@@ -548,6 +637,21 @@ owner reviews and merges the PR by hand. Play scripts are unchanged:
 `mcp-seat plays admit` still pushes straight to mtg-decks main after the
 in-pod gate (commit, rebase, gate, push, retries, a PR only as a rare
 fallback after repeated non-fast-forward races).
+
+## Migration: `note` becomes required later
+
+`note` lands optional (API-1): every play already committed validates
+unchanged, and no deck has to be rewritten before this schema change ships.
+Until a play carries its own `note`, the hint that surfaces a play's
+reasoning mid-game falls back to `intent`, truncated at a sentence boundary
+within `MAX_NOTE_LENGTH` (240) characters - an approximate, human-written
+sentence read by an agent is still a `why` where there would otherwise be
+none, so every play gets a `why` immediately rather than waiting on a
+rewrite. As each deck is rewritten, its plays gain real `note` strings
+written for the agent reading them mid-turn, not borrowed from `intent`.
+`note` becomes a required field only once the last deck has been rewritten
+with real notes of its own - schema first, then each deck in turn, then the
+requirement; there is no date fixed for that step today.
 
 ## Not in the vocabulary
 

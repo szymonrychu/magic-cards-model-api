@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from magic_cards_model_api.playscripts.lint import MAX_ADVICE, MAX_PLAYS
 from magic_cards_model_api.playscripts.runtime import Exit
 from magic_cards_model_api.playscripts.schema import (
     AMOUNT_DECISION_KINDS,
@@ -20,6 +21,7 @@ from magic_cards_model_api.playscripts.schema import (
     DECISION_KINDS,
     FORBIDDEN_DECISION_KINDS,
     MAX_ANSWERS,
+    MAX_NOTE_LENGTH,
     MAX_PREFER,
     MAX_TARGETS,
     MISSING_FROM_BY,
@@ -214,3 +216,83 @@ def test_doc_names_the_missing_from_selector_and_its_closed_vocabularies():
     assert _listed("- Missing-from by:") == list(MISSING_FROM_BY)
     for phrase in ("`subtypes_any`", "known information", "`include=contents`"):
         assert phrase in text.split("### `missing_from`", 1)[1].split("\n## ", 1)[0]
+
+
+def test_doc_defines_note_its_bound_and_its_reader() -> None:
+    text = DOC.read_text()
+    section = text.split("### `note`", 1)[1].split("\n## ", 1)[0]
+    for phrase in (
+        f"{MAX_NOTE_LENGTH}",
+        "agent",
+        "mid-game",
+        "`intent`",
+        "human reading a diff",
+        "1443",
+        "3110",
+        "`PROSE_KEYS`",
+        "may name cards",
+    ):
+        assert phrase in section
+
+
+def test_doc_defines_advice_only_plays() -> None:
+    text = DOC.read_text()
+    section = text.split("## Advice-only plays", 1)[1].split("\n## ", 1)[0]
+    for phrase in (
+        "no moves",
+        "commits nothing",
+        "hold",
+        "by construction",
+        "live-together",
+    ):
+        assert phrase in section
+    assert "by construction" in section and "not" in section
+
+
+def test_doc_names_the_advice_only_caps() -> None:
+    text = DOC.read_text()
+    assert f"`too-many-plays` {MAX_PLAYS}" in text or f"{MAX_PLAYS}" in text
+    for phrase in (
+        "`too-many-plays`",
+        f"{MAX_PLAYS}",
+        "`too-many-advice`",
+        f"{MAX_ADVICE}",
+        "`too-many-active-for-archetype`",
+        "move-bearing",
+        "skips advice-only",
+    ):
+        assert phrase in text
+
+
+def test_doc_defines_advice_only_chained() -> None:
+    text = DOC.read_text()
+    section = text.split("### `advice-only-chained`", 1)[1].split("\n## ", 1)[0]
+    for phrase in ("chain further", "chained into", "both directions"):
+        assert phrase in section
+
+
+def test_doc_states_there_is_no_autofire() -> None:
+    text = DOC.read_text()
+    for phrase in (
+        "no autofire",
+        "arming",
+        "extra",
+        "permanent and deliberate",
+        "no promotion path",
+    ):
+        assert phrase in text
+    assert "`unknown-field`" in text.split("no autofire", 1)[1].split("\n## ", 1)[0]
+
+
+def test_doc_describes_the_note_migration() -> None:
+    text = DOC.read_text()
+    section = text.split("## Migration", 1)[1]
+    for phrase in (
+        "optional",
+        "`intent`",
+        "sentence boundary",
+        f"{MAX_NOTE_LENGTH}",
+        "`why`",
+        "required",
+    ):
+        assert phrase in section
