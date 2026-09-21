@@ -61,6 +61,7 @@ LISTING_FIELDS: tuple[str, ...] = (
     "name",
     "priority",
     "applies",
+    "advice_only",
     "failing_condition",
     "needs_input",
     "invalid_input",
@@ -207,6 +208,21 @@ def run(
         should_stop=should_stop,
         invoked_via=invoked_via,
     )
+    exit_ = result.script_exit
+    if (
+        exit_ is not None
+        and exit_.exit is runtime.Exit.REFUSED
+        and exit_.refusal_source == "runner"
+        and runtime.ADVICE_ONLY_MARKER in (exit_.refusal or "")
+    ):
+        # API-3 item 2: the same shape `merged_inputs`' own conflict already
+        # takes above - a bare refusal string, never the ordinary
+        # `{script_exit, state}` envelope, so `mcp.run_script` and
+        # `mcp-seat script run` both report it identically (both branch on
+        # `isinstance(answer, str)`) rather than one of them running a
+        # draft-capturing/`_tool_result`-narrowing path meant for a play that
+        # actually reached the board.
+        return exit_.refusal
     state = result.state if result.state is not None else seat.fetch_state()
     exit_block = script_exit(result, _registered_moves(seat, corpora))
     _record_run(seat, corpora, script, state, exit_block, advise=seat.advise)
@@ -286,10 +302,13 @@ def listing(
         for doc, play in plays
     ]
     entries.sort(key=lambda entry: (-_priority(entry), str(entry["id"])))
-    applicable = [entry["id"] for entry in entries if entry["applies"]]
+    # API-3 item 3: an advice-only entry never joins `applicable` (nothing
+    # about it is runnable) even when its own conditions genuinely `apply`,
+    # and so never counts toward `runtime_conflict` either.
+    applicable = [entry["id"] for entry in entries if entry["applies"] and not entry["advice_only"]]
     ambiguous = len(applicable) > 1
     for entry in entries:
-        entry["runtime_conflict"] = ambiguous and entry["applies"]
+        entry["runtime_conflict"] = ambiguous and entry["applies"] and not entry["advice_only"]
     return {
         "deck_slug": corpus.get("deck_slug"),
         "guides_revision": corpus.get("guides_revision"),
@@ -428,6 +447,13 @@ def _judged(
         "priority": doc.get("priority"),
         "applies": False,
         "failing_condition": None,
+        # API-3 item 3: true for a play with no moves (`schema.Play`'s own
+        # docstring calls this "advice-only") - independent of whether its
+        # own conditions apply below, since the point of such a play is
+        # exactly to say so via its `note`. `listing` itself keeps such an
+        # entry out of `applicable`/`runtime_conflict` regardless of
+        # `applies`, since there is nothing here a caller could run.
+        "advice_only": isinstance(play, dict) and not play.get("moves"),
     }
     asserted = supplied.get(BUILTIN_INPUT)
     if isinstance(play, runtime.ScriptExit):

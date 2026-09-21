@@ -151,6 +151,7 @@ NON_TOOL_VOCABULARY = {
     "name",
     "priority",
     "applies",
+    "advice_only",
     "conflicts",
     "code",
     "path",

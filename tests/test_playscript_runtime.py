@@ -1195,6 +1195,110 @@ def test_a_run_after_game_over_is_refused_with_no_ledger_row(
     assert started(board) == [] and finished(board) == []
 
 
+# -- advice-only plays (no moves) -----------------------------------------------
+
+
+def test_an_advice_only_play_is_refused_before_any_ledger_row(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """API-3: a play with no moves (`schema.Play`'s own docstring: "advice-
+    only... exists to explain a decision rather than to act on one") is
+    refused by `run_script` itself, naming the play and its note, before any
+    `start` row reaches the ledger - a refused start would otherwise burn the
+    once-per-turn-and-step slot (`records._prior_script_run`) for a play that
+    never did anything."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("scout", moves=[], note="hold up removal this turn"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(seat, script_id="scout", reasoning=REASONING, corpora=seats.script_corpora)
+
+    out = result.script_exit
+    assert out.exit is Exit.REFUSED, result.to_dict()
+    assert out.refusal_source == "runner"
+    assert "scout" in out.refusal and "advice-only" in out.refusal, out.refusal
+    assert "hold up removal this turn" in out.refusal, out.refusal
+    assert started(board) == [] and finished(board) == []
+    assert [method for method, _, _ in hook.sent if method == "POST"] == []
+
+
+def test_runtime_drive_is_never_reached_for_an_advice_only_play(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """API-3 item 4: the refusal lands upstream of `_drive` itself, not as
+    one more empty-safe read inside it - `_drive` reads `play["moves"]`
+    unguarded in several places (building the request, counting done moves,
+    proposing move 1 for an advisor), and none of that is meant to become
+    defensive: a committing path re-judging a fresh board is the design's
+    whole safety claim, untouched here."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("scout", moves=[]))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    def boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("runtime._drive was called for an advice-only play")
+
+    monkeypatch.setattr(runtime, "_drive", boom)
+
+    result = run_script(seat, script_id="scout", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert result.script_exit.exit is Exit.REFUSED, result.to_dict()
+
+
+def test_script_tools_run_surfaces_the_advice_only_refusal_as_a_bare_string(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """API-3 item 2: `script_tools.run` surfaces this refusal as its own
+    refusal string, the same way it already surfaces `merged_inputs`' own -
+    so `mcp.run_script` and `mcp-seat script run` both report it identically,
+    rather than routing a play that never ran through the normal
+    `{script_exit, state}` envelope."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("scout", moves=[], note="hold up removal"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    answer = script_tools.run(seat, seats.script_corpora, script="scout", reasoning=REASONING)
+
+    assert isinstance(answer, str), answer
+    assert "advice-only" in answer and "hold up removal" in answer
+    assert started(board) == [] and finished(board) == []
+
+
+def test_listing_marks_an_advice_only_play_and_never_offers_it_as_applicable(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """API-3 item 3: `listing` marks an advice-only entry `advice_only: true`
+    - its own condition can still genuinely `apply` (the point of the play is
+    to say so via its `note`) - but it is never counted toward `applicable`
+    or `runtime_conflict`, since there is nothing there a caller could run."""
+    alice = seat_uid(board, "alice")
+    register(
+        client,
+        board,
+        alice,
+        land_script("drop", priority=50),
+        land_script("advice", priority=40, moves=[], note="prefer the shock land"),
+    )
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = script_tools.listing(seat, seats.script_corpora)
+
+    entries = {entry["id"]: entry for entry in result["scripts"]}
+    assert entries["drop"]["advice_only"] is False, entries["drop"]
+    assert entries["advice"]["advice_only"] is True, entries["advice"]
+    assert entries["advice"]["applies"] is True, entries["advice"]
+    assert result["applicable"] == ["drop"]
+    assert result["runtime_conflict"] is False
+
+
 def test_already_ran_from_the_start_route_is_surfaced(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

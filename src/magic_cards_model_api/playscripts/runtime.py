@@ -434,6 +434,18 @@ def run_script(
     play = _normalised(raw)
     if isinstance(play, ScriptExit):
         return RunResult(True, play)
+    if not play["moves"]:
+        # API-3: a play with no moves is advice-only (`schema.Play`'s own
+        # docstring) - refused here, before a `_Run` even exists and before
+        # `_guarded`/`_drive` are ever entered, so no `start` row reaches the
+        # ledger for it. A start refused there instead would still burn the
+        # once-per-turn-and-step slot (`records._prior_script_run`) for a
+        # play that never did anything, and `_drive` reads `play["moves"]`
+        # unguarded in several places downstream (`_moves`, `_send_move`,
+        # `_settle`, `_advise`, `_end`) that are never meant to be made
+        # empty-safe one at a time - the refusal has to land upstream of all
+        # of them at once, not inside `_drive` itself.
+        return RunResult(True, _advice_only_refusal(play))
     run = _Run(
         run_id=uuid.uuid4().hex,
         script_id=play["id"],
@@ -1880,6 +1892,27 @@ def _no_such_script(script_id: str) -> ScriptExit:
 
 def _runner_refusal(script_id: str | None, why: str) -> ScriptExit:
     return ScriptExit(Exit.REFUSED, script_id=script_id, refusal=why, refusal_source="runner")
+
+
+#: The refusal text `_advice_only_refusal` always contains - `script_tools.
+#: run`'s own signal (a plain substring check, the same idiom
+#: `REASONING_PLACEHOLDER in refusal` already uses elsewhere) to surface this
+#: one refusal as its own bare string, the way it already surfaces
+#: `merged_inputs`' own, rather than the ordinary `{script_exit, state}`
+#: envelope a play that actually ran gets.
+ADVICE_ONLY_MARKER = "is advice-only: it carries no moves, there is nothing to run"
+
+
+def _advice_only_refusal(play: dict[str, Any]) -> ScriptExit:
+    """The refusal for a play with no moves (API-3; `schema.Play`'s own
+    docstring: "advice-only... exists to explain a decision rather than to
+    act on one"). Names the play and, since it never acts, gives its own
+    `note` as the whole of what it has to say."""
+    why = f"{play['id']} {ADVICE_ONLY_MARKER}, and its note is the whole of what it has to say"
+    note = play.get("note")
+    if note:
+        why = f"{why}: {note}"
+    return _runner_refusal(play["id"], why)
 
 
 def _suffixed(ctx: _Context, run: _Run, what: str) -> str:
