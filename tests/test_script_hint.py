@@ -29,13 +29,14 @@ from test_playscript_runtime import (
     input_script,
     land_script,
     register,
+    rows,
     seat_uid,
     strand_board,
     tap_island_script,
     wired,
 )
 
-from magic_cards_model_api import seatkit
+from magic_cards_model_api import audit, seatkit
 from magic_cards_model_api.mcp import build_server
 from magic_cards_model_api.playscripts import runtime, schema, script_tools
 from magic_cards_model_api.store import store
@@ -1490,7 +1491,9 @@ def test_an_advice_only_play_that_applies_appears_in_the_advice_block(
     reply = wait(server, alice)
 
     assert "applicable" not in reply["scripts"], reply["scripts"]
-    assert reply["scripts"]["advice"] == [{"id": "scout", "why": "hold up removal this turn"}]
+    [entry] = reply["scripts"]["advice"]
+    assert isinstance(entry.pop("offer_seq", None), int)
+    assert entry == {"id": "scout", "why": "hold up removal this turn"}
 
 
 def test_advice_only_plays_never_join_applicable_or_its_conflict(
@@ -1517,7 +1520,9 @@ def test_advice_only_plays_never_join_applicable_or_its_conflict(
     [applicable] = reply["scripts"]["applicable"]
     assert applicable["id"] == "drop"
     assert "conflict" not in applicable
-    assert reply["scripts"]["advice"] == [{"id": "scout", "why": "hold up removal this turn"}]
+    [entry] = reply["scripts"]["advice"]
+    assert isinstance(entry.pop("offer_seq", None), int)
+    assert entry == {"id": "scout", "why": "hold up removal this turn"}
 
 
 def test_advice_falls_back_to_truncated_intent_the_same_way_applicable_does(
@@ -1648,3 +1653,167 @@ def test_five_worst_case_applicable_entries_stay_under_the_byte_budget() -> None
 
     assert len(without_inputs) < script_tools.MAX_HINT_BYTES, len(without_inputs)
     assert len(with_inputs) < script_tools.MAX_HINT_BYTES, len(with_inputs)
+
+
+# ---------------------------------------------------------------------------
+# API-6: the runner posts the offers, at zero agent turns
+# ---------------------------------------------------------------------------
+
+
+def offered_rows(game_id: str) -> list[dict[str, Any]]:
+    return [row["detail"] for row in rows(game_id, audit.SCRIPT_RUN_OFFERED_ACTION)]
+
+
+def test_an_applicable_play_posts_one_offer_row(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    [entry] = answer["scripts"]["applicable"]
+    assert isinstance(entry.get("offer_seq"), int), entry
+    [offer] = offered_rows(game)
+    assert offer["script_id"] == "drop"
+    assert offer["seat"] == "alice"
+    assert offer["role"] == "seat"
+
+
+def test_an_advice_only_play_posts_one_offer_row(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("scout", moves=[], note="hold up removal"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    [entry] = answer["scripts"]["advice"]
+    assert isinstance(entry.get("offer_seq"), int), entry
+    [offer] = offered_rows(game)
+    assert offer["script_id"] == "scout"
+    assert offer["role"] == "seat"
+
+
+def test_a_second_hint_at_the_same_position_posts_no_second_offer(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    first = wait(server, alice)
+    second = wait(server, alice)
+
+    [first_entry] = first["scripts"]["applicable"]
+    [second_entry] = second["scripts"]["applicable"]
+    assert second_entry["offer_seq"] == first_entry["offer_seq"]
+    assert len(offered_rows(game)) == 1
+
+
+def test_a_moved_position_posts_a_new_offer(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    first = wait(server, alice)
+    [first_entry] = first["scripts"]["applicable"]
+
+    engine_game = store.get(game)
+    assert engine_game is not None and engine_game.turn is not None
+    engine_game.turn.turns_taken += 1
+    force_precombat_main(game)
+
+    second = wait(server, alice)
+    [second_entry] = second["scripts"]["applicable"]
+
+    assert second_entry["offer_seq"] != first_entry["offer_seq"]
+    assert len(offered_rows(game)) == 2
+
+
+def test_a_post_that_raises_leaves_the_entry_without_offer_seq(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F5/mcp.py:684-690's discipline, applied to the offer post itself: an
+    HTTP failure posting the offer must never cost the caller its answer -
+    the entry is returned as it would be otherwise, just without
+    `offer_seq`, and nothing is recorded on the ledger."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    real_call_json = seatkit.Seat.call_json
+
+    def raising(
+        self: Any, method: str, path: str, body: Any = None, *, capture_draft: bool = True
+    ) -> Any:
+        if isinstance(body, dict) and body.get("phase") == "offer":
+            raise RuntimeError("boom")
+        return real_call_json(self, method, path, body, capture_draft=capture_draft)
+
+    monkeypatch.setattr(seatkit.Seat, "call_json", raising)
+
+    answer = wait(server, alice)
+
+    [entry] = answer["scripts"]["applicable"]
+    assert entry["id"] == "drop"
+    assert "offer_seq" not in entry
+    assert offered_rows(game) == []
+
+
+def test_armable_entries_post_no_offer(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_theirs_end_step(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    assert "applicable" not in answer["scripts"], answer
+    assert "advice" not in answer["scripts"], answer
+    [entry] = answer["scripts"]["armable"]
+    assert entry["id"] == "drop"
+    assert offered_rows(game) == []
+
+
+def test_an_advisor_posts_its_offers_as_role_advisor(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from magic_cards_model_api.repository import Advisor
+
+    force_precombat_main(game)
+    add_card(client, game, "Island", "alice", "hand")
+    advisor_uid = "advisor-uid"
+    store.register_advisors(game, {advisor_uid: Advisor(player="alice")})
+    register(client, game, advisor_uid, land_script("drop"))
+    _, server = server_for(monkeypatch, game)
+    # This advisor's own human holds priority right now, which is a "real
+    # wake" that also reads `available_actions` (`wait_for_priority`'s own
+    # docstring) - irrelevant to what this test checks, so it is stubbed
+    # rather than left to trip the file's `_never_available_actions` guard.
+    monkeypatch.setattr(seatkit, "available_actions", lambda *a, **k: [])
+
+    answer = wait(server, advisor_uid)
+
+    [entry] = answer["scripts"]["applicable"]
+    assert isinstance(entry.get("offer_seq"), int), entry
+    [offer] = offered_rows(game)
+    assert offer["role"] == "advisor"
+    assert offer["seat"] == "alice"

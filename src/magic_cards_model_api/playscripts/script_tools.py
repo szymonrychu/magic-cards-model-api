@@ -26,6 +26,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -133,6 +134,20 @@ _RECENT_RUNS_KEY = "_recent_runs"
 #: free, and nothing about a registered corpus changes between two calls that
 #: both read it with `fresh=False` (S1 review finding 5).
 _PLAYS_CACHE_KEY = "_normalised_plays"
+
+#: `(script_id, position[0], position[1])` -> the `log_seq` of the first
+#: `phase: offer` row `applicable_hint` posted for it (API-6, F4) - stashed
+#: on the same corpus dict as `_RECENT_RUNS_KEY`, in the same style: a plain
+#: dict this process keeps for itself, never a key the API itself writes or
+#: reads, and never carried by `fresh=True`'s allow-list either (a refresh
+#: drops it, same as `_PLAYS_CACHE_KEY`, and this recomputes exactly when a
+#: fresh read would anyway have nothing to dedupe against). A hint that
+#: finds a play already offered at this exact position posts no second row
+#: - it reuses that first offer's own `log_seq` instead - because without
+#: this the hint rides every wake AND every action answer, so one applying
+#: play would post a row per answer and the counts feeding the reviewer bars
+#: would be meaningless.
+_OFFERED_KEY = "_offered_plays"
 
 
 def merged_inputs(opposing_archetype: str, inputs: dict[str, Any] | None) -> dict[str, Any] | str:
@@ -770,6 +785,89 @@ def _hint_judged(
         }
 
 
+def _post_offer(
+    seat: Seat,
+    corpus: dict[str, Any],
+    state: dict[str, Any],
+    entry: dict[str, Any],
+    play: dict[str, Any],
+) -> None:
+    """Post one `phase: offer` row for `entry` through `seat`'s existing HTTP
+    client (API-6) and fill `entry["offer_seq"]` from the response's own
+    `log_seq` - unless this exact `(script_id, _turn_position(state), step)`
+    was already offered by this process (`_OFFERED_KEY`, F4), in which case
+    no second row is posted and `entry` gets that first offer's own
+    `offer_seq` instead.
+
+    **Failure discipline**, deliberately the same as `mcp._attach_script_hint`
+    (`mcp.py:684-690`): whatever this can raise - an HTTP error, a refusal
+    (a game that has just ended answers this very route with one, same as
+    any other post-game call, and is swallowed here like any other), a
+    malformed response missing `log_seq` - must never cost the caller its
+    answer. It is caught, logged once, and `entry` is handed back exactly as
+    it already was: still in the answer, its own `why`/`call` untouched,
+    simply without `offer_seq`. Never dropped."""
+    script_id = str(entry.get("id"))
+    position = (_turn_position(state), state.get("step"))
+    turn = position[0] if isinstance(position[0], int) else 0
+    step = str(position[1]) if position[1] else "unknown"
+    offered = corpus.get(_OFFERED_KEY)
+    if not isinstance(offered, dict):
+        offered = {}
+        corpus[_OFFERED_KEY] = offered
+    key = (script_id, position[0], position[1])
+    cached = offered.get(key)
+    if cached is not None:
+        entry["offer_seq"] = cached
+        return
+    try:
+        answer = seat.call_json(
+            "POST",
+            f"/api/games/{seat.game_id()}/script-runs",
+            {
+                "phase": "offer",
+                "run_id": uuid.uuid4().hex,
+                "seat": seat.player,
+                "role": "advisor" if seat.advise else "seat",
+                "advise": seat.advise,
+                "script_id": script_id,
+                "priority": play.get("priority") if isinstance(play, dict) else None,
+                "turn": turn,
+                "step": step,
+            },
+        )
+        log_seq = answer.get("log_seq") if isinstance(answer, dict) else None
+        if not isinstance(log_seq, int):
+            raise ValueError(f"offer post for {script_id!r} carried no log_seq: {answer!r}")
+    except Exception:
+        logger.warning(
+            "posting the offer of %s for %s raised - entry sent without `offer_seq`",
+            script_id,
+            seat.uid,
+            exc_info=True,
+        )
+        return
+    offered[key] = log_seq
+    entry["offer_seq"] = log_seq
+
+
+def _post_offers(
+    seat: Seat,
+    corpus: dict[str, Any],
+    state: dict[str, Any],
+    entries: list[dict[str, Any]],
+    plays_by_id: dict[str, tuple[dict[str, Any], dict[str, Any] | runtime.ScriptExit]],
+) -> None:
+    """`_post_offer` for every one of `entries` (API-6) - `applicable_hint`'s
+    own kept `applicable` and `advice` items, never `armable` (nothing is
+    being offered to run there). Bounded to at most `entries`' own length,
+    which `_hint_bounded` has already capped at `MAX_HINT_SCRIPTS` by the
+    time this runs - so an answer never pays more than that many extra local
+    round trips for this."""
+    for entry in entries:
+        _post_offer(seat, corpus, state, entry, _play_for(plays_by_id, entry.get("id")))
+
+
 def applicable_hint(
     seat: Seat,
     corpora: dict[tuple[str, str], dict[str, Any]],
@@ -808,12 +906,12 @@ def applicable_hint(
     Each entry is `{id, name, why, call}` (API-4: `why` is the play's own
     `_hint_why` - its `note`, or its `intent` cut to a sentence boundary
     (`_truncated_intent`) when it has no `note`, or its bare `name` when it
-    has neither; `offer_seq` is API-6's, not written yet), `call` a
-    ready-to-use `run_script` invocation, `inputs` among its arguments only
-    when the remembered inputs are non-empty - or, when two or more apply at
-    once (`listing`'s own `runtime_conflict`), `{id, name, why, conflict:
-    true}` with `call` left out, since a seat has to pick one itself before
-    either can commit.
+    has neither), `call` a ready-to-use `run_script` invocation, `inputs`
+    among its arguments only when the remembered inputs are non-empty - or,
+    when two or more apply at once (`listing`'s own `runtime_conflict`),
+    `{id, name, why, conflict: true}` with `call` left out, since a seat has
+    to pick one itself before either can commit. `offer_seq` (API-6) joins
+    every kept entry here once its own offer post lands - see below.
 
     **`advice`** (API-4): one entry per advice-only play (`schema.Play`'s
     own docstring: "exists to explain a decision rather than to act on
@@ -826,7 +924,8 @@ def applicable_hint(
     `call` (there is nothing to run) and no `name` (`why`, the play's own
     `note`/`intent`/`name` via `_hint_why`, is the whole content). Never
     counted toward `applicable`'s own conflict either, the same split
-    `listing` already makes (API-3 item 3).
+    `listing` already makes (API-3 item 3). `offer_seq` (API-6) joins this
+    entry too, exactly as it does an `applicable` one.
 
     **`armable`** (S2): scripts with `priority > 0`, a matching archetype,
     that do NOT apply yet but whose `when` comes up again before this seat's
@@ -841,6 +940,45 @@ def applicable_hint(
     `armable` id at once: `pass_until(..., arm=[...])` for a seat (advisors
     are refused `pass_until`), `wait_for_priority(..., arm=[...])` for an
     advisor.
+
+    **Offer posting** (API-6, `_post_offer`/`_post_offers`): once
+    `_hint_bounded` has decided which entries survive, every surviving
+    `applicable` and `advice` entry - never `armable`, which offers nothing
+    to run - is posted to the ledger as its own `phase: offer` row, through
+    `seat`'s existing HTTP client (the same one `runtime`'s own `start`/
+    `finish` rows already go over), so the reviewer can later pair up
+    whether a play offered here was actually taken. The entry's own
+    `offer_seq` is that row's `log_seq`, once posted.
+
+    Deduped (F4) on `(script_id, _turn_position(state), step)`, an
+    in-process cache next to `_RECENT_RUNS_KEY` under `_OFFERED_KEY`: a play
+    already offered at this exact position is still rendered here, `why`
+    included, but posts no second row and carries the first one's own
+    `offer_seq` - this hint rides every wake AND every action answer, so
+    without the dedupe one applying play would post a row per answer and
+    the counts feeding the reviewer bars would be meaningless. A position
+    that has genuinely moved on posts again.
+
+    Failure discipline is deliberately the same `mcp._attach_script_hint`
+    already applies around computing the hint itself: nothing an offer post
+    can raise - an HTTP error, a refusal (a game that has just ended
+    answers this very route with one, and it is swallowed here like any
+    other) - ever costs the caller its answer. A failed post is logged once
+    and its entry is returned exactly as it otherwise would be, simply
+    without `offer_seq` - never dropped.
+
+    Bounded to at most the kept entries - `_hint_bounded` has already
+    capped `applicable` plus `advice` plus `armable` together at
+    `MAX_HINT_SCRIPTS`, and `armable` posts nothing, so an answer never pays
+    more than `MAX_HINT_SCRIPTS` extra local round trips for this, on the
+    answer's own path, before it is sent. That is a real latency cost worth
+    saying plainly (F5): up to five synchronous HTTP calls to this same
+    process's own API, paid inside one wake/action answer, so that the
+    accept/reject signal this offer exists to record costs the AGENT
+    reading that answer nothing at all.
+
+    An advisor posts its own offers as `role: "advisor"` for the human it
+    watches, exactly as it already reports its runs (`runtime._run_fields`).
 
     All three blocks share `MAX_HINT_NAME_CHARS`'s truncation on `name`
     (`advice` carries no `name` to truncate), and together share
@@ -1007,6 +1145,11 @@ def applicable_hint(
     )
     if not kept_applicable and not kept_advice and not kept_armable and not hyp_skips:
         return None
+    # API-6: post the offer, once per surviving `applicable`/`advice` entry
+    # (never `armable` - nothing there is being offered to run), before this
+    # answer is handed back. `_post_offer`'s own failure discipline means
+    # this never costs the caller its answer even when every post fails.
+    _post_offers(seat, corpus, state, kept_applicable + kept_advice, plays_by_id)
     result: dict[str, Any] = {}
     if kept_applicable:
         result["applicable"] = kept_applicable
