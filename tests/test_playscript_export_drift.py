@@ -71,6 +71,10 @@ def _selector_properties() -> dict:
     return json.loads(OUTPUT.read_text())["$defs"]["Selector"]["properties"]
 
 
+def _play_schema() -> dict:
+    return json.loads(OUTPUT.read_text())
+
+
 def test_the_contract_carries_payable_any_with_its_four_value_vocabulary():
     field = _selector_properties()["payable_any"]
     assert field["type"] == "array"
@@ -80,6 +84,18 @@ def test_the_contract_carries_payable_any_with_its_four_value_vocabulary():
 
 def test_the_contract_carries_unlocks_next_as_a_boolean():
     assert _selector_properties()["unlocks_next"]["type"] == "boolean"
+
+
+def test_the_contract_carries_note_as_a_string_bounded_at_240_characters():
+    field = _play_schema()["properties"]["note"]
+    assert field["type"] == "string"
+    assert field["maxLength"] == 240
+
+
+def test_the_contract_does_not_require_moves_or_bound_it_from_below():
+    schema = _play_schema()
+    assert "moves" not in schema["required"]
+    assert "minItems" not in schema["properties"]["moves"]
 
 
 def test_the_contract_is_generated_output_and_carries_no_hand_edit():

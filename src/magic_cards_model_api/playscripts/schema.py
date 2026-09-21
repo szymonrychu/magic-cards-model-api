@@ -83,6 +83,9 @@ TIES = ("any",)
 #: writing); a play meant for every matchup says `*`.
 MAX_ARCHETYPES = 32
 MAX_INPUT_VALUES = 32
+#: `note`'s own bound: short enough for an agent to read mid-game, long
+#: enough for one sentence of reasoning.
+MAX_NOTE_LENGTH = 240
 
 COMBAT_DECLARATION_STEPS = ("declare_attackers", "declare_blockers")
 #: The steps a script may name: the autopass steps, minus the two combat
@@ -198,6 +201,8 @@ CODES = (
     "chain-too-deep",
     "too-many-plays",
     "too-many-active-for-archetype",
+    "too-many-advice",
+    "advice-only-chained",
     "unknown-archetype-key",
     "unknown-input",
     "invalid-input-value",
@@ -227,6 +232,9 @@ class PlaysError:
 
 
 NonBlank = Annotated[str, Field(pattern=r"\S")]
+#: `note`'s own type: a non-blank string, bounded, unlike `NonBlank`'s other
+#: prose fields (`name`, `intent`), which carry no length bound of their own.
+Note = Annotated[str, Field(pattern=r"\S", max_length=MAX_NOTE_LENGTH)]
 ArchetypeKey = Annotated[str, Field(pattern=r"^(\*|[a-z0-9]+(-[a-z0-9]+)*)$")]
 AtLeastZero = Annotated[int, Field(ge=0)]
 Op = Literal[OPS]
@@ -260,9 +268,7 @@ EntersAnyWords = Annotated[list[Literal[ENTERS_STATES]], Field(max_length=len(EN
 #: (`hypothetical_facts.py`) touches. A word outside the four is
 #: `malformed-play`, never a silent no-match.
 PAYABLE_STATES = ("now", "with_a_land", "next_turn", "no")
-PayableAnyWords = Annotated[
-    list[Literal[PAYABLE_STATES]], Field(max_length=len(PAYABLE_STATES))
-]
+PayableAnyWords = Annotated[list[Literal[PAYABLE_STATES]], Field(max_length=len(PAYABLE_STATES))]
 
 
 class _Strict(BaseModel):
@@ -732,19 +738,25 @@ class When(_Strict):
 
 class Play(_Strict):
     """One play script. `name` and `intent` are prose nothing executes;
-    `priority` 0 disables it; `true` must all hold and `false` must all not
-    hold; `next` names plays of the same deck tried after the moves."""
+    `note` is prose too, but for a different reader - `intent` is written for
+    a human reading a diff, `note` is written for an agent reading it
+    mid-game, saying why this play is a good choice right now. `priority` 0
+    disables it; `true` must all hold and `false` must all not hold; `next`
+    names plays of the same deck tried after the moves. A play with no moves
+    is advice-only: it commits nothing to the game, and exists to explain a
+    decision rather than to act on one."""
 
     schema_version: Literal[1]
     id: NonBlank
     name: NonBlank
     intent: NonBlank = None
+    note: Note = None
     priority: Annotated[int, Field(ge=0, le=MAX_PRIORITY)]
     opposing_archetypes: list[ArchetypeKey] = Field(min_length=1, max_length=MAX_ARCHETYPES)
     when: When
     true: list[Condition] = Field(default_factory=list, max_length=MAX_CONDITIONS)
     false: list[Condition] = Field(default_factory=list, max_length=MAX_CONDITIONS)
-    moves: list[Move] = Field(min_length=1, max_length=MAX_MOVES)
+    moves: list[Move] = Field(default_factory=list, max_length=MAX_MOVES)
     next: list[NonBlank] = Field(default_factory=list, max_length=MAX_NEXT)
 
     @field_validator("schema_version", mode="before")
@@ -793,6 +805,7 @@ _ITEM_ADAPTERS: dict[str, TypeAdapter[Any]] = {
 }
 _BOUND_TYPES = (
     "too_long",
+    "string_too_long",
     "too_many_input_values",
     "greater_than_equal",
     "less_than_equal",

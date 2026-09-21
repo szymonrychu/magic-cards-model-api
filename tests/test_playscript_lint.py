@@ -53,16 +53,21 @@ def cli(*argv: str) -> int:
 
 
 def test_codes_and_warning_codes_are_the_shared_contract():
-    assert CODES[14:17] == ("unknown-input", "invalid-input-value", "malformed-inputs")
-    assert CODES[17:22] == (
+    assert CODES[12:15] == (
+        "too-many-active-for-archetype",
+        "too-many-advice",
+        "advice-only-chained",
+    )
+    assert CODES[16:19] == ("unknown-input", "invalid-input-value", "malformed-inputs")
+    assert CODES[19:24] == (
         "unknown-decision-kind",
         "unknown-cast-cost",
         "duplicate-step",
         "wildcard-with-keys",
         "answer-shape-mismatch",
     )
-    assert CODES[22:] == ("never-applicable",)
-    assert len(CODES) == 23
+    assert CODES[24:] == ("never-applicable",)
+    assert len(CODES) == 25
     assert WARNING_CODES == ("play-conflict", "next-conflict")
     assert EXCLUSIVITY_DIMENSIONS == (
         "whose_turn",

@@ -91,6 +91,8 @@ def test_the_error_codes_are_the_shared_contract_in_order():
         "chain-too-deep",
         "too-many-plays",
         "too-many-active-for-archetype",
+        "too-many-advice",
+        "advice-only-chained",
         "unknown-archetype-key",
         "unknown-input",
         "invalid-input-value",
@@ -125,8 +127,8 @@ MOVE = FETCH_SHOCK["moves"][0]
 BOUNDS = [
     ("priority-above-100", mutate("priority", 101)),
     ("priority-negative", mutate("priority", -1)),
-    ("no-moves", mutate("moves", [])),
     ("five-moves", mutate("moves", [copy.deepcopy(MOVE)] * 5)),
+    ("note-too-long", mutate("note", "x" * 241)),
     ("four-answers", mutate("moves.0.answers", [ANSWER] * 4)),
     ("four-next", mutate("next", ["a", "b", "c", "d"])),
     ("nine-true", mutate("true", [COND] * 9)),
@@ -192,7 +194,7 @@ def test_every_malformed_shape_is_malformed_play(doc):
 
 
 def test_a_missing_required_field_is_malformed_play():
-    for key in ("schema_version", "id", "name", "priority", "opposing_archetypes", "when", "moves"):
+    for key in ("schema_version", "id", "name", "priority", "opposing_archetypes", "when"):
         doc = copy.deepcopy(FETCH_SHOCK)
         del doc[key]
         assert codes(doc) == ["malformed-play"], key
@@ -200,9 +202,56 @@ def test_a_missing_required_field_is_malformed_play():
 
 def test_optional_top_level_fields_may_be_omitted():
     doc = copy.deepcopy(FETCH_SHOCK)
-    for key in ("intent", "true", "false", "next"):
+    for key in ("intent", "true", "false", "next", "moves"):
         del doc[key]
     assert play_errors(doc) == []
+
+
+def test_note_is_optional_prose_bounded_at_240_characters():
+    """`note` defaults the same way `intent` already does (schema.py:741):
+    left out entirely, it is `None`, never validated."""
+    doc = copy.deepcopy(FETCH_SHOCK)
+    assert "note" not in doc
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).note is None
+
+    at_bound = mutate("note", "x" * 240)
+    assert play_errors(at_bound) == []
+    assert Play.model_validate(at_bound).note == "x" * 240
+
+    over_bound = mutate("note", "x" * 241)
+    assert codes(over_bound) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(over_bound)
+
+    blank = mutate("note", "   ")
+    assert codes(blank) == ["malformed-play"]
+
+
+def test_moves_absent_and_moves_empty_both_validate_and_normalise_the_same():
+    """A play with no moves is advice-only (D2): both spellings - the key
+    left out, and `moves: []` - validate, and dump back to the same shape."""
+    doc_absent = copy.deepcopy(FETCH_SHOCK)
+    del doc_absent["moves"]
+    doc_empty = mutate("moves", [])
+
+    assert play_errors(doc_absent) == []
+    assert play_errors(doc_empty) == []
+
+    model_absent = Play.model_validate(doc_absent)
+    model_empty = Play.model_validate(doc_empty)
+    assert model_absent.moves == []
+    assert model_empty.moves == []
+    assert model_absent.model_dump() == model_empty.model_dump()
+
+
+def test_autofire_is_rejected_as_an_unknown_field():
+    """Owner decision 2026-09-21: autofire is dropped. Nothing ever fires on
+    its own, and the field must not creep back in as an accepted key."""
+    doc = mutate("autofire", True)
+    assert codes(doc) == ["unknown-field"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
 
 
 @pytest.mark.parametrize("step", ["declare_attackers", "declare_blockers"])
@@ -505,7 +554,6 @@ def test_unlocks_next_non_bool_is_malformed():
 
 def test_prefer_stays_capped_at_four_selectors():
     assert MAX_PREFER == 4
-
 
 
 # -- O7: unlocks, unlocks_by_search, affordable ----------------------------------
