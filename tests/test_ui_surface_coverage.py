@@ -94,7 +94,7 @@ guard. `U2 (cost surfaces)` hit that for real - it publishes
 "clears" the `UnreadableModeView.notice` entry while
 `ActionRow.unreadable_modes` and `UnreadableModeView.mode_number` are still
 read by nobody. Rule 5 is the answer, and
-`test_a_collision_on_an_unreachable_view_does_not_clear_a_pending_entry`
+`test_a_collision_on_an_unreachable_view_does_not_clear_an_allowlist_entry`
 pins that exact merge. Rule 5 is *not* a licence to widen 2: the residual it
 does not cover - a collision between two views the browser genuinely holds
 both of - stays a known false negative, to be answered by reading the field
@@ -107,12 +107,46 @@ to write a second entry per field behind it.
 keeps that from being a hole - every unreachable view must hang off a link
 that is itself written down, so a new view behind a new unread field fails
 twice, not zero times.
+
+A pending entry may not outlive its task
+----------------------------------------
+`_PENDING_SIBLING_FIXES` is the one entry shape that is a promise rather
+than a state: "published, unread, and somebody else is wiring it". A promise
+rots in a way a reason does not, and it did. The first round of this file
+parked fifteen fields on two sibling tasks; those tasks shipped wiring six of
+them and stopping, and the remaining nine sat in a list that said they were
+in flight. Nothing failed, because each entry's only self-clearing trigger
+was the field being *read* - which is exactly what does not happen to a field
+its owner walked away from.
+
+Three rules now hold the shape, and none of them needs anybody to remember
+anything:
+
+* an entry must name a task in `_OPEN_WAVE_TASKS`
+  (`test_every_pending_entry_names_a_wave_that_is_still_open`);
+* a task in `_OPEN_WAVE_TASKS` must still be named by an entry
+  (`test_every_open_wave_still_has_a_pending_entry`), so the declaration and
+  the parking die together and neither can rot alone;
+* and the one that does not wait for a human act at all
+  (`abandoned_pending_entries`): a task that has wired **some** of its fields
+  has shipped, so whatever it left unread is parked on nobody and is reported
+  the moment the first of its fields lands. That is the nine, caught
+  automatically, and `test_nothing_is_left_parked_when_this_wave_lands` runs
+  it against the state the next merge produces rather than waiting for the
+  merge.
+
+What remains deliberate, and is the whole point of a *self*-clearing list: a
+landed entry still fails, once, with the exact keys to delete
+(`test_pending_fixes_have_not_landed_yet`). A landed entry that passed would
+be a guard quietly downgraded from "unread and unexplained, fail" to
+"unread and excused" the day somebody deletes the read.
 """
 
 from __future__ import annotations
 
 import re
 import typing
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -394,15 +428,54 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         "the player half of a slot's pool; `affordances.target_candidates` folds it into "
         "the `TargetSlotCandidates.candidates` lines the browser actually reads",
     ),
+    ("Action", "x_range"): _Reason(
+        "known-gap",
+        "CR 107.3a's legal X range; `ui/render/ribbon.js`'s `renderXInput` draws an "
+        "`<input type=number min=0>` with no maximum and no floor above zero, so an X the "
+        "engine will refuse can still be announced and comes back refused",
+    ),
     ("Action", "target_slots"): _Reason(
         "superseded",
         "the browser builds its target slots from `ActionTargets.slots` and from "
         "`CastHintsView.targeting.requirements`, which restate the same requirements",
     ),
+    ("ActionRow", "activate_first"): _Reason(
+        "known-gap",
+        "CR 118.3c mana abilities a row the engine already calls affordable cannot be paid "
+        "without; `ui/menus.js` can activate a permanent's mana ability from the board and "
+        "nothing on the casting strip says which activations this row is waiting on",
+    ),
+    ("ActionRow", "optional_costs"): _Reason(
+        "superseded",
+        "`ui/render/ribbon.js`'s `renderAdditionalCosts` announces optional additional "
+        "costs from `card.cast.additional_costs` (`AdditionalCostHintView`) and re-prices "
+        "the cast through `previewAndMaybeFire`'s dry run, which answers live the "
+        "affordability this row's own copy carries per option",
+    ),
+    ("ActionRow", "printed_cost"): _Reason(
+        "cosmetic",
+        "the cost the card would print where CR 601.2f changed what it is charged; the "
+        "casting strip shows no price text at all - the dry run highlights the permanents "
+        "the cast will tap - so the printed-versus-charged contrast has nowhere to go, and "
+        "the cast is charged `cost` either way",
+    ),
     ("ActionRow", "printed_produces"): _Reason(
         "cosmetic",
         "the printed phrase for a mana row the board resolved differently; the browser's "
         "mana menu shows the ability text and the resolved amount",
+    ),
+    ("ActionRow", "unreadable_modes"): _Reason(
+        "superseded",
+        "`card.cast.modes.options` carries the same `engine_api.unreadable_modes` reading "
+        "per mode (`ModeOptionView.understood` and `.notice`), and `ui/render/ribbon.js`'s "
+        "`renderModes` marks the mode with it *before* it is chosen - which is the half of "
+        "the bug a row's list, arriving only at cast time, cannot fix",
+    ),
+    ("ActionRow", "x_costs"): _Reason(
+        "known-gap",
+        "what an X row is charged at each X its `cost` string cannot describe once a floor "
+        "or a reduction has eaten into it; the strip prices a cast by dry-running the X "
+        "that was typed, so an unaffordable X is found by trying it rather than read off",
     ),
     ("ActionTargets", "more_with"): _Reason(
         "agent-facing",
@@ -429,11 +502,16 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         "one entry of `Action.pays_with`, which this same list already exempts for the same "
         "reason - no entry point takes a plan back in",
     ),
+    ("ManualManaStepView", "adds"): _Reason(
+        "known-gap",
+        "what one of `ActionRow.activate_first`'s manual activations adds on a copy of the "
+        "board - the same hole one step in, and reachable only once that field is read",
+    ),
     ("ModalHintsView", "entwine_cost"): _Reason(
         "known-gap",
         "CR 702.42a's entwine cost is published on the modal hints and nothing in the "
         "browser offers it; its announceable form is a row `optional_costs` entry, itself "
-        "still unread (see `_PENDING_SIBLING_FIXES`)",
+        "unread and written down below",
     ),
     ("ModalHintsView", "escalate_cost"): _Reason(
         "known-gap",
@@ -491,6 +569,18 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         "known-gap",
         'whether a requirement\'s count is itself variable ("X target creatures"); '
         "`ui/targeting.js` branches on `count` and `unbounded` only",
+    ),
+    ("UnreadableModeView", "mode_number"): _Reason(
+        "superseded",
+        "`ModeOptionView.number` labels the same mode on the chip row the browser does "
+        "render; this list is reachable only through `ActionRow.unreadable_modes`, which "
+        "is superseded whole",
+    ),
+    ("UnreadableModeView", "notice"): _Reason(
+        "superseded",
+        "`ModeOptionView.notice` is the same sentence from the same "
+        "`engine_api.unreadable_mode_notice`, printed in full on the unreadable mode's own "
+        "note rather than hidden behind a tooltip",
     ),
     ("_CardViewFields", "art_crop"): _Reason(
         "cosmetic",
@@ -557,6 +647,31 @@ class _Pending(NamedTuple):
     why: str
 
 
+#: The sibling tasks of the wave currently in flight, by the name their
+#: `_PENDING_SIBLING_FIXES` entries give them. This is the one place that
+#: says "somebody is still working on this", and it is what stops a pending
+#: entry from outliving the task it names.
+#:
+#: The two lists are pinned to each other in both directions - an entry must
+#: name a task listed here (`test_every_pending_entry_names_a_wave_that_is_
+#: still_open`) and a task listed here must still have an entry
+#: (`test_every_open_wave_still_has_a_pending_entry`) - so the declaration
+#: and the parking die together rather than the tuple rotting on its own.
+#:
+#: Emptying it is not the only guard against a task that quietly finishes,
+#: and deliberately so, because emptying it is a human act. The one that is
+#: not is `abandoned_pending_entries`: a task that has wired *some* of its
+#: fields has shipped, so the rest of its entries are not pending on
+#: anybody, and they are reported the moment the first one lands. That is
+#: the check the last round of this wave was missing - U1 landed three of
+#: its six fields and U2 one of its seven, and the nine left behind read as
+#: "in flight" forever.
+_OPEN_WAVE_TASKS: tuple[str, ...] = (
+    "U1 (cast path correctness)",
+    "U2 (cost surfaces)",
+)
+
+
 #: Fields that are **bugs, not exemptions**: published, unread, and being
 #: wired up right now by a sibling task in this same wave. They are listed
 #: here instead of in `_NOT_CONSUMED_ON_PURPOSE` so that nothing about them
@@ -569,11 +684,17 @@ class _Pending(NamedTuple):
 #: with extra steps.
 #:
 #: "Reading the field" means `is_reached`, not a bare name hit - see rule 5
-#: in the module docstring. Several entries below sit on a nested view that
-#: only exists inside another entry here (`UnreadableModeView.*` inside
-#: `ActionRow.unreadable_modes`, `ManualManaStepView.adds` inside
-#: `ActionRow.activate_first`), and a sibling wave that happens to publish
-#: the same field name on some other view must not delete them.
+#: in the module docstring. An entry can sit on a nested view that only
+#: exists inside another entry here (`CardFaceView.land_face` inside
+#: `_CardViewFields.faces`), and a sibling wave that happens to publish the
+#: same field name on some other view must not delete it.
+#:
+#: An entry is a promise, so it is held to the three rules in the module
+#: docstring's "A pending entry may not outlive its task": it names an open
+#: task, that task is still named here, and a task that has wired some of
+#: its fields has shipped and may not park the rest. A field whose owner is
+#: gone belongs in `_NOT_CONSUMED_ON_PURPOSE` with a reason kind, or in
+#: `ui/`.
 _PENDING_SIBLING_FIXES: dict[tuple[str, str], _Pending] = {
     ("Action", "land_face"): _Pending(
         "U1 (cast path correctness)",
@@ -595,41 +716,6 @@ _PENDING_SIBLING_FIXES: dict[tuple[str, str], _Pending] = {
         "CR 709.3's split half and CR 715.3's Adventure: each face is its own row with its "
         "own cost, and a browser that ignores the field casts the wrong half",
     ),
-    ("ActionRow", "unreadable_modes"): _Pending(
-        "U1 (cast path correctness)",
-        "CR 700.2a modes this engine cannot read, refused on cast - the bug where a mode "
-        "was accepted through targeting and only then refused",
-    ),
-    ("UnreadableModeView", "mode_number"): _Pending(
-        "U1 (cast path correctness)",
-        "which mode of the printed list is unreadable - the number the mode picker has to "
-        "disable, reachable only once `unreadable_modes` is read",
-    ),
-    ("UnreadableModeView", "notice"): _Pending(
-        "U1 (cast path correctness)",
-        "the engine's own words for why that mode would do nothing, which is what the mode "
-        "picker should be saying instead of refusing after the fact",
-    ),
-    ("Action", "x_range"): _Pending(
-        "U2 (cost surfaces)",
-        "CR 107.3a's legal X range; the browser's X input is bounded by nothing, so a spell "
-        "can be announced at an X the engine will refuse",
-    ),
-    ("ActionRow", "x_costs"): _Pending(
-        "U2 (cost surfaces)",
-        "what each X actually charges once a floor or a reduction has eaten into it - the "
-        "half of the wrong-price bug the plain `cost` string cannot express",
-    ),
-    ("ActionRow", "printed_cost"): _Pending(
-        "U2 (cost surfaces)",
-        "the cost the card would print when CR 601.2f changed what it is charged; a browser "
-        "showing only one of the two shows the player the wrong price",
-    ),
-    ("ActionRow", "optional_costs"): _Pending(
-        "U2 (cost surfaces)",
-        "the reported kicker bug: the row's own optional costs are never read - the browser "
-        "writes `body.optional_costs` from the card hints and reads the row's back never",
-    ),
     ("ActionRow", "improvise"): _Pending(
         "U2 (cost surfaces)",
         "CR 702.126a's artifacts to tap; the row says the cast is payable once they are, "
@@ -639,16 +725,6 @@ _PENDING_SIBLING_FIXES: dict[tuple[str, str], _Pending] = {
         "U2 (cost surfaces)",
         "the affordance half of the same offer - which untapped artifacts could be spent, "
         "beside convoke, delve and crew, which the browser already reads",
-    ),
-    ("ActionRow", "activate_first"): _Pending(
-        "U2 (cost surfaces)",
-        "CR 118.3c mana abilities that must be activated by hand before a row the engine "
-        'calls "affordable: yes" can actually be paid',
-    ),
-    ("ManualManaStepView", "adds"): _Pending(
-        "U2 (cost surfaces)",
-        "what one of those manual activations adds, reachable only once `activate_first` "
-        "itself is read",
     ),
 }
 
@@ -671,9 +747,7 @@ def _link_is_read(
     """Whether the browser follows the edge `model.name` at all - by name, or
     through a declared generic read (`SpecialActionsView`'s keys, which is how
     `SpecialActionEntry` is reached without any of its link names appearing)."""
-    return (_declaring_class(model, name).__name__, name) in generic or is_consumed(
-        name, ui_source
-    )
+    return (_declaring_class(model, name).__name__, name) in generic or is_consumed(name, ui_source)
 
 
 def reachable_models(ui_source: str) -> set[type[BaseModel]]:
@@ -716,10 +790,51 @@ def _reached_index(ui_source: str) -> dict[tuple[str, str], bool]:
     }
 
 
-def landed_pending_entries(ui_source: str) -> list[tuple[str, str]]:
-    """The `_PENDING_SIBLING_FIXES` keys whose sibling fix has landed."""
+def landed_pending_entries(
+    ui_source: str, pending: Mapping[tuple[str, str], _Pending] | None = None
+) -> list[tuple[str, str]]:
+    """The pending keys whose sibling fix has landed."""
     reached = _reached_index(ui_source)
-    return sorted(key for key in _PENDING_SIBLING_FIXES if reached.get(key))
+    entries = _PENDING_SIBLING_FIXES if pending is None else pending
+    return sorted(key for key in entries if reached.get(key))
+
+
+def orphaned_pending_entries(
+    pending: Mapping[tuple[str, str], _Pending], open_tasks: Sequence[str]
+) -> list[tuple[str, str]]:
+    """The pending keys parked on a task nobody has declared open."""
+    return sorted(key for key, entry in pending.items() if entry.task not in open_tasks)
+
+
+def waves_with_nothing_pending(
+    pending: Mapping[tuple[str, str], _Pending], open_tasks: Sequence[str]
+) -> list[str]:
+    """The declared-open tasks no pending entry names any more."""
+    parked = {entry.task for entry in pending.values()}
+    return sorted(task for task in open_tasks if task not in parked)
+
+
+def abandoned_pending_entries(
+    pending: Mapping[tuple[str, str], _Pending], ui_source: str
+) -> list[tuple[str, str]]:
+    """The pending keys whose task has demonstrably finished without them.
+
+    A task that has wired *none* of its fields is still in flight, and its
+    entries are exactly what the pending list is for. A task that has wired
+    at least one has shipped: whatever it left unread it is not going to
+    come back for, so those entries are parked on nobody and are reported
+    here. This is the check that does not wait for a human to remember to
+    empty `_OPEN_WAVE_TASKS`."""
+    reached = _reached_index(ui_source)
+    by_task: dict[str, list[tuple[str, str]]] = {}
+    for key, entry in pending.items():
+        by_task.setdefault(entry.task, []).append(key)
+    abandoned: list[tuple[str, str]] = []
+    for keys in by_task.values():
+        if not any(reached.get(key) for key in keys):
+            continue
+        abandoned += [key for key in keys if not reached.get(key)]
+    return sorted(abandoned)
 
 
 def wired_allowlist_entries(ui_source: str) -> list[tuple[str, str]]:
@@ -869,9 +984,14 @@ def test_pending_fixes_have_not_landed_yet(ui_source: str) -> None:
         for owner, name in landed_pending_entries(ui_source)
     ]
     assert not landed, (
-        f"ui/ now reads {landed} - the fix landed. Delete those entries from "
-        "_PENDING_SIBLING_FIXES in tests/test_ui_surface_coverage.py; the field is "
-        "guarded by the ordinary rule from here on."
+        f"ui/ now reads {landed} - the fix landed, so the entry has done its job. Delete "
+        "exactly those keys from _PENDING_SIBLING_FIXES in "
+        "tests/test_ui_surface_coverage.py and nothing else: every field still listed "
+        "there is unread and still owed. Each deleted field is guarded by the ordinary "
+        "rule from here on, and when a task loses its last entry, drop it from "
+        "_OPEN_WAVE_TASKS too (test_every_open_wave_still_has_a_pending_entry says so). "
+        "When the dict empties, _WAVE_LANDING_READS goes with it - it describes this "
+        "wave's reads and nothing else."
     )
     gone = sorted(
         f"{owner}.{name}"
@@ -928,7 +1048,7 @@ def test_bracket_and_destructuring_reads_count() -> None:
 # entry. `U2 (cost surfaces)` produced exactly that collision for real: it
 # adds `ModeOptionView.notice` and reads it in `ui/render/ribbon.js` as
 # `m.notice`, which by name alone clears the `UnreadableModeView.notice`
-# entry below - on a view the browser still cannot reach, because
+# entry above - on a view the browser still cannot reach, because
 # `ActionRow.unreadable_modes` is what carries it and nothing reads that.
 # Reachability is what separates the two.
 
@@ -938,43 +1058,62 @@ def test_bracket_and_destructuring_reads_count() -> None:
 _U2_MODE_NOTICE_READ = "const label = m.number + '. ' + m.text; const why = m.notice;"
 
 
-def test_a_collision_on_an_unreachable_view_does_not_clear_a_pending_entry(
-    ui_source: str,
-) -> None:
-    """The merge-time false clear, pinned. `UnreadableModeView` hangs off
-    `ActionRow.unreadable_modes`, which no browser module reads, so no read of
-    the bare name `notice` anywhere in `ui/` can be a read of *this* field."""
-    merged = ui_source + "\n" + _U2_MODE_NOTICE_READ
-    assert ("UnreadableModeView", "notice") not in landed_pending_entries(merged)
-    assert ("UnreadableModeView", "mode_number") not in landed_pending_entries(merged)
+def test_a_collision_on_an_unreachable_view_does_not_clear_an_allowlist_entry() -> None:
+    """The merge-time false clear, pinned on the entries it actually hit.
+    `UnreadableModeView` hangs off `ActionRow.unreadable_modes`, so a browser
+    that does not read *that* is not reading this view's `notice`, whatever
+    the name says - and the two entries recording that the browser gets the
+    fact from `ModeOptionView` instead must survive the collision.
+
+    The source here is the read and nothing else, deliberately: a pin built
+    on top of the live `ui/` asserts that today's `ui/` happens not to read
+    the link, which stops being true the day somebody wires it and turns a
+    rule pin into a merge conflict. This pins the rule."""
+    wired = wired_allowlist_entries(_U2_MODE_NOTICE_READ)
+    assert ("UnreadableModeView", "notice") not in wired
+    assert ("UnreadableModeView", "mode_number") not in wired
 
 
-def test_the_same_collision_does_not_clear_an_allowlist_entry(ui_source: str) -> None:
-    """The other self-clearing list, which has the same collision exposure:
-    `TargetSlot.player_candidates` sits under the allowlisted
-    `Action.target_slots`, so a read of `player_candidates` on the
-    affordances' own slot view must not delete its entry."""
-    merged = ui_source + "\nconst players = slot.player_candidates || [];"
-    assert ("TargetSlot", "player_candidates") not in wired_allowlist_entries(merged)
+def test_the_same_collision_does_not_clear_another_allowlist_entry() -> None:
+    """The same exposure one surface over: `TargetSlot.player_candidates`
+    sits under the allowlisted `Action.target_slots`, so a read of
+    `player_candidates` on the affordances' own slot view must not delete
+    its entry."""
+    source = "const players = slot.player_candidates || [];"
+    assert ("TargetSlot", "player_candidates") not in wired_allowlist_entries(source)
 
 
-def test_a_pending_entry_still_clears_once_the_link_and_the_field_are_read(
-    ui_source: str,
-) -> None:
+#: A pending entry on a view behind an unread link, and one on a view the
+#: browser holds, sharing a field name - the pending list's half of the same
+#: collision. `Action.land_face` rides the row; `CardFaceView` hangs off
+#: `_CardViewFields.faces`.
+_LAND_FACE_PENDING = {
+    ("Action", "land_face"): _Pending("U1 (cast path correctness)", "the row's MDFC land face"),
+    ("CardFaceView", "land_face"): _Pending(
+        "U1 (cast path correctness)", "the face list's copy of it"
+    ),
+    ("_CardViewFields", "faces"): _Pending("U1 (cast path correctness)", "CR 712's face list"),
+}
+
+
+def test_a_collision_on_an_unreachable_view_does_not_clear_a_pending_entry() -> None:
+    """Reading the name on the row clears the row's entry and leaves the face
+    list's alone, because nothing read the link that carries the face list."""
+    landed = landed_pending_entries("if (row.land_face) playLand(row);", pending=_LAND_FACE_PENDING)
+    assert ("Action", "land_face") in landed
+    assert ("CardFaceView", "land_face") not in landed
+    assert ("_CardViewFields", "faces") not in landed
+
+
+def test_a_pending_entry_still_clears_once_the_link_and_the_field_are_read() -> None:
     """The self-clearing property is the reason the pending list is allowed to
     exist, so reachability must not quietly cost it. Read the link *and* the
-    field and the entry is reported landed, exactly as before."""
-    merged = ui_source + "\n".join(
-        [
-            "",
-            "const modes = row.unreadable_modes || [];",
-            "modes.forEach((m) => disable(m.mode_number, m.notice));",
-        ]
+    field and every entry is reported landed, exactly as before."""
+    landed = landed_pending_entries(
+        "const faces = card.faces || [];\nfaces.forEach((f) => f.land_face && offer(f));",
+        pending=_LAND_FACE_PENDING,
     )
-    landed = landed_pending_entries(merged)
-    assert ("UnreadableModeView", "notice") in landed
-    assert ("UnreadableModeView", "mode_number") in landed
-    assert ("ActionRow", "unreadable_modes") in landed
+    assert landed == sorted(_LAND_FACE_PENDING)
 
 
 def test_a_bare_word_is_not_a_read() -> None:
@@ -982,3 +1121,108 @@ def test_a_bare_word_is_not_a_read() -> None:
     a bare identifier is not a property read."""
     assert not is_consumed("splice_options", "next.splice(index, 0, id);")
     assert not is_consumed("improvise", "const improvise = 1;")
+
+
+# -- a wave that finishes may not leave fields parked ---------------------
+
+
+#: The reads `U1 (cast path correctness)` and `U2 (cost surfaces)` add to
+#: `ui/`, one per field their branches wire up. Appended to the live source
+#: this is the state the next merge produces, so a suite that is green with
+#: this appended is a suite that survives that merge with nothing parked.
+#:
+#: Wave-shaped, like `_OPEN_WAVE_TASKS`, and it dies with the same edit: once
+#: `_PENDING_SIBLING_FIXES` is empty this describes reads that have already
+#: landed, and the test below has nothing left to say.
+_WAVE_LANDING_READS = "\n".join(
+    [
+        "const faces = card.faces || [];",
+        "faces.forEach((f) => f.land_face && offerLandDrop(f));",
+        "if (row.land_face) playLand(row);",
+        "if (row.spell_face) castFace(row.spell_face);",
+        "const tappable = row.improvise || [];",
+        "const offer = affordance.object_costs.improvise;",
+    ]
+)
+
+
+def test_an_entry_parked_on_a_closed_wave_is_an_orphan() -> None:
+    pending = {
+        ("ActionRow", "x_costs"): _Pending("U2 (cost surfaces)", "a b c d e f"),
+        ("ActionRow", "improvise"): _Pending("U9 (still going)", "a b c d e f"),
+    }
+    assert orphaned_pending_entries(pending, ("U9 (still going)",)) == [("ActionRow", "x_costs")]
+
+
+def test_an_open_wave_with_nothing_pending_on_it_is_reported() -> None:
+    pending = {("ActionRow", "x_costs"): _Pending("U2 (cost surfaces)", "a b c d e f")}
+    assert waves_with_nothing_pending(pending, ("U2 (cost surfaces)", "U9 (gone)")) == ["U9 (gone)"]
+
+
+#: One task parking two fields, for the two halves of the rule below. The
+#: sources these are measured against are written out in full rather than
+#: appended to the live `ui/`, for the reason the collision pins are: a pin
+#: that leans on what today's `ui/` happens not to read stops pinning the
+#: rule the day somebody wires the field.
+_ONE_TASK_TWO_FIELDS = {
+    ("ActionRow", "improvise"): _Pending("U2 (cost surfaces)", "the row's artifacts to tap"),
+    ("ActionRow", "x_costs"): _Pending("U2 (cost surfaces)", "the row's charge per X"),
+}
+
+
+def test_a_wave_that_landed_one_field_and_parked_another_is_reported() -> None:
+    """The audit's finding, mechanised: `U2` wired `improvise` and left
+    `x_costs` unread, which says the task finished rather than that it is
+    still in flight."""
+    source = "const tappable = row.improvise || [];"
+    assert abandoned_pending_entries(_ONE_TASK_TWO_FIELDS, source) == [("ActionRow", "x_costs")]
+
+
+def test_a_wave_with_nothing_landed_yet_is_still_in_flight() -> None:
+    """The other half, and the reason the rule is per task rather than per
+    field: while none of a task's fields is read the task has not shipped,
+    and its entries are exactly what the pending list is for."""
+    assert abandoned_pending_entries(_ONE_TASK_TWO_FIELDS, "const x = 1;") == []
+
+
+def test_every_pending_entry_names_a_wave_that_is_still_open() -> None:
+    orphans = orphaned_pending_entries(_PENDING_SIBLING_FIXES, _OPEN_WAVE_TASKS)
+    assert not orphans, (
+        f"these entries are parked on a task that is no longer open: {orphans} - the task "
+        "finished without wiring the field, so it is not pending on anybody. Wire it up in "
+        "ui/, or move it to _NOT_CONSUMED_ON_PURPOSE with a reason kind."
+    )
+
+
+def test_every_open_wave_still_has_a_pending_entry() -> None:
+    dead = waves_with_nothing_pending(_PENDING_SIBLING_FIXES, _OPEN_WAVE_TASKS)
+    assert not dead, (
+        f"_OPEN_WAVE_TASKS declares {dead} open and no entry is pending on it - delete it "
+        "from _OPEN_WAVE_TASKS so a later entry cannot park itself on a task nobody is "
+        "running any more."
+    )
+
+
+def test_no_open_wave_has_finished_leaving_fields_parked(ui_source: str) -> None:
+    abandoned = abandoned_pending_entries(_PENDING_SIBLING_FIXES, ui_source)
+    assert not abandoned, (
+        f"these fields are parked on a task that has already wired up others: {abandoned} - "
+        "the task is done, so nothing is coming for these. Wire them up, or move them to "
+        "_NOT_CONSUMED_ON_PURPOSE with a reason kind."
+    )
+
+
+def test_nothing_is_left_parked_when_this_wave_lands(ui_source: str) -> None:
+    """The guard, run against the state the next merge produces.
+
+    Every entry left in `_PENDING_SIBLING_FIXES` has to clear on that merge.
+    One that does not is a field its task finished without wiring - the exact
+    state that turned this list into an excuse list once already - and it is
+    caught here, on this branch, rather than by whoever merges."""
+    merged = ui_source + "\n" + _WAVE_LANDING_READS
+    abandoned = abandoned_pending_entries(_PENDING_SIBLING_FIXES, merged)
+    assert not abandoned, (
+        f"when this wave lands, {abandoned} stay unread with their task finished. They are "
+        "not pending on anybody: wire them up in ui/, or move them to "
+        "_NOT_CONSUMED_ON_PURPOSE with a reason kind and one line saying why."
+    )

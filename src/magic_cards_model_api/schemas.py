@@ -10,7 +10,9 @@ Adding a field to a view the browser reads is only half a change.
 field published on `ActionRow` (including one inherited from the engine's own
 `Action`), `CardView`/`_CardViewFields`, `PendingDecisionView` or the
 affordance views has to be read somewhere under `ui/` or written down there
-with a one-line reason. Six live bugs came from skipping that step."""
+with a one-line reason - and a field left for a sibling task to wire is held
+to that task still being open, so a promise cannot quietly become an excuse.
+Six live bugs came from skipping that step."""
 
 from __future__ import annotations
 
