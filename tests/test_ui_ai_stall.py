@@ -166,3 +166,63 @@ def test_no_activity_at_all_is_unaffected():
     message = notice(board(), status, 60)
     assert message is not None
     assert "60s" in message
+
+
+# -- the pregame, where nobody holds priority ---------------------------------
+#
+# CR 103.5's mulligan step and CR 103.6's opening-hand step grant no player
+# priority, so `priority_holder` is null and every check this module makes
+# fell straight through: a game held on a dead AI seat's mulligan showed the
+# human nothing whatsoever. The server now says so itself (`pregame.stalled`,
+# `ai_pregame.stall`), and this passes that notice through verbatim - it
+# already names the seat, the move, why nothing answered it, and the ways
+# out, and paraphrasing it here would be a second copy to keep in step.
+
+
+def pregame_board(stalled: list[dict], **overrides: Any) -> dict:
+    return board(
+        priority_holder=None,
+        turn_number=0,
+        step="mulligan",
+        pregame={
+            "step": "mulligan",
+            "awaiting_mulligan": ["claude"],
+            "stalled": stalled,
+        },
+        **overrides,
+    )
+
+
+HELD = {
+    "player": "claude",
+    "kind": "mulligan",
+    "reason": "the seat's claude subprocess exited 0",
+    "text": "claude's CR 103.5 mulligan declaration is owed, and nothing is playing that seat.",
+}
+
+
+def test_a_pregame_move_the_server_refused_to_make_is_reported():
+    message = notice(pregame_board([HELD]), {"state": "stopped", "last_error": None}, 0)
+    assert message == HELD["text"], "the server's own notice was not what the human was shown"
+
+
+def test_the_pregame_notice_does_not_wait_for_a_stall_timer():
+    # Zero seconds unchanged, and a seat the server has not called broken:
+    # the ordinary timer below would say nothing for another 45 seconds, and
+    # the game is already held.
+    assert notice(pregame_board([HELD]), {"state": "dispatched", "last_error": None}, 0) is not None
+
+
+def test_a_pregame_held_on_the_other_seat_is_not_blamed_on_this_one():
+    held = HELD | {"player": "you", "text": "you owe a declaration."}
+    assert notice(pregame_board([held]), {"state": "stopped", "last_error": None}, 0) is None
+
+
+def test_an_ordinary_pregame_says_nothing():
+    assert notice(pregame_board([]), {"state": "dispatched", "last_error": None}, 600) is None
+
+
+def test_a_server_too_old_to_report_stalls_is_not_a_crash():
+    stale = pregame_board([])
+    del stale["pregame"]["stalled"]
+    assert notice(stale, {"state": "dispatched", "last_error": None}, 600) is None

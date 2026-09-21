@@ -1546,6 +1546,52 @@ NOTES_ROUTING_DURING_GAME = (
     "copy it into the guide now."
 )
 
+#: The post-game reviewer's own extra clause, and the counterpart of
+#: `NOTES_ROUTING_DURING_GAME` above: the same routing rule, for the one
+#: reader of it that is not a seat.
+#:
+#: **Why this clause has to exist at all.** `NOTES_ROUTING` sends a system
+#: problem to `report_problem`, and every `mtg` MCP tool - that one included
+#: - takes a `player_uid`. A seat has had its own since turn zero
+#: (`turn_zero` prints it). The post-game reviewer (`review.review_prompt`,
+#: run by `wrapper.oneshot`) is a separate `claude --print` process that
+#: never played anything and holds no credential, so without being told
+#: which uid to use it can read the rule, agree with it, and still have
+#: nowhere to put what it found - one live destination and one dead one.
+#: This names the credential, so both halves of the rule are reachable from
+#: the review.
+#:
+#: **The uid is the SEAT's, and it outlives the game.** `app.find_seat`
+#: resolves a uid against every game the store still holds, and
+#: `app.report_problem` has no "the game is over" guard - it records
+#: `audit.PROBLEM_ACTION` for the seat the credential opens. So the row the
+#: reviewer files is the row the seat would have filed, in the same game's
+#: own ledger, which is exactly what `NOTES_ROUTING` promises it is.
+#:
+#: **One tool, not a returned seat.** `wrapper.oneshot.REVIEW_MCP_TOOLS`
+#: allows `mcp__mtg__report_problem` and nothing else on that server, so the
+#: credential named here can file a report and cannot cast, pass, or touch
+#: a game that is already finished. The last sentence says so, because a
+#: reviewer that does not know it will otherwise try.
+NOTES_ROUTING_AFTER_GAME = (
+    "You are reviewing a finished game, not playing one, so you have no "
+    "seat of your own - use the seat's, which stays valid after the game "
+    'ends: `report_problem(player_uid="{uid}", text="...")` files the row '
+    "in game {game_id}'s own audit ledger, the same row {player} would have "
+    "filed during the game. One call per distinct system problem, made "
+    "BEFORE you write the critique, and say in the critique which ones you "
+    "filed. `report_problem` is the ONLY tool on the `mtg` server you may "
+    "call here - every other one is denied, because this game is over."
+)
+
+
+def notes_routing_after_game(assignment: Assignment) -> str:
+    """`NOTES_ROUTING_AFTER_GAME` with this review's own seat filled in."""
+    return NOTES_ROUTING_AFTER_GAME.format(
+        uid=assignment.uid, game_id=assignment.game_id, player=assignment.player
+    )
+
+
 #: The first words of every handover turn.
 HANDOVER_OPENING = "Hand over now: this game is finished for you."
 

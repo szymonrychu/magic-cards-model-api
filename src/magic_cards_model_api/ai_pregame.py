@@ -22,10 +22,46 @@ button they could press would move it. That is exactly the reported symptom -
 **What this does.** One daemon thread per game with bot seats. It watches for
 an obligation owed *by a bot seat* - a CR 103.5 declaration it has not made,
 or a CR 103.6 window it holds - and, when nothing is playing that seat any
-more, makes the engine's own default move for it: keep the dealt hand
-(bottoming the back of the hand, `opening._bottom_answer`'s documented
-default), and decline the opening-hand actions. Recorded in the audit log as
-`automatic`, `live: false`, so a transcript never claims the bot chose it.
+more, makes that move for it **if and only if the engine would accept exactly
+one answer to it** (`is_forced`). Recorded in the audit log as `automatic`,
+`live: false`, so a transcript never claims the bot chose it.
+
+**And when there is more than one answer, it refuses.** Reported live on
+2026-09-20 by the agent that then inherited the seat:
+
+    an automatic backstop declared 'keep' (take=false) for seat claude during
+    the mulligan step, reason 'nothing is playing this seat: driver
+    unreachable'. This locked in a 7-card opening hand with ZERO lands with no
+    chance for the real agent to mulligan it away.
+
+The zero-lander is the symptom; the defect is that a module whose job is to
+keep a game moving was making an unrecoverable *strategic* choice, and making
+it precisely because nobody was there to make it properly. Nothing later in a
+game gives a kept hand back, so the wrong answer here cannot be corrected the
+way a misplayed turn can.
+
+Teaching this module to count lands would be the same defect with a
+better-looking failure, so the rule is not about mulligans at all. Both
+pregame windows close for good once they pass - CR 103.5's round resolves and
+the hand is fixed, CR 103.6's window goes to the next seat and never comes
+back - so every pregame obligation is one-shot, and the only thing left to
+ask about one is how many answers the engine would accept. One answer is not
+a decision and is taken (the overwhelmingly common CR 103.6 pass, for a hand
+that offers no opening-hand action at all). Two or more is a choice, and the
+game is HELD there instead, with a notice (`stall`, `stall_text`) that names
+the seat, the move, the evidence that nothing is playing it, and every way
+out: restart the agent, decide for the seat with the game's admin key, or
+abandon the game. The same fail-closed-with-a-visible-notice this codebase
+prefers everywhere else (`understood=False`, `restriction_understood`, the
+unread-trigger and unread-spell notices).
+
+**A held game is recoverable; a wrongly answered one is not.** That trade is
+the whole argument. The stall is visible on the board (`pregame.stalled`,
+`opening.pregame_view`), in the audit log (`pregame_stalled`), and in the
+play UI (`ui/store.js`'s `aiStallNotice`, `ui/render/ribbon.js`), and it
+clears itself the moment the obligation is answered - by the seat's own agent
+arriving late, which is exactly what happened in the reported game, or by the
+human deciding for it on purpose.
 
 **"When nothing is playing that seat" is measured, not guessed.** The first
 version of this module fired on a timer alone: a bot seat that had not moved
@@ -57,13 +93,17 @@ ever":
   longer a guess about how long thinking takes, so it does not need retuning
   when the agent gets slower.
 - `AI_PREGAME_MAX_WAIT_SECONDS` is the hard ceiling on how long a human may be
-  made to wait on a bot seat's pregame move regardless of how alive it looks -
-  the case where the agent is up, playing, and simply never declares.
+  made to wait *silently* on a bot seat's pregame move regardless of how alive
+  it looks - the case where the agent is up, playing, and simply never
+  declares. It bounds the silence, not the decision: at the ceiling a forced
+  move is made and a choice is stalled loudly, because a seat being alive
+  makes taking its decision away worse, not better.
 
-**And the loser of the race fails loudly.** A live seat's declaration can
-still arrive just after the backstop's, and when it does `opening.py` refuses
-it with `PregameOverruled` - a 409 whose text says a backstop already moved
-for this seat and that any differing decision has been lost - and records a
+**And the loser of the race fails loudly.** A live seat's move can still
+arrive just after the backstop's - only over a forced one now, in practice
+CR 103.6's pass on a hand that offers nothing - and when it does `opening.py`
+refuses it with `PregameOverruled`: a 409 whose text says a backstop already
+moved for this seat and that any differing decision has been lost, plus a
 banner in the audit log. Silently answering 400 is what made the live bug
 invisible.
 
@@ -90,7 +130,7 @@ from typing import Any
 
 from magic_cards_model.models import Game
 
-from . import ai_seat, opening
+from . import ai_seat, audit, opening
 from .repository import GameUnloadable
 from .store import store
 
@@ -210,6 +250,99 @@ def obligation(game: Game, ai_players: set[str]) -> tuple[str, str] | None:
     return None
 
 
+def legal_moves(game: Game, owed: tuple[str, str]) -> list[str]:
+    """Every pregame move the engine would accept from this seat right now,
+    read off the engine rather than listed here.
+
+    - CR 103.5: keeping is always legal, and taking a mulligan is legal while
+      `Player.can_mulligan` ("a player can take mulligans until their opening
+      hand would be zero cards, after which they may not take further
+      mulligans").
+    - CR 103.6: passing the window is always legal, and each entry in
+      `Game.opening_hand_options` is one more action this seat's own opening
+      hand offers - which is already the engine's answer to "does this card
+      allow a player to take an action", restrictions included.
+
+    One entry means the seat has no choice to make. More than one means it
+    does, and `is_forced` below is where that distinction is spent.
+    """
+    kind, name = owed
+    if kind == "mulligan":
+        return ["keep"] + (["mulligan"] if game.player(name).can_mulligan else [])
+    return ["pass"] + [str(decision.card) for decision in game.opening_hand_options(name)]
+
+
+def is_forced(game: Game, owed: tuple[str, str]) -> bool:
+    """Whether this obligation has exactly one legal answer.
+
+    **The whole rule this module now turns on.** A move with one legal answer
+    is not a decision and nothing is taken from a seat by making it; a move
+    with two is a choice, and every pregame window closes for good once it
+    passes - CR 103.5's round resolves and the hand is fixed, CR 103.6's
+    window is handed to the next seat and never comes back - so a choice
+    guessed here can never be corrected later in the game.
+
+    That "closes for good" is what makes this generic rather than a list of
+    decision kinds somebody has to keep up to date: it is true of the pregame
+    as a whole, so the only question left per obligation is how many answers
+    the engine would accept, and the engine is asked (`legal_moves`).
+    """
+    return len(legal_moves(game, owed)) == 1
+
+
+def stall_text(game_id: str, owed: tuple[str, str], why: str) -> str:
+    """What a human at a panel, and an agent reading the board, are told when
+    the backstop declines to answer.
+
+    Failing closed is only better than a silent wrong answer when it is loud,
+    so this names all four things a reader needs: which seat, which move, the
+    evidence that nothing is playing that seat, and every way out of it. The
+    project's standing preference, and the same shape as the unread-trigger
+    and unread-spell notices.
+    """
+    kind, name = owed
+    move = "CR 103.5 mulligan declaration" if kind == "mulligan" else "CR 103.6 opening-hand window"
+    cost = (
+        "a hand kept is kept for the rest of the game"
+        if kind == "mulligan"
+        else "a window passed is handed to the next seat and never reopens"
+    )
+    return (
+        f"{name}'s {move} is owed, and nothing is playing that seat: {why}. The pregame is "
+        f"HELD here rather than answered for {name}: that move has more than one legal "
+        f"answer, and {cost}, so the automatic backstop will not choose it on a seat's "
+        f"behalf. It is still {name}'s to make - an agent that arrives late makes it "
+        f"itself and this notice clears. To move the game on now: start {name}'s agent "
+        f"again, or decide for it yourself with this game's admin key "
+        f"(POST /api/games/{game_id}/pregame/"
+        f"{'mulligan' if kind == 'mulligan' else 'opening-hand/finish'}), which is recorded "
+        f"as your decision and not as a default, or abandon the game from the lobby."
+    )
+
+
+def stall(game_id: str, owed: tuple[str, str], reason: str | None) -> dict[str, Any]:
+    """Refuse one obligation the backstop is not entitled to answer, loudly.
+
+    Idempotent per (seat, move): the watcher re-reads liveness every grace
+    period for as long as the obligation stands, and a banner repeated once
+    a second is as good as hidden.
+    """
+    kind, name = owed
+    why = reason or "nothing is playing this seat"
+    text = stall_text(game_id, owed, why)
+    if store.record_pregame_stall(game_id, name, kind, why, text):
+        audit.record(
+            game_id,
+            "pregame_stalled",
+            player=name,
+            kind=kind,
+            allowed=False,
+            reason=why,
+            text=text,
+        )
+    return {"stalled": {"player": name, "kind": kind, "reason": why, "text": text}}
+
+
 def settle(
     game_id: str, game: Game, owed: tuple[str, str], reason: str | None = None
 ) -> dict[str, Any]:
@@ -256,6 +389,8 @@ def settle_now(
         owed = obligation(game, ai_players)
         if owed is None or (expect is not None and owed != expect):
             return None
+        if not is_forced(game, owed):
+            return stall(game_id, owed, reason)
         return settle(game_id, game, owed, reason)
 
 
@@ -317,30 +452,29 @@ def watch(
             pending, look_again, give_up = owed, now + grace, now + max_wait
         elif now >= look_again:
             activity = seat_activity(game_id, owed[1])
+            reason: str | None = None
             if activity == ai_seat.GONE:
-                settle_now(
-                    game_id,
-                    ai_players,
-                    expect=owed,
-                    reason=f"nothing is playing this seat: {_why_gone(game_id, owed[1])}",
-                )
-                pending = None
+                reason = f"nothing is playing this seat: {_why_gone(game_id, owed[1])}"
             elif now >= give_up:
-                settle_now(
-                    game_id,
-                    ai_players,
-                    expect=owed,
-                    reason=(
-                        f"the seat is {activity} but has not made this pregame move in "
-                        f"{max_wait:.0f}s (AI_PREGAME_MAX_WAIT_SECONDS) - a human cannot "
-                        "be made to wait on it any longer"
-                    ),
+                reason = (
+                    f"the seat is {activity} but has not made this pregame move in "
+                    f"{max_wait:.0f}s (AI_PREGAME_MAX_WAIT_SECONDS) - a human cannot "
+                    "be made to wait on it silently any longer"
                 )
-                pending = None
-            else:
-                # Visibly still working. Leave its move to it and look again
-                # after another grace period.
+            if reason is None:
+                # Visibly still working, and inside the ceiling. Leave its
+                # move to it and look again after another grace period.
                 look_again = now + grace
+            elif (settle_now(game_id, ai_players, expect=owed, reason=reason) or {}).get("stalled"):
+                # Refused, not answered: the move was a real choice and this
+                # module does not make those (`is_forced`). The obligation
+                # still stands, so its clocks are deliberately NOT restarted -
+                # `pending` stays put, `give_up` keeps its original deadline,
+                # and liveness is re-read every grace period so the seat's own
+                # declaration is taken the moment its agent turns up.
+                look_again = now + grace
+            else:
+                pending = None
         if stop_event is not None:
             if stop_event.wait(poll):
                 return
@@ -377,12 +511,16 @@ def start(game_id: str, ai_players: list[str]) -> None:
 
 __all__ = [
     "grace_seconds",
+    "is_forced",
     "is_watching",
+    "legal_moves",
     "max_wait_seconds",
     "obligation",
     "seat_activity",
     "settle",
     "settle_now",
+    "stall",
+    "stall_text",
     "start",
     "stop",
     "watch",

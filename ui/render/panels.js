@@ -197,7 +197,14 @@ function renderAiStallBanner(root, app, handlers) {
     return;
   }
   banner.hidden = false;
-  banner.appendChild(h("span", {}, `${message}.`));
+  // A pregame stall is not "the agent has gone quiet mid-game", and passing
+  // priority is not a move anyone holds in CR 103.5 or CR 103.6 - so neither
+  // the reassurance nor the button belongs there. The server's own notice is
+  // whole sentences already and says what the ways out are
+  // (`ai_pregame.stall_text`), so it is not punctuated a second time either.
+  const pregameStall = Boolean(app.state && app.state.pregame);
+  banner.appendChild(h("span", {}, pregameStall ? message : `${message}.`));
+  if (pregameStall) return;
   banner.appendChild(
     h("span", { class: "why" }, "Nothing is wrong with your game - its opponent is an agent, and it has gone quiet.")
   );

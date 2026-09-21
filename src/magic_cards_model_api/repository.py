@@ -529,6 +529,33 @@ class GameRepository(Protocol):
         """The pregame moves the backstop made for this seat, if any."""
         ...
 
+    def record_pregame_stall(
+        self, game_id: str, player: str, kind: str, reason: str, text: str
+    ) -> bool:
+        """Remember that `ai_pregame.py`'s backstop found `kind` owed by a
+        seat nothing is playing, and **refused to answer it** because the
+        answer would not have been forced. `True` the first time this
+        (player, kind) is recorded, `False` afterwards - the watcher re-reads
+        the obligation every grace period for as long as it stands, and one
+        stall is one banner in the transcript, not one per poll.
+
+        Process-local in both implementations for the same reason
+        `record_automatic_pregame` is: the backstop that writes it is a thread
+        in this process. See `PostgresRepository.__init__`."""
+        ...
+
+    def clear_pregame_stall(self, game_id: str, player: str, kind: str) -> None:
+        """Drop the stall notice for one (player, kind), the obligation it
+        was about having now been answered - by the seat itself, arriving
+        late, or by the game's owner deciding for it."""
+        ...
+
+    def pregame_stalls(self, game_id: str) -> list[dict[str, str]]:
+        """Every pregame obligation this game is currently held on, oldest
+        first: `{"player", "kind", "reason", "text"}` each. Empty for a game
+        that is waiting on nobody, which is nearly every game."""
+        ...
+
     def ids(self) -> list[str]:
         """Every game id currently held."""
         ...
@@ -795,6 +822,12 @@ class InMemoryRepository:
         # adjacent machinery (T7 owns it), not part of `GameRepository`. See
         # `record_automatic_pregame`.
         self._automatic_pregame: dict[str, dict[str, set[str]]] = {}
+        # game_id -> (player, kind) -> the notice saying this pregame move is
+        # owed by a seat nothing is playing and was NOT made for it. The
+        # other side of `_automatic_pregame`: that one records what the
+        # backstop did, this one records what it refused to do and why. See
+        # `record_pregame_stall`.
+        self._pregame_stalls: dict[str, dict[tuple[str, str], dict[str, str]]] = {}
         # Lobby-owned. The games the play UI's lobby booted, oldest first.
         # Only those are ever reset through `DELETE /api/ui/games/{id}`
         # (`lobby.py`): a game booted by `serve.py --match` or by
@@ -989,6 +1022,29 @@ class InMemoryRepository:
         with self._lock:
             return set(self._automatic_pregame.get(game_id, {}).get(player, set()))
 
+    def record_pregame_stall(
+        self, game_id: str, player: str, kind: str, reason: str, text: str
+    ) -> bool:
+        with self._lock:
+            stalls = self._pregame_stalls.setdefault(game_id, {})
+            if (player, kind) in stalls:
+                return False
+            stalls[(player, kind)] = {
+                "player": player,
+                "kind": kind,
+                "reason": reason,
+                "text": text,
+            }
+            return True
+
+    def clear_pregame_stall(self, game_id: str, player: str, kind: str) -> None:
+        with self._lock:
+            self._pregame_stalls.get(game_id, {}).pop((player, kind), None)
+
+    def pregame_stalls(self, game_id: str) -> list[dict[str, str]]:
+        with self._lock:
+            return [dict(stall) for stall in self._pregame_stalls.get(game_id, {}).values()]
+
     @contextmanager
     def locked(self, game_id: str) -> Iterator[Game]:
         """Hold `game_id`'s mutation lock for a whole request, yielding the
@@ -1133,6 +1189,7 @@ class InMemoryRepository:
             self._agent_settings.pop(game_id, None)
             self._ai_players.pop(game_id, None)
             self._automatic_pregame.pop(game_id, None)
+            self._pregame_stalls.pop(game_id, None)
             if game_id in self._ui_games:
                 self._ui_games.remove(game_id)
             return game is not None

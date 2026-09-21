@@ -369,6 +369,12 @@ class PostgresRepository:
         # the same surface `InMemoryRepository` does - `opening.py` calls
         # both of these on whichever store `store.py` selected.
         self._automatic_pregame: dict[str, dict[str, set[str]]] = {}
+        # game_id -> (player, kind) -> the notice for a pregame move the
+        # backstop found owed by a seat nothing is playing and REFUSED to
+        # make, the answer not being forced. Process-local for exactly the
+        # reason `_automatic_pregame` above is: the watcher that writes it is
+        # a thread in this process.
+        self._pregame_stalls: dict[str, dict[tuple[str, str], dict[str, str]]] = {}
         # M8: pending reservations against `MAX_LIVE_GAMES`, keyed by token.
         # Process-local, like `_locks`/`_automatic_pregame` above and for the
         # same underlying reason: this whole phase deploys the lobby at
@@ -816,6 +822,7 @@ class PostgresRepository:
             self._cache.pop(game_id, None)
             self._undecodable.pop(game_id, None)
             self._automatic_pregame.pop(game_id, None)
+            self._pregame_stalls.pop(game_id, None)
         with self._locks_lock:
             self._locks.pop(game_id, None)
         return result.rowcount > 0
@@ -994,6 +1001,31 @@ class PostgresRepository:
         """The pregame moves the backstop made for this seat, if any."""
         with self._cache_lock:
             return set(self._automatic_pregame.get(game_id, {}).get(player, set()))
+
+    def record_pregame_stall(
+        self, game_id: str, player: str, kind: str, reason: str, text: str
+    ) -> bool:
+        """`InMemoryRepository`'s own method, same behaviour, process-local
+        for the reason `__init__` gives."""
+        with self._cache_lock:
+            stalls = self._pregame_stalls.setdefault(game_id, {})
+            if (player, kind) in stalls:
+                return False
+            stalls[(player, kind)] = {
+                "player": player,
+                "kind": kind,
+                "reason": reason,
+                "text": text,
+            }
+            return True
+
+    def clear_pregame_stall(self, game_id: str, player: str, kind: str) -> None:
+        with self._cache_lock:
+            self._pregame_stalls.get(game_id, {}).pop((player, kind), None)
+
+    def pregame_stalls(self, game_id: str) -> list[dict[str, str]]:
+        with self._cache_lock:
+            return [dict(stall) for stall in self._pregame_stalls.get(game_id, {}).values()]
 
     def register_ui_game(self, game_id: str) -> None:
         if not _looks_like_id(game_id):

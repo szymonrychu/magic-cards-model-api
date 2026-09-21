@@ -1734,6 +1734,24 @@ class OpeningHandOptionView(BaseModel):
     prompt: str
 
 
+class PregameStallView(BaseModel):
+    """One pregame obligation the game is held on: a move owed by a seat
+    nothing is playing, that `ai_pregame.py`'s backstop refused to answer
+    because the answer would have been a choice rather than a forced move.
+    See `ai_pregame.is_forced` and `ai_pregame.stall_text`."""
+
+    player: str
+    kind: str
+    """`"mulligan"` (CR 103.5) or `"opening_hand"` (CR 103.6)."""
+    reason: str
+    """The evidence that nothing is playing that seat - `ai_seat.why_gone`'s
+    own line, or the ceiling that a live-but-silent seat blew."""
+    text: str
+    """The whole notice, as a human at a panel and an agent reading the board
+    are both shown it: what is owed, why nothing answered it, and every way
+    out."""
+
+
 class PregameView(BaseModel):
     """What the game is waiting for in the pregame (`opening.pregame_view`),
     or `None` once CR 103.8's first turn has begun. `opening_hand_options`
@@ -1751,6 +1769,10 @@ class PregameView(BaseModel):
     opening_hand_actor: str | None = None
     opening_hand_options: dict[str, list[OpeningHandOptionView]]
     opening_hand_notices: list[str]
+    stalled: list[PregameStallView] = []
+    """Pregame moves owed by a seat nothing is playing that the backstop
+    refused to make - `[]` for every game waiting on nobody, which is nearly
+    all of them. Public: `visibility._redact_pregame` does not touch it."""
 
 
 class ExilePileView(BaseModel):

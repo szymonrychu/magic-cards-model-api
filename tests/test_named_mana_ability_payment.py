@@ -527,10 +527,20 @@ def test_two_distinct_colours_reach_an_any_combination_ability(client, game):
     `ManaAbility.offers` (engine-side) then has to let a hand-picked `{W}{U}`
     production actually be tapped for, not just resolved - so the dry-run
     check that used to stop at "pass the colour chosen" now drives a real
-    cast: Ornithopter costs `{0}`, so nothing is spent and the whole mixture
-    survives, untouched, into the pool the state view reports. That is the
-    genuine two-colour mixture this test exists to prove, not two mana of one
-    colour standing in for it.
+    cast. The cast is a Lightning Bolt paid by a Mountain, and the Watch's own
+    mixture survives untouched into the pool the state view reports: CR 106.6's
+    tag on it says "spend this mana only to cast spells from exile", and a Bolt
+    cast from hand is not that, so the `{R}` comes off the Mountain and the
+    whole `{W}{U}` is still floating afterwards. That is the genuine two-colour
+    mixture this test exists to prove, not two mana of one colour standing in
+    for it.
+
+    The vehicle used to be an Ornithopter, cast for `{0}` so that nothing
+    could be spent - which stopped working the day `pay_with` learned not to
+    activate a mana ability for a cost with no mana payment in it (CR 601.2g,
+    CR 118.3c; see `engine_api.owes_mana`). A cost that really does owe mana
+    the Watch's restricted mixture cannot pay is the same "nothing is spent"
+    guarantee, taken from the restriction rather than from the price.
 
     Sol Ring, cast right after from the same hand with no further mana
     named, then reuses that already-floating pool and is refused - not
@@ -540,15 +550,18 @@ def test_two_distinct_colours_reach_an_any_combination_ability(client, game):
     text is the engine's own restriction sentence, not a tap-stage message.
     """
     add_card(client, game, "Interdimensional Web Watch", "alice", "battlefield")
-    add_card(client, game, "Ornithopter", "alice", "hand")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
     watch = battlefield_id(client, game, "Interdimensional Web Watch")
+    mountain = battlefield_id(client, game, "Mountain")
     index = mana_ability_index(client, game, "Interdimensional Web Watch", restricted=True)
 
     tapped = cast(
         client,
         game,
-        "Ornithopter",
-        [{"card_id": watch, "colors": ["W", "U"], "ability_index": index}],
+        "Lightning Bolt",
+        [{"card_id": watch, "colors": ["W", "U"], "ability_index": index}, mountain],
+        targets=["bob"],
     )
     assert tapped["allowed"] is True, tapped
     while state(client, game)["stack"]:

@@ -9903,6 +9903,35 @@
         "title": "PregameSettleResponse",
         "type": "object"
       },
+      "PregameStallView": {
+        "description": "One pregame obligation the game is held on: a move owed by a seat\nnothing is playing, that `ai_pregame.py`'s backstop refused to answer\nbecause the answer would have been a choice rather than a forced move.\nSee `ai_pregame.is_forced` and `ai_pregame.stall_text`.",
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player",
+          "kind",
+          "reason",
+          "text"
+        ],
+        "title": "PregameStallView",
+        "type": "object"
+      },
       "PregameView": {
         "description": "What the game is waiting for in the pregame (`opening.pregame_view`),\nor `None` once CR 103.8's first turn has begun. `opening_hand_options`\nnames cards in a hidden zone (CR 402.3), so `visibility._redact_pregame`\nempties every seat's entry but the viewer's own - never removes the key,\nso this needs no `| None` of its own beyond the whole field on\n`GameStateView`.",
         "properties": {
@@ -9968,6 +9997,14 @@
             },
             "title": "Opening Hand Options",
             "type": "object"
+          },
+          "stalled": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PregameStallView"
+            },
+            "title": "Stalled",
+            "type": "array"
           },
           "step": {
             "title": "Step",

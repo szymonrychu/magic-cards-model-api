@@ -1462,6 +1462,16 @@ def test_the_handover_says_a_problem_spotted_during_the_game_is_reported_then(gu
     assert "when it is spotted" in text
 
 
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+def test_the_handover_does_not_carry_the_reviewers_own_after_game_clause(guide, role):
+    """T13-r1.2: the reviewer is told which `player_uid` `report_problem`
+    takes because it is not a seat and has none of its own. A seat playing
+    the game already has its uid from turn zero, and the handover must not
+    grow a second, staler copy of it."""
+    text = _flat(_handover(guide, role))
+    assert "report_problem(player_uid=" not in text
+
+
 def test_the_routing_rule_is_one_constant_both_prompts_read():
     """Clause (a): the same rule, in the same words, in both write-back
     prompts - which is only guaranteed if there is one copy of it."""

@@ -90,10 +90,15 @@ there is no priority to wait for until CR 103.8's first turn begins.
 **Do not dawdle here, and do not exit here.** A previous run of this brief
 declared its keep, decided the pregame was "nothing to act on yet", and exited
 - leaving a human at a panel that said "waiting on you" with no button that
-could move it. The server now backstops that (`ai_pregame.py`: a bot seat that
-does not move within its grace period gets the engine's default keep and
-decline made for it, logged as `automatic`), but a hand *you* chose beats a
-hand chosen for you by a timer. Declare, finish CR 103.6, and stay running.
+could move it. The server backstops that (`ai_pregame.py`), but only for a
+move with exactly one legal answer: a CR 103.6 window your hand offers nothing
+to do in is passed for you, logged as `automatic`. **Your CR 103.5 mulligan
+declaration is never made for you.** Keeping is one of two legal answers and
+nothing gives a kept hand back, so a seat nobody is playing holds the whole
+game there with a notice on the board (`state.pregame.stalled`) until you turn
+up and declare, or until the human decides for you on purpose. That is your
+hand to throw away or keep - nobody will do it for you, and nobody will do it
+*to* you. Declare, finish CR 103.6, and stay running.
 
 ## The loop
 

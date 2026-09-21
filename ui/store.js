@@ -292,10 +292,25 @@ export const AI_STALL_SECONDS = 45;
  * `last_error` and `state === "unreachable"` still win over all of this: a
  * seat the server already knows is broken is reported immediately, whatever
  * its last transcript line said.
+ *
+ * The pregame is checked before any of that, and on the server's word rather
+ * than on a clock here. Nobody holds priority in CR 103.5's mulligan step or
+ * CR 103.6's opening-hand step, so every check below would fall straight
+ * through - which is why a game held on a dead AI seat's mulligan showed the
+ * human nothing at all. `pregame.stalled` is the server saying it found that
+ * move owed by a seat nothing is playing and REFUSED to answer it, because
+ * answering would have been a choice and a kept hand cannot be given back
+ * (`ai_pregame.is_forced`). Its own `text` carries the ways out, so it is
+ * passed through verbatim rather than paraphrased here.
  */
 export function aiStallNotice(state, aiPlayer, aiStatus, unchangedSeconds, grace) {
   if (!state || !aiPlayer) return null;
   if (state.winner || state.drawn) return null;
+  const stalled = state.pregame && state.pregame.stalled;
+  if (Array.isArray(stalled)) {
+    const held = stalled.find((entry) => entry && entry.player === aiPlayer);
+    if (held) return held.text;
+  }
   if (state.priority_holder !== aiPlayer) return null;
   const error = aiStatus && aiStatus.last_error;
   if (error) return `${aiPlayer}'s agent reported an error: ${error}`;

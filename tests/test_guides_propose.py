@@ -37,6 +37,8 @@ from guides_git_testkit import (
 )
 from playscript_testkit import SLUG
 
+from magic_cards_model_api.playscripts.content_gate import CONTENT_REFUSED
+
 NOTES = f"decks/{SLUG}/NOTES.md"
 BRANCH = f"seat/{GAME}-{SLUG}-seat-guides"
 ADVISOR_BRANCH = f"seat/{GAME}-{SLUG}-advisor-guides"
@@ -176,6 +178,9 @@ def test_a_forbidden_boarding_plan_key_is_refused(
     edit_plan(root, change)
     rc, result, _, _ = propose(capsys, root)
     assert (rc, result["result"]) == (1, "refused"), result
+    # T38's content gate did not take this refusal over: the remedy for a key
+    # outside the allowlist is to revert it, not to reword it.
+    assert result["result"] != CONTENT_REFUSED
     assert where in result["message"]
     assert rendered_log(render_log) == []
     assert branches(bare) == {"main"}
@@ -204,6 +209,7 @@ def test_a_forbidden_file_is_refused(capsys, root, bare, github, render_log, pat
     (root / path).write_text("changed\n", encoding="utf-8")
     rc, result, _, _ = propose(capsys, root)
     assert (rc, result["result"]) == (1, "refused"), result
+    assert result["result"] != CONTENT_REFUSED
     assert path in result["files"]
     assert rendered_log(render_log) == []
     assert branches(bare) == {"main"}
@@ -242,6 +248,7 @@ def test_the_newest_run_is_the_one_allowed(capsys, root, bare, render_log):
     (root / OLD_PLAN).write_text(dump(doc), encoding="utf-8")
     rc, result, _, _ = propose(capsys, root)
     assert result["result"] == "refused"
+    assert result["result"] != CONTENT_REFUSED
     assert result["files"] == [OLD_PLAN]
     assert branches(bare) == {"main"}
 
@@ -410,9 +417,7 @@ def test_the_checkout_lock_is_held_across_processes(tmp_path):
     holder = threading.Thread(target=hold)
     holder.start()
     held.wait(5.0)
-    child = subprocess.Popen(
-        [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True
-    )
+    child = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True)
     try:
         assert child.poll() is None
         release.set()

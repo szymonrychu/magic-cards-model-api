@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from conftest import add_card
+from conftest import add_card, force_turn_position
+from magic_cards_model.machines import Step
 from magic_cards_model.machines.hypothetical import payability_matrix
 from magic_cards_model.models import CardState
 
@@ -699,3 +700,394 @@ def test_timing_on_a_realistic_board(client, game):
     assert facts["cards"]
     assert elapsed < 3.0, f"build_hypothetical_facts took {elapsed:.2f}s"
     print(f"\nbuild_hypothetical_facts: {elapsed * 1000:.1f} ms for a 7-card hand, 19 lands")
+
+
+# -- T3: payable_any and unlocks_next, the `next_turn` horizon --------------------
+#
+# The flag is named `next_turn`: `build_hypothetical_facts(game, player,
+# candidate_ids=..., next_turn=True)` runs the second `payability_matrix`
+# pass with `assuming_untapped=True` and adds `payable_any` (hand cards) and
+# `unlocks_next` (the same lands `unlocks` is offered on). Unset, nothing
+# about the answer moves.
+
+
+def _horizon(game_id: str, player: str = "alice", **kwargs: Any) -> dict[str, Any]:
+    return build_hypothetical_facts(_live(game_id), player, next_turn=True, **kwargs)
+
+
+def test_payable_any_is_not_now_for_a_targetable_card_whose_colour_is_unpayable(client, game):
+    """The entire point of the fix: `castable_now` is the colour-blind read -
+    it only asks whether `legal_actions` offers a row with its mandatory
+    targets filled, never whether the mana is there. Fatal Push ({B}) with a
+    Mountain up and an opposing Grizzly Bears to kill is `castable_now:
+    true` and still not payable, so `payable_any` must read the Swamp in
+    hand ("with_a_land"), never "now"."""
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Swamp", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    live = _live(game)
+    alice = live.player("alice")
+    push_id = str(_by_name(alice.hand, "Fatal Push").id)
+
+    facts = _horizon(game)
+
+    assert facts["cards"][push_id]["castable_now"] is True
+    assert facts["cards"][push_id]["payable_any"] == "with_a_land"
+
+
+def test_payable_any_is_now_when_the_card_is_payable_and_has_a_legal_target(client, game):
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    live = _live(game)
+    alice = live.player("alice")
+    push_id = str(_by_name(alice.hand, "Fatal Push").id)
+
+    assert _horizon(game)["cards"][push_id]["payable_any"] == "now"
+
+
+def test_payable_any_is_never_now_without_a_legal_target(client, game):
+    """The same board as above with no creature anywhere: the {B} is payable
+    right now, but every cast row Fatal Push offers has an empty mandatory
+    target slot, so `_has_a_payable_targeted_option` refuses "now". Only the
+    "now" tier asks that - the later ones are about mana reach alone, and
+    the Island's own column says the mana is there - so it reads
+    "with_a_land" rather than "now". The claim the vocabulary makes is about
+    when the cost could be paid, and only "now" is also a claim that the
+    spell could be cast this instant."""
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    push_id = str(_by_name(alice.hand, "Fatal Push").id)
+
+    facts = _horizon(game)
+
+    assert facts["cards"][push_id]["castable_now"] is False
+    assert facts["cards"][push_id]["payable_any"] == "with_a_land"
+
+
+def test_payable_any_is_next_turn_when_only_the_untap_step_pays_it(client, game):
+    """Preordain ({U}) with the only Island already tapped: unpayable now,
+    unpayable with the Mountain in hand, payable the moment the untap step
+    has happened - which is exactly what the second `assuming_untapped` pass
+    answers."""
+    add_card(client, game, "Island", "alice", "battlefield", tapped=True)
+    add_card(client, game, "Mountain", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    preordain_id = str(_by_name(alice.hand, "Preordain").id)
+
+    assert _horizon(game)["cards"][preordain_id]["payable_any"] == "next_turn"
+
+
+def test_payable_any_is_no_when_nothing_in_reach_pays_it(client, game):
+    """Psychic Frog ({U}{B}) with an empty battlefield and a lone Mountain in
+    hand: no colour, no land drop that helps, and nothing to untap."""
+    add_card(client, game, "Mountain", "alice", "hand")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    frog_id = str(_by_name(alice.hand, "Psychic Frog").id)
+
+    assert _horizon(game)["cards"][frog_id]["payable_any"] == "no"
+
+
+def test_an_x_cost_hand_card_gets_no_payable_any_entry_at_all(client, game):
+    """Item 2's fail-closed rule, the same one `unlocks` already applies via
+    `_has_x`: `payability_matrix` only ever judges an X spell at X=0 (CR
+    107.1b's cheapest legal announcement), so a "yes" there says nothing
+    about the X a play actually wants. Postmortem Lunge ({X}{B/P}) therefore
+    carries no `payable_any` key at all - not "no", which would be a claim -
+    while the ordinary card beside it in the same hand still gets one."""
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Postmortem Lunge", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    lunge_id = str(_by_name(alice.hand, "Postmortem Lunge").id)
+    preordain_id = str(_by_name(alice.hand, "Preordain").id)
+
+    facts = _horizon(game)
+
+    assert "payable_any" not in facts["cards"][lunge_id]
+    assert facts["cards"][preordain_id]["payable_any"] == "with_a_land"
+
+
+def test_unlocks_next_reads_the_board_after_the_untap_step(client, game):
+    """Swamp tapped, Island in hand, Psychic Frog ({U}{B}) in hand. Today's
+    `unlocks` is False - the Island alone only ever makes {U}, and the Swamp
+    is tapped - but once the untap step has happened the Swamp pays the {B}
+    and the Island is exactly what turns the Frog on, so `unlocks_next` is
+    True."""
+    add_card(client, game, "Swamp", "alice", "battlefield", tapped=True)
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    island_id = str(_by_name(alice.hand, "Island").id)
+
+    facts = _horizon(game)
+
+    assert facts["cards"][island_id]["unlocks"] is False
+    assert facts["cards"][island_id]["unlocks_next"] is True
+
+
+def test_unlocks_next_is_false_when_the_untap_step_already_pays_it(client, game):
+    """The mirror image, and the reason `unlocks_next` compares against the
+    *assuming_untapped* now row rather than the real one: the tapped Island
+    on the battlefield pays Preordain by itself once it untaps, so the
+    Island in hand adds nothing that was not already there next turn -
+    `unlocks_next` is False even though today's `unlocks` is True."""
+    add_card(client, game, "Island", "alice", "battlefield", tapped=True)
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    island_id = str(_by_name(alice.hand, "Island").id)
+
+    facts = _horizon(game)
+
+    assert facts["cards"][island_id]["unlocks"] is True
+    assert facts["cards"][island_id]["unlocks_next"] is False
+
+
+def test_a_land_whose_untapped_option_is_lethal_never_reads_unlocks_next(client, game):
+    """CR 704.5a, applied to `unlocks_next` exactly as `enters`/`unlocks`
+    already apply it: Sacred Foundry's untapped option costs 2 life, so at 2
+    life it is not an option a player can use and the land fails closed -
+    with the notice that says why."""
+    add_card(client, game, "Sacred Foundry", "alice", "hand")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    foundry_id = str(_by_name(alice.hand, "Sacred Foundry").id)
+
+    assert _horizon(game)["cards"][foundry_id]["unlocks_next"] is True
+
+    alice.life = 2
+    lethal = _horizon(game)
+
+    assert lethal["cards"][foundry_id]["unlocks_next"] is False
+    assert any(
+        "lethal" in notice.casefold() and "unlocks_next" in notice for notice in lethal["notices"]
+    ), lethal["notices"]
+
+
+def test_unlocks_next_is_offered_on_exactly_the_lands_unlocks_is_offered_on(client, game):
+    """Requirement (d): the CR 401.2 argument in the module docstring stays
+    true verbatim only if `unlocks_next` never widens the set of lands whose
+    facts reach the wire. A hand land always, a `candidate_ids` land too,
+    and no other library card ever."""
+    add_card(client, game, "Ragavan, Nimble Pilferer", "alice", "hand")
+    add_card(client, game, "Mountain", "alice", "library")
+    add_card(client, game, "Sacred Foundry", "alice", "library")
+    live = _live(game)
+    alice = live.player("alice")
+    mountain = _by_name(alice.library, "Mountain")
+    foundry = _by_name(alice.library, "Sacred Foundry")
+
+    named = build_hypothetical_facts(
+        live, "alice", candidate_ids=frozenset({str(mountain.id)}), next_turn=True
+    )
+    assert "unlocks_next" in named["cards"][str(mountain.id)]
+    assert str(foundry.id) not in named["cards"]
+
+    unnamed = _horizon(game)
+    assert str(mountain.id) not in unnamed["cards"]
+    assert str(foundry.id) not in unnamed["cards"]
+
+    for facts in (named, unnamed):
+        for card_id, entry in facts["cards"].items():
+            assert ("unlocks_next" in entry) == ("unlocks" in entry), (card_id, entry)
+
+
+def test_a_hand_land_carries_unlocks_next_beside_unlocks(client, game):
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    live = _live(game)
+    alice = live.player("alice")
+    island_id = str(_by_name(alice.hand, "Island").id)
+
+    entry = _horizon(game)["cards"][island_id]
+
+    assert entry["unlocks"] is True
+    assert entry["unlocks_next"] is True
+
+
+def test_with_a_land_is_withheld_once_this_turns_land_drop_is_spent(client, game):
+    """D-3, the fix: `playscripts.schema` defines the word as "`with_a_land`
+    once the land drop still available this turn is made" (and `mtg-decks`'
+    mirror says the same), so the fact is gated on that drop actually being
+    available - CR 305.2a's own comparison of the lands this player may play
+    this turn against the ones they already played.
+
+    Preordain ({U}) with an Island in hand reads "with_a_land" while the drop
+    is there. Spend it and no land can be played this turn at all, so the
+    word is withheld: with nothing on the battlefield to untap either, the
+    honest answer left in the four-word vocabulary is "no"."""
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    live = _live(game)
+    preordain_id = str(_by_name(live.player("alice").hand, "Preordain").id)
+
+    assert _horizon(game)["cards"][preordain_id]["payable_any"] == "with_a_land"
+
+    live.lands_played["alice"] = live.land_allowance("alice")
+    spent = _horizon(game)
+
+    assert spent["cards"][preordain_id]["payable_any"] == "no"
+    assert any("with_a_land" in notice and "305.2a" in notice for notice in spent["notices"]), (
+        spent["notices"]
+    )
+
+
+def test_with_a_land_is_withheld_on_the_opponents_turn(client, game):
+    """CR 305.3, "A player can't play a land, for any reason, if it isn't
+    their turn" - the other durable half of the drop. Fatal Push is the card
+    that makes the point: an instant is castable on bob's turn (CR 117.1a),
+    so nothing about the *timing* stops it and the Swamp in hand really does
+    pay the {B} - what stops it is that alice cannot play that Swamp at all
+    while it is not her turn. So the word is withheld, and the notice names
+    the rule."""
+    add_card(client, game, "Swamp", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    live = _live(game)
+    push_id = str(_by_name(live.player("alice").hand, "Fatal Push").id)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
+
+    facts = _horizon(game)
+
+    assert facts["cards"][push_id]["payable_any"] == "no"
+    assert any("with_a_land" in notice and "305.3" in notice for notice in facts["notices"]), facts[
+        "notices"
+    ]
+
+
+def test_with_a_land_survives_a_non_empty_stack_and_says_timing_is_not_read(client, game):
+    """The half of CR 305 the gate deliberately does **not** read: CR 305.1's
+    own timing (a main phase, an empty stack, priority in hand). That half is
+    this instant's, satisfied again the moment the stack empties, and it is
+    never satisfied at all while a `candidate_ids` caller asks mid-resolution
+    (CR 608.2d) - gating on it would collapse every `with_a_land` for a seat
+    reading a script mid-search.
+
+    So with a spell on the stack and the drop still unspent, Fatal Push still
+    reads "with_a_land" off the Swamp in hand, and a notice says in the
+    engine's own words which timing the fact did not read."""
+    add_card(client, game, "Swamp", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "stack")
+    live = _live(game)
+    push_id = str(_by_name(live.player("alice").hand, "Fatal Push").id)
+
+    facts = _horizon(game)
+
+    assert facts["cards"][push_id]["payable_any"] == "with_a_land"
+    assert any("305.1" in notice for notice in facts["notices"]), facts["notices"]
+
+
+def test_the_land_drop_gate_never_touches_unlocks(client, game):
+    """The gate is `payable_any`'s alone. `unlocks` answers "would this land
+    entering turn something on", a question with no land drop in it at all
+    (its own contract never mentions one), so a spent drop leaves it exactly
+    where it was - and the divergence between the two facts is the one the
+    module docstring records rather than a bug."""
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    live = _live(game)
+    island_id = str(_by_name(live.player("alice").hand, "Island").id)
+    live.lands_played["alice"] = live.land_allowance("alice")
+
+    plain = build_hypothetical_facts(live, "alice")
+    horizon = _horizon(game)
+
+    assert plain["cards"][island_id]["unlocks"] is True
+    assert horizon["cards"][island_id]["unlocks"] is True
+    assert horizon["cards"][island_id]["unlocks_next"] is True
+
+
+def test_an_extra_land_play_keeps_with_a_land_alive_after_the_first_drop(client, game):
+    """CR 305.2's "continuous effects may increase this number", read through
+    the engine's own `land_allowance` rather than a hardcoded one: with a
+    second land play granted, one spent drop does not withhold the word."""
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    live = _live(game)
+    preordain_id = str(_by_name(live.player("alice").hand, "Preordain").id)
+    live.lands_played["alice"] = 1
+    live.grant_extra_land_play("alice")
+
+    facts = _horizon(game)
+
+    assert live.land_allowance("alice") == 2
+    assert facts["cards"][preordain_id]["payable_any"] == "with_a_land"
+    assert not any("with_a_land" in notice and "withheld" in notice for notice in facts["notices"])
+
+
+def test_with_the_flag_unset_nothing_moves_and_the_second_pass_never_runs(client, game):
+    """Requirement (e): the default answer is byte for byte what it was
+    before this fix existed, and the extra `assuming_untapped` pass costs
+    nothing unless it was asked for - proved by counting the
+    `payability_matrix` calls rather than by timing."""
+    import magic_cards_model_api.playscripts.hypothetical_facts as module
+
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Island", "alice", "hand")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    live = _live(game)
+
+    real = module.payability_matrix
+    calls: list[bool] = []
+
+    def counting(*args: Any, **kwargs: Any):
+        calls.append(bool(kwargs.get("assuming_untapped", False)))
+        return real(*args, **kwargs)
+
+    module.payability_matrix = counting
+    try:
+        implicit = json.dumps(build_hypothetical_facts(live, "alice"))
+        assert calls == [False]
+
+        calls.clear()
+        explicit_off = json.dumps(build_hypothetical_facts(live, "alice", next_turn=False))
+        assert calls == [False]
+
+        calls.clear()
+        on = build_hypothetical_facts(live, "alice", next_turn=True)
+        assert calls == [False, True]
+    finally:
+        module.payability_matrix = real
+
+    assert implicit == explicit_off
+    assert "payable_any" not in implicit
+    assert "unlocks_next" not in implicit
+    assert any("payable_any" in entry for entry in on["cards"].values())
+    assert any("unlocks_next" in entry for entry in on["cards"].values())
+
+
+def test_the_existing_facts_are_untouched_by_the_flag(client, game):
+    """Requirement (f): turning the horizon on adds keys and never edits one.
+    Every fact the default answer carries reads the same with the flag set."""
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Polluted Delta", "alice", "hand")
+    add_card(client, game, "Psychic Frog", "alice", "hand")
+    add_card(client, game, "Fatal Push", "alice", "hand")
+    add_card(client, game, "Island", "alice", "library")
+    live = _live(game)
+
+    plain = build_hypothetical_facts(live, "alice")
+    horizon = build_hypothetical_facts(live, "alice", next_turn=True)
+
+    assert set(plain["cards"]) == set(horizon["cards"])
+    for card_id, entry in plain["cards"].items():
+        for key, value in entry.items():
+            assert horizon["cards"][card_id][key] == value, (card_id, key)
+    for notice in plain["notices"]:
+        assert notice in horizon["notices"]

@@ -373,6 +373,7 @@
       "alice": [],
       "bob": []
     },
+    "stalled": [],
     "step": "mulligan"
   },
   "priority_holder": null,
