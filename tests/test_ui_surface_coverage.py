@@ -155,12 +155,14 @@ in `ui/menus.js` rather than on the ribbon; a round of this file read the
 gap as "nobody is coming for these" and wrote them into
 `_NOT_CONSUMED_ON_PURPOSE` as `superseded` - an exemption asserting the
 browser deliberately does not read three fields it had begun reading
-fourteen minutes earlier. They are parked on U2 below, and
-`test_no_allowlist_entry_is_cleared_when_this_wave_lands` is what makes the
-next such move fail on the branch that makes it rather than in the merge.
+fourteen minutes earlier. Pinning that collision on the *allowlist* is what
+`test_a_collision_on_an_unreachable_view_does_not_clear_a_promise` and
+`test_reading_the_row_list_does_clear_the_whole_promise` do below, against a
+synthetic pending dict rather than the live one - the mechanism is worth
+keeping pinned even once the wave that exposed it has fully landed.
 
-Three rules now hold the shape, and none of them needs anybody to remember
-anything:
+Three rules held the shape while `_PENDING_SIBLING_FIXES` was non-empty, and
+none of them needed anybody to remember anything:
 
 * an entry must name a task in `_OPEN_WAVE_TASKS`
   (`test_every_pending_entry_names_a_wave_that_is_still_open`);
@@ -170,17 +172,23 @@ anything:
 * and the one that does not wait for a human act at all
   (`abandoned_pending_entries`): a task that has wired **some** of its fields
   has shipped, so whatever it left unread is parked on nobody and is reported
-  the moment the first of its fields lands. That is the six, caught
-  automatically, and `test_nothing_is_left_parked_when_this_wave_lands` runs
-  it against the state the next merge produces rather than waiting for the
-  merge - with `test_no_allowlist_entry_is_cleared_when_this_wave_lands`
-  asking the mirror question of the other list.
+  the moment the first of its fields lands.
+
+All three rules still hold with the dict and the task tuple both empty - each
+one degenerates to "nothing to check" rather than to a false pass, which is
+what lets `_PENDING_SIBLING_FIXES`/`_OPEN_WAVE_TASKS` repopulate for a future
+wave without anybody having to re-derive the shape.
 
 What remains deliberate, and is the whole point of a *self*-clearing list: a
 landed entry still fails, once, with the exact keys to delete
 (`test_pending_fixes_have_not_landed_yet`). A landed entry that passed would
 be a guard quietly downgraded from "unread and unexplained, fail" to
-"unread and excused" the day somebody deletes the read.
+"unread and excused" the day somebody deletes the read. U1 (cast path
+correctness) and U2 (cost surfaces) have now each shipped every field they
+owed - that is what emptied both lists - so the "next merge" simulation this
+file used to run against a live wave (`_WAVE_LANDING_READS`, and the two
+tests that measured against it) went with them: nothing is in flight to
+simulate landing.
 """
 
 from __future__ import annotations
@@ -678,10 +686,7 @@ class _Pending(NamedTuple):
 #: by U2 in `ui/menus.js`, which is the mis-parking the module docstring
 #: describes - while U2 wired two of its own eight, and the six it left read
 #: as "in flight" forever.
-_OPEN_WAVE_TASKS: tuple[str, ...] = (
-    "U1 (cast path correctness)",
-    "U2 (cost surfaces)",
-)
+_OPEN_WAVE_TASKS: tuple[str, ...] = ()
 
 
 #: Fields that are **bugs, not exemptions**: published, unread, and being
@@ -707,55 +712,12 @@ _OPEN_WAVE_TASKS: tuple[str, ...] = (
 #: its fields has shipped and may not park the rest. A field whose owner is
 #: gone belongs in `_NOT_CONSUMED_ON_PURPOSE` with a reason kind, or in
 #: `ui/`.
-_PENDING_SIBLING_FIXES: dict[tuple[str, str], _Pending] = {
-    ("Action", "land_face"): _Pending(
-        "U1 (cast path correctness)",
-        "CR 712.12's MDFC land face: the row says which face is the land drop and the "
-        "browser plays the card instead - the bug where a card was burned as a land",
-    ),
-    ("CardFaceView", "land_face"): _Pending(
-        "U1 (cast path correctness)",
-        "the same MDFC flag on the card's own face list, which is where the hand card has "
-        "to read it to offer the land drop at all",
-    ),
-    ("_CardViewFields", "faces"): _Pending(
-        "U1 (cast path correctness)",
-        "CR 712's face list; the browser has no double-faced card display at all today, and "
-        "the MDFC land-drop fix is the first thing that needs one",
-    ),
-    ("Action", "spell_face"): _Pending(
-        "U1 (cast path correctness)",
-        "CR 709.3's split half and CR 715.3's Adventure: each face is its own row with its "
-        "own cost, and a browser that ignores the field casts the wrong half",
-    ),
-    ("ActionRow", "improvise"): _Pending(
-        "U2 (cost surfaces)",
-        "CR 702.126a's artifacts to tap; the row says the cast is payable once they are, "
-        "and a browser that ignores it calls an artifact deck uncastable",
-    ),
-    ("ObjectCostsView", "improvise"): _Pending(
-        "U2 (cost surfaces)",
-        "the affordance half of the same offer - which untapped artifacts could be spent, "
-        "beside convoke, delve and crew, which the browser already reads",
-    ),
-    ("ActionRow", "unreadable_modes"): _Pending(
-        "U2 (cost surfaces)",
-        "the row's own list of the modes this engine cannot read; a browser that ignores it "
-        "offers a cast whose mode the engine refuses, which is the mode-refused-after-"
-        "targeting bug",
-    ),
-    ("UnreadableModeView", "mode_number"): _Pending(
-        "U2 (cost surfaces)",
-        "which numbered mode the row is talking about - the numbers `CastRequest.modes` "
-        "takes, so it is what names the mode a caption can warn about",
-    ),
-    ("UnreadableModeView", "notice"): _Pending(
-        "U2 (cost surfaces)",
-        "the engine's own sentence for that mode, from `engine_api.unreadable_mode_notice` "
-        "- the refusal text in the engine's words, which is the whole point of showing it "
-        "rather than a phrase this repo made up",
-    ),
-}
+#: Empty: U1 (cast path correctness) and U2 (cost surfaces) - the two tasks
+#: that parked fields here - have each shipped every field they owed. A
+#: future wave that publishes a field one sibling task reads and another has
+#: not yet wired repopulates this the same way; until then the ordinary rule
+#: (`_NOT_CONSUMED_ON_PURPOSE`, or a genuine unread field) covers everything.
+_PENDING_SIBLING_FIXES: dict[tuple[str, str], _Pending] = {}
 
 
 # -- the guard -----------------------------------------------------------
@@ -1190,29 +1152,6 @@ def test_a_bare_word_is_not_a_read() -> None:
 # -- a wave that finishes may not leave fields parked ---------------------
 
 
-#: The reads `U1 (cast path correctness)` and `U2 (cost surfaces)` add to
-#: `ui/`, one per field their branches wire up. Appended to the live source
-#: this is the state the next merge produces, so a suite that is green with
-#: this appended is a suite that survives that merge with nothing parked.
-#:
-#: Wave-shaped, like `_OPEN_WAVE_TASKS`, and it dies with the same edit: once
-#: `_PENDING_SIBLING_FIXES` is empty this describes reads that have already
-#: landed, and the test below has nothing left to say.
-_WAVE_LANDING_READS = "\n".join(
-    [
-        "const faces = card.faces || [];",
-        "faces.forEach((f) => f.land_face && offerLandDrop(f));",
-        "if (row.land_face) playLand(row);",
-        "if (row.spell_face) castFace(row.spell_face);",
-        "const tappable = row.improvise || [];",
-        "const offer = affordance.object_costs.improvise;",
-        "for (const mode of (row && row.unreadable_modes) || [])",
-        "  byNumber.set(mode.mode_number, mode);",
-        "const why = modes.map((mode) => mode.notice).join('\\n');",
-    ]
-)
-
-
 def test_an_entry_parked_on_a_closed_wave_is_an_orphan() -> None:
     pending = {
         ("ActionRow", "x_costs"): _Pending("U2 (cost surfaces)", "a b c d e f"),
@@ -1276,45 +1215,6 @@ def test_no_open_wave_has_finished_leaving_fields_parked(ui_source: str) -> None
         f"these fields are parked on a task that has already wired up others: {abandoned} - "
         "the task is done, so nothing is coming for these. Wire them up, or move them to "
         "_NOT_CONSUMED_ON_PURPOSE with a reason kind."
-    )
-
-
-def test_no_allowlist_entry_is_cleared_when_this_wave_lands(ui_source: str) -> None:
-    """The allowlist's half of that same merge, and the round this file got
-    wrong.
-
-    `test_nothing_is_left_parked_when_this_wave_lands` asks whether a pending
-    entry survives the merge. This asks the mirror question of the other
-    self-clearing list: whether an entry that says "the browser deliberately
-    does not read this" is still true once the wave's own reads arrive. An
-    entry the merge clears was never an exemption - it was a field a sibling
-    task was in the middle of wiring, and it belongs in
-    `_PENDING_SIBLING_FIXES` so that it fails once, loudly, with the rest of
-    them. Without this, such an entry is found by whoever merges, as a second
-    unrelated red test on top of the self-clearing one this file promises."""
-    merged = ui_source + "\n" + _WAVE_LANDING_READS
-    wired = [f"{owner}.{name}" for owner, name in wired_allowlist_entries(merged)]
-    assert not wired, (
-        f"when this wave lands, ui/ reads {wired} - which _NOT_CONSUMED_ON_PURPOSE says it "
-        "deliberately does not. A field a sibling task is wiring up is not an exemption: "
-        "move those entries to _PENDING_SIBLING_FIXES, parked on the task that is wiring "
-        "them, so they clear with the rest of the wave instead of failing the allowlist."
-    )
-
-
-def test_nothing_is_left_parked_when_this_wave_lands(ui_source: str) -> None:
-    """The guard, run against the state the next merge produces.
-
-    Every entry left in `_PENDING_SIBLING_FIXES` has to clear on that merge.
-    One that does not is a field its task finished without wiring - the exact
-    state that turned this list into an excuse list once already - and it is
-    caught here, on this branch, rather than by whoever merges."""
-    merged = ui_source + "\n" + _WAVE_LANDING_READS
-    abandoned = abandoned_pending_entries(_PENDING_SIBLING_FIXES, merged)
-    assert not abandoned, (
-        f"when this wave lands, {abandoned} stay unread with their task finished. They are "
-        "not pending on anybody: wire them up in ui/, or move them to "
-        "_NOT_CONSUMED_ON_PURPOSE with a reason kind and one line saying why."
     )
 
 
