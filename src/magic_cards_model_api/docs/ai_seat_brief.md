@@ -138,6 +138,14 @@ middle buys you nothing and costs you a whole round trip. A seat was measured
 spending 65 calls on a single activation this way, two out of every three of
 them asking for something it had already been handed.
 
+This is exactly why arming, above, never runs anything itself: this loop was
+always the thing arming had to fit inside, not something arming gets to
+stand outside of. A play that fired on its own the instant it applied would
+be a second committing command in a step that only ever has room for one -
+one the seat itself never issued. So arming stays inside step 1, judging on
+the way to the wait's own stop, and hands the ready call back for step 2 to
+be the seat's own, exactly like any other applicable play.
+
 What that means concretely, for the five commands you will be tempted to run
 - plus the one answer that genuinely does arrive thin:
 
@@ -422,10 +430,12 @@ guide it belongs to.
 
 **Read the hint before you play a line by hand.** Every `wait` answer and
 every action answer (`cast`, `activate`, `play-land`, `decide`, `pass`, ...)
-carries `scripts.applicable` - `[{{id, name, call}}]` - when one of your
-registered scripts applies right now, `call` already an `mcp-seat script
-run ...` command line naming the exact flags to pass; run it verbatim rather
-than translating it into anything else. When an answer carries
+carries `scripts.applicable` - `[{{id, name, why, call}}]` - when one of your
+registered scripts applies right now. `why` is the play's own reasoning, cut
+to a sentence - read it, it is the same explanation a human reviewing the
+game later gets for the same play - and `call` is already an `mcp-seat
+script run ...` command line naming the exact flags to pass; run it verbatim
+rather than translating it into anything else. When an answer carries
 `scripts.applicable`, that entry's `call` is this turn's committing call -
 not the hand-played moves. After `play-land` of a fetch land, read that same
 answer's `scripts.applicable` before you `activate` it by hand. The hint
@@ -434,6 +444,13 @@ already knows which script applies, with the archetype filled in; only
 `conflict: true` in place of `call`: do not pick between them by priority -
 play that window yourself, and extend their conditions after the game so
 that at most one applies.
+
+The same answer's `scripts.advice` - `[{{id, why}}]` - is a different thing:
+an advice-only play, one that has nothing to run at all. It carries no
+`call` and no `name`, only `why`. Reading it is not an action - it exists to
+tell you that holding, or doing the thing by hand yourself right here, is
+the correct play, and to say why, so do not go looking for a `call` on one
+of these; there is none to find.
 
 The same answer's `scripts.armable` and `arm_call` are for arming ahead of
 the window rather than playing it by hand once it arrives - `arm_call` is

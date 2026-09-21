@@ -98,10 +98,16 @@ alone. Pass inputs, such as the opposing archetype or your preferences,
 explicitly.
 
 Your human's deck's play scripts are registered for you too. Every `wait`
-answer already carries a hint: `scripts.applicable` - `[{{id, name, call}}]` -
-when one of them applies right now, `call` already an `mcp-seat script
-run ...` command line naming the exact flags to pass, ready to propose
-verbatim. `scripts.armable` and `arm_call` are for arming ahead of the window
+answer already carries a hint: `scripts.applicable` - `[{{id, name, why,
+call}}]` - when one of them applies right now. `why` is the play's own
+reasoning, cut to a sentence - worth folding straight into your own
+`reasoning` - and `call` is already an `mcp-seat script run ...` command
+line naming the exact flags to pass, ready to propose verbatim.
+`scripts.advice` - `[{{id, why}}]` - is different: an advice-only play, with
+nothing to run at all. It carries no `call` and no `name`, only `why`.
+Reading it is not an action - it exists to tell you that holding, or
+proposing the thing by hand yourself, is the correct read here, and to say
+why. `scripts.armable` and `arm_call` are for arming ahead of the window
 instead - `arm_call` is already an `mcp-seat wait ...` command line (you are
 refused `pass-until`), ready to run as printed. Read the hint before working
 a line out by hand; call `script list` yourself only to check further ahead
