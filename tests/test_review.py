@@ -689,9 +689,7 @@ def test_an_ai_review_failure_is_recorded_and_reaches_the_review(client: TestCli
         assert filed.json()["recorded"] is True
 
         review_body = _review(client, game_id, key=info["admin_key"]).json()
-        rows = [
-            e for e in review_body["entries"] if e["action"] == audit.AI_REVIEW_FAILED_ACTION
-        ]
+        rows = [e for e in review_body["entries"] if e["action"] == audit.AI_REVIEW_FAILED_ACTION]
         assert len(rows) == 1
         assert rows[0]["detail"]["stage"] == "generate"
         assert rows[0]["detail"]["invoked"] is True
@@ -745,9 +743,7 @@ def test_an_ai_review_failure_is_gated_exactly_like_an_ai_review(client: TestCli
     info = _played_out(client)
     game_id = info["game_id"]
     try:
-        wrong_seat = _ai_review_failure(
-            client, info, player="bob", uid=info["seat_uids"]["alice"]
-        )
+        wrong_seat = _ai_review_failure(client, info, player="bob", uid=info["seat_uids"]["alice"])
         assert wrong_seat.status_code == 404, wrong_seat.text
         human = _ai_review_failure(client, info, player="alice", uid=info["seat_uids"]["alice"])
         assert human.status_code == 404, human.text

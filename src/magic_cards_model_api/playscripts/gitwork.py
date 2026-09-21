@@ -132,6 +132,7 @@ def checkout_lock(root: Path | str, timeout: float | None = None) -> Iterator[No
     finally:
         handle.close()
 
+
 #: The results a command prints. `error` is an infrastructure failure (no
 #: token, GitHub refused, git itself broke), never a verdict on the change.
 #: `pr_opened` is `plays admit`'s own rare fallback (3 non-fast-forward

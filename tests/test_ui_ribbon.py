@@ -1988,4 +1988,3 @@ def test_a_mode_the_engine_cannot_read_is_not_a_chip_to_click() -> None:
     assert result["unreadable"] is False
     # The readable mode beside it is still an ordinary chip.
     assert result["calls"] == [2]
-

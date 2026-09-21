@@ -1343,9 +1343,7 @@ def test_every_terminal_path_is_named_and_reaches_the_filing_decision():
 
     from mtg_agent.driver.app import TERMINAL_PATHS
 
-    source = Path(
-        __import__("mtg_agent.driver.app", fromlist=["app"]).__file__ or ""
-    ).read_text()
+    source = Path(__import__("mtg_agent.driver.app", fromlist=["app"]).__file__ or "").read_text()
     for name in TERMINAL_PATHS:
         assert f'"{name}"' in source, f"no call site ever passes the terminal path {name!r}"
     assert "retire" in TERMINAL_PATHS

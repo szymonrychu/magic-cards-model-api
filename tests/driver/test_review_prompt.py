@@ -450,9 +450,7 @@ def test_a_worst_case_long_games_prompt_stays_under_the_oneshot_ceiling() -> Non
 
 
 def test_the_ledger_block_respects_its_own_character_budget() -> None:
-    record = _record(
-        entries=[_row(seq, reasoning="z" * 5000) for seq in range(1, 201)]
-    )
+    record = _record(entries=[_row(seq, reasoning="z" * 5000) for seq in range(1, 201)])
     text = review_prompt(_assignment(), "notes", record)
     assert len(text) < MAX_LEDGER_CHARS + 20_000
     assert "earlier rows omitted" in text
@@ -663,6 +661,8 @@ def test_the_ask_still_sits_outside_the_untrusted_game_record() -> None:
     text = review_prompt(_assignment(), "notes", _ledger())
     end = next(line for line in text.splitlines() if line.startswith("=== END GAME RECORD"))
     assert text.index("TIMING AND INSTANT SPEED") > text.index(end)
+
+
 # -- T13-r1.2: the system-problem half of the routing is reachable --------------
 
 

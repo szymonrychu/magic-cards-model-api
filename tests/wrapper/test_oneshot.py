@@ -181,9 +181,7 @@ def test_report_problem_is_the_only_mcp_tool_the_reviewer_may_call(
     argv = _captured(monkeypatch, tmp_path)["argv"]
     allowed = _flag(argv, "--allowedTools").split(",")
 
-    assert [rule for rule in allowed if rule.startswith("mcp__")] == [
-        "mcp__mtg__report_problem"
-    ]
+    assert [rule for rule in allowed if rule.startswith("mcp__")] == ["mcp__mtg__report_problem"]
     for tool in (
         "mcp__mtg",
         "mcp__mtg__*",

@@ -533,9 +533,7 @@ def _options_line(entry: dict[str, Any]) -> str | None:
     if not names:
         return None
     counted = Counter(names)
-    shown = ", ".join(
-        name if count == 1 else f"{name} x{count}" for name, count in counted.items()
-    )
+    shown = ", ".join(name if count == 1 else f"{name} x{count}" for name, count in counted.items())
     return f"    options that were legal and not taken: {shown}"
 
 

@@ -1492,4 +1492,3 @@ def test_a_mode_the_engine_cannot_read_cannot_be_announced() -> None:
         charm=THRABEN_CHARM,
     )
     assert modes == [2]
-
