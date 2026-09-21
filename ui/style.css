@@ -1390,6 +1390,12 @@ h3 { font-size: 14px; }
    their own hand in the seconds right after a refusal: the worst possible
    moment, since the refusal is what makes them click again. `.card-zoom`
    (the card preview) carries the same line for the same reason. */
+/* `white-space: pre-line` and the width cap are what make it a surface
+   rather than a single line: `app.js`'s `toast` holds every line that is
+   currently live, newline-separated, because a poll tick routinely carries
+   several engine notices at once and overwriting lost all but the last.
+   `max-width` keeps a long refusal from spanning the whole viewport, and
+   `overflow-wrap` keeps a card name with no spaces in it inside the box. */
 .toast {
   position: fixed;
   left: 50%;
@@ -1403,6 +1409,10 @@ h3 { font-size: 14px; }
   border: 1px solid var(--line-bright);
   box-shadow: var(--shadow);
   font-size: 13px;
+  white-space: pre-line;
+  max-width: min(560px, calc(100vw - 32px));
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 .toast.bad { border-color: var(--bad); color: var(--bad); }
 

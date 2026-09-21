@@ -625,10 +625,26 @@ _NOTICE_LIST_NAMES: tuple[str, ...] = (
     "opening_hand_notices",
 )
 
-#: The key `_new_notices` files a `continuous_effects.layer_notices` entry
-#: under - it has no `Game`-level list of its own name to borrow, so this is
-#: what the payload's `"kind"` and `_notice_snapshot`'s dict both call it.
-_LAYER_NOTICE_KIND = "layer_notices"
+#: The fail-closed notice lists that are NOT fields of `Game`, as
+#: `(the Game field holding the model, that model's own list attribute)`.
+#: `continuous_effects.layer_notices` (`ContinuousEffects`,
+#: `machines/layers.py`) is the only one today.
+#:
+#: Named separately because `_NOTICE_LIST_NAMES`'s drift guard cannot see
+#: them: `test_notices.py`'s `test_every_game_notice_list_is_wired` reflects
+#: over `Game`'s own fields, and a list hanging off a model `Game` holds
+#: never appears there - which is why this one reached a seat only by being
+#: written out by hand, and why a second one added tomorrow would have been
+#: dropped exactly the way `search_description_notices` and its three
+#: siblings were. `test_every_nested_notice_list_is_wired` is the guard for
+#: this tuple: it sweeps every model-valued field `Game` declares and fails,
+#: by name, on a nested `list[<...>Notice]` with no pair here.
+#:
+#: Each publishes under its own attribute name - the same convention the
+#: `Game`-level lists use, so `"layer_notices"` is what the payload's
+#: `"kind"` and `_notice_snapshot`'s dict both call it - and that guard also
+#: refuses a nested name that collides with a `Game`-level one.
+_NESTED_NOTICE_LISTS: tuple[tuple[str, str], ...] = (("continuous_effects", "layer_notices"),)
 
 
 def _notice_snapshot(game: Game) -> dict[str, int]:
@@ -636,7 +652,8 @@ def _notice_snapshot(game: Game) -> dict[str, int]:
     `run_command`'s "before" half of the diff `_new_notices` takes after a
     command finishes."""
     snapshot = {name: len(getattr(game, name)) for name in _NOTICE_LIST_NAMES}
-    snapshot[_LAYER_NOTICE_KIND] = len(game.continuous_effects.layer_notices)
+    for owner, name in _NESTED_NOTICE_LISTS:
+        snapshot[name] = len(getattr(getattr(game, owner), name))
     return snapshot
 
 
@@ -664,12 +681,41 @@ def _notice_source(game: Game, source_id: UUID | None) -> tuple[str | None, str 
     return card.zone.value, card.controller_or_owner
 
 
+def _notice_payload(kind: str, item: Any) -> dict[str, Any]:
+    """One notice's own fields, under the engine's list name as `"kind"`.
+
+    The list name wins over anything the notice model itself calls `kind`.
+    `TargetingNotice` is the one model that has such a field
+    (`TargetingNoticeKind`: four outcomes, two of them engine gaps and two of
+    them the rules working as printed - `ui/app.js`'s
+    `TARGETING_NOTICE_MESSAGES` renders one line each), and the obvious
+    `{"kind": kind, **item.model_dump()}` let that dump overwrite the list
+    name - so one list out of twenty-four reached every consumer labelled
+    `no_legal_targets` instead of `targeting_notices`, which is the key
+    `visibility.redact_notices`'s tests pin, `ui/app.js` renders on, and an
+    agent groups by.
+
+    Nothing is dropped: a notice's own `kind` is kept beside it as
+    `notice_kind`, because "the parser has a gap" against "there is genuinely
+    nothing to target" is exactly the distinction a reader of that notice
+    needs. Generic - no per-model knowledge, and a future notice model that
+    grows its own `kind` field behaves the same way without a change here.
+    """
+    fields = item.model_dump(mode="json")
+    own_kind = fields.pop("kind", None)
+    payload: dict[str, Any] = {"kind": kind, **fields}
+    if own_kind is not None:
+        payload["notice_kind"] = own_kind
+    return payload
+
+
 def _new_notices(game: Game, before: dict[str, int]) -> list[dict[str, Any]]:
     """Every notice appended to any of `game`'s 24 lists since `before` was
-    taken, as `{"kind": <the engine's own list name>, **notice.model_dump
-    (mode="json"), "zone": ..., "controller": ...}` - the engine's own record
-    passed straight through, plus the two bookkeeping keys `_notice_source`
-    computes and `visibility.redact_notices` reads later. No explanatory
+    taken, as `{"kind": <the engine's own list name>, <the notice's own
+    fields>, "zone": ..., "controller": ...}` (`_notice_payload`) - the
+    engine's own record passed straight through, plus the two bookkeeping
+    keys `_notice_source` computes and `visibility.redact_notices` reads
+    later. No explanatory
     sentence is authored here - what a notice *means* belongs in the MCP
     tool docstring and `driver/prompt.py`, not in this data.
 
@@ -681,7 +727,7 @@ def _new_notices(game: Game, before: dict[str, int]) -> list[dict[str, Any]]:
     for name in _NOTICE_LIST_NAMES:
         items = getattr(game, name)
         for item in items[before[name] :]:
-            payload = {"kind": name, **item.model_dump(mode="json")}
+            payload = _notice_payload(name, item)
             if name == "opening_hand_notices":
                 # `OpeningHandNotice` (`machines/opening_hand.py`) carries no
                 # `source_id` at all to look up - but CR 103.6's whole
@@ -696,12 +742,13 @@ def _new_notices(game: Game, before: dict[str, int]) -> list[dict[str, Any]]:
             payload["zone"] = zone
             payload["controller"] = controller
             notices.append(payload)
-    for item in game.continuous_effects.layer_notices[before[_LAYER_NOTICE_KIND] :]:
-        payload = {"kind": _LAYER_NOTICE_KIND, **item.model_dump(mode="json")}
-        zone, controller = _notice_source(game, item.source_id)
-        payload["zone"] = zone
-        payload["controller"] = controller
-        notices.append(payload)
+    for owner, name in _NESTED_NOTICE_LISTS:
+        for item in getattr(getattr(game, owner), name)[before[name] :]:
+            payload = _notice_payload(name, item)
+            zone, controller = _notice_source(game, getattr(item, "source_id", None))
+            payload["zone"] = zone
+            payload["controller"] = controller
+            notices.append(payload)
     return notices
 
 

@@ -483,59 +483,178 @@ function boardIsNewest(seq) {
  * between a poll's reads and this seat's own action, so a test of it has to
  * drive the real poll rather than a restatement of it. */
 
-/** Every fail-closed "the engine recognised this but could not read it well
- * enough to act on it" notice kind this UI knows how to toast, mapped to the
- * human-readable line for one of its own entries. Each of `Game`'s ~20 notice
- * lists (`commands._NOTICE_LIST_NAMES`) is this same shape - CR text the
- * engine refused rather than guessed at - but only the kinds actually
- * reachable through a played card's real text are named here; a kind added
- * here with no matching entry in `commands._NOTICE_LIST_NAMES` would toast
- * for a notice the server never sends, and `test_notices.py`'s own drift
- * guard is what catches the far more damaging direction (a notice list the
- * server sends that nothing here, or any other surface, ever names).
+/** The kinds whose own line says more than the generic one below can: each
+ * names what specifically was refused and what that cost the board, in the
+ * engine's own terms. This is deliberately NOT the list of kinds that get
+ * rendered - `noticeMessage` renders every kind, named here or not.
  *
- * `unmodeled_trigger_effect_notices` was first: `Game.resolve` files it when
- * a spell's whole printed text had no reader and it resolved as a silent
- * no-op (Stock Up, in the live game this exists for). The rest are the
- * Reality Fracture bump's four previously-unwired notice lists plus
- * `layer_remainder_notices` (wired into `commands._NOTICE_LIST_NAMES` first,
- * this UI's own toast forgotten alongside it in the same pass) - each is the
- * identical "recognised, refused, recorded" shape over its own clause. */
+ * That distinction is the whole fix. This used to be a hand-written table of
+ * six consulted with a plain lookup, so the other eighteen kinds the server
+ * publishes (`commands._NOTICE_LIST_NAMES`, 23 `Game` lists plus
+ * `continuous_effects.layer_notices`) were looked up, missed, and dropped on
+ * the floor - `mode_notices`, `cost_modifier_notices`,
+ * `conditional_clause_notices`, `targeting_notices`, `imprint_notices`,
+ * `opening_hand_notices`, `layer_notices` and the rest. Every one of them is
+ * a deliberate fail-closed record: the engine recognised something, refused
+ * to guess, and said so. A loud refusal nobody renders is a silent failure,
+ * and a hand-maintained render list is exactly what turned one into the
+ * other. So the table below is an enrichment, never a gate.
+ *
+ * `targeting_notices` is here for a different reason than the other six: it
+ * is the one notice model carrying a meaning of its own in a second field
+ * (`TargetingNoticeKind`, which `commands._notice_payload` keeps as
+ * `notice_kind` so the list name can own `kind`). Its four values are four
+ * different outcomes - two engine gaps, two the rules working as printed,
+ * and the object ends up on the stack, off the stack, or in a graveyard
+ * depending which - so it delegates to `TARGETING_NOTICE_MESSAGES` below
+ * rather than printing one sentence over all of them. */
 const ENGINE_GAP_NOTICE_MESSAGES = {
   unmodeled_trigger_effect_notices: (notice) =>
-    `${notice.source_name || "A card"}: the engine could not read this card's text, so it did nothing. Reported as an engine gap.`,
+    `${noticeCardName(notice)}: the engine could not read this card's text, so it did nothing. Reported as an engine gap.`,
   layer_remainder_notices: (notice) =>
-    `${notice.source_name || "A card"}: part of its resolving text could not be read, so that part did nothing. Reported as an engine gap.`,
+    `${noticeCardName(notice)}: part of its resolving text could not be read, so that part did nothing. Reported as an engine gap.`,
   search_description_notices: (notice) =>
-    `${notice.source_name || "A card"}: a search's card description could not be read, so the search did not run at all. Reported as an engine gap.`,
+    `${noticeCardName(notice)}: a search's card description could not be read, so the search did not run at all. Reported as an engine gap.`,
   unreadable_copy_exception_notices: (notice) =>
-    `${notice.source_name || "A card"}: a copy's "except ..." clause could not be read, so it entered as a plain copy. Reported as an engine gap.`,
+    `${noticeCardName(notice)}: a copy's "except ..." clause could not be read, so it entered as a plain copy. Reported as an engine gap.`,
   unreadable_counter_amount_notices: (notice) =>
-    `${notice.source_name || "A card"}: a counter amount could not be evaluated, so no counters were placed. Reported as an engine gap.`,
+    `${noticeCardName(notice)}: a counter amount could not be evaluated, so no counters were placed. Reported as an engine gap.`,
   keyword_line_notices: (notice) =>
-    `${notice.source_name || "A card"}: part of a computed ability line could not be read as a keyword. Reported as an engine gap.`,
+    `${noticeCardName(notice)}: part of a computed ability line could not be read as a keyword. Reported as an engine gap.`,
+  targeting_notices: (notice) =>
+    (TARGETING_NOTICE_MESSAGES[notice.notice_kind] || TARGETING_NOTICE_MESSAGES.unparsed_targets)(
+      notice,
+    ),
 };
 
-/** Toasts one message per newly-polled log entry carrying any
- * `ENGINE_GAP_NOTICE_MESSAGES` notice - the human otherwise has no way to
- * know a spell resolved as a silent (or partial) no-op: the game log panel
- * is gone (`ui/render/panels.js`), `app.log` is read only by
- * `advice_model.js`'s staleness check, and the resolving pass is routinely
- * the OPPONENT's, not this seat's own - the notice rides
+/** `targeting_notices` is one list carrying four genuinely different
+ * outcomes, told apart by the notice's own `TargetingNoticeKind`
+ * (`machines/triggers.py`), which `commands._notice_payload` keeps beside the
+ * list name as `notice_kind`. Two of them are the rules working exactly as
+ * printed and two are engine gaps, and - the part one shared sentence got
+ * wrong - the board ends up in three different places:
+ *
+ * - `unparsed_targets`: the restriction could not be read at all. An engine
+ *   gap. The ability is on the stack, having chosen nothing.
+ * - `no_legal_targets`: nothing was legal and the requirement was optional
+ *   (CR 115.6's "up to N"). Correct, and the ability is on the stack having
+ *   chosen nothing - the one case the old single line described.
+ * - `mandatory_target_missing`: nothing was legal and the requirement was
+ *   not optional. Also correct (CR 603.3d removes the ability from the
+ *   stack; CR 601.2e refuses the equivalent activation), but the ability is
+ *   gone rather than sitting there.
+ * - `unreadable_aura_target`: a resolving Aura whose attachment the parser
+ *   could not re-resolve. An engine gap, and the Aura is in its owner's
+ *   graveyard rather than on the battlefield or the stack.
+ *
+ * A `notice_kind` this table does not know falls back to the engine-gap
+ * line, never to one of the two "that is the rule" lines: over-reporting a
+ * gap costs a false bug report, while telling a player a refusal was correct
+ * when nobody checked is how a real gap goes unreported.
+ * `tests/test_ui_app.py` drives this table over `TargetingNoticeKind` read
+ * live off the engine, so a fifth sub-kind fails there by name. */
+const TARGETING_NOTICE_MESSAGES = {
+  unparsed_targets: (notice) =>
+    `${noticeCardName(notice)}: a targeting restriction${noticeClause(notice)} could not be read, so its ability went on the stack with no target chosen. Reported as an engine gap.`,
+  no_legal_targets: (notice) =>
+    `${noticeCardName(notice)}: nothing on the board was a legal target${noticeClause(notice)}, and that target was optional, so its ability went on the stack having chosen none. That is the rule, not a bug.`,
+  mandatory_target_missing: (notice) =>
+    `${noticeCardName(notice)}: nothing on the board was a legal target${noticeClause(notice)}, and that target was not optional, so the ability never went on the stack at all and does nothing. That is the rule, not a bug.`,
+  unreadable_aura_target: (notice) =>
+    `${noticeCardName(notice)}: the engine could not work out what this Aura attaches to${noticeClause(notice)}, so it went to its owner's graveyard instead of entering the battlefield. Reported as an engine gap.`,
+};
+
+/** The card a notice is about. Almost every notice model names it
+ * `source_name`; `OpeningHandNotice` (`machines/opening_hand.py`) has no
+ * source at all and carries `card_name` instead. Either may arrive as the
+ * literal `"<hidden>"` - `visibility.redact_notices` blanks a notice about a
+ * card in a hidden zone before this seat ever reads it - which is a readable
+ * line on its own and deliberately left alone here. */
+function noticeCardName(notice) {
+  return notice.source_name || notice.card_name || "A card";
+}
+
+/** The printed text a notice quotes, as a parenthetical, or `""` when it
+ * quotes none (`UndefinedPowerNotice` carries only its source).
+ *
+ * Only the fields `visibility._NOTICE_TEXT_FIELDS` redacts are read here.
+ * That is not an accident of taste: a field this UI prints that redaction
+ * does not blank would leak a hidden-zone card's text to the opponent, so
+ * the rendered set stays a subset of the redacted set by construction.
+ * `UnreadableCounterAmountNotice.expression` and `KeywordLineNotice.unread`
+ * are the two that are outside it today - both are also accompanied by
+ * `text`, so nothing is actually lost by skipping them. */
+function noticeClause(notice) {
+  for (const field of ["text", "clause", "condition"]) {
+    const value = notice[field];
+    if (typeof value === "string" && value.trim() && value !== "<hidden>") {
+      return ` ("${value}")`;
+    }
+  }
+  return "";
+}
+
+/** `mode_notices` -> `"mode"`, `cost_modifier_notices` -> `"cost modifier"`.
+ * The engine names every one of these lists after the thing it could not
+ * read, so its own name is the most specific description of the gap that
+ * exists without a human writing one - and it keeps working for a kind added
+ * after this line was written. */
+function noticeGapName(kind) {
+  return String(kind || "notice").replace(/_notices$/, "").replace(/_/g, " ");
+}
+
+/** One human-readable line for any notice the server can send - the six (now
+ * seven) kinds with their own wording above, and a line built from the
+ * kind's own name and quoted clause for every other kind, including kinds
+ * that do not exist yet.
+ *
+ * Exported for `tests/test_ui_app.py`, which drives it over
+ * `commands._NOTICE_LIST_NAMES` read live off the server module: that test is
+ * the drift guard for this file, the same way `test_notices.py`'s
+ * `test_every_game_notice_list_is_wired` is the one for `commands.py`. */
+export function noticeMessage(notice) {
+  const specific = ENGINE_GAP_NOTICE_MESSAGES[notice.kind];
+  if (specific) return specific(notice);
+  return `${noticeCardName(notice)}: the engine hit a gap reading its ${noticeGapName(
+    notice.kind,
+  )}${noticeClause(notice)} and refused to guess rather than act on it, so that part of the card did nothing. Reported as an engine gap.`;
+}
+
+/** Toasts one message per notice on each newly-polled log entry - the human
+ * otherwise has no way to know a spell resolved as a silent (or partial)
+ * no-op: the game log panel is gone (`ui/render/panels.js`), `app.log` is
+ * read only by `advice_model.js`'s staleness check, and the resolving pass is
+ * routinely the OPPONENT's, not this seat's own - the notice rides
  * `outcome.detail["notices"]` on whoever's request resolved the stack
  * (`commands._attach_notices`), so a human polling only her own command
  * responses never sees it. `GET .../log` carries it too, already redacted
  * for this viewer server-side (`visibility.redact_log_entry`), and both
  * `poll()` and `refresh()` already read it every tick - so that is the path
- * this toasts from instead. */
+ * this toasts from instead.
+ *
+ * The toast is the presentation every kind gets. There is no quieter surface
+ * left to put the rest in - the log panel this would otherwise have shared is
+ * gone - and a notice is rare by construction (the engine files one only when
+ * it refuses a clause), so the volume that would make a toast the wrong
+ * choice for a routine event does not arise here.
+ *
+ * Every notice on every entry, not one per tick: `toast` holds all the lines
+ * that are live at once (`liveToasts`), which is what makes toasting a whole
+ * tick's worth of them honest. Before that it overwrote, so a tick carrying
+ * two showed only the second - the same silent drop this change exists to
+ * remove, moved one step later in the pipeline. */
 function toastEngineGapNotices(entries) {
   for (const entry of entries || []) {
-    const notices = (entry.detail && entry.detail.notices) || [];
-    for (const notice of notices) {
-      const message = ENGINE_GAP_NOTICE_MESSAGES[notice.kind];
-      if (message) toast(message(notice));
-    }
+    toastNotices((entry.detail && entry.detail.notices) || []);
   }
+}
+
+/** One line per notice, all of them on screen together.
+ *
+ * Exported for `tests/test_ui_app.py`, which drives a burst of five straight
+ * through it rather than through a `/log` read shaped to carry five. */
+export function toastNotices(notices) {
+  for (const notice of notices || []) toast(noticeMessage(notice));
 }
 
 export async function poll() {
@@ -1666,14 +1785,51 @@ async function onPregame(path, body) {
   await refresh();
 }
 
-function toast(text) {
+/** How long one toasted line stays on screen. Per line, not per element:
+ * see `liveToasts`. */
+const TOAST_MS = 4000;
+
+/** Every line currently on screen, oldest first, each with its own expiry.
+ *
+ * `#toast` used to be a single string with a single shared timer: each call
+ * overwrote whatever was there and reset the clock. That is fine for the
+ * refusal a player's own click just earned - there is only ever one of those
+ * in flight - and wrong for `toastNotices`, which routinely has several
+ * lines to show at once. One poll tick reads every log entry since the last
+ * one, so an opponent's or an AI's whole turn arrives together, and a single
+ * resolution can file notices to two different lists; with an overwrite,
+ * every line but the last was gone before the browser ever painted it, and
+ * the game log panel that used to be the backstop no longer exists
+ * (`ui/render/panels.js`). So the element holds all the lines that are
+ * currently live instead, each expiring on its own timer.
+ *
+ * Nothing is queued behind anything: a new line is painted immediately, so a
+ * refusal never waits out a notice's 4000ms. Nothing is capped either - a
+ * notice is rare by construction (the engine files one only when it refuses
+ * a clause), and silently dropping the twelfth would reintroduce, at a
+ * higher water mark, exactly the defect this replaces. */
+const liveToasts = [];
+
+function paintToasts() {
   const el = document.querySelector("#toast");
-  el.textContent = text;
-  el.hidden = false;
-  clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => {
-    el.hidden = true;
-  }, 4000);
+  if (!el) return;
+  el.textContent = liveToasts.map((entry) => entry.text).join("\n");
+  el.hidden = liveToasts.length === 0;
+}
+
+/** Put one line on screen for `TOAST_MS`, beside whatever else is up.
+ *
+ * Exported for `tests/test_ui_app.py`, which checks that a refusal toasted
+ * while notices are on screen appears at once and displaces none of them. */
+export function toast(text) {
+  const entry = { text };
+  liveToasts.push(entry);
+  entry.timer = setTimeout(() => {
+    const at = liveToasts.indexOf(entry);
+    if (at >= 0) liveToasts.splice(at, 1);
+    paintToasts();
+  }, TOAST_MS);
+  paintToasts();
 }
 
 // ---- names, zones, the report form, the AI seat, and leaving the game -----

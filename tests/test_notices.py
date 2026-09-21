@@ -525,7 +525,9 @@ def test_every_game_notice_list_is_wired() -> None:
     `notices` read. `continuous_effects.layer_notices` is deliberately not
     swept here - it lives one field down, on `ContinuousEffects` rather than
     `Game` itself, so it never appears in `Game`'s own field reflection, and
-    `commands.py`'s own `_LAYER_NOTICE_KIND` already handles it by hand."""
+    `commands._NESTED_NOTICE_LISTS` carries it instead, and
+    `test_every_nested_notice_list_is_wired` below is that tuple's own
+    guard."""
     from typing import get_args, get_origin, get_type_hints
 
     hints = get_type_hints(Game)
@@ -547,6 +549,69 @@ def test_every_game_notice_list_is_wired() -> None:
         f"never reaches a decide response, GET .../log, or an agent's own read. "
         f"Fix: add the field name to _NOTICE_LIST_NAMES."
     )
+
+
+def test_every_nested_notice_list_is_wired() -> None:
+    """The same drift guard as above, one level down - the level the guard
+    above cannot see.
+
+    `continuous_effects.layer_notices` is a fail-closed notice list that is
+    not a field of `Game` at all: it hangs off `ContinuousEffects`
+    (`machines/layers.py`), so `Game`'s own field reflection never finds it
+    and `test_every_game_notice_list_is_wired` passes whatever happens to
+    it. It reached a seat only because `commands.py` named it by hand, and a
+    *second* nested list added tomorrow - on `ContinuousEffects` or on any
+    other model `Game` holds - would be dropped on the floor in exactly the
+    way `search_description_notices` and its three siblings were, with
+    nothing in this suite going red.
+
+    So the sweep here is over every model-valued field `Game` declares, and
+    every `list[<...>Notice]` field on it has to be named in
+    `commands._NESTED_NOTICE_LISTS`. A nested list is published under its own
+    attribute name, the same convention the top-level lists use, so the two
+    namespaces must not collide either - a nested `mode_notices` silently
+    sharing `Game.mode_notices`'s key would merge two different engine
+    records into one kind for every consumer downstream."""
+    from typing import get_args, get_origin, get_type_hints
+
+    from pydantic import BaseModel
+
+    nested: set[tuple[str, str]] = set()
+    for owner, owner_hint in get_type_hints(Game).items():
+        if not (isinstance(owner_hint, type) and issubclass(owner_hint, BaseModel)):
+            continue
+        for name, hint in get_type_hints(owner_hint).items():
+            if (
+                get_origin(hint) is list
+                and get_args(hint)
+                and isinstance(get_args(hint)[0], type)
+                and get_args(hint)[0].__name__.endswith("Notice")
+            ):
+                nested.add((owner, name))
+    assert nested, "the reflection itself found nothing - the guard would pass vacuously"
+
+    missing = nested - set(commands._NESTED_NOTICE_LISTS)
+    assert not missing, (
+        f"{sorted(missing)} are fail-closed notice lists hanging off a model "
+        f"Game holds rather than off Game itself, so "
+        f"test_every_game_notice_list_is_wired's reflection never sees them and "
+        f"_new_notices's diff never reads them - a live seat's own refusal there "
+        f"never reaches a decide response, GET .../log, or an agent's own read. "
+        f"Fix: add the (owner field, attribute) pair to "
+        f"commands._NESTED_NOTICE_LISTS."
+    )
+    stale = set(commands._NESTED_NOTICE_LISTS) - nested
+    assert not stale, (
+        f"commands._NESTED_NOTICE_LISTS names {sorted(stale)}, which the engine "
+        f"no longer declares - _notice_snapshot would raise on the next command"
+    )
+    collisions = {name for _owner, name in nested} & set(commands._NOTICE_LIST_NAMES)
+    assert not collisions, (
+        f"{sorted(collisions)} is both a nested notice list and one of Game's "
+        f"own, and both publish under that one name - every consumer "
+        f"downstream would read two different engine records as one kind"
+    )
+
 
 
 # -- reaching an AI seat ------------------------------------------------------
@@ -673,3 +738,45 @@ def test_redact_notices_never_touches_a_public_zone():
     notices = [_public_notice()]
     for viewer in ("alice", "bob", None, visibility.ADMIN):
         assert visibility.redact_notices(notices, viewer) == notices
+
+
+def test_a_targeting_notices_payload_keeps_the_engines_own_list_name_as_its_kind(
+    monkeypatch, client, game
+):
+    """`TargetingNotice` is the one notice model carrying a field of its own
+    called `kind` (`TargetingNoticeKind`: `unparsed_targets`, the engine gap,
+    vs `no_legal_targets`, a perfectly legal CR 608.2d board). `commands.
+    _new_notices` builds every payload as `{"kind": <list name>, **notice.
+    model_dump()}`, so that dump used to overwrite the list name and a
+    targeting notice reached every consumer labelled `no_legal_targets`
+    instead of `targeting_notices` - `visibility.redact_notices`'s own
+    `kind` round-trip test asserts the list name, `ui/app.js` dispatches its
+    rendering on it, and an agent reading `notices` groups by it, so one
+    list out of twenty-four silently spoke a different language.
+
+    The list name wins, and the notice's own `kind` is kept beside it under
+    `notice_kind` - nothing is dropped, because `unparsed_targets` vs
+    `no_legal_targets` is exactly the distinction a human reading the toast
+    needs (an engine gap, or nothing legal to point at)."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    live = store.get(game)
+    forest = next(state for state in live.shared_zones[Zone.BATTLEFIELD] if state.name == "Forest")
+
+    def _probe(g: Game, payload: dict) -> dict:
+        g.targeting_notices.append(
+            TargetingNotice(
+                kind=TargetingNoticeKind.NO_LEGAL_TARGET,
+                source_id=forest.id,
+                source_name="Forest",
+                text="up to one target nonbasic land",
+            )
+        )
+        return {}
+
+    monkeypatch.setitem(commands.COMMAND_HANDLERS, "test_targeting_kind_probe", _probe)
+    result = run_command(live, Command(kind="test_targeting_kind_probe", payload={}))
+
+    assert result.status is RunStatus.COMPLETED
+    (notice,) = result.outcome["notices"]
+    assert notice["kind"] == "targeting_notices"
+    assert notice["notice_kind"] == "no_legal_targets"

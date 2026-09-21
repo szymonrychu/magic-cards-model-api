@@ -4458,12 +4458,91 @@ def test_each_wired_notice_kind_toasts_its_own_engine_gap_message(
     assert "engine gap" in result["toast"].lower()
 
 
-def test_an_unwired_notice_kind_toasts_nothing() -> None:
-    """A notice `kind` with no entry in `ENGINE_GAP_NOTICE_MESSAGES` (a
-    notice this UI genuinely does not know how to phrase, or one that is not
-    an engine-gap shape at all) must not throw and must not toast - the
-    negative case `test_a_notice_free_log_entry_toasts_nothing` proves for no
-    notices at all, proven here for a real, just unrecognised, one."""
+# -- the drift guard: nothing the server can emit is dropped on the floor -----
+
+
+def _server_notice_kinds() -> list[str]:
+    """Every `kind` string `commands._new_notices` can stamp on a payload -
+    the engine's own 23 `Game`-level notice lists plus
+    `continuous_effects.layer_notices`, read from the server module itself
+    rather than restated here, so this guard follows the engine instead of a
+    copy of it."""
+    from magic_cards_model_api import commands
+
+    return [
+        *commands._NOTICE_LIST_NAMES,
+        *(name for _owner, name in commands._NESTED_NOTICE_LISTS),
+    ]
+
+
+def test_every_notice_kind_the_server_can_emit_renders_a_human_line() -> None:
+    """The cross-surface drift guard, the shape `tests/test_notices.py`'s
+    `test_every_game_notice_list_is_wired` has on the server side and
+    `tests/test_ui_decision_coverage.py` has for decisions: every notice kind
+    `commands._new_notices` can put on the wire must come back out of
+    `ui/app.js`'s `noticeMessage` as a line a human can read.
+
+    This is the regression test for the defect itself. The server published
+    all 24 kinds; `ENGINE_GAP_NOTICE_MESSAGES` was a hand-written table of
+    six, and the other eighteen - `mode_notices`, `cost_modifier_notices`,
+    `conditional_clause_notices`, `targeting_notices`,
+    `suspend_redirect_notices`, `imprint_notices`, `undefined_power_notices`,
+    `opening_hand_notices`, `layer_notices` among them - were looked up,
+    missed, and silently dropped. A loud, deliberate refusal nobody renders
+    is a silent failure with extra steps.
+
+    The fix is not a longer table: `noticeMessage` falls back to a line built
+    from the kind's own name and whichever of the notice's text fields is
+    populated, so a twenty-fifth list the engine adds tomorrow is rendered
+    the day it ships rather than the day somebody remembers this file. This
+    test would still fail the moment that fallback is removed or narrowed
+    back to a lookup, which is the failure mode it exists to catch."""
+    kinds = _server_notice_kinds()
+    assert len(kinds) >= 24, kinds
+    messages = run_app(
+        "Object.fromEntries(KINDS.map((kind) => [kind, m.noticeMessage("
+        '{ kind, source_id: "s1", source_name: "Echoing Deeps", card_name: "Echoing Deeps",'
+        ' text: "some unread clause" })]))',
+        KINDS=kinds,
+    )
+    for kind in kinds:
+        line = messages.get(kind)
+        assert isinstance(line, str) and line.strip(), (
+            f"{kind} renders nothing - the server can emit it, so a human playing "
+            f"through the browser is the one person who never learns the engine "
+            f"refused. Fix: give ui/app.js's noticeMessage a line for it, or (better) "
+            f"leave the generic fallback in place so the next kind needs no fix at all."
+        )
+        assert "Echoing Deeps" in line, (kind, line)
+
+
+def test_every_notice_kind_names_its_own_gap_rather_than_one_shared_line() -> None:
+    """A fallback that rendered the same sentence for all 24 would pass the
+    guard above while telling a human nothing - so each kind's line has to be
+    distinguishable from every other kind's. The generic half earns that by
+    naming the kind ("cost modifier", "opening hand") in the line it builds;
+    the six specific lines were already distinct."""
+    kinds = _server_notice_kinds()
+    messages = run_app(
+        "Object.fromEntries(KINDS.map((kind) => [kind, m.noticeMessage("
+        '{ kind, source_id: "s1", source_name: "Echoing Deeps", card_name: "Echoing Deeps",'
+        ' text: "some unread clause" })]))',
+        KINDS=kinds,
+    )
+    by_line: dict[str, list[str]] = {}
+    for kind, line in messages.items():
+        by_line.setdefault(line, []).append(kind)
+    collisions = {line: names for line, names in by_line.items() if len(names) > 1}
+    assert not collisions, f"these kinds render an identical, useless line: {collisions}"
+
+
+def test_a_notice_kind_this_ui_has_never_seen_still_reaches_the_player() -> None:
+    """The twenty-fifth list, tested before it exists: a `kind` that is in no
+    table anywhere in this UI still toasts, through the real `poll()` path,
+    naming both the card and the kind. This replaces
+    `test_an_unwired_notice_kind_toasts_nothing`, which pinned the defect as
+    if it were the design - an unrecognised notice used to be dropped, which
+    is exactly how eighteen real ones were."""
     result = run_app(
         """
         globalThis.__toast = { textContent: "", hidden: true };
@@ -4493,11 +4572,12 @@ def test_an_unwired_notice_kind_toasts_nothing() -> None:
                     detail: {
                       notices: [
                         {
-                          kind: "opening_hand_notices",
-                          card_name: "Leyline of the Void",
-                          text: "some text",
-                          zone: "hand",
-                          controller: null,
+                          kind: "future_widget_notices",
+                          source_id: "s1",
+                          source_name: "Echoing Deeps",
+                          text: "a clause no parser reads yet",
+                          zone: "graveyard",
+                          controller: "alice",
                         },
                       ],
                     },
@@ -4516,8 +4596,482 @@ def test_an_unwired_notice_kind_toasts_nothing() -> None:
             state: board, log: { entries: [], lastSeq: 0 },
           });
           await m.poll();
-          return globalThis.__toast.hidden;
+          return { toast: globalThis.__toast.textContent, hidden: globalThis.__toast.hidden };
         })()
         """
     )
-    assert result is True, "a notice kind with no toast message must not toast"
+    assert result["hidden"] is False, "a notice kind nothing names is still a refusal"
+    assert "Echoing Deeps" in result["toast"]
+    assert "future widget" in result["toast"].lower(), result["toast"]
+
+
+def test_a_redacted_notice_toasts_without_naming_the_hidden_card() -> None:
+    """`visibility.redact_notices` blanks a hidden-zone notice's card to
+    `<hidden>` before it ever reaches this seat - the generic line has to
+    stay readable on that shape rather than printing a bare `<hidden>:` or
+    leaking the text field it just blanked."""
+    line = run_app(
+        'm.noticeMessage({ kind: "imprint_notices", source_id: null,'
+        ' source_name: "<hidden>", text: "<hidden>", zone: "hand", controller: "bob" })'
+    )
+    assert isinstance(line, str) and line.strip()
+    assert "imprint" in line.lower(), line
+
+
+def test_a_targeting_notice_that_is_not_an_engine_gap_does_not_claim_to_be_one() -> None:
+    """`targeting_notices` is the one list carrying two genuinely different
+    meanings in its own `kind` field (`commands._new_notices` keeps it as
+    `notice_kind`): `unparsed_targets` is an engine gap, `no_legal_targets`
+    is CR 608.2d working exactly as written. Rendering the legal one as an
+    engine gap would train a player to distrust a correct board."""
+    gap = run_app(
+        'm.noticeMessage({ kind: "targeting_notices", notice_kind: "unparsed_targets",'
+        ' source_name: "White Orchid Phantom", text: "up to one target nonbasic land" })'
+    )
+    legal = run_app(
+        'm.noticeMessage({ kind: "targeting_notices", notice_kind: "no_legal_targets",'
+        ' source_name: "White Orchid Phantom", text: "up to one target nonbasic land" })'
+    )
+    assert "engine gap" in gap.lower(), gap
+    assert "engine gap" not in legal.lower(), legal
+    assert "White Orchid Phantom" in legal
+
+
+def test_the_six_already_wired_kinds_keep_their_own_specific_wording() -> None:
+    """Clause (d) of the brief, pinned: the generic fallback must never
+    swallow a message that already said something more useful. Each of these
+    six phrases appears only in that kind's own `ENGINE_GAP_NOTICE_MESSAGES`
+    line, never in the line the fallback builds."""
+    specific = {
+        "unmodeled_trigger_effect_notices": "could not read this card's text",
+        "layer_remainder_notices": "part of its resolving text",
+        "search_description_notices": "a search's card description",
+        "unreadable_copy_exception_notices": "entered as a plain copy",
+        "unreadable_counter_amount_notices": "no counters were placed",
+        "keyword_line_notices": "computed ability line",
+    }
+    messages = run_app(
+        "Object.fromEntries(KINDS.map((kind) => [kind, m.noticeMessage("
+        '{ kind, source_id: "s1", source_name: "Echoing Deeps", text: "some clause" })]))',
+        KINDS=list(specific),
+    )
+    for kind, phrase in specific.items():
+        assert phrase in messages[kind], (kind, messages[kind])
+
+
+# -- a burst of notices: every one of them, not just the last ----------------
+
+
+def test_two_notices_landing_in_one_poll_tick_both_reach_the_player() -> None:
+    """The defect this is written against: `toastEngineGapNotices` called
+    `toast()` once per notice in a synchronous loop, and `toast()` overwrote
+    `#toast`.textContent and reset one shared timer - so a poll tick carrying
+    more than one notice showed only the last of them, with the others
+    discarded before any repaint. The log panel is gone
+    (`ui/render/panels.js`), so there was nowhere else left to read them.
+
+    One tick carrying two is not exotic: `/log` returns every entry since
+    `lastSeq`, so an opponent's or an AI's whole turn arrives in one read,
+    and a single resolution can file notices to two different lists at once
+    (a cost modifier it could not apply and a mode it could not read). Going
+    from six rendered kinds to twenty-four makes it commonplace.
+
+    Both messages have to be on screen together - this is the assertion that
+    "nothing is silently discarded" actually holds at the surface, not only
+    in the wiring that computes the lines."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          body: {
+            classList: { toggle: () => {} },
+            setAttribute: () => {},
+            removeAttribute: () => {},
+          },
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        const board = {
+          you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+          active_player: "bob", priority_holder: "alice", battlefield: [],
+          hands: { alice: [] }, stack: [], combat: { attacks: [] },
+          winner: null, drawn: false, pregame: null,
+        };
+        globalThis.fetch = (path) => {
+          if (path.includes("/log")) {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                log: [
+                  {
+                    seq: 1,
+                    action: "pass_priority",
+                    detail: {
+                      notices: [
+                        {
+                          kind: "cost_modifier_notices",
+                          source_id: "s1",
+                          source_name: "Trinisphere",
+                          text: "each spell that would cost less than three",
+                          zone: "battlefield",
+                          controller: "bob",
+                        },
+                        {
+                          kind: "mode_notices",
+                          source_id: "s2",
+                          source_name: "Cryptic Command",
+                          text: "choose two",
+                          zone: "stack",
+                          controller: "alice",
+                        },
+                      ],
+                    },
+                  },
+                ],
+                last_seq: 1,
+              }),
+            });
+          }
+          return Promise.resolve({ ok: true, json: async () => board });
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null, busy: 0,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: board, log: { entries: [], lastSeq: 0 },
+          });
+          await m.poll();
+          return { toast: globalThis.__toast.textContent, hidden: globalThis.__toast.hidden };
+        })()
+        """
+    )
+    assert result["hidden"] is False
+    assert "Trinisphere" in result["toast"], (
+        "the first of two notices in one tick was overwritten by the second and "
+        "is gone for good - the log panel that used to carry it does not exist"
+    )
+    assert "Cryptic Command" in result["toast"], result["toast"]
+
+
+def test_a_burst_of_notices_keeps_every_line_on_screen() -> None:
+    """The same guarantee at the size a real turn produces: five notices
+    filed by one command all read back off `#toast` together, in the order
+    the engine filed them. A presentation that showed one and queued the
+    rest behind a shared 4000ms timer would pass the two-notice test above
+    by luck of ordering and still lose four of these."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        m.toastNotices([
+          { kind: "mode_notices", source_name: "Card One", text: "one" },
+          { kind: "imprint_notices", source_name: "Card Two", text: "two" },
+          { kind: "layer_notices", source_name: "Card Three", text: "three" },
+          { kind: "evasion_notices", source_name: "Card Four", text: "four" },
+          { kind: "opening_hand_notices", card_name: "Card Five", text: "five" },
+        ]);
+        ({ toast: globalThis.__toast.textContent, hidden: globalThis.__toast.hidden })
+        """
+    )
+    assert result["hidden"] is False
+    for name in ("Card One", "Card Two", "Card Three", "Card Four", "Card Five"):
+        assert name in result["toast"], (name, result["toast"])
+    order = [result["toast"].index(name) for name in ("Card One", "Card Three", "Card Five")]
+    assert order == sorted(order), f"notices are shown out of the order they were filed: {result}"
+
+
+def test_an_ordinary_refusal_still_shows_the_moment_it_is_toasted() -> None:
+    """The other half of the same surface: a refusal a player's own click
+    just earned must not wait behind anything. Whatever holds several
+    notices together has to put a newly toasted line on screen immediately,
+    not schedule it."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        m.toastNotices([
+          { kind: "mode_notices", source_name: "Card One", text: "one" },
+          { kind: "imprint_notices", source_name: "Card Two", text: "two" },
+        ]);
+        m.toast("you cannot cast that right now");
+        globalThis.__toast.textContent
+        """
+    )
+    assert "you cannot cast that right now" in result, result
+    assert "Card One" in result, "a refusal must not wipe the notices already on screen"
+
+
+# -- targeting notices: four outcomes, four lines ---------------------------
+
+
+def _targeting_notice_kinds() -> list[str]:
+    """Every `TargetingNoticeKind` the engine defines, read live off the
+    engine module rather than restated here - the same posture
+    `_server_notice_kinds` takes for the notice lists themselves."""
+    from magic_cards_model.machines.triggers import TargetingNoticeKind
+
+    return [kind.value for kind in TargetingNoticeKind]
+
+
+#: What each targeting sub-kind actually did to the board, and whether it is
+#: an engine gap. Hand-written on purpose: it is the assertion, and a kind
+#: the engine adds without an entry here fails
+#: `test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is` by
+#: name rather than silently inheriting somebody else's sentence.
+#:
+#: A row may be written before the engine next door can file its kind, but
+#: only by saying so in that row's `pending_engine` - a one-line reason.
+#: An undeclared row the engine cannot file is drift in the other direction
+#: (`_targeting_rows_unfileable`), and a `pending_engine` the engine has
+#: since shipped is a stale marker (`_targeting_rows_pending_but_shipped`).
+#: Every row is rendered and checked either way, so one waiting for its
+#: engine value cannot rot while it waits.
+_TARGETING_OUTCOMES = {
+    "unparsed_targets": {
+        "gap": True,
+        "says": "went on the stack",
+        "never_says": "never went on the stack",
+    },
+    "no_legal_targets": {
+        "gap": False,
+        "says": "went on the stack",
+        "never_says": "never went on the stack",
+    },
+    "mandatory_target_missing": {
+        "gap": False,
+        "says": "never went on the stack",
+        "never_says": "graveyard",
+    },
+    "unreadable_aura_target": {
+        "gap": True,
+        "says": "graveyard",
+        "never_says": "went on the stack",
+    },
+}
+
+
+def _targeting_rows_missing(kinds: list[str]) -> list[str]:
+    """The sub-kinds in `kinds` with no row in `_TARGETING_OUTCOMES`, i.e.
+    outcomes the engine can file that nothing here has decided how to
+    render. The drift this file has always guarded against."""
+    return sorted(set(kinds) - set(_TARGETING_OUTCOMES))
+
+
+def _targeting_rows_unfileable(
+    kinds: list[str], outcomes: dict[str, dict[str, object]] | None = None
+) -> list[str]:
+    """The rows here that `kinds` cannot file and that never said they were
+    waiting for one - wiring rendered for a `notice_kind` no engine this
+    checkout builds against can produce.
+
+    This direction was once switched off entirely, on the argument that a
+    browser-rendering test has no business pinning which
+    `../magic-cards-model` revision is checked out next door. The argument
+    is right about the constraint and wrong about switching the check off:
+    with it off, the workbench pinned an engine that defined two of these
+    four kinds while `ui/app.js` rendered all four, the two extra lines were
+    unreachable in everything actually deployed, and no test anywhere went
+    red to say so. That is the same silent-failure shape the notices exist
+    to remove, one layer up.
+
+    So a row is allowed to run ahead of the engine, but it has to say so:
+    `pending_engine` is a one-line reason, it is checked (the row still has
+    to render honestly), and `_targeting_rows_pending_but_shipped` makes it
+    expire the moment the engine catches up.
+
+    `outcomes` defaults to the real table and is supplied only by
+    `test_a_row_may_wait_for_its_engine_half_only_by_saying_so`, which has to
+    exercise the hatch on a table of its own - nothing in the real one is
+    pending today."""
+    rows = _TARGETING_OUTCOMES if outcomes is None else outcomes
+    return sorted(
+        kind
+        for kind, row in rows.items()
+        if kind not in set(kinds) and not row.get("pending_engine")
+    )
+
+
+def _targeting_rows_pending_but_shipped(
+    kinds: list[str], outcomes: dict[str, dict[str, object]] | None = None
+) -> list[str]:
+    """The rows still marked `pending_engine` that `kinds` can now file. The
+    marker is an exception to `_targeting_rows_unfileable`, so it has to
+    expire on its own: a row left waiting for an engine value that arrived
+    silently re-opens the hole the marker was allowed to punch.
+
+    `outcomes` is supplied for the same reason as above."""
+    rows = _TARGETING_OUTCOMES if outcomes is None else outcomes
+    return sorted(
+        kind for kind, row in rows.items() if row.get("pending_engine") and kind in set(kinds)
+    )
+
+
+def test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is() -> None:
+    """`targeting_notices` is one list carrying four genuinely different
+    outcomes in its own `kind` field (`commands._notice_payload` keeps it as
+    `notice_kind`), and the browser is where a human learns which one
+    happened:
+
+    - `unparsed_targets` - the restriction could not be read. Engine gap; the
+      ability is on the stack having chosen nothing.
+    - `no_legal_targets` - nothing was legal and the target was optional
+      (CR 115.6). The rules working as printed; the ability is on the stack
+      having chosen nothing.
+    - `mandatory_target_missing` - nothing was legal and the target was not
+      optional. Also the rules working as printed (CR 603.3d), but the
+      ability is *gone*, never placed on the stack at all.
+    - `unreadable_aura_target` - a resolving Aura whose attachment could not
+      be re-resolved. Engine gap, and the Aura is in a graveyard rather than
+      anywhere near the stack.
+
+    The defect this pins: one line was rendered for all of them, claiming
+    "its ability went on the stack with no target. That is the rule, not a
+    bug." That is true of exactly one of the four. For the other three it
+    states the opposite of what happened, and for two of them it actively
+    suppresses an engine-gap report - the precise failure this whole change
+    exists to remove."""
+    engine_kinds = _targeting_notice_kinds()
+    missing = _targeting_rows_missing(engine_kinds)
+    assert not missing, (
+        "the engine's TargetingNoticeKind and this file's expectations have "
+        f"drifted apart: {missing} is emitted by the engine and rendered by "
+        "nothing. A new sub-kind is a new outcome for a player to be told "
+        "about - give it its own line in ui/app.js's TARGETING_NOTICE_MESSAGES "
+        "and its own row here."
+    )
+    unfileable = _targeting_rows_unfileable(engine_kinds)
+    assert not unfileable, (
+        f"{unfileable} is rendered here and by ui/app.js, and the engine at "
+        "../magic-cards-model cannot file it: nothing a human plays against "
+        "this pair will ever show those lines. Either that engine half has "
+        "not landed and the superrepo still pins an older commit - advance "
+        "the pin - or the row is stale and belongs deleted. A row genuinely "
+        "waiting on an engine change says so in its own `pending_engine`."
+    )
+    stale = _targeting_rows_pending_but_shipped(engine_kinds)
+    assert not stale, (
+        f"{stale} is still marked `pending_engine` and the engine next door "
+        "files it now - drop the marker so the row is guarded like every "
+        "other one."
+    )
+    # Every row, not only the ones this engine checkout can emit: a row
+    # waiting on an engine value still has to render distinctly and honestly,
+    # or it is wiring nobody has ever run.
+    kinds = sorted(set(_TARGETING_OUTCOMES) | set(engine_kinds))
+    lines = run_app(
+        "Object.fromEntries(KINDS.map((notice_kind) => [notice_kind, m.noticeMessage("
+        '{ kind: "targeting_notices", notice_kind, source_name: "Hyena Umbra",'
+        ' text: "enchant creature" })]))',
+        KINDS=kinds,
+    )
+    for kind, expected in _TARGETING_OUTCOMES.items():
+        line = lines[kind]
+        assert "Hyena Umbra" in line, (kind, line)
+        assert expected["says"] in line, (kind, line)
+        assert expected["never_says"] not in line, (kind, line)
+        if expected["gap"]:
+            assert "engine gap" in line.lower(), (kind, line)
+        else:
+            assert "engine gap" not in line.lower(), (kind, line)
+            assert "not a bug" in line.lower(), (kind, line)
+    assert len(set(lines.values())) == len(lines), f"two outcomes render the same line: {lines}"
+
+
+def test_a_targeting_sub_kind_this_ui_has_never_seen_fails_loud() -> None:
+    """The fifth sub-kind, tested before it exists. An unrecognised
+    `notice_kind` must fall back to the engine-gap wording rather than to any
+    of the four lines above: over-reporting a gap costs a false bug report,
+    while a wrong "that is the rule, not a bug" teaches a player to trust a
+    board the engine itself refused to stand behind."""
+    line = run_app(
+        'm.noticeMessage({ kind: "targeting_notices", notice_kind: "some_future_kind",'
+        ' source_name: "Hyena Umbra", text: "enchant creature" })'
+    )
+    assert "Hyena Umbra" in line, line
+    assert "engine gap" in line.lower(), line
+    assert "not a bug" not in line.lower(), line
+
+
+def test_the_targeting_guard_reports_drift_in_both_directions() -> None:
+    """The guard above has to fire in both directions, and it took two goes
+    to get that right.
+
+    It started as `set(engine_kinds) == set(_TARGETING_OUTCOMES)`, which is
+    two assertions welded together: "nothing the engine emits is unrendered"
+    and "nothing rendered here is unemittable". The second was removed
+    wholesale, because it made this repo's suite depend on which
+    `../magic-cards-model` revision happens to be checked out next door -
+    the api could not go green against the engine's own `main` until an
+    engine change landed first.
+
+    Removing it cost more than it saved. `mandatory_target_missing` and
+    `unreadable_aura_target` sat in `ui/app.js` while the superrepo pinned
+    an engine that defines neither, so the deployed pair rendered two lines
+    it could never reach, and the whole suite stayed green - a silent
+    failure in the code whose entire job is to stop silent failures.
+
+    Both directions are checked again, with an explicit escape hatch for the
+    ordering problem that killed the first attempt: `pending_engine` on a row
+    declares "the engine half has not landed yet", in one line, where a
+    reader will see it. `_targeting_rows_pending_but_shipped` then expires
+    the marker as soon as the engine catches up, so the hatch cannot be left
+    propping a row open forever.
+
+    Checked against supplied kind sets rather than whatever is checked out,
+    so this test says the same thing on either engine."""
+    engine_before_the_four_outcomes = ["unparsed_targets", "no_legal_targets"]
+    assert _targeting_rows_missing(engine_before_the_four_outcomes) == [], (
+        "an engine that predates a row in _TARGETING_OUTCOMES has not left a "
+        "kind unrendered - that is the other direction's business"
+    )
+    assert _targeting_rows_missing([*_targeting_notice_kinds(), "some_future_kind"]) == [
+        "some_future_kind"
+    ], "a sub-kind the engine emits with no row here must fail by name"
+    assert _targeting_rows_unfileable(engine_before_the_four_outcomes) == [
+        "mandatory_target_missing",
+        "unreadable_aura_target",
+    ], (
+        "an engine that cannot file a row rendered here must fail by name: "
+        "this is the exact pair the superrepo shipped unreachable"
+    )
+    assert _targeting_rows_unfileable(_targeting_notice_kinds()) == [], (
+        "every row here is fileable by the engine this checkout builds against, or says why not"
+    )
+
+
+def test_a_row_may_wait_for_its_engine_half_only_by_saying_so() -> None:
+    """The escape hatch, exercised on a table of its own so it keeps working
+    the day someone needs it - the real `_TARGETING_OUTCOMES` has nothing
+    pending today, and a mechanism nothing runs is a mechanism that is
+    already broken when it is first reached for.
+
+    Three claims: an undeclared row the engine cannot file is drift; the same
+    row with a `pending_engine` reason is not; and that reason expires by
+    itself once the engine ships the kind, rather than sitting there excusing
+    a row nobody rechecks."""
+    waiting = "a_kind_the_engine_has_not_shipped"
+    table: dict[str, dict[str, object]] = {
+        "unparsed_targets": dict(_TARGETING_OUTCOMES["unparsed_targets"]),
+        waiting: {"gap": True, "says": "went on the stack", "never_says": "graveyard"},
+    }
+    engine = ["unparsed_targets"]
+
+    assert _targeting_rows_unfileable(engine, table) == [waiting], (
+        "a row the engine cannot file, saying nothing about why, is drift"
+    )
+    assert _targeting_rows_pending_but_shipped(engine, table) == []
+
+    table[waiting]["pending_engine"] = "engine PR #28 has not landed yet"
+    assert _targeting_rows_unfileable(engine, table) == [], (
+        "a row that names the engine change it waits on is not drift"
+    )
+    assert _targeting_rows_pending_but_shipped(engine, table) == []
+
+    landed = [*engine, waiting]
+    assert _targeting_rows_unfileable(landed, table) == []
+    assert _targeting_rows_pending_but_shipped(landed, table) == [waiting], (
+        "a marker outliving the engine change it names must fail by name"
+    )
