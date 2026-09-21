@@ -511,3 +511,65 @@ def test_the_affordance_of_a_chosen_half_is_that_halfs_own_targeting(client, gam
     assert names(front) == {"Aether Spellbomb"}
     assert [r["phrase"] for r in tear["requirements"]] == ["target enchantment"]
     assert names(tear) == {"Blood Moon"}
+
+
+# -- what the hand card says before any fetch --------------------------------
+#
+# The same reasoning `additional_costs` landed on (PR #57): a choice that is
+# not in the browser's hands the moment the player picks the card up is a
+# choice `actions.js`'s `needsChoices` cannot stop for, so the cast fires
+# before it is ever offered. Both facts below are printed ones, needing no
+# `Casting`, so they ride the board poll with `needs_x` and `modes`.
+
+
+def test_an_improvise_card_names_the_object_cost_it_prints(client, game):
+    """CR 702.126a. Kappa Cannoneer targets nothing, has no X, no modes and no
+    optional additional cost, so every other check `needsChoices` makes reads
+    false - and the cast fired at the full {5}{U} with the artifact-tap step
+    never drawn."""
+    add_card(client, game, "Kappa Cannoneer", "alice", "hand")
+    kappa = find(state(client, game)["hands"]["alice"], "Kappa Cannoneer")
+
+    (improvise,) = kappa["cast"]["object_costs"]
+    assert improvise == {"keyword": "Improvise", "rule": "CR 702.126a"}
+
+
+def test_a_delve_card_names_its_own_object_cost_the_same_way(client, game):
+    """Not the reported keyword: the same printed fact for CR 702.66a, read
+    off the engine's own `has_delve` rather than a keyword list of this
+    module's own."""
+    add_card(client, game, "Treasure Cruise", "alice", "hand")
+    cruise = find(state(client, game)["hands"]["alice"], "Treasure Cruise")
+    assert cruise["cast"]["object_costs"] == [{"keyword": "Delve", "rule": "CR 702.66a"}]
+
+
+def test_a_card_paying_with_no_objects_carries_no_object_costs_key(client, game):
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    bolt = find(state(client, game)["hands"]["alice"], "Lightning Bolt")
+    assert "object_costs" not in bolt["cast"]
+
+
+def test_a_mode_the_engine_cannot_read_is_marked_on_the_card_view(client, game):
+    """`engine_api.unreadable_modes` is what refuses the cast after the
+    targets have been chosen (`engine_api` raises `unreadable_mode_notice`).
+    Published here, it can be shown on the chip *before* the choice instead -
+    the same `understood: false` treatment a cost this engine cannot charge
+    already gets."""
+    add_card(client, game, "Thraben Charm", "alice", "hand")
+    charm = find(state(client, game)["hands"]["alice"], "Thraben Charm")
+
+    modes = {mode["number"]: mode for mode in charm["cast"]["modes"]["options"]}
+    assert modes[2]["understood"] is True
+    assert modes[2]["notice"] is None
+    # "Exile any number of target players' graveyards" - named by the
+    # engine's own `docs/engine-coverage.md` as one it cannot read.
+    assert modes[3]["understood"] is False
+    assert "cannot be read by this engine" in modes[3]["notice"]
+
+
+def test_every_mode_of_a_readable_modal_card_is_understood(client, game):
+    add_card(client, game, "Kozilek's Command", "alice", "hand")
+    command = find(state(client, game)["hands"]["alice"], "Kozilek's Command")
+    options = command["cast"]["modes"]["options"]
+    assert options and all(mode["understood"] for mode in options)
+    assert all(mode["notice"] is None for mode in options)

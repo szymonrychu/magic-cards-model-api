@@ -181,3 +181,63 @@ def test_a_card_with_none_of_the_three_reports_no_object_costs(client, game):
     add_card(client, game, "Lightning Bolt", "alice", "hand")
     bolt = find(state(client, game)["hands"]["alice"], "Lightning Bolt")
     assert offers(client, game, bolt["id"]) == {}
+
+
+# -- improvise (CR 702.126a) -------------------------------------------------
+#
+# The fourth face of the same `ObjectOffer` subsystem, and the one no surface
+# a human clicks ever offered: `object_costs.improvise` has been published
+# since it was written and `render/ribbon.js` drew a step for convoke and
+# delve only, so Kappa Cannoneer - maindeck in affinity - was effectively
+# uncastable in the browser, attempted at its full {5}{U} and refused.
+
+
+def test_an_improvise_spell_offers_the_untapped_artifacts_that_could_tap_for_it(client, game):
+    add_card(client, game, "Metallic Rebuke", "alice", "hand")
+    add_card(client, game, "Ornithopter", "alice", "battlefield")
+    add_card(client, game, "Springleaf Drum", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    add_card(client, game, "Sol Ring", "bob", "battlefield")
+    rebuke = find(state(client, game)["hands"]["alice"], "Metallic Rebuke")
+
+    improvise = offers(client, game, rebuke["id"])["improvise"]
+    # CR 702.126a taps *your* artifacts: not the opponent's Sol Ring, and not
+    # a creature that is no artifact at all.
+    assert names(improvise) == {"Ornithopter", "Springleaf Drum"}
+    assert improvise["rule"] == "CR 702.126a"
+
+
+def test_improvise_pays_the_generic_with_artifacts_and_leaves_the_coloured_symbol(client, game):
+    """CR 702.126a: "each artifact you tap after you're done activating mana
+    abilities pays for {1}". Five artifacts cover Kappa Cannoneer's {5} and
+    the {U} still needs a real blue source."""
+    add_card(client, game, "Kappa Cannoneer", "alice", "hand")
+    for _ in range(5):
+        add_card(client, game, "Ornithopter", "alice", "battlefield")
+    add_card(client, game, "Island", "alice", "battlefield")
+    kappa = find(state(client, game)["hands"]["alice"], "Kappa Cannoneer")
+    board = state(client, game)["battlefield"]
+    thopters = [c["id"] for c in board if c["name"] == "Ornithopter"]
+    island = [c["id"] for c in board if c["name"] == "Island"]
+
+    response = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": kappa["id"],
+            "improvise": thopters,
+            "mana_sources": island,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["allowed"] is True, body
+    assert body["cost"] == "{5}{U}"
+
+    after = state(client, game)
+    assert all(c["tapped"] for c in after["battlefield"] if c["name"] == "Ornithopter")
+    # One blue source on the whole board and a {5}{U} spell on the stack: the
+    # five generic came off the artifacts, which is the reduced price the
+    # browser could never reach.
+    assert all(c["tapped"] for c in after["battlefield"] if c["name"] == "Island")
+    assert [o["name"] for o in after["stack"]] == ["Kappa Cannoneer"]

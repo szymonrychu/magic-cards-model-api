@@ -1578,6 +1578,18 @@ class TargetingProfileView(BaseModel):
 class ModeOptionView(BaseModel):
     number: int
     text: str
+    understood: bool = True
+    """`False` is the loud case, and the one this field exists for: CR 700.2a
+    carries each chosen mode out one by one, and a mode this engine cannot
+    read into an effect resolves doing nothing at all
+    (`engine_api.unreadable_modes`, the same reading that refuses a cast
+    naming one). Published beside the printed text so a surface can mark the
+    mode *before* it is chosen - the refusal lands after targets have been
+    picked, which is far too late to have chosen a different mode."""
+    notice: str | None = None
+    """Why the engine cannot read it, in the engine's own words
+    (`engine_api.unreadable_mode_notice` - the exact sentence a cast choosing
+    this mode is refused with). `None` whenever `understood` is true."""
 
 
 class ModalHintsView(BaseModel):
@@ -1657,6 +1669,27 @@ class SpellFaceHintView(BaseModel):
     this face's own cost, since CR 709.3a evaluates only the chosen half."""
 
 
+class ObjectCostHintView(BaseModel):
+    """One way this card's cost may be paid with objects rather than mana -
+    convoke (CR 702.51a), delve (CR 702.66a) or improvise (CR 702.126a), as
+    `affordances.cast_hints` reads them off the printing.
+
+    The printed half only: *which* creatures, graveyard cards or artifacts
+    qualify needs a board, and is `object_costs` on
+    `GET .../affordances/{card_id}`. This rides the card view for the same
+    reason `additional_costs` does - it is what a client holds the moment the
+    card is picked up, before any affordance fetch, and a cost not known that
+    early is one the client cannot stop the cast for. Kappa Cannoneer is the
+    case that proved it: no targets, no X, no modes, so the browser fired the
+    cast at its full {5}{U} with the artifact-tap step never offered."""
+
+    keyword: str
+    """`Convoke`, `Delve` or `Improvise` - the same spelling
+    `object_costs` keys its candidate lists by, lowercased."""
+    rule: str
+    """The CR rule that defines it, in the engine's own citation."""
+
+
 class CastHintsView(BaseModel):
     """What casting this hand/exile card asks for - X, modes, targets, the
     faces it may be cast as, and the optional additional costs it may be
@@ -1675,6 +1708,9 @@ class CastHintsView(BaseModel):
     additional_costs: list[AdditionalCostHintView] | None = None
     """CR 601.2b's optional additional costs, absent (never empty) for a card
     that prints none."""
+    object_costs: list[ObjectCostHintView] | None = None
+    """Convoke, delve and improvise, absent (never empty) for a card printing
+    none of the three."""
 
 
 class LoyaltyHintView(BaseModel):

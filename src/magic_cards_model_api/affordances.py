@@ -117,7 +117,7 @@ from magic_cards_model.models import CardState, Game, Player, Zone
 from magic_cards_model.models.action import TargetSlot
 
 from .board_scope import on_one_board
-from .engine_api import dry_run_copy
+from .engine_api import dry_run_copy, unreadable_mode_notice, unreadable_modes
 
 #: Zones whose contents a spell or ability can realistically be asked to
 #: target, and which every seat may see anyway (CR 400.2's public zones, plus
@@ -416,7 +416,30 @@ def cast_hints(state: CardState) -> dict[str, Any]:
             }
             for option in printed
         ]
+    printed_objects = _printed_object_costs(card)
+    if printed_objects:
+        # CR 702.51a/702.66a/702.126a's "pay part of this cost with objects
+        # instead of mana", as a *printed* fact - which artifacts or creatures
+        # are eligible is `object_costs` below, and needs a board. This half
+        # is here for the same reason `additional_costs` is: it is what the
+        # browser holds the instant the player picks the card up, before any
+        # affordance fetch, and a cost that is not known that early is one
+        # `ui/actions.js`'s `needsChoices` cannot stop the cast for. Kappa
+        # Cannoneer is the case that proved it: no targets, no X, no modes and
+        # no optional additional cost, so the cast fired at the full {5}{U}
+        # with the artifact-tap step never drawn.
+        hints["object_costs"] = printed_objects
     if modal is not None:
+        # CR 700.2a's modes, each carrying whether this engine can read it
+        # into an effect. `engine_api.unreadable_modes` is the same reading
+        # that refuses the cast (`engine_api` raises
+        # `unreadable_mode_notice`), asked before the choice instead of after
+        # the targets are picked - so a mode that would spend the card for
+        # nothing is marked on the chip rather than refused once it is too
+        # late to have chosen differently. Failing closed out loud, the same
+        # `understood: false` treatment an uncharged optional cost and an
+        # unread CR 106.6 mana restriction already get.
+        unreadable = {mode.number: mode for mode in unreadable_modes(state)}
         hints["modes"] = {
             "instruction": modal.instruction,
             "minimum": modal.minimum,
@@ -425,9 +448,45 @@ def cast_hints(state: CardState) -> dict[str, Any]:
             "understood": modal.understood,
             "entwine_cost": modal.entwine_cost,
             "escalate_cost": modal.escalate_cost,
-            "options": [{"number": mode.number, "text": mode.text} for mode in modal.modes],
+            "options": [
+                {
+                    "number": mode.number,
+                    "text": mode.text,
+                    "understood": mode.number not in unreadable,
+                    "notice": (
+                        unreadable_mode_notice(state, unreadable[mode.number])
+                        if mode.number in unreadable
+                        else None
+                    ),
+                }
+                for mode in modal.modes
+            ],
         }
     return hints
+
+
+#: The object-cost keywords, each with the rule that defines it and the
+#: engine's own predicate for "this printing has it" - never a reading of the
+#: printed text by this module. `object_costs` below answers the same three
+#: keywords against a board; this answers them off the printing alone.
+#: Crew is deliberately absent: it is a Vehicle's own activated ability
+#: (CR 702.122a), not part of casting anything.
+_OBJECT_COST_KEYWORDS = (
+    ("Convoke", "CR 702.51a", "has_convoke"),
+    ("Delve", "CR 702.66a", "has_delve"),
+    ("Improvise", "CR 702.126a", "has_improvise"),
+)
+
+
+def _printed_object_costs(card: Any) -> list[dict[str, Any]]:
+    """Which of convoke, delve and improvise this printing prints."""
+    from magic_cards_model.machines import objects_as_costs
+
+    return [
+        {"keyword": keyword, "rule": rule}
+        for keyword, rule, predicate in _OBJECT_COST_KEYWORDS
+        if getattr(objects_as_costs, predicate)(card)
+    ]
 
 
 def all_targetables(game: Game) -> list[Any]:

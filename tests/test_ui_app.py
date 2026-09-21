@@ -3691,6 +3691,129 @@ def test_an_enrichment_does_not_yank_focus_back_to_the_first_option() -> None:
     assert result["disabled"] == [False, True, False], "and it still enriched the menu"
 
 
+# -- a mode the engine cannot read, on the menu that opened -------------
+#
+# The row-side half of the marking `render/ribbon.js` draws on the mode
+# chips: `ActionRow.unreadable_modes` rides the same `legal-actions` answer
+# the enrichment above is already asking for, so the option the player is
+# looking at can say it before the announcement is begun at all. The whole
+# chain is real here - `menus.enrichItems` -> `menuOptions` -> the popover's
+# own `applyItem` - because "published and rendered nowhere" is exactly the
+# defect this closes.
+
+UNREADABLE_MODE_NOTICE = (
+    "mode 3 (Exile any number of target players' graveyards.) is not readable "
+    "by this engine, so choosing it would resolve doing nothing (CR 700.2a)"
+)
+
+MODAL_CHARM = {
+    "id": "tc1",
+    "name": "Thraben Charm",
+    "type_line": "Instant",
+    "zone": "hand",
+    "controller": "alice",
+    "cast": {
+        "mana_cost": "{1}{W}",
+        "modes": {
+            "instruction": "Choose one -",
+            "minimum": 1,
+            "maximum": 1,
+            "options": [
+                {"number": 1, "text": "Destroy target creature.", "understood": True},
+                {"number": 2, "text": "You gain 4 life.", "understood": True},
+                {
+                    "number": 3,
+                    "text": "Exile any number of target players' graveyards.",
+                    "understood": False,
+                    "notice": UNREADABLE_MODE_NOTICE,
+                },
+            ],
+        },
+    },
+}
+
+MODAL_CHARM_ROW = [
+    {
+        "kind": "cast",
+        "card_id": "tc1",
+        "ability_index": None,
+        "affordable": "unknown",
+        "unaffordable_reason": None,
+        "unreadable_modes": [
+            {
+                "mode_number": 3,
+                "text": "Exile any number of target players' graveyards.",
+                "notice": UNREADABLE_MODE_NOTICE,
+            }
+        ],
+    }
+]
+
+
+def test_a_mode_the_engine_cannot_read_is_captioned_on_the_option_that_opened() -> None:
+    """Thraben Charm's third mode. The engine refuses a cast naming it, but
+    only once the modes and the targets have been chosen - so the menu says
+    so first, out of the row's own `unreadable_modes`, and goes on offering
+    the cast: the other two modes are readable."""
+    result = _click(
+        """
+          let release;
+          const held = new Promise((r) => { release = r; });
+          globalThis.__respond = (method, path) => (path.includes("legal-actions") ? held : null);
+          m.onHandCard(card, { currentTarget: anchor });
+          const beforeEnrichment = options().map((o) => o.deepText);
+          release({ ok: true, json: async () => ({ actions: rows }) });
+          await settle();
+          const option = options()[0];
+          return {
+            beforeEnrichment,
+            text: option.deepText,
+            disabled: option.disabled,
+            title: option.attrs.title,
+          };
+        """,
+        state=_click_state(hands={"alice": [MODAL_CHARM]}),
+        card=MODAL_CHARM,
+        rows=MODAL_CHARM_ROW,
+    )
+    assert result["beforeEnrichment"] == ["Cast"], "the menu opens on local state alone"
+    assert result["text"] == "Cast mode 3 cannot be read by this engine"
+    assert result["title"] == UNREADABLE_MODE_NOTICE
+    assert result["disabled"] is False, "the other two modes are castable; this is a caption"
+
+
+def test_the_captioned_option_still_begins_the_cast() -> None:
+    """The other half of "caption, never a filter": the player can take the
+    option they were just warned about, and it begins the ordinary
+    announcement - where `render/ribbon.js` marks mode 3 again on its chip
+    row, and where one of the two readable modes is chosen. Nothing is fired
+    and nothing is refused by the click itself; `refreshAffordance` holds its
+    read until a mode has been picked (`actions.js`'s `modesReady`)."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: rows }) })
+              : null;
+          await m.onHandCard(card, { currentTarget: anchor });
+          options()[0].click();
+          await settle();
+          const action = m.store.get().action;
+          return {
+            began: action && { kind: action.kind, cardId: action.cardId, error: action.error },
+            posts: globalThis.__calls.filter((c) => c.method === "POST"),
+            toast: globalThis.__toast.deepText,
+          };
+        """,
+        state=_click_state(hands={"alice": [MODAL_CHARM]}),
+        card=MODAL_CHARM,
+        rows=MODAL_CHARM_ROW,
+    )
+    assert result["began"] == {"kind": "cast", "cardId": "tc1", "error": None}
+    assert result["posts"] == [], "the caption is not a refusal: nothing is cast on the click"
+    assert result["toast"] == "", result["toast"]
+
+
 # -- the selection clicks, proved untouched ----------------------------------
 
 

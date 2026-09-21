@@ -3816,6 +3816,20 @@
             "title": "Needs X",
             "type": "boolean"
           },
+          "object_costs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ObjectCostHintView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Object Costs"
+          },
           "spell_faces": {
             "anyOf": [
               {
@@ -7070,6 +7084,17 @@
       },
       "ModeOptionView": {
         "properties": {
+          "notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notice"
+          },
           "number": {
             "title": "Number",
             "type": "integer"
@@ -7077,6 +7102,11 @@
           "text": {
             "title": "Text",
             "type": "string"
+          },
+          "understood": {
+            "default": true,
+            "title": "Understood",
+            "type": "boolean"
           }
         },
         "required": [
@@ -8162,6 +8192,25 @@
           "name"
         ],
         "title": "ObjectCostCandidateView",
+        "type": "object"
+      },
+      "ObjectCostHintView": {
+        "description": "One way this card's cost may be paid with objects rather than mana -\nconvoke (CR 702.51a), delve (CR 702.66a) or improvise (CR 702.126a), as\n`affordances.cast_hints` reads them off the printing.\n\nThe printed half only: *which* creatures, graveyard cards or artifacts\nqualify needs a board, and is `object_costs` on\n`GET .../affordances/{card_id}`. This rides the card view for the same\nreason `additional_costs` does - it is what a client holds the moment the\ncard is picked up, before any affordance fetch, and a cost not known that\nearly is one the client cannot stop the cast for. Kappa Cannoneer is the\ncase that proved it: no targets, no X, no modes, so the browser fired the\ncast at its full {5}{U} with the artifact-tap step never offered.",
+        "properties": {
+          "keyword": {
+            "title": "Keyword",
+            "type": "string"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "keyword",
+          "rule"
+        ],
+        "title": "ObjectCostHintView",
         "type": "object"
       },
       "ObjectCostsView": {
