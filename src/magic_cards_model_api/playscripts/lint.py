@@ -23,7 +23,12 @@ Corpus rules (a deck's plays together), by code:
 - `chain-too-deep`: the longest `next` chain is at most 3 plays, measured with
   every play that can reach itself left out, so a cycle is reported once as
   `next-cycle` and never masks the depth of the rest of the graph.
-- `too-many-plays`: at most 12 plays per deck.
+- `too-many-plays`: at most 12 *move-bearing* plays per deck (a play whose
+  `moves` is absent or empty is advice-only, per `Play`'s own docstring, and
+  is never counted here - see `too-many-advice`).
+- `too-many-advice`: at most 6 advice-only plays per deck, counted and capped
+  separately from move-bearing ones, reported against the same `plays/`
+  directory path `too-many-plays` uses.
 - `too-many-active-for-archetype` (O8): at most 6 plays that can be *live
   together* per (deck, archetype key) - the largest subset of the priority
   > 0 plays applying to that key no two of which are provably exclusive by
@@ -31,7 +36,12 @@ Corpus rules (a deck's plays together), by code:
   count of plays that apply. A `*` play counts toward every key. Two groups
   a deck's own turn-range guards already prove disjoint (an opening's `turn
   <= 2` against a later play's `turn >= 3`) are never summed together, only
-  the larger of the two compared against the cap.
+  the larger of the two compared against the cap. An advice-only play never
+  enters this count, priority or not: see the note on advice-only plays below.
+- `advice-only-chained` (F8): an advice-only play's own `next` is non-empty,
+  or some play names an advice-only play in its `next` - either way one error
+  naming both play ids, since a play with no moves commits nothing and so has
+  nothing to chain into or out of.
 - `unknown-archetype-key`: every archetype key is `*` or a matchup stem of the
   deck's newest analysis run. A non-blank key the schema's key pattern refuses
   (`esper_blink`) is this code alone, never also `malformed-play`.
@@ -51,10 +61,16 @@ Corpus rules (a deck's plays together), by code:
   a pair that is one normalized condition is left to the rule before).
 
 A type-line field may hold a string that is also a card name when it is a
-type-line word on >= 3 cached cards (`Mountain`). `name` and `intent` are
-prose and may name cards.
+type-line word on >= 3 cached cards (`Mountain`). `name`, `intent` and `note`
+are prose and may name cards - the exemption is top-level only, so a
+machine-read field nested anywhere below the top level is judged like any
+other, its key coinciding with a prose field's name notwithstanding.
 
-Conflict warnings never fail the gate, and a play with any error reported
+Conflict warnings, too-many-active-for-archetype and advice-only-chained's
+"chained into" half are all proofs about what can *commit* at one decision
+point; a play with no moves commits nothing, so an advice-only play is
+outside each of those proofs by construction, not exempted from them by
+policy. Conflict warnings never fail the gate, and a play with any error reported
 against its own file is left out of them. Two plays are provably exclusive when
 at least one dimension holds: `whose_turn` (mine vs theirs), `steps`
 (disjoint), `opposing_archetypes` (the archetype sets do not intersect: a
@@ -125,9 +141,10 @@ EXCLUSIVITY_DIMENSIONS = (
 
 MAX_CHAIN = 3
 MAX_PLAYS = 12
+MAX_ADVICE = 6
 MAX_ACTIVE_PER_ARCHETYPE = 6
 PHRASE_MIN_CARDS = 3
-PROSE_KEYS = ("name", "intent")
+PROSE_KEYS = ("name", "intent", "note")
 PHRASE_KEYS = ("ability_text_has", "oracle_has")
 #: Fields whose values are drawn from a closed, type-line-like vocabulary
 #: (card names may coincide with a common word here without meaning the
@@ -196,6 +213,15 @@ class PlaysWarning:
 
 def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _advice_only(doc: dict[str, Any]) -> bool:
+    """A play whose `moves` is absent or empty: it commits nothing to the
+    game, so it is outside every proof about what can commit at one decision
+    point (too-many-active-for-archetype, play-conflict, next-conflict) by
+    construction, not by an exemption on top of them."""
+    moves = doc.get("moves")
+    return not (isinstance(moves, list) and len(moves) > 0)
 
 
 def _join(where: str, key: Any) -> str:
@@ -687,9 +713,17 @@ def conflict_dimensions(a: dict[str, Any], b: dict[str, Any], catalog: dict[str,
 def _conflict_warnings(
     plays: list[tuple[str, str, dict[str, Any]]], catalog: dict[str, Any]
 ) -> list[PlaysWarning]:
-    """play-conflict over enabled plays, next-conflict over each play's next list."""
+    """play-conflict over enabled plays, next-conflict over each play's next list.
+
+    An advice-only play (`_advice_only`) commits nothing at any decision
+    point, so it is never one half of a play-conflict and never one of the
+    entries compared for next-conflict, priority or `next` notwithstanding."""
     warnings = []
-    active = [p for p in plays if _is_int(p[2].get("priority")) and p[2]["priority"] > 0]
+    active = [
+        p
+        for p in plays
+        if not _advice_only(p[2]) and _is_int(p[2].get("priority")) and p[2]["priority"] > 0
+    ]
     for index, (id_a, rel, doc_a) in enumerate(active):
         for id_b, _, doc_b in active[index + 1 :]:
             if exclusivity(doc_a, doc_b, catalog):
@@ -711,7 +745,9 @@ def _conflict_warnings(
     for pid, rel, doc in plays:
         nxt = doc.get("next")
         entries = (
-            [n for n in nxt if isinstance(n, str) and n in by_id] if isinstance(nxt, list) else []
+            [n for n in nxt if isinstance(n, str) and n in by_id and not _advice_only(by_id[n])]
+            if isinstance(nxt, list)
+            else []
         )
         for index, first in enumerate(entries):
             for second in entries[index + 1 :]:
@@ -789,6 +825,41 @@ def _graph_errors(plays: dict[str, tuple[str, list[str]]]) -> list[PlaysError]:
     return errors
 
 
+def _advice_chain_errors(docs: list[tuple[str, str, dict[str, Any]]]) -> list[PlaysError]:
+    """F8: an advice-only play (`_advice_only`) commits nothing, so it can
+    neither chain further nor be chained into - `advice-only-chained` in
+    both directions. Needs the whole deck's docs, so it runs beside
+    `_graph_errors` rather than inside the per-file loop."""
+    errors: list[PlaysError] = []
+    by_id = {pid: doc for pid, _, doc in docs}
+    advice_ids = {pid for pid, doc in by_id.items() if _advice_only(doc)}
+    for pid, rel, doc in docs:
+        nxt = doc.get("next")
+        targets = (
+            [n for n in nxt if isinstance(n, str) and n in by_id] if isinstance(nxt, list) else []
+        )
+        for target in targets:
+            if pid in advice_ids:
+                errors.append(
+                    PlaysError(
+                        "advice-only-chained",
+                        rel,
+                        f"play {pid!r} is advice-only (no moves) but names {target!r} in "
+                        "next; an advice-only play commits nothing and cannot chain",
+                    )
+                )
+            elif target in advice_ids:
+                errors.append(
+                    PlaysError(
+                        "advice-only-chained",
+                        rel,
+                        f"play {pid!r} names advice-only play {target!r} in next; an "
+                        "advice-only play commits nothing and cannot be chained into",
+                    )
+                )
+    return errors
+
+
 # -- per deck, per root ----------------------------------------------------------------
 
 
@@ -807,18 +878,14 @@ def check_deck(
     if cards is None:
         cards = CardIndex.load(cards_path)
     plays_rel = _rel(deck / "plays", root)
-    if len(files) > MAX_PLAYS:
-        errors.append(
-            PlaysError(
-                "too-many-plays", plays_rel, f"{len(files)} plays, at most {MAX_PLAYS} per deck"
-            )
-        )
 
     known_keys = newest_matchup_keys(deck)
     catalog = input_catalog(declared or [], known_keys)
     graph: dict[str, tuple[str, list[str]]] = {}
     active: list[tuple[list[str], dict[str, Any]]] = []
     docs: list[tuple[str, str, dict[str, Any]]] = []
+    move_bearing = 0
+    advice_only_count = 0
     for path in files:
         rel = _rel(path, root)
         try:
@@ -832,6 +899,11 @@ def check_deck(
         errors.extend(_input_errors(doc, rel, catalog, declared_ok=declared is not None))
         errors.extend(_never_applicable(doc, rel, catalog))
         docs.append((path.stem, rel, doc))
+        advice = _advice_only(doc)
+        if advice:
+            advice_only_count += 1
+        else:
+            move_bearing += 1
         archetypes = doc.get("opposing_archetypes")
         archetypes = (
             [a for a in archetypes if isinstance(a, str)] if isinstance(archetypes, list) else []
@@ -847,7 +919,9 @@ def check_deck(
                     )
                 )
         priority = doc.get("priority")
-        if _is_int(priority) and priority > 0:
+        # An advice-only play commits nothing at any decision point, so it
+        # never enters the live-together count, priority > 0 or not.
+        if not advice and _is_int(priority) and priority > 0:
             active.append((archetypes, doc))
         nxt = doc.get("next", [])
         graph[path.stem] = (
@@ -855,14 +929,33 @@ def check_deck(
             [n for n in nxt if isinstance(n, str)] if isinstance(nxt, list) else [],
         )
 
+    if move_bearing > MAX_PLAYS:
+        errors.append(
+            PlaysError(
+                "too-many-plays",
+                plays_rel,
+                f"{move_bearing} plays with moves, at most {MAX_PLAYS} per deck "
+                "(advice-only plays are counted separately and are not included here)",
+            )
+        )
+    if advice_only_count > MAX_ADVICE:
+        errors.append(
+            PlaysError(
+                "too-many-advice",
+                plays_rel,
+                f"{advice_only_count} advice-only plays (no moves), at most {MAX_ADVICE} per deck",
+            )
+        )
+
     # `_max_live_together`'s own docstring assumes "a deck carries at most
     # MAX_PLAYS plays, so the search space is always tiny" - true only once
-    # `too-many-plays` above has actually bounded `files`. Past that cap the
-    # pivotless Bron-Kerbosch search is exponential (measured ~7 minutes at
-    # 30 plays), and `too-many-plays` already reported the real problem, so
-    # this search is skipped rather than run redundantly and slowly.
+    # `too-many-plays` above has actually bounded the move-bearing plays that
+    # can ever reach `active`. Past that cap the pivotless Bron-Kerbosch
+    # search is exponential (measured ~7 minutes at 30 plays), and
+    # `too-many-plays` already reported the real problem, so this search is
+    # skipped rather than run redundantly and slowly.
     keys = {WILDCARD} | {k for archetypes, _ in active for k in archetypes}
-    if len(files) <= MAX_PLAYS:
+    if move_bearing <= MAX_PLAYS:
         for key in sorted(keys):
             matching = [
                 doc for archetypes, doc in active if WILDCARD in archetypes or key in archetypes
@@ -880,6 +973,7 @@ def check_deck(
                 )
 
     errors.extend(_graph_errors(graph))
+    errors.extend(_advice_chain_errors(docs))
     errored = {e.path for e in errors}
     clean = [entry for entry in docs if entry[1] not in errored]
     return errors, _conflict_warnings(clean, catalog), len(files)

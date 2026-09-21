@@ -30,9 +30,28 @@ from magic_cards_model_api import seat_cli
 from magic_cards_model_api.playscripts.lint import (
     CODES,
     EXCLUSIVITY_DIMENSIONS,
+    MAX_ADVICE,
+    MAX_PLAYS,
     WARNING_CODES,
     check_report,
 )
+
+
+def advice(id: str, **over: Any) -> dict[str, Any]:
+    """An advice-only play: `moves` empty, so it commits nothing."""
+    over.setdefault("priority", 0)
+    return play(id=id, moves=[], **over)
+
+
+def test_max_plays_and_max_advice_are_the_documented_caps():
+    assert MAX_PLAYS == 12
+    assert MAX_ADVICE == 6
+
+
+def move_bearing(id: str, **over: Any) -> dict[str, Any]:
+    """A play with a move, priority disabled so it never enters an active count."""
+    over.setdefault("priority", 0)
+    return play(id=id, **over)
 
 
 @pytest.fixture
@@ -151,6 +170,22 @@ def test_card_name_in_any_machine_read_field(root):
 def test_card_names_are_allowed_in_prose(root):
     put(root, play(name="Crack Arid Mesa for Sacred Foundry", intent="Lightning Bolt later."))
     assert check_report(root) == ([], [])
+
+
+def test_note_may_name_a_card_at_the_top_level(root):
+    # PROSE_KEYS: `note` is exempt exactly like `name` and `intent`.
+    put(root, play(note="Lightning Bolt"))
+    assert check_report(root) == ([], [])
+
+
+def test_a_nested_field_named_note_naming_a_card_is_still_card_name_in_field(root):
+    # F10: the prose exemption is top-level only. A machine-read field that
+    # happens to be named "note" anywhere below the top level gets no
+    # exemption at all - it is judged the same as any other machine field.
+    doc = play()
+    doc["false"][1]["select"] = {"note": "Lightning Bolt"}
+    put(root, doc)
+    assert "card-name-in-field" in error_codes(root)
 
 
 def test_a_type_line_word_on_three_cards_is_not_a_card_name_in_a_type_field(root):
@@ -284,6 +319,61 @@ def test_too_many_plays(root):
     assert error_codes(root) == ["too-many-plays"]
 
 
+def test_too_many_plays_message_says_advice_only_plays_are_not_counted(root):
+    for i in range(13):
+        put(root, move_bearing(f"p{i}"))
+    (error,) = [e for e in check_report(root)[0] if e.code == "too-many-plays"]
+    assert "13" in error.message and str(MAX_PLAYS) in error.message
+    assert "advice-only" in error.message
+
+
+# -- MAX_PLAYS and MAX_ADVICE: move-bearing and advice-only plays, capped
+# -- and reported separately (API-2) -------------------------------------
+
+
+def test_twelve_move_bearing_and_six_advice_only_plays_are_clean(root):
+    for i in range(12):
+        put(root, move_bearing(f"m{i}"))
+    for i in range(6):
+        put(root, advice(f"a{i}"))
+    assert check_report(root) == ([], [])
+
+
+def test_thirteen_move_bearing_plays_trip_too_many_plays_regardless_of_advice(root):
+    for i in range(13):
+        put(root, move_bearing(f"m{i}"))
+    for i in range(6):
+        put(root, advice(f"a{i}"))
+    codes = error_codes(root)
+    assert "too-many-plays" in codes
+    assert "too-many-advice" not in codes
+
+
+def test_seven_advice_only_plays_trip_too_many_advice_regardless_of_move_bearing(root):
+    for i in range(12):
+        put(root, move_bearing(f"m{i}"))
+    for i in range(7):
+        put(root, advice(f"a{i}"))
+    codes = error_codes(root)
+    assert "too-many-advice" in codes
+    assert "too-many-plays" not in codes
+
+
+def test_too_many_advice_message_names_the_count_and_the_cap(root):
+    for i in range(7):
+        put(root, advice(f"a{i}"))
+    (error,) = check_report(root)[0]
+    assert error.code == "too-many-advice"
+    assert "7" in error.message and str(MAX_ADVICE) in error.message
+
+
+def test_too_many_advice_reports_against_the_plays_dir_like_too_many_plays(root):
+    for i in range(7):
+        put(root, advice(f"a{i}"))
+    (error,) = check_report(root)[0]
+    assert error.path == f"decks/{SLUG}/plays"
+
+
 def test_inputs_json_is_not_a_play(root):
     for i in range(12):
         put(root, play(id=f"p{i}", priority=0))
@@ -317,6 +407,17 @@ def test_a_disabled_play_does_not_count_as_active(root):
     for i in range(6):
         put(root, play(id=f"p{i}", priority=10))
     put(root, play(id="off", priority=0))
+    assert check_report(root)[0] == []
+
+
+def test_advice_only_plays_never_count_toward_too_many_active_for_archetype(root):
+    # Requirement 4: an advice-only play never enters `active` and never
+    # enters `_max_live_together`, priority > 0 or not - it commits nothing
+    # at any decision point, so it is outside the O8 proof by construction.
+    for i in range(6):
+        put(root, play(id=f"p{i}", priority=10))
+    for i in range(6):
+        put(root, advice(f"a{i}", priority=10))
     assert check_report(root)[0] == []
 
 
@@ -647,6 +748,15 @@ def test_a_disabled_play_is_never_compared(root):
     assert check_report(root) == ([], [])
 
 
+def test_two_advice_only_plays_that_would_conflict_on_every_dimension_raise_no_warning(root):
+    # Requirement 4: an advice-only play is never one half of a play-conflict
+    # - it commits nothing, so there is no decision point for it to conflict
+    # at, priority > 0 or not.
+    put(root, advice("a", priority=60))
+    put(root, advice("b", priority=60))
+    assert check_report(root) == ([], [])
+
+
 EXCLUSIVE_PAIRS = [
     ("whose_turn", {"when": when("mine")}, {"when": when("theirs")}),
     ("steps", {"when": when(steps=("upkeep",))}, {"when": when(steps=("end_step",))}),
@@ -748,6 +858,47 @@ def test_an_errored_play_is_left_out_of_next_conflicts(root):
     put(root, play(id="c", priority=0, when=when("theirs"), next=["a", "bad"]))
     errors, warnings = check_report(root)
     assert [e.code for e in errors] == ["unknown-input"]
+    assert warnings == []
+
+
+# -- F8: advice-only-chained --------------------------------------------------
+
+
+def test_advice_only_chained_when_the_advice_only_play_itself_has_a_next(root):
+    put(root, play(id="a", priority=0))
+    put(root, advice("b", next=["a"]))
+    (error,) = [e for e in check_report(root)[0] if e.code == "advice-only-chained"]
+    assert error.path == f"decks/{SLUG}/plays/b.json"
+    assert "'b'" in error.message and "'a'" in error.message
+
+
+def test_advice_only_chained_when_a_play_names_an_advice_only_play_in_next(root):
+    put(root, advice("a"))
+    put(root, play(id="b", priority=0, next=["a"]))
+    (error,) = [e for e in check_report(root)[0] if e.code == "advice-only-chained"]
+    assert error.path == f"decks/{SLUG}/plays/b.json"
+    assert "'b'" in error.message and "'a'" in error.message
+
+
+def test_a_next_chain_of_move_bearing_plays_is_not_advice_only_chained(root):
+    put(root, play(id="a", next=["b"], priority=0))
+    put(root, play(id="b", priority=0))
+    assert check_report(root)[0] == []
+
+
+def test_an_advice_only_play_with_no_next_is_not_advice_only_chained(root):
+    put(root, advice("a"))
+    put(root, play(id="b", priority=0))
+    assert check_report(root)[0] == []
+
+
+def test_advice_only_chained_leaves_the_naming_play_out_of_next_conflicts(root):
+    # The naming play itself carries the advice-only-chained error, so it is
+    # left out of clean docs the same as any other errored play.
+    put(root, advice("a"))
+    put(root, play(id="c", next=["a"], priority=0))
+    errors, warnings = check_report(root)
+    assert [e.code for e in errors] == ["advice-only-chained"]
     assert warnings == []
 
 
