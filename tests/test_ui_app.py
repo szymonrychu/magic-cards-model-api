@@ -4469,7 +4469,10 @@ def _server_notice_kinds() -> list[str]:
     copy of it."""
     from magic_cards_model_api import commands
 
-    return [*commands._NOTICE_LIST_NAMES, commands._LAYER_NOTICE_KIND]
+    return [
+        *commands._NOTICE_LIST_NAMES,
+        *(name for _owner, name in commands._NESTED_NOTICE_LISTS),
+    ]
 
 
 def test_every_notice_kind_the_server_can_emit_renders_a_human_line() -> None:
