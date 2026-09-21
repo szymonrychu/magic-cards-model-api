@@ -198,7 +198,9 @@ def test_an_armed_applying_play_is_marked_and_keeps_its_call(
             server,
             "wait_for_priority",
             {"player_uid": alice, "arm": "drop", "arm_reasoning": "arm it"},
-        ).content[0].text
+        )
+        .content[0]
+        .text
     )
 
     assert answer["armed_applying"] == ["drop"]
@@ -232,7 +234,9 @@ def test_an_armed_play_sorts_first_among_conflicting_applying_plays(
             server,
             "wait_for_priority",
             {"player_uid": alice, "arm": "drop-b", "arm_reasoning": "arm it"},
-        ).content[0].text
+        )
+        .content[0]
+        .text
     )
 
     assert answer["armed_applying"] == ["drop-b"]

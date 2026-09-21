@@ -1131,9 +1131,7 @@ def applicable_hint(
     # threaded through this function's own arguments. Read once here so
     # every one of them sorts first below, regardless of its own priority,
     # and carries `armed: true` so a reader can tell why.
-    armed_ids = {
-        str(script_id) for script_id in (state.get("armed_applying") or []) if script_id
-    }
+    armed_ids = {str(script_id) for script_id in (state.get("armed_applying") or []) if script_id}
     if holds_priority:
         recent = {
             (str(run[0]), run[1], run[2])

@@ -377,9 +377,7 @@ def test_a_script_needing_an_unsupplied_input_is_not_reported_applying(
     seats = wired(monkeypatch, board)
     seat, hook = hooked_seat(seats, alice)
 
-    result = arming.arm(
-        seat, seats.script_corpora, arm=["need-tempo"], arm_reasoning=ARM_REASONING
-    )
+    result = arming.arm(seat, seats.script_corpora, arm=["need-tempo"], arm_reasoning=ARM_REASONING)
 
     assert isinstance(result, dict), result
     assert result["applying"] == []

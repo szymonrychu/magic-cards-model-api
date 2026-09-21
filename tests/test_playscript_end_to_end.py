@@ -693,9 +693,7 @@ def test_an_offered_move_bearing_and_advice_only_play_both_reach_the_ledger_and_
 
     # 5: bob's own read of the same log carries neither row.
     bob_log = log_rows(client, game, bob)
-    assert not [row for row in bob_log if row["action"] == audit.SCRIPT_RUN_OFFERED_ACTION], (
-        bob_log
-    )
+    assert not [row for row in bob_log if row["action"] == audit.SCRIPT_RUN_OFFERED_ACTION], bob_log
 
     # 7: repeat the same wake at the same turn and step (nothing on the
     # board moved) - the F4 dedupe: no second offer row, the same offer_seq
