@@ -459,6 +459,26 @@ def test_status_is_pending_before_the_pod_runs() -> None:
     assert seats.status("u1")["state"] == "pending"
 
 
+def test_status_is_pending_during_the_driver_self_dispatch_boot_window() -> None:
+    """The driver's own lifespan sets `current["pending"] = True` the moment
+    self-dispatch is scheduled, before `assign` has recorded anything else -
+    so a `Running` pod whose driver answers `/status` with exactly that
+    shape (`pending: True`, `turnActive: False`, `lastError: None`) must
+    read as `pending` here, the same "alive, not finished" state a booting
+    pod gets before the driver is even reachable. Reading it as `idle`
+    instead is indistinguishable from a seat that finished and gave up, and
+    would hand a perfectly healthy, still-booting seat to the pregame
+    backstop."""
+    seats, _, _ = make(status={"turnActive": False, "pending": True, "lastError": None})
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    status = seats.status("u1")
+    assert status["state"] == "pending"
+    assert status["pod"] == "Running"
+    assert status["driver"]["pending"] is True
+
+
 def test_release_tells_the_driver_then_deletes_the_job() -> None:
     seats, batch, http = make()
     seats.start(
