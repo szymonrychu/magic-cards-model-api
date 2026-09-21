@@ -496,6 +496,59 @@ def test_neither_brief_instructs_a_routine_board_or_log_read():
             )
 
 
+#: API-7-r1: the owner dropped autofire outright (`playscripts.arming.arm`
+#: only ever judges an armed id against the board now - it never calls
+#: `script_tools.run`), but `ai_seat_brief.md` was never touched by either
+#: API-7 commit and still told a live seat the pre-API-7 story: that arming
+#: "fires inside the wait itself" and that a run can start merely by being
+#: armed with `--arm`. A seat that believed either sentence could sit on an
+#: armed play forever, waiting for the wait to have already sent the
+#: `script run` call for it, rather than reading `scripts.applicable`'s own
+#: `armed: true` entry off the answer that stopped and sending `script run`
+#: itself - the one committing call the loop actually requires. Pinned the
+#: same way `RETIRED_ROUTINE_READS` pins wave 1's retired instruction: the
+#: exact retired sentences may never reappear in the brief that is fed to a
+#: real playing seat verbatim (`ai_seat.BRIEF_FILES`).
+RETIRED_ARM_AUTOFIRE_CLAIMS = (
+    "Arming never adds a third command - it fires inside the wait",
+    "it fires inside the wait itself, so it does not contradict",
+    "waiting for your own priority to fire something armed",
+    "Scripts only run when you start them with `script run` or arm them with\n"
+    "`--arm` on `wait`/`pass-until`; a run you neither started nor armed was "
+    "started by someone else.",
+)
+
+
+def test_seat_brief_never_claims_arming_fires_a_run():
+    """API-7-r1's own finding: `ai_seat_brief.md` still documented arming as
+    auto-firing after API-7 dropped that behaviour everywhere else. This
+    fails red against the unfixed brief and must stay green once the brief
+    is rewritten to say arming only judges."""
+    flat = _flat(BRIEF)
+    for retired in RETIRED_ARM_AUTOFIRE_CLAIMS:
+        retired_flat = " ".join(retired.split())
+        assert retired_flat not in flat, (
+            f"ai_seat_brief.md still claims arming fires a run ({retired_flat!r}) - "
+            "API-7 dropped autofire outright; arming only judges and the seat "
+            "sends `script run` itself off `scripts.applicable`'s `armed: true` entry"
+        )
+
+
+def test_seat_brief_states_arming_only_judges():
+    """The replacement doctrine, positively stated: arming never runs a
+    script itself (`playscripts.arming.arm`'s own contract), and the seat is
+    the one who sends `script run` off the ready `call` an applying armed
+    play is marked with first in `scripts.applicable`."""
+    section = " ".join(_loop_section(BRIEF.read_text()).split())
+    assert "never runs" in section or "never fires" in section, (
+        "ai_seat_brief.md's loop section never states that arming does not run anything itself"
+    )
+    assert "scripts.applicable" in section, (
+        "ai_seat_brief.md's loop section never points a seat back at "
+        "scripts.applicable for the armed play's own ready call"
+    )
+
+
 def test_both_briefs_forbid_the_calls_every_answer_already_answers():
     """Not enough that the old instruction is gone: a seat with no
     instruction either way reaches for the board, because reading the board

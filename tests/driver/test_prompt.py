@@ -832,9 +832,17 @@ LOOP_HINT_DOCTRINE = (
 #: the old wording never admitted that. Per brief: a buddy is refused
 #: `pass-until` outright, so its own wording only ever names `wait`.
 CLI_HINT_CAUTION = {
+    # API-7-r1: the owner dropped autofire outright, and `ai_seat_brief.md`
+    # (fed verbatim to a real playing seat, `ai_seat.BRIEF_FILES`) is
+    # rewritten to say so - arming only judges, it never starts a run.
+    # `ai_buddy_brief.md` still carries the pre-API-7 sentence below: it is
+    # a separate, un-reviewed finding (`noted, not doing now` in the API-7-r1
+    # report), not something this task's evidence named.
     "ai_seat_brief.md": (
-        "Scripts only run when you start them with `script run` or arm them with `--arm` on "
-        "`wait`/`pass-until`; a run you neither started nor armed was started by someone else."
+        "Scripts only run when you start them with `script run` - arming with `--arm` on "
+        "`wait`/`pass-until` never runs one, only judges: it marks whichever armed script "
+        "applies first in `scripts.applicable` with its own `call` ready, for you to run "
+        "yourself; a run you did not start yourself was started by someone else."
     ),
     "ai_buddy_brief.md": (
         "Scripts only run when you start them with `script run` or arm them with `--arm` on "

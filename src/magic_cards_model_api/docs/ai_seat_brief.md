@@ -106,15 +106,22 @@ hand to throw away or keep - nobody will do it for you, and nobody will do it
 own next turn, run `plan --for-turn next ...` during your opponent's turn
 rather than waiting until your own upkeep to write one - see "Declare your
 plan before you act" below. Then wait to your own main phase with
-`pass-until <step>`, arming whatever registered scripts are worth firing on
+`pass-until <step>`, arming whatever registered scripts are worth judging on
 the way with `--arm SCRIPT_ID` (repeatable, one per script, priority order)
 and `--arm-reasoning "..."`. A named fetch land is the clearest case: arm the
 fetch play before your turn begins, rather than cracking it by hand once it
-resolves. Arming never adds a third command - it fires inside the wait
-itself, so it does not contradict "nothing in between" below. If the answer
-says it is still waiting for your own priority to fire something armed, run
-`pass-until` again with `--resume` passed back verbatim - never start a
-fresh run there.
+resolves. **Arming never runs anything itself** - it only judges the armed
+ids against the board the instant you hold priority, inside the wait itself,
+so it does not add a third command and does not contradict "nothing in
+between" below. The moment one applies, the wait stops right there
+(`finished: true`), and that play comes back sorted first in
+`scripts.applicable`, marked so you can tell it was armed, with its own
+`call` ready - you send that `script run` yourself, exactly as you would any
+other applicable play. Two armed plays applying at once is a conflict
+(`armed_conflict`): neither is offered, and you play that window yourself.
+If the answer says it is still waiting for your own priority so an armed
+play can be judged, run `pass-until` again with `--resume` passed back
+verbatim - never start a fresh run there.
 
 Your steady state is two commands, and **nothing in between**:
 
@@ -486,9 +493,11 @@ loop: read `script_exit.exit` and do exactly one thing.
 - `exit` null: the time cap came first. Run it again with
   `--resume '<the script_exit.resume object>'`, handed back verbatim.
 
-Scripts only run when you start them with `script run` or arm them with
-`--arm` on `wait`/`pass-until`; a run you neither started nor armed was
-started by someone else.
+Scripts only run when you start them with `script run` - arming with `--arm`
+on `wait`/`pass-until` never runs one, only judges: it marks whichever armed
+script applies first in `scripts.applicable` with its own `call` ready, for
+you to run yourself; a run you did not start yourself was started by someone
+else.
 
 ## Win the game, do not merely make legal moves
 
