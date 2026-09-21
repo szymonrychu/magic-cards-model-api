@@ -4822,9 +4822,13 @@ def _targeting_notice_kinds() -> list[str]:
 #: `test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is` by
 #: name rather than silently inheriting somebody else's sentence.
 #:
-#: Rows may run AHEAD of the engine checked out next door - see
-#: `_targeting_rows_missing`. Every row is rendered and checked either way,
-#: so one waiting for its engine value cannot rot while it waits.
+#: A row may be written before the engine next door can file its kind, but
+#: only by saying so in that row's `pending_engine` - a one-line reason.
+#: An undeclared row the engine cannot file is drift in the other direction
+#: (`_targeting_rows_unfileable`), and a `pending_engine` the engine has
+#: since shipped is a stale marker (`_targeting_rows_pending_but_shipped`).
+#: Every row is rendered and checked either way, so one waiting for its
+#: engine value cannot rot while it waits.
 _TARGETING_OUTCOMES = {
     "unparsed_targets": {
         "gap": True,
@@ -4851,16 +4855,58 @@ _TARGETING_OUTCOMES = {
 
 def _targeting_rows_missing(kinds: list[str]) -> list[str]:
     """The sub-kinds in `kinds` with no row in `_TARGETING_OUTCOMES`, i.e.
-    outcomes the engine can file that nothing here has decided how to render.
-
-    One direction only, deliberately. A row here with no engine value is NOT
-    drift: the browser table is allowed to be ahead of the engine, and
-    demanding equality made this repo's suite depend on which
-    `../magic-cards-model` revision happens to be checked out - green on one
-    branch of it and red on its own `main`, for a file that renders text.
-    `test_the_targeting_guard_follows_the_engine_without_pinning_it_to_one_commit`
-    pins both halves of that asymmetry."""
+    outcomes the engine can file that nothing here has decided how to
+    render. The drift this file has always guarded against."""
     return sorted(set(kinds) - set(_TARGETING_OUTCOMES))
+
+
+def _targeting_rows_unfileable(
+    kinds: list[str], outcomes: dict[str, dict[str, object]] | None = None
+) -> list[str]:
+    """The rows here that `kinds` cannot file and that never said they were
+    waiting for one - wiring rendered for a `notice_kind` no engine this
+    checkout builds against can produce.
+
+    This direction was once switched off entirely, on the argument that a
+    browser-rendering test has no business pinning which
+    `../magic-cards-model` revision is checked out next door. The argument
+    is right about the constraint and wrong about switching the check off:
+    with it off, the workbench pinned an engine that defined two of these
+    four kinds while `ui/app.js` rendered all four, the two extra lines were
+    unreachable in everything actually deployed, and no test anywhere went
+    red to say so. That is the same silent-failure shape the notices exist
+    to remove, one layer up.
+
+    So a row is allowed to run ahead of the engine, but it has to say so:
+    `pending_engine` is a one-line reason, it is checked (the row still has
+    to render honestly), and `_targeting_rows_pending_but_shipped` makes it
+    expire the moment the engine catches up.
+
+    `outcomes` defaults to the real table and is supplied only by
+    `test_a_row_may_wait_for_its_engine_half_only_by_saying_so`, which has to
+    exercise the hatch on a table of its own - nothing in the real one is
+    pending today."""
+    rows = _TARGETING_OUTCOMES if outcomes is None else outcomes
+    return sorted(
+        kind
+        for kind, row in rows.items()
+        if kind not in set(kinds) and not row.get("pending_engine")
+    )
+
+
+def _targeting_rows_pending_but_shipped(
+    kinds: list[str], outcomes: dict[str, dict[str, object]] | None = None
+) -> list[str]:
+    """The rows still marked `pending_engine` that `kinds` can now file. The
+    marker is an exception to `_targeting_rows_unfileable`, so it has to
+    expire on its own: a row left waiting for an engine value that arrived
+    silently re-opens the hole the marker was allowed to punch.
+
+    `outcomes` is supplied for the same reason as above."""
+    rows = _TARGETING_OUTCOMES if outcomes is None else outcomes
+    return sorted(
+        kind for kind, row in rows.items() if row.get("pending_engine") and kind in set(kinds)
+    )
 
 
 def test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is() -> None:
@@ -4887,7 +4933,8 @@ def test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is() -> Non
     states the opposite of what happened, and for two of them it actively
     suppresses an engine-gap report - the precise failure this whole change
     exists to remove."""
-    missing = _targeting_rows_missing(_targeting_notice_kinds())
+    engine_kinds = _targeting_notice_kinds()
+    missing = _targeting_rows_missing(engine_kinds)
     assert not missing, (
         "the engine's TargetingNoticeKind and this file's expectations have "
         f"drifted apart: {missing} is emitted by the engine and rendered by "
@@ -4895,10 +4942,25 @@ def test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is() -> Non
         "about - give it its own line in ui/app.js's TARGETING_NOTICE_MESSAGES "
         "and its own row here."
     )
+    unfileable = _targeting_rows_unfileable(engine_kinds)
+    assert not unfileable, (
+        f"{unfileable} is rendered here and by ui/app.js, and the engine at "
+        "../magic-cards-model cannot file it: nothing a human plays against "
+        "this pair will ever show those lines. Either that engine half has "
+        "not landed and the superrepo still pins an older commit - advance "
+        "the pin - or the row is stale and belongs deleted. A row genuinely "
+        "waiting on an engine change says so in its own `pending_engine`."
+    )
+    stale = _targeting_rows_pending_but_shipped(engine_kinds)
+    assert not stale, (
+        f"{stale} is still marked `pending_engine` and the engine next door "
+        "files it now - drop the marker so the row is guarded like every "
+        "other one."
+    )
     # Every row, not only the ones this engine checkout can emit: a row
     # waiting on an engine value still has to render distinctly and honestly,
     # or it is wiring nobody has ever run.
-    kinds = sorted(set(_TARGETING_OUTCOMES) | set(_targeting_notice_kinds()))
+    kinds = sorted(set(_TARGETING_OUTCOMES) | set(engine_kinds))
     lines = run_app(
         "Object.fromEntries(KINDS.map((notice_kind) => [notice_kind, m.noticeMessage("
         '{ kind: "targeting_notices", notice_kind, source_name: "Hyena Umbra",'
@@ -4933,34 +4995,83 @@ def test_a_targeting_sub_kind_this_ui_has_never_seen_fails_loud() -> None:
     assert "not a bug" not in line.lower(), line
 
 
-def test_the_targeting_guard_follows_the_engine_without_pinning_it_to_one_commit() -> None:
-    """The guard above has to fire in exactly one direction: a
-    `TargetingNoticeKind` the engine defines with no row here is drift and
-    must fail by name, while a row here the engine has not shipped yet is
-    not.
+def test_the_targeting_guard_reports_drift_in_both_directions() -> None:
+    """The guard above has to fire in both directions, and it took two goes
+    to get that right.
 
-    That asymmetry is the whole point, and it was got wrong once already.
-    The guard was written as `set(engine_kinds) == set(_TARGETING_OUTCOMES)`,
-    which is two assertions welded together: "nothing the engine emits is
-    unrendered" (the one this file exists for) and "this UI knows nothing the
-    engine does not" (a statement about which engine commit is checked out
-    next door). The second one pinned this repo's test suite to a single
-    `../magic-cards-model` revision - the api could not go green against the
-    engine's own `main` until an engine change landed first, which is not a
-    property a browser-rendering test has any business having. The browser
-    table is allowed to be ahead of the engine: an entry for a kind that is
-    not emitted yet renders for nobody and costs nothing, and
-    `test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is`
-    exercises it regardless so it cannot rot while it waits.
+    It started as `set(engine_kinds) == set(_TARGETING_OUTCOMES)`, which is
+    two assertions welded together: "nothing the engine emits is unrendered"
+    and "nothing rendered here is unemittable". The second was removed
+    wholesale, because it made this repo's suite depend on which
+    `../magic-cards-model` revision happens to be checked out next door -
+    the api could not go green against the engine's own `main` until an
+    engine change landed first.
 
-    Both directions are checked here against supplied kind sets rather than
-    against whatever is checked out, so this stays true on either engine."""
+    Removing it cost more than it saved. `mandatory_target_missing` and
+    `unreadable_aura_target` sat in `ui/app.js` while the superrepo pinned
+    an engine that defines neither, so the deployed pair rendered two lines
+    it could never reach, and the whole suite stayed green - a silent
+    failure in the code whose entire job is to stop silent failures.
+
+    Both directions are checked again, with an explicit escape hatch for the
+    ordering problem that killed the first attempt: `pending_engine` on a row
+    declares "the engine half has not landed yet", in one line, where a
+    reader will see it. `_targeting_rows_pending_but_shipped` then expires
+    the marker as soon as the engine catches up, so the hatch cannot be left
+    propping a row open forever.
+
+    Checked against supplied kind sets rather than whatever is checked out,
+    so this test says the same thing on either engine."""
     engine_before_the_four_outcomes = ["unparsed_targets", "no_legal_targets"]
     assert _targeting_rows_missing(engine_before_the_four_outcomes) == [], (
-        "an engine that predates a row in _TARGETING_OUTCOMES is not drift - "
-        "this repo must go green against the engine's main, not only against "
-        "a branch of it"
+        "an engine that predates a row in _TARGETING_OUTCOMES has not left a "
+        "kind unrendered - that is the other direction's business"
     )
     assert _targeting_rows_missing([*_targeting_notice_kinds(), "some_future_kind"]) == [
         "some_future_kind"
     ], "a sub-kind the engine emits with no row here must fail by name"
+    assert _targeting_rows_unfileable(engine_before_the_four_outcomes) == [
+        "mandatory_target_missing",
+        "unreadable_aura_target",
+    ], (
+        "an engine that cannot file a row rendered here must fail by name: "
+        "this is the exact pair the superrepo shipped unreachable"
+    )
+    assert _targeting_rows_unfileable(_targeting_notice_kinds()) == [], (
+        "every row here is fileable by the engine this checkout builds against, or says why not"
+    )
+
+
+def test_a_row_may_wait_for_its_engine_half_only_by_saying_so() -> None:
+    """The escape hatch, exercised on a table of its own so it keeps working
+    the day someone needs it - the real `_TARGETING_OUTCOMES` has nothing
+    pending today, and a mechanism nothing runs is a mechanism that is
+    already broken when it is first reached for.
+
+    Three claims: an undeclared row the engine cannot file is drift; the same
+    row with a `pending_engine` reason is not; and that reason expires by
+    itself once the engine ships the kind, rather than sitting there excusing
+    a row nobody rechecks."""
+    waiting = "a_kind_the_engine_has_not_shipped"
+    table: dict[str, dict[str, object]] = {
+        "unparsed_targets": dict(_TARGETING_OUTCOMES["unparsed_targets"]),
+        waiting: {"gap": True, "says": "went on the stack", "never_says": "graveyard"},
+    }
+    engine = ["unparsed_targets"]
+
+    assert _targeting_rows_unfileable(engine, table) == [waiting], (
+        "a row the engine cannot file, saying nothing about why, is drift"
+    )
+    assert _targeting_rows_pending_but_shipped(engine, table) == []
+
+    table[waiting]["pending_engine"] = "engine PR #28 has not landed yet"
+    assert _targeting_rows_unfileable(engine, table) == [], (
+        "a row that names the engine change it waits on is not drift"
+    )
+    assert _targeting_rows_pending_but_shipped(engine, table) == []
+
+    landed = [*engine, waiting]
+    assert _targeting_rows_unfileable(landed, table) == []
+    assert _targeting_rows_pending_but_shipped(landed, table) == [waiting], (
+        "a marker outliving the engine change it names must fail by name"
+    )
