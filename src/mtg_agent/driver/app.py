@@ -54,7 +54,7 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any, Literal
 
 import httpx
@@ -1619,31 +1619,89 @@ def build_app(
         """A per-game Job carries its own match in `DRIVER_ASSIGNMENT_JSON`
         rather than waiting for a caller to `POST /dispatch` it, so it
         self-dispatches here, on startup, through the same `assign` the
-        route uses. `assign` is synchronous (it blocks on `httpx.Client`
-        calls), so it runs in a worker thread rather than the event loop -
-        `to_thread` rather than a bare call, so a slow game server or agent
-        does not stall the ASGI startup phase itself.
+        route uses.
+
+        **The dispatch runs as a background task, never awaited before
+        `yield`.** `assign` is synchronous (it blocks on `httpx.Client` calls
+        to the game server, and to the agent's wrapper for up to
+        `agent_boot_wait`), so it still runs in a worker thread - `to_thread`,
+        not a bare call - but awaiting that call here, before `yield`, used to
+        hold ASGI startup open for the whole of it: uvicorn does not consider
+        the app started, and serves NOTHING - not even `GET /status` - until
+        lifespan reaches its `yield`. `k8s_seats.status()` reads `/status` to
+        tell a `Running` pod that is still booting from one whose driver died,
+        and allows only `driver_grace_seconds` (60s, deliberately untouched by
+        this fix) before calling an unreachable driver an error; a
+        self-dispatch slower than that - a slow game server, or an agent
+        genuinely still coming up - used to make a perfectly healthy seat
+        register as a dead one and hand the game to the pregame backstop.
+        Backgrounding the dispatch is what keeps `/status` answering from the
+        container's very first tick, so that grace clock has something to
+        actually read.
+
+        `current["pending"]` is set True the moment this task is scheduled -
+        before `assign` itself is even called, let alone has claimed the
+        seat - so a reader of `/status` during this window (`k8s_seats.
+        status()`, `ai_seat.py`) sees the same "assigned, not yet confirmed
+        playing" shape `assign`'s own ordinary path already produces, rather
+        than the assignment-less, not-pending, not-active shape both readers
+        read as `idle` - which they already treat as "this seat gave up", not
+        "this seat has not started yet".
 
         Every failure - a body that will not parse as JSON, one that parses
         but fails validation, the game server being unreachable, the agent
-        refusing turn 0 outright - is caught here, broadly, logged, and
-        recorded on `/status` rather than raised: raising here would keep the
-        container from ever starting, which is worse than a container that
-        starts idle and reports why. For a per-game Job (`exit_after_match`)
-        a self-dispatch that cannot even begin is terminal - there is no
-        caller left to retry it - so the container is told to exit rather
-        than sit idle until Kubernetes' own deadline finds it."""
+        refusing turn 0 outright - is still caught broadly, logged, and
+        recorded on `/status` rather than raised: an uncaught exception here
+        would only become an unhandled-task-exception line in the log, worse
+        than the same failure recorded where `/status` can show it. For a
+        per-game Job (`exit_after_match`) a self-dispatch that cannot even
+        begin is terminal - there is no caller left to retry it - so the
+        container is told to exit rather than sit idle until Kubernetes' own
+        deadline finds it.
+
+        JSON parsing and validation stay synchronous, before `yield`: both
+        are in-memory and instant, so there is nothing a background task buys
+        there, and a malformed assignment can be recorded - and the container
+        told to exit - before the app has even started.
+
+        The task is kept on `app.state` so it is never garbage-collected
+        mid-flight, and is cancelled and awaited - swallowing the
+        `CancelledError` that produces - on shutdown, so a container tearing
+        down never leaves a dispatch thread dangling behind it."""
+        self_dispatch_task: asyncio.Task[None] | None = None
         if settings.assignment_json:
             try:
                 body = DispatchIn.model_validate_json(settings.assignment_json)
-                await asyncio.to_thread(assign, body)
-            except Exception as exc:  # noqa: BLE001 - any failure here is terminal
+            except Exception as exc:  # noqa: BLE001 - malformed input is terminal, not fatal to boot
                 log.error("self-dispatch failed: %s", exc)
                 with lock:
                     current["lastError"] = str(exc)
                 if settings.exit_after_match:
                     app.state.should_exit = True
+            else:
+                with lock:
+                    current["pending"] = True
+
+                async def run_self_dispatch(body: DispatchIn = body) -> None:
+                    try:
+                        await asyncio.to_thread(assign, body)
+                    except Exception as exc:  # noqa: BLE001 - any failure here is terminal
+                        log.error("self-dispatch failed: %s", exc)
+                        with lock:
+                            current["lastError"] = str(exc)
+                            current["pending"] = False
+                        if settings.exit_after_match:
+                            app.state.should_exit = True
+
+                self_dispatch_task = asyncio.create_task(
+                    run_self_dispatch(), name="driver-self-dispatch"
+                )
+                app.state.self_dispatch_task = self_dispatch_task
         yield
+        if self_dispatch_task is not None:
+            self_dispatch_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self_dispatch_task
 
     app.router.lifespan_context = lifespan
 
