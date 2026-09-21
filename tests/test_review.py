@@ -1434,7 +1434,7 @@ def _advised_run_then_the_real_move(client: TestClient) -> tuple[dict[str, Any],
     assert _declare(client, info).status_code == 200
     card_id = _card_id(client, game_id, "Forest", "bob")
     advice_seq = _advise(client, game_id, body={"card_id": card_id}, summary="play the Forest")
-    for phase in ("start", "finish"):
+    for phase in ("offer", "start", "finish"):
         reported = _script_run(client, game_id, "bobs-advisor", phase)
         assert reported.status_code == 200, reported.text
     played = client.post(
@@ -1463,6 +1463,12 @@ def test_a_script_run_row_is_never_the_move_advice_was_followed_by(client: TestC
         assert row["refused"] == []
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_is_move_does_not_count_an_offer_row() -> None:
+    for action in audit.SCRIPT_RUN_ACTIONS:
+        assert review._is_move({"action": action}) is False, action
+    assert review._is_move({"action": "play_land"}) is True
 
 
 def test_a_script_run_row_is_not_a_declared_seats_move(client: TestClient) -> None:
@@ -1501,6 +1507,10 @@ def test_the_opponents_review_omits_the_script_run_rows(client: TestClient) -> N
                 for e in own.json()["entries"]
                 if e["action"] in audit.SCRIPT_RUN_ACTIONS
             ]
-            assert kept == [audit.SCRIPT_RUN_STARTED_ACTION, audit.SCRIPT_RUN_ACTION], params
+            assert kept == [
+                audit.SCRIPT_RUN_OFFERED_ACTION,
+                audit.SCRIPT_RUN_STARTED_ACTION,
+                audit.SCRIPT_RUN_ACTION,
+            ], params
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})

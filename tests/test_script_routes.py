@@ -128,6 +128,12 @@ def finish(**over: Any) -> dict[str, Any]:
     return body
 
 
+def offer(**over: Any) -> dict[str, Any]:
+    body = run(phase="offer")
+    body.update(over)
+    return body
+
+
 def post_run(client: TestClient, game: str, body: dict[str, Any], **params: str):
     return client.post(f"/api/games/{game}/script-runs", params=params, json=body)
 
@@ -912,6 +918,94 @@ def test_a_start_or_finish_after_game_over_is_refused_with_no_record(
     assert script_rows(audit.entries(game)) == []
 
 
+# ---------------------------------------------------------------------------
+# the offer phase (API-5)
+# ---------------------------------------------------------------------------
+
+
+def test_an_offer_is_recorded(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+
+    offered = post_run(client, game, offer(), uid=alice)
+
+    assert offered.status_code == 200, offered.text
+    body = offered.json()
+    assert body["recorded"] is True
+    assert body["phase"] == "offer"
+    assert body["run_id"] == "run-1"
+    rows = script_rows(audit.entries(game))
+    assert [row["action"] for row in rows] == [audit.SCRIPT_RUN_OFFERED_ACTION]
+    assert rows[0]["seq"] == body["log_seq"]
+
+
+def test_an_offer_does_not_block_a_later_start_at_the_same_turn_and_step(
+    client: TestClient, game: str
+) -> None:
+    """F2 regression: `_prior_script_run` must not key an offer row as a
+    prior run, or the very `script run` the offer invited would be refused
+    with `409 already_ran`. Written first, before `SCRIPT_RUN_SLOT_ACTIONS`
+    existed, and seen to fail with a 409 for the reason described here."""
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    assert post_run(client, game, offer(run_id="offer-1"), uid=alice).status_code == 200
+
+    started = post_run(client, game, run(run_id="run-1"), uid=alice)
+
+    assert started.status_code == 200, started.text
+    assert [row["action"] for row in script_rows(audit.entries(game))] == [
+        audit.SCRIPT_RUN_OFFERED_ACTION,
+        audit.SCRIPT_RUN_STARTED_ACTION,
+    ]
+
+
+def test_the_offer_action_is_in_script_run_actions_but_not_the_slot_actions() -> None:
+    assert audit.SCRIPT_RUN_OFFERED_ACTION in audit.SCRIPT_RUN_ACTIONS
+    assert audit.SCRIPT_RUN_OFFERED_ACTION not in audit.SCRIPT_RUN_SLOT_ACTIONS
+    assert set(audit.SCRIPT_RUN_SLOT_ACTIONS) == {
+        audit.SCRIPT_RUN_STARTED_ACTION,
+        audit.SCRIPT_RUN_ACTION,
+    }
+
+
+def test_an_offer_is_refused_when_scripts_are_disabled(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCRIPTS_ENABLED", "false")
+    alice = seat_uid(game, "alice")
+
+    offered = post_run(client, game, offer(), uid=alice)
+
+    assert offered.status_code == 409, offered.text
+    assert offered.json()["code"] == "scripts_disabled"
+    assert script_rows(audit.entries(game)) == []
+
+
+def test_an_offer_of_a_script_the_seat_did_not_register_is_refused(
+    client: TestClient, game: str
+) -> None:
+    alice = seat_uid(game, "alice")
+
+    offered = post_run(client, game, offer(), uid=alice)
+
+    assert offered.status_code == 404, offered.text
+    assert offered.json()["code"] == "unknown_script"
+    assert script_rows(audit.entries(game)) == []
+
+
+def test_an_offer_after_game_over_is_refused_with_no_record(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    conceded = client.post(f"/api/games/{game}/actions/concede", json={"player": "bob"})
+    assert conceded.status_code == 200 and conceded.json()["winner"] == "alice", conceded.text
+
+    offered = post_run(client, game, offer(), uid=alice)
+
+    assert offered.status_code == 409, offered.text
+    assert offered.json().get("type") == "game_over", offered.json()
+    assert script_rows(audit.entries(game)) == []
+
+
 def test_a_finish_writes_one_script_run_row_with_every_field(client: TestClient, game: str) -> None:
     alice = seat_uid(game, "alice")
     body = finish()
@@ -1221,6 +1315,7 @@ def test_the_admin_keys_advisor_start_is_checked_against_that_seats_advisors(
 def _played_runs(client: TestClient, game: str) -> None:
     alice = seat_uid(game, "alice")
     assert register(client, game, alice, uid=alice).status_code == 200
+    assert post_run(client, game, offer(run_id="offer-1"), uid=alice).status_code == 200
     assert post_run(client, game, run(), uid=alice).status_code == 200
     assert post_run(client, game, finish(), uid=alice).status_code == 200
 
@@ -1257,6 +1352,7 @@ def test_the_seat_its_advisor_and_the_admin_read_its_script_run_rows(
     for params in ({"uid": alice}, {"uid": advisor}, {"uid": admin_key}):
         log = client.get(f"/api/games/{game}/log", params=params)
         assert [row["action"] for row in script_rows(log.json()["log"])] == [
+            audit.SCRIPT_RUN_OFFERED_ACTION,
             audit.SCRIPT_RUN_STARTED_ACTION,
             audit.SCRIPT_RUN_ACTION,
         ], params

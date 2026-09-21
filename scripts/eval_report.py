@@ -175,6 +175,7 @@ NOT_PLAY = frozenset(
         "pregame_settled",
         "report_problem",
         "script_run",
+        "script_run_offered",
         "script_run_started",
         "shuffled",
         "state_based_actions",

@@ -55,7 +55,12 @@ from magic_cards_model.machines.decisions import PendingDecision
 from magic_cards_model.models import CardState, Game
 
 from .action_rows import legal_action_rows
-from .audit import PLAN_ACTION, SCRIPT_RUN_ACTION, SCRIPT_RUN_ACTIONS, SCRIPT_RUN_STARTED_ACTION
+from .audit import (
+    PLAN_ACTION,
+    SCRIPT_RUN_ACTION,
+    SCRIPT_RUN_SLOT_ACTIONS,
+    SCRIPT_RUN_STARTED_ACTION,
+)
 from .repository import RECENT_RECORDS_WINDOW
 
 #: CR 103's pregame steps, which the engine models as two steps a game
@@ -909,7 +914,7 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
     for row in reversed(store.recent_records(game_id, RECENT_RECORDS_WINDOW)):
         payload = row["payload"]
         action = payload.get("action")
-        if action not in SCRIPT_RUN_ACTIONS:
+        if action not in SCRIPT_RUN_SLOT_ACTIONS:
             continue
         prior = payload.get("detail") or {}
         if tuple(prior.get(name) for name in _SCRIPT_RUN_KEY) != key:
@@ -952,6 +957,23 @@ def record_script_run_finish(game_id: str, detail: dict[str, Any]) -> int:
 
     with _SCRIPT_RUN_LOCK:
         return audit.record(game_id, SCRIPT_RUN_ACTION, player=detail["seat"], **detail)
+
+
+def record_script_run_offer(game_id: str, detail: dict[str, Any]) -> int:
+    """Write one `script_run_offered` row for `detail` and return its `seq`.
+
+    Unlike `record_script_run_start`, this never checks `_prior_script_run`
+    and never raises `ScriptAlreadyRan`: an offer is not a run, it does not
+    hold the once-per-turn-and-step slot, and it must not collide with (or
+    be collided into by) one. Still taken under `_SCRIPT_RUN_LOCK`, like the
+    other two, so it is never interleaved with a start's own
+    check-then-append."""
+    from . import audit
+
+    with _SCRIPT_RUN_LOCK:
+        return audit.record(
+            game_id, audit.SCRIPT_RUN_OFFERED_ACTION, player=detail["seat"], **detail
+        )
 
 
 @dataclass(frozen=True)

@@ -633,7 +633,8 @@ class ScriptsCorpusResponse(BaseModel):
 
 class ScriptRunIn(RequestModel):
     """`POST /api/games/{game_id}/script-runs` - one script run, reported by
-    the runner at its `start` and again at its `finish`.
+    the runner at its `start` and again at its `finish`, or one offer of a
+    play the runner never ran (`phase: offer`).
 
     Not a game action: it mutates no `Game`, and the moves a script makes go
     through the action routes, which gate them. So none of
@@ -647,7 +648,16 @@ class ScriptRunIn(RequestModel):
     writes one `script_run` row carrying every field below.
     """
 
-    phase: Literal["start", "finish"]
+    phase: Literal["start", "finish", "offer"]
+    """`start`/`finish` bracket a run the runner actually made. `offer` is
+    different: it is the runner telling the ledger that this play was
+    offered to this seat at this turn and step, out of band - a play the
+    runner surfaced but that the seat may or may not have taken - so that
+    whether the seat took it or did something else can be paired up later,
+    at read time, from the ledger's own rows. Nothing live tracks that
+    pairing; an offer row does not consume the once-per-turn-and-step slot
+    a `start` does, so it never blocks (and is never blocked by) a `start`
+    of the same script at the same turn and step."""
     run_id: Stated
     """The runner's own id for this run."""
     parent_run_id: str | None = None

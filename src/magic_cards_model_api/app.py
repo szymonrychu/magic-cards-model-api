@@ -3721,7 +3721,8 @@ def _uids_running(game_id: str, player: str, role: str) -> list[str]:
 )
 def record_script_run(game_id: str, req: ScriptRunIn, request: Request) -> dict[str, Any]:
     """Report one play-script run: `phase: start` as it begins, `phase:
-    finish` when it ends (`schemas.ScriptRunIn`).
+    finish` when it ends, or `phase: offer` for a play the runner offered
+    this seat without running it (`schemas.ScriptRunIn`).
 
     B8-06: refused the same way every action route is (CR 104.1,
     `REFUSED_AFTER_GAME_OVER`/`commands.GameOverError`) once the game has
@@ -3749,9 +3750,21 @@ def record_script_run(game_id: str, req: ScriptRunIn, request: Request) -> dict[
     second start of the same script by the same seat at the same turn and
     step with exit `already_ran` (`records.record_script_run_start`).
     `finish` writes one `script_run` row with every field of the request and
-    the `game_id`, and is recorded even with the switch off. Both rows are
-    omitted from every log read but that seat's, its advisor's and the admin
-    key's (`visibility.redact_log_entry`).
+    the `game_id`, and is recorded even with the switch off. All three rows
+    are omitted from every log read but that seat's, its advisor's and the
+    admin key's (`visibility.redact_log_entry`).
+
+    `offer` (API-5) records that a play was offered to this seat at this
+    turn and step, out of band, so a later read can pair up whether the seat
+    took it - a `script_run_offered` row, never a run of its own
+    (`records.record_script_run_offer`). It sits behind the same kill switch
+    a `start` does (`code: scripts_disabled` with the switch off - an offer
+    arriving then is a stale process, since the hint that would have made it
+    never ran) and the same `unknown_script` check (a play offered outside
+    the registered corpus is a bug worth a 4xx). It is deliberately **not**
+    behind `already_ran`: an offer does not hold the once-per-turn-and-step
+    slot a `start` does, so it neither collides with one nor blocks the very
+    `start` it invited (`audit.SCRIPT_RUN_SLOT_ACTIONS`).
     """
     game = game_or_404(game_id)
     caller, key = _query_credentials(request)
@@ -3772,6 +3785,10 @@ def record_script_run(game_id: str, req: ScriptRunIn, request: Request) -> dict[
         records.require_scripts_enabled("starting a script run")
         records.require_registered_script(game_id, runners, detail)
         seq = records.record_script_run_start(game_id, detail)
+    elif req.phase == "offer":
+        records.require_scripts_enabled("offering a script run")
+        records.require_registered_script(game_id, runners, detail)
+        seq = records.record_script_run_offer(game_id, detail)
     else:
         seq = records.record_script_run_finish(game_id, detail)
     return {"recorded": True, "phase": req.phase, "run_id": req.run_id, "log_seq": seq}

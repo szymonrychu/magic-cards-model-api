@@ -147,10 +147,27 @@ SCRIPT_RUN_STARTED_ACTION = "script_run_started"
 #: routes and are rows of their own.
 SCRIPT_RUN_ACTION = "script_run"
 
-#: Both script-run rows. A run names the seat's own cards, plans and guides,
-#: so `visibility.redact_log_entry` drops these rows outright for every
-#: viewer but that seat, its advisor and the admin key.
-SCRIPT_RUN_ACTIONS = (SCRIPT_RUN_STARTED_ACTION, SCRIPT_RUN_ACTION)
+#: A runner telling the ledger that a play was offered to this seat at this
+#: turn and step, out of band (`phase: offer`) - never a run itself, and it
+#: never raises `records.ScriptAlreadyRan`. Written so whether the seat took
+#: the offer or did something else can be paired up at read time; nothing
+#: live tracks that pairing, and this row does not hold the
+#: once-per-turn-and-step slot a `start` does (`SCRIPT_RUN_SLOT_ACTIONS`).
+SCRIPT_RUN_OFFERED_ACTION = "script_run_offered"
+
+#: All three script-run rows. A run (or an offer) names the seat's own
+#: cards, plans and guides, so `visibility.redact_log_entry` drops these
+#: rows outright for every viewer but that seat, its advisor and the admin
+#: key - and `review._is_move`/`app.game_review` treat all three the same
+#: way: never a move, never shown to the opponent.
+SCRIPT_RUN_ACTIONS = (SCRIPT_RUN_STARTED_ACTION, SCRIPT_RUN_ACTION, SCRIPT_RUN_OFFERED_ACTION)
+
+#: The two rows that hold the once-per-turn-and-step slot `records.
+#: _prior_script_run` reads back for `already_ran` - deliberately narrower
+#: than `SCRIPT_RUN_ACTIONS`: an offer is not a run and must never be found
+#: as a "prior run" of the very `start` it invited, or that `start` would be
+#: wrongly refused with `409 already_ran`.
+SCRIPT_RUN_SLOT_ACTIONS = (SCRIPT_RUN_STARTED_ACTION, SCRIPT_RUN_ACTION)
 
 #: The actions that get a banner at WARNING rather than one compact line.
 LOUD_ACTIONS = (PROBLEM_ACTION, OVERRULE_ACTION, PLAN_ACTION, ADVICE_ACTION)
