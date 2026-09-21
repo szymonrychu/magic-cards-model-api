@@ -708,21 +708,22 @@ def build_server(seats: Seats) -> MCPServer:
         posted the moment the human's own poll notices the window (within one
         `wait_for_priority` call's own internal poll, not only on the next
         separate one) rather than only when the buddy happens to call
-        something else afterward. `state` carries `armed` whenever this same
-        call also fired an armed script (`wait_for_priority`'s own splice),
-        which is what lets `draft_status_for_answer` catch the two colliding
-        in one answer (review fix 4) before either ever reaches `resolve_
-        advice_draft`.
+        something else afterward.
 
         `None` for a seat, or an advisor with nothing staged - `draft` is left
         off the answer entirely rather than invented as some idle status.
 
         `answer.get("script_exit")` (review fix 2, 2026-09-14) is threaded
         through too - a MANUAL `run_script` call's own `script_exit` is this
-        very answer's own proposal, exactly as `state["armed"]` is for an
-        armed script `wait_for_priority` fires inside its own poll. Every
-        other tool's `answer` simply has no `script_exit` key, so this is a
-        no-op for them.
+        very answer's own proposal, which is what lets `draft_status_for_
+        answer` catch it colliding with a reached draft in the same answer
+        (review fix 4) before either ever reaches `resolve_advice_draft`.
+        API-7 dropped this docstring's other half: `wait_for_priority`'s own
+        armed script used to be able to collide the same way, since arming
+        itself fired a proposal inside the poll - it no longer fires
+        anything at all (`playscripts.arming.arm` only ever judges), so only
+        a MANUAL run can still collide here. Every other tool's `answer`
+        simply has no `script_exit` key, so this is a no-op for them.
 
         Same failure discipline as `_attach_script_hint`: an exception here
         must never break the tool answer whose action already landed, so it
@@ -907,19 +908,22 @@ def build_server(seats: Seats) -> MCPServer:
                 `nothing new yet` carries no list. A seat's own wait carries
                 none either - its list rides the actions it takes.
 
-        **`arm` (S2)**: a list of registered script ids (or a comma-separated
-                string of them), in priority order, to fire on their own the moment this wait wakes
-                for a real reason - "wait until you could require picking scripts
-                to run: if the situation still matches a script's conditions, it
-                fires automatically". Never mandatory: left empty (the default),
-                this behaves exactly as it always has. Judged the same way
-                `run_script`/the hint judge; two armed scripts applying at once
-                is a conflict and neither fires (`armed_conflict` names them).
-                `arm_reasoning` is required whenever `arm` is non-empty - every
-                fire is judged and recorded with it. `opposing_archetype` and
-                `inputs` mean what they mean for `run_script`. An advisor here
-                fires in advise mode: the first applicable armed script proposes
-                a move (`advised`) and the batch stops there.
+        **`arm` (S2, API-7)**: a list of registered script ids (or a
+                comma-separated string of them), in priority order, to judge the
+                moment this wait wakes for a real reason - "wait until you could
+                require picking a script to run: if the situation matches one of
+                these, tell me which". **Arming never runs anything itself** -
+                the owner dropped that outright. Judged the same way
+                `run_script`/the hint judge; whichever one applies comes back
+                sorted first in `scripts.applicable`, marked `armed: true`, with
+                its own `call` ready - you send that call yourself, exactly as
+                you would any other applicable play. Two armed scripts applying
+                at once is a conflict and neither is offered (`armed_conflict`
+                names them). Never mandatory: left empty (the default), this
+                behaves exactly as it always has. `arm_reasoning` is required
+                whenever `arm` is non-empty - every judgement is recorded with
+                it. `opposing_archetype` and `inputs` mean what they mean for
+                `run_script`.
 
         **`wake_to_draft` (S2 A6, advisor only)**: also wake when the board
                 changes while it is not yet your human's priority, provided you
@@ -2528,15 +2532,23 @@ def build_server(seats: Seats) -> MCPServer:
         words - said once, for the run, and threaded onto every pass it
         makes.
 
-        ## Arming (S2)
+        ## Arming (S2, API-7)
 
         `arm`: a list of registered script ids (or a comma-separated string of
-        them), in priority order, to fire on their own the instant this run finishes here - or
-        hits its own `MAX_PASSES_PER_CALL` hand-back - never on a plain
-        "waiting for the opponent" hand-back, which is not this seat's moment.
-        Judged the same way `run_script`/the hint judge; two armed scripts
-        applying at once is a conflict and neither fires (`armed_conflict`
-        names them). `arm_reasoning` is required whenever `arm` is non-empty.
+        them), in priority order, to judge on your behalf - never to run:
+        arming never runs anything itself, the owner dropped that outright.
+        Judged the instant this seat holds priority anywhere along the run,
+        BEFORE that priority is passed - not only once the run finishes or
+        hits its own `MAX_PASSES_PER_CALL` hand-back, so a multi-step run
+        cannot cross straight through the very window a play was armed for.
+        Never on a plain "waiting for the opponent" hand-back, which is not
+        this seat's moment. The instant one applies, this call stops right
+        there, `finished: true`, naming it in `stopped_because` - it comes
+        back sorted first in `scripts.applicable` too, marked `armed: true`,
+        with its own `call` ready for you to send yourself. Judged the same
+        way `run_script`/the hint judge; two armed scripts applying at once is
+        a conflict and neither is offered (`armed_conflict` names them).
+        `arm_reasoning` is required whenever `arm` is non-empty.
         `opposing_archetype` and `inputs` mean what they mean for
         `run_script`. Never mandatory - left empty (the default), this call
         behaves exactly as it always has. Refused outright to an advisor, same

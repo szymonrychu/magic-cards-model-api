@@ -1,21 +1,20 @@
-"""S2 A2: `playscripts/arming.py` - the arming core.
+"""S2 A2 / API-7: `playscripts/arming.py` - the arming core.
 
 An agent may hand `arm()` an ordered list of script ids instead of running one
 by hand: `arm()` judges every armed id against the board with the same
-`_judged`/hint logic, fires the first (and only) one that applies through
-`script_tools.run(wait=False, invoked_via="armed")`, re-judges the rest after
-each completed run, and stops the batch the moment anything other than a
-clean resolution happens. Lifetime one call: nothing here remembers an armed
-list across calls.
+`_judged`/hint logic and reports which of them apply right now - it never
+runs anything. Two or more applying at once is a conflict, reported back
+rather than picked for the seat.
 
-Two kinds of coverage: a handful of true end-to-end tests over a real board
-(firing for real, the conflict case, the reasoning refusals, the contents
-fetch, `invoked_via` on the ledger), and control-flow tests that monkeypatch
-`arming._judge_round` and `script_tools.run` directly - the exit-handling
-table itself (`_judged`'s own applicability logic and every `Exit` value) is
-already exhaustively covered against real boards in
-`test_playscript_runtime.py`; what is new here is only how `arm()` sequences
-calls to it.
+API-7 removed the whole "fire the sole applier through `script_tools.run`,
+re-judge, keep going up to `MAX_ARMED_RUNS`" batch this file used to cover -
+the owner dropped autofire entirely, so there is no run, no per-run time
+budget, no exit-handling taxonomy left to test here at all. What survives
+(and what replaces the removed coverage) is: the up-front refusals, the real
+end-to-end judging over a live board (including the contents fetch and the
+already-run-this-step exclusion, both still exactly `_judge_round`'s own
+unchanged machinery), the conflict case, and the pending-decision gate - each
+now asserted as "what `applying` reports", never "what fired".
 """
 
 from __future__ import annotations
@@ -28,7 +27,6 @@ from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
 from test_playscript_runtime import (
     fetch_shock,
-    finished,
     hooked_seat,
     land_script,
     register,
@@ -39,9 +37,9 @@ from test_playscript_runtime import (
 )
 
 from magic_cards_model_api.playscripts import arming, script_tools
-from magic_cards_model_api.playscripts.runtime import REASONING_PLACEHOLDER, Exit
+from magic_cards_model_api.playscripts.runtime import REASONING_PLACEHOLDER
 
-ARM_REASONING = "the human is thinking; fire this the moment it is legal"
+ARM_REASONING = "the human is thinking; arm this so I can act the moment it is legal"
 
 
 @pytest.fixture()
@@ -92,12 +90,16 @@ def test_the_call_templates_placeholder_reasoning_is_refused_before_any_fetch(
     assert hook.sent == []
 
 
-# -- real board: firing, invoked_via, and the conflict case --------------------
+# -- real board: judging never runs anything ------------------------------------
 
 
-def test_a_single_applicable_armed_script_fires_for_real(
+def test_a_single_applicable_armed_script_is_reported_applying_and_never_run(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """API-7: the old test here proved the armed script actually ran
+    (`hook.posts("/actions/play-land")`) - that behaviour is gone by owner
+    decision. What replaces it: `arm()` reports the id as applying, and
+    nothing about the board or the ledger moves at all."""
     alice = seat_uid(board, "alice")
     register(client, board, alice, land_script("drop"))
     add_card(client, board, "Island", "alice", "hand")
@@ -108,22 +110,14 @@ def test_a_single_applicable_armed_script_fires_for_real(
 
     assert isinstance(result, dict), result
     assert result.get("armed_conflict") is None
-    [entry] = result["armed"]
-    assert entry["script"] == "drop"
-    assert entry["exit"] == "chain_complete"
-    assert hook.posts("/actions/play-land"), "the armed script actually played the land"
-
-    [start] = started(board)
-    [finish] = finished(board)
-    assert start["invoked_via"] == "armed"
-    assert finish["invoked_via"] == "armed"
+    assert result["applying"] == ["drop"]
+    assert hook.posts("/actions/play-land") == [], "arm() must never run anything (API-7)"
+    assert started(board) == [], "no ledger row - nothing was ever attempted"
 
 
-def test_a_script_off_its_when_does_not_fire_and_never_waits(
+def test_a_script_off_its_when_is_reported_not_applying(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`wait=False` (D2): an armed script off its `when` right now is simply
-    not applicable, never a reason to pass priority toward a later `when`."""
     alice = seat_uid(board, "alice")
     register(client, board, alice, fetch_shock())
     # No fetch land on the board at all: the script's `true` never holds.
@@ -135,11 +129,11 @@ def test_a_script_off_its_when_does_not_fire_and_never_waits(
     )
 
     assert isinstance(result, dict), result
-    assert result["armed"] == []
+    assert result["applying"] == []
     assert hook.posts("/actions/activate") == []
 
 
-def test_two_armed_scripts_applying_at_once_is_a_conflict_and_neither_fires(
+def test_two_armed_scripts_applying_at_once_is_a_conflict(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     alice = seat_uid(board, "alice")
@@ -154,7 +148,7 @@ def test_two_armed_scripts_applying_at_once_is_a_conflict_and_neither_fires(
 
     assert isinstance(result, dict), result
     assert set(result["armed_conflict"]) == {"drop-a", "drop-b"}
-    assert result["armed"] == []
+    assert result["applying"] == []
     assert hook.posts("/actions/play-land") == []
     assert started(board) == []
 
@@ -200,10 +194,10 @@ def test_a_conflicting_round_never_leaks_library_contents_into_the_answer(
 ) -> None:
     """S2 review finding 7: `_judge_round`'s own `include=contents` fetch -
     paid only to judge a condition that reads this seat's own hidden zones -
-    used to become the state `arm()` hands back whenever nothing actually
-    fired that round (a conflict, here), so the wait/pass answer built on
-    top of it leaked the seat's own library contents merely from judging,
-    never from anything that actually ran."""
+    must never become the state `arm()` hands back. API-7: with `arm()` now
+    never running anything at all, this is not merely the "nothing fired"
+    branch any more - it is the ONLY branch, so this must hold for every
+    `arm()` answer, not just a conflicting one."""
     alice = seat_uid(board, "alice")
     needs_contents = land_script(
         "needs-library-count",
@@ -227,7 +221,7 @@ def test_a_conflicting_round_never_leaks_library_contents_into_the_answer(
 
     assert isinstance(result, dict), result
     assert result.get("armed_conflict"), result
-    assert result["armed"] == [], result
+    assert result["applying"] == [], result
     assert "library_contents" not in result["state"], result["state"]
     assert hook.posts("/actions/play-land") == []
 
@@ -291,17 +285,19 @@ def test_a_pending_decision_only_lets_a_first_move_answer_play_apply(
     assert judged["drop"]["failing_condition"]["list"] == "pending_decision", judged["drop"]
 
 
-def test_advisor_armed_run_blocked_by_a_pending_decision_is_not_locked_out(
+def test_advisor_arm_is_blocked_by_a_pending_decision_then_reported_once_it_clears(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S2 review finding 4 (advisor half): an advisor's armed script whose
-    first move is a regular action, watching a human with a pending
-    `pay_mana` decision, must not be attempted at all - it is judged
-    not-applying (the seat half's own fix) rather than fired and refused -
-    so nothing is ever recorded against it and it is still proposed once
-    the human's decision is answered, in this same turn and step. Before the
-    fix this attempt was fired anyway, refused 409, and (an advise finish's
-    zero moves never released) locked out for the rest of the step."""
+    """S2 review finding 4 (advisor half), narrowed by API-7: an advisor's
+    armed script whose first move is a regular action, watching a human with
+    a pending `pay_mana` decision, is judged not-applying while the decision
+    is pending - the same gate a seat gets, since `_judge_round` never
+    distinguishes advisor from seat at all (it only ever judges, never runs,
+    so there is no advise-mode branch left to test here). The old test named
+    this `test_advisor_armed_run_blocked_by_a_pending_decision_is_not_locked_
+    out` and additionally proved a fired run's own advise-mode proposal
+    (`exit == "advised"`) - that assertion is gone with the run it covered;
+    `arm()` reports `applying` for an advisor exactly as it does for a seat."""
     from test_decision_kinds import resolve_top, stage_mystical_dispute_targeting_bears
 
     from magic_cards_model_api.repository import Advisor
@@ -327,7 +323,7 @@ def test_advisor_armed_run_blocked_by_a_pending_decision_is_not_locked_out(
 
     blocked = arming.arm(seat, seats.script_corpora, arm=["drop"], arm_reasoning=ARM_REASONING)
     assert isinstance(blocked, dict), blocked
-    assert blocked["armed"] == [], blocked
+    assert blocked["applying"] == [], blocked
     assert started(game) == [], "nothing was ever attempted while the decision was pending"
 
     alice = seat_uid(game, "alice")
@@ -341,9 +337,53 @@ def test_advisor_armed_run_blocked_by_a_pending_decision_is_not_locked_out(
 
     proposed = arming.arm(seat, seats.script_corpora, arm=["drop"], arm_reasoning=ARM_REASONING)
     assert isinstance(proposed, dict), proposed
-    [entry] = proposed["armed"]
-    assert entry["exit"] == "advised", entry
-    assert entry.get("refusal") is None, entry
+    assert proposed["applying"] == ["drop"], proposed
+    assert started(game) == [], "arm() must never run anything (API-7)"
+
+
+# -- a script judged needing an unsupplied input is never reported applying ----
+
+
+def test_a_script_needing_an_unsupplied_input_is_not_reported_applying(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old suite proved `arm()` would still ATTEMPT a script whose
+    condition needed an input it was not given, surfacing `needs_input` as a
+    fired-but-incomplete run. That attempt is gone with the run: `_judged`
+    itself never lets such a script's `applies` become `True` (its own
+    `conditions.evaluate` sets `needs_input`/`invalid_input` instead), so
+    `arm()` simply never reports it as applying."""
+    doc = land_script("need-tempo")
+    doc["true"] = [
+        *doc["true"],
+        {"kind": "input", "name": "prefer_tempo", "op": "eq", "value": True},
+    ]
+    alice = seat_uid(board, "alice")
+    register(
+        client,
+        board,
+        alice,
+        doc,
+        inputs=[
+            {
+                "name": "prefer_tempo",
+                "type": "bool",
+                "description": "Tempo first.",
+                "required": True,
+            }
+        ],
+    )
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = arming.arm(
+        seat, seats.script_corpora, arm=["need-tempo"], arm_reasoning=ARM_REASONING
+    )
+
+    assert isinstance(result, dict), result
+    assert result["applying"] == []
+    assert hook.posts("/actions/play-land") == []
 
 
 # -- conflict excludes ids already run this step --------------------------------
@@ -358,9 +398,11 @@ def test_a_script_already_run_this_step_does_not_count_toward_a_conflict(
     fired earlier this step, still condition-true (two untapped Islands
     means tapping one still leaves the count condition true), could tie
     with a genuinely new applier and report a conflict that was not really
-    there. `_judge_round` now skips an id `applicable_hint`'s own
-    already-ran cache holds for this position, the same way the hint
-    itself does."""
+    there. `_judge_round` skips an id `applicable_hint`'s own already-ran
+    cache holds for this position, the same way the hint itself does - this
+    machinery is unchanged by API-7 (`script_tools.run` itself still exists
+    and is still how a script is actually run, whether by hand or read off
+    `scripts.applicable`'s own `call`)."""
     alice = seat_uid(board, "alice")
     register(
         client,
@@ -380,7 +422,6 @@ def test_a_script_already_run_this_step_does_not_count_toward_a_conflict(
         script="float-a",
         reasoning=ARM_REASONING,
         wait=False,
-        invoked_via="armed",
     )
     assert first["script_exit"]["exit"] == "chain_complete", first["script_exit"]
 
@@ -395,378 +436,31 @@ def test_a_script_already_run_this_step_does_not_count_toward_a_conflict(
     assert judged["float-b"]["applies"] is True, judged["float-b"]
 
 
-# -- one shared deadline over the whole batch -----------------------------------
+# -- an unregistered armed id's own computed refusal must reach the caller ------
 
 
-class _FakeClock:
-    """A `time.monotonic` stand-in whose reading only moves when told to -
-    `arming.time.monotonic()` is looked up through this instance once
-    `arming`'s own `time` name is monkeypatched to it."""
-
-    def __init__(self, start: float = 0.0) -> None:
-        self.now = start
-
-    def monotonic(self) -> float:
-        return self.now
-
-
-def _judge_first_remaining(
-    seat: Any, corpora: Any, ids: list[str], supplied: Any
-) -> tuple[dict[str, Any], Any]:
-    """Only the first of `ids` (this round's `remaining`) applies - lets a
-    batch of several armed scripts fire one at a time, in order, across
-    several rounds, rather than three simultaneous appliers tripping the
-    conflict check."""
-    applies = ids[0] if ids else None
-    judged = {script_id: {"id": script_id, "applies": script_id == applies} for script_id in ids}
-    return judged, {"turn_number": 1, "step": "precombat_main"}
-
-
-def test_the_whole_armed_batch_shares_one_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """S2 review finding 3: each armed run used to get the *whole*
-    `RUN_CAP_SECONDS` again, so three armed runs could together take up to
-    3x the cap. `arm()` now sets one deadline for the whole batch when it
-    starts, and each run gets only what is left of it."""
-    clock = _FakeClock()
-    monkeypatch.setattr(arming, "time", clock)
-    monkeypatch.setattr(arming, "_judge_round", _judge_first_remaining)
-    captured_max_seconds: list[float] = []
-
-    def run(seat: Any, corpora: Any, *, script: str, max_seconds: float, **kwargs: Any) -> Any:
-        captured_max_seconds.append(max_seconds)
-        clock.now += 8.0  # each run "takes" 8 seconds of wall time
-        return {
-            "script_exit": {"script": script, "exit": Exit.CHAIN_COMPLETE.value, "moves_done": 1},
-            "state": {"turn_number": 1, "step": "precombat_main"},
-        }
-
-    monkeypatch.setattr(script_tools, "run", run)
-    seat = object()
-
-    result = arming.arm(
-        seat,
-        {},
-        arm=["a", "b", "c"],
-        arm_reasoning=ARM_REASONING,  # type: ignore[arg-type]
-    )
-
-    assert isinstance(result, dict), result
-    assert len(result["armed"]) == 3, result
-    from magic_cards_model_api.playscripts.runtime import RUN_CAP_SECONDS
-
-    assert captured_max_seconds[0] == RUN_CAP_SECONDS
-    assert captured_max_seconds[1] == RUN_CAP_SECONDS - 8.0
-    assert captured_max_seconds[2] == RUN_CAP_SECONDS - 16.0
-    assert all(value <= RUN_CAP_SECONDS for value in captured_max_seconds)
-
-
-def test_the_batch_stops_rather_than_starting_a_run_with_no_budget_left(
-    monkeypatch: pytest.MonkeyPatch,
+def test_arm_returns_the_refusal_for_an_unregistered_armed_id(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A batch whose own deadline is exhausted mid-way stops there rather
-    than starting one more run with (effectively) no time left for it."""
-    clock = _FakeClock()
-    monkeypatch.setattr(arming, "time", clock)
-    monkeypatch.setattr(arming, "_judge_round", _judge_first_remaining)
-    calls = {"n": 0}
-
-    def run(seat: Any, corpora: Any, *, script: str, max_seconds: float, **kwargs: Any) -> Any:
-        calls["n"] += 1
-        clock.now += 13.0  # each run "takes" 13 seconds; the third never starts
-        return {
-            "script_exit": {"script": script, "exit": Exit.CHAIN_COMPLETE.value, "moves_done": 1},
-            "state": {"turn_number": 1, "step": "precombat_main"},
-        }
-
-    monkeypatch.setattr(script_tools, "run", run)
-    seat = object()
-
-    result = arming.arm(
-        seat,
-        {},
-        arm=["a", "b", "c"],
-        arm_reasoning=ARM_REASONING,  # type: ignore[arg-type]
-        max_seconds=25.0,
-    )
-
-    assert isinstance(result, dict), result
-    assert len(result["armed"]) == 2, result
-    assert calls["n"] == 2, calls
-
-
-def test_a_near_zero_budget_after_judging_stops_the_batch_before_starting_a_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """S2 arming re-review finding 5: `run_budget` used to be read BEFORE
-    `_judge_round`'s own fetch, so a batch whose deadline had almost (but not
-    quite) run out by the time judging finished still started a run with
-    whatever near-zero budget was left over - just long enough for
-    `script_tools.run` to post a `start` row before its own time cap cut the
-    run off with no `finish`, which blocks the script for the rest of the
-    step (`records._prior_script_run`: "a bare start with no matching finish
-    yet ... still blocks"). The fix reads the budget AFTER judging and
-    refuses to start a run below `MIN_ARMED_RUN_SECONDS`, stopping the batch
-    with a note instead - `script_tools.run` is never even called."""
-    clock = _FakeClock()
-    monkeypatch.setattr(arming, "time", clock)
-
-    def judge_and_burn_the_budget(
-        seat: Any, corpora: Any, ids: list[str], supplied: Any
-    ) -> tuple[dict[str, Any], Any]:
-        clock.now += 23.0  # judging itself burns nearly the whole 25s deadline
-        applies = ids[0] if ids else None
-        judged = {sid: {"id": sid, "applies": sid == applies} for sid in ids}
-        return judged, {"turn_number": 1, "step": "precombat_main"}
-
-    monkeypatch.setattr(arming, "_judge_round", judge_and_burn_the_budget)
-    started_runs = {"n": 0}
-
-    def run(seat: Any, corpora: Any, *, script: str, max_seconds: float, **kwargs: Any) -> Any:
-        started_runs["n"] += 1
-        return {
-            "script_exit": {"script": script, "exit": Exit.CHAIN_COMPLETE.value, "moves_done": 1},
-            "state": {"turn_number": 1, "step": "precombat_main"},
-        }
-
-    monkeypatch.setattr(script_tools, "run", run)
-    seat = object()
-
-    result = arming.arm(
-        seat,
-        {},
-        arm=["a"],
-        arm_reasoning=ARM_REASONING,  # type: ignore[arg-type]
-        max_seconds=25.0,
-    )
-
-    assert started_runs["n"] == 0, "a run must never start on a near-zero remaining budget"
-    assert isinstance(result, dict), result
-    assert result["armed"] == []
-    assert result.get("note") == arming.INSUFFICIENT_RUN_BUDGET_NOTE
-
-
-# -- the 3-run cap ---------------------------------------------------------------
-
-
-def needs_input_script(script_id: str) -> dict[str, Any]:
-    """A script whose condition needs an input this test never supplies -
-    every one of these is simultaneously in the `needs_input` position (never
-    the `applies` one, so this never trips the conflict check), letting the
-    batch work through several of them in `arm` order without depending on
-    board state changing between rounds."""
-    doc = land_script(script_id)
-    doc["true"] = [
-        *doc["true"],
-        {"kind": "input", "name": "prefer_tempo", "op": "eq", "value": True},
-    ]
-    return doc
-
-
-def test_the_batch_stops_at_three_armed_runs(
-    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    alice = seat_uid(board, "alice")
-    register(
-        client,
-        board,
-        alice,
-        needs_input_script("need-1"),
-        needs_input_script("need-2"),
-        needs_input_script("need-3"),
-        needs_input_script("need-4"),
-        inputs=[
-            {
-                "name": "prefer_tempo",
-                "type": "bool",
-                "description": "Tempo first.",
-                "required": True,
-            }
-        ],
-    )
-    add_card(client, board, "Island", "alice", "hand")
-    seats = wired(monkeypatch, board)
-    seat, hook = hooked_seat(seats, alice)
+    """`_judge_round` already computes a `refusal` for an armed id that is
+    not registered under this seat's corpus ("no script %r is registered for
+    this seat") - API-7's `arm()` surfaces it as `armed_unregistered` rather
+    than silently reading the same as "genuinely does not apply yet"."""
+    alice = seat_uid(game, "alice")
+    seats = wired(monkeypatch, game)
+    seat, _ = hooked_seat(seats, alice)
+    register(client, game, alice, land_script("drop"))
 
     result = arming.arm(
         seat,
         seats.script_corpora,
-        arm=["need-1", "need-2", "need-3", "need-4"],
+        arm=["not-a-real-script"],
         arm_reasoning=ARM_REASONING,
     )
 
     assert isinstance(result, dict), result
-    assert result.get("armed_conflict") is None, result
-    assert len(result["armed"]) == arming.MAX_ARMED_RUNS == 3
-    assert {entry["script"] for entry in result["armed"]} == {"need-1", "need-2", "need-3"}
-    assert all(entry["exit"] == "needs_input" for entry in result["armed"]), result["armed"]
-    assert hook.posts("/actions/play-land") == []
-
-
-# -- exit-handling control flow (monkeypatched) ---------------------------------
-
-
-def _fake_judge(applies: dict[str, bool], needs_input: dict[str, str] | None = None) -> Any:
-    def judge(seat: Any, corpora: Any, ids: list[str], supplied: Any) -> tuple[dict[str, Any], Any]:
-        judged = {}
-        for script_id in ids:
-            entry: dict[str, Any] = {"id": script_id, "applies": applies.get(script_id, False)}
-            if needs_input and script_id in needs_input:
-                entry["needs_input"] = needs_input[script_id]
-            judged[script_id] = entry
-        return judged, {"turn_number": 1, "step": "precombat_main"}
-
-    return judge
-
-
-def _fake_run(exits: dict[str, list[dict[str, Any]]]) -> Any:
-    """`script_tools.run` stand-in: pops the next canned `script_exit` queued
-    for a script id and echoes it back the same shape `script_tools.run`
-    hands to `arming.arm` - `{"script_exit": ..., "state": ...}`."""
-
-    def run(seat: Any, corpora: Any, *, script: str, **kwargs: Any) -> dict[str, Any]:
-        queue = exits[script]
-        exit_block = {"script": script, "moves_done": 0, "moves_total": 0, **queue.pop(0)}
-        return {"script_exit": exit_block, "state": {"turn_number": 1, "step": "precombat_main"}}
-
-    return run
-
-
-def _arm(
-    monkeypatch: pytest.MonkeyPatch, *, applies: dict[str, bool], exits: dict[str, Any]
-) -> Any:
-    monkeypatch.setattr(arming, "_judge_round", _fake_judge(applies))
-    monkeypatch.setattr(script_tools, "run", _fake_run(exits))
-    seat = object()
-    return arming.arm(
-        seat,
-        {},
-        arm=list(applies),
-        arm_reasoning=ARM_REASONING,  # type: ignore[arg-type]
-    )
-
-
-def test_chain_complete_counts_as_fired_and_the_batch_continues(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    result = _arm(
-        monkeypatch,
-        applies={"a": True},
-        exits={"a": [{"exit": Exit.CHAIN_COMPLETE.value}]},
-    )
-    assert [entry["exit"] for entry in result["armed"]] == ["chain_complete"]
-
-
-def test_not_applicable_is_dropped_and_the_batch_tries_the_next_id(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Round 1: "a" is the sole applier but its own run comes back
-    # not_applicable (a race between the judge snapshot and the run itself);
-    # round 2 re-judges with "a" gone and "b" now the sole applier.
-    calls = {"n": 0}
-
-    def judge(seat: Any, corpora: Any, ids: list[str], supplied: Any) -> tuple[dict[str, Any], Any]:
-        calls["n"] += 1
-        applies = "a" if calls["n"] == 1 else "b"
-        return (
-            {script_id: {"id": script_id, "applies": script_id == applies} for script_id in ids},
-            {"turn_number": 1, "step": "precombat_main"},
-        )
-
-    monkeypatch.setattr(arming, "_judge_round", judge)
-    monkeypatch.setattr(
-        script_tools,
-        "run",
-        _fake_run(
-            {
-                "a": [{"exit": Exit.NOT_APPLICABLE.value}],
-                "b": [{"exit": Exit.CHAIN_COMPLETE.value}],
-            }
-        ),
-    )
-    seat = object()
-
-    result = arming.arm(seat, {}, arm=["a", "b"], arm_reasoning=ARM_REASONING)  # type: ignore[arg-type]
-
-    assert [entry["script"] for entry in result["armed"]] == ["a", "b"]
-    assert [entry["exit"] for entry in result["armed"]] == ["not_applicable", "chain_complete"]
-
-
-def test_needs_input_is_listed_first_and_the_batch_continues(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        arming,
-        "_judge_round",
-        _fake_judge({"a": False, "b": True}, needs_input={"a": "prefer_tempo"}),
-    )
-    monkeypatch.setattr(
-        script_tools,
-        "run",
-        _fake_run(
-            {
-                "a": [{"exit": Exit.NEEDS_INPUT.value, "needs_input": "prefer_tempo"}],
-                "b": [{"exit": Exit.CHAIN_COMPLETE.value}],
-            }
-        ),
-    )
-    seat = object()
-
-    result = arming.arm(seat, {}, arm=["b", "a"], arm_reasoning=ARM_REASONING)  # type: ignore[arg-type]
-
-    # "a" ran (its needs_input surfaced) and "b" ran too; "a"'s entry is
-    # listed first regardless of `arm` order or firing order.
-    assert result["armed"][0]["script"] == "a"
-    assert result["armed"][0]["exit"] == "needs_input"
-
-
-@pytest.mark.parametrize(
-    "exit_value",
-    [
-        Exit.NEEDS_PLAN.value,
-        Exit.REFUSED.value,
-        Exit.UNFORESEEN.value,
-        Exit.INTERRUPTED.value,
-        Exit.AMBIGUOUS.value,
-        Exit.STALE.value,
-        Exit.UNKNOWN_OUTCOME.value,
-        Exit.ADVISED.value,
-    ],
-)
-def test_a_stopping_exit_ends_the_batch(monkeypatch: pytest.MonkeyPatch, exit_value: str) -> None:
-    result = _arm(
-        monkeypatch,
-        applies={"a": True, "b": False},
-        exits={"a": [{"exit": exit_value}], "b": [{"exit": Exit.CHAIN_COMPLETE.value}]},
-    )
-    # Only "a" fired: the batch stopped rather than trying "b" next.
-    assert [entry["script"] for entry in result["armed"]] == ["a"]
-
-
-def test_a_null_exit_time_cap_stops_and_carries_its_resume(monkeypatch: pytest.MonkeyPatch) -> None:
-    result = _arm(
-        monkeypatch,
-        applies={"a": True, "b": False},
-        exits={
-            "a": [{"exit": None, "resume": {"run_id": "r1"}}],
-            "b": [{"exit": Exit.CHAIN_COMPLETE.value}],
-        },
-    )
-    assert [entry["script"] for entry in result["armed"]] == ["a"]
-    assert result["armed"][0]["resume"] == {"run_id": "r1"}
-
-
-def test_hands_back_the_fresh_board_on_a_stopping_exit(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(arming, "_judge_round", _fake_judge({"a": True}))
-
-    def run(seat: Any, corpora: Any, *, script: str, **kwargs: Any) -> dict[str, Any]:
-        return {
-            "script_exit": {"script": script, "exit": Exit.REFUSED.value, "moves_done": 0},
-            "state": {"turn_number": 9, "step": "end_step"},
-        }
-
-    monkeypatch.setattr(script_tools, "run", run)
-    seat = object()
-
-    result = arming.arm(seat, {}, arm=["a"], arm_reasoning=ARM_REASONING)  # type: ignore[arg-type]
-
-    assert result["state"] == {"turn_number": 9, "step": "end_step"}
+    assert result["applying"] == []
+    [entry] = result["armed_unregistered"]
+    assert entry["id"] == "not-a-real-script"
+    assert "not-a-real-script" in entry["reason"]
+    assert "registered" in entry["reason"]

@@ -179,6 +179,69 @@ def test_scripts_disabled_server_side_carries_no_hint(
     assert "scripts" not in answer, answer
 
 
+def test_an_armed_applying_play_is_marked_and_keeps_its_call(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """API-7: `wait_and_arm`'s own judge (`playscripts.arming.arm`) writes
+    the ids it found applying onto `state["armed_applying"]` before this
+    hint is ever built - `applicable_hint` reads it straight off that same
+    `state`, no second wiring path. The armed id's own entry carries
+    `armed: true` here so a reader can tell why it is worth arming for."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = json.loads(
+        call_tool(
+            server,
+            "wait_for_priority",
+            {"player_uid": alice, "arm": "drop", "arm_reasoning": "arm it"},
+        ).content[0].text
+    )
+
+    assert answer["armed_applying"] == ["drop"]
+    [entry] = answer["scripts"]["applicable"]
+    assert entry["id"] == "drop"
+    assert entry["armed"] is True
+    assert "call" in entry
+
+
+def test_an_armed_play_sorts_first_among_conflicting_applying_plays(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The armed id sorts first in `scripts.applicable` even when it is the
+    LOWER-priority one of two plays the full corpus finds applying at once -
+    "ahead of every other applying play regardless of priority" - proven
+    here under a genuine corpus-wide conflict (S1's own `runtime_conflict`,
+    unrelated to arming's own, narrower conflict check over just the `arm`
+    list): neither entry gets a `call` (an unarmed conflict is still a
+    conflict), but the armed one is still first and still marked."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop-a"), land_script("drop-b", priority=45))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    answer = json.loads(
+        call_tool(
+            server,
+            "wait_for_priority",
+            {"player_uid": alice, "arm": "drop-b", "arm_reasoning": "arm it"},
+        ).content[0].text
+    )
+
+    assert answer["armed_applying"] == ["drop-b"]
+    applicable = answer["scripts"]["applicable"]
+    assert [entry["id"] for entry in applicable] == ["drop-b", "drop-a"], applicable
+    assert applicable[0]["armed"] is True
+    assert applicable[0]["conflict"] is True
+    assert "armed" not in applicable[1]
+    for entry in applicable:
+        assert "call" not in entry
+
+
 def test_two_conflicting_plays_are_flagged_and_carry_no_call(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

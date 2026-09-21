@@ -545,13 +545,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     def arm_flags(command: Any) -> None:
-        """S2: `--arm`/`--arm-reasoning`/`--opposing-archetype`/`--input`,
-        shared by `wait` and `pass-until` - the same `playscripts.arming.arm`
-        arguments `mcp.wait_for_priority`/`mcp.pass_until` take. Arming fires
-        only once this command is about to return with a real stop: after
-        `wait`'s own check wakes for a real reason, or when `pass-until`
-        finishes (or hits its own pass cap) - never on a retryable hand-back
-        where the opponent still holds priority."""
+        """S2/API-7: `--arm`/`--arm-reasoning`/`--opposing-archetype`/
+        `--input`, shared by `wait` and `pass-until` - the same
+        `playscripts.arming.arm` arguments `mcp.wait_for_priority`/
+        `mcp.pass_until` take. Arming never runs anything - it only judges,
+        once this command is about to return with a real stop: after
+        `wait`'s own check wakes for a real reason, or the moment
+        `pass-until` holds priority anywhere along its own run (before it
+        finishes, or hits its own pass cap) - never on a retryable hand-back
+        where the opponent still holds priority. Whichever one applies stops
+        the command right there and comes back first in `scripts.applicable`,
+        marked `armed: true`, with its own `call` ready to send yourself."""
         command.add_argument(
             "--arm",
             dest="arm",
@@ -560,9 +564,10 @@ def build_parser() -> argparse.ArgumentParser:
             metavar="SCRIPT_ID",
             help=(
                 "a registered script id to arm, in priority order; repeat for each. "
-                "If it already applies the moment this command is about to return, it "
-                "fires on its own (playscripts.arming.arm) - never mandatory, and never "
-                "a reason to wait longer than this command already would"
+                "If it already applies the moment this command is about to return, this "
+                "call stops and offers it in scripts.applicable (playscripts.arming.arm) "
+                "rather than running it for you - never mandatory, and never a reason to "
+                "wait longer than this command already would"
             ),
         )
         command.add_argument(

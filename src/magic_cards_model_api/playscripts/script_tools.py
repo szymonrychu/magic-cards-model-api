@@ -913,6 +913,13 @@ def applicable_hint(
     to pick one itself before either can commit. `offer_seq` (API-6) joins
     every kept entry here once its own offer post lands - see below.
 
+    **API-7**: whichever ids `state["armed_applying"]` names (`playscripts.
+    arming.arm`'s own judge, spliced onto `state` before this hint is ever
+    built) sort first here, ahead of every other applying entry regardless
+    of priority, each carrying `armed: true` so a reader can tell why it
+    jumped the queue - arming no longer fires anything itself; this is how
+    the play it found applying reaches the seat, with its own `call` ready.
+
     **`advice`** (API-4): one entry per advice-only play (`schema.Play`'s
     own docstring: "exists to explain a decision rather than to act on
     one") that applies right now - judged under the exact same gate
@@ -1066,6 +1073,16 @@ def applicable_hint(
 
     applicable_items: list[dict[str, Any]] = []
     advice_items: list[dict[str, Any]] = []
+    # API-7: `wait_and_arm`/`pass_until`'s own arming judge (`playscripts.
+    # arming.arm`) writes the ids it found currently applying onto this very
+    # `state` before this hint is ever built (`seatkit._merge_armed`, the
+    # `_pass_until_once` armed-judge hook) - never a second wiring path
+    # threaded through this function's own arguments. Read once here so
+    # every one of them sorts first below, regardless of its own priority,
+    # and carries `armed: true` so a reader can tell why.
+    armed_ids = {
+        str(script_id) for script_id in (state.get("armed_applying") or []) if script_id
+    }
     if holds_priority:
         recent = {
             (str(run[0]), run[1], run[2])
@@ -1084,6 +1101,11 @@ def applicable_hint(
         # gate (this seat holding priority, right now, over the same
         # `_RECENT_RUNS_KEY`-filtered board).
         applying = [entry for entry in not_recently_run if not entry["advice_only"]]
+        if armed_ids:
+            # A stable sort: `applying` already carries the priority order
+            # `entries.sort` gave it, and moving the armed ones to the front
+            # must never reshuffle anyone else relative to one another.
+            applying = sorted(applying, key=lambda entry: str(entry["id"]) not in armed_ids)
         conflict = len(applying) > 1
         for entry in applying:
             item: dict[str, Any] = {
@@ -1091,6 +1113,8 @@ def applicable_hint(
                 "name": _truncated_name(entry.get("name")),
                 "why": _hint_why(_play_for(plays_by_id, entry["id"])),
             }
+            if str(entry["id"]) in armed_ids:
+                item["armed"] = True
             if conflict:
                 item["conflict"] = True
             else:

@@ -162,11 +162,12 @@ def test_seatkit_20_names_plan_ahead() -> None:
 
 
 def test_seatkit_20_names_arming() -> None:
-    """S2 A2-A5: `arm`/`arm_reasoning`/`opposing_archetype`/`inputs` on
-    `wait_for_priority` and `pass_until`; the `armed`/`armed_conflict`/
-    `armed_error`/`armed_skipped` answer keys; `scripts.armable` and
-    `arm_call`; and `pass_until`'s `finished: false` plus `resume` while it
-    waits for this seat's own priority at an armed destination."""
+    """S2 A2-A5, API-7: `arm`/`arm_reasoning`/`opposing_archetype`/`inputs`
+    on `wait_for_priority` and `pass_until`; the `armed_applying`/
+    `armed_conflict`/`armed_error`/`armed_unregistered` answer keys;
+    `scripts.armable` and `arm_call`; and `pass_until`'s `finished: false`
+    plus `resume` while it waits for this seat's own priority at an armed
+    destination."""
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
     paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
@@ -180,7 +181,7 @@ def test_seatkit_20_names_arming() -> None:
         "armed",
         "armed_conflict",
         "armed_error",
-        "armed_skipped",
+        "armed_unregistered",
         "armable",
         "arm_call",
         "finished: false",

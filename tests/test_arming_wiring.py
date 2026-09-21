@@ -1,12 +1,30 @@
-"""S2 A3: wire `playscripts.arming.arm` into the waits.
+"""S2 A3 / API-7: wire `playscripts.arming.arm` into the waits.
 
-An armed script only ever fires at the moment the answer is about to go back
-to the seat holding priority, or with a decision pending for it - after
-`seatkit.block_until_wake` (wrapped as `wait_and_arm`) returns a real wake,
-or when `pass_until` finishes (or hits the `MAX_PASSES_PER_CALL` hand-back).
-Never on a retryable hand-back, where the opponent still holds priority: that
-is not this seat's moment, and arming firing there would mean arming decided
-something the wait itself was built to avoid deciding.
+Arming never runs anything - the owner dropped autofire entirely. An armed
+script is judged in two places: `seatkit.wait_and_arm` (a single check, once
+the wait wakes for a real reason - never a bare `NOTHING_NEW_YET`, a
+game-gone answer, or an interrupted wait), and `pass_until`, which judges
+TWICE: inside `_pass_until_once`'s own loop, the instant this seat holds
+priority anywhere along the run (API-7, the load-bearing half - without this
+a multi-step run crossed straight through the exact window a play was armed
+for), and once more after the whole call is about to return with a real stop
+- `finished: True`, or the `MAX_PASSES_PER_CALL` hand-back - covering the one
+case the inner hook cannot see: reaching a `theirs`/`either` destination
+before this seat has ever held priority there. Never on a retryable
+hand-back, where the opponent still holds priority: that is not this seat's
+moment, and arming judging there would be arming, not the wait, deciding
+when to look.
+
+A script whose own `when` genuinely matches nowhere on the run's own path
+except the destination itself is what most fixtures below arm - it never
+gives the new inner hook (`_pass_until_once`'s own judge-before-pass)
+anything to report until the run actually gets there, exactly the same
+board crossing the pre-API-7 suite exercised. A few tests need the OPPOSITE:
+proving arming stays silent on a hand-back it must never act on at all. For
+those, the armed script's own `opposing_archetypes` is set to something the
+call never asserts, so it can never apply regardless of where the run is
+standing - a deliberate, permanent mismatch, not a board condition that
+happens not to hold yet.
 """
 
 from __future__ import annotations
@@ -38,15 +56,22 @@ from magic_cards_model_api.repository import Advisor
 from magic_cards_model_api.seatkit import block_until_wake, pass_until, wait_and_arm
 from magic_cards_model_api.store import store
 
-ARM_REASONING = "the human is thinking; fire this the moment it is legal"
+ARM_REASONING = "the human is thinking; arm this so I can act the moment it is legal"
+
+#: An `opposing_archetypes` value no test below ever asserts - a script
+#: carrying only this one can never apply, on any board, regardless of what
+#: step or turn the run is standing on. Used to arm something that must stay
+#: silent for the length of a whole test, rather than something that merely
+#: does not apply *yet*.
+NEVER_MATCHES = ["mono-red-aggro"]
 
 
-def drop_island_script(script_id: str) -> dict[str, Any]:
+def drop_island_script(script_id: str, **over: Any) -> dict[str, Any]:
     """`land_script`, narrowed to Island specifically - a run that crosses a
     turn boundary draws a card, and `land_script`'s own bare `types_all:
     Land` selector ties (ambiguous) once a second, differently-named land is
     in hand."""
-    doc = land_script(script_id)
+    doc = land_script(script_id, **over)
     doc["moves"] = [
         {
             "kind": "play_land",
@@ -62,10 +87,10 @@ def board(client: TestClient, game: str) -> str:
     return game
 
 
-# -- pass_until -------------------------------------------------------------
+# -- pass_until: the outer, post-run judge (destination-only appliers) --------
 
 
-def test_a_fetch_land_armed_from_the_opponents_end_step_fires_in_my_own_main(
+def test_a_fetch_land_armed_from_the_opponents_end_step_is_offered_in_my_own_main(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
@@ -90,20 +115,21 @@ def test_a_fetch_land_armed_from_the_opponents_end_step_fires_in_my_own_main(
 
     assert result["finished"] is True, result
     assert result.get("armed_conflict") is None, result
-    [entry] = result["armed"]
-    assert entry["script"] == "drop"
-    assert entry["exit"] == "chain_complete", entry
-    assert hook.posts("/actions/play-land"), "the armed script actually played the land"
+    assert result["armed_applying"] == ["drop"]
+    assert "drop" in result["stopped_because"] or result["stopped_because"].startswith("reached"), (
+        result
+    )
+    assert hook.posts("/actions/play-land") == [], "arm() must never run anything (API-7)"
     assert result["state"]["step"] == "precombat_main"
 
 
-def test_a_play_whose_when_does_not_match_does_not_fire(
+def test_a_play_whose_when_does_not_match_is_never_offered(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A script keyed to `theirs`/`end_step` is armed on the same run that
     reaches the seat's own precombat_main (the same real crossing as the
-    fires-for-real test above): it never matches there, so `armed` comes
-    back empty rather than firing anything."""
+    test above): it never matches there, so `armed_applying` comes back
+    empty rather than anything being offered."""
     monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
     alice = seat_uid(game, "alice")
     force_turn_position(game, Step.END_STEP, "bob")
@@ -132,7 +158,7 @@ def test_a_play_whose_when_does_not_match_does_not_fire(
         )
 
     assert result["finished"] is True, result
-    assert result["armed"] == []
+    assert result["armed_applying"] == []
     assert hook.posts("/actions/play-land") == []
 
 
@@ -141,7 +167,7 @@ def test_pass_until_surfaces_scripts_it_skipped_for_unavailable_facts(
 ) -> None:
     """A 500 from the facts route during the arming judge (D2) must not stay
     silent about it the way any other non-applying script would: the id it
-    left un-fired for that reason, and the HTTP status/reason, come back on
+    left un-judged for that reason, and the HTTP status/reason, come back on
     `armed_facts_unavailable`."""
     monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
     alice = seat_uid(game, "alice")
@@ -170,17 +196,17 @@ def test_pass_until_surfaces_scripts_it_skipped_for_unavailable_facts(
         )
 
     assert result["finished"] is True, result
-    assert result["armed"] == []
+    assert result["armed_applying"] == []
     [skip] = result["armed_facts_unavailable"]
     assert skip["id"] == "needs-facts"
     assert "500" in skip["reason"]
     assert hook.posts("/actions/play-land") == []
 
 
-# -- finding 2: a theirs/either destination waits for OWN priority to fire ---
+# -- finding 2: a theirs/either destination waits for OWN priority to judge --
 
 
-def test_a_theirs_end_step_script_fires_once_the_opponent_passes_priority_there(
+def test_a_theirs_end_step_script_is_offered_once_the_opponent_passes_priority_there(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """S2 arming re-review finding 2: `autopass_stop_reason` stops a
@@ -221,23 +247,24 @@ def test_a_theirs_end_step_script_fires_once_the_opponent_passes_priority_there(
 
     assert result["finished"] is True, result
     assert result.get("armed_conflict") is None, result
-    [entry] = result["armed"]
-    assert entry["script"] == "theirs-end"
-    assert entry["exit"] == "chain_complete", entry
-    assert hook.posts("/actions/activate"), "the armed script actually activated the island"
+    assert result["armed_applying"] == ["theirs-end"]
+    assert hook.posts("/actions/activate") == [], "arm() must never run anything (API-7)"
     assert result["state"]["step"] == "end_step"
 
 
-def test_nothing_fires_on_a_retryable_hand_back(
-    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+def test_nothing_is_judged_on_a_retryable_hand_back(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`pass_until` hands the board straight back the moment it would have to
-    wait for the opponent (no `max_seconds`, no `Opponent` thread here) - a
-    retryable hand-back, and arming must not even look at the board then."""
-    alice = seat_uid(board, "alice")
-    register(client, board, alice, land_script("drop"))
-    add_card(client, board, "Island", "alice", "hand")
-    seats = wired(monkeypatch, board)
+    wait for the opponent (no `max_seconds`, no `Opponent` thread here, and
+    it is bob's own turn throughout) - a retryable hand-back, and arming must
+    not even look at the board then: alice never holds priority in this call
+    at all, so neither the inner nor the outer judge ever runs."""
+    alice = seat_uid(game, "alice")
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Island", "alice", "hand")
+    seats = wired(monkeypatch, game)
     seat, hook = hooked_seat(seats, alice)
 
     result = pass_until(
@@ -250,7 +277,7 @@ def test_nothing_fires_on_a_retryable_hand_back(
     )
 
     assert result["finished"] is False
-    assert "armed" not in result, result
+    assert "armed_applying" not in result, result
     assert "armed_conflict" not in result, result
     assert hook.posts("/actions/play-land") == []
 
@@ -273,7 +300,7 @@ def test_arming_is_skipped_entirely_when_arm_is_empty(
 
     # No `Opponent` thread here on purpose: whatever this hand-back looks
     # like, an empty `arm` must never even try arming.
-    assert "armed" not in result
+    assert "armed_applying" not in result
     assert hook.posts("/actions/play-land") == []
 
 
@@ -297,7 +324,7 @@ def test_advisor_pass_until_is_still_refused_even_with_arm_given(
 
     assert result["finished"] is True
     assert result["stopped_because"] == seatkit.ADVISE_NO_PASS_UNTIL
-    assert "armed" not in result
+    assert "armed_applying" not in result
     assert hook.posts("/actions/play-land") == []
 
 
@@ -315,7 +342,7 @@ def test_wait_and_arm_survives_arming_raising(
     `playscripts.arming.arm` caught an exception (`_guarded`, the MCP
     decorator, only catches `httpx.HTTPError`), so a bug in arming crashed
     the whole wait - losing the board it had already fetched - rather than
-    just failing to arm. A raise there must not cost the caller the wait's
+    just failing to judge. A raise there must not cost the caller the wait's
     own answer."""
     from magic_cards_model_api.playscripts import arming
 
@@ -339,7 +366,7 @@ def test_wait_and_arm_survives_arming_raising(
 
     assert woken["wake_reason"] != seatkit.NOTHING_NEW_YET
     assert "state" in woken and woken["state"] is not None
-    assert "armed" not in woken
+    assert "armed_applying" not in woken
     assert "arming blew up" in woken.get("armed_error", "")
     assert hook.posts("/actions/play-land") == []
     seatkit_records = [r for r in caplog.records if r.name == "mcm.seatkit"]
@@ -349,10 +376,13 @@ def test_wait_and_arm_survives_arming_raising(
 def test_pass_until_survives_arming_raising(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, caplog: Any
 ) -> None:
-    """The same protection on `pass_until`'s own arming call: a raise there
-    must not cost the run its own `stopped_because`/`passes`/`state`. A real
-    finished crossing (not a retryable hand-back), so arming is genuinely
-    attempted."""
+    """The same protection on `pass_until`'s own arming calls (inner and
+    outer alike): a raise there must not cost the run its own
+    `stopped_because`/`passes`/`state`. `arming.arm` is monkeypatched to
+    always raise, so the inner, load-bearing hook (`_pass_until_once`'s own
+    judge-before-pass, the first place this seat ever holds priority - its
+    own upkeep) is what actually catches this, before the run ever reaches
+    its named destination."""
     from magic_cards_model_api.playscripts import arming
 
     monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
@@ -380,7 +410,7 @@ def test_pass_until_survives_arming_raising(
 
     assert result["finished"] is True, result
     assert result["stopped_because"]
-    assert "armed" not in result
+    assert "armed_applying" not in result
     assert "arming blew up" in result.get("armed_error", "")
     assert hook.posts("/actions/play-land") == []
     seatkit_records = [r for r in caplog.records if r.name == "mcm.seatkit"]
@@ -390,7 +420,7 @@ def test_pass_until_survives_arming_raising(
 # -- wait_and_arm -------------------------------------------------------------
 
 
-def test_wait_and_arm_fires_on_a_real_wake(
+def test_wait_and_arm_reports_a_real_wake(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     alice = seat_uid(board, "alice")
@@ -408,12 +438,11 @@ def test_wait_and_arm_fires_on_a_real_wake(
     )
 
     assert woken["wake_reason"] != seatkit.NOTHING_NEW_YET
-    [entry] = woken["armed"]
-    assert entry["exit"] == "chain_complete", entry
-    assert hook.posts("/actions/play-land")
+    assert woken["armed_applying"] == ["drop"]
+    assert hook.posts("/actions/play-land") == [], "arm() must never run anything (API-7)"
 
 
-def test_wait_and_arm_never_fires_on_nothing_new_yet(
+def test_wait_and_arm_never_judges_on_nothing_new_yet(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`before` is this same board's own signature, so the wake condition is
@@ -435,38 +464,19 @@ def test_wait_and_arm_never_fires_on_nothing_new_yet(
     )
 
     assert woken["wake_reason"] == seatkit.NOTHING_NEW_YET
-    assert "armed" not in woken
+    assert "armed_applying" not in woken
     assert hook.posts("/actions/play-land") == []
 
 
-def test_an_advisors_armed_script_posts_an_advice_row(
-    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    advisor = "arming-advisor-wait-uid"
-    store.register_advisors(board, {advisor: Advisor(player="alice")})
-    register(client, board, advisor, land_script("drop"))
-    add_card(client, board, "Island", "alice", "hand")
-    seats = wired(monkeypatch, board)
-    seat, _ = hooked_seat(seats, advisor)
-
-    woken = wait_and_arm(
-        seat,
-        before=None,
-        corpora=seats.script_corpora,
-        arm=["drop"],
-        arm_reasoning=ARM_REASONING,
-    )
-
-    assert woken["wake_reason"] != seatkit.NOTHING_NEW_YET
-    [entry] = woken["armed"]
-    assert entry["exit"] == "advised", entry
-
-    rows = [
-        row
-        for row in seatkit_audit_entries(board)
-        if row["action"] == "script_run" and row["detail"].get("role") == "advisor"
-    ]
-    assert rows and rows[-1]["detail"]["invoked_via"] == "armed"
+# API-7: `test_an_advisors_armed_script_posts_an_advice_row` covered an
+# advisor's armed script itself firing through advise mode and posting its
+# own `/advice` row - that behaviour is gone with the run it depended on.
+# `arm()` never calls `script_tools.run` for a seat or an advisor: an
+# advisor now reports `armed_applying` exactly like a seat does, and it is
+# up to the advisor (or its own buddy) to actually run or draft the play
+# from there. Coverage of "an advisor gets `armed_applying` the same way a
+# seat does" lives in `test_playscript_arming.py`'s judging tests, which
+# never special-case `seat.advise` at all.
 
 
 def seatkit_audit_entries(game_id: str) -> list[dict[str, Any]]:
@@ -479,27 +489,27 @@ def test_bare_block_until_wake_is_unaffected(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`block_until_wake` itself - `run_action`'s own post-action wake check
-    - is untouched: it takes no `arm` at all, so nothing here can fire from
-    inside an ordinary action's own follow-up check."""
+    - is untouched: it takes no `arm` at all, so nothing here can be judged
+    from inside an ordinary action's own follow-up check."""
     alice = seat_uid(board, "alice")
     seats = wired(monkeypatch, board)
     seat, _ = hooked_seat(seats, alice)
 
     woken = block_until_wake(seat, before=None)
 
-    assert "armed" not in woken
+    assert "armed_applying" not in woken
 
 
-# -- finding 6: never arms on a stop without priority or a real decision ------
+# -- finding 6: never judges on a stop without priority or a real decision ---
 
 
-def test_wait_and_arm_never_fires_on_a_game_over_wake(
+def test_wait_and_arm_never_judges_on_a_game_over_wake(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """S2 review finding 6: `compute_wake_reason` answers a bare `"game
     over"` once a winner or a draw is set - a real wake, not `NOTHING_NEW_
-    YET`/`GAME_GONE`/`WAIT_INTERRUPTED` - so arming used to fire on it too,
-    even though there is nothing left to play. No armed row is written."""
+    YET`/`GAME_GONE`/`WAIT_INTERRUPTED` - so arming used to run on it too,
+    even though there is nothing left to play."""
     alice = seat_uid(board, "alice")
     register(client, board, alice, land_script("drop"))
     add_card(client, board, "Island", "alice", "hand")
@@ -518,12 +528,12 @@ def test_wait_and_arm_never_fires_on_a_game_over_wake(
     )
 
     assert woken["wake_reason"] == "game over"
-    assert "armed" not in woken
+    assert "armed_applying" not in woken
     assert hook.posts("/actions/play-land") == []
     assert started(board) == []
 
 
-def test_wait_and_arm_never_fires_on_game_gone(
+def test_wait_and_arm_never_judges_on_game_gone(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     alice = seat_uid(board, "alice")
@@ -542,11 +552,11 @@ def test_wait_and_arm_never_fires_on_game_gone(
     )
 
     assert woken["wake_reason"] == seatkit.GAME_GONE
-    assert "armed" not in woken
+    assert "armed_applying" not in woken
     assert hook.posts("/actions/play-land") == []
 
 
-def test_pass_until_never_fires_on_game_gone(
+def test_pass_until_never_judges_on_game_gone(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     alice = seat_uid(board, "alice")
@@ -567,16 +577,24 @@ def test_pass_until_never_fires_on_game_gone(
 
     assert result["finished"] is True
     assert result["stopped_because"] == seatkit.GAME_GONE
-    assert "armed" not in result
+    assert "armed_applying" not in result
     assert hook.posts("/actions/play-land") == []
     assert started(board) == []
 
 
-def test_pass_until_never_fires_on_an_unknown_outcome(
+def test_pass_until_never_judges_on_an_unknown_outcome(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """`drop` carries `opposing_archetypes=NEVER_MATCHES` here on purpose:
+    the inner hook (`_pass_until_once`'s own judge-before-pass) runs on
+    alice's very first priority-holding lap, in her own current
+    `precombat_main` - if `drop` genuinely applied there, arming would stop
+    the run before the pass this test needs to attempt ever happened. What
+    this proves is unaffected either way: an `unknown_outcome` stop is not
+    arm-eligible, so even with something armed, neither judge ever writes
+    anything onto this answer."""
     alice = seat_uid(board, "alice")
-    register(client, board, alice, land_script("drop"))
+    register(client, board, alice, land_script("drop", opposing_archetypes=NEVER_MATCHES))
     add_card(client, board, "Island", "alice", "hand")
     seats = wired(monkeypatch, board)
 
@@ -598,16 +616,18 @@ def test_pass_until_never_fires_on_an_unknown_outcome(
 
     assert result["finished"] is True
     assert result["stopped_because"] == seatkit.UNKNOWN_OUTCOME
-    assert "armed" not in result
+    assert "armed_applying" not in result
     assert hook.posts("/actions/play-land") == []
     assert started(board) == []
 
 
-def test_pass_until_never_fires_on_a_refused_pass(
+def test_pass_until_never_judges_on_a_refused_pass(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Same reasoning as the unknown-outcome test above for `drop`'s own
+    `opposing_archetypes` mismatch."""
     alice = seat_uid(board, "alice")
-    register(client, board, alice, land_script("drop"))
+    register(client, board, alice, land_script("drop", opposing_archetypes=NEVER_MATCHES))
     add_card(client, board, "Island", "alice", "hand")
     seats = wired(monkeypatch, board)
 
@@ -629,7 +649,7 @@ def test_pass_until_never_fires_on_a_refused_pass(
 
     assert result["finished"] is True
     assert "a pass was refused" in result["stopped_because"]
-    assert "armed" not in result
+    assert "armed_applying" not in result
     assert hook.posts("/actions/play-land") == []
     assert started(board) == []
 
@@ -665,7 +685,7 @@ def test_wait_and_arm_refuses_a_blank_arm_reasoning_before_waiting(
     elapsed = time.monotonic() - started_at
 
     assert elapsed < 1.0, f"waited {elapsed:.2f}s despite the invalid arm_reasoning"
-    assert "armed" not in woken
+    assert "armed_applying" not in woken
     assert woken.get("armed_refusal")
     assert hook.posts("/actions/play-land") == []
 
@@ -689,7 +709,7 @@ def test_pass_until_refuses_a_blank_arm_reasoning_before_any_pass(
     )
 
     assert result["finished"] is True
-    assert "armed" not in result
+    assert "armed_applying" not in result
     assert result.get("armed_refusal")
     assert result["passes"] == 0
     assert hook.posts("/actions/pass-priority") == []
@@ -717,173 +737,9 @@ def test_pass_until_refuses_disagreeing_opposing_archetype_and_inputs_before_any
     )
 
     assert result["finished"] is True
-    assert "armed" not in result
+    assert "armed_applying" not in result
     assert result.get("armed_refusal")
     assert hook.posts("/actions/pass-priority") == []
-
-
-# -- S2 arming re-review finding 6: one shared call budget over wait + arming --
-
-
-class _MonotonicSequence:
-    """A `time.monotonic` stand-in that hands back each of `readings` in
-    turn, then repeats the last one - enough to make `wait_and_arm`/
-    `pass_until`'s own "elapsed since call start" measurement deterministic
-    without a real clock or a real wait."""
-
-    def __init__(self, *readings: float) -> None:
-        self._readings = list(readings)
-        self._index = 0
-
-    def monotonic(self) -> float:
-        value = self._readings[min(self._index, len(self._readings) - 1)]
-        self._index += 1
-        return value
-
-    def sleep(self, _seconds: float) -> None:
-        return None
-
-
-def test_wait_and_arm_hands_arming_only_the_remainder_of_one_shared_call_budget(
-    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """S2 arming re-review finding 6: arming used to get a full, fresh
-    `RUN_CAP_SECONDS` (25s) on top of whatever the wait itself already spent
-    (up to its own `MAX_WAIT_SECONDS`, also 25s) - up to ~50s for one call,
-    breaking `MAX_WAIT_SECONDS`'s own rationale of staying comfortably under
-    the ~30s client/transport timeout. `wait_and_arm` now shares one
-    `TOTAL_CALL_BUDGET_SECONDS` deadline across the wait and arming: arming
-    gets only whatever the wait left of it - here, the wait "spent" 20 of the
-    call's 29-second total, leaving arming only 9, never a fresh 25."""
-    alice = seat_uid(board, "alice")
-    register(client, board, alice, land_script("drop"))
-    add_card(client, board, "Island", "alice", "hand")
-    seats = wired(monkeypatch, board)
-    seat, _ = hooked_seat(seats, alice)
-    woken_state = seat.fetch_state()
-
-    clock = _MonotonicSequence(0.0, 20.0)
-    monkeypatch.setattr(seatkit, "time", clock)
-    monkeypatch.setattr(
-        seatkit,
-        "block_until_wake",
-        lambda *a, **kw: {"state": woken_state, "wake_reason": "priority", "recent_log": []},
-    )
-    captured: dict[str, Any] = {}
-
-    def fake_arm(*a: Any, **kw: Any) -> Any:
-        captured["max_seconds"] = kw.get("max_seconds")
-        return {"armed": []}
-
-    from magic_cards_model_api.playscripts import arming as playscript_arming
-
-    monkeypatch.setattr(playscript_arming, "arm", fake_arm)
-
-    seatkit.wait_and_arm(
-        seat,
-        before=None,
-        corpora=seats.script_corpora,
-        arm=["drop"],
-        arm_reasoning=ARM_REASONING,
-    )
-
-    assert captured["max_seconds"] == pytest.approx(seatkit.TOTAL_CALL_BUDGET_SECONDS - 20.0)
-    assert captured["max_seconds"] < seatkit.MAX_WAIT_SECONDS, (
-        "arming must never get a fresh RUN_CAP_SECONDS on top of what the wait already spent"
-    )
-
-
-def test_wait_and_arm_skips_arming_when_too_little_budget_remains(
-    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The other half: once the wait alone has spent enough of the shared
-    budget that less than `MIN_ARMED_RUN_SECONDS` is left, arming is skipped
-    entirely - never even attempted - with a note telling the caller to call
-    again (the hint's own `arm_call` is still valid)."""
-    from magic_cards_model_api.playscripts.arming import MIN_ARMED_RUN_SECONDS
-
-    alice = seat_uid(board, "alice")
-    register(client, board, alice, land_script("drop"))
-    add_card(client, board, "Island", "alice", "hand")
-    seats = wired(monkeypatch, board)
-    seat, hook = hooked_seat(seats, alice)
-    woken_state = seat.fetch_state()
-
-    spent = seatkit.TOTAL_CALL_BUDGET_SECONDS - (MIN_ARMED_RUN_SECONDS - 0.5)
-    clock = _MonotonicSequence(0.0, spent)
-    monkeypatch.setattr(seatkit, "time", clock)
-    monkeypatch.setattr(
-        seatkit,
-        "block_until_wake",
-        lambda *a, **kw: {"state": woken_state, "wake_reason": "priority", "recent_log": []},
-    )
-
-    def never_called(*a: Any, **kw: Any) -> Any:
-        raise AssertionError("arm() must never be called on too little remaining budget")
-
-    from magic_cards_model_api.playscripts import arming as playscript_arming
-
-    monkeypatch.setattr(playscript_arming, "arm", never_called)
-
-    woken = seatkit.wait_and_arm(
-        seat,
-        before=None,
-        corpora=seats.script_corpora,
-        arm=["drop"],
-        arm_reasoning=ARM_REASONING,
-    )
-
-    assert "armed" not in woken
-    assert woken.get("armed_skipped") == seatkit.ARMING_SKIPPED_LOW_BUDGET
-    assert hook.posts("/actions/play-land") == []
-
-
-def test_pass_until_hands_arming_only_the_remainder_of_one_shared_call_budget(
-    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The same sharing, on `pass_until`'s own arming call."""
-    alice = seat_uid(board, "alice")
-    register(client, board, alice, land_script("drop"))
-    add_card(client, board, "Island", "alice", "hand")
-    seats = wired(monkeypatch, board)
-    seat, _ = hooked_seat(seats, alice)
-    finished_state = seat.fetch_state()
-
-    clock = _MonotonicSequence(0.0, 0.0, 18.0, 18.0)
-    monkeypatch.setattr(seatkit, "time", clock)
-    monkeypatch.setattr(
-        seatkit,
-        "_pass_until_once",
-        lambda *a, **kw: {
-            "stopped_because": "reached your postcombat main",
-            "passes": 3,
-            "finished": True,
-            "until": {"step": "postcombat_main", "whose_turn": "mine"},
-            "state": finished_state,
-            "recent_log": [],
-        },
-    )
-    captured: dict[str, Any] = {}
-
-    def fake_arm(*a: Any, **kw: Any) -> Any:
-        captured["max_seconds"] = kw.get("max_seconds")
-        return {"armed": []}
-
-    from magic_cards_model_api.playscripts import arming as playscript_arming
-
-    monkeypatch.setattr(playscript_arming, "arm", fake_arm)
-
-    pass_until(
-        seat,
-        until_step="postcombat_main",
-        whose_turn="mine",
-        corpora=seats.script_corpora,
-        arm=["drop"],
-        arm_reasoning=ARM_REASONING,
-    )
-
-    assert captured["max_seconds"] == pytest.approx(seatkit.TOTAL_CALL_BUDGET_SECONDS - 18.0)
-    assert captured["max_seconds"] < seatkit.MAX_WAIT_SECONDS
 
 
 # -- CLI ----------------------------------------------------------------------
@@ -920,9 +776,7 @@ def test_cli_wait_passes_arm_through(
     import json
 
     printed = json.loads(capsys.readouterr().out)
-    [entry] = printed["armed"]
-    assert entry["script"] == "drop"
-    assert entry["exit"] == "chain_complete", entry
+    assert printed["armed_applying"] == ["drop"]
 
 
 def test_cli_pass_until_arm_is_repeatable(
@@ -933,10 +787,9 @@ def test_cli_pass_until_arm_is_repeatable(
 ) -> None:
     """Two `--arm` flags collect into one list rather than the second
     overwriting the first - proven by both being judged: the unregistered
-    `another-one` never becomes a firing candidate and comes back its own
-    refused `armed` entry (`test_arm_returns_the_refusal_for_an_unregistered_
-    armed_id`) while `drop` still fires once the crossing reaches alice's
-    own main."""
+    `another-one` never becomes an applying candidate and comes back its own
+    `armed_unregistered` entry while `drop` is reported applying once the
+    crossing reaches alice's own main."""
     from test_front_end_parity import wire
 
     wire(monkeypatch)
@@ -972,16 +825,16 @@ def test_cli_pass_until_arm_is_repeatable(
 
     printed = json.loads(capsys.readouterr().out)
     assert printed["finished"] is True, printed
-    by_script = {entry["script"]: entry for entry in printed["armed"]}
-    assert by_script["drop"]["exit"] == "chain_complete", printed["armed"]
-    assert by_script["another-one"]["exit"] == "refused", printed["armed"]
-    assert "registered" in by_script["another-one"]["refusal"]
+    assert printed["armed_applying"] == ["drop"], printed
+    [unregistered] = printed["armed_unregistered"]
+    assert unregistered["id"] == "another-one"
+    assert "registered" in unregistered["reason"]
 
 
 # -- MCP tools ------------------------------------------------------------------
 
 
-def test_mcp_wait_for_priority_fires_an_armed_script(
+def test_mcp_wait_for_priority_reports_an_armed_script_applying(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import json
@@ -1003,12 +856,10 @@ def test_mcp_wait_for_priority_fires_an_armed_script(
     )
 
     answer = json.loads(result.content[0].text)
-    [entry] = answer["armed"]
-    assert entry["script"] == "drop"
-    assert entry["exit"] == "chain_complete", entry
+    assert answer["armed_applying"] == ["drop"]
 
 
-def test_mcp_pass_until_fires_an_armed_script_on_a_real_crossing(
+def test_mcp_pass_until_reports_an_armed_script_applying_on_a_real_crossing(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import json
@@ -1041,9 +892,7 @@ def test_mcp_pass_until_fires_an_armed_script_on_a_real_crossing(
 
     answer = json.loads(result.content[0].text)
     assert answer["finished"] is True, answer
-    [entry] = answer["armed"]
-    assert entry["script"] == "drop"
-    assert entry["exit"] == "chain_complete", entry
+    assert answer["armed_applying"] == ["drop"]
 
 
 def _parse_call(call: str) -> tuple[str, dict[str, Any]]:
@@ -1141,9 +990,7 @@ def test_the_armable_hints_own_call_template_actually_invokes(
 
     answer = _json.loads(result.content[0].text)
     assert answer["finished"] is True, answer
-    [entry] = answer["armed"]
-    assert entry["script"] == "drop"
-    assert entry["exit"] == "chain_complete", entry
+    assert answer["armed_applying"] == ["drop"]
 
 
 def test_arm_still_accepts_a_comma_separated_string(
@@ -1159,7 +1006,7 @@ def test_arm_still_accepts_a_comma_separated_string(
     assert _parse_ids([]) == []
 
 
-def test_mcp_pass_until_never_fires_on_a_retryable_hand_back(
+def test_mcp_pass_until_never_judges_on_a_retryable_hand_back(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import json
@@ -1169,13 +1016,16 @@ def test_mcp_pass_until_never_fires_on_a_retryable_hand_back(
     from magic_cards_model_api.mcp import build_server
 
     alice = seat_uid(board, "alice")
-    register(client, board, alice, land_script("drop"))
+    register(client, board, alice, land_script("drop", opposing_archetypes=NEVER_MATCHES))
     add_card(client, board, "Island", "alice", "hand")
     seats = wired(monkeypatch, board)
     server = build_server(seats)
 
     # No `Opponent` here: alice's own single pass hands the board straight
-    # back "you do not hold priority", a retryable hand-back.
+    # back "you do not hold priority", a retryable hand-back. `drop`'s own
+    # `opposing_archetypes` mismatch keeps it from ever applying during
+    # alice's own current `precombat_main`, so that single pass is actually
+    # attempted rather than pre-empted by the inner judge-before-pass hook.
     result = call_tool(
         server,
         "pass_until",
@@ -1188,7 +1038,7 @@ def test_mcp_pass_until_never_fires_on_a_retryable_hand_back(
     )
 
     answer = json.loads(result.content[0].text)
-    assert "armed" not in answer, answer
+    assert "armed_applying" not in answer, answer
 
 
 # -- S2 arming re-review finding 1: waiting for OWN priority at a theirs/either
@@ -1208,22 +1058,22 @@ def _pass_bob(client: TestClient, game_id: str, bob: str) -> None:
     assert passed.status_code == 200 and passed.json()["allowed"] is True, passed.text
 
 
-def test_default_max_seconds_returns_resume_that_fires_in_the_same_end_step(
+def test_default_max_seconds_returns_resume_that_is_offered_in_the_same_end_step(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """S2 arming re-review finding 1: reaching a `theirs`/`either`
     destination without this seat holding priority there yet used to answer
     `finished: true` outright whenever `max_seconds` was left at its default
     `0.0` - `_wait_for_own_priority_at_destination`'s own wait never even
-    ran, so the answer carried no `armed`, no note, and critically no
-    `resume`. A caller that took that at face value and called `pass_until`
-    again with no `resume` would get a fresh run stamped from the board it
-    is standing on (`start_autopass`), which exempts THIS very occurrence of
-    the destination as "the step the run started in" and skips straight to
-    the NEXT one - a whole turn later. The fix: `finished: false` with a
-    `resume` carrying the run's ORIGINAL starting stamp, so a follow-up call
-    that hands it straight back still arms in this same end step, the
-    moment this seat actually gets priority there.
+    ran, so the answer carried no `armed_applying`, no note, and critically
+    no `resume`. A caller that took that at face value and called
+    `pass_until` again with no `resume` would get a fresh run stamped from
+    the board it is standing on (`start_autopass`), which exempts THIS very
+    occurrence of the destination as "the step the run started in" and skips
+    straight to the NEXT one - a whole turn later. The fix: `finished: false`
+    with a `resume` carrying the run's ORIGINAL starting stamp, so a
+    follow-up call that hands it straight back still arms in this same end
+    step, the moment this seat actually gets priority there.
 
     `force_turn_position` positions the board at bob's postcombat_main
     (still holding priority there) rather than his end_step directly: naming
@@ -1262,7 +1112,7 @@ def test_default_max_seconds_returns_resume_that_fires_in_the_same_end_step(
         # max_seconds left at its default 0.0 on purpose.
     )
     assert result["finished"] is False, result
-    assert "armed" not in result, result
+    assert "armed_applying" not in result, result
     assert result.get("resume") is not None, result
     assert result["state"]["step"] == "end_step"
     assert "call again with resume" in result["stopped_because"], result
@@ -1281,9 +1131,8 @@ def test_default_max_seconds_returns_resume_that_fires_in_the_same_end_step(
     )
 
     assert result2["finished"] is True, result2
-    [entry] = result2["armed"]
-    assert entry["script"] == "theirs-end"
-    assert hook.posts("/actions/activate"), "fired in the SAME end step, not a later one"
+    assert result2["armed_applying"] == ["theirs-end"]
+    assert hook.posts("/actions/activate") == [], "arm() must never run anything (API-7)"
     assert result2["state"]["step"] == "end_step"
     assert result2["state"]["turn_number"] == starting_turn, (
         "must not have skipped to the next occurrence"
@@ -1332,7 +1181,7 @@ def test_pass_until_hands_back_resume_when_the_human_thinks_longer_than_the_wait
     )
 
     assert result["finished"] is False, result
-    assert "armed" not in result, result
+    assert "armed_applying" not in result, result
     assert result.get("resume") is not None, result
     assert result["state"]["step"] == "end_step"
     assert "waiting for your priority at end_step" in result["stopped_because"], result
@@ -1388,7 +1237,7 @@ def test_pass_until_interrupted_waiting_for_own_priority_keeps_resume(
     )
 
     assert result["finished"] is False, result
-    assert "armed" not in result, result
+    assert "armed_applying" not in result, result
     assert result.get("resume") is not None, result
     assert result["stopped_because"] == seatkit.WAIT_INTERRUPTED, result
     assert not hook.posts("/actions/activate")
@@ -1403,7 +1252,7 @@ def test_a_stack_arrival_while_waiting_for_own_priority_is_reported(
     `stopped_because` from before the wait even began - the new stack object
     silently unreported, even though `stop_on_stack` (the default) asks for
     exactly that. The fix reports the same stop reason `autopass_stop_reason`
-    itself would have; arming still runs on the resulting board, and a
+    itself would have; arming still judges the resulting board, and a
     script whose own `when` needs an empty stack is judged and skipped on
     its own terms, never hard-skipped here."""
     monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
@@ -1489,7 +1338,7 @@ def test_a_stack_arrival_while_waiting_for_own_priority_is_reported(
     assert result["finished"] is True, result
     assert result["stopped_because"] == "something new went on the stack: Lightning Bolt", result
     assert [obj["name"] for obj in result["state"]["stack"]] == ["Lightning Bolt"]
-    assert result["armed"] == [], (
+    assert result["armed_applying"] == [], (
         "the script's own `when` needs an empty stack, judged and skipped on its own "
         "terms rather than hard-skipped by the wait"
     )
@@ -1503,13 +1352,13 @@ def test_mcp_wait_for_priority_carries_every_documented_armed_field(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`wait_and_arm`'s own documented answer (`seatkit.py`'s own module
-    docstring) can carry `armed`, `armed_conflict`, `armed_refusal`,
+    docstring) can carry `armed_applying`, `armed_conflict`, `armed_refusal`,
     `armed_error` (arming itself crashed, not a script's own refusal),
-    `armed_skipped` (too little budget left to even attempt arming), and
+    `armed_unregistered` (an armed id with no script registered for it) and
     `armed_facts_unavailable` (a script judged against facts the board could
-    not fetch) - `mcp.py`'s `wait_for_priority` only ever copied the first
-    three onto the seat-facing state, so a seat could not tell "nothing
-    applied" from "arming crashed" or "arming never even tried"."""
+    not fetch) - `mcp.py`'s `wait_for_priority` must copy every one of them
+    onto the seat-facing state, so a seat can tell "nothing applies" from
+    "arming crashed" or "this id does not exist"."""
     import json
 
     from test_mcp_input_required import call_tool
@@ -1526,11 +1375,11 @@ def test_mcp_wait_for_priority_carries_every_documented_armed_field(
             "state": real_state,
             "wake_reason": "priority",
             "recent_log": [],
-            "armed": [],
+            "armed_applying": [],
             "armed_conflict": ["already-covered"],
             "armed_refusal": "already-covered",
             "armed_error": "arming raised RuntimeError: arming blew up",
-            "armed_skipped": seatkit.ARMING_SKIPPED_LOW_BUDGET,
+            "armed_unregistered": [{"id": "not-a-real-script", "reason": "not registered"}],
             "armed_facts_unavailable": [{"id": "needs-facts", "reason": "500"}],
         }
 
@@ -1541,7 +1390,7 @@ def test_mcp_wait_for_priority_carries_every_documented_armed_field(
     answer = json.loads(result.content[0].text)
 
     assert answer["armed_error"] == "arming raised RuntimeError: arming blew up"
-    assert answer["armed_skipped"] == seatkit.ARMING_SKIPPED_LOW_BUDGET
+    assert answer["armed_unregistered"] == [{"id": "not-a-real-script", "reason": "not registered"}]
     assert answer["armed_facts_unavailable"] == [{"id": "needs-facts", "reason": "500"}]
 
 
@@ -1570,11 +1419,11 @@ def test_cli_wait_carries_every_documented_armed_field(
             "state": real_state,
             "wake_reason": "priority",
             "recent_log": [],
-            "armed": [],
+            "armed_applying": [],
             "armed_conflict": ["already-covered"],
             "armed_refusal": "already-covered",
             "armed_error": "arming raised RuntimeError: arming blew up",
-            "armed_skipped": seatkit.ARMING_SKIPPED_LOW_BUDGET,
+            "armed_unregistered": [{"id": "not-a-real-script", "reason": "not registered"}],
             "armed_facts_unavailable": [{"id": "needs-facts", "reason": "500"}],
         }
 
@@ -1585,41 +1434,13 @@ def test_cli_wait_carries_every_documented_armed_field(
     assert exit_code == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["armed_error"] == "arming raised RuntimeError: arming blew up"
-    assert printed["armed_skipped"] == seatkit.ARMING_SKIPPED_LOW_BUDGET
+    assert printed["armed_unregistered"] == [
+        {"id": "not-a-real-script", "reason": "not registered"}
+    ]
     assert printed["armed_facts_unavailable"] == [{"id": "needs-facts", "reason": "500"}]
 
 
-# -- an unregistered armed id's own computed refusal must reach the caller ---
-
-
-def test_arm_returns_the_refusal_for_an_unregistered_armed_id(
-    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`_judge_round` already computes a `refusal` for an armed id that is
-    not registered under this seat's corpus ("no script %r is registered
-    for this seat") - `arm`'s own loop only ever read `applies`/
-    `needs_input`/`invalid_input` off each judged entry, never `refusal`,
-    so that computed refusal was silently thrown away and the caller saw
-    only an empty `armed: []` with no way to tell "genuinely nothing
-    applies yet" from "this id does not exist at all"."""
-    from magic_cards_model_api.playscripts import arming
-    from magic_cards_model_api.playscripts.runtime import Exit
-
-    alice = seat_uid(game, "alice")
-    seats = wired(monkeypatch, game)
-    seat, _ = hooked_seat(seats, alice)
-    register(client, game, alice, land_script("drop"))
-
-    result = arming.arm(
-        seat,
-        seats.script_corpora,
-        arm=["not-a-real-script"],
-        arm_reasoning=ARM_REASONING,
-    )
-
-    assert isinstance(result, dict), result
-    [entry] = result["armed"]
-    assert entry["script"] == "not-a-real-script"
-    assert entry["exit"] == Exit.REFUSED.value
-    assert "not-a-real-script" in entry["refusal"]
-    assert "registered" in entry["refusal"]
+# API-7: `test_arm_returns_the_refusal_for_an_unregistered_armed_id` moved to
+# `test_playscript_arming.py`, which is where every other direct
+# `arming.arm()` judging test now lives - this file is the wiring layer
+# (`wait_and_arm`/`pass_until`), not the judge itself.

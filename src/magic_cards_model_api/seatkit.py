@@ -251,14 +251,30 @@ PROTOCOL_VERSION = "seatkit-20"
 #: `opposing_archetype` and `inputs`, meaning what they mean for
 #: `run_script`. The wait judges every armed id against the board the
 #: moment it would otherwise wake for a real reason; two or more applying
-#: at once is a conflict and neither fires. The answer carries `armed`
-#: (the ids that actually fired, `[]` when none did), `armed_conflict`
-#: (the ids that would have conflicted, when arming stopped for that
-#: reason), `armed_error` (the judge itself raised, rather than a script's
-#: own refusal), and `armed_skipped` (the batch stopped before a run's own
-#: start, below `MIN_ARMED_RUN_SECONDS` of budget left in the call). Each
-#: fired run's own ledger row carries `invoked_via: "armed"`, a third value
-#: beside `"mcp"` and `"cli"` (`schemas.ScriptRunIn.invoked_via`).
+#: at once is a conflict and neither is offered.
+#:
+#: **API-7 replaces this paragraph's original "it fires" contract: arming
+#: never fires anything, ever - the owner dropped autofire outright.**
+#: `wait_for_priority`/`pass_until` only judge the armed ids
+#: (`playscripts.arming.arm`) and report which apply; the seat itself still
+#: sends the one committing call that runs a play, read off
+#: `scripts.applicable` (below) exactly as it would for any other applying
+#: play. The answer carries `armed_applying` (the ids currently applying,
+#: `[]` when none do - never a list of fired runs), `armed_conflict` (the
+#: ids that would have conflicted), `armed_unregistered` (an armed id with
+#: no script registered for it), `armed_error` (the judge itself raised,
+#: rather than a script's own refusal) and `armed_facts_unavailable` (an
+#: armed script whose own selectors needed a facts fetch that failed).
+#: `pass_until`'s own `_pass_until_once` additionally judges arming on
+#: every lap of its internal loop where this seat already holds priority,
+#: BEFORE passing it - the load-bearing half of this change: without it, a
+#: multi-step `pass_until` run crossed straight through the window an
+#: armed play was armed for, since only the run's own final stop used to be
+#: judged at all. It stops such a run immediately, `finished: true`, with a
+#: `stopped_because` naming the play. `invoked_via: "armed"` on a ledger
+#: row (`schemas.ScriptRunIn.invoked_via`, a third value beside `"mcp"` and
+#: `"cli"`) is history now, never written again: it named a run `arm()`
+#: itself fired, and `arm()` no longer runs anything at all.
 #:
 #: The S1 hint (`scripts.applicable` above) gains two siblings on the same
 #: `scripts` object: `armable` (the registered ids that would be worth
@@ -266,7 +282,11 @@ PROTOCOL_VERSION = "seatkit-20"
 #: not yet applicable to the board sitting in front of this answer) and
 #: `arm_call`, one ready-to-use `pass_until(..., arm=[...])` or
 #: `wait_for_priority(..., arm=[...])` invocation string arming every
-#: surviving `armable` id at once.
+#: surviving `armable` id at once. API-7: whichever ids the arming judge
+#: above found applying sort first in `scripts.applicable` itself, ahead of
+#: every other applying entry regardless of priority, each carrying
+#: `armed: true` (`script_tools.applicable_hint`, reading `armed_applying`
+#: off this very `state`).
 #:
 #: `pass_until` gains one more armed-only behaviour: reaching a
 #: `theirs`/`either` destination with something armed for it, but before
@@ -278,13 +298,15 @@ PROTOCOL_VERSION = "seatkit-20"
 #: waiting inside that same occurrence for its own priority to arm
 #: against, rather than the starting-step exemption silently carrying the
 #: run past the window to the NEXT occurrence of that step, a whole turn
-#: later.
+#: later. Once this seat does hold priority there, the same judge-and-offer
+#: (never fire) treatment above applies.
 #:
-#: A pre-bump process sends no `arm`, so nothing here ever judges or fires
-#: anything on its behalf, and it reads `armed`, `armed_conflict`,
-#: `armed_error`, `armed_skipped`, `scripts.armable`, `scripts.arm_call`,
-#: and an `invoked_via: "armed"` row the same way it already reads any
-#: other extra key - untouched noise, never acted on.
+#: A pre-bump process sends no `arm`, so nothing here ever judges anything
+#: on its behalf, and it reads `armed_applying`, `armed_conflict`,
+#: `armed_error`, `armed_unregistered`, `armed_facts_unavailable`,
+#: `scripts.armable`, `scripts.arm_call` and `scripts.applicable[].armed`
+#: the same way it already reads any other extra key - untouched noise,
+#: never acted on.
 #:
 #: Also `seatkit-20`, buddy pre-drafts (S2 A6): `wait_for_priority` gains
 #: `wake_to_draft` (advisor uid only, refused outright for a seat), which
@@ -299,7 +321,10 @@ PROTOCOL_VERSION = "seatkit-20"
 #: "failed": "window"|"board"|"legality"|"refused"}` the moment the window
 #: has passed, the board moved underneath it, or the draft no longer
 #: validates, and `{"status": "superseded_by_script", "script": ...}` when
-#: an armed script already fired ahead of it. `AdviceIn.drafted_at_seq`
+#: a MANUAL `run_script`/CLI `script run` call already advised in this very
+#: answer (API-7: arming itself can no longer cause this - it only ever
+#: judges, never runs anything, so the two can no longer collide inside one
+#: poll). `AdviceIn.drafted_at_seq`
 #: carries the ledger position the draft was captured at, left null on an
 #: ordinary undrafted proposal. A pre-bump process has no `wake_to_draft`
 #: argument and no `stage_advice` tool to call, and reads a `draft` key on
@@ -366,11 +391,8 @@ PROTOCOL_VERSION = "seatkit-20"
 #: answer - indistinguishable from those same plays genuinely not applying.
 #: `arm()` (`playscripts/arming.py`) now also answers
 #: `armed_facts_unavailable: [{"id": ..., "reason": ...}, ...]`, naming
-#: every armed script a judge round this call made left un-fired for that
-#: reason and the
-#: HTTP status/reason `Seat.hypothetical_facts` raised on - deduplicated
-#: across the rounds one `arm()` call can make, logged once per round by
-#: `_FactsOnce` itself rather than once per affected script. The S1 hint
+#: every armed script this call's own judge left un-judged for that reason
+#: and the HTTP status/reason `Seat.hypothetical_facts` raised on. The S1 hint
 #: (`scripts.applicable`/`armable` above) gains the same signal as a short
 #: `scripts.note` string instead, present even when it is the only thing
 #: that answer has to say. A pre-bump process reads both the same as any
@@ -1741,10 +1763,10 @@ class Seat:
         proposed right away. Defaults true - every ordinary caller (an MCP
         action tool, a CLI action command) IS the "next committing call" a
         staged window is waiting to be filled in by. `playscripts.runtime.
-        _advise` passes `False`: an armed script firing is a proposal for
-        *right now*, not the future window a draft is staged toward, and
-        capturing it there swallowed the script's own move - the runtime read
-        the resulting `{"drafted": True, ...}` shape as a refusal, since it
+        _advise` passes `False`: a script run's own proposal is for *right
+        now*, not the future window a draft is staged toward, and capturing
+        it there swallowed the script's own move - the runtime read the
+        resulting `{"drafted": True, ...}` shape as a refusal, since it
         never carries the `proposed` key a real proposal answer does.
         """
         advised = self._advise_answer(method, path, body, capture_draft=capture_draft)
@@ -2720,22 +2742,6 @@ def _arming_moment(state: dict[str, Any], me: str) -> bool:
 #: above this is silently capped, never honoured past it.
 MAX_WAIT_SECONDS = 25.0
 
-#: The whole MCP call's own bound - the wait (`MAX_WAIT_SECONDS`) plus
-#: whatever armed batch fires once it wakes - kept under the same
-#: `CLIENT_TIMEOUT_SECONDS`/transport-read-timeout rationale `MAX_WAIT_
-#: SECONDS`'s own comment gives, rather than a second `RUN_CAP_SECONDS`
-#: (also `MAX_WAIT_SECONDS`) restarting the clock from zero purely for
-#: arming - which is what `wait_and_arm`/`pass_until` used to hand
-#: `playscripts.arming.arm`, up to ~50s total for one call (S2 arming
-#: re-review finding 6). `_ARMING_ALLOWANCE_SECONDS` is the small top-up
-#: arming gets on top of the wait's own bound when the wait spends the whole
-#: of it; `wait_and_arm`/`pass_until` measure their own elapsed time from the
-#: call's own start against this total and hand arming whatever is left of
-#: it - which is *more* than the allowance whenever the wait wakes early,
-#: never less.
-_ARMING_ALLOWANCE_SECONDS = 4.0
-TOTAL_CALL_BUDGET_SECONDS = MAX_WAIT_SECONDS + _ARMING_ALLOWANCE_SECONDS
-
 #: How often a bounded wait re-checks the wake condition. Short enough that a
 #: wake condition is noticed promptly once it actually holds; long enough not
 #: to hammer the game API with a read every few milliseconds.
@@ -2851,31 +2857,7 @@ def block_until_wake(
         time.sleep(min(WAIT_POLL_SECONDS, remaining))
 
 
-#: `wait_and_arm`/`pass_until`'s own note when arming is skipped entirely -
-#: never even attempted - because too little of `TOTAL_CALL_BUDGET_SECONDS`
-#: remained once the wait itself was done (S2 arming re-review finding 6).
-#: The hint's own `arm_call` named exactly the same `arm` ids and is still
-#: valid - a caller that reads this just calls it (or this same tool) again.
-ARMING_SKIPPED_LOW_BUDGET = (
-    "arming was skipped: fewer than MIN_ARMED_RUN_SECONDS of this call's own budget remained "
-    "once the wait was done, and starting a run that close to the deadline risks leaving a "
-    "start row with no matching finish, which would block the script for the rest of the step. "
-    "Call again - the hint's own `arm_call` is still valid."
-)
-
-
-def _arming_budget(call_start: float) -> float:
-    """What is left of `TOTAL_CALL_BUDGET_SECONDS`, measured from
-    `call_start` (this call's own entry, captured once by its caller) rather
-    than a fresh `RUN_CAP_SECONDS` starting the clock over purely for
-    arming - see `TOTAL_CALL_BUDGET_SECONDS`'s own comment. Never negative:
-    a wait that overran its own bound (should not happen, `block_until_wake`/
-    `_pass_until_once` are themselves bounded) still hands arming a number
-    its own `run_budget < MIN_ARMED_RUN_SECONDS` check can act on."""
-    return max(0.0, TOTAL_CALL_BUDGET_SECONDS - (time.monotonic() - call_start))
-
-
-def _fire_armed_scripts(
+def _judge_armed_scripts(
     seat: Seat,
     corpora: dict[tuple[str, str], dict[str, Any]] | None,
     *,
@@ -2883,21 +2865,18 @@ def _fire_armed_scripts(
     arm_reasoning: str,
     opposing_archetype: str,
     inputs: dict[str, Any] | None,
-    should_stop: Callable[[], bool] | None,
-    max_seconds: float,
 ) -> dict[str, Any] | str | None:
     """`playscripts.arming.arm`, imported lazily: `playscripts` imports this
     module (`script_tools`/`runtime` both read `Seat`/`scripts_enabled_here`
     off it), so importing it back here at module load time would cycle.
     `None` when there is nothing to arm - an empty `arm`, or a caller (like
     `run_action`'s own post-action wake) that never passed a `corpora` cache
-    to arm against at all.
+    to judge against at all.
 
-    `max_seconds` is the caller's own remaining share of
-    `TOTAL_CALL_BUDGET_SECONDS` (`_arming_budget`) - never a fresh
-    `RUN_CAP_SECONDS` restarting the clock at the hand-back, which is what
-    let one call's wait and its own arming together run up to ~50s (S2
-    arming re-review finding 6)."""
+    API-7: this only ever judges - `arm()` itself never runs anything any
+    more, so there is no run-time budget left to thread through here (the
+    old `max_seconds`/`should_stop` this function used to hand down existed
+    only for `script_tools.run`, which is gone)."""
     if not arm or corpora is None:
         return None
     from .playscripts import arming as playscript_arming
@@ -2909,49 +2888,57 @@ def _fire_armed_scripts(
         arm_reasoning=arm_reasoning,
         opposing_archetype=opposing_archetype,
         inputs=inputs,
-        max_seconds=max_seconds,
-        should_stop=should_stop,
     )
 
 
-def _merge_armed(result: dict[str, Any], armed: dict[str, Any] | str | None, seat: Seat) -> None:
-    """Splice one `_fire_armed_scripts` answer into `result` (a
-    `block_until_wake`-shaped or `pass_until`-shaped dict, both of which
-    carry a `state` key) - `armed`/`armed_conflict`/`armed_facts_unavailable`
-    added, `state` (and, for a caller that reads it, `recent_log`) replaced
-    with the post-arming board when arming actually ran something."""
+def _merge_armed(result: dict[str, Any], armed: dict[str, Any] | str | None) -> None:
+    """Splice one `_judge_armed_scripts` answer (`playscripts.arming.arm`)
+    into `result` (a `block_until_wake`-shaped or `pass_until`-shaped dict,
+    both of which carry a `state` key). `armed_applying` (the ids currently
+    applying - never a list of fired runs, API-7), `armed_conflict`,
+    `armed_unregistered` and `armed_facts_unavailable` are added when
+    present. `armed_applying` is also written onto `result["state"]` itself
+    - never replacing `state` wholesale, since judging never mutates the
+    board - so `script_tools.applicable_hint` can read it straight off the
+    very `state` it is about to build `scripts.applicable` from and mark/
+    reorder the play it names, with no second wiring path."""
     if armed is None:
         return
     if isinstance(armed, str):
         result["armed_refusal"] = armed
         return
-    result["armed"] = armed["armed"]
+    applying = armed.get("applying") or []
+    result["armed_applying"] = applying
     if "armed_conflict" in armed:
         result["armed_conflict"] = armed["armed_conflict"]
+    if "armed_unregistered" in armed:
+        result["armed_unregistered"] = armed["armed_unregistered"]
     if "armed_facts_unavailable" in armed:
         result["armed_facts_unavailable"] = armed["armed_facts_unavailable"]
-    if armed.get("state") is not None:
-        result["state"] = armed["state"]
-        result["recent_log"] = seat.recent_log()
+    if applying and isinstance(result.get("state"), dict):
+        result["state"]["armed_applying"] = applying
 
 
 #: Every key `wait_and_arm`'s own answer can carry beyond `state`/
 #: `wake_reason`/`recent_log` - this module's own docstring above states the
-#: full documented contract (`armed`, `armed_conflict`, `armed_error`,
-#: `armed_skipped`) plus `armed_refusal` (`_arming_moment`'s own bad-request
-#: refusal, S2 A3) and `armed_facts_unavailable` (`_merge_armed`, D2). A
-#: caller that forwards `wait_and_arm`'s answer onto a seat-facing state
-#: (`mcp.py`'s `wait_for_priority`, `seat_cli.py`'s `wait`) must copy every
-#: one of these, not a subset it happened to remember: `armed_error` in
-#: particular is the only way a seat can tell "nothing applied" apart from
-#: "arming itself crashed", and a caller that drops it silently reports the
-#: crash as though nothing had been armed at all.
+#: full documented contract (`armed_applying`, `armed_conflict`,
+#: `armed_error`, `armed_unregistered`) plus `armed_refusal` (`_arming_
+#: moment`'s own bad-request refusal, S2 A3) and `armed_facts_unavailable`
+#: (`_merge_armed`, D2). A caller that forwards `wait_and_arm`'s answer onto
+#: a seat-facing state (`mcp.py`'s `wait_for_priority`, `seat_cli.py`'s
+#: `wait`) must copy every one of these, not a subset it happened to
+#: remember: `armed_error` in particular is the only way a seat can tell
+#: "nothing applies" apart from "arming itself crashed", and a caller that
+#: drops it silently reports the crash as though nothing had been armed at
+#: all. Updated in step with `_merge_armed`/`arming.arm`'s own answer shape -
+#: whichever field moves here is exactly what a seat-facing caller must
+#: start (or stop) copying.
 ARMED_RESULT_FIELDS = (
-    "armed",
+    "armed_applying",
     "armed_conflict",
     "armed_refusal",
     "armed_error",
-    "armed_skipped",
+    "armed_unregistered",
     "armed_facts_unavailable",
 )
 
@@ -2970,21 +2957,22 @@ def wait_and_arm(
     wake_to_draft: bool = False,
     draft_staged: bool = False,
 ) -> dict[str, Any]:
-    """`block_until_wake`, then fire this seat's armed scripts
-    (`playscripts.arming.arm`, S2) once the wait actually wakes it for a real
-    reason - never on a bare `NOTHING_NEW_YET`, a game-gone answer, or an
-    interrupted wait, since none of those is "this seat holding priority or a
-    decision pending for it", the one moment arming is allowed to act.
+    """`block_until_wake`, then judge this seat's armed scripts
+    (`playscripts.arming.arm`, API-7 - never runs anything) once the wait
+    actually wakes it for a real reason - never on a bare `NOTHING_NEW_YET`,
+    a game-gone answer, or an interrupted wait, since none of those is "this
+    seat holding priority or a decision pending for it", the one moment
+    arming is allowed to act.
 
     Arming is preferred, never mandatory: `arm` left empty (the default)
     makes this behave exactly like `block_until_wake` always has - this is
     `mcp.wait_for_priority`'s and `mcp-seat wait`'s own wrapper, not a
     replacement for `block_until_wake` itself (`run_action`'s own post-action
-    wake check keeps calling that directly, and fires nothing).
+    wake check keeps calling that directly, and judges nothing).
 
     `wake_to_draft`/`draft_staged` (S2 A6) are threaded straight through to
     `block_until_wake` and nowhere else in here - a draft-time wake is not one
-    of the "fire the armed scripts" reasons above, only `wake_reason` gains a
+    of the "judge the armed scripts" reasons above, only `wake_reason` gains a
     new possible value (`compute_wake_reason`'s own docstring)."""
     if arm:
         from .playscripts import arming as playscript_arming
@@ -3008,11 +2996,6 @@ def wait_and_arm(
             )
             woken["armed_refusal"] = problem
             return woken
-    # S2 arming re-review finding 6: captured before the wait itself runs, so
-    # arming's own share below is measured against the WHOLE call, never a
-    # fresh `RUN_CAP_SECONDS` restarting the clock purely for it - see
-    # `TOTAL_CALL_BUDGET_SECONDS`.
-    call_start = time.monotonic()
     woken = block_until_wake(
         seat,
         before=before,
@@ -3031,35 +3014,27 @@ def wait_and_arm(
         return woken
     if not arm:
         return woken
-    from .playscripts.arming import MIN_ARMED_RUN_SECONDS
-
-    arm_budget = _arming_budget(call_start)
-    if arm_budget < MIN_ARMED_RUN_SECONDS:
-        woken["armed_skipped"] = ARMING_SKIPPED_LOW_BUDGET
-        return woken
     try:
-        armed = _fire_armed_scripts(
+        armed = _judge_armed_scripts(
             seat,
             corpora,
             arm=arm,
             arm_reasoning=arm_reasoning,
             opposing_archetype=opposing_archetype,
             inputs=inputs,
-            should_stop=should_stop,
-            max_seconds=arm_budget,
         )
     except Exception as exc:  # noqa: BLE001 - arming must never cost the wait its own answer
         # S2 review finding 2: nothing between here and `playscripts.arming.arm`
         # caught an exception before this (`_guarded`, the MCP decorator, only
         # catches `httpx.HTTPError`), so a bug in arming crashed the whole
         # wait - losing the board it had already fetched - rather than just
-        # failing to arm. `woken` is already a complete, honest answer to the
-        # wait itself; arming failing must never take that away from the
+        # failing to judge. `woken` is already a complete, honest answer to
+        # the wait itself; arming failing must never take that away from the
         # caller, so it is logged once and noted, not raised.
-        logger.exception("arming raised for %s while firing %r", seat.uid, arm)
+        logger.exception("arming raised for %s while judging %r", seat.uid, arm)
         woken["armed_error"] = f"arming raised {type(exc).__name__}: {exc}"
         return woken
-    _merge_armed(woken, armed, seat)
+    _merge_armed(woken, armed)
     return woken
 
 
@@ -4078,36 +4053,23 @@ def _unvalidated_action_still_legal(
     return True
 
 
-def _script_already_advised(armed: Any, script_exit: Any = None) -> str | None:
+def _script_already_advised(script_exit: Any = None) -> str | None:
     """The id of the script that just proposed in this very answer (`Exit.
     ADVISED`, `playscripts.runtime._advise`), or `None`.
 
-    Two shapes carry this - review fix 2 (2026-09-14) widened the original
-    single-shape check, which only ever looked at `armed` and so never
-    caught a MANUAL run colliding with a reached draft:
+    `script_exit` is the single `script_exit` dict a MANUAL run produces -
+    `mcp.run_script`/CLI `script run`'s own answer, whose `script_exit.exit`
+    is `"advised"` exactly when that very call proposed.
 
-    - `armed` is whatever `woken["state"]["armed"]` carries (`mcp.wait_for_
-      priority`'s own splice of `wait_and_arm`'s `armed` answer) - a list of
-      `script_exit`-shaped dicts, or absent/`None` for every answer that
-      never armed anything (every action tool, and a `wait_for_priority`/CLI
-      `wait` call with no `arm`). This is an armed script firing on its own,
-      inside a poll.
-    - `script_exit` is the single `script_exit` dict a MANUAL run produces -
-      `mcp.run_script`/CLI `script run`'s own answer, whose `script_exit.
-      exit` is `"advised"` exactly when that very call proposed. An armed
-      script and a manual run can never both fire in the same answer (only
-      one of `wait_for_priority`/`run_script` is ever called for it), so
-      checking both is never ambiguous about which one to report.
-
-    Reading the STRING `"advised"` rather than importing `playscripts.
-    runtime.Exit`: `playscripts` imports `seatkit` (`Seat`/`scripts_enabled_
-    here`), so importing back here would cycle - the same reason `_fire_
-    armed_scripts` imports `playscripts.arming` lazily instead."""
-    if isinstance(armed, list):
-        for entry in armed:
-            if isinstance(entry, dict) and entry.get("exit") == "advised":
-                script = entry.get("script")
-                return script if isinstance(script, str) else None
+    API-7 removed this function's other half: review fix 2 (2026-09-14)
+    originally widened a single-shape check that only ever looked at
+    `woken["state"]["armed"]` - a list of `script_exit`-shaped dicts an
+    armed script firing inside a poll produced - to also catch a MANUAL run
+    colliding with a reached draft. Arming no longer fires anything at all
+    (API-7: `playscripts.arming.arm` only ever judges), so that collision
+    can no longer happen inside a poll; only a MANUAL run can still advise
+    in the same answer a draft is about to post in, which is exactly what
+    `script_exit` alone now covers."""
     if isinstance(script_exit, dict) and script_exit.get("exit") == "advised":
         script = script_exit.get("script")
         return script if isinstance(script, str) else None
@@ -4169,17 +4131,20 @@ def resolve_advice_draft(
         `_advise_answer` ran to draft it; an unvalidated one asks
         `_unvalidated_action_still_legal`. Either failing drops the draft and
         answers `{"status": "stale", "failed": "legality"}`.
-    (d) **a script that already advised in this very answer** (review fix 2,
-        2026-09-14, re-review): checked only once (a), (b) and (c) all hold
-        and this draft is genuinely about to post - `state.get("armed")`
-        (an armed script `wait_for_priority`/CLI `wait` fired inside its own
-        poll) or `script_exit` (a MANUAL `run_script`/CLI `script run` that
-        just proposed) both name it, via `_script_already_advised`. Posting
-        the draft too would put two `/advice` rows in the ledger for the one
+    (d) **a MANUAL run that already advised in this very answer** (review
+        fix 2, 2026-09-14, re-review; narrowed by API-7): checked only once
+        (a), (b) and (c) all hold and this draft is genuinely about to post
+        - `script_exit` (a MANUAL `run_script`/CLI `script run` that just
+        proposed) names it, via `_script_already_advised`. Posting the
+        draft too would put two `/advice` rows in the ledger for the one
         answer, and `ui/advice_model.js`'s `currentAdvice` (newest-wins)
         would hide whichever posted first without a trace - the draft loses,
         dropped outright, answering `{"status": "superseded_by_script",
-        "script": ...}` instead of posting.
+        "script": ...}` instead of posting. API-7 dropped this check's other
+        half: an ARMED script advising inside a poll used to collide with a
+        reached draft the same way, but arming never fires anything any
+        more (`playscripts.arming.arm` only ever judges), so only a MANUAL
+        run can still collide here.
 
         This check used to run FIRST, ahead of (a)/(b)/(c), and superseded
         ANY captured draft the instant a script advised anywhere in the same
@@ -4187,7 +4152,7 @@ def resolve_advice_draft(
         yet lost to a script proposing for an entirely different, current
         moment. Moved here so only a draft that would otherwise post right
         now can ever be superseded; one still `"held"` on window, board or
-        legality is untouched by a script firing alongside it.
+        legality is untouched by a manual run advising alongside it.
 
     All three - now four - holding posts for real: `POST .../advice`, carrying
     `drafted_at_seq` from when this was staged, and the draft is dropped
@@ -4283,7 +4248,7 @@ def resolve_advice_draft(
         if not legal:
             _pop_draft_if_same(seat, entry)
             return {"status": "stale", "failed": "legality"}
-        scripted = _script_already_advised(state.get("armed"), script_exit)
+        scripted = _script_already_advised(script_exit)
         if scripted is not None:
             _pop_draft_if_same(seat, entry)
             return {"status": "superseded_by_script", "script": scripted}
@@ -4519,8 +4484,8 @@ def _window_passed_note(stopped_because: str) -> str:
     (S2 arming re-review finding 2)."""
     return (
         f"{stopped_because} - but the step moved on before you ever held priority there (or had "
-        "a decision pending for you), so nothing armed could fire this occurrence. Call again to "
-        "arm for its next one."
+        "a decision pending for you), so nothing armed could ever have been judged applying this "
+        "occurrence. Call again to arm for its next one."
     )
 
 
@@ -4545,7 +4510,7 @@ def _own_priority_wait_note(until_step: str) -> str:
     still-open window rather than being read as a fresh run that would
     exempt it all over again."""
     return (
-        f"waiting for your priority at {until_step} to fire armed scripts; call again with resume"
+        f"waiting for your priority at {until_step} to judge armed scripts; call again with resume"
     )
 
 
@@ -4569,11 +4534,12 @@ def _wait_for_own_priority_at_destination(
     `theirs`/`either` destination is usually still the active opponent's own
     first priority in it (CR 117.3a): a step's active player gets priority
     before anyone else does. Arming needs this seat to actually hold
-    priority (or have a decision pending for it) before anything it fires
-    can be legal (`runtime._drive` requires holding priority before a
-    script's first move - S1 review finding 4a), so firing on the raw
-    "reached" board would silently do nothing, and a caller that did not
-    retry would never learn the window had even opened.
+    priority (or have a decision pending for it) before the play it names
+    can actually be run (`runtime._drive` requires holding priority before
+    a script's first move - S1 review finding 4a), so judging on the raw
+    "reached" board would report nothing applying even when it genuinely
+    will the moment this seat gets there, and a caller that did not retry
+    would never learn the window had even opened.
 
     This polls the board directly - never `_pass_until_once`'s own `resume`:
     re-entering its state machine here would reset `started_step`/
@@ -4604,8 +4570,9 @@ def _wait_for_own_priority_at_destination(
     `run`'s own `known_stack_ids` - the stack as it stood when this destination
     was first reached - reports the same stop reason `autopass_stop_reason`'s
     own stack check would have, rather than leaving the stale "reached ..."
-    text as if nothing had landed. Arming still runs on it: a script whose own
-    `when` needs an empty stack is judged and skipped on its own terms, never
+    text as if nothing had landed. Arming still judges the board once this
+    returns (`pass_until`'s own outer arm check): a script whose own `when`
+    needs an empty stack is judged and skipped on its own terms, never
     hard-skipped here."""
 
     def give_up(reason: str) -> dict[str, Any]:
@@ -4667,13 +4634,20 @@ def pass_until(
     rather than handed straight back the first time it would otherwise have
     to wait for the opponent.
 
-    `arm` (S2) fires this seat's armed scripts (`playscripts.arming.arm`)
-    once this call is about to return with a real stop - `finished: True`,
-    or the `MAX_PASSES_PER_CALL` hand-back - never on a retryable hand-back
-    (the opponent still holds priority): that is not this seat's moment, and
-    arming judging the board there would be arming, not the wait, deciding
-    when to look. Arming is preferred, never mandatory: an empty `arm` (the
-    default) leaves this behaving exactly as it always has.
+    `arm` (API-7) judges this seat's armed scripts (`playscripts.arming.arm`)
+    - never fires anything - in two places: inside `_pass_until_once`'s own
+    loop, the instant this seat holds priority somewhere along the way
+    (threaded through via `kwargs` below, so a multi-step run cannot cross
+    the very window it was armed for without ever looking), and once more
+    here, after the call is about to return with a real stop - `finished:
+    True`, or the `MAX_PASSES_PER_CALL` hand-back - covering the one case
+    the inner hook cannot: reaching a `theirs`/`either` destination before
+    this seat has held priority there at all (`_wait_for_own_priority_at_
+    destination`, below). Never on a retryable hand-back (the opponent still
+    holds priority): that is not this seat's moment, and arming judging the
+    board there would be arming, not the wait, deciding when to look. Arming
+    is preferred, never mandatory: an empty `arm` (the default) leaves this
+    behaving exactly as it always has.
 
     Left at its default `max_seconds=0.0`, this is exactly one call to
     `_pass_until_once` and nothing else - the poll-and-return behaviour that
@@ -4739,11 +4713,6 @@ def pass_until(
                 refused_arm["available_actions"] = available_actions(seat, state)
             refused_arm["recent_log"] = seat.recent_log()
             return refused_arm
-    # S2 arming re-review finding 6: captured before the wait/pass loop
-    # below runs, so arming's own share (computed once the run stops) is
-    # measured against the WHOLE call, never a fresh `RUN_CAP_SECONDS`
-    # restarting the clock purely for it - see `TOTAL_CALL_BUDGET_SECONDS`.
-    call_start = time.monotonic()
     max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
     deadline = time.monotonic() + max_seconds
     kwargs: dict[str, Any] = {
@@ -4754,6 +4723,11 @@ def pass_until(
         "stop_when_you_can_attack": stop_when_you_can_attack,
         "reasoning": reasoning,
         "include_actions": include_actions,
+        "corpora": corpora,
+        "arm": arm,
+        "arm_reasoning": arm_reasoning,
+        "opposing_archetype": opposing_archetype,
+        "inputs": inputs,
     }
     result = _pass_until_once(seat, resume=resume, **kwargs)
     while not result["finished"] and result.get("retryable", False) and time.monotonic() < deadline:
@@ -4796,41 +4770,31 @@ def pass_until(
         and not retryable
         and inner_arm_eligible
         and _arming_moment(result["state"], seat.player)
+        # `_pass_until_once`'s own inner hook already judged and reported on
+        # this very stop (it always runs first, since it fires the instant
+        # this seat holds priority, before `_pass_until_once` ever returns) -
+        # never judge a second time for the same answer.
+        and "armed_applying" not in result
+        and "armed_conflict" not in result
+        and "armed_error" not in result
     ):
-        from .playscripts.arming import MIN_ARMED_RUN_SECONDS
-
-        arm_budget = _arming_budget(call_start)
-        if arm_budget < MIN_ARMED_RUN_SECONDS:
-            # S2 arming re-review finding 6: too little of the call's own
-            # shared budget is left to safely start a run.
-            result["armed_skipped"] = ARMING_SKIPPED_LOW_BUDGET
-            return result
         try:
-            armed = _fire_armed_scripts(
+            armed = _judge_armed_scripts(
                 seat,
                 corpora,
                 arm=arm,
                 arm_reasoning=arm_reasoning,
                 opposing_archetype=opposing_archetype,
                 inputs=inputs,
-                should_stop=should_stop,
-                max_seconds=arm_budget,
             )
         except Exception as exc:  # noqa: BLE001 - see wait_and_arm's own guard
             # S2 review finding 2: a raise here must not cost the run its own
             # stopped_because/passes/state/resume - `result` is already a
             # complete, honest answer to the run itself.
-            logger.exception("arming raised for %s while firing %r", seat.uid, arm)
+            logger.exception("arming raised for %s while judging %r", seat.uid, arm)
             result["armed_error"] = f"arming raised {type(exc).__name__}: {exc}"
             return result
-        _merge_armed(result, armed, seat)
-        if (
-            include_actions
-            and armed is not None
-            and not isinstance(armed, str)
-            and armed.get("state") is not None
-        ):
-            result["available_actions"] = available_actions(seat, result["state"])
+        _merge_armed(result, armed)
     return result
 
 
@@ -4845,6 +4809,11 @@ def _pass_until_once(
     resume: dict[str, Any] | None = None,
     reasoning: str | None = None,
     include_actions: bool = True,
+    corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
+    arm: list[str] | None = None,
+    arm_reasoning: str = "",
+    opposing_archetype: str = "*",
+    inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pass every priority this seat is *currently* able to pass, up to a named
     point in the turn - then return. Never sleeps, never waits for the
@@ -4852,6 +4821,15 @@ def _pass_until_once(
     (above) is the public entry point, and the only thing that ever calls
     this directly; its own bounded wait is what a caller who wants to wait
     at all should reach for, not a loop around this function by hand.
+
+    `corpora`/`arm`/`arm_reasoning`/`opposing_archetype`/`inputs` (API-7) are
+    `pass_until`'s own arming arguments, threaded straight through so the
+    armed-judge hook below can act on them: without this, a multi-step run
+    passed straight through the exact window a play was armed for, since
+    only the run's own final stop was ever judged (`pass_until`'s own outer
+    arm check, which cannot see any of the priority windows this function
+    crosses on its own before returning). An empty `arm` makes the hook a
+    no-op, exactly as everywhere else arming is optional.
 
     This used to run a deadline loop: `max_seconds` (60 by default, and an MCP
     client could ask for more) with a `time.sleep` in every branch that had
@@ -5106,6 +5084,70 @@ def _pass_until_once(
             )
 
         if state.get("priority_holder") == seat.player:
+            # API-7, the load-bearing half: judged HERE, with the fresh
+            # `state` this very lap already fetched, and BEFORE this seat's
+            # priority is passed below - never after. Without this, a run
+            # crossing several of this seat's own priority windows in one
+            # call (exactly what `pass_until` is for) would check only its
+            # own final stop, sailing straight through every armed play's
+            # own window on the way there. Arming never fires anything
+            # (API-7): an applying play, or a conflict, simply stops this
+            # run right here, `finished: true`, so the seat reads the play
+            # off `scripts.applicable` (marked `armed: true` there) and
+            # sends it itself as its own next committing call.
+            if arm:
+                from .playscripts import arming as playscript_arming
+
+                try:
+                    judged = playscript_arming.arm(
+                        seat,
+                        corpora,
+                        arm=arm,
+                        arm_reasoning=arm_reasoning,
+                        opposing_archetype=opposing_archetype,
+                        inputs=inputs,
+                    )
+                except Exception as exc:  # noqa: BLE001 - see wait_and_arm's own guard
+                    # Arming must never cost this run its own board - the
+                    # same discipline `wait_and_arm`/`pass_until`'s own
+                    # outer arm call already applies.
+                    logger.exception(
+                        "arming raised for %s while judging %r inside pass_until",
+                        seat.uid,
+                        arm,
+                    )
+                    crashed = answer(
+                        state,
+                        f"arming raised while judging inside pass_until: "
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                    crashed["armed_error"] = f"arming raised {type(exc).__name__}: {exc}"
+                    return crashed
+                if isinstance(judged, dict):
+                    conflict = judged.get("armed_conflict")
+                    applying = judged.get("applying") or []
+                    if conflict or applying:
+                        state["armed_applying"] = applying
+                        if conflict:
+                            stopped = answer(
+                                state,
+                                "two or more armed plays apply at once ("
+                                + ", ".join(conflict)
+                                + ") - pick one yourself",
+                            )
+                            stopped["armed_conflict"] = conflict
+                        else:
+                            stopped = answer(
+                                state,
+                                f"an armed play now applies: {applying[0]} - see "
+                                "scripts.applicable for the ready call",
+                            )
+                            stopped["armed_applying"] = applying
+                        if judged.get("armed_unregistered"):
+                            stopped["armed_unregistered"] = judged["armed_unregistered"]
+                        if judged.get("armed_facts_unavailable"):
+                            stopped["armed_facts_unavailable"] = judged["armed_facts_unavailable"]
+                        return stopped
             if passes >= MAX_PASSES_PER_CALL:
                 return handed_back(
                     state,

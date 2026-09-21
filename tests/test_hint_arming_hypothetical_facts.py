@@ -233,11 +233,10 @@ def test_arm_surfaces_scripts_it_skipped_for_unavailable_facts(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`_judge_round` already marks a facts-needing play not applicable when
-    the fetch fails (test above); before this, `arm()` dropped that fact on
-    the floor the same as any other non-applying script. It must now name
-    the skipped id and the HTTP status/reason back, on a new
-    `armed_facts_unavailable` key - the plain-drop play still fires, since
-    it never needed the facts at all."""
+    the fetch fails (test above); `arm()` (API-7: judges only, never runs
+    anything) must not drop that fact on the floor the same as any other
+    non-applying script - it names the skipped id and the HTTP status/reason
+    back on `armed_facts_unavailable`."""
     force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
     alice = seat_uid(game, "alice")
     unlocks_hand(client, game)
@@ -251,11 +250,11 @@ def test_arm_surfaces_scripts_it_skipped_for_unavailable_facts(
         seat,
         seats.script_corpora,
         arm=["needs-facts"],
-        arm_reasoning="the human is thinking; fire this the moment it is legal",
+        arm_reasoning="the human is thinking; arm this so I can act the moment it is legal",
     )
 
     assert isinstance(result, dict), result
-    assert result["armed"] == []
+    assert result["applying"] == []
     [skip] = result["armed_facts_unavailable"]
     assert skip["id"] == "needs-facts"
     assert "404" in skip["reason"]

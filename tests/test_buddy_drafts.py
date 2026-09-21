@@ -678,49 +678,16 @@ def test_wake_to_draft_does_not_wake_while_staged_but_wakes_once_stale(
 # (2026-09-14 review, finding 4)
 # ---------------------------------------------------------------------------
 
-
-def test_an_armed_scripts_proposal_supersedes_a_reached_staged_draft(
-    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A captured draft whose window is reached in the very same poll that
-    also fires an armed script would otherwise double-post: `resolve_advice_
-    draft` sees the window reached, the board unchanged and the action still
-    legal, so it posts the draft right alongside the script's own `/advice`
-    row - two proposals in one answer, the second of which
-    `ui/advice_model.js`'s `currentAdvice` (newest-wins) then hides without a
-    trace. The fix drops the draft instead and says so."""
-    wire(monkeypatch)
-    uid = advisor_uid(game, player="alice")
-    register(client, game, uid, land_script("drop"))
-    add_card(client, game, "Island", "alice", "hand")
-
-    seats = seats_for(game)
-    server = build_server(seats)
-    seat = seats.seat_for(uid)
-    assert seat is not None
-
-    # Stage a window earlier this same turn, for a step that ranks after
-    # where it is staged - "reached" the moment the board gets there, no
-    # extra turn or occurrence bookkeeping needed for this test.
-    force_turn_position(game, Step.UPKEEP, "alice")
-    seat.stage_advice("precombat_main", "mine")
-    capture_a_pass_draft(seat, game, reasoning="nothing to do until my main phase")
-
-    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
-    answer = json.loads(
-        tool_text(
-            server,
-            "wait_for_priority",
-            {"player_uid": uid, "arm": "drop", "arm_reasoning": "make the land drop"},
-        )
-    )
-
-    assert answer.get("armed") and answer["armed"][0]["exit"] == "advised"
-    assert answer["draft"] == {"status": "superseded_by_script", "script": "drop"}
-    rows = advice_rows(game)
-    assert len(rows) == 1, rows
-    assert rows[0]["detail"]["path"].endswith("/actions/play-land"), rows[0]["detail"]["path"]
-    assert uid not in seat._advice_drafts, "a superseded draft must be dropped, not left staged"
+# API-7 removed `test_an_armed_scripts_proposal_supersedes_a_reached_staged_
+# draft`: it covered an armed script's own advise-mode run colliding with a
+# staged draft that reached its window in the same poll (`wait_for_priority`
+# firing "drop" through `_advise` and posting its own `/advice` row
+# alongside the draft's). Arming never runs anything any more
+# (`playscripts.arming.arm` only ever judges - `answer["armed"]` no longer
+# exists at all), so that collision can no longer happen; only a MANUAL
+# `run_script` call can still collide with a reached draft, and that half is
+# `test_a_manual_run_script_proposal_supersedes_a_reached_staged_draft`,
+# below, unaffected.
 
 
 # ---------------------------------------------------------------------------
@@ -1375,7 +1342,14 @@ def test_a_draft_for_another_window_stays_held_when_a_script_advises_elsewhere(
     """The original review fix 4 superseded ANY captured draft the instant a
     script advised anywhere in the same answer, even one staged for a window
     nowhere near reached yet. A draft for a LATER window must simply stay
-    held while an armed script fires for its own, current moment."""
+    held while a script advises for its own, current moment.
+
+    API-7 narrowed which caller can even trigger this: an ARMED script used
+    to be able to advise inside `wait_for_priority`'s own poll (the original
+    version of this test armed "drop" on that very call) - arming never runs
+    anything any more, so only a MANUAL `run_script` call can still collide
+    with a draft this way. This is that same scenario through the surviving
+    path."""
     wire(monkeypatch)
     uid = advisor_uid(game, player="alice")
     register(client, game, uid, land_script("drop"))
@@ -1395,12 +1369,12 @@ def test_a_draft_for_another_window_stays_held_when_a_script_advises_elsewhere(
     answer = json.loads(
         tool_text(
             server,
-            "wait_for_priority",
-            {"player_uid": uid, "arm": "drop", "arm_reasoning": "make the land drop"},
+            "run_script",
+            {"player_uid": uid, "script": "drop", "reasoning": "make the land drop"},
         )
     )
 
-    assert answer.get("armed") and answer["armed"][0]["exit"] == "advised"
+    assert answer["script_exit"]["exit"] == "advised"
     assert answer["draft"] == {"status": "held"}
     rows = advice_rows(game)
     assert len(rows) == 1, rows  # the script's own proposal, never the draft
