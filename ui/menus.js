@@ -440,15 +440,78 @@ export function defenderMenuItems(defenders) {
  * A single item can match several rows (evoke: one card, one `cast` kind,
  * the printed cost and the alternative one). It is unaffordable only when
  * EVERY matching row says so - the menu's one Cast item begins the
- * announcement where that alternative cost is chosen. */
+ * announcement where that alternative cost is chosen.
+ *
+ * The second thing a row carries is its `unreadable_modes`
+ * (`action_rows._Rows.name_unreadable_modes`, off `engine_api`'s own reading
+ * - the same one that refuses the cast): the modes of a modal spell this
+ * engine cannot read into an effect. `render/ribbon.js` already draws those
+ * on the mode chips, but only once the announcement has been begun; this
+ * answer arrives with the click that opens the menu, which is the earlier of
+ * the two places and the one the row publishes for. A caption for exactly
+ * the reason an unpayable cost is one - a card with one unreadable mode is
+ * still castable with its others - and never a `disabled`: that is reserved
+ * for the engine saying no. */
 export function enrichItems(items, actions) {
   const rows = actions || [];
   return (items || []).map((entry) => {
     const matching = rows.filter((row) => matchesAction(entry.match, row));
-    if (!matching.length || matching.some((row) => row.affordable !== "no")) return entry;
-    const reason = matching.map((row) => row.unaffordable_reason).find(Boolean);
-    return { ...entry, disabled: true, sublabel: reason || entry.sublabel };
+    if (!matching.length) return entry;
+    const unreadable = unreadableModesOf(matching);
+    const unaffordable = matching.every((row) => row.affordable === "no");
+    if (!unaffordable && !unreadable.length) return entry;
+    const enriched = { ...entry };
+    if (unaffordable) {
+      const reason = matching.map((row) => row.unaffordable_reason).find(Boolean);
+      enriched.disabled = true;
+      enriched.sublabel = reason || entry.sublabel;
+    }
+    if (unreadable.length) {
+      // The tooltip carries every notice in full either way; the one-line
+      // caption goes to whichever fact is actually stopping the cast, so an
+      // unpayable row keeps saying so.
+      enriched.title = unreadableModeNotices(unreadable);
+      if (!unaffordable) enriched.sublabel = unreadableModeCaption(unreadable);
+    }
+    return enriched;
   });
+}
+
+/** Every `UnreadableModeView` the matching rows name, deduplicated by
+ * `mode_number` and in the card's own printed order - the numbers
+ * `CastRequest.modes` takes. Several rows can describe the same card (the
+ * printed cost and an alternative one), and they name the same modes. */
+function unreadableModesOf(rows) {
+  const byNumber = new Map();
+  for (const row of rows) {
+    for (const mode of (row && row.unreadable_modes) || []) {
+      if (mode && !byNumber.has(mode.mode_number)) byNumber.set(mode.mode_number, mode);
+    }
+  }
+  return [...byNumber.values()].sort((a, b) => a.mode_number - b.mode_number);
+}
+
+/** The dim one-liner under the option: which numbered modes are the ones
+ * that cannot be chosen. */
+function unreadableModeCaption(modes) {
+  const numbers = modes.map((mode) => mode.mode_number);
+  const named = numbers.length === 1 ? `mode ${numbers[0]}` : `modes ${numbers.join(", ")}`;
+  return `${named} cannot be read by this engine`;
+}
+
+/** The option's tooltip: the engine's own reason for each of them, one per
+ * line and in its own words - `unreadable_mode_notice` already names the
+ * card, the mode number and the printed sentence, so nothing is prefixed to
+ * it here. A row whose notice is missing still says what the cast would do,
+ * the same fallback sentence `render/ribbon.js`'s mode chips print. */
+function unreadableModeNotices(modes) {
+  return modes
+    .map(
+      (mode) =>
+        mode.notice ||
+        `mode ${mode.mode_number} cannot be read by this engine, so a cast choosing it is refused`
+    )
+    .join("\n");
 }
 
 /** The fields that identify one `Action`: which card, which entry point,

@@ -530,6 +530,84 @@ def test_an_unaffordable_row_with_no_reason_keeps_the_sublabel_it_opened_with():
     ]
 
 
+# -- a mode the engine cannot read, on the row that names it ------------
+#
+# `ActionRow.unreadable_modes` (`action_rows._Rows.name_unreadable_modes`,
+# from `engine_api.unreadable_modes`) is the row-side half of the reading
+# `render/ribbon.js` already draws on the mode chips. It arrives one step
+# EARLIER than those chips do - with the enumeration this menu is enriched
+# from, before the cast has been begun at all - so the menu is where it is
+# said first. A caption, never a filter: a card with one unreadable mode is
+# still castable with the others, exactly as an unpayable row is still a
+# legal action.
+
+
+UNREADABLE = {
+    "mode_number": 3,
+    "text": "Exile any number of target players' graveyards.",
+    "notice": "mode 3 is not readable by this engine (CR 700.2a)",
+}
+
+
+def test_a_row_naming_an_unreadable_mode_captions_its_item_without_disabling_it():
+    rows = [action(affordable="unknown", unreadable_modes=[UNREADABLE])]
+    (item,) = call("m.enrichItems(items, rows)", items=ITEMS, rows=rows)
+    assert "disabled" not in item, item
+    assert item["sublabel"] == "mode 3 cannot be read by this engine"
+    assert item["title"] == "mode 3 is not readable by this engine (CR 700.2a)"
+
+
+def test_several_unreadable_modes_are_named_together_lowest_first():
+    first = {
+        "mode_number": 1,
+        "text": "Destroy target creature.",
+        "notice": "mode 1 is not readable",
+    }
+    rows = [action(unreadable_modes=[UNREADABLE, first])]
+    (item,) = call("m.enrichItems(items, rows)", items=ITEMS, rows=rows)
+    assert item["sublabel"] == "modes 1, 3 cannot be read by this engine"
+    assert item["title"] == (
+        "mode 1 is not readable\nmode 3 is not readable by this engine (CR 700.2a)"
+    )
+
+
+def test_an_unreadable_mode_with_no_notice_still_says_the_cast_would_be_refused():
+    rows = [action(unreadable_modes=[{"mode_number": 2, "text": "Draw a card.", "notice": None}])]
+    (item,) = call("m.enrichItems(items, rows)", items=ITEMS, rows=rows)
+    assert item["sublabel"] == "mode 2 cannot be read by this engine"
+    assert item["title"] == (
+        "mode 2 cannot be read by this engine, so a cast choosing it is refused"
+    )
+
+
+def test_an_unaffordable_row_keeps_its_reason_and_carries_the_mode_notice_in_the_title():
+    """Two separate facts about the same cast: it cannot be paid for, and one
+    of its modes cannot be read. The caption says the first - that is the one
+    stopping the cast outright - and the second stays on the option as its
+    tooltip rather than being dropped."""
+    rows = [
+        action(
+            affordable="no",
+            unaffordable_reason="not enough mana: needs {W}",
+            unreadable_modes=[UNREADABLE],
+        )
+    ]
+    (item,) = call("m.enrichItems(items, rows)", items=ITEMS, rows=rows)
+    assert item["disabled"] is True
+    assert item["sublabel"] == "not enough mana: needs {W}"
+    assert item["title"] == "mode 3 is not readable by this engine (CR 700.2a)"
+
+
+def test_an_unreadable_mode_on_another_cards_row_never_touches_this_item():
+    rows = [action(card_id="other", unreadable_modes=[UNREADABLE])]
+    assert call("m.enrichItems(items, rows)", items=ITEMS, rows=rows) == ITEMS
+
+
+def test_a_row_with_no_unreadable_modes_leaves_its_item_exactly_as_it_opened():
+    rows = [action(unreadable_modes=[]), action(unreadable_modes=None)]
+    assert call("m.enrichItems(items, rows)", items=ITEMS, rows=rows) == ITEMS
+
+
 def test_enriching_never_reorders_or_drops_an_item():
     items = [
         {"key": "cast", "label": "Cast", "sublabel": "", "match": ITEMS[0]["match"]},
@@ -864,3 +942,29 @@ def test_a_permission_on_a_split_card_offers_its_halves_too():
             },
         },
     ]
+
+
+def test_a_real_unreadable_mode_is_named_on_the_menu_before_the_cast_begins(client, game):
+    """Thraben Charm, two Plains, a real board. The engine cannot read mode
+    3 ("Exile any number of target players' graveyards."), and casting it
+    is refused - but only after the modes and the targets have been chosen
+    (`tests/test_battle3_action_rows.py`'s
+    `test_casting_an_unreadable_mode_is_refused_and_keeps_the_card`). The
+    menu the click opens says so first, out of the row's own
+    `unreadable_modes`, and still offers the cast: modes 1 and 2 are
+    readable."""
+    add_card(client, game, "Plains", "alice", "battlefield")
+    add_card(client, game, "Plains", "alice", "battlefield")
+    add_card(client, game, "Thraben Charm", "alice", "hand")
+    charm = find(state(client, game)["hands"]["alice"], "Thraben Charm")
+    rows = _legal_actions(client, game)
+
+    (cast_row,) = [r for r in rows if r["kind"] == "cast" and r["card_id"] == charm["id"]]
+    numbers = [mode["mode_number"] for mode in cast_row["unreadable_modes"]]
+    assert numbers == [3], cast_row["unreadable_modes"]
+
+    (item,) = _cast_menu(charm, rows)
+    assert "disabled" not in item, item
+    assert item["sublabel"] == "mode 3 cannot be read by this engine"
+    assert item["title"] == cast_row["unreadable_modes"][0]["notice"]
+    assert "CR 700.2a" in item["title"], item["title"]
