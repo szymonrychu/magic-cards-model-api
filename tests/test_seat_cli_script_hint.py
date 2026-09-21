@@ -56,6 +56,11 @@ def test_a_cli_action_answer_hints_the_mcp_seat_script_run_call(
     [entry] = out["scripts"]["applicable"]
     assert entry["id"] == "float"
     assert "conflict" not in entry
+    # API-4: `why` (here, `float`'s own play has no `note`/`intent`, so it
+    # falls back to its bare `name`) bolts straight through this transport
+    # too - `_attach_script_hint` forwards `applicable_hint`'s whole answer
+    # unchanged, and this CLI's own JSON output prints it as-is.
+    assert entry["why"] == "Float blue"
     assert entry["call"] == (
         f'mcp-seat script run float --reasoning "{runtime.REASONING_PLACEHOLDER}" '
         "--opposing-archetype *"

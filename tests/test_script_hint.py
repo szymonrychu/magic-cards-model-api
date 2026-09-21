@@ -37,7 +37,7 @@ from test_playscript_runtime import (
 
 from magic_cards_model_api import seatkit
 from magic_cards_model_api.mcp import build_server
-from magic_cards_model_api.playscripts import runtime, script_tools
+from magic_cards_model_api.playscripts import runtime, schema, script_tools
 from magic_cards_model_api.store import store
 
 
@@ -745,7 +745,10 @@ def test_the_scripts_block_drops_entries_past_its_byte_budget(
     register(client, game, alice, *scripts)
     add_card(client, game, "Island", "alice", "hand")
     _, server = server_for(monkeypatch, game)
-    monkeypatch.setattr(script_tools, "MAX_HINT_BYTES", 150)
+    # API-4: every entry now carries `why` too (here, falling back to the
+    # same long `name`), so a budget tight enough to prove partial dropping
+    # has to fit more than the bare `id`/`name`/`call` this cap once did.
+    monkeypatch.setattr(script_tools, "MAX_HINT_BYTES", 700)
 
     reply = wait(server, alice)
 
@@ -1332,3 +1335,316 @@ def test_arm_call_groups_theirs_and_either_on_the_same_occurrence(
         'arm=["theirs-end", "either-end"], arm_reasoning="<say why>", '
         'opposing_archetype="*", max_seconds=25.0)'
     ), answer["scripts"]["arm_call"]
+
+
+# -- API-4: `why` on `applicable`, and the `advice` block is born --------------
+
+
+def test_truncated_intent_returns_a_short_intent_whole() -> None:
+    short = "Hold up removal until the opponent commits to combat."
+    assert script_tools._truncated_intent(short) == short
+
+
+def test_truncated_intent_cuts_at_the_last_sentence_boundary_within_the_limit() -> None:
+    unit = "Attack now. "
+    intent = (unit * 25).rstrip()
+    assert len(intent) > schema.MAX_NOTE_LENGTH
+
+    truncated = script_tools._truncated_intent(intent)
+
+    assert truncated == (unit * 20).rstrip()
+    assert len(truncated) <= schema.MAX_NOTE_LENGTH
+    assert truncated.endswith(".")
+
+
+def test_truncated_intent_falls_back_to_word_boundary_when_first_sentence_is_too_long() -> None:
+    """The only sentence-ending punctuation anywhere in `intent` sits well
+    past `MAX_NOTE_LENGTH` - never a valid cut - so this falls back to the
+    last word boundary at or before the limit, marked with the ellipsis
+    (never a mid-word slice, never a bare one with no sign it was cut)."""
+    words = "word " * 60
+    intent = words + "and this is where the first sentence finally ends."
+    assert len(intent) > schema.MAX_NOTE_LENGTH
+    assert "." not in intent[: schema.MAX_NOTE_LENGTH]
+
+    truncated = script_tools._truncated_intent(intent)
+
+    assert truncated == ("word " * 47 + "word") + " ..."
+    assert len(truncated) <= schema.MAX_NOTE_LENGTH + len(" ...")
+
+
+def test_truncated_intent_falls_back_to_word_boundary_with_no_punctuation_at_all() -> None:
+    intent = "word " * 60
+    assert "." not in intent and "!" not in intent and "?" not in intent
+    assert len(intent) > schema.MAX_NOTE_LENGTH
+
+    truncated = script_tools._truncated_intent(intent)
+
+    assert truncated == ("word " * 47 + "word") + " ..."
+
+
+def test_hint_why_prefers_the_plays_note() -> None:
+    play = {"note": "hold up removal", "intent": "word " * 60, "name": "Scout"}
+    assert script_tools._hint_why(play) == "hold up removal"
+
+
+def test_hint_why_falls_back_to_truncated_intent_when_there_is_no_note() -> None:
+    long_intent = "word " * 60
+    play = {"intent": long_intent, "name": "Scout"}
+
+    why = script_tools._hint_why(play)
+
+    assert why == script_tools._truncated_intent(long_intent)
+    assert why != long_intent
+
+
+def test_hint_why_returns_a_short_intent_whole() -> None:
+    play = {"intent": "Bait the removal spell before committing more."}
+    assert script_tools._hint_why(play) == play["intent"]
+
+
+def test_hint_why_falls_back_to_name_when_there_is_neither_note_nor_intent() -> None:
+    play = {"name": "Scout the board"}
+    assert script_tools._hint_why(play) == "Scout the board"
+
+
+def test_an_applicable_entry_carries_the_plays_note_as_why(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop", note="prioritize board development"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    reply = wait(server, alice)
+
+    [entry] = reply["scripts"]["applicable"]
+    assert entry["why"] == "prioritize board development"
+
+
+def test_an_applicable_entry_falls_back_to_truncated_intent_as_why(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    long_intent = "word " * 60
+    register(client, game, alice, land_script("drop", intent=long_intent))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    reply = wait(server, alice)
+
+    [entry] = reply["scripts"]["applicable"]
+    assert entry["why"] == script_tools._truncated_intent(long_intent)
+    assert entry["why"] != long_intent
+
+
+def test_an_applicable_entry_falls_back_to_name_as_why(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop", name="Custom drop name"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    reply = wait(server, alice)
+
+    [entry] = reply["scripts"]["applicable"]
+    assert entry["why"] == "Custom drop name"
+
+
+def test_a_conflicted_applicable_entry_still_carries_its_own_why(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script("drop-a", note="do this first"),
+        land_script("drop-b", priority=45, note="or this instead"),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    reply = wait(server, alice)
+
+    entries = {entry["id"]: entry for entry in reply["scripts"]["applicable"]}
+    assert entries["drop-a"]["conflict"] is True and entries["drop-b"]["conflict"] is True
+    assert entries["drop-a"]["why"] == "do this first"
+    assert entries["drop-b"]["why"] == "or this instead"
+
+
+def test_an_advice_only_play_that_applies_appears_in_the_advice_block(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("scout", moves=[], note="hold up removal this turn"))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    reply = wait(server, alice)
+
+    assert "applicable" not in reply["scripts"], reply["scripts"]
+    assert reply["scripts"]["advice"] == [{"id": "scout", "why": "hold up removal this turn"}]
+
+
+def test_advice_only_plays_never_join_applicable_or_its_conflict(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """API-3 item 3's split, carried into the hint: an advice-only play's
+    condition can genuinely apply, but it has nothing runnable to offer, so
+    it never joins `applicable` and never turns a lone runnable play into a
+    conflict."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(
+        client,
+        game,
+        alice,
+        land_script("drop", note="just drop it"),
+        land_script("scout", moves=[], note="hold up removal this turn"),
+    )
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    reply = wait(server, alice)
+
+    [applicable] = reply["scripts"]["applicable"]
+    assert applicable["id"] == "drop"
+    assert "conflict" not in applicable
+    assert reply["scripts"]["advice"] == [{"id": "scout", "why": "hold up removal this turn"}]
+
+
+def test_advice_falls_back_to_truncated_intent_the_same_way_applicable_does(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    long_intent = "word " * 60
+    register(client, game, alice, land_script("scout", moves=[], intent=long_intent))
+    add_card(client, game, "Island", "alice", "hand")
+    _, server = server_for(monkeypatch, game)
+
+    reply = wait(server, alice)
+
+    [entry] = reply["scripts"]["advice"]
+    assert entry["why"] == script_tools._truncated_intent(long_intent)
+
+
+def test_an_advice_only_play_needs_this_seat_to_hold_priority_too(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """API-4: `advice` is judged under the exact same gate `applicable` is -
+    this seat holding priority, right now - so 'hold' advice arrives at the
+    moment the seat is about to act, never during a wait it is not acting
+    in."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("scout", moves=[], note="hold up removal"))
+    add_card(client, game, "Island", "alice", "hand")
+    seats, _ = server_for(monkeypatch, game)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    not_holding = {**seat.fetch_state(), "priority_holder": "bob"}
+
+    hint = script_tools.applicable_hint(seat, seats.script_corpora, not_holding)
+
+    assert hint is None
+
+
+def test_an_advice_only_play_already_offered_this_position_is_not_re_offered(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `_RECENT_RUNS_KEY` suppression `applicable` already gets: once
+    this exact position has recorded the advice-only play's id, it is not
+    re-offered there again, the same as any runnable script."""
+    force_precombat_main(game)
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("scout", moves=[], note="hold up removal"))
+    add_card(client, game, "Island", "alice", "hand")
+    seats, _ = server_for(monkeypatch, game)
+    seat = seats.seat_for(alice)
+    assert seat is not None
+    fetched = seat.fetch_state()
+    corpus = runtime._corpus(seat, seats.script_corpora, fresh=False)
+    assert not isinstance(corpus, runtime.ScriptExit)
+    position = (script_tools._turn_position(fetched), fetched.get("step"))
+    corpus[script_tools._RECENT_RUNS_KEY] = [["scout", position[0], position[1]]]
+
+    hint = script_tools.applicable_hint(seat, seats.script_corpora, fetched)
+
+    assert hint is None
+
+
+def test_hint_bounded_orders_applicable_before_advice_before_armable(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cap-ordering decision `_hint_bounded` documents: `applicable`
+    entries are never displaced, `advice` outranks `armable` since it is
+    live for the moment already reached, and the lowest-priority `armable`
+    entry is what gives way once the shared `MAX_HINT_SCRIPTS` cap is hit."""
+    force_my_upkeep(game)
+    alice = seat_uid(game, "alice")
+    upkeep_when = {"whose_turn": "mine", "steps": ["upkeep"], "stack": "empty"}
+    register(
+        client,
+        game,
+        alice,
+        tap_island_script("drop-a", priority=95, when=upkeep_when),
+        tap_island_script("drop-b", priority=90, when=upkeep_when),
+        land_script("advice-a", priority=80, moves=[], note="hold this", when=upkeep_when),
+        land_script("advice-b", priority=70, moves=[], note="hold that", when=upkeep_when),
+        land_script("armable-high", priority=50),
+        land_script("armable-low", priority=10),
+    )
+    add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Island", "alice", "battlefield")
+    _, server = server_for(monkeypatch, game)
+
+    answer = wait(server, alice)
+
+    scripts = answer["scripts"]
+    assert {entry["id"] for entry in scripts["applicable"]} == {"drop-a", "drop-b"}
+    assert [entry["id"] for entry in scripts["advice"]] == ["advice-a", "advice-b"]
+    assert [entry["id"] for entry in scripts["armable"]] == ["armable-high"]
+
+
+def test_five_worst_case_applicable_entries_stay_under_the_byte_budget() -> None:
+    """Budget check (API-4 item 5): `why` (up to `schema.MAX_NOTE_LENGTH`
+    characters) adds bytes to every kept `applicable` entry on top of the
+    `id`/`name`/`call` this cap already accounted for; `offer_seq` (API-6,
+    not written yet) is budgeted for here ahead of it, so its own bytes
+    never come as a surprise later. Measured before this plan, five
+    worst-case entries (a 34-character id, an 80-character truncated name,
+    and a full `run_script(...)` call naming an `inputs` dict) cost 3205
+    bytes without `inputs` at all and 3600 with a representative one -
+    `why` and `offer_seq` must not push either past `MAX_HINT_BYTES` (both
+    caps stay exactly where they were; this is a budget check, never a
+    resize)."""
+    seat = _FakeSeatForRecordRun("worst-case-seat-uid-0123456789", "game-1")
+    script_id = "x" * 34
+    name = "y" * script_tools.MAX_HINT_NAME_CHARS
+    why = "z" * schema.MAX_NOTE_LENGTH
+
+    def entry(with_inputs: bool) -> dict[str, Any]:
+        inputs = (
+            {"prefer_tempo": True, "opposing_archetype_hint": "w" * 40} if with_inputs else None
+        )
+        return {
+            "id": script_id,
+            "name": name,
+            "why": why,
+            "offer_seq": 999_999_999_999,
+            "call": script_tools._call_template(seat, script_id, "*", inputs, cli=False),
+        }
+
+    without_inputs = json.dumps([entry(False)] * script_tools.MAX_HINT_SCRIPTS).encode("utf-8")
+    with_inputs = json.dumps([entry(True)] * script_tools.MAX_HINT_SCRIPTS).encode("utf-8")
+
+    assert len(without_inputs) < script_tools.MAX_HINT_BYTES, len(without_inputs)
+    assert len(with_inputs) < script_tools.MAX_HINT_BYTES, len(with_inputs)

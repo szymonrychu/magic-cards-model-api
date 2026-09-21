@@ -32,7 +32,7 @@ from typing import Any
 from ..seatkit import MAX_WAIT_SECONDS, HypotheticalFactsUnavailable, Seat, scripts_enabled_here
 from . import conditions, lint, runtime
 from .inputs import BUILTIN_INPUT, input_catalog
-from .schema import WILDCARD
+from .schema import MAX_NOTE_LENGTH, WILDCARD
 
 logger = logging.getLogger("mcm.script_tools")
 
@@ -100,7 +100,9 @@ MAX_HINT_NAME_CHARS = 80
 #: The whole `scripts` block's own byte budget, on top of `MAX_HINT_SCRIPTS`'
 #: cap on entry *count* - a `call` carrying a long `inputs=` dict can still
 #: blow a wake/action answer out even at 5 entries, so entries past this
-#: budget are dropped rather than counted (S1 review finding 6).
+#: budget are dropped rather than counted (S1 review finding 6). Shared by
+#: all three of `applicable`, `advice` and `armable` (API-4) - one budget
+#: over the flat list of surviving entries, not one per block.
 MAX_HINT_BYTES = 4096
 
 #: Where `run`/`listing` stash the archetype this seat last asserted, onto
@@ -775,14 +777,15 @@ def applicable_hint(
     *,
     cli: bool = False,
 ) -> dict[str, Any] | None:
-    """`{"applicable": [...], "armable": [...], "arm_call": "..."}` for one
-    seat's wake/action answer - the same applicability judgement `listing`
-    makes, over `state` this answer already carries rather than a fresh board
-    fetch (plus, at most, one extra fetch for a contents-needing play whose
-    position already matches - see below). `None` when this MCP process has
-    scripts switched off (`scripts_enabled_here`), when this seat has no
-    registered corpus, or when neither block below has anything to say and
-    no play was skipped for unavailable hypothetical facts either.
+    """`{"applicable": [...], "advice": [...], "armable": [...], "arm_call":
+    "..."}` for one seat's wake/action answer - the same applicability
+    judgement `listing` makes, over `state` this answer already carries
+    rather than a fresh board fetch (plus, at most, one extra fetch for a
+    contents-needing play whose position already matches - see below).
+    `None` when this MCP process has scripts switched off
+    (`scripts_enabled_here`), when this seat has no registered corpus, or
+    when none of the blocks below has anything to say and no play was
+    skipped for unavailable hypothetical facts either.
 
     **`note`**: a short string, present whenever a play's own selectors
     needed `Seat.hypothetical_facts` and the fetch failed
@@ -798,13 +801,32 @@ def applicable_hint(
     (`_LAST_ASSERTED_KEY`/`_LAST_INPUTS_KEY` - S1 review finding 4b), and
     never re-offering a script this process has already run at this same
     `(_turn_position(state), step)` (`_RECENT_RUNS_KEY` - finding 4c;
-    `_turn_position` reads `turns_taken`, not `turn_number` - fix 3).
+    `_turn_position` reads `turns_taken`, not `turn_number` - fix 3). An
+    advice-only play (no moves) never joins this block, whatever its own
+    condition says - it has nothing runnable to offer here; see `advice`.
 
-    Each entry is `{id, name, call}`, `call` a ready-to-use `run_script`
-    invocation, `inputs` among its arguments only when the remembered inputs
-    are non-empty - or, when two or more apply at once (`listing`'s own
-    `runtime_conflict`), `{id, name, conflict: true}` with `call` left out,
-    since a seat has to pick one itself before either can commit.
+    Each entry is `{id, name, why, call}` (API-4: `why` is the play's own
+    `_hint_why` - its `note`, or its `intent` cut to a sentence boundary
+    (`_truncated_intent`) when it has no `note`, or its bare `name` when it
+    has neither; `offer_seq` is API-6's, not written yet), `call` a
+    ready-to-use `run_script` invocation, `inputs` among its arguments only
+    when the remembered inputs are non-empty - or, when two or more apply at
+    once (`listing`'s own `runtime_conflict`), `{id, name, why, conflict:
+    true}` with `call` left out, since a seat has to pick one itself before
+    either can commit.
+
+    **`advice`** (API-4): one entry per advice-only play (`schema.Play`'s
+    own docstring: "exists to explain a decision rather than to act on
+    one") that applies right now - judged under the exact same gate
+    `applicable` is, above: this seat holding priority, its condition
+    genuinely evaluated, and not re-offered at this same
+    `(_turn_position(state), step)` (`_RECENT_RUNS_KEY`), so 'hold' advice
+    arrives at the moment this seat is actually about to act rather than
+    during a wait it is not acting in. Each entry is `{id, why}` only - no
+    `call` (there is nothing to run) and no `name` (`why`, the play's own
+    `note`/`intent`/`name` via `_hint_why`, is the whole content). Never
+    counted toward `applicable`'s own conflict either, the same split
+    `listing` already makes (API-3 item 3).
 
     **`armable`** (S2): scripts with `priority > 0`, a matching archetype,
     that do NOT apply yet but whose `when` comes up again before this seat's
@@ -820,12 +842,13 @@ def applicable_hint(
     are refused `pass_until`), `wait_for_priority(..., arm=[...])` for an
     advisor.
 
-    Both blocks share `MAX_HINT_NAME_CHARS`'s truncation on `name`, and
-    together share `MAX_HINT_SCRIPTS`'s cap on entry count and
-    `MAX_HINT_BYTES`'s cap on the whole block's own JSON size - `applicable`
-    entries always kept first (finding 6). Never `static_conflicts` here -
-    its result is not read out of this answer's own items, only `listing`'s
-    (finding 5).
+    All three blocks share `MAX_HINT_NAME_CHARS`'s truncation on `name`
+    (`advice` carries no `name` to truncate), and together share
+    `MAX_HINT_SCRIPTS`'s cap on entry count and `MAX_HINT_BYTES`'s cap on the
+    whole block's own JSON size (`_hint_bounded`, finding 6) - kept in the
+    order `applicable`, `advice`, `armable`; see that function's own
+    docstring for why. Never `static_conflicts` here - its result is not
+    read out of this answer's own items, only `listing`'s (finding 5).
 
     `cli`: when true, `call`/`arm_call` render as `mcp-seat` command lines
     (`seat_cli.py`'s own transport) instead of the MCP `run_script(...)`/
@@ -904,6 +927,7 @@ def applicable_hint(
     entries.sort(key=lambda entry: (-_priority(entry), str(entry["id"])))
 
     applicable_items: list[dict[str, Any]] = []
+    advice_items: list[dict[str, Any]] = []
     if holds_priority:
         recent = {
             (str(run[0]), run[1], run[2])
@@ -911,19 +935,36 @@ def applicable_hint(
             if isinstance(run, list) and len(run) == 3
         }
         position = (_turn_position(state), state.get("step"))
-        applying = [
+        not_recently_run = [
             entry
             for entry in entries
             if entry["applies"] and (str(entry["id"]), *position) not in recent
         ]
+        # API-4: an advice-only entry (no moves) never joins `applicable` -
+        # the same split `listing` already makes (API-3 item 3) - it has its
+        # own `advice` sibling block below, judged under this identical
+        # gate (this seat holding priority, right now, over the same
+        # `_RECENT_RUNS_KEY`-filtered board).
+        applying = [entry for entry in not_recently_run if not entry["advice_only"]]
         conflict = len(applying) > 1
         for entry in applying:
-            item: dict[str, Any] = {"id": entry["id"], "name": _truncated_name(entry.get("name"))}
+            item: dict[str, Any] = {
+                "id": entry["id"],
+                "name": _truncated_name(entry.get("name")),
+                "why": _hint_why(_play_for(plays_by_id, entry["id"])),
+            }
             if conflict:
                 item["conflict"] = True
             else:
                 item["call"] = _call_template(seat, str(entry["id"]), asserted, remembered, cli=cli)
             applicable_items.append(item)
+
+        for entry in not_recently_run:
+            if not entry["advice_only"]:
+                continue
+            advice_items.append(
+                {"id": entry["id"], "why": _hint_why(_play_for(plays_by_id, entry["id"]))}
+            )
 
     armable_items: list[dict[str, Any]] = []
     occurrences: dict[str, tuple[int, str, str]] = {}
@@ -958,15 +999,19 @@ def applicable_hint(
             occurrences[script_id] = occurrence
 
     hyp_skips = hypothetical_skips(entries)
-    if not applicable_items and not armable_items and not hyp_skips:
+    if not applicable_items and not advice_items and not armable_items and not hyp_skips:
         return None
 
-    kept_applicable, kept_armable = _hint_bounded(applicable_items, armable_items)
-    if not kept_applicable and not kept_armable and not hyp_skips:
+    kept_applicable, kept_advice, kept_armable = _hint_bounded(
+        applicable_items, advice_items, armable_items
+    )
+    if not kept_applicable and not kept_advice and not kept_armable and not hyp_skips:
         return None
     result: dict[str, Any] = {}
     if kept_applicable:
         result["applicable"] = kept_applicable
+    if kept_advice:
+        result["advice"] = kept_advice
     if kept_armable:
         result["armable"] = kept_armable
         result["arm_call"] = _arm_call_template(
@@ -1133,27 +1178,46 @@ def _next_occurrence(
 
 
 def _hint_bounded(
-    applicable_items: list[dict[str, Any]], armable_items: list[dict[str, Any]]
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """`applicable_items` and `armable_items`, combined under one shared
-    `MAX_HINT_SCRIPTS` entry cap and `MAX_HINT_BYTES` byte budget -
-    `applicable` entries kept first, `armable` filling whatever is left."""
+    applicable_items: list[dict[str, Any]],
+    advice_items: list[dict[str, Any]],
+    armable_items: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """`applicable_items`, `advice_items` and `armable_items` (API-4),
+    combined under one shared `MAX_HINT_SCRIPTS` entry cap and
+    `MAX_HINT_BYTES` byte budget - the same two caps `applicable`/`armable`
+    already shared, now stretched over all three blocks together rather than
+    given a third helping.
+
+    Kept in this order: `applicable` first, then `advice`, then `armable` -
+    deliberately, not alphabetically and not by priority across blocks.
+    `applicable` is what this seat could run right now, so an advice-only
+    play - nothing here is ever runnable - must never displace a runnable
+    one out of the cap; that ordering is exactly what would turn the hint
+    into telling this seat what to think about instead of what it can do.
+    `advice` still outranks `armable`, though: an advice-only play that
+    applies is judged under the very same gate `applicable` is (this seat
+    holding priority, right now, over the same `_RECENT_RUNS_KEY`-filtered
+    board), so it is live for the moment already reached - while `armable`
+    is only ever worth arming for a wait still ahead of this seat, not the
+    moment it is already in."""
     combined = [("applicable", item) for item in applicable_items]
+    combined += [("advice", item) for item in advice_items]
     combined += [("armable", item) for item in armable_items]
     combined = combined[:MAX_HINT_SCRIPTS]
     kept: list[tuple[str, dict[str, Any]]] = []
     for kind, item in combined:
         candidate = [*kept, (kind, item)]
         # Measured the same way `_byte_bounded` always has - the flat list
-        # of surviving items' own JSON size, not the two-key object they end
-        # up wrapped in: `applicable` and `armable` share one budget over
-        # what they themselves cost, not a second helping for the wrapper.
+        # of surviving items' own JSON size, not the three-key object they
+        # end up wrapped in: all three blocks share one budget over what
+        # they themselves cost, not a second helping for the wrapper.
         if len(json.dumps([entry for _, entry in candidate]).encode("utf-8")) > MAX_HINT_BYTES:
             break
         kept = candidate
     kept_applicable = [item for kind, item in kept if kind == "applicable"]
+    kept_advice = [item for kind, item in kept if kind == "advice"]
     kept_armable = [item for kind, item in kept if kind == "armable"]
-    return kept_applicable, kept_armable
+    return kept_applicable, kept_advice, kept_armable
 
 
 def _cli_quoted(text: str) -> str:
@@ -1301,6 +1365,72 @@ def _truncated_name(name: Any) -> Any:
     if isinstance(name, str) and len(name) > MAX_HINT_NAME_CHARS:
         return name[: MAX_HINT_NAME_CHARS - 3] + "..."
     return name
+
+
+#: The sentence-ending punctuation `_truncated_intent` cuts on - `.`, `!`,
+#: `?` - and the marker it appends when no such cut is possible and it falls
+#: back to a bare word boundary instead, so a reader never mistakes the cut
+#: for the play's own words trailing off there.
+_SENTENCE_ENDINGS = ".!?"
+_TRUNCATION_MARKER = "..."
+
+
+def _truncated_intent(intent: str, limit: int = MAX_NOTE_LENGTH) -> str:
+    """`intent` cut to at most `limit` characters, for a hint's own `why`
+    (API-4/F13) when the play carries no `note` of its own - `intent`
+    carries no length bound of its own (`schema.Note`'s own docstring, next
+    to `schema.NonBlank`), unlike `note`.
+
+    Returned whole when it already fits. Otherwise cut at the LAST
+    sentence-ending punctuation (`_SENTENCE_ENDINGS`) at or before `limit`:
+    `intent` is prose written for a human to read, and a whole sentence
+    reads better than an arbitrary slice. When no sentence ends that early -
+    the very first sentence already runs past `limit`, or `intent` carries
+    no sentence punctuation anywhere - cut at the last word boundary at or
+    before `limit` instead and mark it with `_TRUNCATION_MARKER`, never
+    mid-word and never a bare slice with nothing to say the words kept on
+    going past it."""
+    if len(intent) <= limit:
+        return intent
+    window = intent[:limit]
+    sentence_end = max((window.rfind(mark) for mark in _SENTENCE_ENDINGS), default=-1)
+    if sentence_end != -1:
+        return intent[: sentence_end + 1]
+    space = window.rfind(" ")
+    cut = window[:space] if space > 0 else window
+    return f"{cut.rstrip()} {_TRUNCATION_MARKER}"
+
+
+def _play_for(
+    plays_by_id: dict[str, tuple[dict[str, Any], dict[str, Any] | runtime.ScriptExit]],
+    script_id: Any,
+) -> dict[str, Any]:
+    """The normalised `Play` dump for `script_id` among `applicable_hint`'s
+    own `plays_by_id` - `{}` when it is not registered under that id, or
+    when normalising it refused (a `runtime.ScriptExit`, never reached by an
+    entry that got as far as `applies=True` in practice, but `_hint_why`
+    reads only `.get(...)`, so an empty dict is exactly as safe here as the
+    real thing would be)."""
+    found = plays_by_id.get(str(script_id))
+    if found is None:
+        return {}
+    _, play = found
+    return play if isinstance(play, dict) else {}
+
+
+def _hint_why(play: dict[str, Any]) -> Any:
+    """A hint entry's own `why` (API-4): `play`'s `note` - written for
+    exactly this reader - when it has one; otherwise `play`'s `intent`, cut
+    to a sentence boundary within `MAX_NOTE_LENGTH` characters
+    (`_truncated_intent`, since `intent` carries no length bound of its
+    own); and when `play` has neither, its bare `name` (F13)."""
+    note = play.get("note")
+    if isinstance(note, str) and note:
+        return note
+    intent = play.get("intent")
+    if isinstance(intent, str) and intent:
+        return _truncated_intent(intent)
+    return play.get("name")
 
 
 def _byte_bounded(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
