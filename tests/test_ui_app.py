@@ -4818,6 +4818,10 @@ def _targeting_notice_kinds() -> list[str]:
 #: the engine adds without an entry here fails
 #: `test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is` by
 #: name rather than silently inheriting somebody else's sentence.
+#:
+#: Rows may run AHEAD of the engine checked out next door - see
+#: `_targeting_rows_missing`. Every row is rendered and checked either way,
+#: so one waiting for its engine value cannot rot while it waits.
 _TARGETING_OUTCOMES = {
     "unparsed_targets": {
         "gap": True,
@@ -4840,6 +4844,20 @@ _TARGETING_OUTCOMES = {
         "never_says": "went on the stack",
     },
 }
+
+
+def _targeting_rows_missing(kinds: list[str]) -> list[str]:
+    """The sub-kinds in `kinds` with no row in `_TARGETING_OUTCOMES`, i.e.
+    outcomes the engine can file that nothing here has decided how to render.
+
+    One direction only, deliberately. A row here with no engine value is NOT
+    drift: the browser table is allowed to be ahead of the engine, and
+    demanding equality made this repo's suite depend on which
+    `../magic-cards-model` revision happens to be checked out - green on one
+    branch of it and red on its own `main`, for a file that renders text.
+    `test_the_targeting_guard_follows_the_engine_without_pinning_it_to_one_commit`
+    pins both halves of that asymmetry."""
+    return sorted(set(kinds) - set(_TARGETING_OUTCOMES))
 
 
 def test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is() -> None:
@@ -4866,13 +4884,18 @@ def test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is() -> Non
     states the opposite of what happened, and for two of them it actively
     suppresses an engine-gap report - the precise failure this whole change
     exists to remove."""
-    kinds = _targeting_notice_kinds()
-    assert set(kinds) == set(_TARGETING_OUTCOMES), (
+    missing = _targeting_rows_missing(_targeting_notice_kinds())
+    assert not missing, (
         "the engine's TargetingNoticeKind and this file's expectations have "
-        f"drifted apart: engine={sorted(kinds)} expected={sorted(_TARGETING_OUTCOMES)}. "
-        "A new sub-kind is a new outcome for a player to be told about - give it "
-        "its own line in ui/app.js's TARGETING_NOTICE_MESSAGES and its own row here."
+        f"drifted apart: {missing} is emitted by the engine and rendered by "
+        "nothing. A new sub-kind is a new outcome for a player to be told "
+        "about - give it its own line in ui/app.js's TARGETING_NOTICE_MESSAGES "
+        "and its own row here."
     )
+    # Every row, not only the ones this engine checkout can emit: a row
+    # waiting on an engine value still has to render distinctly and honestly,
+    # or it is wiring nobody has ever run.
+    kinds = sorted(set(_TARGETING_OUTCOMES) | set(_targeting_notice_kinds()))
     lines = run_app(
         "Object.fromEntries(KINDS.map((notice_kind) => [notice_kind, m.noticeMessage("
         '{ kind: "targeting_notices", notice_kind, source_name: "Hyena Umbra",'
@@ -4905,3 +4928,36 @@ def test_a_targeting_sub_kind_this_ui_has_never_seen_fails_loud() -> None:
     assert "Hyena Umbra" in line, line
     assert "engine gap" in line.lower(), line
     assert "not a bug" not in line.lower(), line
+
+
+def test_the_targeting_guard_follows_the_engine_without_pinning_it_to_one_commit() -> None:
+    """The guard above has to fire in exactly one direction: a
+    `TargetingNoticeKind` the engine defines with no row here is drift and
+    must fail by name, while a row here the engine has not shipped yet is
+    not.
+
+    That asymmetry is the whole point, and it was got wrong once already.
+    The guard was written as `set(engine_kinds) == set(_TARGETING_OUTCOMES)`,
+    which is two assertions welded together: "nothing the engine emits is
+    unrendered" (the one this file exists for) and "this UI knows nothing the
+    engine does not" (a statement about which engine commit is checked out
+    next door). The second one pinned this repo's test suite to a single
+    `../magic-cards-model` revision - the api could not go green against the
+    engine's own `main` until an engine change landed first, which is not a
+    property a browser-rendering test has any business having. The browser
+    table is allowed to be ahead of the engine: an entry for a kind that is
+    not emitted yet renders for nobody and costs nothing, and
+    `test_every_targeting_notice_kind_is_rendered_as_what_it_actually_is`
+    exercises it regardless so it cannot rot while it waits.
+
+    Both directions are checked here against supplied kind sets rather than
+    against whatever is checked out, so this stays true on either engine."""
+    engine_before_the_four_outcomes = ["unparsed_targets", "no_legal_targets"]
+    assert _targeting_rows_missing(engine_before_the_four_outcomes) == [], (
+        "an engine that predates a row in _TARGETING_OUTCOMES is not drift - "
+        "this repo must go green against the engine's main, not only against "
+        "a branch of it"
+    )
+    assert _targeting_rows_missing([*_targeting_notice_kinds(), "some_future_kind"]) == [
+        "some_future_kind"
+    ], "a sub-kind the engine emits with no row here must fail by name"
