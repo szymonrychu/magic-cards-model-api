@@ -143,6 +143,14 @@ function abilityMatch(cardId, ability) {
   };
 }
 
+/** What a named Cast item prints under its label: the face's own cost. The
+ * cast hints' `mana_cost` is that face's for a double-faced card (CR 712.8a
+ * - `affordances.cast_hints` reads the front face when the printing's
+ * top-level cost is blank), never the combined line. */
+function castCost(card) {
+  return (card && card.cast && card.cast.mana_cost) || "";
+}
+
 /** One menu item for one ability, keyed `<prefix>:<its own index>`.
  *
  * An activated ability is printed "cost: effect", so its cost is usually the
@@ -160,14 +168,22 @@ function abilityItem(prefix, ability, match) {
 }
 
 /** The items a hand card's menu offers, in order: the ordinary thing first
- * (play it, or cast it), then every special action, then cycling. `key` is
- * what `app.js` switches on - nothing here fires a request or touches the
- * DOM.
+ * (play it, or cast it - one item per castable face when the card offers a
+ * choice of face, and a land face beside them when it has one), then every
+ * special action, then cycling. `key` is what `app.js` switches on - nothing
+ * here fires a request or touches the DOM.
  *
  * Also the whole menu for a plain `{kind: "land"}` or `{kind: "cast"}` plan,
- * which carries no `specials`/`cycling` of its own: both loops run zero
- * times and what comes back is the single Play or Cast item that IS the
+ * which carries no `specials`/`cycling` of its own: every loop runs zero or
+ * one times and what comes back is the single Play or Cast item that IS the
  * confirm for a click that used to fire straight away.
+ *
+ * **Both halves of a two-headed card, each named.** A modal double-faced
+ * card offers its front face as a cast and its land face as a play (CR
+ * 712.12), and a split or adventurer card offers one cast per castable face
+ * (CR 709.3, CR 715.3). An option is labelled with the face's own name only
+ * when there is more than one head to tell apart - a plain Memnite's item is
+ * still "Cast", which is what a one-option confirm should say.
  *
  * Each special action's keyword is its own `ActionKind` in the engine's
  * enumeration (`plot`, `foretell`, `suspend`), so the match needs no table.
@@ -176,12 +192,59 @@ function abilityItem(prefix, ability, match) {
 export function handMenuItems(plan, card) {
   const specialActions = (card && card.special_actions) || {};
   const cardId = card && card.id;
-  const match = (kind, abilityIndex) =>
-    cardId ? { card_id: cardId, kind, ability_index: abilityIndex ?? null } : null;
+  const match = (kind, abilityIndex, extra) =>
+    cardId
+      ? { card_id: cardId, kind, ability_index: abilityIndex ?? null, ...(extra || {}) }
+      : null;
   const isLand = plan.kind === "land" || Boolean(plan.isLand);
-  const items = [
-    isLand ? item("play", "Play", "", match("play_land")) : item("cast", "Cast", "", match("cast")),
-  ];
+  const spellFaces = plan.spellFaces || [];
+  const landFace = plan.landFace || null;
+  // Name the faces only when there is a second head to tell this one from.
+  const named = spellFaces.length > 1 || Boolean(landFace);
+  const frontName = ((card && card.faces) || [])[0]?.name || (card && card.name) || "";
+  const items = [];
+  if (!isLand) {
+    if (spellFaces.length > 1) {
+      // The engine's own `spell_face` string, keyed and sent untransformed
+      // (`CastRequest.spell_face`). The faceless entry of an adventurer
+      // card's pair (CR 715.3's "play the card normally") keys as the plain
+      // `cast` every single-faced card already uses.
+      for (const face of spellFaces) {
+        const name = face.spell_face || null;
+        items.push(
+          item(
+            name ? `cast:${name}` : "cast",
+            `Cast ${face.name}`,
+            face.mana_cost,
+            match("cast", null, name ? { spell_face: name } : null)
+          )
+        );
+      }
+    } else {
+      items.push(
+        item(
+          "cast",
+          named ? `Cast ${frontName}` : "Cast",
+          named ? castCost(card) : "",
+          match("cast")
+        )
+      );
+    }
+  }
+  // CR 712.12's land face, beside the cast rather than instead of it. The
+  // `play_land` row the engine emits for it carries `Action.land_face`, so
+  // the item names it and `enrichItems` can tell the two rows of a card with
+  // a land front AND a land face apart.
+  if (isLand || landFace) {
+    items.push(
+      item(
+        "play",
+        landFace ? `Play ${landFace}` : "Play",
+        "",
+        match("play_land", null, landFace ? { land_face: landFace } : null)
+      )
+    );
+  }
   for (const keyword of plan.specials || []) {
     const offer = specialActions[keyword] || {};
     items.push(
@@ -220,8 +283,32 @@ export function handMenuItems(plan, card) {
  * option the click already had. */
 export function permissionMenuItems(permission) {
   const card = (permission && permission.card) || {};
-  const match = card.id ? { card_id: card.id, kind: "cast", ability_index: null } : null;
-  return [item("cast", "Cast", (permission && permission.granted_by) || "", match)];
+  const caption = (permission && permission.granted_by) || "";
+  const match = (spellFace) =>
+    card.id
+      ? {
+          card_id: card.id,
+          kind: "cast",
+          ability_index: null,
+          ...(spellFace ? { spell_face: spellFace } : {}),
+        }
+      : null;
+  // CR 709.3/CR 715.3 again, and the zone the cast begins in changes nothing
+  // about it: a split card made playable out of exile still has a half to
+  // choose. Same `cast:<face>` keys the hand menu uses, so `app.js` routes
+  // both through one branch.
+  const faces = (card.cast && card.cast.spell_faces) || [];
+  if (faces.length > 1) {
+    return faces.map((face) =>
+      item(
+        face.spell_face ? `cast:${face.spell_face}` : "cast",
+        `Cast ${face.name}`,
+        caption,
+        match(face.spell_face || null)
+      )
+    );
+  }
+  return [item("cast", "Cast", caption, match(null))];
 }
 
 /** The items a permanent's menu offers: one per activated ability, keyed by
@@ -364,16 +451,25 @@ export function enrichItems(items, actions) {
   });
 }
 
-/** The three fields that identify one `Action`: which card, which entry
- * point, and - for an activation - which ability. Everything else on the row
- * (its rule, its cost, its target slots) describes the action rather than
- * naming it. */
+/** The fields that identify one `Action`: which card, which entry point,
+ * and - where the engine emits more than one row for the same pair - which
+ * ability, which cast face (CR 709.3/CR 715.3, Wear // Tear is two `cast`
+ * rows on one card) or which land face (CR 712.12). Everything else on the
+ * row (its rule, its cost, its target slots) describes the action rather
+ * than naming it.
+ *
+ * An item that names no face matches only a row that names none, which is
+ * what keeps a split card's two options from both reading the other half's
+ * affordability. A single-faced card's rows and items name neither, so they
+ * pair exactly as they always did. */
 function matchesAction(match, action) {
   if (!match || !action) return false;
   return (
     match.card_id === action.card_id &&
     match.kind === action.kind &&
-    (match.ability_index ?? null) === (action.ability_index ?? null)
+    (match.ability_index ?? null) === (action.ability_index ?? null) &&
+    (match.spell_face ?? null) === (action.spell_face ?? null) &&
+    (match.land_face ?? null) === (action.land_face ?? null)
   );
 }
 

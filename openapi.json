@@ -3775,7 +3775,7 @@
         "type": "object"
       },
       "CastHintsView": {
-        "description": "What casting this hand/exile card asks for - X, modes, targets, and\nthe optional additional costs it may be announced with\n(`affordances.cast_hints`).",
+        "description": "What casting this hand/exile card asks for - X, modes, targets, the\nfaces it may be cast as, and the optional additional costs it may be\nannounced with (`affordances.cast_hints`).",
         "properties": {
           "additional_costs": {
             "anyOf": [
@@ -3815,6 +3815,20 @@
           "needs_x": {
             "title": "Needs X",
             "type": "boolean"
+          },
+          "spell_faces": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SpellFaceHintView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spell Faces"
           },
           "targeting": {
             "$ref": "#/components/schemas/TargetingProfileView"
@@ -12327,6 +12341,58 @@
         "title": "SpecialActionsView",
         "type": "object"
       },
+      "SpellFaceHintView": {
+        "description": "One face a cast of this card may name (CR 709.3's split halves, CR\n715.3's Adventure) - `affordances.cast_hints`' own reading of the\nengine's `machines/casting.castable_faces`, the same set `legal_actions`\nemits one `Action` per.\n\nOn the card view rather than only on a row for the reason every other\ncast hint is: the hand menu has to offer the halves the moment the player\npicks the card up, and a half that is not on screen before the cast is\ncommitted is a half the player never chose. Without it the browser cast\nWear // Tear with no face named at all, which keeps the printing's\ncombined cost and both halves' targeting.",
+        "properties": {
+          "mana_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Cost"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "needs_x": {
+            "default": false,
+            "title": "Needs X",
+            "type": "boolean"
+          },
+          "spell_face": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spell Face"
+          },
+          "type_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type Line"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SpellFaceHintView",
+        "type": "object"
+      },
       "SpendEffectManaView": {
         "description": "`RestrictedManaView`'s twin for CR 106.6's *other* clause - \"have an\nadditional effect that affects the spell or ability that mana is spent on\"\n(`models.mana.SpendEffectMana`).\n\nIts own list rather than a permissive restriction, because it narrows\nnothing: the mana pays for whatever it could have paid for anyway, and the\nsentence only says what happens to the spell it is spent on. So there is no\n`understood` half to report - an unread one costs the player nothing.",
         "properties": {
@@ -15249,7 +15315,7 @@
     },
     "/api/games/{game_id}/affordances/{card_id}": {
       "get": {
-        "description": "Which objects this announcement could legally target right now.\n\nThe expensive half of `affordances.py` - it walks every object in the\npublic zones against every requirement - so it is asked for on demand,\nwhen the player picks a card up, rather than folded into the 1.2s state\npoll for the whole board. The cheap half (does it target, how many, is\nthere an X, is it modal) already rides along on each card view.\n\n`modes` is a comma-separated list of 1-based mode numbers: a modal\nspell's targeting is unanswerable until the modes are chosen (CR 700.2f),\nso the UI asks again with them once the player has picked.\n\nNothing here is hidden information: every candidate is an object in a\npublic zone (`affordances.CANDIDATE_ZONES`) or a player, so this needs no\n`visibility.redact_view` pass of its own.",
+        "description": "Which objects this announcement could legally target right now.\n\nThe expensive half of `affordances.py` - it walks every object in the\npublic zones against every requirement - so it is asked for on demand,\nwhen the player picks a card up, rather than folded into the 1.2s state\npoll for the whole board. The cheap half (does it target, how many, is\nthere an X, is it modal) already rides along on each card view.\n\n`modes` is a comma-separated list of 1-based mode numbers: a modal\nspell's targeting is unanswerable until the modes are chosen (CR 700.2f),\nso the UI asks again with them once the player has picked.\n\n`spell_face` is the half being cast, for a split or adventurer card (CR\n709.3, CR 715.3) - the same string `Action.spell_face` publishes and\n`CastRequest.spell_face` takes back. CR 709.3b makes the chosen half's\nown text the one the announcement is read against, so asking without it\nanswers the front half's targeting for both halves: Wear // Tear offered\nWear's \"target artifact\" while Tear was being cast.\n\nNothing here is hidden information: every candidate is an object in a\npublic zone (`affordances.CANDIDATE_ZONES`) or a player, so this needs no\n`visibility.redact_view` pass of its own.",
         "operationId": "get_affordances_api_games__game_id__affordances__card_id__get",
         "parameters": [
           {
@@ -15326,6 +15392,22 @@
                 }
               ],
               "title": "X Value"
+            }
+          },
+          {
+            "in": "query",
+            "name": "spell_face",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Spell Face"
             }
           }
         ],

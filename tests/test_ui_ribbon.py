@@ -1600,3 +1600,140 @@ def test_a_committed_replicate_count_lets_the_strip_repaint() -> None:
         consign=CONSIGN,
     )
     assert "no combination of sources can pay this" in result
+
+
+# -- U1: CR 107.3a's X box appears whenever the server says there is an X ----
+
+#: Toxic Deluge: the X is in the printed additional cost ("pay X life"), not
+#: in the mana cost. `cast.needs_x` is the server's own answer for both
+#: kinds (`affordances.cast_hints`), so this strip has nothing of its own to
+#: decide - which is the whole point of the fix.
+TOXIC_DELUGE = {
+    "id": "td1",
+    "name": "Toxic Deluge",
+    "mana_cost": "{2}{B}",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Sorcery",
+    "cast": {
+        "mana_cost": "{2}{B}",
+        "needs_x": True,
+        "modes": None,
+        "targeting": {
+            "targets_anything": False,
+            "understood": True,
+            "minimum": 0,
+            "maximum": 0,
+            "requirements": [],
+        },
+    },
+    "abilities": [],
+}
+
+_PLAIN_CAST_ACTION = """
+function castOf(card, extra) {
+  return {
+    kind: "cast", cardId: card.id, card, abilityIndex: null, keyword: null,
+    modes: [], xValue: null, color: null, altCost: null, optionalCosts: {},
+    choosing: [], convoke: [], delve: [], crewing: [], slots: [], shares: {},
+    pinned: [], freeTargets: [], pendingTargets: [], focusSlot: null,
+    affordance: null, error: null, holdPriority: null, done: false,
+    spellFace: null, ...(extra || {}),
+  };
+}
+"""
+
+
+def _strip(card: dict, extra: dict | None = None) -> str:
+    return run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + _PLAIN_CAST_ACTION
+        + """
+        (() => {
+          const action = castOf(card, extra);
+          const store = makeStore(baseApp(baseState({ hands: { alice: [card] } }), { action }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          return document.querySelector("#casting-strip").textContent;
+        })()
+        """,
+        card=card,
+        extra=extra or {},
+    )
+
+
+def test_an_additional_cost_x_gets_the_same_announce_box_a_mana_cost_x_does() -> None:
+    """The reported defect's surface: no X box appeared for Toxic Deluge, so
+    the cast went out with no `x_value` and the wrath resolved as -0/-0 with
+    0 life paid."""
+    assert "Announce X" in _strip(TOXIC_DELUGE)
+
+
+def test_a_spell_with_no_x_at_all_still_gets_no_box() -> None:
+    no_x = {**TOXIC_DELUGE, "cast": {**TOXIC_DELUGE["cast"], "needs_x": False}}
+    assert "Announce X" not in _strip(no_x)
+
+
+def test_the_x_box_follows_the_chosen_half_of_a_split_card() -> None:
+    """CR 709.3: only the chosen half is evaluated, and only its own cost
+    announces an X. A printing whose combined cost carries `{X}` must not ask
+    for one while the half being cast has none."""
+    faces = [
+        {
+            "spell_face": "Consign",
+            "name": "Consign",
+            "mana_cost": "{1}{U}",
+            "type_line": "Instant",
+            "needs_x": False,
+        },
+        {
+            "spell_face": "Oblivion",
+            "name": "Oblivion",
+            "mana_cost": "{X}{B}{B}",
+            "type_line": "Sorcery",
+            "needs_x": True,
+        },
+    ]
+    card = {
+        **TOXIC_DELUGE,
+        "id": "co1",
+        "name": "Consign",
+        "mana_cost": "{1}{U} // {X}{B}{B}",
+        "cast": {**TOXIC_DELUGE["cast"], "needs_x": True, "spell_faces": faces},
+    }
+    assert "Announce X" not in _strip(card, {"spellFace": "Consign"})
+    assert "Announce X" in _strip(card, {"spellFace": "Oblivion"})
+
+
+def test_the_strip_header_names_the_half_being_cast() -> None:
+    """The strip said "Cast: Wear" with the printing's combined cost while
+    Tear was the half being announced - the card view's `name` is the FRONT
+    face's (CR 709.4's combined characteristics are not either half). What
+    is on screen must be the half the player picked."""
+    faces = [
+        {
+            "spell_face": "Wear",
+            "name": "Wear",
+            "mana_cost": "{1}{R}",
+            "type_line": "Instant",
+            "needs_x": False,
+        },
+        {
+            "spell_face": "Tear",
+            "name": "Tear",
+            "mana_cost": "{W}",
+            "type_line": "Instant",
+            "needs_x": False,
+        },
+    ]
+    card = {
+        **TOXIC_DELUGE,
+        "id": "wt1",
+        "name": "Wear",
+        "mana_cost": "{1}{R} // {W}",
+        "cast": {**TOXIC_DELUGE["cast"], "needs_x": False, "spell_faces": faces},
+    }
+    strip = _strip(card, {"spellFace": "Tear"})
+    assert "Cast: Tear" in strip
+    assert "// " not in strip, "the combined cost is not the cost of either half"

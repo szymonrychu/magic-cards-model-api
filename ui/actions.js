@@ -41,7 +41,18 @@ function abilityOf(card, abilityIndex) {
     : ((card && card.abilities) || [])[abilityIndex] || null;
 }
 
-export function needsChoices(card, abilityIndex) {
+/** Whether beginning this action has anything to ask the player before it
+ * can fire - what `app.js`'s `beginCast` consults instead of posting the
+ * cast on the click that opened the menu.
+ *
+ * `spellFace` is CR 709.3's chosen half, and it always answers true: a
+ * half's own targeting is not on the card view at all - `cast.targeting` is
+ * `targeting_profile(card)`, which reads the printing's FRONT text, so a
+ * Tear cast read Wear's "target artifact" and an Incongruity cast read
+ * Incubation's silence. The server can answer it (`GET .../affordances?
+ * spell_face=...`, CR 709.3b), and one extra read is the price of never
+ * firing a half at the wrong half's announcement. */
+export function needsChoices(card, abilityIndex, spellFace) {
   const ability = abilityOf(card, abilityIndex);
   if (ability) {
     return Boolean(
@@ -50,6 +61,7 @@ export function needsChoices(card, abilityIndex) {
         (ability.mana_options && ability.mana_options.length > 1)
     );
   }
+  if (spellFace) return true;
   const hints = castHints(card);
   const modes = hints.modes && hints.modes.options && hints.modes.options.length;
   if (modes || (hints.targeting && hints.targeting.targets_anything) || hints.needs_x) return true;
@@ -87,6 +99,13 @@ export function begin(kind, card, extra) {
     // permitting spell or ability is still resolving, answered as an ordinary
     // `pending_decision` instead.
     fromZone: extra.fromZone || null,
+    // CR 709.3/CR 715.3's chosen face: the half of a split card, or an
+    // adventurer card's Adventure, this cast is announcing. `null` names no
+    // face - `CastRequest.spell_face`'s own default, and what every
+    // single-faced card sends. The string is the engine's own
+    // (`Action.spell_face`, published on the row and on
+    // `cast.spell_faces[].spell_face`), handed back untransformed.
+    spellFace: extra.spellFace || null,
     modes: [],
     // CR 601.2b's optional additional costs, keyed by the keyword
     // `CastRequest.optional_costs[].keyword` takes back, valued by how many
@@ -304,6 +323,9 @@ export function affordanceQuery(action) {
   if (action.abilityIndex !== null) query.ability_index = action.abilityIndex;
   if (action.modes.length) query.modes = action.modes;
   if (action.xValue !== null) query.x_value = action.xValue;
+  // CR 709.3b: the chosen half's own text is what the announcement is read
+  // against, so the candidate list has to be asked for per face.
+  if (action.spellFace) query.spell_face = action.spellFace;
   return query;
 }
 
@@ -314,9 +336,39 @@ export function modesReady(action) {
   return action.modes.length >= modes.minimum && action.modes.length <= modes.maximum;
 }
 
-function needsX(action) {
+/** The `cast.spell_faces` entry this action is announcing, or null - both
+ * for an action that named no face and for a card that publishes none.
+ * Exported as `faceBeingCast` below for `render/ribbon.js`, which has to
+ * print the half rather than the printing. */
+function chosenFace(action) {
+  const faces = castHints(action.card).spell_faces || [];
+  return faces.find((face) => (face.spell_face ?? null) === (action.spellFace ?? null)) || null;
+}
+
+/** The face this cast is announcing (CR 709.3's half, CR 715.3's Adventure)
+ * as the server published it - `{spell_face, name, mana_cost, type_line,
+ * needs_x}` - or null when the cast names no face. What the casting strip
+ * prints instead of the printing's own name and combined cost, which are
+ * neither half's (CR 709.4). */
+export function faceBeingCast(action) {
+  return action.spellFace ? chosenFace(action) : null;
+}
+
+/** Whether this announcement has an X to announce (CR 107.3a) - exported
+ * because `render/ribbon.js`'s X box asks the same question and must never
+ * answer it differently from `readyToFire` below.
+ *
+ * The server's own answer in every case: `AbilityView.needs_x` for an
+ * activation, the chosen face's `needs_x` for a cast that named one (CR
+ * 709.3a evaluates only that half, so only its own cost announces an X), and
+ * `CastHintsView.needs_x` otherwise - which counts a printed additional
+ * cost's X (Toxic Deluge's "pay X life") as well as an `{X}` in the mana
+ * cost. Nothing here reads a cost string of its own. */
+export function needsX(action) {
   const ability = abilityOf(action.card, action.abilityIndex);
-  return ability ? Boolean(ability.needs_x) : Boolean(castHints(action.card).needs_x);
+  if (ability) return Boolean(ability.needs_x);
+  const face = chosenFace(action);
+  return Boolean(face ? face.needs_x : castHints(action.card).needs_x);
 }
 
 function targeting(action) {
@@ -468,6 +520,10 @@ export function bodyFor(action, you, untapped) {
     }
   }
   if (action.kind === "cast") {
+    // CR 709.3's chosen half, as `CastRequest.spell_face` - sent only when
+    // the player actually named one, so every cast that named no face sends
+    // the same body it always did.
+    if (action.spellFace) body.spell_face = action.spellFace;
     if (action.modes.length) body.modes = action.modes;
     if (action.xValue !== null) body.x_value = action.xValue;
     if (action.keyword) body.keyword = action.keyword;

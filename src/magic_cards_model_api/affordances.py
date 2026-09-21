@@ -56,7 +56,11 @@ each piece attempted, not argued about in advance:
   and so have no index to look one up by; the printed reading survives there
   and nowhere else.
 - **The `{X}` check: folded** into `_needs_x` below, the one place either of
-  these writes `"{X}" in (cost or "")` now.
+  these writes `"{X}" in (cost or "")` now. A CAST asks the wider question
+  CR 107.3a actually poses - an X in a printed additional cost counts too -
+  and `_cast_needs_x` puts the engine's own `cost_announces_x` over its own
+  `additional_cost_phrases` on top of it, which is the identical reading
+  `legal_actions._cast_action` makes for `Action.x_range`.
 - **`cast_hints`'s `targeting`, `modes` and `needs_x`: attempted, and kept.**
   The engine computes all three off the same parsers this module calls
   (`legal_actions._cast_action` runs `modal_profile` and the same
@@ -92,8 +96,16 @@ from typing import Any
 from uuid import UUID
 
 from magic_cards_model.machines import AbilityOnStack
-from magic_cards_model.machines.casting import Casting, optional_additional_costs
-from magic_cards_model.machines.cost import spend_restriction
+from magic_cards_model.machines.casting import (
+    Casting,
+    castable_faces,
+    optional_additional_costs,
+)
+from magic_cards_model.machines.cost import (
+    additional_cost_phrases,
+    cost_announces_x,
+    spend_restriction,
+)
 from magic_cards_model.machines.modes import modal_profile
 from magic_cards_model.machines.targeting import (
     TargetingProfile,
@@ -166,6 +178,86 @@ def _needs_x(cost: str | None) -> bool:
     check is the engine's version of the same question, asked once X has
     been parsed into a `ManaCost` rather than off the raw printed string)."""
     return "{X}" in (cost or "")
+
+
+def _cast_needs_x(card: Any, mana_cost: str | None) -> bool:
+    """Whether CASTING this card announces an X - the whole of CR 107.3a,
+    not just the mana cost's half of it.
+
+    CR 107.3a counts "a mana cost, alternative cost, additional cost, and/or
+    activation cost with an {X}, [-X], or X in it", and the engine reads it
+    exactly that way when it builds a row: `machines.legal_actions.
+    _cast_action` sets `Action.x_range` from `"{X}" in mana_cost` **or** a
+    lone X in any of `machines.cost.additional_cost_phrases`, citing this
+    rule and naming Toxic Deluge's "pay X life" as the case.
+
+    This published the mana-cost half alone, so Toxic Deluge's `needs_x` was
+    False: no X box in the browser, no `x_value` in the request, and
+    `machines.casting.determine_cost`'s "X is 0 if nobody ever said
+    otherwise" made the wrath -0/-0 with 0 life paid. Every reader of
+    `needs_x` was wrong at once - `actions.needsChoices` (fire the cast on
+    the click), `actions.needsX` (`readyToFire` with no X entered),
+    `render/ribbon.renderXInput` (no box), and every non-browser seat reading
+    `CastHintsView.needs_x` - which is why the fix is here, at the one
+    publisher, rather than in any of them.
+
+    `cost_announces_x` is the engine's own predicate for "this printed cost
+    has an X in it", and `additional_cost_phrases` its own enumeration of CR
+    118.8a's sentences: no regex of this module's own, so a card that prints
+    the additional cost differently arrives here answered for free.
+    """
+    return _needs_x(mana_cost) or any(
+        cost_announces_x(phrase) for phrase in additional_cost_phrases(card)
+    )
+
+
+def _spell_faces(card: Any) -> list[dict[str, Any]] | None:
+    """The faces a cast of this card may name (CR 709.3, CR 715.3), or None
+    when there is no choice to make.
+
+    `machines.casting.castable_faces` is the engine's own enumeration - a
+    split card's two halves, an adventurer card's normal cast plus its
+    Adventure, and `(None,)` for everything else - and it is the same set
+    `machines.legal_actions._base_cost_options` emits one row per, so an
+    entry here and a row there can never disagree about which faces exist.
+    Each entry's `spell_face` is the value `CastRequest.spell_face` takes
+    back verbatim, `None` meaning "no face named" (CR 715.3's normal cast).
+
+    Published on the card view, beside `needs_x` and `modes`, because the
+    hand menu has to offer the halves at the moment the player picks the card
+    up - before any `Casting`, affordance or legal-actions row exists. Absent
+    rather than a one-entry list for a single-faced card: there is nothing to
+    choose, and the menu's plain Cast item is the whole of it.
+    """
+    faces = castable_faces(card)
+    if len(faces) < 2:
+        return None
+    printed = {face.name: face for face in card.card_faces or []}
+    # The faceless entry (CR 715.3's "play the card normally") is the
+    # printing's own FRONT half - `Card.name`/`type_line` are the combined
+    # `Bonecrusher Giant // Stomp` and `Creature - Giant // Instant`, which
+    # name no face at all and are not what a menu item should read.
+    front = (card.card_faces or [None])[0]
+    views: list[dict[str, Any]] = []
+    for name in faces:
+        face = printed.get(name) if name is not None else front
+        mana_cost = (face.mana_cost if face is not None else None) or card.mana_cost
+        views.append(
+            {
+                "spell_face": name,
+                "name": face.name if face is not None else card.name,
+                "mana_cost": mana_cost,
+                "type_line": face.type_line if face is not None else card.type_line,
+                # CR 709.3a/715.3a: only the chosen half is evaluated, so
+                # only its own cost announces an X. The named halves read
+                # their own cost; the faceless entry gets the whole
+                # printing's reading, additional-cost sentences included.
+                "needs_x": (
+                    _needs_x(mana_cost) if name is not None else _cast_needs_x(card, mana_cost)
+                ),
+            }
+        )
+    return views
 
 
 def ability_hints(
@@ -287,9 +379,12 @@ def cast_hints(state: CardState) -> dict[str, Any]:
     mana_cost = card.mana_cost or state.mana_cost
     hints: dict[str, Any] = {
         "mana_cost": mana_cost,
-        "needs_x": _needs_x(mana_cost),
+        "needs_x": _cast_needs_x(card, mana_cost),
         "targeting": _profile_view(targeting_profile(card)),
     }
+    spell_faces = _spell_faces(card)
+    if spell_faces is not None:
+        hints["spell_faces"] = spell_faces
     printed = optional_additional_costs(card)
     if printed:
         # CR 601.2b's optional additional costs, read off the printing the same
@@ -408,15 +503,24 @@ def _profile_for(
     ability_index: int | None,
     modes: list[int] | None,
     x_value: int | None,
+    spell_face: str | None = None,
 ) -> tuple[TargetingProfile, list[tuple[int | None, str | None]] | None]:
     """The profile that governs this particular announcement: the engine's own
     public `Game.announcement_profile`, which reads an activated ability's own
-    text (CR 602.2b), a modal spell's chosen modes, or the whole card with X
+    text (CR 602.2b), a modal spell's chosen modes, the named half of a split
+    or adventurer card (CR 709.3b, CR 715.3b), or the whole card with X
     substituted (CR 107.3a).
 
     A modal spell with modes chosen is the one read that also needs to say
     which mode each requirement belongs to, so that one goes through the
     engine's `profile_for_modes_with_owners` to keep the owners.
+
+    `spell_face` is passed straight through: `Game.announcement_profile`
+    already ranks it below `ability_index` and `modes`, and it is the same
+    read `legal_actions._cast_action` makes for every row it emits per face -
+    without it, asking for Wear // Tear's candidates while casting Tear
+    answered Wear's "target artifact", because `targeting_profile` reads
+    `Card.front_oracle_text`.
     """
     if ability_index is None and modes:
         modal = modal_profile(state.card)
@@ -425,7 +529,11 @@ def _profile_for(
             profile, owners = profile_for_modes_with_owners(state.card, chosen, x_value)
             return profile, [(chosen[owner].number, chosen[owner].text) for owner in owners]
     profile = game.announcement_profile(
-        state, ability_index=ability_index, modes=modes, x_value=x_value
+        state,
+        ability_index=ability_index,
+        modes=modes,
+        x_value=x_value,
+        spell_face=spell_face,
     )
     return profile, None
 
@@ -439,6 +547,7 @@ def candidates(
     ability_index: int | None = None,
     modes: list[int] | None = None,
     x_value: int | None = None,
+    spell_face: str | None = None,
 ) -> dict[str, Any]:
     """Every object on the board this announcement could legally name.
 
@@ -458,7 +567,7 @@ def candidates(
     player would read as "nothing is legal".
     """
     try:
-        profile, mode_of = _profile_for(game, state, ability_index, modes, x_value)
+        profile, mode_of = _profile_for(game, state, ability_index, modes, x_value, spell_face)
     except (IndexError, ValueError) as exc:
         return {"error": str(exc), **_no_targets(), "candidates": []}
 

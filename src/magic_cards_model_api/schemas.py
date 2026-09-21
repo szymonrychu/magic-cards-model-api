@@ -1628,15 +1628,50 @@ class AdditionalCostHintView(BaseModel):
     same shape `ManaRestriction.understood` already gets on the mana pool."""
 
 
+class SpellFaceHintView(BaseModel):
+    """One face a cast of this card may name (CR 709.3's split halves, CR
+    715.3's Adventure) - `affordances.cast_hints`' own reading of the
+    engine's `machines/casting.castable_faces`, the same set `legal_actions`
+    emits one `Action` per.
+
+    On the card view rather than only on a row for the reason every other
+    cast hint is: the hand menu has to offer the halves the moment the player
+    picks the card up, and a half that is not on screen before the cast is
+    committed is a half the player never chose. Without it the browser cast
+    Wear // Tear with no face named at all, which keeps the printing's
+    combined cost and both halves' targeting.
+    """
+
+    spell_face: str | None = None
+    """What `CastRequest.spell_face` takes back, verbatim - the engine's own
+    string, never transformed. `None` is CR 715.3's "play the card normally"
+    option, which names no face."""
+    name: str
+    """What to call this option in a menu: the face's own name, or the
+    printing's for the faceless entry."""
+    mana_cost: str | None = None
+    """This face's own cost (CR 709.3b), not the printing's combined one."""
+    type_line: str | None = None
+    needs_x: bool = False
+    """Whether announcing this face announces an X (CR 107.3a) - read off
+    this face's own cost, since CR 709.3a evaluates only the chosen half."""
+
+
 class CastHintsView(BaseModel):
-    """What casting this hand/exile card asks for - X, modes, targets, and
-    the optional additional costs it may be announced with
-    (`affordances.cast_hints`)."""
+    """What casting this hand/exile card asks for - X, modes, targets, the
+    faces it may be cast as, and the optional additional costs it may be
+    announced with (`affordances.cast_hints`)."""
 
     mana_cost: str | None = None
     needs_x: bool
+    """CR 107.3a's whole reading: an `{X}` in the mana cost, **or** an X in a
+    printed additional cost (Toxic Deluge's "pay X life"). The same question
+    `Action.x_range` answers on a row."""
     targeting: TargetingProfileView
     modes: ModalHintsView | None = None
+    spell_faces: list[SpellFaceHintView] | None = None
+    """CR 709.3/CR 715.3's castable faces, absent (never a one-entry list)
+    for a card that offers no choice of face."""
     additional_costs: list[AdditionalCostHintView] | None = None
     """CR 601.2b's optional additional costs, absent (never empty) for a card
     that prints none."""
