@@ -729,3 +729,145 @@ def test_a_worst_case_long_game_stays_under_the_ceiling_with_the_clause() -> Non
     text = review_prompt(_assignment(uid="u" * 400, game_id="g" * 400), "r" * 5000, record)
     assert len(text) <= PROMPT_BUDGET_CHARS
     assert len(text) < MAX_PROMPT_CHARS
+
+
+# -- API-13: the three write bars, and the offer table beside them --------------
+
+
+def _offer_row(
+    script_id: str,
+    run_id: str,
+    *,
+    seat: str = "bob",
+    game_id: str = "g-1",
+    turn: int = 3,
+    step: str = "precombat_main",
+    priority: int | None = 50,
+    advise: bool = False,
+) -> dict:
+    """One `script_run_offered` row, as `audit.entries` returns it - the
+    minimal shape `report.offer_table` reads (`detail.seat`/`game_id` select
+    the seat's own offers, the rest is what one printed row needs)."""
+    return {
+        "seq": None,
+        "action": "script_run_offered",
+        "turn": turn,
+        "step": step,
+        "detail": {
+            "player": seat,
+            "run_id": run_id,
+            "game_id": game_id,
+            "seat": seat,
+            "script_id": script_id,
+            "advise": advise,
+            "priority": priority,
+            "turn": turn,
+            "step": step,
+        },
+    }
+
+
+def _seq_all(entries: list[dict]) -> list[dict]:
+    """`entries`, each numbered in order - `offer_table` reads `seq` to find
+    adjacent offers, so a fixture with several rows has to number them."""
+    for index, entry in enumerate(entries, start=1):
+        entry["seq"] = index
+    return entries
+
+
+def test_the_review_prompt_states_all_three_write_bars() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "TIGHTEN A CONDITION" in text
+    assert "at least 2 declines of" in text
+    assert "1 decline" in text and "2 distinct games" in text
+    assert "names a board fact a condition can express" in text
+    assert "never a priority nudge" in text
+
+    assert "NEW MOVE-BEARING PLAY" in text
+    assert "declined" in text and "twice" in text
+    assert "at most ONE new play per deck" in text
+
+    assert "NEW ADVICE-ONLY PLAY" in text
+    assert "one game" in text
+    assert "NOTES" in text
+    assert "commits nothing" in text
+
+
+def test_the_review_prompt_states_there_is_no_autofire_bar() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "NO autofire bar" in text
+    assert "no promotion path" in text
+    assert "Autofire was dropped by owner decision" in text
+
+
+def test_the_review_prompt_restates_the_mechanic_not_card_rule() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "card-name-in-field" in text
+    assert "phrase-too-narrow" in text
+    assert "at least 3 cached cards" in text
+    assert "Target the mechanic, never the card" in text
+
+
+def test_the_review_prompt_cites_the_format_spec_for_dsl_expressibility() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "docs/superpowers/specs/2026-09-13-play-script-format-design.md" in text
+    assert "expressible in the DSL" in text
+
+
+def test_the_write_bars_section_sits_after_the_untrusted_game_record() -> None:
+    text = review_prompt(_assignment(), "r", _record())
+    end = next(line for line in text.splitlines() if line.startswith("=== END GAME RECORD"))
+    assert text.index("TIGHTEN A CONDITION") > text.index(end)
+
+
+def test_the_offer_table_is_interpolated_into_the_prompt() -> None:
+    """API-8's own table, computed straight off the entries already in the
+    record - the counts belong IN the prompt, not something the reviewer has
+    to recompute by walking the ledger by hand."""
+    from magic_cards_model_api.playscripts.report import offer_table
+
+    entries = _seq_all([_offer_row("fetch-shock", "run-1")])
+    record = _record(entries=entries)
+    expected_table = offer_table(entries, "g-1", "bob")
+
+    text = review_prompt(_assignment(), "r", record)
+
+    assert expected_table in text
+    assert "fetch-shock" in text
+
+
+def test_the_offer_table_sits_after_the_untrusted_game_record() -> None:
+    from magic_cards_model_api.playscripts.report import offer_table
+
+    entries = _seq_all([_offer_row("fetch-shock", "run-1")])
+    record = _record(entries=entries)
+    expected_table = offer_table(entries, "g-1", "bob")
+
+    text = review_prompt(_assignment(), "r", record)
+    end = next(line for line in text.splitlines() if line.startswith("=== END GAME RECORD"))
+    assert text.index(expected_table) > text.index(end)
+
+
+def test_the_review_prompt_says_passed_over_is_not_a_decline_and_declined_is_what_counts() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record(entries=[])))
+    assert "passed over" in text
+    assert "is not a decline" in text
+    assert "`declined` rows only" in text
+
+
+def test_a_worst_case_long_game_with_a_full_offer_table_still_stays_under_the_ceiling() -> None:
+    """The write-bars section and the offer table beside it are appended
+    after the untrusted record, exactly where the routing rule and its own
+    after-game clause are - so they have to be part of the budget the ledger
+    is fitted against too, the same reason `_ROUTING_SIZE` exists."""
+    from mtg_agent.driver.review import PROMPT_BUDGET_CHARS
+    from mtg_agent.wrapper.oneshot import MAX_PROMPT_CHARS
+
+    offers = _seq_all(
+        [_offer_row(f"script-{n}", f"run-{n}", turn=n, priority=n) for n in range(1, 200)]
+    )
+    entries = offers + [_row(seq, reasoning="y" * 3000) for seq in range(1000, 3000)]
+    record = _record(entries=entries)
+    text = review_prompt(_assignment(uid="u" * 400, game_id="g-1"), "r" * 5000, record)
+    assert len(text) <= PROMPT_BUDGET_CHARS
+    assert len(text) < MAX_PROMPT_CHARS

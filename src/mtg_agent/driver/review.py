@@ -68,7 +68,16 @@ import secrets
 from collections import Counter
 from typing import Any
 
-from .prompt import NOTES_ROUTING, Assignment, notes_routing_after_game
+from magic_cards_model_api.playscripts.report import offer_table
+
+from .prompt import (
+    NOTES_ROUTING,
+    WRITE_BARS,
+    WRITE_BARS_HARD_RULES,
+    WRITE_BARS_HEADING,
+    Assignment,
+    notes_routing_after_game,
+)
 
 #: How many of a game's declarations the prompt carries in full. A long game
 #: can declare a plan every turn for 20+ turns; `review.py`'s own
@@ -322,8 +331,20 @@ def review_prompt(
     # `oneshot._capped`'s silent guillotine. Measured against what is
     # already built plus what is still to come.
     after_game = notes_routing_after_game(assignment)
+    # API-13: rendered here, ahead of the ledger's own budget, for the same
+    # reason `after_game` is - both are instruction text this call knows the
+    # exact rendered size of before the ledger is fitted, so both are part of
+    # what the ledger's own remaining budget is measured against rather than
+    # unaccounted-for text appended on top of it later.
+    write_bars_block = _write_bars_block(assignment, review_record)
     tail_size = (
-        len(record_end) + _ROUTING_SIZE + len(after_game) + _ASK_SIZE + len(assignment.player)
+        len(record_end)
+        + _ROUTING_SIZE
+        + len(after_game)
+        + len(write_bars_block)
+        + 2
+        + _ASK_SIZE
+        + len(assignment.player)
     )
     remaining = PROMPT_BUDGET_CHARS - sum(len(line) + 1 for line in lines) - tail_size
     ledger = _ledger_lines(
@@ -371,8 +392,45 @@ def review_prompt(
     lines.append(after_game)
     lines.append("")
 
+    # API-13: the reviewer's own write bars - what a decline pattern earns
+    # (a tightened condition, a new play, a new advice-only play), and what
+    # it never earns (autofire, dropped entirely by owner decision). Also
+    # after the END marker, and for the same reason as the routing rule
+    # above: this is the driver's own instruction to the reviewer, never
+    # data taken from the game.
+    lines.append(write_bars_block)
+    lines.append("")
+
     lines.append(_ask(assignment.player))
     return "\n".join(lines)
+
+
+def _write_bars_block(assignment: Assignment, review_record: dict[str, Any]) -> str:
+    """`prompt.WRITE_BARS`/`WRITE_BARS_HARD_RULES`, plus this game's own
+    `playscripts.report.offer_table` (API-8) so the decline counts each bar
+    is measured against are already IN the prompt rather than something the
+    reviewer has to recompute by walking the ledger by hand.
+
+    Reads `review_record["entries"]` directly - the same list `_ledger_lines`
+    reads, unfiltered and untrimmed by that function's own row/char caps,
+    because an offer's own outcome can depend on a committing row the ledger
+    cap already dropped. `offer_table` bounds its own output to
+    `report.TABLE_LIMIT_BYTES` regardless, so this never re-introduces the
+    unbounded-prompt problem the ledger cap exists to prevent."""
+    table = offer_table(review_record.get("entries") or [], assignment.game_id, assignment.player)
+    return "\n\n".join(
+        [
+            f"{WRITE_BARS_HEADING}\n\n{WRITE_BARS}",
+            WRITE_BARS_HARD_RULES,
+            (
+                f"{assignment.player}'s own script-offer table this game, already "
+                "computed so the counts above are IN this prompt rather than something "
+                "to recall or re-derive from the ledger above. `passed over` is not a "
+                "decline, and neither is an offer with no commitment after it - every "
+                "bar above counts `declined` rows only:\n\n" + table
+            ),
+        ]
+    )
 
 
 def _ask(player: str) -> str:

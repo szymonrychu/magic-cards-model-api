@@ -1605,6 +1605,93 @@ def notes_routing_after_game(assignment: Assignment) -> str:
     )
 
 
+#: API-13: the heading over the post-game reviewer's own write bars
+#: (`WRITE_BARS`) - the rules governing every `mcp-seat plays priority`,
+#: `plays admit` and `guides propose` call `review.review_prompt` lets the
+#: reviewer make (T13's own allowlist: `wrapper.oneshot.REVIEW_BASH_RULES`).
+#: Named apart from `WRITE_BARS` itself for the same reason `ROUTING_HEADING`
+#: is named apart from `NOTES_ROUTING` in `review.py` - the heading is part
+#: of what a call there measures.
+WRITE_BARS_HEADING = "What clears the bar to write a play-script change, and what does not:"
+
+#: The three bars, and no fourth. Each is a threshold of DECLINE evidence
+#: (never a run count - `script_run_table`'s own runs-and-exits view, and
+#: `handover_turn`'s step 1 `plays priority` delta off it, are a different,
+#: already-existing mechanism for a script that ran and either worked or
+#: did not) plus what the change written for it must be.
+#:
+#: **Priority is never the answer here.** A pattern of declines says a
+#: play's own `true`/`false` conditions do not yet describe when it should
+#: fire - reordering which play is *tried* first (`plays priority`) does not
+#: touch that at all, and bumping it in response to a decline would only
+#: make a play that still fires in the wrong spot get offered *sooner*.
+#: Bar (a) is written as a CONDITION for exactly this reason.
+#:
+#: **At most one new play, bar (b) only.** A deck's own `too-many-plays` /
+#: `too-many-advice` / `too-many-active-for-archetype` caps
+#: (`playscripts.lint`) exist because a corpus that grows without limit is
+#: unreviewable by the next reviewer that opens it; one move-bearing play
+#: per review keeps growth slow enough that a human merging the resulting
+#: `guides propose` pull request is reading one change, not a batch.
+#:
+#: **No autofire bar, and this says so rather than leaving a reviewer to
+#: infer it.** An owner decision dropped autofire entirely - no field, no
+#: firing path, no exception - and a review model reading a ledger full of
+#: declines and repeats has every incentive to reconstruct "just run it
+#: automatically once the evidence is strong enough" on its own. The
+#: sentence exists so it does not.
+WRITE_BARS = """Three bars, and the evidence each one needs before you write anything to
+this deck's play-script corpus. None of them is a run count: `script_run_table`
+already covers how a script that ran did, and updating a script's `priority` from
+that evidence is `handover_turn`'s own separate step, for a script that ran and
+either worked or did not. These three are about what a seat DECLINED - the offer
+table below - and each names the evidence and the write it earns:
+
+(a) TIGHTEN A CONDITION on an existing play - at least 2 declines of that one play
+    in this single game, OR 1 decline of it in each of 2 distinct games, AND the
+    decline's own `reasoning` names a board fact a condition can express (a
+    selector, a count, a life total, mana available - the closed vocabulary the
+    format spec below defines). The change lands as a CONDITION added to the
+    play's own `true`/`false` list, never a priority nudge: a run of declines is
+    evidence the condition that stops this play from firing where it should not
+    is missing, not evidence that some other play should be tried first.
+(b) A NEW MOVE-BEARING PLAY - the seat was declined-into the SAME action twice,
+    across two distinct games, and that action is expressible in the DSL as a
+    play's own `moves` (format spec below) - write at most ONE new play per
+    deck, per review: a second genuine case waits for the next review rather
+    than landing both at once.
+(c) A NEW ADVICE-ONLY PLAY - one game is evidence enough, paired with a
+    human-readable NOTES line (`decks/<slug>/NOTES.md`, via `mcp-seat guides
+    propose`) saying what the line is for. Cheaper because it commits nothing:
+    an advice-only play's `moves` is absent or empty, so it surfaces a note at
+    the right moment rather than making the deck's own move.
+
+There is NO autofire bar, and no promotion path from advice-only to move-bearing
+on accumulated evidence alone. Autofire was dropped by owner decision: no field,
+no firing path, no exception - do not invent one, however strong a game's own
+evidence for it looks."""
+
+#: Restated, not reinvented: the two hard rules this repo's own `CLAUDE.md`
+#: already states for every change to `machines/effects.py` and every play
+#: script alike, so the write bars above cannot be met with a change that
+#: violates either one.
+WRITE_BARS_HARD_RULES = """Two rules apply to every write above, restated here rather than
+reinvented:
+
+- Target the mechanic, never the card. `card-name-in-field` refuses any
+  machine-read string equal to a card-data card name, basic land names
+  included - select by subtype instead. `phrase-too-narrow` refuses an
+  `ability_text_has`/`oracle_has` phrase that is not in the oracle text of at
+  least 3 cached cards. A condition tightened under bar (a), or a play written
+  under (b)/(c), for the one card that exposed the gap must still fire for
+  every card that shares the mechanic.
+- A new play under bar (b) or (c) must be expressible in the DSL exactly as
+  docs/superpowers/specs/2026-09-13-play-script-format-design.md defines it - a
+  selector, a condition kind, and, for a move-bearing play, a `moves` entry the
+  schema already has a field for. A line that format cannot say is a NOTES.md
+  sentence, or nothing - never a play written to fit it anyway."""
+
+
 #: The first words of every handover turn.
 HANDOVER_OPENING = "Hand over now: this game is finished for you."
 
