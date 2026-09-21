@@ -124,8 +124,9 @@ def test_seatkit_19_names_the_script_tools_and_their_exit_block() -> None:
 def test_seatkit_20_names_the_script_applicability_hint() -> None:
     """The bump that put `scripts.applicable` on every wait/wake and action
     answer: its changelog paragraph names the hint's shape and the kill
-    switch it checks."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-20"
+    switch it checks. (`seatkit-20` is no longer the current version - see
+    `test_seatkit_21_is_the_current_version` - this test only pins that its
+    own paragraph is still there and still says what it always said.)"""
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
     paragraph = changelog.split("`seatkit-20`", 1)[1].split("`seatkit-19`", 1)[0]
@@ -307,3 +308,57 @@ def test_seatkit_20_names_the_int_agents_dsl_follow_up_gaps() -> None:
         "X-cost",
     ):
         assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
+
+
+def test_seatkit_21_is_the_current_version() -> None:
+    """API-9: API-4 through API-8's script-hint/offer/arming rework shipped
+    every shape this file's other seatkit-21 tests check for straight to
+    main without ever moving this constant - this bump is the catch-up, and
+    it is the version now in effect."""
+    assert protocol.PROTOCOL_VERSION == "seatkit-21"
+
+
+def test_seatkit_21_names_the_why_and_advice_additions() -> None:
+    """API-4: every kept `scripts.applicable` entry now carries `why`, and
+    the new `scripts.advice` sibling block has no `call` because there is
+    nothing to run."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-21`", 1)[1].split("`seatkit-20`", 1)[0]
+    for term in ("why", "scripts.advice", "nothing to run", "advice-only"):
+        assert term in paragraph, f"the seatkit-21 paragraph does not name {term}"
+
+
+def test_seatkit_21_names_the_offer_route_and_ledger_row() -> None:
+    """API-5/API-6: the new `phase: "offer"` on `POST .../script-runs`, the
+    `script_run_offered` row it writes, that it never holds the
+    `already_ran` slot a `start` does, and `offer_seq` joining a kept entry
+    once that row lands."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-21`", 1)[1].split("`seatkit-20`", 1)[0]
+    for term in ('phase: "offer"', "script_run_offered", "offer_seq", "already_ran"):
+        assert term in paragraph, f"the seatkit-21 paragraph does not name {term}"
+
+
+def test_seatkit_21_names_the_arm_never_fires_restatement() -> None:
+    """API-7's contract, restated at the version a reader now expects to
+    find it at: `arm`/`pass_until` never run anything, no exception for any
+    wait anywhere, and an applying armed play still sorts first in
+    `scripts.applicable`."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-21`", 1)[1].split("`seatkit-20`", 1)[0]
+    for term in ("arm", "pass_until", "no exception", "armed: true", "first"):
+        assert term in paragraph, f"the seatkit-21 paragraph does not name {term}"
+
+
+def test_seatkit_21_names_the_pre_bump_behaviour() -> None:
+    """What a process built before this bump does with each new key: reads
+    `why`/`offer_seq`/`scripts.advice` as harmless extra noise, and never
+    posts an offer or writes a `script_run_offered` row at all."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-21`", 1)[1].split("`seatkit-20`", 1)[0]
+    for term in ("harmless", "never posts an offer", "never writes a `script_run_offered`"):
+        assert term in paragraph, f"the seatkit-21 paragraph does not name {term}"

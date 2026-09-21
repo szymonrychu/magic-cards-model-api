@@ -186,7 +186,76 @@ def scripts_enabled_here(env: Mapping[str, str] | None = None) -> bool:
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-20"
+PROTOCOL_VERSION = "seatkit-21"
+#: `seatkit-21` (API-9): the changelog entry the offer/advice work owes -
+#: API-4 through API-8 shipped every shape below straight to main without
+#: ever moving this constant, so a process built against the version before
+#: this one has been silently running one contract older than the answers
+#: it actually gets back. This paragraph is the catch-up, verified against
+#: the merged code rather than written from memory, and the whole reason
+#: this bump exists: a stale MCP process should hit the loud "PROTOCOL
+#: MISMATCH" refusal `api_trouble` already gives it, never keep running
+#: quietly against shapes that moved out from under it.
+#:
+#: `scripts.applicable` (API-4, `script_tools.applicable_hint`): every kept
+#: entry - a `call`-carrying one and a `conflict: true` one alike - now
+#: carries `why`, the play's own `_hint_why`: its `note`, or its `intent`
+#: cut to a sentence boundary when it has no `note`, or its bare `name`
+#: when it has neither. `call` alone never said why THIS play was the one
+#: offered; `why` does.
+#:
+#: `scripts.advice` (API-4) is a new sibling block on the same `scripts`
+#: object: one entry per advice-only play (`schema.Play`'s own "exists to
+#: explain a decision rather than to act on one") that applies right now,
+#: judged under the identical gate `applicable` is - this seat holding
+#: priority, its condition genuinely evaluated, not re-offered at this same
+#: turn and step. Each entry is `{id, why}` only: no `call`, because there
+#: is nothing to run, and no `name`, because `why` is the entry's whole
+#: content. Never counted toward `applicable`'s own conflict either.
+#:
+#: `POST .../script-runs` gains a third `phase`, `"offer"` (API-5,
+#: `schemas.ScriptRunIn.phase`), beside `start` and `finish`: a runner
+#: telling the ledger a play was offered to this seat at this turn and
+#: step, out of band, without running it. It writes one
+#: `script_run_offered` row (`audit.SCRIPT_RUN_OFFERED_ACTION`) and is
+#: deliberately not a `SCRIPT_RUN_SLOT_ACTIONS` member: an offer never
+#: raises `already_ran` and never holds the once-per-turn-and-step slot a
+#: `start` does, so it can never collide with, or block, the very `start`
+#: it invited.
+#:
+#: `offer_seq` (API-6) joins every kept `applicable` and `advice` entry
+#: once its own offer lands: before an answer is handed back, every
+#: surviving entry - never `armable`, which offers nothing to run - is
+#: posted as its own `phase: "offer"` row through this seat's existing HTTP
+#: client, deduped on `(script_id, turn, step)` so the same applying play
+#: re-rendered across several waits posts one row, not one per answer.
+#: `offer_seq` is that row's own `log_seq`. A failed post - an HTTP error,
+#: a post-game refusal, a malformed response - never costs the caller its
+#: answer: the entry comes back exactly as it otherwise would, `why`/`call`
+#: untouched, simply without `offer_seq`, never dropped.
+#:
+#: Nothing above changes arming's own contract - restated here because this
+#: is the version a reader now expects to find it at: `arm`/`pass_until`
+#: only ever judge the armed ids against the board and report which apply.
+#: `arm` no longer runs anything, full stop, not even inside a multi-step
+#: `pass_until` run, and there is no exception carved out for any wait
+#: anywhere in this codebase - the owner dropped autofire entirely, no
+#: field, no firing path, no exception. What an applying armed id gets
+#: INSTEAD of a run is what it already got under the version before this
+#: one: first place in `scripts.applicable`, ahead of every other applying
+#: entry regardless of priority, carrying `armed: true`, its own `call`
+#: ready exactly like any other applying entry's - the seat itself still
+#: sends that call.
+#:
+#: A process built before this bump reads `why`, `offer_seq` and the whole
+#: `scripts.advice` block the same way it already reads any extra key it
+#: does not recognise - harmless, unacted-on noise, exactly the treatment
+#: this convention exists to make safe. It never sends `phase: "offer"`
+#: (that phase did not exist for it to send), so it never posts an offer
+#: and never writes a `script_run_offered` row - the offer signal simply
+#: is not there for a pre-bump process, silence over that one gap being the
+#: correct answer, never a fabricated row.
+#:
 #: `seatkit-20` (S1): every wait/wake answer (`wait_for_priority`) and every
 #: action answer (`cast`, `activate`, `play_land`, `pass_priority`,
 #: `pass_until`, `run_script`, ...) now carries `scripts: {"applicable":
