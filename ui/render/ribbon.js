@@ -54,12 +54,15 @@ import { anchoredPosition } from "../menus.js";
 import { withSymbols, restrictedManaRows } from "../symbols.js";
 import {
   additionalCosts,
+  clampX,
   faceBeingCast,
   needsExplicitFire,
   needsX,
+  optionalCostOffer,
   optionalCostTimes,
   readyToFire,
   targetSlotIndex,
+  xRange,
 } from "../actions.js";
 import { VERB_LABELS, STEPS, passButtonsFor, advanceOffered } from "../priority.js";
 import { renderDecision } from "./decision_controls.js";
@@ -478,32 +481,56 @@ function renderRestrictedMana(app) {
   );
 }
 
-/** CR 107.3a's "Announce X" box, shown exactly when `actions.js` says this
+/**
+ * CR 107.3a's "Announce X" box, shown exactly when `actions.js` says this
  * announcement has an X to announce - the same predicate `readyToFire` gates
  * on, so the box can never be missing from a strip whose Cast button is
- * waiting for it (or present on one that is not).
+ * waiting for it (or present on one that is not) - and bounded by what the
+ * engine has already said it will take.
  *
- * It used to re-derive the answer from `card.cast.needs_x`, which is only
- * half of the rule and none of the per-face reading: Toxic Deluge's "pay X
- * life" got no box at all, and a split card's X-less half would have got one
- * off the printing's combined cost. */
-function renderXInput(card, action, handlers) {
+ * `needsX` reads `card.cast.needs_x`, the chosen face's own `needs_x` (CR
+ * 709.3a evaluates only that half, so Toxic Deluge's "pay X life" and a
+ * split card's X-less half each get the right answer), or an activated
+ * ability's `needs_x` - never a re-derivation of its own.
+ *
+ * `rows` is the stash `app.js` keeps from the menu read that opened this
+ * card's menu; the matching row's `Action.x_range` is the engine's own
+ * `(minimum, maximum)` for this announcement, with `maximum` null for an X
+ * nothing caps (the engine's own field says so - `models/action.py`, which
+ * is also where the rule number above is read from rather than recalled).
+ *
+ * Without it the box was `<input type=number min=0>` with no ceiling and no
+ * floor above zero, so an X the engine would refuse was typed, sent, and
+ * came back as an error to read. Three things carry the bound now, because
+ * each covers a different way of getting it wrong: `min`/`max` for the
+ * stepper, a line of text for anyone typing (the same argument
+ * `renderRestrictedMana` makes about not hiding what a task needs in a
+ * `title`), and `clampX` on the way out for a value typed past both. A row
+ * that says nothing leaves all three off and the box is exactly what it was.
+ */
+function renderXInput(card, action, handlers, rows) {
   if (!needsX(action)) return null;
-  return h(
-    "div",
-    { class: "tray-step" },
-    h("div", { class: "label" }, "Announce X"),
-    h("input", {
-      type: "number",
-      min: "0",
-      value: action.xValue === null ? "" : String(action.xValue),
-      placeholder: "X",
-      // `castingStripEditInProgress` (below) keys off this to tell a live,
-      // uncommitted X value apart from a share stepper's own input.
-      dataset: { field: "x" },
-      onChange: (e) => handlers.onSetX(e.target.value === "" ? null : Number(e.target.value)),
-    })
-  );
+  const range = xRange(action, rows);
+  const [low, high] = range || [0, null];
+  const attrs = {
+    type: "number",
+    min: String(low),
+    value: action.xValue === null ? "" : String(action.xValue),
+    placeholder: "X",
+    // `castingStripEditInProgress` (below) keys off this to tell a live,
+    // uncommitted X value apart from a share stepper's own input.
+    dataset: { field: "x" },
+    onChange: (e) =>
+      handlers.onSetX(e.target.value === "" ? null : clampX(Number(e.target.value), range)),
+  };
+  if (high !== null) attrs.max = String(high);
+  const step = h("div", { class: "tray-step" }, h("div", { class: "label" }, "Announce X"), h("input", attrs));
+  if (range) {
+    step.appendChild(
+      h("div", { class: "hint" }, high === null ? `at least ${low}` : `${low} to ${high}`)
+    );
+  }
+  return step;
 }
 
 function renderAltCosts(action, handlers) {
@@ -568,7 +595,7 @@ function renderAltCosts(action, handlers) {
  *   sentence in full rather than a tooltip, so the player learns the card
  *   has an option the program cannot take instead of being shown nothing.
  */
-function renderAdditionalCosts(card, action, handlers) {
+function renderAdditionalCosts(card, action, handlers, rows) {
   const options = action.kind === "cast" ? additionalCosts(card) : [];
   if (!options.length) return null;
   const step = h(
@@ -631,7 +658,46 @@ function renderAdditionalCosts(card, action, handlers) {
     );
   }
   step.appendChild(row);
+  // The engine's own verdict on each option, off `ActionRow.optional_costs`.
+  // The chips above are the card's printed enumeration
+  // (`card.cast.additional_costs`), which says what may be announced and
+  // nothing about what this board can pay; the row prices each option with
+  // this row's own cost plus that one and names, in the engine's words, why
+  // one cannot be. Nothing read it, so a kicker the board could not pay
+  // looked exactly like one it could and the player learned the difference
+  // from the refusal.
+  //
+  // Said rather than enforced, deliberately: the option stays clickable,
+  // because an unaffordable announcement is still worth making before
+  // activating the mana ability that pays for it (`ActionRow.activate_first`
+  // is the engine saying so about the cast itself), and the dry run below
+  // answers affordability live anyway. This is the answer arriving before
+  // the attempt instead of after it.
+  for (const option of options) {
+    const offer = optionalCostOffer(action, rows, option.keyword);
+    if (!offer || offer.affordable !== "no") continue;
+    step.appendChild(
+      h(
+        "div",
+        { class: "hint" },
+        `${option.keyword}: ${offer.unaffordable_reason || "the engine cannot pay this right now"}`
+      )
+    );
+  }
   return step;
+}
+
+/** The `GET .../legal-actions` rows `app.js` stashed for the card this
+ * announcement is about, or `[]`.
+ *
+ * Guarded on the card id because the stash is one card's answer, taken on
+ * the click that opened its menu: reading another card's row off it would be
+ * a bound, or a price, made up from the wrong board object. An announcement
+ * begun some other way simply has no rows and every reader falls back. */
+function actionRowsFor(app, action) {
+  const stash = app.actionRows;
+  if (!stash || !action || stash.cardId !== action.cardId) return [];
+  return stash.rows || [];
 }
 
 function renderObjectCostStep(action, offer, field, label, onToggle) {
@@ -843,10 +909,12 @@ function renderCastingStrip(el, app, handlers) {
   const altStep = renderAltCosts(action, handlers);
   if (altStep) el.appendChild(altStep);
 
-  const additionalStep = renderAdditionalCosts(card, action, handlers);
+  const rows = actionRowsFor(app, action);
+
+  const additionalStep = renderAdditionalCosts(card, action, handlers, rows);
   if (additionalStep) el.appendChild(additionalStep);
 
-  const xStep = renderXInput(card, action, handlers);
+  const xStep = renderXInput(card, action, handlers, rows);
   if (xStep) el.appendChild(xStep);
 
   const slotsStep = renderSlotChips(action, handlers);

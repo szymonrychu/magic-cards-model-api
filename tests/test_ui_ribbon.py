@@ -1988,3 +1988,258 @@ def test_a_mode_the_engine_cannot_read_is_not_a_chip_to_click() -> None:
     assert result["unreadable"] is False
     # The readable mode beside it is still an ordinary chip.
     assert result["calls"] == [2]
+
+
+# ------------------------------------------------ the X box's own bounds ---
+#
+# The strip drew `<input type=number min=0>` with no maximum and no floor
+# above zero, whatever the engine had already said about the X it would take
+# (`Action.x_range` on the cast row, published and read by nothing). So an
+# announcement outside the range was typed, sent, refused, and reported back
+# as an error the player then had to read - with the bound that would have
+# prevented it already in the browser's hands.
+#
+# The rows are the ones `app.js` stashed from the menu read that opened this
+# card's menu (`enrichActionMenu`), so the fixture here is that stash.
+
+X_BOUNDED_ROW = {
+    "kind": "cast",
+    "card_id": "kc",
+    "ability_index": None,
+    "affordable": "yes",
+    "x_range": [1, 3],
+}
+X_OPEN_ROW = {**X_BOUNDED_ROW, "x_range": [0, None]}
+
+X_STRIP = """
+function xStripFor(stash, handlers) {
+  const action = {
+    kind: "cast", cardId: koz.id, card: koz, abilityIndex: null, keyword: null,
+    modes: [1, 2], xValue: null, color: null, altCost: null, optionalCosts: {},
+    choosing: [], convoke: [], delve: [], crewing: [], slots: [], shares: {},
+    pinned: [], freeTargets: [], pendingTargets: [], focusSlot: null,
+    affordance: null, error: null, holdPriority: false, done: false,
+  };
+  const state = baseState({ hands: { alice: [koz] } });
+  const store = makeStore(baseApp(state, { action, actionRows: stash }));
+  m.mountRibbon(document, store, handlers || HANDLERS);
+  store.set({});
+  return document.querySelector("#casting-strip");
+}
+"""
+
+
+def test_the_x_box_carries_the_engines_own_floor_and_ceiling() -> None:
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + X_STRIP
+        + """
+        (() => {
+          const input = findByField(xStripFor({ cardId: "kc", rows: [row] }), "input", "x");
+          return { min: input.attrs.min, max: input.attrs.max };
+        })()
+        """,
+        koz=KOZILEK,
+        row=X_BOUNDED_ROW,
+    )
+    assert result == {"min": "1", "max": "3"}
+
+
+def test_an_open_ended_x_gets_a_floor_and_no_ceiling() -> None:
+    """`maximum: null` is the engine saying nothing caps this X. A `max` of
+    any kind there would be this browser inventing a limit."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + X_STRIP
+        + """
+        (() => {
+          const input = findByField(xStripFor({ cardId: "kc", rows: [row] }), "input", "x");
+          const max = input.attrs.max;
+          return { min: input.attrs.min, max: max === undefined ? null : max };
+        })()
+        """,
+        koz=KOZILEK,
+        row=X_OPEN_ROW,
+    )
+    assert result == {"min": "0", "max": None}
+
+
+def test_the_bounded_x_box_says_the_range_in_words_too() -> None:
+    """A `min`/`max` pair is enforced by the stepper and invisible to anyone
+    typing - the range is written out beside the box for the same reason
+    `renderRestrictedMana` writes its sentence out rather than leaving it in
+    a `title`."""
+    strip = run_module(
+        "render/ribbon.js",
+        FAKE_DOM + X_STRIP + '(() => xStripFor({ cardId: "kc", rows: [row] }).textContent)()',
+        koz=KOZILEK,
+        row=X_BOUNDED_ROW,
+    )
+    assert "1 to 3" in strip
+
+
+def test_a_typed_x_outside_the_range_is_brought_back_inside_it() -> None:
+    """The bound has to hold for a typed value too, which `min`/`max` alone
+    do not stop - and the engine's own answer is the one to clamp to."""
+    calls = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + X_STRIP
+        + """
+        (() => {
+          const calls = [];
+          const handlers = { ...HANDLERS, onSetX: (n) => calls.push(n) };
+          const strip = xStripFor({ cardId: "kc", rows: [row] }, handlers);
+          const input = findByField(strip, "input", "x");
+          input.value = "9";
+          input.listeners.change({ target: input });
+          input.value = "0";
+          input.listeners.change({ target: input });
+          input.value = "";
+          input.listeners.change({ target: input });
+          return calls;
+        })()
+        """,
+        koz=KOZILEK,
+        row=X_BOUNDED_ROW,
+    )
+    assert calls == [3, 1, None]
+
+
+def test_an_unbounded_x_box_is_exactly_what_it_was_before() -> None:
+    """No row, no bound: the strip is opened before the menu read has landed
+    and from paths that opened no menu at all, and a missing answer must not
+    take the X box away or invent a ceiling for it."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + X_STRIP
+        + """
+        (() => {
+          const strip = xStripFor(null);
+          const input = findByField(strip, "input", "x");
+          return {
+            min: input.attrs.min,
+            max: input.attrs.max === undefined ? null : input.attrs.max,
+            text: strip.textContent,
+          };
+        })()
+        """,
+        koz=KOZILEK,
+    )
+    assert result["min"] == "0"
+    assert result["max"] is None
+    assert "Announce X" in result["text"]
+
+
+def test_a_stash_for_another_card_bounds_nothing() -> None:
+    """The stash is one card's rows. Reading another card's `x_range` off it
+    would be a bound made up from the wrong board object."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + X_STRIP
+        + """
+        (() => {
+          const input = findByField(
+            xStripFor({ cardId: "somethingelse", rows: [row] }), "input", "x");
+          return input.attrs.max === undefined ? null : input.attrs.max;
+        })()
+        """,
+        koz=KOZILEK,
+        row=X_BOUNDED_ROW,
+    )
+    assert result is None
+
+
+# -------------------------- the row's own verdict on an optional cost ------
+#
+# `ActionRow.optional_costs` prices each of CR 601.2b's optional additional
+# costs with this row's own cost plus that one, and says in the engine's
+# words why one cannot be paid. `card.cast.additional_costs` - which is what
+# offers the chips - carries none of that. Nothing read the row's copy, so a
+# kicker the board could not pay looked exactly like one it could, and the
+# player found out from the refusal.
+
+UNAFFORDABLE_KICKER_ROW = {
+    "kind": "cast",
+    "card_id": "ms",
+    "ability_index": None,
+    "affordable": "yes",
+    "optional_costs": [
+        {
+            "keyword": "Kicker",
+            "rule": "CR 702.33a",
+            "cost": "{1}{G}",
+            "repeatable": False,
+            "understood": True,
+            "affordable": "no",
+            "unaffordable_reason": "cannot pay {3}{G} and {1}{G}: 4 mana available",
+        }
+    ],
+}
+
+OPTIONAL_COST_STASH = """
+function stashStripFor(card, stash, optionalCosts) {
+  const state = baseState({ hands: { alice: [card] } });
+  const store = makeStore(
+    baseApp(state, { action: castOf(card, optionalCosts), actionRows: stash })
+  );
+  m.mountRibbon(document, store, HANDLERS);
+  store.set({});
+  return document.querySelector("#casting-strip");
+}
+"""
+
+
+def test_an_unaffordable_kicker_says_so_in_the_engines_own_words() -> None:
+    strip = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + OPTIONAL_COST_ACTION
+        + OPTIONAL_COST_STASH
+        + '(() => stashStripFor(shambler, { cardId: "ms", rows: [row] }).textContent)()',
+        shambler=SHAMBLER,
+        row=UNAFFORDABLE_KICKER_ROW,
+    )
+    assert "Kicker" in strip, "the option is still offered - this is a notice, not a block"
+    assert "cannot pay {3}{G} and {1}{G}: 4 mana available" in strip
+
+
+def test_an_affordable_kicker_gets_no_notice_at_all() -> None:
+    affordable = {
+        **UNAFFORDABLE_KICKER_ROW,
+        "optional_costs": [
+            {
+                **UNAFFORDABLE_KICKER_ROW["optional_costs"][0],
+                "affordable": "yes",
+                "unaffordable_reason": None,
+            }
+        ],
+    }
+    strip = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + OPTIONAL_COST_ACTION
+        + OPTIONAL_COST_STASH
+        + '(() => stashStripFor(shambler, { cardId: "ms", rows: [row] }).textContent)()',
+        shambler=SHAMBLER,
+        row=affordable,
+    )
+    assert "Kicker" in strip
+    assert "cannot pay" not in strip
+
+
+def test_a_kicker_with_no_row_to_price_it_is_offered_exactly_as_before() -> None:
+    strip = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + OPTIONAL_COST_ACTION
+        + OPTIONAL_COST_STASH
+        + "(() => stashStripFor(shambler, null).textContent)()",
+        shambler=SHAMBLER,
+    )
+    assert "Kicker" in strip
+    assert "cannot pay" not in strip

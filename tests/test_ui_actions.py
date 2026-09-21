@@ -1492,3 +1492,166 @@ def test_a_mode_the_engine_cannot_read_cannot_be_announced() -> None:
         charm=THRABEN_CHARM,
     )
     assert modes == [2]
+
+
+# ------------------------------- the legal-action row an announcement IS ---
+#
+# `app.js`'s menu read (`enrichActionMenu`) already fetches
+# `GET .../legal-actions` on the click that opens a card's menu, and the
+# announcement begun from that menu is one of the rows it answered with.
+# `rowFor` is what finds it again, and `xRange`/`optionalCostOffer` are the
+# two things the casting strip reads off it: the engine's own bounds on the
+# X it will accept (`Action.x_range`) and its own verdict on each optional
+# additional cost (`ActionRow.optional_costs`). Both were published and read
+# by nothing.
+
+CAST_ROW = {
+    "kind": "cast",
+    "card_id": "b1",
+    "ability_index": None,
+    "affordable": "yes",
+    "x_range": [2, 5],
+}
+ABILITY_ROW = {
+    "kind": "activate",
+    "card_id": "b1",
+    "ability_index": 0,
+    "affordable": "yes",
+    "x_range": [0, None],
+}
+MANA_ROW = {
+    "kind": "activate_mana",
+    "card_id": "b1",
+    "ability_index": 1,
+    "affordable": "yes",
+    "x_range": [1, 1],
+}
+
+
+def _rows(expression: str, rows: list[dict] | None = None) -> object:
+    return run_module("actions.js", expression, bolt=BOLT, rows=rows if rows is not None else [])
+
+
+def test_the_row_for_a_cast_is_matched_on_card_kind_and_ability() -> None:
+    """The three fields that identify an `Action` - `menus.js`'s own
+    `matchesAction` rule, reused rather than re-derived."""
+    assert (
+        _rows(
+            "(() => m.rowFor(m.begin('cast', bolt, {}), rows).kind)()",
+            rows=[ABILITY_ROW, CAST_ROW],
+        )
+        == "cast"
+    )
+
+
+def test_the_browsers_one_activate_covers_both_engine_activation_kinds() -> None:
+    """`ActionKind` splits an activation into `activate` and `activate_mana`;
+    this browser's action state has one `activate` for both, so a row match
+    that insisted on the name would find a mana ability's row never."""
+    assert (
+        _rows(
+            "(() => m.rowFor(m.begin('activate', bolt, {abilityIndex: 1}), rows).kind)()",
+            rows=[ABILITY_ROW, MANA_ROW],
+        )
+        == "activate_mana"
+    )
+
+
+def test_no_matching_row_is_no_row_rather_than_the_first_one() -> None:
+    assert (
+        _rows(
+            "(() => m.rowFor(m.begin('activate', bolt, {abilityIndex: 7}), rows))()",
+            rows=[CAST_ROW, ABILITY_ROW],
+        )
+        is None
+    )
+
+
+def test_the_x_range_is_the_engines_own_bounds() -> None:
+    assert _rows("(() => m.xRange(m.begin('cast', bolt, {}), rows))()", rows=[CAST_ROW]) == [2, 5]
+
+
+def test_an_open_ended_x_keeps_its_floor_and_no_ceiling() -> None:
+    """`maximum: null` is the engine saying nothing caps how much mana could
+    be spent - never "not applicable", which is `x_range` itself being null."""
+    assert _rows(
+        "(() => m.xRange(m.begin('activate', bolt, {abilityIndex: 0}), rows))()",
+        rows=[ABILITY_ROW],
+    ) == [0, None]
+
+
+def test_a_row_that_names_no_x_range_answers_nothing() -> None:
+    """A row without an X is not a row with an X of zero width: the strip has
+    to be able to tell "the engine said nothing" apart from "the engine said
+    0 to 0", because only the second one is a bound worth drawing."""
+    assert (
+        _rows(
+            "(() => m.xRange(m.begin('cast', bolt, {}), rows))()",
+            rows=[{"kind": "cast", "card_id": "b1", "ability_index": None}],
+        )
+        is None
+    )
+
+
+def test_no_rows_at_all_answers_nothing() -> None:
+    """The strip can be opened before the menu's read has landed, and from
+    paths that never opened a menu - which is silence, not a bound of zero."""
+    assert _rows("(() => m.xRange(m.begin('cast', bolt, {}), rows))()") is None
+
+
+def test_an_x_is_raised_to_the_engines_floor() -> None:
+    assert _rows("(() => m.clampX(0, [2, 5]))()") == 2
+
+
+def test_an_x_is_capped_at_the_engines_ceiling() -> None:
+    assert _rows("(() => m.clampX(9, [2, 5]))()") == 5
+
+
+def test_an_open_ended_x_is_never_capped() -> None:
+    assert _rows("(() => m.clampX(99, [0, null]))()") == 99
+
+
+def test_an_x_with_no_range_to_measure_against_is_left_alone() -> None:
+    assert _rows("(() => m.clampX(4, null))()") == 4
+
+
+KICKED_ROW = {
+    "kind": "cast",
+    "card_id": "b1",
+    "ability_index": None,
+    "affordable": "yes",
+    "optional_costs": [
+        {
+            "keyword": "Kicker",
+            "rule": "CR 702.33a",
+            "cost": "{1}{G}",
+            "repeatable": False,
+            "understood": True,
+            "affordable": "no",
+            "unaffordable_reason": "cannot pay {3}{G} and {1}{G}: 4 mana available",
+        }
+    ],
+}
+
+
+def test_the_rows_verdict_on_an_optional_cost_is_found_by_keyword() -> None:
+    """The row prices each option with this row's own cost plus that one -
+    which the cast hints (`AdditionalCostHintView`) do not carry at all."""
+    assert (
+        _rows(
+            "(() => m.optionalCostOffer(m.begin('cast', bolt, {}), rows, 'Kicker')"
+            ".unaffordable_reason)()",
+            rows=[KICKED_ROW],
+        )
+        == "cannot pay {3}{G} and {1}{G}: 4 mana available"
+    )
+
+
+def test_an_option_the_row_does_not_name_has_no_verdict() -> None:
+    assert (
+        _rows(
+            "(() => m.optionalCostOffer(m.begin('cast', bolt, {}), rows, 'Replicate'))()",
+            rows=[KICKED_ROW],
+        )
+        is None
+    )

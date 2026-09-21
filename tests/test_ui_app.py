@@ -5007,3 +5007,81 @@ def test_a_non_mana_x_spell_does_not_fire_before_its_x_is_announced() -> None:
     assert result["action"]["xValue"] is None
     casts = [c for c in result["calls"] if c["method"] == "POST" and "actions/cast" in c["path"]]
     assert casts == [], "no cast may be posted before X is announced"
+
+
+# ------------------------------- the menu read's rows, kept for the strip ---
+#
+# `enrichActionMenu` already asks the engine for this seat's legal actions on
+# the click that opens a card's menu, and throws the answer away once it has
+# greyed out what cannot be paid for. The announcement begun from that very
+# menu is one of those rows, and the row carries two things the casting strip
+# had no other way to know: the engine's own bounds on the X it will accept
+# (`Action.x_range`) and its own verdict on each optional additional cost
+# (`ActionRow.optional_costs`). Keeping the answer costs no extra request.
+
+X_BOUNDED_ROW = {
+    "kind": "cast",
+    "card_id": "kc",
+    "ability_index": None,
+    "affordable": "yes",
+    "x_range": [1, 3],
+}
+
+
+def test_the_menu_read_keeps_its_rows_for_the_casting_strip() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: [row] }) })
+              : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          return m.store.get().actionRows;
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+        row=X_BOUNDED_ROW,
+    )
+    assert result == {"cardId": "kc", "rows": [X_BOUNDED_ROW]}
+
+
+def test_a_menu_read_that_changes_nothing_still_keeps_its_rows() -> None:
+    """The early return that skips the redraw when no option needs greying
+    out is about the menu, not about the answer: an affordable row carries
+    the X range and the optional-cost prices just the same."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: [row] }) })
+              : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          return m.store.get().actionRows;
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+        row={**X_BOUNDED_ROW, "affordable": "yes"},
+    )
+    assert result == {"cardId": "kc", "rows": [{**X_BOUNDED_ROW, "affordable": "yes"}]}
+
+
+def test_a_failed_menu_read_leaves_no_stale_rows_behind() -> None:
+    """A read that never answered is not an answer about this card. The
+    previous card's rows must not be left standing under it, because the
+    strip's only guard is the card id they are filed under."""
+    result = _click(
+        """
+          m.store.set({ actionRows: { cardId: "somethingelse", rows: [row] } });
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions") ? Promise.reject(new Error("network down")) : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          return m.store.get().actionRows;
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+        row=X_BOUNDED_ROW,
+    )
+    assert result is None

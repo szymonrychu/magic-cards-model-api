@@ -114,6 +114,29 @@ keeps that from being a hole - every unreachable view must hang off a link
 that is itself written down, so a new view behind a new unread field fails
 twice, not zero times.
 
+An exemption is not available for a field the brief called a bug
+----------------------------------------------------------------
+Clause (d) of the brief that asked for this file names six fields - MDFC
+`land_face`, `x_range`, `spell_face`, `improvise`, `unreadable_modes`,
+`optional_costs` - and says of them, in those words, that they "must NOT be
+allowlisted - they are bugs, not exemptions". Two of them ended up in
+`_NOT_CONSUMED_ON_PURPOSE` anyway, one round apart, each with a true sentence
+attached: `Action.x_range` as a `known-gap` whose own text conceded the live
+defect it was excusing, and `ActionRow.optional_costs` as `superseded` by the
+cast hints the strip offers its chips from. Neither reason was wrong about
+the browser. Both were answers to a question the brief had already closed.
+
+Prose cannot hold that line, because the failure mode *is* a later reader
+finding a defensible sentence. `_NAMED_AS_BUGS_BY_THE_BRIEF` holds it
+instead, with two tests that have no answer between them but wiring the
+field up: a named field may not appear in the exemption list at all
+(`test_a_field_the_brief_named_as_a_bug_is_never_an_exemption`), and it must
+be read by `ui/` or still owed by a task that has shipped none of its own
+fields (`test_every_field_the_brief_named_as_a_bug_is_read_or_still_owed`).
+Both `x_range` and `optional_costs` are wired now - the X box carries the
+engine's own floor and ceiling, and the additional-cost step carries its own
+per-option price - so the list guards them rather than describing them.
+
 A pending entry may not outlive its task
 ----------------------------------------
 `_PENDING_SIBLING_FIXES` is the one entry shape that is a promise rather
@@ -446,12 +469,6 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         "the player half of a slot's pool; `affordances.target_candidates` folds it into "
         "the `TargetSlotCandidates.candidates` lines the browser actually reads",
     ),
-    ("Action", "x_range"): _Reason(
-        "known-gap",
-        "CR 107.3a's legal X range; `ui/render/ribbon.js`'s `renderXInput` draws an "
-        "`<input type=number min=0>` with no maximum and no floor above zero, so an X the "
-        "engine will refuse can still be announced and comes back refused",
-    ),
     ("Action", "target_slots"): _Reason(
         "superseded",
         "the browser builds its target slots from `ActionTargets.slots` and from "
@@ -462,13 +479,6 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         "CR 118.3c mana abilities a row the engine already calls affordable cannot be paid "
         "without; `ui/menus.js` can activate a permanent's mana ability from the board and "
         "nothing on the casting strip says which activations this row is waiting on",
-    ),
-    ("ActionRow", "optional_costs"): _Reason(
-        "superseded",
-        "`ui/render/ribbon.js`'s `renderAdditionalCosts` announces optional additional "
-        "costs from `card.cast.additional_costs` (`AdditionalCostHintView`) and re-prices "
-        "the cast through `previewAndMaybeFire`'s dry run, which answers live the "
-        "affordability this row's own copy carries per option",
     ),
     ("ActionRow", "printed_cost"): _Reason(
         "cosmetic",
@@ -485,8 +495,9 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
     ("ActionRow", "x_costs"): _Reason(
         "known-gap",
         "what an X row is charged at each X its `cost` string cannot describe once a floor "
-        "or a reduction has eaten into it; the strip prices a cast by dry-running the X "
-        "that was typed, so an unaffordable X is found by trying it rather than read off",
+        "or a reduction has eaten into it; `renderXInput` now bounds the box by the row's "
+        "`x_range`, which is what the engine will accept, but no price per X is shown and "
+        "an unaffordable X inside that range is still found by dry-running it",
     ),
     ("ActionTargets", "more_with"): _Reason(
         "agent-facing",
@@ -521,13 +532,13 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
     ("ModalHintsView", "entwine_cost"): _Reason(
         "known-gap",
         "CR 702.42a's entwine cost is published on the modal hints and nothing in the "
-        "browser offers it; its announceable form is a row `optional_costs` entry, itself "
-        "unread and written down below",
+        "browser offers it; the strip builds its chips from `CastHintsView.additional_"
+        "costs`, which does not carry the modal hints' own two",
     ),
     ("ModalHintsView", "escalate_cost"): _Reason(
         "known-gap",
         "CR 702.120a's escalate cost, in exactly the position `entwine_cost` is in - "
-        "published on the hints, offered by no control, announceable only through the row",
+        "published on the hints and offered by no control",
     ),
     ("ObjectCostCandidateView", "pays"): _Reason(
         "known-gap",
@@ -1304,4 +1315,77 @@ def test_nothing_is_left_parked_when_this_wave_lands(ui_source: str) -> None:
         f"when this wave lands, {abandoned} stay unread with their task finished. They are "
         "not pending on anybody: wire them up in ui/, or move them to "
         "_NOT_CONSUMED_ON_PURPOSE with a reason kind and one line saying why."
+    )
+
+
+# -- clause (d): a field the brief called a bug, mechanised ---------------
+#
+# The round this file got wrong a second time. Clause (d) of the brief names
+# six fields and says of them, in those words, that they "must NOT be
+# allowlisted - they are bugs, not exemptions". Two of them ended up in
+# `_NOT_CONSUMED_ON_PURPOSE` anyway - `Action.x_range` as a `known-gap` whose
+# own text conceded the live defect ("an X the engine will refuse can still
+# be announced and comes back refused"), and `ActionRow.optional_costs` as
+# `superseded` by the cast hints' own enumeration. Both reasons were true
+# sentences about the browser; neither was a thing the brief left open.
+#
+# Prose cannot hold that line, because the whole failure mode is a later
+# reader finding a defensible sentence for a field and writing it down. The
+# two tests below hold it instead: a named field may not appear in the
+# exemption list at all, and it must be either read by `ui/` or still owed by
+# an open task. The only way to satisfy both is to wire it up.
+
+
+#: The field names clause (d) called bugs, by the bare name it named them
+#: under - a name rather than a `(class, field)` key on purpose, so an
+#: engine bump that publishes `x_range` on some *other* view inherits the
+#: same refusal instead of arriving unclaimed.
+#:
+#: `faces`, `mode_number` and the rest are not here: the brief did not name
+#: them, and they are the links and neighbours its six ride on. They are
+#: held by `_PENDING_SIBLING_FIXES` and the rules above it like any other
+#: parked field.
+_NAMED_AS_BUGS_BY_THE_BRIEF: frozenset[str] = frozenset(
+    {
+        "land_face",
+        "x_range",
+        "spell_face",
+        "improvise",
+        "unreadable_modes",
+        "optional_costs",
+    }
+)
+
+
+def test_a_field_the_brief_named_as_a_bug_is_never_an_exemption() -> None:
+    excused = sorted(
+        f"{owner}.{name} ({_NOT_CONSUMED_ON_PURPOSE[owner, name].kind})"
+        for owner, name in _NOT_CONSUMED_ON_PURPOSE
+        if name in _NAMED_AS_BUGS_BY_THE_BRIEF
+    )
+    assert not excused, (
+        f"{excused} sit in _NOT_CONSUMED_ON_PURPOSE, and clause (d) of the brief names "
+        "those fields as bugs rather than exemptions. A true sentence about what the "
+        "browser does instead is not a licence to excuse one: wire it up in ui/, or park "
+        "it in _PENDING_SIBLING_FIXES on a task that is actually going to."
+    )
+
+
+def test_every_field_the_brief_named_as_a_bug_is_read_or_still_owed(ui_source: str) -> None:
+    """The other half, and the one that cannot be satisfied by moving an entry
+    between two dicts: a named field is read by `ui/`, or it is parked on an
+    open task that has wired none of its own fields yet. Anything else is the
+    field quietly going unread with nobody owing it."""
+    reached = _reached_index(ui_source)
+    stranded = sorted(
+        f"{field.owner}.{field.name} (published on: {', '.join(field.surfaces)})"
+        for field in published_fields()
+        if field.name in _NAMED_AS_BUGS_BY_THE_BRIEF
+        and not reached[field.owner, field.name]
+        and (field.owner, field.name) not in _PENDING_SIBLING_FIXES
+    )
+    assert not stranded, (
+        f"{stranded} are fields clause (d) named as bugs, and nothing under ui/ reads "
+        "them and no open task is parked on them. Wire them up - an exemption is not "
+        "available for these."
     )

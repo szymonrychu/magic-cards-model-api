@@ -257,6 +257,98 @@ export function optionalCostTimes(action, keyword) {
   return (action.optionalCosts || {})[keyword] || 0;
 }
 
+/**
+ * The engine's own `GET .../legal-actions` rows, keyed by the browser's
+ * `action.kind`. The engine splits an activation in two (`activate` for an
+ * ordinary one, `activate_mana` for a mana ability, each its own entry
+ * point); this browser's announcement state has a single `activate` for
+ * both, so a match that compared the names directly would find a mana
+ * ability's row never. `crew` and `special` are deliberately absent: neither
+ * is an `ActionKind` the enumeration answers with.
+ */
+const ROW_KINDS = { cast: ["cast"], activate: ["activate", "activate_mana"] };
+
+/**
+ * The `GET .../legal-actions` row this in-flight announcement IS, out of the
+ * rows `app.js`'s own menu read (`enrichActionMenu`) stashed for this card -
+ * matched on the three fields that identify an `Action`, which is
+ * `menus.js`'s `matchesAction` rule rather than a second one of this file's
+ * own.
+ *
+ * `null` for an announcement no row describes, and that is the ordinary case
+ * as often as not: the rows are a snapshot taken on the click that opened
+ * the card's menu, so a strip opened before the read landed - or from a path
+ * that opened no menu at all - simply has none. Every reader below answers
+ * `null` in turn and the strip falls back to what it drew before, which is
+ * why none of this can make a control disappear.
+ */
+export function rowFor(action, rows) {
+  const kinds = action ? ROW_KINDS[action.kind] : null;
+  if (!kinds) return null;
+  const index = action.abilityIndex === undefined ? null : action.abilityIndex;
+  for (const row of rows || []) {
+    if (!row || row.card_id !== action.cardId) continue;
+    if (!kinds.includes(row.kind)) continue;
+    if ((row.ability_index === undefined ? null : row.ability_index) !== index) continue;
+    return row;
+  }
+  return null;
+}
+
+/**
+ * The legal range for this announcement's X, off the engine's own
+ * `Action.x_range` - `[minimum, maximum]`, with `maximum` null for an X
+ * nothing caps (`models/action.py`: "`maximum` is `None` for a genuinely
+ * open-ended X ..., never for 'not applicable'" - that is the whole field
+ * being null, which is why this answers `null` and not `[0, null]` for a row
+ * that names no X at all).
+ *
+ * The browser had no reading of this at all: the strip drew
+ * `<input type=number min=0>` and an X outside what the engine would take
+ * was announced, refused, and reported back as an error. A bound the player
+ * can see before they type is the same fact one round trip earlier.
+ */
+export function xRange(action, rows) {
+  const row = rowFor(action, rows);
+  const range = row && row.x_range;
+  if (!Array.isArray(range) || range.length !== 2) return null;
+  const low = Number(range[0]);
+  const high = range[1] === null || range[1] === undefined ? null : Number(range[1]);
+  if (Number.isNaN(low) || (high !== null && Number.isNaN(high))) return null;
+  return [low, high];
+}
+
+/** `n` brought inside `range` (`xRange`'s own shape, or `null` for an
+ * announcement no row bounded - which is left exactly as typed). */
+export function clampX(n, range) {
+  if (!range || n === null || n === undefined || Number.isNaN(n)) return n;
+  const [low, high] = range;
+  if (n < low) return low;
+  if (high !== null && n > high) return high;
+  return n;
+}
+
+/**
+ * What the engine says about announcing `keyword` on this row - one entry of
+ * `ActionRow.optional_costs`, or `null` when no row names it.
+ *
+ * The strip offers the options themselves from `card.cast.additional_costs`,
+ * which is what the browser holds the moment the card is picked up. That
+ * enumeration says what the card prints; it does not say what this board can
+ * pay. Only the row does: it prices each option with this row's own cost
+ * plus that one and reports `affordable` and `unaffordable_reason` per
+ * option, in the engine's own words. The two are not the same fact, which is
+ * why one does not supersede the other.
+ */
+export function optionalCostOffer(action, rows, keyword) {
+  if (!keyword) return null;
+  const row = rowFor(action, rows);
+  for (const option of (row && row.optional_costs) || []) {
+    if (option && option.keyword === keyword) return option;
+  }
+  return null;
+}
+
 export function chooseColor(action, color) {
   return { ...action, color };
 }

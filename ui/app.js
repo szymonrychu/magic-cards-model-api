@@ -78,6 +78,15 @@ export const store = createStore({
   aiUid: null,
   state: null,
   action: null,
+  // The `GET .../legal-actions` rows `enrichActionMenu`'s own read answered
+  // with, filed under the card whose menu asked for them:
+  // `{cardId, rows}`, or `null`. `render/ribbon.js` reads the in-flight
+  // announcement's own row back out of it for the two things only the row
+  // carries - the engine's bounds on X and its price for each optional
+  // additional cost. A snapshot of the click that opened the menu, never
+  // refreshed on the poll, for the reason `enrichActionMenu` gives: per-card
+  // affordance work is banned from the 1.2s tick.
+  actionRows: null,
   // The pass this seat still owes after its own cast, activation, equip or
   // cycle paused on a decision (`afterStackAction`): `{seat, generation,
   // readSeq}` - the seat that acted, the `pending_decision.generation` the
@@ -1043,9 +1052,23 @@ async function enrichActionMenu(anchor, card, items, run) {
       withUid(gamePath(`legal-actions?player=${encodeURIComponent(you())}`), app.uid)
     );
   } catch {
+    // Not an answer about this card, so nothing may be left standing under
+    // it: `actionRows`' only guard is the card id it is filed under, and a
+    // previous card's rows kept here would price this one's cast.
+    store.set({ actionRows: null });
     return;
   }
-  const enriched = M.enrichItems(items, (answer && answer.actions) || []);
+  const rows = (answer && answer.actions) || [];
+  // Kept rather than thrown away once the menu has been greyed out, and
+  // before every early return below, because the two readers are not the
+  // menu: `render/ribbon.js`'s X box reads the matching row's
+  // `Action.x_range` for the bounds the engine will accept, and its
+  // additional-cost step reads `ActionRow.optional_costs` for the engine's
+  // own per-option price and refusal. Both were published and read by
+  // nothing. This is the same answer this same click already paid for - the
+  // strip asking again would be a second whole-board read per card.
+  store.set({ actionRows: { cardId: card.id, rows } });
+  const enriched = M.enrichItems(items, rows);
   if (enriched.every((item, i) => item === items[i])) return;
   if (!popoverIsOpenFor(anchor)) return;
   // Patched in place, never reopened: the answer can land while the player
@@ -1845,6 +1868,7 @@ export function leaveGame() {
     aiUid: null,
     state: null,
     action: null,
+    actionRows: null,
     pendingRelease: null,
     combatDraft: {},
     run: null,
