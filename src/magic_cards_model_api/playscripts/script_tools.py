@@ -149,6 +149,26 @@ _PLAYS_CACHE_KEY = "_normalised_plays"
 #: would be meaningless.
 _OFFERED_KEY = "_offered_plays"
 
+#: `script_id` -> the `run_id` of the most recent `phase: offer` row this
+#: process posted (or reused, F4) for it - stashed on the same corpus dict,
+#: in the same per-process style as `_OFFERED_KEY` right above, and refreshed
+#: on every `applicable_hint` call that still offers `script_id` (API-10).
+#:
+#: `run` (below) pops this the moment a **fresh** `run_script` call actually
+#: starts that same `script_id`, and hands the popped value on as that run's
+#: own `run_id` instead of a freshly minted one - the one piece API-6/API-8
+#: never wired: `records.record_script_run_start` mints its own `run_id`
+#: (`runtime.py`'s `uuid.uuid4().hex`) independently of whatever `run_id` the
+#: offer that invited this run was posted under, so `report.offer_table`'s
+#: own "taken"/"passed over" reading - which matches a `script_run_started`
+#: row's `run_id` against an offer's - could never see a live run as
+#: anything but a `decline` of every offer that ever preceded it. Popped
+#: rather than merely read: a run_id is claimed by at most one start, so a
+#: second, unrelated start of the same script later (a fresh offer never
+#: having intervened) gets its own fresh id rather than a stale reuse of one
+#: this process already spent.
+_PENDING_OFFER_RUN_ID_KEY = "_pending_offer_run_ids"
+
 
 def merged_inputs(opposing_archetype: str, inputs: dict[str, Any] | None) -> dict[str, Any] | str:
     """The inputs the runner is handed: `inputs` with `opposing_archetype`
@@ -204,7 +224,16 @@ def run(
     `should_stop` ends the run's waiting early, as its time cap does.
     `invoked_via` ("mcp", "cli" or "armed") is carried onto the start/finish
     rows this run posts - `mcp.run_script` sends "mcp", `mcp-seat script run`
-    sends "cli", `playscripts.arming.arm` sends "armed"."""
+    sends "cli", `playscripts.arming.arm` sends "armed".
+
+    A **fresh** start (never a `resume`, which continues an already-started
+    run under its own existing `run_id`) that names a `script` this process
+    has an outstanding offer for (`_PENDING_OFFER_RUN_ID_KEY`, API-10) claims
+    that offer's own `run_id` for the run it is about to start, rather than
+    leaving `runtime.run_script` mint a fresh one - the missing half of
+    API-6/API-8's own pairing: without it, `report.offer_table` could never
+    read a live run as anything but a decline of the very offer that
+    proposed it, since nothing ever tied the two `run_id`s together."""
     supplied = merged_inputs(opposing_archetype, inputs)
     if isinstance(supplied, str):
         return supplied
@@ -212,6 +241,13 @@ def run(
     token = parse_resume(resume)
     if isinstance(token, str):
         return token
+    claimed_run_id: str | None = None
+    if token is None:
+        corpus = runtime._corpus(seat, corpora, fresh=False)
+        if not isinstance(corpus, runtime.ScriptExit):
+            pending = corpus.get(_PENDING_OFFER_RUN_ID_KEY)
+            if isinstance(pending, dict):
+                claimed_run_id = pending.pop(script, None)
     result = runtime.run_script(
         seat,
         script_id=script,
@@ -224,6 +260,7 @@ def run(
         max_seconds=max_seconds if max_seconds > 0 else runtime.RUN_CAP_SECONDS,
         should_stop=should_stop,
         invoked_via=invoked_via,
+        run_id=claimed_run_id,
     )
     exit_ = result.script_exit
     if (
@@ -799,6 +836,12 @@ def _post_offer(
     no second row is posted and `entry` gets that first offer's own
     `offer_seq` instead.
 
+    Either way also (re)fills `_PENDING_OFFER_RUN_ID_KEY[script_id]` with
+    this offer's own `run_id` (API-10) - the first offer's, on a cache hit,
+    exactly like `offer_seq` - so a fresh `run` of this same script picks it
+    up as that run's own `run_id` and `report.offer_table` can actually
+    pair the two up.
+
     **Failure discipline**, deliberately the same as `mcp._attach_script_hint`
     (`mcp.py:684-690`): whatever this can raise - an HTTP error, a refusal
     (a game that has just ended answers this very route with one, same as
@@ -815,18 +858,25 @@ def _post_offer(
     if not isinstance(offered, dict):
         offered = {}
         corpus[_OFFERED_KEY] = offered
+    pending = corpus.get(_PENDING_OFFER_RUN_ID_KEY)
+    if not isinstance(pending, dict):
+        pending = {}
+        corpus[_PENDING_OFFER_RUN_ID_KEY] = pending
     key = (script_id, position[0], position[1])
     cached = offered.get(key)
     if cached is not None:
-        entry["offer_seq"] = cached
+        cached_log_seq, cached_run_id = cached
+        entry["offer_seq"] = cached_log_seq
+        pending[script_id] = cached_run_id
         return
+    run_id = uuid.uuid4().hex
     try:
         answer = seat.call_json(
             "POST",
             f"/api/games/{seat.game_id()}/script-runs",
             {
                 "phase": "offer",
-                "run_id": uuid.uuid4().hex,
+                "run_id": run_id,
                 "seat": seat.player,
                 "role": "advisor" if seat.advise else "seat",
                 "advise": seat.advise,
@@ -847,8 +897,9 @@ def _post_offer(
             exc_info=True,
         )
         return
-    offered[key] = log_seq
+    offered[key] = (log_seq, run_id)
     entry["offer_seq"] = log_seq
+    pending[script_id] = run_id
 
 
 def _post_offers(

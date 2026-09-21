@@ -372,6 +372,7 @@ def run_script(
     poll_seconds: float = POLL_SECONDS,
     should_stop: Callable[[], bool] | None = None,
     invoked_via: str = "mcp",
+    run_id: str | None = None,
 ) -> RunResult:
     """Run one registered script (and whatever single `next` play applies
     after it) for `seat`. `inputs` is passed to every condition check in the
@@ -381,7 +382,15 @@ def run_script(
     `invoked_via` is who started this run - `"mcp"`, `"cli"` or `"armed"`
     (`playscripts.arming.arm`, firing a script on its own between a seat's
     own moves) - carried onto the start and finish rows this run posts
-    (`schemas.ScriptRunIn.invoked_via`, required there)."""
+    (`schemas.ScriptRunIn.invoked_via`, required there).
+
+    `run_id`, when given, is used as this run's own id instead of a freshly
+    minted one - only for a genuinely fresh start (`resume` is None); a
+    resumed run always keeps the id its own token already carries. `script_
+    tools.run` is the only caller that ever passes one (API-10): the `run_id`
+    of an outstanding `phase: offer` row for this same `script_id`, so
+    `report.offer_table` can pair this run back to the offer that proposed
+    it."""
     if not reasoning or not reasoning.strip():
         return RunResult(
             True,
@@ -447,7 +456,7 @@ def run_script(
         # of them at once, not inside `_drive` itself.
         return RunResult(True, _advice_only_refusal(play))
     run = _Run(
-        run_id=uuid.uuid4().hex,
+        run_id=run_id or uuid.uuid4().hex,
         script_id=play["id"],
         script_sha=script_sha(raw),
         parent_run_id=None,

@@ -181,6 +181,17 @@ def play(**over: Any) -> dict[str, Any]:
     return base
 
 
+def advice_play(base: dict[str, Any], **over: Any) -> dict[str, Any]:
+    """`base` (any registered play, real or a worked example), deep-copied
+    and turned advice-only: `moves`/`next` forced empty, `lint._advice_only`'s
+    own reading of "commits nothing". `over` replaces anything else - at
+    least `id` (and usually `name`), since an advice-only sibling must never
+    reuse the move-bearing play's own id in the same corpus."""
+    doc = copy.deepcopy(base)
+    doc.update(over, moves=[], next=[])
+    return doc
+
+
 # -- the card cache ------------------------------------------------------------
 
 _FETCH = (

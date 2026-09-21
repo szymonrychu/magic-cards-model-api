@@ -32,7 +32,7 @@ import pytest
 from conftest import add_card, force_turn_position, life_of, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
-from playscript_testkit import FLASH_PERMANENT, flash_permanent_play
+from playscript_testkit import FLASH_PERMANENT, advice_play, flash_permanent_play
 from test_cast_cost_choices import answer
 from test_mcp_input_required import call_tool, wired
 from test_playscript_runtime import finished, opponent_passes, seat_uid
@@ -40,7 +40,7 @@ from test_playscript_runtime import finished, opponent_passes, seat_uid
 from magic_cards_model_api import audit, scryfall, seatkit
 from magic_cards_model_api.main import app
 from magic_cards_model_api.mcp import build_server
-from magic_cards_model_api.playscripts import runtime
+from magic_cards_model_api.playscripts import report, runtime
 from magic_cards_model_api.playscripts.selectors import compare, matches, parse_type_line
 from magic_cards_model_api.repository import Advisor
 from magic_cards_model_api.store import store
@@ -193,6 +193,22 @@ def run(server: Any, uid: str, script: str, **extra: Any) -> dict[str, Any]:
 
 def listing(server: Any, uid: str, **extra: Any) -> dict[str, Any]:
     return answer(call_tool(server, "list_scripts", {"player_uid": uid, **extra}))
+
+
+def wait(server: Any, uid: str, **extra: Any) -> dict[str, Any]:
+    """A real `wait_for_priority` wake, the normal path a live game attaches
+    `scripts.applicable`/`scripts.advice` (`mcp._attach_script_hint`) through,
+    rather than calling `script_tools.applicable_hint` directly."""
+    return answer(call_tool(server, "wait_for_priority", {"player_uid": uid, **extra}))
+
+
+def log_rows(client: TestClient, game_id: str, uid: str) -> list[dict[str, Any]]:
+    """The real `GET .../log` route's own rows for `uid` - the seat-filtered
+    read a live player gets, never `audit.entries_since` read straight off
+    the process."""
+    response = client.get(f"/api/games/{game_id}/log", params={"uid": uid})
+    assert response.status_code == 200, response.text
+    return response.json()["log"]
 
 
 # -- the board ----------------------------------------------------------------------
@@ -599,6 +615,122 @@ def test_the_fetch_shock_seed_cracks_arid_mesa_for_an_untapped_sacred_foundry(
     ), [row["reasoning"] for row in moves]
     [record] = finished(game)
     assert record["moves_done"] == 1 and record["exit"] == "chain_complete"
+
+
+# -- API-10: an offer row reaches the ledger and pairs up with the run -----------------------
+
+
+def register_two_scripts(
+    client: TestClient,
+    game_id: str,
+    uid: str,
+    move_play: dict[str, Any],
+    advice_play_doc: dict[str, Any],
+) -> None:
+    """Exactly `[move_play, advice_play_doc]` as `uid`'s whole corpus - never
+    the full real boros-aggro corpus (`register_corpus`), so nothing else
+    registered can also apply on this board and blur which offer is which."""
+    body = {
+        "deck_slug": "boros-aggro",
+        "guides_revision": GUIDES_REVISION,
+        "scripts": [move_play, advice_play_doc],
+        "inputs": [],
+    }
+    response = client.put(
+        f"/api/games/{game_id}/seats/{uid}/scripts", params={"uid": uid}, json=body
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_an_offered_move_bearing_and_advice_only_play_both_reach_the_ledger_and_pair_up(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """API-10: the whole path, end to end, rather than any one piece of it
+    mocked out - every piece here (the hint, the offer post, the log's own
+    seat filtering, the run itself, `offer_table`) already has its own unit
+    tests; this is the seam none of them individually prove.
+
+    The advice-only sibling is the real `fetch-untapped-shock` play itself,
+    `moves`/`next` emptied (`advice_play`) - same `when`/`true`/`false`, so
+    it applies on exactly the same board the move-bearing play does, at the
+    same turn and step, in the same offer set."""
+    alice = seat_uid(game, ME)
+    bob = seat_uid(game, OPPONENT)
+    move_play = play_of("boros-aggro", "fetch-untapped-shock")
+    advice_play_doc = advice_play(
+        move_play, id="fetch-untapped-shock-advice-note", name="Note: the same read, nothing to run"
+    )
+    register_two_scripts(client, game, alice, move_play, advice_play_doc)
+    fetch_shock_board(client, game)
+    server = mcp_server(client, monkeypatch, game)
+
+    # 2: a real wake, the normal path a live game attaches the hint through.
+    woken = wait(server, alice)
+
+    # 3: scripts.applicable/scripts.advice, `why` and `offer_seq` on each.
+    scripts = woken.get("scripts")
+    assert scripts is not None, woken
+    [applicable] = [e for e in scripts.get("applicable", []) if e["id"] == move_play["id"]]
+    assert applicable["why"], applicable
+    assert isinstance(applicable["offer_seq"], int), applicable
+    [advice] = [e for e in scripts.get("advice", []) if e["id"] == advice_play_doc["id"]]
+    assert advice["why"], advice
+    assert isinstance(advice["offer_seq"], int), advice
+
+    # 4: one script_run_offered row per offered play, actually in the
+    # ledger, readable back through the log route by alice, at the exact
+    # offer_seq the answer named.
+    alice_log = log_rows(client, game, alice)
+    offered_by_seq = {
+        row["seq"]: row for row in alice_log if row["action"] == audit.SCRIPT_RUN_OFFERED_ACTION
+    }
+    assert offered_by_seq[applicable["offer_seq"]]["detail"]["script_id"] == move_play["id"], (
+        alice_log
+    )
+    assert offered_by_seq[advice["offer_seq"]]["detail"]["script_id"] == advice_play_doc["id"], (
+        alice_log
+    )
+
+    # 5: bob's own read of the same log carries neither row.
+    bob_log = log_rows(client, game, bob)
+    assert not [row for row in bob_log if row["action"] == audit.SCRIPT_RUN_OFFERED_ACTION], (
+        bob_log
+    )
+
+    # 7: repeat the same wake at the same turn and step (nothing on the
+    # board moved) - the F4 dedupe: no second offer row, the same offer_seq
+    # both times.
+    watermark = audit.last_seq(game)
+    woken_again = wait(server, alice)
+    scripts_again = woken_again["scripts"]
+    [applicable_again] = [
+        e for e in scripts_again.get("applicable", []) if e["id"] == move_play["id"]
+    ]
+    [advice_again] = [
+        e for e in scripts_again.get("advice", []) if e["id"] == advice_play_doc["id"]
+    ]
+    assert applicable_again["offer_seq"] == applicable["offer_seq"], (applicable, applicable_again)
+    assert advice_again["offer_seq"] == advice["offer_seq"], (advice, advice_again)
+    assert audit.last_seq(game) == watermark, "the repeat wake posted a second offer row"
+
+    # 6: run the offered play - never refused `already_ran` (F2, end to end,
+    # not only at the unit level: an offer never holds the once-per-turn-
+    # and-step slot a start does).
+    with opponent_passes(game):
+        out = run(server, alice, move_play["id"])["script_exit"]
+    assert out["exit"] != "already_ran", out
+    assert out["exit"] == "chain_complete", out
+
+    # `offer_table` over the resulting ledger: the move-bearing play taken,
+    # the advice-only sibling passed over (its own offer set's only other
+    # member was the one actually taken) rather than declined.
+    table = report.offer_table(audit.entries_since(game, 0), game, ME)
+    move_line = next(line for line in table.splitlines() if line.startswith(f"{move_play['id']} |"))
+    advice_line = next(
+        line for line in table.splitlines() if line.startswith(f"{advice_play_doc['id']} |")
+    )
+    assert move_line.split(" | ")[5] == "taken", table
+    assert advice_line.split(" | ")[5] == "passed over", table
 
 
 # -- fetch-surveil ------------------------------------------------------------------------
