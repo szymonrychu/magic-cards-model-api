@@ -56,6 +56,16 @@ is a static read of `ui/*.js` + `ui/render/*.js` source. The rule, in full:
    asserts that snippet is **still in the file**, so deleting the generic
    consumer fails here rather than quietly re-arming the guard's own excuse.
 
+5. **A read only counts on a view the browser can reach.** A nested view
+   arrives inside a field, so a field nobody reads is a view nobody holds:
+   `UnreadableModeView` is published only inside `ActionRow.unreadable_modes`,
+   and while nothing reads *that*, no line in `ui/` can be reading
+   `UnreadableModeView.notice`, whatever the name says. `reachable_models`
+   walks the surfaces as a graph, following an edge only when the field
+   labelling it is read (by name, or generically as in 4), and
+   `is_reached` is `is_consumed` plus "and at least one view carrying this
+   field is reachable".
+
 Two other generic reads the sweep turned up are deliberately **not**
 modelled here, because neither is a field on these surfaces.
 `CardView.counters` is a `dict[str, int]` whose keys are counter kinds, not
@@ -66,15 +76,37 @@ model fields, and `ui/cards.js` walks it with `Object.entries`; the engine's
 this file does not publish.
 
 What this rule can and cannot see, stated plainly rather than implied. It is
-name-based, not type-flow-based: two different published models that share a
-field name are indistinguishable, so a name read anywhere in `ui/` counts
-everywhere. That is a deliberate lean towards false negatives on *common*
-names (`id`, `name`, `cost`), and it is the right lean, because the drift
-that caused all six bugs is a **newly published field name that nothing in
-the UI mentions at all** - which this catches exactly. The alternative, a
-guard that fires on a field someone can point at a live consumer for, is a
-guard that gets deleted the first time it is wrong. When in doubt the answer
-is an annotated allowlist entry, never a looser regex.
+name-based, not type-flow-based: two published models that share a field
+name are indistinguishable to rule 2, so a name read anywhere in `ui/` would
+otherwise count everywhere. On the ordinary guard that is a deliberate lean
+towards false negatives on *common* names (`id`, `name`, `cost`), and it is
+the right lean, because the drift that caused all six bugs is a **newly
+published field name that nothing in the UI mentions at all** - which this
+catches exactly. A guard that fires on a field someone can point at a live
+consumer for is a guard that gets deleted the first time it is wrong. When in
+doubt the answer is an annotated allowlist entry, never a looser regex.
+
+That lean flips sign on the two **self-clearing** lists
+(`_NOT_CONSUMED_ON_PURPOSE`, `_PENDING_SIBLING_FIXES`), which react to a read
+by telling a human to delete an entry: there a false positive deletes a
+guard. `U2 (cost surfaces)` hit that for real - it publishes
+`ModeOptionView.notice` and reads it as `m.notice`, which by name alone
+"clears" the `UnreadableModeView.notice` entry while
+`ActionRow.unreadable_modes` and `UnreadableModeView.mode_number` are still
+read by nobody. Rule 5 is the answer, and
+`test_a_collision_on_an_unreachable_view_does_not_clear_a_pending_entry`
+pins that exact merge. Rule 5 is *not* a licence to widen 2: the residual it
+does not cover - a collision between two views the browser genuinely holds
+both of - stays a known false negative, to be answered by reading the field
+or writing an entry, never by loosening the regex.
+
+Rule 5 subtracts from the ordinary guard too: a field on an unreachable view
+is skipped rather than reported, because the fix is to wire up the link, not
+to write a second entry per field behind it.
+`test_every_unreachable_view_is_anchored_in_a_written_down_link` is what
+keeps that from being a hole - every unreachable view must hang off a link
+that is itself written down, so a new view behind a new unread field fails
+twice, not zero times.
 """
 
 from __future__ import annotations
@@ -187,11 +219,34 @@ class _Field(NamedTuple):
     name: str
     surfaces: tuple[str, ...]
     """Which entries of `_SURFACES` publish it, for the failure message."""
+    containers: tuple[type[BaseModel], ...]
+    """The models that carry it on the wire, for `reachable_models`. Usually
+    one; `Action`'s fields ride both `ActionRow` and `ActionWithTargets`."""
+
+
+def _views() -> dict[type[BaseModel], dict[str, tuple[type[BaseModel], ...]]]:
+    """Every model on a browser-facing surface, and for each of its fields the
+    views that field carries. This is the wire as a graph: the roots of
+    `_SURFACES` plus everything reachable from them, with the edges labelled
+    by the field name the browser would have to read to follow them."""
+    views: dict[type[BaseModel], dict[str, tuple[type[BaseModel], ...]]] = {}
+    queue = list(_SURFACES.values())
+    while queue:
+        model = queue.pop()
+        if model in views:
+            continue
+        views[model] = {}
+        for name, info in model.model_fields.items():
+            nested = tuple(dict.fromkeys(_nested_models(info.annotation)))
+            views[model][name] = nested
+            queue += nested
+    return views
 
 
 def published_fields() -> list[_Field]:
     """Every field on every surface, keyed by its declaring class."""
     where: dict[tuple[str, str], set[str]] = {}
+    carried: dict[tuple[str, str], set[type[BaseModel]]] = {}
     for label, root in _SURFACES.items():
         seen: set[type[BaseModel]] = set()
         queue = [root]
@@ -203,9 +258,15 @@ def published_fields() -> list[_Field]:
             for name, info in model.model_fields.items():
                 owner = _declaring_class(model, name).__name__
                 where.setdefault((owner, name), set()).add(label)
+                carried.setdefault((owner, name), set()).add(model)
                 queue += _nested_models(info.annotation)
     return [
-        _Field(owner, name, tuple(sorted(labels)))
+        _Field(
+            owner,
+            name,
+            tuple(sorted(labels)),
+            tuple(sorted(carried[owner, name], key=lambda model: model.__name__)),
+        )
         for (owner, name), labels in sorted(where.items())
     ]
 
@@ -506,6 +567,13 @@ class _Pending(NamedTuple):
 #: `test_pending_fixes_have_not_landed_yet` fails and names the line to
 #: delete. A "known-pending" entry that passed forever would be an excuse
 #: with extra steps.
+#:
+#: "Reading the field" means `is_reached`, not a bare name hit - see rule 5
+#: in the module docstring. Several entries below sit on a nested view that
+#: only exists inside another entry here (`UnreadableModeView.*` inside
+#: `ActionRow.unreadable_modes`, `ManualManaStepView.adds` inside
+#: `ActionRow.activate_first`), and a sibling wave that happens to publish
+#: the same field name on some other view must not delete them.
 _PENDING_SIBLING_FIXES: dict[tuple[str, str], _Pending] = {
     ("Action", "land_face"): _Pending(
         "U1 (cast path correctness)",
@@ -594,15 +662,89 @@ def _generic_index() -> dict[tuple[str, str], _GenericConsumer]:
     }
 
 
+def _link_is_read(
+    model: type[BaseModel],
+    name: str,
+    ui_source: str,
+    generic: dict[tuple[str, str], _GenericConsumer],
+) -> bool:
+    """Whether the browser follows the edge `model.name` at all - by name, or
+    through a declared generic read (`SpecialActionsView`'s keys, which is how
+    `SpecialActionEntry` is reached without any of its link names appearing)."""
+    return (_declaring_class(model, name).__name__, name) in generic or is_consumed(
+        name, ui_source
+    )
+
+
+def reachable_models(ui_source: str) -> set[type[BaseModel]]:
+    """The views the browser can actually get to.
+
+    A surface root is reachable. Anything else is reachable only when some
+    field carrying it is itself read - because a nested view arrives inside a
+    field, and a field the browser never reads is a view the browser never
+    holds. See the module docstring for why this, and not a wider regex, is
+    the answer to a name that two views share."""
+    views = _views()
+    generic = _generic_index()
+    reachable = set(_SURFACES.values())
+    frontier = list(reachable)
+    while frontier:
+        model = frontier.pop()
+        for name, nested in views[model].items():
+            if not nested or not _link_is_read(model, name, ui_source, generic):
+                continue
+            for view in nested:
+                if view not in reachable:
+                    reachable.add(view)
+                    frontier.append(view)
+    return reachable
+
+
+def is_reached(field: _Field, ui_source: str, reachable: set[type[BaseModel]]) -> bool:
+    """Whether `ui/` reads this field *as published here*: the name is read,
+    and at least one of the views that carries it is one the browser holds."""
+    return any(model in reachable for model in field.containers) and is_consumed(
+        field.name, ui_source
+    )
+
+
+def _reached_index(ui_source: str) -> dict[tuple[str, str], bool]:
+    reachable = reachable_models(ui_source)
+    return {
+        (field.owner, field.name): is_reached(field, ui_source, reachable)
+        for field in published_fields()
+    }
+
+
+def landed_pending_entries(ui_source: str) -> list[tuple[str, str]]:
+    """The `_PENDING_SIBLING_FIXES` keys whose sibling fix has landed."""
+    reached = _reached_index(ui_source)
+    return sorted(key for key in _PENDING_SIBLING_FIXES if reached.get(key))
+
+
+def wired_allowlist_entries(ui_source: str) -> list[tuple[str, str]]:
+    """The `_NOT_CONSUMED_ON_PURPOSE` keys the browser has since learned to read."""
+    reached = _reached_index(ui_source)
+    return sorted(key for key in _NOT_CONSUMED_ON_PURPOSE if reached.get(key))
+
+
 def test_every_published_field_is_consumed_or_written_down(ui_source: str) -> None:
     """The guard itself. A field published on a surface the browser reads is
     read by `ui/`, declared as a generic read, listed as a sibling task's
     in-flight fix, or written down with a reason - and nothing else."""
     generic = _generic_index()
+    reachable = reachable_models(ui_source)
     unexplained = []
     for field in published_fields():
         key = (field.owner, field.name)
         if key in generic or key in _NOT_CONSUMED_ON_PURPOSE or key in _PENDING_SIBLING_FIXES:
+            continue
+        if not any(model in reachable for model in field.containers):
+            # Every view carrying it arrives inside a field the browser does
+            # not read, so the answer for this field is the entry on that
+            # link, not a second entry here. The link cannot itself be
+            # unaccounted for - `test_every_unreachable_view_is_anchored...`
+            # is what holds that door shut.
             continue
         if is_consumed(field.name, ui_source):
             continue
@@ -636,11 +778,7 @@ def test_allowlisted_fields_are_still_published_and_still_unread(ui_source: str)
         f"_NOT_CONSUMED_ON_PURPOSE names fields that are no longer published: {gone} - "
         "delete the entries"
     )
-    wired = sorted(
-        f"{owner}.{name}"
-        for owner, name in _NOT_CONSUMED_ON_PURPOSE
-        if is_consumed(name, ui_source)
-    )
+    wired = [f"{owner}.{name}" for owner, name in wired_allowlist_entries(ui_source)]
     assert not wired, (
         f"ui/ now reads {wired}, which _NOT_CONSUMED_ON_PURPOSE says it deliberately does "
         "not - delete those entries so the guard keeps watching the field for real"
@@ -682,17 +820,54 @@ def test_every_generic_consumer_is_still_in_the_browser() -> None:
             )
 
 
+def test_every_unreachable_view_is_anchored_in_a_written_down_link(ui_source: str) -> None:
+    """The one hole reachability could have opened, nailed shut.
+
+    Fields on a view the browser cannot reach are skipped by the ordinary
+    rule, on the grounds that the link carrying that view is the thing with
+    the entry against it. This asserts that is true: every unreachable view
+    is reached from a reachable one by at least one link that is written down
+    in `_NOT_CONSUMED_ON_PURPOSE` or `_PENDING_SIBLING_FIXES`. Publish a new
+    nested view behind a new unread field and its fields do not vanish - the
+    field itself fails the ordinary rule, and this fails too until somebody
+    says which it is."""
+    views = _views()
+    reachable = reachable_models(ui_source)
+    written_down = set(_NOT_CONSUMED_ON_PURPOSE) | set(_PENDING_SIBLING_FIXES)
+
+    anchored: set[type[BaseModel]] = set()
+    frontier = sorted(reachable, key=lambda model: model.__name__)
+    while frontier:
+        model = frontier.pop()
+        for name, nested in views[model].items():
+            if (_declaring_class(model, name).__name__, name) not in written_down:
+                continue
+            for view in nested:
+                if view not in reachable and view not in anchored:
+                    anchored.add(view)
+                    frontier.append(view)
+
+    orphans = sorted(
+        view.__name__ for view in views if view not in reachable and view not in anchored
+    )
+    assert not orphans, (
+        f"these views are published and unreachable from ui/: {orphans} - and no field "
+        "carrying one is written down, so their own fields are being skipped for no "
+        "recorded reason. Wire up the field that carries the view, or give that field an "
+        "entry in _NOT_CONSUMED_ON_PURPOSE or _PENDING_SIBLING_FIXES."
+    )
+
+
 def test_pending_fixes_have_not_landed_yet(ui_source: str) -> None:
     """`_PENDING_SIBLING_FIXES` is a promise that someone else is wiring the
     field up. When they do, this fails and names the entry to delete - which
     is the only thing that keeps a "pending" entry from becoming a permanent
     exemption nobody re-reads."""
     published = {(field.owner, field.name) for field in published_fields()}
-    landed = sorted(
-        f"{owner}.{name} ({entry.task})"
-        for (owner, name), entry in _PENDING_SIBLING_FIXES.items()
-        if is_consumed(name, ui_source)
-    )
+    landed = [
+        f"{owner}.{name} ({_PENDING_SIBLING_FIXES[owner, name].task})"
+        for owner, name in landed_pending_entries(ui_source)
+    ]
     assert not landed, (
         f"ui/ now reads {landed} - the fix landed. Delete those entries from "
         "_PENDING_SIBLING_FIXES in tests/test_ui_surface_coverage.py; the field is "
@@ -742,6 +917,64 @@ def test_bracket_and_destructuring_reads_count() -> None:
     assert is_consumed("land_face", 'const face = card["land_face"];')
     assert is_consumed("land_face", "const { land_face } = card;")
     assert is_consumed("land_face", "render(({ land_face }) => land_face);")
+
+
+# -- name collisions across views, pinned --------------------------------
+#
+# `is_consumed` sees a name, not a type, so two views that publish the same
+# field name are indistinguishable to it. That is a harmless lean towards
+# false negatives on the ordinary rule, and a *dangerous* one on the two
+# self-clearing lists, which react to a read by telling a human to delete an
+# entry. `U2 (cost surfaces)` produced exactly that collision for real: it
+# adds `ModeOptionView.notice` and reads it in `ui/render/ribbon.js` as
+# `m.notice`, which by name alone clears the `UnreadableModeView.notice`
+# entry below - on a view the browser still cannot reach, because
+# `ActionRow.unreadable_modes` is what carries it and nothing reads that.
+# Reachability is what separates the two.
+
+
+#: `ui/render/ribbon.js` after U2 lands: a read of a *different* view's
+#: `notice`. Used to pin the collision rather than describe it.
+_U2_MODE_NOTICE_READ = "const label = m.number + '. ' + m.text; const why = m.notice;"
+
+
+def test_a_collision_on_an_unreachable_view_does_not_clear_a_pending_entry(
+    ui_source: str,
+) -> None:
+    """The merge-time false clear, pinned. `UnreadableModeView` hangs off
+    `ActionRow.unreadable_modes`, which no browser module reads, so no read of
+    the bare name `notice` anywhere in `ui/` can be a read of *this* field."""
+    merged = ui_source + "\n" + _U2_MODE_NOTICE_READ
+    assert ("UnreadableModeView", "notice") not in landed_pending_entries(merged)
+    assert ("UnreadableModeView", "mode_number") not in landed_pending_entries(merged)
+
+
+def test_the_same_collision_does_not_clear_an_allowlist_entry(ui_source: str) -> None:
+    """The other self-clearing list, which has the same collision exposure:
+    `TargetSlot.player_candidates` sits under the allowlisted
+    `Action.target_slots`, so a read of `player_candidates` on the
+    affordances' own slot view must not delete its entry."""
+    merged = ui_source + "\nconst players = slot.player_candidates || [];"
+    assert ("TargetSlot", "player_candidates") not in wired_allowlist_entries(merged)
+
+
+def test_a_pending_entry_still_clears_once_the_link_and_the_field_are_read(
+    ui_source: str,
+) -> None:
+    """The self-clearing property is the reason the pending list is allowed to
+    exist, so reachability must not quietly cost it. Read the link *and* the
+    field and the entry is reported landed, exactly as before."""
+    merged = ui_source + "\n".join(
+        [
+            "",
+            "const modes = row.unreadable_modes || [];",
+            "modes.forEach((m) => disable(m.mode_number, m.notice));",
+        ]
+    )
+    landed = landed_pending_entries(merged)
+    assert ("UnreadableModeView", "notice") in landed
+    assert ("UnreadableModeView", "mode_number") in landed
+    assert ("ActionRow", "unreadable_modes") in landed
 
 
 def test_a_bare_word_is_not_a_read() -> None:
