@@ -801,9 +801,16 @@ OLD_NEVER_RUN_SENTENCE = (
 #: 2026-09-14 S2 A8: the replacement, word for word, everywhere an MCP prompt
 #: (seat or buddy) said the old sentence above - arming is now a second,
 #: equally real way to start a run, and the old wording never admitted that.
+#:
+#: API-7-r1 review: the owner dropped autofire outright, so this no longer
+#: names arming as a way a run starts at all - it mirrors the CLI fix at
+#: `CLI_HINT_CAUTION` above: arming only judges and offers, `run_script` is
+#: the only thing that ever runs one.
 NEW_NEVER_RUN_SENTENCE_MCP = (
-    "Scripts only run when you start them with `run_script` or arm them on a "
-    "wait; a run you neither started nor armed was started by someone else."
+    "Scripts only run when you start them with `run_script` - arming on a wait never runs "
+    "one, only judges: it marks whichever armed play applies first in `scripts.applicable` "
+    "with its own `call` ready, and a run you did not start yourself was started by someone "
+    "else."
 )
 
 HINT_DOCTRINE = (

@@ -630,8 +630,10 @@ The same answer's `scripts.armable` and `arm_call` are for arming ahead of
 the window rather than playing it by hand once it arrives - see "Plan ahead,
 and arm your wait" under "The loop" above.
 
-Scripts only run when you start them with `run_script` or arm them on a
-wait; a run you neither started nor armed was started by someone else.
+Scripts only run when you start them with `run_script` - arming on a wait
+never runs one, only judges: it marks whichever armed play applies first in
+`scripts.applicable` with its own `call` ready, and a run you did not start
+yourself was started by someone else.
 
 **No hint yet, or you want to check ahead of time? Pick one with
 `list_scripts`.** It judges every registered script against the board right
@@ -1384,8 +1386,10 @@ reads. Two or more entries at once carry `conflict: true` in place of `call`:
 do not pick between them by priority - say it is close and propose the line
 you would take.
 
-Scripts only run when you start them with `run_script` or arm them on a
-wait; a run you neither started nor armed was started by someone else.
+Scripts only run when you start them with `run_script` - arming on a wait
+never runs one, only judges: it marks whichever armed play applies first in
+`scripts.applicable` with its own `call` ready, and a run you did not start
+yourself was started by someone else.
 
 Still want to check ahead of time, or no hint is on the wake you are
 holding? `list_scripts` judges every registered script against the board
