@@ -549,6 +549,70 @@ def test_seat_brief_states_arming_only_judges():
     )
 
 
+#: API-7-r1's own report deferred this file: "`ai_buddy_brief.md` ... carr[ies]
+#: the identical stale claims but [is] outside this task's named evidence -
+#: noted, not fixed here." The follow-up review named it explicitly:
+#: `ai_buddy_brief.md` is loaded verbatim by `ai_seat.BRIEF_FILES` for
+#: `ROLE_ADVISOR` exactly as `ai_seat_brief.md` is loaded for a playing seat,
+#: so a live advisor read the same pre-API-7 story - arming "fires inside
+#: `wait` itself" (the "Arm it (S2)" bullet) and a script "run" starts merely
+#: by being "arm[ed]... with `--arm`" (the "Scripts only run..." sentence).
+#: Retired the same way `RETIRED_ARM_AUTOFIRE_CLAIMS` retires the seat
+#: brief's identical claims above.
+RETIRED_ARM_AUTOFIRE_CLAIMS_BUDDY = (
+    "Arming never adds a command of its own - it fires inside `wait`",
+    "Scripts only run when you start them with `script run` or arm them with\n"
+    "`--arm` on `wait`; a run you neither started nor armed was started by\n"
+    "someone else.",
+)
+
+
+def _commands_section(text: str) -> str:
+    """`## Your commands` through the next heading."""
+    start = text.index("## Your commands")
+    return text[start : text.index("\n## ", start + len("## Your commands"))]
+
+
+def _scripts_section(text: str) -> str:
+    """`## Scripts` through the next heading."""
+    start = text.index("## Scripts")
+    return text[start : text.index("\n## ", start + len("## Scripts"))]
+
+
+def test_buddy_brief_never_claims_arming_fires_a_run():
+    """The same finding as `test_seat_brief_never_claims_arming_fires_a_run`,
+    for the advisor brief: `ai_seat.BRIEF_FILES` loads `ai_buddy_brief.md`
+    verbatim for `ROLE_ADVISOR`, so an advisor believing arming still fires a
+    run would never send the follow-up `script run` a judged-only arm needs."""
+    flat = _flat(BUDDY_BRIEF)
+    for retired in RETIRED_ARM_AUTOFIRE_CLAIMS_BUDDY:
+        retired_flat = " ".join(retired.split())
+        assert retired_flat not in flat, (
+            f"ai_buddy_brief.md still claims arming fires a run ({retired_flat!r}) - "
+            "API-7 dropped autofire outright; arming only judges and the advisor "
+            "proposes `script run` itself off `scripts.applicable`'s `armed: true` entry"
+        )
+
+
+def test_buddy_brief_states_arming_only_judges():
+    """The replacement doctrine, positively stated, in both spots the old
+    claim lived: the `Arm it (S2)` bullet under `## Your commands`, and the
+    never-auto-run sentence under `## Scripts`."""
+    commands = " ".join(_commands_section(BUDDY_BRIEF.read_text()).split())
+    assert "never runs" in commands or "never fires" in commands, (
+        "ai_buddy_brief.md's 'Arm it (S2)' bullet never states that arming "
+        "does not run anything itself"
+    )
+    assert "scripts.applicable" in commands, (
+        "ai_buddy_brief.md's 'Arm it (S2)' bullet never points an advisor back "
+        "at scripts.applicable for the armed play's own ready call"
+    )
+    scripts_section = " ".join(_scripts_section(BUDDY_BRIEF.read_text()).split())
+    assert "only judges" in scripts_section or "never runs" in scripts_section, (
+        "ai_buddy_brief.md's Scripts section never states that arming only judges"
+    )
+
+
 def test_both_briefs_forbid_the_calls_every_answer_already_answers():
     """Not enough that the old instruction is gone: a seat with no
     instruction either way reaches for the board, because reading the board

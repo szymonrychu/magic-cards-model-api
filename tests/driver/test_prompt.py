@@ -832,12 +832,9 @@ LOOP_HINT_DOCTRINE = (
 #: the old wording never admitted that. Per brief: a buddy is refused
 #: `pass-until` outright, so its own wording only ever names `wait`.
 CLI_HINT_CAUTION = {
-    # API-7-r1: the owner dropped autofire outright, and `ai_seat_brief.md`
-    # (fed verbatim to a real playing seat, `ai_seat.BRIEF_FILES`) is
-    # rewritten to say so - arming only judges, it never starts a run.
-    # `ai_buddy_brief.md` still carries the pre-API-7 sentence below: it is
-    # a separate, un-reviewed finding (`noted, not doing now` in the API-7-r1
-    # report), not something this task's evidence named.
+    # API-7-r1: the owner dropped autofire outright, and both CLI briefs
+    # (fed verbatim to a real playing seat/advisor by `ai_seat.BRIEF_FILES`)
+    # are rewritten to say so - arming only judges, it never starts a run.
     "ai_seat_brief.md": (
         "Scripts only run when you start them with `script run` - arming with `--arm` on "
         "`wait`/`pass-until` never runs one, only judges: it marks whichever armed script "
@@ -845,8 +842,10 @@ CLI_HINT_CAUTION = {
         "yourself; a run you did not start yourself was started by someone else."
     ),
     "ai_buddy_brief.md": (
-        "Scripts only run when you start them with `script run` or arm them with `--arm` on "
-        "`wait`; a run you neither started nor armed was started by someone else."
+        "Scripts only run when you start them with `script run` - arming with `--arm` "
+        "on `wait` never runs one, only judges: it marks whichever armed script applies "
+        "first in `scripts.applicable` with its own `call` ready, for you to propose "
+        "yourself; a run you did not start yourself was started by someone else."
     ),
 }
 
@@ -992,15 +991,19 @@ def test_seat_loop_names_the_fetch_land_arming_case(tmp_path, guide):
     assert "arm the fetch play before your turn begins" in section
 
 
-def test_seat_loop_says_to_resume_a_wait_for_own_priority_to_fire_armed(tmp_path, guide):
+def test_seat_loop_says_to_resume_a_wait_for_own_priority_to_judge_armed(tmp_path, guide):
     """The concurrent arming fix this task was warned about: a `pass_until`
-    waiting for this seat's own priority to fire something armed hands back a
-    note, not a silent "reached". Pinned generically - only the verb and
-    `resume`, never a hardcoded field name for the note itself, since that
-    shape is still moving on `s2-arming`."""
+    waiting for this seat's own priority so an armed play can be judged
+    hands back a note, not a silent "reached". Pinned generically - only the
+    verb and `resume`, never a hardcoded field name for the note itself,
+    since that shape is still moving on `s2-arming`.
+
+    API-7 review: "fire" retired everywhere else in this paragraph (arming
+    only ever judges now), so the wait-for-priority sentence beside it is
+    updated the same way rather than left as the one stale survivor."""
     text = turn_zero(assignment(guide), tmp_path / "current-game.md")
     section = _flat(_section(text, "## The loop")).lower()
-    assert "waiting for your own priority to fire" in section
+    assert "waiting for your own priority so an armed play can be judged" in section
     assert "resume" in section
     assert "never start a fresh run there" in section
 
@@ -1108,12 +1111,67 @@ def test_buddy_tools_section_says_to_replace_the_arm_reasoning_placeholder(tmp_p
     assert "only `arm_reasoning` is left for you to write" in section
 
 
+#: API-7 review finding: the live driver prompt (`turn_zero`'s `## The loop`
+#: and `advisor_turn_zero`'s `## The tools you read the game with`) still
+#: said arming "fires inside the wait itself" and that `armed` names
+#: "whatever fired" - neither true once `arm()` only ever judges. Retired the
+#: same way `OLD_NEVER_RUN_SENTENCE` is retired above.
+RETIRED_ARM_FIRES_CLAIMS_PROMPT = (
+    "it fires inside the wait itself, so it does",
+    "with `armed` naming whatever fired",
+    "fires whatever\n  registered scripts you name the moment this wait wakes",
+)
+
+
+def test_seat_loop_never_claims_arming_fires_a_run(tmp_path, guide):
+    """API-7 review: `turn_zero`'s loop section still told a driven seat
+    arming "fires inside the wait itself" and that `armed` names "whatever
+    fired" - both pre-API-7 autofire claims. A seat believing either would
+    never send the required follow-up `run_script` call."""
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The loop"))
+    for retired in RETIRED_ARM_FIRES_CLAIMS_PROMPT:
+        retired_flat = " ".join(retired.split())
+        assert retired_flat not in section, (
+            f"seat prompt's loop section still claims arming fires a run ({retired_flat!r})"
+        )
+
+
+def test_seat_loop_states_arming_only_judges_and_names_armed_applying(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The loop"))
+    assert "Arming never runs anything itself" in section
+    assert "`armed_applying`" in section
+    assert "scripts.applicable" in section
+    assert "`run_script`" in section
+
+
+def test_buddy_tools_section_never_claims_arming_fires_a_run(tmp_path, guide):
+    """Same finding, for the advisor prompt: `advisor_turn_zero`'s tools
+    section carried the identical stale claim."""
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The tools you read the game with"))
+    for retired in RETIRED_ARM_FIRES_CLAIMS_PROMPT:
+        retired_flat = " ".join(retired.split())
+        assert retired_flat not in section, (
+            f"buddy prompt's tools section still claims arming fires a run ({retired_flat!r})"
+        )
+
+
+def test_buddy_tools_section_states_arming_only_judges(tmp_path, guide):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## The tools you read the game with"))
+    assert "Arming never runs anything itself" in section
+    assert "`armed_applying`" in section
+    assert "scripts.applicable" in section
+
+
 def test_seat_loop_still_keeps_the_resume_on_armed_wait_guidance(tmp_path, guide):
     """The placeholder fix must not clobber the neighbouring resume-on-armed
-    -wait sentence it sits beside."""
+    -wait sentence it sits beside (API-7: "judged", not "fired")."""
     text = turn_zero(assignment(guide), tmp_path / "current-game.md")
     section = _flat(_section(text, "## The loop")).lower()
-    assert "waiting for your own priority to fire" in section
+    assert "waiting for your own priority so an armed play can be judged" in section
     assert "resume" in section
     assert "never start a fresh run there" in section
 

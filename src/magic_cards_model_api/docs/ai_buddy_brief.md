@@ -39,10 +39,13 @@ arguments.
   again when you need history a `wait` answer cannot give you - not on every
   wake, because nothing before your last look has changed.
 - **Arm it (S2).** `wait --arm SCRIPT_ID` (repeatable, priority order) plus
-  `--arm-reasoning "..."` fires a registered script the moment this `wait`
-  wakes for a real reason. From your advisor uid it proposes rather than
-  moves. Arming never adds a command of its own - it fires inside `wait`
-  itself.
+  `--arm-reasoning "..."` judges the armed script against the board the
+  moment this `wait` wakes for a real reason. **Arming never runs anything
+  itself** - the moment one applies, the wait stops right there and that
+  script comes back sorted first in `scripts.applicable`, marked so you can
+  tell it was armed, with its own `call` ready; from your advisor uid,
+  proposing it makes no move, the same as any other `script run` you send
+  yourself.
 
 ## Draft ahead while your human plays
 
@@ -130,9 +133,11 @@ line you would take.
   is JSON (`true`, `3`) and as text otherwise. It is the CLI spelling of the
   `inputs` parameter `run_script` and `list_scripts` take over MCP.
 
-Scripts only run when you start them with `script run` or arm them with
-`--arm` on `wait`; a run you neither started nor armed was started by
-someone else.
+Scripts only run when you start them with `script run` - arming with `--arm`
+on `wait` never runs one, only judges: it marks whichever armed script
+applies first in `scripts.applicable` with its own `call` ready, for you to
+propose yourself; a run you did not start yourself was started by someone
+else.
 
 ## When you think, and when you stay quiet
 

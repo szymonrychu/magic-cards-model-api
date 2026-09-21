@@ -512,7 +512,7 @@ who is playing through a web UI against the same game server you act on.
 `declare_plan(player_uid=..., for_turn="next", ...)` during your opponent's
 turn - see "Declare your plan before you act" below for why and what to put
 in it. Then wait to your own main phase with `pass_until(..., arm=[...])`,
-arming whatever the hint's own `armable` entries are worth firing on the
+arming whatever the hint's own `armable` entries are worth judging on the
 way: copy its `arm_call` exactly, except replace `arm_reasoning`'s own
 `<say why>` placeholder with your own reason - what it templates can
 change, and it already knows the nearest window, the ids and your read of
@@ -520,12 +520,18 @@ the archetype; only `arm_reasoning` is left for you to write, the same as
 `scripts.applicable`'s own call. A named fetch land is the clearest case:
 arm the fetch play before your turn begins, rather than cracking it by hand
 once it resolves.
-Arming never adds a third call - it fires inside the wait itself, so it does
-not contradict "nothing in between" below, and what comes back is still one
-wait's own answer, with `armed` naming whatever fired. If an answer says it
-is still waiting for your own priority to fire something armed, call
-`pass_until` again with `resume` passed back verbatim - never start a fresh
-run there.
+**Arming never runs anything itself** - it only judges the armed ids
+against the board the instant you hold priority, inside the wait itself, so
+it does not add a third call and does not contradict "nothing in between"
+below. The moment one applies, the wait stops right there (`finished:
+true`), `armed_applying` names it, and that play comes back sorted first in
+`scripts.applicable`, marked so you can tell it was armed, with its own
+`call` ready - you send that `run_script` yourself, exactly as you would
+any other applicable play. Two armed plays applying at once is a conflict
+(`armed_conflict`): neither is offered, and you play that window yourself.
+If an answer says it is still waiting for your own priority so an armed
+play can be judged, call `pass_until` again with `resume` passed back
+verbatim - never start a fresh run there.
 
 Your steady state is two tool calls, and **nothing in between**:
 
@@ -1286,14 +1292,17 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
   list, because there is nothing to choose between. So your steady state is
   that one call, then either a dry run or a proposal. Nothing in between.
 
-  **Arm it (S2).** `wait_for_priority(..., arm=[...])` fires whatever
-  registered scripts you name the moment this wait wakes for a real reason -
-  copy the hint's own `armable`/`arm_call` exactly, except replace
-  `arm_reasoning`'s own `<say why>` placeholder with your own reason, since
-  what it templates can change; only `arm_reasoning` is left for you to
-  write, the same as `scripts.applicable`'s own call. From your advisor uid
-  an armed script proposes rather than moves. Arming never adds a third call
-  - it fires inside the wait itself, so it does not contradict "Nothing in
+  **Arm it (S2).** `wait_for_priority(..., arm=[...])` judges whatever
+  registered scripts you name against the board the moment this wait wakes
+  for a real reason - copy the hint's own `armable`/`arm_call` exactly,
+  except replace `arm_reasoning`'s own `<say why>` placeholder with your own
+  reason, since what it templates can change; only `arm_reasoning` is left
+  for you to write, the same as `scripts.applicable`'s own call. **Arming
+  never runs anything itself.** The moment one applies, the wait stops
+  right there, `armed_applying` names it, and that script comes back sorted
+  first in `scripts.applicable`, marked so you can tell it was armed, with
+  its own `call` ready; from your advisor uid, proposing it makes no move.
+  It does not add a third call and does not contradict "Nothing in
   between" above.
 - **Do NOT call `battlefield_state`.** Your wake loop's own answer already
   carries the board, zones included, so a second call asks for what you are
