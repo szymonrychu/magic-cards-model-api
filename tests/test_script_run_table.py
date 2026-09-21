@@ -1,6 +1,6 @@
-"""`playscripts.report.script_run_table`: the compact per-script run table a
-handover prompt carries, off the `script_run` rows `POST .../script-runs`
-writes for one seat in one game."""
+"""`playscripts.report.script_run_table`/`offer_table`: the compact per-script
+run and per-offer tables a handover prompt carries, off the rows `POST
+.../script-runs` writes for one seat in one game."""
 
 from __future__ import annotations
 
@@ -315,3 +315,288 @@ def test_a_single_row_too_long_to_fit_is_cut_rather_than_overflowing():
     assert len(table.encode("utf-8")) <= report.TABLE_LIMIT_BYTES
     assert lines_of(table)[-1].startswith(report.TRUNCATION_MARKER)
     assert "1 more" in lines_of(table)[-1]
+
+
+# == offer_table ===============================================================
+#
+# `offer_table` (API-8): one line per play a runner offered this seat, off the
+# `script_run_offered` rows `phase: offer` writes - accept/reject, never a run
+# count. See `report.offer_table`'s own docstring for what "the next
+# committing row", "offer set" and "passed over" mean precisely.
+
+
+def offer_detail(
+    script_id: str,
+    run_id: str,
+    *,
+    game_id: str = "g1",
+    seat: str = "alice",
+    turn: int = 3,
+    step: str = "precombat_main",
+    priority: int | None = 50,
+    advise: bool = False,
+) -> dict[str, Any]:
+    return {
+        "player": seat,
+        "run_id": run_id,
+        "parent_run_id": None,
+        "game_id": game_id,
+        "seat": seat,
+        "role": "seat",
+        "advise": advise,
+        "script_id": script_id,
+        "script_sha": "sha",
+        "guides_revision": "rev",
+        "priority": priority,
+        "opposing_archetype_asserted": "dimir-frog",
+        "turn": turn,
+        "step": step,
+        "seq_start": None,
+        "seq_end": None,
+        "moves_done": None,
+        "moves_total": None,
+        "exit": None,
+        "stop_reason": None,
+        "refusal_text": None,
+        "resumes": None,
+        "wall_ms": None,
+        "reapplicable_after": None,
+        "invoked_via": "mcp",
+    }
+
+
+def started_detail(
+    script_id: str,
+    run_id: str,
+    *,
+    game_id: str = "g1",
+    seat: str = "alice",
+    turn: int = 3,
+    step: str = "precombat_main",
+) -> dict[str, Any]:
+    return {
+        "player": seat,
+        "run_id": run_id,
+        "parent_run_id": None,
+        "game_id": game_id,
+        "seat": seat,
+        "role": "seat",
+        "advise": False,
+        "script_id": script_id,
+        "script_sha": "sha",
+        "guides_revision": "rev",
+        "priority": 50,
+        "opposing_archetype_asserted": "dimir-frog",
+        "turn": turn,
+        "step": step,
+        "seq_start": None,
+        "seq_end": None,
+        "moves_done": None,
+        "moves_total": None,
+        "exit": None,
+        "stop_reason": None,
+        "refusal_text": None,
+        "resumes": None,
+        "wall_ms": None,
+        "reapplicable_after": None,
+        "invoked_via": "mcp",
+    }
+
+
+def action_detail(
+    seat: str = "alice", *, allowed: bool | None = True, reasoning: str | None = "because"
+) -> dict[str, Any]:
+    return {"player": seat, "allowed": allowed, "reasoning": reasoning}
+
+
+def offer_row_for(table: str, run_id: str) -> str:
+    matches = [line for line in lines_of(table) if line.split(" | ")[1] == run_id]
+    assert len(matches) == 1, table
+    return matches[0]
+
+
+def test_no_offers_is_a_named_absence():
+    assert report.offer_table([], "g1", "alice") == "no script offers recorded for alice in g1"
+
+
+def test_an_offer_with_nothing_after_it_is_just_offered_not_declined():
+    """API-8 requirement 4: a cut log window or a finished game leaves an
+    offer with no committing row after it - that is an offer and nothing
+    else, never a decline."""
+    records = [stored(1, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("fetch-shock", "run-1"))]
+
+    table = report.offer_table(records, "g1", "alice")
+
+    row = offer_row_for(table, "run-1")
+    assert row.split(" | ")[5] == "offered"
+    assert "declined" not in row
+
+
+def test_a_started_row_for_the_same_play_is_taken():
+    records = [
+        stored(1, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("fetch-shock", "run-1")),
+        stored(2, audit.SCRIPT_RUN_STARTED_ACTION, started_detail("fetch-shock", "run-1")),
+    ]
+
+    table = report.offer_table(records, "g1", "alice")
+
+    assert offer_row_for(table, "run-1").split(" | ")[5] == "taken"
+
+
+def test_a_started_row_for_a_sibling_offer_is_passed_over_not_declined():
+    """F3: several plays ride one answer under a conflict - the hint offers
+    every candidate as its own row at the same seat/turn/step, adjacent in
+    the ledger, and the seat can take at most one. The others are 'passed
+    over', not declined, so a reviewer bar counting `declined` never fires on
+    a seat that did exactly what the conflict hint told it to."""
+    records = [
+        stored(1, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("fetch-shock", "run-a")),
+        stored(2, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("fetch-shock", "run-b")),
+        stored(3, audit.SCRIPT_RUN_STARTED_ACTION, started_detail("fetch-shock", "run-b")),
+    ]
+
+    table = report.offer_table(records, "g1", "alice")
+
+    assert offer_row_for(table, "run-a").split(" | ")[5] == "passed over"
+    assert offer_row_for(table, "run-b").split(" | ")[5] == "taken"
+
+
+def test_offers_at_different_ledger_positions_are_not_one_offer_set():
+    """Same seat/turn/step but NOT adjacent in the ledger (something else was
+    recorded in between) is two separate offer sets, so a start of the other
+    one is a decline, not a pass-over."""
+    records = [
+        stored(1, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("fetch-shock", "run-a")),
+        stored(2, "cast", action_detail(allowed=False, reasoning=None)),
+        stored(3, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("fetch-shock", "run-b")),
+        stored(4, audit.SCRIPT_RUN_STARTED_ACTION, started_detail("fetch-shock", "run-b")),
+    ]
+
+    table = report.offer_table(records, "g1", "alice")
+
+    assert offer_row_for(table, "run-a").split(" | ")[5] == "declined"
+    assert offer_row_for(table, "run-b").split(" | ")[5] == "taken"
+
+
+def test_a_decline_names_the_action_and_its_reasoning():
+    """Reasoning is already mandatory on every committing agent action but a
+    pass (`records.require_reasoning`), so it rides along for free here. A
+    non-committing `plan_declared` row in between is skipped, never mistaken
+    for the commitment."""
+    records = [
+        stored(1, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("fetch-shock", "run-1")),
+        stored(2, audit.PLAN_ACTION, {"player": "alice", "plan": "attack"}),
+        stored(3, "cast", action_detail(reasoning="racing the clock, tapping out now")),
+    ]
+
+    table = report.offer_table(records, "g1", "alice")
+
+    row = offer_row_for(table, "run-1")
+    fields = row.split(" | ")
+    assert fields[5] == "declined"
+    assert fields[6] == "cast"
+    assert fields[7] == "racing the clock, tapping out now"
+
+
+def test_a_decline_by_pass_names_the_action_with_no_blank_reasoning():
+    """A pass declining an offer carries its action name and no reasoning
+    (`require_reasoning`'s `pass_shaped` exemption) - the table says so
+    rather than leaving the column blank. A refused (`allowed: false`) row in
+    between is not a commitment and is skipped."""
+    records = [
+        stored(1, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("fetch-shock", "run-1")),
+        stored(2, "cast", action_detail(allowed=False, reasoning=None)),
+        stored(3, "pass_priority", action_detail(allowed=True, reasoning=None)),
+    ]
+
+    table = report.offer_table(records, "g1", "alice")
+
+    row = offer_row_for(table, "run-1")
+    fields = row.split(" | ")
+    assert fields[5] == "declined"
+    assert fields[6] == "pass_priority"
+    assert fields[7] != "-"
+    assert fields[7].strip() != ""
+    assert "reasoning" in fields[7].lower()
+
+
+def test_an_advise_only_plays_offer_is_counted_and_not_a_failure():
+    """An advisor's play can be offered and declined like any other; it can
+    simply never be 'taken' (only the seat itself ever posts `script_run_
+    started`). With nothing after it, that must still read as 'offered', not
+    as some implied failure."""
+    records = [
+        stored(
+            1,
+            audit.SCRIPT_RUN_OFFERED_ACTION,
+            offer_detail("advisor-line", "run-1", advise=True),
+        )
+    ]
+
+    table = report.offer_table(records, "g1", "alice")
+
+    row = offer_row_for(table, "run-1")
+    assert row.split(" | ")[0] == "advisor-line (advise)"
+    assert row.split(" | ")[5] == "offered"
+
+
+def test_offers_are_ordered_by_priority_then_sequence():
+    records = [
+        stored(1, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("low", "run-low", priority=10)),
+        stored(2, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("high", "run-high", priority=90)),
+        stored(3, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("none", "run-none", priority=None)),
+    ]
+
+    table = report.offer_table(records, "g1", "alice")
+
+    assert [line.split(" | ")[1] for line in lines_of(table)[1:]] == [
+        "run-high",
+        "run-low",
+        "run-none",
+    ]
+
+
+def test_other_seats_other_games_are_not_this_seats_offers():
+    records = [
+        stored(1, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("s", "run-1", seat="bob")),
+        stored(2, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("s", "run-2", game_id="g2")),
+    ]
+
+    assert report.offer_table(records, "g1", "alice") == (
+        "no script offers recorded for alice in g1"
+    )
+
+
+def test_audit_entries_shaped_offer_rows_are_read_the_same():
+    records = [entry(1, audit.SCRIPT_RUN_OFFERED_ACTION, offer_detail("fetch-shock", "run-1"))]
+
+    table = report.offer_table(records, "g1", "alice")
+
+    assert offer_row_for(table, "run-1").split(" | ")[5] == "offered"
+
+
+def test_an_offer_table_past_four_kilobytes_is_cut_with_a_marker():
+    records = [
+        stored(
+            index,
+            audit.SCRIPT_RUN_OFFERED_ACTION,
+            offer_detail(
+                f"script-with-a-fairly-long-identifier-{index:04d}",
+                f"run-{index:04d}",
+                priority=index,
+            ),
+        )
+        for index in range(300)
+    ]
+
+    table = report.offer_table(records, "g1", "alice")
+
+    assert report.TABLE_LIMIT_BYTES == 4096
+    assert len(table.encode("utf-8")) <= report.TABLE_LIMIT_BYTES
+    lines = lines_of(table)
+    assert lines[-1].startswith(report.TRUNCATION_MARKER)
+    shown = len(lines) - 2
+    assert shown > 0
+    assert f"{300 - shown} more" in lines[-1]
+    # The highest priorities survive the cut.
+    assert "run-0299" in lines[1]
