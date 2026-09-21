@@ -59,12 +59,15 @@ is a static read of `ui/*.js` + `ui/render/*.js` source. The rule, in full:
 5. **A read only counts on a view the browser can reach.** A nested view
    arrives inside a field, so a field nobody reads is a view nobody holds:
    `UnreadableModeView` is published only inside `ActionRow.unreadable_modes`,
-   and while nothing reads *that*, no line in `ui/` can be reading
-   `UnreadableModeView.notice`, whatever the name says. `reachable_models`
-   walks the surfaces as a graph, following an edge only when the field
-   labelling it is read (by name, or generically as in 4), and
-   `is_reached` is `is_consumed` plus "and at least one view carrying this
-   field is reachable".
+   so for as long as nothing reads *that*, no line in `ui/` can be reading
+   `UnreadableModeView.notice`, whatever the name says - and `ui/render/
+   ribbon.js` does read a `.notice`, on `ModeOptionView`. (U2 has since
+   wired the row list in `ui/menus.js`, which is what makes all three of
+   those keys land together rather than a name collision clearing one of
+   them early.) `reachable_models` walks the surfaces as a graph, following
+   an edge only when the field labelling it is read (by name, or generically
+   as in 4), and `is_reached` is `is_consumed` plus "and at least one view
+   carrying this field is reachable".
 
 Two other generic reads the sweep turned up are deliberately **not**
 modelled here, because neither is a field on these surfaces.
@@ -91,11 +94,14 @@ That lean flips sign on the two **self-clearing** lists
 by telling a human to delete an entry: there a false positive deletes a
 guard. `U2 (cost surfaces)` hit that for real - it publishes
 `ModeOptionView.notice` and reads it as `m.notice`, which by name alone
-"clears" the `UnreadableModeView.notice` entry while
-`ActionRow.unreadable_modes` and `UnreadableModeView.mode_number` are still
-read by nobody. Rule 5 is the answer, and
-`test_a_collision_on_an_unreachable_view_does_not_clear_an_allowlist_entry`
-pins that exact merge. Rule 5 is *not* a licence to widen 2: the residual it
+"clears" the `UnreadableModeView.notice` entry on a view nothing could reach
+until the same task wired `ActionRow.unreadable_modes`. Read-by-name alone,
+`.notice` would have cleared one of that trio's three entries a commit
+before the other two, which is a promise deleted rather than kept. Rule 5 is
+the answer: `test_a_collision_on_an_unreachable_view_does_not_clear_a_promise`
+pins that exact merge, and `test_reading_the_row_list_does_clear_the_whole_
+promise` is its other half - the rule has to let a kept promise clear too.
+Rule 5 is *not* a licence to widen 2: the residual it
 does not cover - a collision between two views the browser genuinely holds
 both of - stays a known false negative, to be answered by reading the field
 or writing an entry, never by loosening the regex.
@@ -113,11 +119,22 @@ A pending entry may not outlive its task
 `_PENDING_SIBLING_FIXES` is the one entry shape that is a promise rather
 than a state: "published, unread, and somebody else is wiring it". A promise
 rots in a way a reason does not, and it did. The first round of this file
-parked fifteen fields on two sibling tasks; those tasks shipped wiring six of
-them and stopping, and the remaining nine sat in a list that said they were
-in flight. Nothing failed, because each entry's only self-clearing trigger
-was the field being *read* - which is exactly what does not happen to a field
-its owner walked away from.
+parked fifteen fields on two sibling tasks; nine of them were wired and six
+were not, and the six sat in a list that said they were in flight. Nothing
+failed, because each entry's only self-clearing trigger was the field being
+*read* - which is exactly what does not happen to a field its owner walked
+away from.
+
+A promise also rots by being parked on the wrong owner, which is the second
+thing that happened here. `ActionRow.unreadable_modes` and the two
+`UnreadableModeView` fields behind it were parked on U1 and delivered by U2,
+in `ui/menus.js` rather than on the ribbon; a round of this file read the
+gap as "nobody is coming for these" and wrote them into
+`_NOT_CONSUMED_ON_PURPOSE` as `superseded` - an exemption asserting the
+browser deliberately does not read three fields it had begun reading
+fourteen minutes earlier. They are parked on U2 below, and
+`test_no_allowlist_entry_is_cleared_when_this_wave_lands` is what makes the
+next such move fail on the branch that makes it rather than in the merge.
 
 Three rules now hold the shape, and none of them needs anybody to remember
 anything:
@@ -130,10 +147,11 @@ anything:
 * and the one that does not wait for a human act at all
   (`abandoned_pending_entries`): a task that has wired **some** of its fields
   has shipped, so whatever it left unread is parked on nobody and is reported
-  the moment the first of its fields lands. That is the nine, caught
+  the moment the first of its fields lands. That is the six, caught
   automatically, and `test_nothing_is_left_parked_when_this_wave_lands` runs
   it against the state the next merge produces rather than waiting for the
-  merge.
+  merge - with `test_no_allowlist_entry_is_cleared_when_this_wave_lands`
+  asking the mirror question of the other list.
 
 What remains deliberate, and is the whole point of a *self*-clearing list: a
 landed entry still fails, once, with the exact keys to delete
@@ -464,13 +482,6 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         "the printed phrase for a mana row the board resolved differently; the browser's "
         "mana menu shows the ability text and the resolved amount",
     ),
-    ("ActionRow", "unreadable_modes"): _Reason(
-        "superseded",
-        "`card.cast.modes.options` carries the same `engine_api.unreadable_modes` reading "
-        "per mode (`ModeOptionView.understood` and `.notice`), and `ui/render/ribbon.js`'s "
-        "`renderModes` marks the mode with it *before* it is chosen - which is the half of "
-        "the bug a row's list, arriving only at cast time, cannot fix",
-    ),
     ("ActionRow", "x_costs"): _Reason(
         "known-gap",
         "what an X row is charged at each X its `cost` string cannot describe once a floor "
@@ -570,18 +581,6 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         'whether a requirement\'s count is itself variable ("X target creatures"); '
         "`ui/targeting.js` branches on `count` and `unbounded` only",
     ),
-    ("UnreadableModeView", "mode_number"): _Reason(
-        "superseded",
-        "`ModeOptionView.number` labels the same mode on the chip row the browser does "
-        "render; this list is reachable only through `ActionRow.unreadable_modes`, which "
-        "is superseded whole",
-    ),
-    ("UnreadableModeView", "notice"): _Reason(
-        "superseded",
-        "`ModeOptionView.notice` is the same sentence from the same "
-        "`engine_api.unreadable_mode_notice`, printed in full on the unreadable mode's own "
-        "note rather than hidden behind a tooltip",
-    ),
     ("_CardViewFields", "art_crop"): _Reason(
         "cosmetic",
         "a third image crop; `ui/cards.js` picks between `image` and `small_image` and has "
@@ -663,9 +662,11 @@ class _Pending(NamedTuple):
 #: not is `abandoned_pending_entries`: a task that has wired *some* of its
 #: fields has shipped, so the rest of its entries are not pending on
 #: anybody, and they are reported the moment the first one lands. That is
-#: the check the last round of this wave was missing - U1 landed three of
-#: its six fields and U2 one of its seven, and the nine left behind read as
-#: "in flight" forever.
+#: the check the last round of this wave was missing. Of the fifteen fields
+#: the first round parked, all seven on U1 ended up read - four by U1, three
+#: by U2 in `ui/menus.js`, which is the mis-parking the module docstring
+#: describes - while U2 wired two of its own eight, and the six it left read
+#: as "in flight" forever.
 _OPEN_WAVE_TASKS: tuple[str, ...] = (
     "U1 (cast path correctness)",
     "U2 (cost surfaces)",
@@ -725,6 +726,23 @@ _PENDING_SIBLING_FIXES: dict[tuple[str, str], _Pending] = {
         "U2 (cost surfaces)",
         "the affordance half of the same offer - which untapped artifacts could be spent, "
         "beside convoke, delve and crew, which the browser already reads",
+    ),
+    ("ActionRow", "unreadable_modes"): _Pending(
+        "U2 (cost surfaces)",
+        "the row's own list of the modes this engine cannot read; a browser that ignores it "
+        "offers a cast whose mode the engine refuses, which is the mode-refused-after-"
+        "targeting bug",
+    ),
+    ("UnreadableModeView", "mode_number"): _Pending(
+        "U2 (cost surfaces)",
+        "which numbered mode the row is talking about - the numbers `CastRequest.modes` "
+        "takes, so it is what names the mode a caption can warn about",
+    ),
+    ("UnreadableModeView", "notice"): _Pending(
+        "U2 (cost surfaces)",
+        "the engine's own sentence for that mode, from `engine_api.unreadable_mode_notice` "
+        "- the refusal text in the engine's words, which is the whole point of showing it "
+        "rather than a phrase this repo made up",
     ),
 }
 
@@ -1048,30 +1066,65 @@ def test_bracket_and_destructuring_reads_count() -> None:
 # entry. `U2 (cost surfaces)` produced exactly that collision for real: it
 # adds `ModeOptionView.notice` and reads it in `ui/render/ribbon.js` as
 # `m.notice`, which by name alone clears the `UnreadableModeView.notice`
-# entry above - on a view the browser still cannot reach, because
-# `ActionRow.unreadable_modes` is what carries it and nothing reads that.
-# Reachability is what separates the two.
+# entry - on a view the browser cannot reach until something reads
+# `ActionRow.unreadable_modes`, the field that carries it. Reachability is
+# what separates the two, and it has to hold on *both* lists: the three
+# `unreadable_modes` keys sit in `_PENDING_SIBLING_FIXES` (U2 wires them in
+# `ui/menus.js`), where a false clear would delete a promise rather than an
+# exemption. `TargetSlot.player_candidates` is the allowlist's live instance
+# of the same shape.
 
 
-#: `ui/render/ribbon.js` after U2 lands: a read of a *different* view's
-#: `notice`. Used to pin the collision rather than describe it.
+#: `ui/render/ribbon.js`'s mode chips: a read of a *different* view's
+#: `notice` and `number`. Used to pin the collision rather than describe it.
 _U2_MODE_NOTICE_READ = "const label = m.number + '. ' + m.text; const why = m.notice;"
 
 
-def test_a_collision_on_an_unreachable_view_does_not_clear_an_allowlist_entry() -> None:
+#: The three keys `ui/menus.js` reaches only through `ActionRow.unreadable_modes`,
+#: in the shape they hold in `_PENDING_SIBLING_FIXES`. Written out rather than
+#: read off the live dict for the reason the source below is written out: a pin
+#: that leans on where an entry happens to sit today stops pinning the rule the
+#: day it moves.
+_UNREADABLE_MODES_PENDING = {
+    ("ActionRow", "unreadable_modes"): _Pending(
+        "U2 (cost surfaces)", "the row's unreadable-mode list"
+    ),
+    ("UnreadableModeView", "mode_number"): _Pending(
+        "U2 (cost surfaces)", "which mode the entry names"
+    ),
+    ("UnreadableModeView", "notice"): _Pending(
+        "U2 (cost surfaces)", "the engine's own sentence for it"
+    ),
+}
+
+
+def test_a_collision_on_an_unreachable_view_does_not_clear_a_promise() -> None:
     """The merge-time false clear, pinned on the entries it actually hit.
     `UnreadableModeView` hangs off `ActionRow.unreadable_modes`, so a browser
     that does not read *that* is not reading this view's `notice`, whatever
-    the name says - and the two entries recording that the browser gets the
-    fact from `ModeOptionView` instead must survive the collision.
+    the name says - and the ribbon's own `m.notice` must not report the
+    promise landed while the link is still unread.
 
     The source here is the read and nothing else, deliberately: a pin built
     on top of the live `ui/` asserts that today's `ui/` happens not to read
     the link, which stops being true the day somebody wires it and turns a
     rule pin into a merge conflict. This pins the rule."""
-    wired = wired_allowlist_entries(_U2_MODE_NOTICE_READ)
-    assert ("UnreadableModeView", "notice") not in wired
-    assert ("UnreadableModeView", "mode_number") not in wired
+    landed = landed_pending_entries(_U2_MODE_NOTICE_READ, pending=_UNREADABLE_MODES_PENDING)
+    assert landed == []
+
+
+def test_reading_the_row_list_does_clear_the_whole_promise() -> None:
+    """The other side of it, which is what actually happened: `ui/menus.js`
+    reads the link and both fields behind it, so all three entries clear
+    together. A rule that only ever refuses to clear would be a list that
+    never empties."""
+    source = (
+        "for (const mode of (row && row.unreadable_modes) || []) "
+        "byNumber.set(mode.mode_number, mode);\n"
+        "const why = modes.map((mode) => mode.notice).join('\\n');"
+    )
+    landed = landed_pending_entries(source, pending=_UNREADABLE_MODES_PENDING)
+    assert landed == sorted(_UNREADABLE_MODES_PENDING)
 
 
 def test_the_same_collision_does_not_clear_another_allowlist_entry() -> None:
@@ -1142,6 +1195,9 @@ _WAVE_LANDING_READS = "\n".join(
         "if (row.spell_face) castFace(row.spell_face);",
         "const tappable = row.improvise || [];",
         "const offer = affordance.object_costs.improvise;",
+        "for (const mode of (row && row.unreadable_modes) || [])",
+        "  byNumber.set(mode.mode_number, mode);",
+        "const why = modes.map((mode) => mode.notice).join('\\n');",
     ]
 )
 
@@ -1209,6 +1265,29 @@ def test_no_open_wave_has_finished_leaving_fields_parked(ui_source: str) -> None
         f"these fields are parked on a task that has already wired up others: {abandoned} - "
         "the task is done, so nothing is coming for these. Wire them up, or move them to "
         "_NOT_CONSUMED_ON_PURPOSE with a reason kind."
+    )
+
+
+def test_no_allowlist_entry_is_cleared_when_this_wave_lands(ui_source: str) -> None:
+    """The allowlist's half of that same merge, and the round this file got
+    wrong.
+
+    `test_nothing_is_left_parked_when_this_wave_lands` asks whether a pending
+    entry survives the merge. This asks the mirror question of the other
+    self-clearing list: whether an entry that says "the browser deliberately
+    does not read this" is still true once the wave's own reads arrive. An
+    entry the merge clears was never an exemption - it was a field a sibling
+    task was in the middle of wiring, and it belongs in
+    `_PENDING_SIBLING_FIXES` so that it fails once, loudly, with the rest of
+    them. Without this, such an entry is found by whoever merges, as a second
+    unrelated red test on top of the self-clearing one this file promises."""
+    merged = ui_source + "\n" + _WAVE_LANDING_READS
+    wired = [f"{owner}.{name}" for owner, name in wired_allowlist_entries(merged)]
+    assert not wired, (
+        f"when this wave lands, ui/ reads {wired} - which _NOT_CONSUMED_ON_PURPOSE says it "
+        "deliberately does not. A field a sibling task is wiring up is not an exemption: "
+        "move those entries to _PENDING_SIBLING_FIXES, parked on the task that is wiring "
+        "them, so they clear with the rest of the wave instead of failing the allowlist."
     )
 
 
