@@ -27,6 +27,7 @@ from magic_cards_model.machines import Step
 from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG
 
 from magic_cards_model_api import audit, game_access, seatkit, visibility
+from magic_cards_model_api.playscripts.schema import MAX_MOVES
 from magic_cards_model_api.repository import Advisor
 from magic_cards_model_api.store import store
 
@@ -341,15 +342,15 @@ def test_an_invalid_script_is_rejected_with_its_code(client: TestClient, game: s
 
 def test_every_invalid_script_is_reported(client: TestClient, game: str) -> None:
     alice = seat_uid(game, "alice")
-    no_moves = copy.deepcopy(FETCH_SHOCK)
-    no_moves["moves"] = []
+    too_many_moves = copy.deepcopy(FETCH_SHOCK)
+    too_many_moves["moves"] = too_many_moves["moves"] * (MAX_MOVES + 1)
     fights = copy.deepcopy(FETCH_SURVEIL)
     fights["moves"] = [{"kind": "attack"}]
 
     put = client.put(
         f"/api/games/{game}/seats/{alice}/scripts",
         params={"uid": alice},
-        json=corpus(no_moves, fights),
+        json=corpus(too_many_moves, fights),
     )
 
     assert put.status_code == 422, put.text
