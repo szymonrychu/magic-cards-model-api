@@ -122,6 +122,10 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         #: default. Set to simulate a slow review generation, to prove the
         #: driver never waits on it before answering `/turn-done`.
         "wrapper_review_delay": 0,
+        #: The wrapper session's own state word on `GET /v1/session`
+        #: (`wrapper.session.State`): "busy" while claude holds a turn,
+        #: whoever pushed it.
+        "session_state": "ready",
     }
     #: The fake wrapper's own idea of its current model/effort/max_thinking_
     #: tokens - what `GET /v1/session` answers and `POST /v1/session` updates.
@@ -146,6 +150,9 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
     probes: list[dict] = []
     #: The `uid` of every `GET .../log` read.
     log_reads: list[str | None] = []
+    #: Every `POST /api/games/{id}/report` the driver sent, with the `uid`
+    #: query credential it presented.
+    problem_reports: list[dict] = []
 
     game = FastAPI()
 
@@ -181,6 +188,14 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         reflection_posts.append({"game_id": game_id, **body})
         events.append("reflection")
         return {"recorded": True, "log_seq": len(reflection_posts), "player": body.get("player")}
+
+    @game.post("/api/games/{game_id}/report")
+    def post_report(game_id: str, body: dict, uid: str | None = None):
+        if state["game"] == "down":
+            raise httpx.ConnectError("connection refused")
+        problem_reports.append({"game_id": game_id, "uid": uid, **body})
+        events.append("report")
+        return {"recorded": True}
 
     @game.get("/api/games/{game_id}/review")
     def get_review(game_id: str, uid: str | None = None, key: str | None = None):
@@ -342,7 +357,10 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
             raise httpx.ConnectError("connection refused")
         if not state["session_supported"]:
             raise HTTPException(status_code=404, detail="not found")
-        return dict(session_settings) | {"activity": state["activity"]}
+        return dict(session_settings) | {
+            "activity": state["activity"],
+            "state": state["session_state"],
+        }
 
     @wrapper.post("/v1/session", status_code=202)
     def post_session(body: dict):
@@ -395,4 +413,5 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         interrupts=interrupts,
         probes=probes,
         log_reads=log_reads,
+        problem_reports=problem_reports,
     )

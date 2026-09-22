@@ -233,3 +233,8 @@ def test_fallback_gets_no_notice_of_its_own():
         "reason": "the `claude` CLI is not on PATH",
     }
     assert notice("ai-uid", status) is None
+
+
+def test_a_stalled_seat_is_not_reported_as_still_loading():
+    status = {"uid": "ai-uid", "mechanism": "kubernetes", "state": "stalled", "pod": "Running"}
+    assert notice("ai-uid", status) is None

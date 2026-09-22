@@ -144,7 +144,9 @@ def test_a_turn_in_flight_is_interrupted_before_the_handover_is_pushed(world):
 
 def test_no_turn_in_flight_means_no_interrupt(world):
     dispatch(world)
+    world.state["agent"] = "down"  # so no continuation can be pushed either
     finish(world, "turn-1")  # the game is still running: nothing in flight now
+    world.state["agent"] = "up"
     world.client.post("/handover", json={})
     handover_turn_id(world)
     assert world.interrupts == []

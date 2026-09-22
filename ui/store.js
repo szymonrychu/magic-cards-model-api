@@ -337,7 +337,9 @@ export function aiStallNotice(state, aiPlayer, aiStatus, unchangedSeconds, grace
 // States a seat's own set of `mechanism`s ever report are its shape here -
 // see `ai_seat.py` (`subprocess`/`wrapper`) and `k8s_seats.py`
 // (`kubernetes`) - nothing here invents a phase none of them observe.
-const AI_LOADING_READY_STATES = new Set(["thinking", "idle", "dispatched", "stopped"]);
+// `stalled` (`k8s_seats.driver_seat_state`) is a seat that was playing and
+// has stopped mid-game - a problem the pill reports, never a boot.
+const AI_LOADING_READY_STATES = new Set(["thinking", "idle", "dispatched", "stopped", "stalled"]);
 
 /**
  * What to tell the human while their opponent's AI seat is still starting
@@ -432,7 +434,7 @@ export const AI_ACTIVITY_LABELS = {
  * (`k8s_seats.py`, and a `subprocess` runner) and `dispatched` (the `wrapper`
  * mechanism, which never rewrites that word while the seat is healthy - see
  * `ai_seat.py`'s `_live_driver_status`). Every other state - `error`,
- * `unreachable`, `gone`, `stopped`, `idle`, `pending`, `starting` - already
+ * `unreachable`, `gone`, `stopped`, `idle`, `stalled`, `pending`, `starting` - already
  * says something truer than any activity could, and keeps its own word. */
 const AI_ACTIVITY_PLAYING_STATES = new Set(["thinking", "dispatched"]);
 

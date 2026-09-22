@@ -752,6 +752,11 @@ than a hedge.
   game is worthless. Do not stop because the game is long, because you think
   you are losing, or because you are unsure - read the state and take the
   best legal action.
+- Your turn lasts the whole game. Nobody reads what you write between tool
+  calls, so never end it with a summary or a checkpoint while the game is
+  still running - there is no natural pause to report at. Plan ahead during
+  your opponent's actions (their turn, their priority windows) rather than
+  stopping to take stock.
 - There is no command that steps the turn on, and you never need one. No
   player receives priority in the untap step (CR 502.4) or in an ordinary
   cleanup step (CR 514.3), and a step nobody receives priority in ends on its

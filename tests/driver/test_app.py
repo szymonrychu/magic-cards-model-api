@@ -163,12 +163,15 @@ def test_a_second_dispatch_for_the_same_uid_does_not_push_a_second_turn_zero(wor
     assert len(submitted) == 1
 
 
-def test_turn_done_mid_game_pushes_nothing(world):
+def test_turn_done_mid_game_pushes_only_a_continuation(world):
+    """A mid-game turn end is never left idle (`test_continue_turn.py`), and
+    it is never mistaken for the end of the game either: no reflection."""
     client = world.client
     submitted = world.submitted
     dispatch(client)
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "ok"})
-    assert len(submitted) == 1
+    assert len(submitted) == 2
+    assert submitted[1]["text"].startswith("The game is not over")
 
 
 def test_turn_done_after_a_win_pushes_exactly_one_reflection_turn(world):
@@ -810,7 +813,10 @@ def test_a_failed_turn_is_reported_by_status(world):
 def test_a_turn_that_succeeds_clears_a_previous_failure(world):
     client = world.client
     dispatch(client)
-    client.post("/turn-done", json={"turnId": "turn-1", "state": "failed", "error": "boom"})
+    client.post(
+        "/turn-done",
+        json={"turnId": "turn-1", "state": "failed", "error": "claude exited with code 1"},
+    )
     assert client.get("/status").json()["lastError"] is not None
     client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "ok"})
     assert client.get("/status").json()["lastError"] is None
@@ -836,10 +842,14 @@ def test_a_dispatched_turn_is_reported_as_in_flight(world):
 
 def test_a_finished_turn_is_no_longer_in_flight(world):
     """The exact shape of the reported hang: the agent's turn ended, the game
-    is still running, and nothing is playing the seat."""
+    is still running, and nothing is playing the seat - here because the
+    agent is gone, so no continuation could be pushed."""
     client = world.client
     dispatch(client)
-    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "ok"})
+    client.post(
+        "/turn-done",
+        json={"turnId": "turn-1", "state": "failed", "error": "claude exited with code 1"},
+    )
     assert client.get("/status").json()["turnActive"] is False
 
 

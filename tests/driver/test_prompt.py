@@ -25,6 +25,7 @@ from mtg_agent.driver.prompt import (
     NOTES_ROUTING_DURING_GAME,
     Assignment,
     advisor_turn_zero,
+    continue_turn,
     handover_nudge,
     handover_turn,
     memory_index,
@@ -1759,3 +1760,53 @@ def test_the_advisor_prompt_carries_the_same_two_sided_test(guide, tmp_path):
         "what do I lose by acting now instead of waiting, and what do I lose by "
         "waiting instead of acting now" in text
     )
+
+
+# ---- one turn is the whole game: never end it with a summary mid-game ------
+#
+# Live 2026-09-22: the agent ended its own turn mid-game with "I'll pause here
+# and give you the state of play", and nothing ever picked the seat back up.
+
+
+WHOLE_GAME = "Your turn lasts the whole game"
+
+
+def test_turn_zero_says_the_turn_lasts_the_whole_game(tmp_path, guide):
+    text = " ".join(turn_zero(assignment(guide), tmp_path / "current-game.md").split())
+    assert WHOLE_GAME in text
+    assert "never end it with a summary or a checkpoint" in text
+    assert "plan ahead during your opponent's actions" in text.lower()
+
+
+def test_advisor_turn_zero_says_the_turn_lasts_the_whole_game(tmp_path, guide):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert WHOLE_GAME in text
+    assert "never end it with a summary or a checkpoint" in text
+
+
+def test_the_seat_brief_says_the_turn_lasts_the_whole_game():
+    brief = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "magic_cards_model_api"
+        / "docs"
+        / "ai_seat_brief.md"
+    ).read_text()
+    assert WHOLE_GAME in brief
+    assert "never end it with a summary or a checkpoint" in brief
+
+
+def test_continue_turn_tells_a_seat_to_resume_play(guide):
+    text = continue_turn(assignment(guide))
+    assert text.startswith("The game is not over")
+    assert "nobody reads" in text.lower()
+    assert "wait_for_priority" in text and "battlefield_state" in text
+    assert "secret-uid" in text, "the seat's own uid, so the next call needs no lookup"
+    assert "Keep playing" in text
+
+
+def test_continue_turn_tells_a_buddy_to_resume_advising(guide):
+    text = continue_turn(replace(assignment(guide), role="advisor"))
+    assert text.startswith("The game is not over")
+    assert "Keep advising" in text
+    assert "Keep playing" not in text

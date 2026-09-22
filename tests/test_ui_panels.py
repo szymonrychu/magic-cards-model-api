@@ -470,3 +470,41 @@ def test_the_ai_pill_falls_back_to_the_seat_state_when_nothing_was_observed() ->
     )
     assert result["plain"] == "AI (claude): thinking"
     assert result["unreachable"] == "AI (claude): unreachablewhy"
+
+
+def test_a_stalled_seat_reads_as_a_problem_not_as_loading_or_idle() -> None:
+    """`stalled` (`k8s_seats.driver_seat_state`): the game is running and
+    nothing is playing the seat. It must neither pass for a healthy idle nor
+    bring back the "starting the agent" boot banner."""
+    result = run_module(
+        "render/panels.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const store = makeStore({
+            state: baseState(),
+            aiStatus: null,
+            aiUid: "ai-uid",
+            connection: "ok",
+          });
+          m.mountTopbar(document, store, {
+            onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+          });
+          store.set({
+            aiStatus: {
+              uid: "ai-uid", player: "claude", mechanism: "kubernetes", state: "stalled",
+              pod: "Running", reason: "nothing is playing this seat",
+            },
+          });
+          const panel = document.querySelector("#ai-panel");
+          return {
+            text: panel.textContent,
+            className: panel.firstChild.className,
+            banner: document.querySelector("#ai-loading-banner").hidden,
+          };
+        })()
+        """,
+    )
+    assert result["text"].startswith("AI (claude): stalled")
+    assert "bad" in result["className"].split()
+    assert result["banner"] is True

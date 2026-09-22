@@ -82,7 +82,8 @@ function showAiError(root, status) {
   // Two shapes reach here: the subprocess seat (a `returncode` and captured
   // `stderr_tail`) and the wrapper seat (a driver-reported `last_error`).
   // Show whichever the status actually carries.
-  const detail = status.last_error || (status.stderr_tail || []).join("\n") || "no detail was reported";
+  const detail =
+    status.last_error || status.reason || (status.stderr_tail || []).join("\n") || "no detail was reported";
   const heading =
     status.returncode === undefined || status.returncode === null
       ? "AI seat error"
@@ -130,7 +131,9 @@ function renderAiPanel(root, app) {
     );
     return;
   }
-  const bad = status.state === "error" || status.state === "unreachable";
+  // `stalled`: the game is running and nothing is playing the seat - never
+  // painted as a healthy idle.
+  const bad = status.state === "error" || status.state === "unreachable" || status.state === "stalled";
   // What the agent is actually doing, when the wrapper observed it and this
   // page can still stand behind the observation; otherwise the plain seat
   // state, exactly as this pill has always read. The class stays keyed to

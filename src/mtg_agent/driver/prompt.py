@@ -476,6 +476,57 @@ def render_current_game(
     return "\n".join(lines)
 
 
+#: The one sentence both turn-0 prompts and `ai_seat_brief.md` carry about
+#: how long a turn is. Live 2026-09-22 the agent ended its own turn mid-game
+#: with a chat-style "state of play" summary - nobody reads text between
+#: turns, so that summary stranded the seat until a human intervened.
+WHOLE_GAME_TURN = (
+    "Your turn lasts the whole game. Nobody reads what you write between tool\n"
+    "  calls, so never end it with a summary or a checkpoint while the game is\n"
+    "  still running - there is no natural pause to report at. Plan ahead during\n"
+    "  your opponent's actions (their turn, their priority windows) rather than\n"
+    "  stopping to take stock."
+)
+WHOLE_GAME_TURN_ADVISOR = (
+    "Your turn lasts the whole game. Nobody reads what you write between tool\n"
+    "  calls, so never end it with a summary or a checkpoint while the game is\n"
+    "  still running - your human sees only the advice you propose, never prose\n"
+    "  left at the end of a turn. Plan ahead during the opponent's actions rather\n"
+    "  than stopping to take stock."
+)
+
+
+def continue_turn(assignment: Assignment) -> str:
+    """The turn the driver pushes when a turn ended while the game is still
+    running - the agent stopped with a summary, hit a turn limit, or errored
+    without the agent itself being gone. Short on purpose: everything the
+    agent needs is already in this same conversation, and what it lacks is
+    only the instruction to carry on."""
+    uid = assignment.uid
+    if assignment.role == "advisor":
+        role_line = (
+            f"Keep advising {assignment.player!r}: resume your wake loop with "
+            f"`wait_for_priority(player_uid={uid!r}, max_seconds=20)`, or "
+            f"`battlefield_state(player_uid={uid!r})` if you need the whole board "
+            "first, and plan ahead while the opponent acts."
+        )
+    else:
+        role_line = (
+            f"Keep playing: call `wait_for_priority(player_uid={uid!r})` now, or "
+            f"`battlefield_state(player_uid={uid!r})` if you need the whole board "
+            "first, and keep planning ahead while your opponent acts."
+        )
+    return f"""The game is not over - game {assignment.game_id} is still running, and your
+turn just ended.
+
+Nobody reads what you write between turns. A status summary or a "natural
+checkpoint" reaches no one and stops the game for everyone: while the game
+runs, never end your turn with a summary. Your turn lasts until the game shows
+a winner or a draw.
+
+{role_line}"""
+
+
 def turn_zero(assignment: Assignment, current_game_path: Path, briefing: str = "") -> str:
     """Turn 0. `briefing` is the rendered `current-game.md`.
 
@@ -1161,6 +1212,7 @@ than a hedge.
   report. Stopping for any other reason is not allowed. A partially played
   game is worthless. Do not stop because the game is long, because you think
   you are losing, or because you are unsure.
+- {WHOLE_GAME_TURN}
 - In a main phase use `play_land` / `cast` / `activate`, then `pass` for that
   one priority. The moment there is nothing left to do until some later point
   in the turn, reach for `pass_until` to get there in one call - never `pass`
@@ -1501,6 +1553,7 @@ changes.
   seat may do.
 - Keep going until the game is over. A buddy that gives up halfway is worse
   than no buddy, because your human has already learned to look for you.
+- {WHOLE_GAME_TURN_ADVISOR}
 - Never advise on cards you cannot see. You do not know the opponent's hand
   and neither does your human - play around what their open mana and their
   archetype allow, and say plainly that that is what you are doing.

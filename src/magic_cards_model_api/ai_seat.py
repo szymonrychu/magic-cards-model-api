@@ -465,6 +465,18 @@ class AiSeatRegistry:
             status["state"] = "error"
         elif answer.get("pending"):
             status["state"] = "pending"
+        elif (
+            "turnActive" in answer
+            and not answer.get("turnActive")
+            and not answer.get("agentBusy")
+            and answer.get("gameId")
+            and not answer.get("reflected")
+        ):
+            # A game still assigned, not yet reflected on, and no turn in
+            # flight anywhere: nothing is playing this seat, which is not the
+            # healthy `dispatched` - the same `stalled` `k8s_seats.
+            # driver_seat_state` reports for the kubernetes mechanism.
+            status["state"] = "stalled"
         return status
 
     def start(
@@ -651,7 +663,10 @@ class AiSeatRegistry:
             return GONE
         if answer.get("pending"):
             return STARTING
-        if answer.get("turnActive"):
+        if answer.get("turnActive") or answer.get("agentBusy"):
+            # `agentBusy`: claude holds a turn the driver did not push (a
+            # background task woke it, or a message went to the wrapper
+            # directly) - playing all the same.
             return WORKING
         # An older driver that does not report `turnActive` at all: fall back
         # to "it was dispatched and has not errored", which is the most this

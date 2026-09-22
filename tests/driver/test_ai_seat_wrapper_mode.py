@@ -296,3 +296,24 @@ def test_creation_alone_dispatches_the_ai_seat_in_wrapper_mode(client, driver) -
     status = ai_seat.registry.status(bot_uid)
     assert status is not None
     assert status["mechanism"] == "wrapper"
+
+
+# ---- an active turn is never idle, a stranded mid-game seat is not healthy ---
+
+
+def test_a_seat_whose_wrapper_holds_a_turn_the_driver_did_not_push_is_working(
+    driver_with_status,
+):
+    driver_with_status["turnActive"] = False
+    driver_with_status["agentBusy"] = True
+    assert started().activity("u") == ai_seat.WORKING
+
+
+def test_status_says_stalled_for_a_running_game_nothing_is_playing(driver_with_status):
+    driver_with_status.update(turnActive=False, agentBusy=False, gameId="g", reflected=False)
+    assert started().status("u")["state"] == "stalled"
+
+
+def test_status_stays_dispatched_while_the_wrapper_holds_a_turn(driver_with_status):
+    driver_with_status.update(turnActive=False, agentBusy=True, gameId="g", reflected=False)
+    assert started().status("u")["state"] == "dispatched"

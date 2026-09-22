@@ -1525,3 +1525,56 @@ def test_release_deletes_the_buddy_job_by_its_own_name() -> None:
     released = seats.release("a1")
     assert batch.deleted == ["mtg-buddy-g1-a1"] and released["deleted"] is True
     assert seats.status("a1") is None
+
+
+# ---- an active turn is never "idle"; a stranded mid-game seat is not either --
+#
+# Live 2026-09-22 the play UI's pill read "AI (claude): idle" while the agent
+# was mid-turn planning: `turnActive` only knows the turns the driver itself
+# pushed, and every other shape fell through to "idle".
+
+
+def _state_for(driver_status: dict) -> str:
+    seats, _, _ = make(status=driver_status)
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    return seats.status("u1")["state"]
+
+
+def test_status_is_thinking_when_the_wrapper_holds_a_turn_the_driver_did_not_push() -> None:
+    assert (
+        _state_for(
+            {
+                "turnActive": False,
+                "agentBusy": True,
+                "pending": False,
+                "lastError": None,
+                "gameId": "g1",
+                "reflected": False,
+            }
+        )
+        == "thinking"
+    )
+
+
+def test_status_is_stalled_when_nothing_plays_a_seat_whose_game_is_running() -> None:
+    assert (
+        _state_for(
+            {
+                "turnActive": False,
+                "agentBusy": False,
+                "pending": False,
+                "lastError": None,
+                "gameId": "g1",
+                "reflected": False,
+            }
+        )
+        == "stalled"
+    )
+
+
+def test_status_is_idle_only_for_a_driver_with_no_game_left_to_play() -> None:
+    idle = {"turnActive": False, "agentBusy": False, "pending": False, "lastError": None}
+    assert _state_for(idle | {"gameId": None, "reflected": False}) == "idle"
+    assert _state_for(idle | {"gameId": "g1", "reflected": True}) == "idle"

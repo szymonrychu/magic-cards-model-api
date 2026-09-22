@@ -315,6 +315,27 @@ def _default_http(base: str) -> httpx.Client:
     return httpx.Client(base_url=base, timeout=10.0)
 
 
+def driver_seat_state(driver: dict[str, Any]) -> str:
+    """The seat state word for a reachable driver's `/status` with no error.
+
+    `thinking` whenever claude holds a turn - one the driver pushed
+    (`turnActive`) or one it did not (`agentBusy`, the wrapper's own session
+    state: an agent woken by a background task, or a message sent to the
+    wrapper directly). `turnActive` alone used to read such an agent as
+    `idle` while it was mid-turn planning. `stalled` for a seat with a game
+    still assigned and not yet reflected on but no turn in flight: nothing is
+    playing it, which is not a healthy idle. `idle` is left for a driver with
+    no game to play.
+    """
+    if driver.get("turnActive") or driver.get("agentBusy"):
+        return "thinking"
+    if driver.get("pending"):
+        return "pending"
+    if driver.get("gameId") and not driver.get("reflected"):
+        return "stalled"
+    return "idle"
+
+
 class K8sSeats:
     """One Kubernetes Job per AI seat: create it, watch it, reconcile it
     against the games actually still live, and answer status/release for one
@@ -568,11 +589,7 @@ class K8sSeats:
                 "pod": phase,
                 "driver": driver,
             }
-        state = (
-            "thinking"
-            if driver.get("turnActive")
-            else ("pending" if driver.get("pending") else "idle")
-        )
+        state = driver_seat_state(driver)
         # What the agent is doing right now, as one coarse word the driver
         # read off its own agent container's transcript watcher
         # (`mtg_agent/wrapper/activity.py`) - the play UI's AI pill shows it
@@ -583,7 +600,11 @@ class K8sSeats:
         return {
             **base,
             "state": state,
-            "reason": None,
+            "reason": (
+                "the agent's turn ended while the game is still running"
+                if state == "stalled"
+                else None
+            ),
             "pod": phase,
             "driver": driver,
             "activity": activity if isinstance(activity, dict) else None,

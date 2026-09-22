@@ -81,6 +81,7 @@ from .handover import (
 from .prompt import (
     Assignment,
     advisor_turn_zero,
+    continue_turn,
     handover_nudge,
     handover_turn,
     plan_header,
@@ -127,6 +128,30 @@ REVIEW_HTTP_TIMEOUT = 1260.0
 #: (1740s, `deploy/seat-job.yaml`): past that the kubelet cuts the join
 #: short anyway and the bound stops meaning anything.
 RETIRE_REVIEW_JOIN_TIMEOUT = REVIEW_HTTP_TIMEOUT + 70.0
+
+#: The auto-continue loop guard. One wrapper turn is meant to cover a whole
+#: match, so a turn that ends while the game runs is followed at once by a
+#: continuation turn (`continue_turn`). A continuation that ends within
+#: `CONTINUE_QUICK_SECONDS` did no real play; `CONTINUE_QUICK_LIMIT` of those
+#: in a row means the agent ends every turn the moment it starts (a broken
+#: session, a prompt it keeps refusing), and pushing more would spin forever -
+#: so the driver stops, logs an error and files a problem report instead. A
+#: continuation that runs longer resets the count.
+CONTINUE_QUICK_SECONDS = 30.0
+CONTINUE_QUICK_LIMIT = 3
+
+#: How long `turn_done` waits before checking a game it could not read once
+#: more. One retry, bounded: a game server restarting is back well inside
+#: this, and one that is not is reported through `lastError` rather than
+#: leaving the seat idle with nobody told.
+UNREACHABLE_RETRY_SECONDS = 5.0
+
+#: How the wrapper words a failed turn when the agent itself is gone
+#: (`wrapper.session.Manager._finish_failed`): claude exited, reported a fatal
+#: error (auth, quota), or its PTY stopped taking input. Pushing a
+#: continuation at those cannot help; they keep the pre-continuation
+#: handling, a `lastError` the game server reads as an error.
+AGENT_GONE_ERRORS = ("claude exited", "claude reported a fatal error", "write to pty failed")
 
 #: How much of the agent's own account of a turn goes into the container log.
 #: The whole `finalText` can be a page; the first paragraphs are where the
@@ -350,6 +375,16 @@ def build_app(
         # everything else assignment-scoped, once `retire` has already
         # joined whatever it named.
         "reviewThread": None,
+        # Auto-continue bookkeeping (`continue_play`): the continuation turn
+        # in flight and when it was pushed, how many continuations in a row
+        # ended within `CONTINUE_QUICK_SECONDS`, and every turn id whose
+        # `/turn-done` was already handled - `webhook.Deliverer` retries a
+        # slow delivery, and a retry must not push a second continuation or
+        # mark the turn now in flight as finished.
+        "continuationTurnId": None,
+        "continuationStarted": 0.0,
+        "quickContinuations": 0,
+        "doneTurns": set(),
     }
 
     def clear_locked() -> None:
@@ -365,6 +400,10 @@ def build_app(
             reflectionHandled=False,
             aiReviewConsidered=False,
             reviewThread=None,
+            continuationTurnId=None,
+            continuationStarted=0.0,
+            quickContinuations=0,
+            doneTurns=set(),
         )
 
     def seed_plan_file(assignment: Assignment) -> None:
@@ -1396,12 +1435,19 @@ def build_app(
             reflected = current["reflected"]
             reflection_id = current["reflectionTurnId"]
             active = current["handover"]
+            duplicate = (
+                bool(finished) and finished != reflection_id and (finished in current["doneTurns"])
+            )
+            if finished and not duplicate:
+                current["doneTurns"].add(finished)
             if active is None:
                 # The turn the agent just finished is no longer in flight. Set
-                # before anything else here, so a reflection push below can
-                # turn it back on and a game that is still running reports the
-                # truth: nothing is playing this seat at the moment.
-                current["turnActive"] = False
+                # before anything else here, so a continuation or reflection
+                # push below can turn it back on. A retried delivery of a turn
+                # already handled leaves it alone: the turn in flight now is a
+                # later one, and it has not finished.
+                if not duplicate:
+                    current["turnActive"] = False
             elif active["turnId"] is not None and finished == active["turnId"]:
                 current["turnActive"] = False
                 active["done"].set()
@@ -1466,17 +1512,143 @@ def build_app(
             }
         if reflected:
             return {"ignored": "already reflected"}
+        if duplicate:
+            return {"ignored": "duplicate delivery"}
+        error = str(record.get("error") or "")
+        agent_gone = error.startswith(AGENT_GONE_ERRORS)
+        return settle_turn(assignment, finished, agent_gone=agent_gone, retry=True)
 
+    def retry_unreachable(assignment: Assignment, finished: str | None, agent_gone: bool) -> None:
+        """`settle_turn`'s one delayed re-check of a game it could not read.
+
+        Skipped when anything moved on meanwhile: the assignment was retired
+        or replaced, a handover started, the game was reflected on, or some
+        other turn is in flight."""
+        time.sleep(UNREACHABLE_RETRY_SECONDS)
+        with lock:
+            moved_on = (
+                current["assignment"] is not assignment
+                or current["handover"] is not None
+                or current["reflected"]
+                or current["turnActive"]
+            )
+        if moved_on:
+            return
+        settle_turn(assignment, finished, agent_gone=agent_gone, retry=False)
+
+    def file_problem_report(assignment: Assignment, text: str) -> None:
+        """The same row the `mtg` MCP server's `report_problem` tool files
+        (`POST /api/games/{id}/report`), under this seat's own uid. Best
+        effort: an unreachable game server is logged, never raised."""
+        try:
+            with make_client(settings.game_api) as client:
+                response = client.post(
+                    f"/api/games/{assignment.game_id}/report",
+                    params={"uid": assignment.uid},
+                    json={"player": assignment.player, "text": text},
+                )
+            if response.status_code >= 400:
+                log.warning(
+                    "game server refused the problem report for game %s: %s",
+                    assignment.game_id,
+                    response.status_code,
+                )
+        except Exception as exc:  # noqa: BLE001 - a report must never break the driver
+            log.warning("could not file a problem report for game %s: %s", assignment.game_id, exc)
+
+    def continue_play(assignment: Assignment, finished: str | None) -> dict:
+        """Push a continuation turn: the game is still running and nothing
+        is playing the seat. See `CONTINUE_QUICK_SECONDS` for the guard."""
+        with lock:
+            if (
+                current["assignment"] is not assignment
+                or current["handover"] is not None
+                or current["reflected"]
+            ):
+                return {"ignored": "assignment moved on"}
+            if finished and finished == current["continuationTurnId"]:
+                quick = now() - current["continuationStarted"] < CONTINUE_QUICK_SECONDS
+                current["quickContinuations"] = current["quickContinuations"] + 1 if quick else 0
+            tripped = current["quickContinuations"] >= CONTINUE_QUICK_LIMIT
+            if tripped:
+                reason = (
+                    f"stopped auto-continuing: {current['quickContinuations']} continuation "
+                    f"turns in a row each ended within {CONTINUE_QUICK_SECONDS:g}s while "
+                    "the game was still running"
+                )
+                current["lastError"] = reason
+        if tripped:
+            log.error("game %s (%s): %s", assignment.game_id, assignment.player, reason)
+            file_problem_report(
+                assignment,
+                f"The driver {reason}. The agent keeps ending its turn at once; "
+                "the seat is no longer being played and needs a look.",
+            )
+            return {"ignored": "continuation loop", "gameId": assignment.game_id}
+        try:
+            turn_id = push_turn(continue_turn(assignment))
+        except AgentUnavailable as exc:
+            log.error(
+                "game %s is still running but the agent could not continue: %s",
+                assignment.game_id,
+                exc,
+            )
+            with lock:
+                if current["assignment"] is assignment:
+                    current["lastError"] = f"could not continue the game: {exc}"
+            return {"ignored": "agent unavailable", "gameId": assignment.game_id}
+        with lock:
+            if current["assignment"] is assignment:
+                current.update(
+                    lastTurnId=turn_id,
+                    turnActive=True,
+                    lastError=None,
+                    continuationTurnId=turn_id,
+                    continuationStarted=now(),
+                )
+        log.info(
+            "game %s still running after turn %s, continuation turn %s",
+            assignment.game_id,
+            finished or "?",
+            turn_id,
+        )
+        return {"continued": turn_id, "gameId": assignment.game_id}
+
+    def settle_turn(
+        assignment: Assignment, finished: str | None, *, agent_gone: bool, retry: bool
+    ) -> dict:
+        """A play turn ended outside any handover: continue the game, or
+        reflect on it once it is over."""
         try:
             state = game_state(assignment.game_id, assignment.uid)
         except httpx.HTTPError as exc:
-            log.warning("could not read game state after a turn: %s", exc)
+            if retry:
+                log.warning(
+                    "could not read game state after a turn, checking again in %gs: %s",
+                    UNREACHABLE_RETRY_SECONDS,
+                    exc,
+                )
+                threading.Thread(
+                    target=retry_unreachable,
+                    args=(assignment, finished, agent_gone),
+                    daemon=True,
+                    name="driver-unreachable-retry",
+                ).start()
+            else:
+                log.error("game %s still unreachable after a retry: %s", assignment.game_id, exc)
+                with lock:
+                    if current["assignment"] is assignment:
+                        current["lastError"] = (
+                            f"game server unreachable after turn {finished or '?'}: {exc}"
+                        )
             return {"ignored": "game unreachable"}
 
         winner = state.get("winner")
         drawn = bool(state.get("drawn"))
         if not winner and not drawn:
-            return {"ignored": "game still running"}
+            if agent_gone:
+                return {"ignored": "game still running"}
+            return continue_play(assignment, finished)
 
         outcome = f"{winner} won" if winner else "the game was a draw"
         try:
@@ -1554,7 +1726,7 @@ def build_app(
         """Start the handover, or join the one running; see `start_handover`."""
         return start_handover(body.outcome)
 
-    def agent_activity() -> dict[str, Any] | None:
+    def agent_session() -> dict[str, Any] | None:
         """What the agent is doing right now, read off the wrapper.
 
         The agent's own listener is not reachable from outside the pod, and
@@ -1566,6 +1738,9 @@ def build_app(
         agent, a wrapper old enough to 404 the route, a non-JSON body and an
         `activity` that is not an object all come back as `None`, which the
         UI reads as "fall back to the plain state word".
+
+        Answers the wrapper's whole session object, so `/status` can carry
+        both its `activity` and its own `state` word.
         """
         try:
             with make_client(settings.wrapper_api) as client:
@@ -1584,21 +1759,26 @@ def build_app(
             answer = response.json()
         except ValueError:
             return None
-        if not isinstance(answer, dict):
-            return None
-        activity = answer.get("activity")
-        return activity if isinstance(activity, dict) else None
+        return answer if isinstance(answer, dict) else None
 
     @app.get("/status")
     def status() -> dict:
         # Outside the lock: it is an HTTP round trip, and nothing below
         # depends on it being consistent with the snapshot taken under the
         # lock - it is one coarse word about the agent, not driver state.
-        activity = agent_activity()
+        session = agent_session() or {}
+        activity = session.get("activity")
         with lock:
             assignment = current["assignment"]
             return {
-                "agentActivity": activity,
+                "agentActivity": activity if isinstance(activity, dict) else None,
+                # The wrapper's own "claude holds a turn" (`session.State.
+                # BUSY`), whoever pushed that turn. `turnActive` only knows
+                # the turns this driver pushed; an agent woken by a
+                # background task's notification, or by a message sent to
+                # the wrapper directly, is working all the same, and must
+                # never read as idle.
+                "agentBusy": session.get("state") == "busy",
                 "gameId": assignment.game_id if assignment else None,
                 "player": assignment.player if assignment else None,
                 "deck": (assignment.guide.slug if assignment and assignment.guide else None),
