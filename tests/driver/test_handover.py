@@ -472,3 +472,51 @@ def test_the_prestop_module_gives_up_after_wait_seconds_and_still_exits_zero(tmp
 
 def test_the_prestop_module_exits_zero_on_arguments_it_cannot_read(tmp_path):
     assert handover.main(["--wait", "soon"], env={"DRIVER_WORKSPACE": str(tmp_path)}) == 0
+
+
+# ---- D1: after a concede the seat reflects, then writes the guide updates ----
+
+
+def test_after_a_concede_the_reflection_runs_and_the_review_carries_it(world):
+    """A3: a natural game over - a concede included - no longer releases the
+    AI seat, so the driver sees the game over on its next turn, reads both
+    lists with the seat's own uid, reflects, and files the review with the
+    reflection's own text rather than taking `handover_without_reflection`."""
+    dispatch(world)
+    world.state["winner"] = "alice"
+    finish(world, "turn-1", "conceded")
+    assert "The game is over" in world.submitted[1]["text"]
+    assert {"uid": world.uid, "over": True} in world.seat_reads
+
+    finish(world, "turn-2", "they curved out and I kept a slow hand")
+    wait_for(lambda: world.review_requests)
+    prompt = world.review_requests[0]["prompt"]
+    assert "they curved out and I kept a slow hand" in prompt
+    assert "(the seat left no reflection)" not in prompt
+    assert "Opponent's deck: no guide" in prompt
+
+    turn_id = handover_turn_id(world)
+    text = " ".join(handover_turns(world)[0]["text"].split())
+    assert "Opponent's deck: no guide" in text
+    assert "## Guide updates" in handover_turns(world)[0]["text"]
+    finish(world, turn_id)
+    wait_for(lambda: world.ai_review_posts)
+    assert world.ai_review_failures == []
+
+
+def test_a_handover_after_game_over_identifies_the_opponent_lazily(world):
+    """No reflection ran (the preStop arrived first): the handover still
+    reads the revealed list before it writes the turn."""
+    dispatch(world)
+    world.state["winner"] = "alice"
+    world.client.post("/handover", json={})
+    handover_turn_id(world)
+    assert {"uid": world.uid, "over": True} in world.seat_reads
+    assert "Opponent's deck: no guide" in " ".join(handover_turns(world)[0]["text"].split())
+
+
+def test_a_release_mid_game_has_no_revealed_list_and_says_so(world):
+    dispatch(world)
+    world.client.post("/release", json={})
+    handover_turn_id(world)
+    assert "Opponent's deck: not revealed" in " ".join(handover_turns(world)[0]["text"].split())

@@ -33,6 +33,7 @@ from magic_cards_model_api.playscripts.schema import (
 from .guides import (
     CONFIDENT,
     LOW,
+    NONE,
     UNKNOWN_ARCHETYPE,
     Candidate,
     DeckGuide,
@@ -43,7 +44,9 @@ from .guides import (
 from .handover import HANDOVER_BUDGET_SECONDS, NUDGE_AFTER_SECONDS
 from .matchup_card import (
     guide_paths,
+    load_boarding_plan,
     matchup_note_key,
+    matchup_row,
     render_matchup_card,
 )
 from .revision import UNKNOWN_REVISION
@@ -102,6 +105,23 @@ class Assignment:
     Carried from `DispatchIn.role`, and the one thing that picks
     `advisor_turn_zero` over `turn_zero`. Defaulted, so a dispatch from a
     caller that predates roles is a seat, unchanged."""
+
+    opponent_identification: Identification | None = None
+    """What the classifier said about the OPPONENT's list, which the lobby
+    reveals to this game's own credentials once the game is over (A2). Read
+    by the driver before the reflection turn, or lazily when the handover
+    starts first. `None` when the list could not be read - mid-game, an
+    unreachable lobby, a board with no decklists - and the prompts then state
+    their fallback: name the deck from what the board showed."""
+
+    opponent_checked: bool = False
+    """Whether the driver has already tried to identify the opponent, so the
+    post-game read happens once whichever of the reflection and the handover
+    reaches it first."""
+
+    stub_decks: tuple[str, ...] = ()
+    """The corpus's stub decks (`GuideLibrary.stub_decks`), listed with the
+    opponent so a seat facing an unguided deck reuses its stub."""
 
     @property
     def guide(self) -> DeckGuide | None:
@@ -1239,19 +1259,270 @@ than a hedge.
 Begin."""
 
 
-def reflection_turn(assignment: Assignment, memory_root: Path, outcome: str) -> str:
-    slug = assignment.deck_slug
-    deck_dir = Path(memory_root) / slug
-    return f"""The game is over: {outcome}
+# ---- the opponent's deck, revealed once the game is over (D1) -------------
+#
+# The lobby reveals both lists to the game's own credentials after game over,
+# and the driver runs the opponent's through the classifier the seat's own
+# went through (`Assignment.opponent_identification`). The reflection, the
+# handover, its nudge and the reviewer all say the same thing about it, so it
+# is rendered here once.
 
-Write up what you learned, so the next game on this deck starts from it.
+#: What the propose command names the opponent's deck when the driver cannot:
+#: a list it never read, an unguided deck's stub, a family's branch.
+OPPONENT_SLUG = "<opponent-slug>"
+STUB_SLUG = "<stub-slug>"
+BRANCH_SLUG = "<branch-slug>"
 
-1. `{deck_dir / "games" / f"{assignment.game_id}.md"}` - the plan file you wrote
-   at the start of the game. Finish it: the result,
-   what your opponent turned out to be playing and how early you knew, the two
-   or three decisions that actually decided it, and what you would do
-   differently.
-2. `{deck_dir / "vs-<archetype>.md"}` - your standing read on this matchup,
+SEAT_ROW = 'no row - append one with `origin: "seat"`'
+
+
+def _is_mirror(assignment: Assignment) -> bool:
+    opponent = assignment.opponent_identification
+    return (
+        assignment.guide is not None
+        and opponent is not None
+        and opponent.guide is not None
+        and opponent.guide.slug == assignment.guide.slug
+    )
+
+
+def _opponent_slug(assignment: Assignment) -> str:
+    opponent = assignment.opponent_identification
+    if opponent is None:
+        return OPPONENT_SLUG
+    if opponent.guide is not None:
+        return opponent.guide.slug
+    return BRANCH_SLUG if opponent.confidence == LOW else STUB_SLUG
+
+
+def _confidence(identification: Identification) -> str:
+    return "confident" if identification.confidence == CONFIDENT else "low confidence"
+
+
+def _own_plan(assignment: Assignment) -> dict | None:
+    return load_boarding_plan(assignment.guide)
+
+
+def _no_plan(assignment: Assignment) -> str | None:
+    """Why the matchup has no plan row to go in, or `None` when it has."""
+    if assignment.guide is None:
+        return "none - your own list has no guide"
+    if _own_plan(assignment) is None:
+        return (
+            "your deck has no boarding plan - the matchup note goes in "
+            f"`decks/{assignment.deck_slug}/NOTES.md`"
+        )
+    return None
+
+
+def _row(assignment: Assignment, archetype: str | None) -> str:
+    """Where the matchup against `archetype` lives in the seat's own plan."""
+    missing = _no_plan(assignment)
+    if missing is not None:
+        return missing
+    found = matchup_row(_own_plan(assignment), archetype)
+    if found is None:
+        return SEAT_ROW
+    index, name = found
+    return f"`{name}` = matchups[{index}]"
+
+
+def _deduced_row(assignment: Assignment) -> str:
+    missing = _no_plan(assignment)
+    if missing is not None:
+        return missing
+    return f"the row named for the archetype you deduced, if there is one; otherwise {SEAT_ROW}"
+
+
+def _runners_up(assignment: Assignment, identification: Identification) -> str:
+    rows = [
+        f"`{c.slug}` (archetype `{c.archetype}`, {_clause_count(c)}; your plan's row: "
+        f"{_row(assignment, c.archetype)})"
+        for c in identification.alternatives
+    ]
+    return "Runners-up: " + "; ".join(rows) + "." if rows else ""
+
+
+def _stub_rule(assignment: Assignment) -> str:
+    stubs = (
+        "Existing stubs: "
+        + ", ".join(f"`{slug}`" for slug in assignment.stub_decks)
+        + " - reuse the one that is this deck."
+        if assignment.stub_decks
+        else "Existing stubs: none yet."
+    )
+    return (
+        "create a stub `decks/<slug>/NOTES.md` for it, `<slug>` being the archetype you "
+        "deduced, slugified: lowercase, every run of other characters one `-` "
+        f"(`ur cutter prowess` is `ur-cutter-prowess`), and `{STUB_SLUG}` in the command "
+        f"below. {stubs} A new stub whose slug is a guided deck's directory or its "
+        "archetype name is refused: that deck has a guide, so use its slug instead."
+    )
+
+
+def opponent_block(assignment: Assignment) -> str:
+    """What the seat is told about the opponent's deck after the game: the
+    deck, how sure the classifier is, and the seat's own plan row for it.
+
+    Five outcomes. A classified deck names its slug and archetype, and a low
+    one its runners-up; an unguided deck gets a stub; a mirror is one update;
+    a list the driver never read states the fallback - go by what the board
+    showed."""
+    opponent = assignment.opponent_identification
+    if opponent is None:
+        return (
+            "Opponent's deck: not revealed - the driver could not read their decklist "
+            "after the game. Go by what you saw: if it was a guided deck (a `decks/<slug>/` "
+            f"in /guides with a `decklist.txt`), use that slug for `{OPPONENT_SLUG}`; "
+            f"otherwise {_stub_rule(assignment)} Your plan's row: {_deduced_row(assignment)}."
+        )
+    if opponent.confidence == NONE:
+        return (
+            "Opponent's deck: no guide - no deck in the guides corpus matches their "
+            f"revealed list. So {_stub_rule(assignment)} Your plan's row: "
+            f"{_deduced_row(assignment)}."
+        )
+    archetype = opponent.archetype or UNKNOWN_ARCHETYPE
+    if opponent.guide is None:
+        branches = ", ".join(f"`{c.slug}`" for c in opponent.leaders)
+        return (
+            f"Opponent's deck: some kind of `{archetype}` (low confidence: {branches} "
+            f"matched equally; your plan's row: {_row(assignment, archetype)}). "
+            f"{_runners_up(assignment, opponent)} Pick the branch the board showed, and "
+            f"use its slug for `{BRANCH_SLUG}`."
+        )
+    text = (
+        f"Opponent's deck: `{opponent.guide.slug}` ({_confidence(opponent)}; archetype "
+        f"`{archetype}`; your plan's row: {_row(assignment, archetype)})."
+    )
+    if opponent.confidence == LOW:
+        runners_up = _runners_up(assignment, opponent)
+        text += (
+            f" {runners_up} A low-confidence match: if the board showed a runner-up "
+            "instead, write to that deck and its row."
+            if runners_up
+            else " A low-confidence match, with no runner-up: trust what the board showed."
+        )
+    if _is_mirror(assignment):
+        text += (
+            " mirror: one update - they were on your own deck, so the own-deck and the "
+            f"opponent notes are one file, `decks/{assignment.deck_slug}/NOTES.md`, and "
+            "`guides propose` takes a single `--deck`."
+        )
+    return text
+
+
+def _opponent_reveal(assignment: Assignment) -> str:
+    """The reflection's one paragraph on the revealed deck."""
+    opponent = assignment.opponent_identification
+    if opponent is None:
+        return (
+            "The driver could not read your opponent's decklist after the game, so their "
+            "deck is not revealed: go by what you saw."
+        )
+    if opponent.confidence == NONE:
+        return (
+            "Your opponent's decklist is revealed now, and no deck in the guides corpus "
+            "matches it: go by what you saw."
+        )
+    named = f"`{opponent.guide.slug}`" if opponent.guide else f"some kind of `{opponent.archetype}`"
+    text = (
+        "Your opponent's decklist is revealed now that the game is over: "
+        f"{named} ({_confidence(opponent)}; archetype `{opponent.archetype}`)."
+    )
+    if opponent.confidence == LOW and opponent.alternatives:
+        text += f" Also plausible: {_named(opponent.alternatives)}."
+    if _is_mirror(assignment):
+        text += " A mirror: they were on your own deck."
+    return text
+
+
+def guides_propose_command(assignment: Assignment) -> str:
+    """The one `guides propose` call that lands every guide update: the
+    seat's own deck when it has a guide (O4), and the opponent's, once."""
+    decks = [assignment.deck_slug] if assignment.guide is not None else []
+    theirs = _opponent_slug(assignment)
+    if theirs not in decks:
+        decks.append(theirs)
+    flags = " ".join(f"--deck {slug}" for slug in decks)
+    return f"mcp-seat guides propose {flags} --game-id {assignment.game_id}"
+
+
+#: How to act on each `guides propose` result.
+PROPOSE_RESULTS = (
+    "Read its `result` and act on it: `admitted` - live on mtg-decks main, done; "
+    "`conflict` - main moved under your edit and both sides now sit between conflict "
+    "markers in the files it names: resolve each keeping both sides' intent, then run "
+    "the same command again; `error` with `retryable: true` - it lost three push races: "
+    "run the same command again; `refused`, `refused_content` or `gate_failed` - fix "
+    "what it names and run it again."
+)
+
+
+def guide_updates(assignment: Assignment) -> str:
+    """The three guide updates a finished game owes: the opponent block, the
+    three targets, the one command and how to read its result."""
+    own = assignment.deck_slug
+    theirs = _opponent_slug(assignment)
+    if assignment.guide is None:
+        own_targets = (
+            "(a) and (c): skip the own-deck update - your own list has no guide, so there "
+            "is no own deck file or plan to write to. Write (b) only."
+        )
+    else:
+        own_targets = (
+            f"(a) Your own deck, `decks/{own}/NOTES.md`: how this game was won or lost, "
+            "and what to watch out for next time."
+        )
+    targets = [own_targets]
+    if _is_mirror(assignment):
+        targets.append(
+            f"(b) The opponent's deck is yours too: add their strategy as you saw it to "
+            f"the same `decks/{own}/NOTES.md`."
+        )
+    else:
+        targets.append(
+            f"(b) The opponent's deck, `decks/{theirs}/NOTES.md`: their strategy as you "
+            "saw it play out - what they did, in what order, and which cards carried it."
+        )
+    if assignment.guide is not None:
+        if _own_plan(assignment) is None:
+            targets.append(
+                "(c) The matchup: your deck has no boarding plan, so how to win this "
+                f"matchup goes into `decks/{own}/NOTES.md` with (a)."
+            )
+        else:
+            targets.append(
+                "(c) The matchup, in your plan's row named above: `play_plan` and `notes` "
+                "on how to win this matchup. With no row, append one to `matchups[]`: "
+                '`{"name": "<their archetype>", "origin": "seat", "play_plan": {"keep": '
+                '"", "goldfish_for": "", "watch_for": "", "posture": "", "posture_why": '
+                '""}, "notes": ["..."]}` - exactly those keys, the five `play_plan` '
+                "strings filled, and a `name` that slugifies to no existing row."
+            )
+    return "\n\n".join(
+        [
+            opponent_block(assignment),
+            "Three guide updates, required every game, each written from what THIS game "
+            "showed - your finished plan file and `vs-` note already hold it:",
+            "\n".join(targets),
+            "Land them with one command, once they are written:\n"
+            f"`{guides_propose_command(assignment)}`",
+            PROPOSE_RESULTS,
+        ]
+    )
+
+
+def _vs_note(assignment: Assignment, deck_dir: Path) -> str:
+    opponent = assignment.opponent_identification
+    if opponent is not None and opponent.confidence != NONE and opponent.archetype:
+        key = matchup_note_key(opponent.archetype)
+        return f"""`{deck_dir / f"vs-{key}.md"}` - your standing read on this matchup,
+   keyed on the revealed deck's archetype, `{opponent.archetype}`. Create it
+   if it does not exist, and revise it rather than appending if it does: their
+   threats, your answers, which cards are dead, what the race maths looks
+   like, mulligan policy."""
+    return f"""`{deck_dir / "vs-<archetype>.md"}` - your standing read on this matchup,
    keyed on the archetype you deduced, spelled exactly as the matchup card's
    tells table spells it, or on `{UNKNOWN_ARCHETYPE}` if what they played
    matched none of those rows. Never a name of your own invention: the next
@@ -1259,7 +1530,28 @@ Write up what you learned, so the next game on this deck starts from it.
    under a name nobody looks up is a note you wrote for nothing. Create it if
    it does not exist, and revise it rather than appending if it does: their
    threats, your answers, which cards are dead, what the race maths looks
-   like, mulligan policy.
+   like, mulligan policy."""
+
+
+def reflection_turn(assignment: Assignment, memory_root: Path, outcome: str) -> str:
+    slug = assignment.deck_slug
+    deck_dir = Path(memory_root) / slug
+    return f"""The game is over: {outcome}
+
+{_opponent_reveal(assignment)}
+
+Write up what you learned, so the next game on this deck starts from it.
+
+1. `{deck_dir / "games" / f"{assignment.game_id}.md"}` - the plan file you wrote
+   at the start of the game. Finish it: the result, what your opponent turned
+   out to be playing and how early you knew, the two or three decisions that
+   actually decided it, and what you would do differently. Then the three
+   things your handover turns into guide updates:
+   - your own deck: how this game was won or lost, and what to watch out for
+     next time;
+   - the opponent's strategy as you saw it play out;
+   - how to win this matchup.
+2. {_vs_note(assignment, deck_dir)}
 3. `{Path(memory_root) / "MEMORY.md"}` - one line per note, `- [title](path) -
    hook`. Add lines for anything new; do not restate the note's contents there.
 
@@ -1782,13 +2074,24 @@ WRITE_CHANNELS_HEADING = "The two channels you write through, and how far each o
 #: `playscripts.admit` enforces server-side, so the bound stated here is the
 #: bound that is actually checked.
 #:
-#: **Prose over a play change, and why the text says so in those words.**
-#: `WRITE_BARS` above already gates a NEW play behind two distinct-game
-#: declines; this goes further and tells the reviewer which of its two tools
-#: to reach for at all. A `guides propose` edit is advice a pilot reads and
-#: weighs before acting on it - the backstop a judgement call needs - while a
-#: play landed by `plays admit` runs by itself the next time its conditions
-#: hold, with nobody weighing it first.
+#: **Both channels land on main with no human review.** `guides propose`
+#: pushes to mtg-decks main once its in-pod gates pass, exactly like `plays
+#: admit`, so the text says so rather than promising a reader who does not
+#: exist.
+#:
+#: **Prose over a play change, argued without a human reader.** `WRITE_BARS`
+#: above already gates a NEW play behind two distinct-game declines; this
+#: goes further and tells the reviewer which of its two tools to reach for at
+#: all. The case for prose never rested on a human gate: a guide sentence is
+#: read by the next pilot - a seat, from its matchup card and notes - who
+#: weighs it against the board in front of it before acting, and can decide
+#: it does not apply. A play landed by `plays admit` runs by itself the next
+#: time its conditions hold, and nothing weighs it first.
+#:
+#: **Conflict markers, resolved with Edit.** The reviewer holds no git and
+#: no shell beyond `mcp-seat`, but it does hold Edit - which is all a
+#: `conflict` result asks for: the markers are left in the working tree, with
+#: no rebase state behind them.
 #:
 #: **Priority is still never the answer** (restated from `WRITE_BARS`' own
 #: note for the same reason as the rest of this block: a reviewer reading
@@ -1796,13 +2099,17 @@ WRITE_CHANNELS_HEADING = "The two channels you write through, and how far each o
 #: `plays priority` call changes which applicable play is TRIED first, never
 #: whether a play applies where it should not, so a misplay that is a rule
 #: belongs in that play's own conditions and nowhere else.
-WRITE_CHANNELS = f"""`mcp-seat guides propose` may change ONLY `matchups[].play_plan` and
-`matchups[].notes` of the deck's newest
-`analysis/*/domain3-matchup-threat/boarding-plan.json`, plus
-`decks/<slug>/NOTES.md` - nothing else in either file, and no other file.
-It is pushed straight to mtg-decks main once its in-pod gates pass and
-returns `admitted`: it is live at once. A `conflict` result leaves both sides
-between conflict markers in the files; resolve them and run it again.
+WRITE_CHANNELS = f"""`mcp-seat guides propose --deck SLUG [--deck SLUG ...] --game-id GAME` may
+change ONLY `matchups[].play_plan` and `matchups[].notes` of each guided
+deck's newest `analysis/*/domain3-matchup-threat/boarding-plan.json` - or
+append a row there carrying `origin: "seat"` - plus `decks/<slug>/NOTES.md`
+of each deck it names, a stub's included (a `decks/<slug>/` holding only
+`NOTES.md`, for an opponent deck with no guide) - nothing else in either
+file, and no other file. It is pushed straight to mtg-decks main once its
+in-pod gates pass and returns `admitted`: it is live at once, with no human
+review. A `conflict` result leaves both sides between conflict markers in the
+files it names: resolve them with Edit, keeping both sides' intent, and run
+the same command again. `error` with `retryable: true` means run it again.
 
 `mcp-seat plays admit` takes play-script changes under `decks/*/plays/**`
 straight to mtg-decks main, after the in-pod gate (`mcp-seat plays check`
@@ -1813,9 +2120,11 @@ you use most conservatively of the two.
 
 Prefer prose. When the misplay you found is a judgement call - which line is
 right in this matchup, what a card is for, how to read this board - write it
-up with `guides propose`, not a play change: a human reads that before it
-ever reaches a deck. Reach for `plays admit` only when the misplay is a rule
-a script's own CONDITIONS can express, and even then the fix belongs in the
+up with `guides propose`, not a play change: the next pilot reads a guide
+sentence and weighs it against the board in front of it before acting, and
+can see that it does not apply, while a play fires by itself. Reach for
+`plays admit` only when the misplay is a rule a script's own CONDITIONS can
+express, and even then the fix belongs in the
 play's `true`/`false` list, never its priority: a play's conditions say WHEN
 it should fire, and that is where a rule belongs. Reordering which
 applicable play is tried first with `mcp-seat plays priority` never touches
@@ -1864,12 +2173,14 @@ def handover_turn(
     slug = assignment.deck_slug
     game = assignment.game_id
     budget = int(HANDOVER_BUDGET_SECONDS // 60)
+    own_notes = f" (`decks/{slug}/NOTES.md`)" if assignment.guide is not None else ""
     return f"""{HANDOVER_OPENING}
 
 Outcome: {outcome}. Stop playing: whether you played this seat or advised on
 it, this turn is the handover, and it has {budget} minutes, not an hour.
 Finish the handover inside the time budget: do priority updates and admits
-first, then optional script or guide development through subagents.
+first, then the three guide updates, then optional script development through
+subagents.
 
 ## What to do
 
@@ -1879,32 +2190,41 @@ scripts through subagents, along with guides.
 1. Update the priority of each script that ran with `mcp-seat plays priority`
    from this game's evidence. Change a script's priority only for scripts that
    actually ran this game, with recorded exits, as shown in the run table.
-   Never lower a script for `not_applicable`, or for having had no applicable
-   window. Change a script's priority by at most 5 per game.
+   Never lower a script for `not_applicable`, or for having had no applicable window.
+   Change a script's priority by at most 5 per game.
    `mcp-seat plays priority <play-id> --delta N --deck {slug} --game-id {game}`
    raises what worked and lowers what stopped or was refused, and refuses
    more than 5 with `priority_limit`. Nothing else in the file changes.
 2. Admit those priority updates at once with
    `mcp-seat plays admit --deck {slug} --game-id {game}`.
-3. Then, with the time left, hand optional development to subagents: one
+3. Write the three guide updates under "Guide updates" below. They are
+   required, not development: every game ends with them landed, or with the
+   command's own answer saying why they could not.
+4. Then, with the time left, hand optional development to subagents: one
    per new script for a line you played by hand more than once, and one per
    script to improve. Every
    conflict warning below needs its conditions extended so that at most one
    play applies; priority alone never resolves a conflict. Each subagent checks
    its files with `mcp-seat plays check --root /guides --deck {slug}`.
-4. Land scripts with `mcp-seat plays admit --deck {slug} --game-id {game}`, and
-   propose guides with `mcp-seat guides propose --deck {slug} --game-id {game}`.
+5. Land scripts with `mcp-seat plays admit --deck {slug} --game-id {game}`, and
+   the three guide updates with `{guides_propose_command(assignment)}`.
    Both push straight to mtg-decks main the moment their gates pass, and
    nobody reviews or merges them afterwards. A `conflict` from propose leaves
    both sides between conflict markers in the files: resolve them keeping
    both sides' intent and run the same command again. Read each command's
    `result`, fix what it names, and run it again.
-5. Stay within the allowed guide fields. Edit only `matchups[].play_plan` and
-   `matchups[].notes` in the deck's newest `boarding-plan.json`, plus
-   `decks/{slug}/NOTES.md`. Any other guide change is refused.
-6. Never `git stash` in /guides: commit through the provided commands or
+6. Stay within the allowed guide fields. Edit only `matchups[].play_plan` and
+   `matchups[].notes` in your deck's newest `boarding-plan.json`, or append a
+   row there with `origin: "seat"`, plus the `NOTES.md` of each deck you pass
+   to `guides propose`{own_notes}, a stub's included. Any other guide change is
+   refused.
+7. Never `git stash` in /guides: commit through the provided commands or
    discard. A stash is invisible to admit and propose, and dies with the pod;
    discard a change with `git restore <path>`.
+
+## Guide updates
+
+{guide_updates(assignment)}
 
 ## What goes in the guide, and what does not
 
@@ -1935,6 +2255,7 @@ def handover_nudge(assignment: Assignment) -> str:
         f"{int(NUDGE_AFTER_SECONDS // 60)} minutes into the handover: push now. "
         "Stop developing: stop any subagent or background task still running, run "
         f"`mcp-seat plays admit --deck {slug} --game-id {game}` and "
-        f"`mcp-seat guides propose --deck {slug} --game-id {game}` with what you "
-        "have, then end the turn."
+        f"`{guides_propose_command(assignment)}` with what you have - the three guide "
+        "updates are required, so write any still missing in a sentence or two first - "
+        f"then end the turn.\n\n{opponent_block(assignment)}"
     )

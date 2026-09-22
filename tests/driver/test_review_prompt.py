@@ -1007,3 +1007,69 @@ def test_no_prompt_reads_the_ai_review_row_back() -> None:
         source = inspect.getsource(module)
         assert "AI_REVIEW_ACTION" not in source, f"{module.__name__} now reads the ai_review row"
         assert "ai_review_failed" not in source, f"{module.__name__} now reads the ai_review row"
+
+
+# ---------------------------------------------------------------------------
+# D1: guides land on main with no human review, and the reviewer gets the
+# seat's own opponent block and three guide targets.
+# ---------------------------------------------------------------------------
+
+
+def _prowess_seat(tmp_path) -> Assignment:
+    from mtg_agent.driver.guides import CONFIDENT, DeckGuide
+
+    root = tmp_path / "decks" / "prowess"
+    root.mkdir(parents=True)
+    (root / "decklist.txt").write_text("4 Monastery Swiftspear\n")
+    prowess = DeckGuide(slug="prowess", root=root, decklist=root / "decklist.txt")
+    return _assignment(
+        opponent_identification=Identification(CONFIDENT, prowess, (), "izzet prowess"),
+        opponent_checked=True,
+    )
+
+
+def test_the_review_prompt_renders_the_opponent_block_after_the_record(tmp_path) -> None:
+    text = review_prompt(_prowess_seat(tmp_path), "r", _record())
+    end = next(line for line in text.splitlines() if line.startswith("=== END GAME RECORD"))
+    block = text.index("Opponent's deck: `prowess` (confident; archetype `izzet prowess`")
+    assert block > text.index(end)
+
+
+def test_the_review_prompt_names_the_three_guide_targets(tmp_path) -> None:
+    text = _flat(review_prompt(_prowess_seat(tmp_path), "r", _record()))
+    assert "`decks/prowess/NOTES.md`" in text
+    assert "their strategy as you saw it" in text
+    # O4: the reviewed seat's own list has no guide, so no own-deck update.
+    assert "skip the own-deck update" in text
+    assert "`mcp-seat guides propose --deck prowess --game-id g-1`" in text
+
+
+def test_the_review_prompt_names_the_missing_list_fallback() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "Opponent's deck: not revealed" in text
+
+
+def test_the_write_channels_say_guides_land_with_no_human_review() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "no human review" in text
+    assert "a human reads that before it ever reaches a deck" not in text
+
+
+def test_the_write_channels_argue_prose_without_a_human_reader() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "Prefer prose" in text
+    assert "the next pilot reads" in text
+    assert "weighs it against the board" in text
+
+
+def test_the_write_channels_say_markers_are_resolved_with_edit() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "conflict markers" in text
+    assert "with Edit" in text
+
+
+def test_the_write_channels_name_seat_rows_and_stubs() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert '`origin: "seat"`' in text
+    assert "stub" in text
+    assert "--deck SLUG [--deck SLUG ...]" in text

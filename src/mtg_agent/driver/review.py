@@ -37,7 +37,11 @@ data. The seat's own handover turn carries the identical text from the same
 constant: two prompts that can write to a deck's guide, one rule, no drift.
 
 That rule has two destinations, and the reviewer can reach both. The guide
-half it reaches with `mcp-seat guides propose`. The system-problem half is
+half it reaches with `mcp-seat guides propose`, which pushes to mtg-decks
+main with no human review; the prompt hands it the seat's own guide-update
+block (`prompt.guide_updates`: the opponent's revealed deck, the seat's own
+plan row for it, and the three targets), so the reviewer writes to the same
+three places the seat was told to. The system-problem half is
 `report_problem`, an `mtg` MCP tool that takes a `player_uid` - which a
 reviewer, never having played anything, does not have. So this prompt also
 carries `prompt.NOTES_ROUTING_AFTER_GAME`, which names the SEAT's own uid
@@ -99,6 +103,7 @@ from .prompt import (
     WRITE_CHANNELS,
     WRITE_CHANNELS_HEADING,
     Assignment,
+    guide_updates,
     notes_routing_after_game,
 )
 
@@ -167,6 +172,12 @@ _DETAIL_IN_HEADING = ("player", "card", "allowed", "reason")
 #: marker. Named rather than inlined because its length is part of the tail
 #: the ledger's remaining budget is measured against below.
 ROUTING_HEADING = "Where anything you write down goes:"
+
+#: The heading over the seat's own three guide updates (D1): the revealed
+#: opponent deck, the three targets and the one `guides propose` call - the
+#: same block the handover turn carries, so the reviewer writes to the same
+#: places the seat was told to.
+GUIDE_UPDATES_HEADING = "The guide updates this game owes, as the seat was given them:"
 
 #: The routing block's own rendered size - the heading, a blank line, the
 #: shared `NOTES_ROUTING` text, the reviewer's own `NOTES_ROUTING_AFTER_GAME`
@@ -360,11 +371,14 @@ def review_prompt(
     # what the ledger's own remaining budget is measured against rather than
     # unaccounted-for text appended on top of it later.
     write_bars_block = _write_bars_block(assignment, review_record)
+    updates_block = f"{GUIDE_UPDATES_HEADING}\n\n{guide_updates(assignment)}"
     tail_size = (
         len(record_end)
         + _ROUTING_SIZE
         + len(after_game)
         + len(write_bars_block)
+        + 2
+        + len(updates_block)
         + 2
         + _ASK_SIZE
         + len(assignment.player)
@@ -422,6 +436,12 @@ def review_prompt(
     # above: this is the driver's own instruction to the reviewer, never
     # data taken from the game.
     lines.append(write_bars_block)
+    lines.append("")
+
+    # D1: the seat's own opponent block and three guide targets, after the
+    # END marker like every other instruction here - the revealed deck is
+    # the driver's own classification, never text taken from the game.
+    lines.append(updates_block)
     lines.append("")
 
     lines.append(_ask(assignment.player))

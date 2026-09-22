@@ -1559,3 +1559,119 @@ def test_a_release_files_the_review_before_the_session_is_torn_down(world):
 
     assert "ai_review" in world.events and "delete" in world.events
     assert world.events.index("ai_review") < world.events.index("delete")
+
+
+# ---- D1: the opponent's deck, identified once the game is over ---------------
+
+#: Two clauses the world's `OPPONENT_DECKLIST` satisfies in full.
+PROWESS_FULL = {
+    "schema_version": 1,
+    "archetype": "izzet prowess",
+    "signature": [
+        {"cards": ["Monastery Swiftspear"], "min": 4, "why": "the one-drop"},
+        {"cards": ["Lightning Bolt"], "min": 4, "why": "the burn"},
+    ],
+}
+
+#: The same archetype with a second clause the list misses: half its
+#: signature, so the classifier answers LOW.
+PROWESS_PARTIAL = {
+    **PROWESS_FULL,
+    "signature": [
+        PROWESS_FULL["signature"][0],
+        {"cards": ["Dragon's Rage Channeler"], "min": 4, "why": "the other threat"},
+    ],
+}
+
+
+def add_guide(world, slug: str, archetype: dict) -> None:
+    root = world.settings.guides_root / "decks" / slug
+    root.mkdir(parents=True)
+    (root / "decklist.txt").write_text("4 Monastery Swiftspear\n")
+    (root / "archetype.json").write_text(json.dumps(archetype))
+
+
+def reach_the_handover(world, winner: str = "alice") -> tuple[str, str]:
+    """Dispatch, end the game, finish the reflection: the reflection turn's
+    text and the handover turn's text."""
+    client = world.client
+    dispatch(client)
+    world.state["winner"] = winner
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+    reflection = world.submitted[1]["text"]
+    client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"})
+    wait_for(lambda: any(t["text"].startswith(HANDOVER_OPENING) for t in world.submitted))
+    handover = next(t["text"] for t in world.submitted if t["text"].startswith(HANDOVER_OPENING))
+    return reflection, handover
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+@pytest.mark.parametrize(
+    ("setup", "in_reflection", "in_handover"),
+    [
+        (
+            lambda w: add_guide(w, "prowess", PROWESS_FULL),
+            "`prowess` (confident; archetype `izzet prowess`)",
+            "`mcp-seat guides propose --deck dimir-frog --deck prowess --game-id g-1`",
+        ),
+        (
+            lambda w: add_guide(w, "prowess", PROWESS_PARTIAL),
+            "`prowess` (low confidence; archetype `izzet prowess`)",
+            "Opponent's deck: `prowess` (low confidence",
+        ),
+        (
+            lambda w: None,
+            "no deck in the guides corpus matches",
+            "Opponent's deck: no guide",
+        ),
+        (
+            lambda w: w.state.update(opponent_decklist=DECKLIST),
+            "mirror",
+            "`mcp-seat guides propose --deck dimir-frog --game-id g-1`",
+        ),
+        (
+            lambda w: w.state.update(opponent_decklist=None),
+            "could not read",
+            "Opponent's deck: not revealed",
+        ),
+    ],
+    ids=["confident", "low", "none", "mirror", "missing"],
+)
+def test_the_opponents_deck_is_identified_before_the_reflection(
+    world, setup, in_reflection, in_handover
+):
+    setup(world)
+    reflection, handover = reach_the_handover(world)
+    assert in_reflection in _flat(reflection)
+    assert in_handover in _flat(handover)
+
+
+def test_the_opponents_list_is_read_with_the_seats_own_uid_after_game_over(world):
+    reach_the_handover(world)
+    assert {"uid": "secret-uid", "over": True} in world.seat_reads
+
+
+def test_the_opponents_list_is_read_once_per_game(world):
+    reach_the_handover(world)
+    assert sum(1 for read in world.seat_reads if read["over"]) == 1
+
+
+def test_the_handover_lists_the_existing_stub_decks(world):
+    stub = world.settings.guides_root / "decks" / "mono-red-burn"
+    stub.mkdir(parents=True)
+    (stub / "NOTES.md").write_text("# mono red burn\n")
+    _, handover = reach_the_handover(world)
+    assert "Existing stubs: `mono-red-burn`" in _flat(handover)
+
+
+def test_an_unreadable_seats_route_is_a_missing_list_not_a_failed_reflection(world):
+    """Best effort: the reflection is still pushed, with the fallback."""
+    client = world.client
+    dispatch(client)
+    world.state["winner"] = "alice"
+    world.state["opponent_decklist"] = ""
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+    assert "could not read" in _flat(world.submitted[1]["text"])

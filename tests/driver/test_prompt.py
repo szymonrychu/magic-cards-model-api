@@ -1274,7 +1274,8 @@ HANDOVER_PINS = (
     "game's evidence.",
     "`mcp-seat plays priority <play-id> --delta N --deck dimir-frog --game-id g-1`",
     "Land scripts with `mcp-seat plays admit --deck dimir-frog --game-id g-1`",
-    "propose guides with `mcp-seat guides propose --deck dimir-frog --game-id g-1`",
+    "the three guide updates with `mcp-seat guides propose --deck dimir-frog --deck "
+    "<opponent-slug> --game-id g-1`",
     "Both push straight to mtg-decks main",
     "nobody reviews or merges them afterwards",
     "resolve them keeping both sides' intent and run the same command again",
@@ -1289,7 +1290,7 @@ HANDOVER_PINS = (
 #: that game, ran out its 510 s budget developing, and ran `git stash` in its
 #: own /guides clone. These rules go wherever a seat or buddy is told to hand
 #: over: the handover turn and both briefs.
-HANDOVER_RULES = (
+BRIEF_HANDOVER_RULES = (
     "Change a script's priority only for scripts that actually ran this game, with recorded "
     "exits, as shown in the run table.",
     "Never lower a script for `not_applicable`, or for having had no applicable window.",
@@ -1297,6 +1298,15 @@ HANDOVER_RULES = (
     "Finish the handover inside the time budget: do priority updates and admits first, then "
     "optional script or guide development through subagents.",
     "Never `git stash` in /guides: commit through the provided commands or discard.",
+)
+
+#: D1: the handover turn itself makes the three guide updates a required
+#: step, so its budget rule orders them before optional development.
+HANDOVER_RULES = (
+    *BRIEF_HANDOVER_RULES[:3],
+    "Finish the handover inside the time budget: do priority updates and admits first, then "
+    "the three guide updates, then optional script development through subagents.",
+    BRIEF_HANDOVER_RULES[4],
 )
 
 #: The subset the play-script spec carries where it describes `priority`.
@@ -1357,7 +1367,7 @@ def test_handover_turn_orders_priority_and_admit_before_development(guide):
 
 
 @pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
-@pytest.mark.parametrize("rule", HANDOVER_RULES)
+@pytest.mark.parametrize("rule", BRIEF_HANDOVER_RULES)
 def test_briefs_carry_the_handover_rules(brief, rule):
     section = _flat(
         _section((BRIEFS / brief).read_text(), "## Play scripts and guides, for handover")
@@ -1810,3 +1820,278 @@ def test_continue_turn_tells_a_buddy_to_resume_advising(guide):
     assert text.startswith("The game is not over")
     assert "Keep advising" in text
     assert "Keep playing" not in text
+
+
+# ---- D1: the opponent's deck, revealed post-game, and the three guide updates -
+#
+# Once the game is over the lobby reveals both lists (A2) and the driver runs
+# the opponent's through the same classifier its own went through. What the
+# reflection, the handover and the nudge say about it differs per outcome, so
+# each outcome is pinned: confident, low, none, a mirror and a list the
+# driver never got.
+
+OWN_PLAN = {
+    "matchups": [
+        {"name": "boros energy", "play_plan": {}, "notes": []},
+        {"name": "Izzet Prowess", "play_plan": {}, "notes": []},
+        {"name": "boros aggro", "play_plan": {}, "notes": []},
+    ]
+}
+
+
+@pytest.fixture
+def planned(guide) -> DeckGuide:
+    """The `guide` fixture with a boarding plan the rows are looked up in."""
+    plan = guide.matchups_dir.parent / "boarding-plan.json"
+    plan.write_text(json.dumps(OWN_PLAN))
+    return replace(guide, boarding_plan=plan)
+
+
+def other_guide(tmp_path: Path, slug: str) -> DeckGuide:
+    root = tmp_path / "guides" / "decks" / slug
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "decklist.txt").write_text("4 Monastery Swiftspear\n")
+    return DeckGuide(slug=slug, root=root, decklist=root / "decklist.txt")
+
+
+def opponent(guide: DeckGuide, archetype: str, confidence: str = CONFIDENT, **kwargs):
+    candidates = kwargs.pop("candidates", None) or (
+        candidate(guide, archetype, 3, 3 if confidence == CONFIDENT else 2),
+    )
+    return Identification(confidence, guide, tuple(candidates), archetype)
+
+
+def seat_facing(own: DeckGuide | None, identification, stubs=(), checked=True) -> Assignment:
+    return replace(
+        assignment(own),
+        opponent_identification=identification,
+        opponent_checked=checked,
+        stub_decks=tuple(stubs),
+    )
+
+
+def _handover_of(seat: Assignment, role: str = "seat") -> str:
+    return handover_turn(replace(seat, role=role), "alice won", RUN_TABLE, "(none)")
+
+
+def test_a_confident_opponent_names_the_deck_its_archetype_and_the_plans_row(tmp_path, planned):
+    seat = seat_facing(planned, opponent(other_guide(tmp_path, "prowess"), "izzet prowess"))
+    text = _flat(_handover_of(seat))
+    assert (
+        "Opponent's deck: `prowess` (confident; archetype `izzet prowess`; your plan's row: "
+        "`Izzet Prowess` = matchups[1])" in text
+    )
+    assert "`mcp-seat guides propose --deck dimir-frog --deck prowess --game-id g-1`" in text
+
+
+def test_a_confident_opponent_with_no_row_is_told_to_append_a_seat_row(tmp_path, planned):
+    seat = seat_facing(planned, opponent(other_guide(tmp_path, "living-end"), "living end"))
+    text = _flat(_handover_of(seat))
+    assert "Opponent's deck: `living-end` (confident; archetype `living end`" in text
+    assert 'no row - append one with `origin: "seat"`' in text
+
+
+def test_the_handover_names_the_three_required_guide_targets(tmp_path, planned):
+    seat = seat_facing(planned, opponent(other_guide(tmp_path, "prowess"), "izzet prowess"))
+    section = _flat(_section(_handover_of(seat), "## Guide updates"))
+    assert "required" in section
+    assert "`decks/dimir-frog/NOTES.md`" in section
+    assert "`decks/prowess/NOTES.md`" in section
+    assert "matchups[1]" in section
+    assert "how this game was won or lost" in section
+    assert "what to watch out for" in section
+    assert "strategy" in section
+    assert "how to win this matchup" in section
+
+
+def test_the_handover_says_how_to_read_each_propose_result(tmp_path, planned):
+    seat = seat_facing(planned, opponent(other_guide(tmp_path, "prowess"), "izzet prowess"))
+    section = _flat(_section(_handover_of(seat), "## Guide updates"))
+    assert "`admitted`" in section and "live" in section
+    assert "`conflict`" in section and "conflict markers" in section
+    assert "`retryable: true`" in section
+    assert "run the same command again" in section
+
+
+def test_a_low_confidence_opponent_names_its_runners_up(tmp_path, planned):
+    prowess = other_guide(tmp_path, "prowess")
+    boros = other_guide(tmp_path, "boros-aggro")
+    identification = opponent(
+        prowess,
+        "izzet prowess",
+        LOW,
+        candidates=(
+            candidate(prowess, "izzet prowess", 3, 2),
+            candidate(boros, "boros aggro", 4, 2),
+        ),
+    )
+    text = _flat(_handover_of(seat_facing(planned, identification)))
+    assert "Opponent's deck: `prowess` (low confidence; archetype `izzet prowess`" in text
+    assert "Runners-up: `boros-aggro` (archetype `boros aggro`, 2 of its 4 signature" in text
+    assert "`boros aggro` = matchups[2]" in text
+
+
+def test_a_family_opponent_names_every_branch(tmp_path, planned):
+    eldrazi = other_guide(tmp_path, "eldrazi-tron")
+    prison = other_guide(tmp_path, "prison-tron")
+    identification = Identification(
+        LOW,
+        None,
+        (candidate(eldrazi, "eldrazi tron", 3, 2), candidate(prison, "urzatron", 3, 2)),
+        "tron",
+    )
+    text = _flat(_handover_of(seat_facing(planned, identification)))
+    assert "some kind of `tron`" in text
+    assert "`eldrazi-tron`" in text and "`prison-tron`" in text
+    assert "--deck <branch-slug>" in text
+
+
+def test_an_unguided_opponent_gets_a_stub_and_the_existing_stubs_listed(planned):
+    seat = seat_facing(planned, Identification(NONE), stubs=("amulet-titan", "mono-red-burn"))
+    text = _flat(_handover_of(seat))
+    assert "Opponent's deck: no guide" in text
+    assert "create a stub `decks/<slug>/NOTES.md`" in text
+    assert "slugify" in text or "slugified" in text
+    assert "Existing stubs: `amulet-titan`, `mono-red-burn`" in text
+    assert "refused" in text
+    assert "`mcp-seat guides propose --deck dimir-frog --deck <stub-slug> --game-id g-1`" in text
+
+
+def test_an_unguided_opponent_with_no_stubs_yet_says_so(planned):
+    text = _flat(_handover_of(seat_facing(planned, Identification(NONE))))
+    assert "Existing stubs: none yet" in text
+
+
+def test_a_mirror_is_one_update_and_one_deck(planned):
+    own = assignment(planned).identification
+    text = _flat(_handover_of(seat_facing(planned, own)))
+    assert "mirror: one update" in text
+    assert "`mcp-seat guides propose --deck dimir-frog --game-id g-1`" in text
+    assert "--deck dimir-frog --deck" not in text
+
+
+def test_a_missing_opponent_list_states_its_fallback(planned):
+    text = _flat(_handover_of(seat_facing(planned, None)))
+    assert "Opponent's deck: not revealed" in text
+    assert "could not read" in text
+    assert "what you saw" in text
+    assert "create a stub `decks/<slug>/NOTES.md`" in text
+
+
+def test_an_unidentified_opponent_before_the_driver_looked_says_the_same(guide):
+    """A caller that never ran the post-game identification (every handover
+    rendered before D1) gets the missing-list fallback, not a crash."""
+    text = _flat(_handover_of(assignment(guide)))
+    assert "Opponent's deck: not revealed" in text
+
+
+def test_own_list_with_no_guide_skips_the_own_deck_update(tmp_path):
+    seat = seat_facing(None, opponent(other_guide(tmp_path, "prowess"), "izzet prowess"))
+    text = _flat(_handover_of(seat))
+    assert "skip the own-deck update" in text
+    assert "`mcp-seat guides propose --deck prowess --game-id g-1`" in text
+    assert "decks/unknown-deck/" not in text
+
+
+def test_own_guide_with_no_boarding_plan_routes_the_matchup_note_to_notes(tmp_path, guide):
+    seat = seat_facing(guide, opponent(other_guide(tmp_path, "prowess"), "izzet prowess"))
+    text = _flat(_handover_of(seat))
+    assert "your deck has no boarding plan" in text
+
+
+@pytest.mark.parametrize(
+    "identification",
+    [None, Identification(NONE)],
+    ids=["missing", "none"],
+)
+def test_seat_and_buddy_get_the_same_guide_updates(planned, identification):
+    seat = seat_facing(planned, identification)
+    assert _handover_of(seat, "seat") == _handover_of(seat, "advisor")
+
+
+def test_the_nudge_carries_the_opponent_block_and_both_decks(tmp_path, planned):
+    seat = seat_facing(planned, opponent(other_guide(tmp_path, "prowess"), "izzet prowess"))
+    text = _flat(handover_nudge(seat))
+    assert "push now" in text
+    assert "Opponent's deck: `prowess` (confident" in text
+    assert "`mcp-seat guides propose --deck dimir-frog --deck prowess --game-id g-1`" in text
+    assert "three guide updates" in text
+
+
+def test_the_mirror_nudge_proposes_a_single_deck(planned):
+    own = assignment(planned).identification
+    text = _flat(handover_nudge(seat_facing(planned, own)))
+    assert "`mcp-seat guides propose --deck dimir-frog --game-id g-1`" in text
+
+
+def test_reflection_names_the_revealed_deck_and_keys_the_note_on_its_archetype(tmp_path, guide):
+    seat = seat_facing(guide, opponent(other_guide(tmp_path, "prowess"), "izzet prowess"))
+    memory = tmp_path / "memory"
+    text = _flat(reflection_turn(seat, memory, outcome="alice won"))
+    assert "`prowess` (confident; archetype `izzet prowess`)" in text
+    assert str(memory / "dimir-frog" / "vs-izzet-prowess.md") in text
+    assert "vs-<archetype>.md" not in text
+
+
+def test_reflection_asks_for_the_three_things_the_guides_need(tmp_path, guide):
+    seat = seat_facing(guide, opponent(other_guide(tmp_path, "prowess"), "izzet prowess"))
+    text = _flat(reflection_turn(seat, tmp_path / "memory", outcome="alice won"))
+    assert "how this game was won or lost" in text
+    assert "what to watch out for" in text
+    assert "the opponent's strategy" in text
+    assert "how to win this matchup" in text
+
+
+def test_reflection_names_low_confidence_and_its_runners_up(tmp_path, guide):
+    prowess = other_guide(tmp_path, "prowess")
+    boros = other_guide(tmp_path, "boros-aggro")
+    identification = opponent(
+        prowess,
+        "izzet prowess",
+        LOW,
+        candidates=(
+            candidate(prowess, "izzet prowess", 3, 2),
+            candidate(boros, "boros aggro", 4, 2),
+        ),
+    )
+    text = _flat(reflection_turn(seat_facing(guide, identification), tmp_path / "m", "bob won"))
+    assert "`prowess` (low confidence; archetype `izzet prowess`)" in text
+    assert "`boros-aggro`" in text
+
+
+@pytest.mark.parametrize(
+    "identification",
+    [None, Identification(NONE)],
+    ids=["missing", "none"],
+)
+def test_an_unclassified_opponent_keeps_the_deduced_key(tmp_path, guide, identification):
+    text = _flat(reflection_turn(seat_facing(guide, identification), tmp_path / "m", "bob won"))
+    assert "vs-<archetype>.md" in text
+    assert "tells table" in text
+    assert "`unknown`" in text
+
+
+def test_reflection_says_a_missing_list_was_not_revealed(tmp_path, guide):
+    text = _flat(reflection_turn(seat_facing(guide, None), tmp_path / "m", "bob won"))
+    assert "could not read" in text
+
+
+def test_reflection_says_no_guide_matched_the_revealed_list(tmp_path, guide):
+    text = _flat(reflection_turn(seat_facing(guide, Identification(NONE)), tmp_path / "m", "x"))
+    assert "no deck in the guides corpus matches" in text
+
+
+def test_reflection_in_a_mirror_says_so(tmp_path, guide):
+    own = assignment(guide).identification
+    text = _flat(reflection_turn(seat_facing(guide, own), tmp_path / "m", "bob won"))
+    assert "mirror" in text
+
+
+def test_no_driver_source_says_guides_wait_for_a_pull_request():
+    """Guides push straight to main: no driver module may still tell a seat
+    or a reviewer that a guide edit waits on a pull request or an owner."""
+    driver = Path(__file__).resolve().parents[2] / "src" / "mtg_agent" / "driver"
+    for source in sorted(driver.glob("*.py")):
+        text = source.read_text().lower()
+        for retired in ("awaiting_owner_review", "pull request", "pr_opened", "owner review"):
+            assert retired not in text, f"{source.name} still says {retired!r}"

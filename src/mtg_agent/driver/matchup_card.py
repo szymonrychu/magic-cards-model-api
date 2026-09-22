@@ -1037,6 +1037,30 @@ def matchup_note_key(name: str | None) -> str:
     return slugify(name) if name else UNKNOWN_ARCHETYPE
 
 
+def matchup_row(plan: dict | None, archetype: str | None) -> tuple[int, str] | None:
+    """The row of `plan["matchups"]` written for `archetype`, as `(index,
+    name)`, or `None` when the plan has no such row.
+
+    Matched on `slugify` equality, the one spelling the tells table, the
+    `vs-<key>.md` notes and the matchup files already share. The index is
+    into the raw list, malformed entries included, because it is the JSON
+    path `guides propose` names when it refuses an edit to that row.
+    """
+    if not archetype or not isinstance(plan, dict):
+        return None
+    rows = plan.get("matchups")
+    if not isinstance(rows, list):
+        return None
+    wanted = slugify(archetype)
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        name = _text(row.get("name"))
+        if name and slugify(name) == wanted:
+            return index, name
+    return None
+
+
 def guide_paths(guide: DeckGuide | None) -> list[tuple[str, Path]]:
     """The guide files that stay available for a deliberate read."""
     if guide is None:

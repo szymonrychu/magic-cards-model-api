@@ -240,7 +240,21 @@ and push straight to mtg-decks main, the same as `mcp-seat plays admit` does
 for play scripts. Nobody reviews or merges either afterwards. When main moved
 under the edit it is replayed onto it; a clash comes back as `conflict` with
 the markers left in the files for the agent to resolve and run again, and
-three lost push races come back as a retryable `error`. That handover runs at the natural
+three lost push races come back as a retryable `error`.
+
+After a game ends, the lobby reveals both decklists to the game's own seats,
+and the driver runs the opponent's through the same classifier that picked
+the seat's own guide. The reflection turn and the handover then name that
+deck (slug, confidence, archetype, the seat's own plan row for it, and the
+runners-up when the match is weak), and the handover makes three guide
+updates a required step: the seat's own `decks/<own>/NOTES.md` (how the game
+was won or lost, what to watch for), the opponent's `decks/<opp>/NOTES.md`
+(their strategy; a stub deck when no guide matches, with the existing stubs
+listed for reuse), and the plan's matchup row (or an appended `origin:
+"seat"` row) on how to win the matchup - all landed by one `guides propose`
+call. A mirror is one update under a single `--deck`; a seat whose own list
+has no guide skips its own-deck update. The post-game reviewer gets the same
+block. That handover runs at the natural
 points where the agent stops playing: when a game ends, and when the driver's
 `POST /release` is called (a human taking the seat back, or a buddy standing
 down). A plain `docker compose stop` or `docker compose down` does **not**

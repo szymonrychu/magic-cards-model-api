@@ -663,6 +663,26 @@ class GuideLibrary:
             found.append(self._build(entry, decklist))
         return found
 
+    def stub_decks(self) -> list[str]:
+        """The slugs of the stub decks: a `decks/<slug>/` holding `NOTES.md`
+        and no `decklist.txt`.
+
+        A seat creates one after a game against a deck the corpus has no
+        guide for, to keep what it learned about that opponent's strategy.
+        Listed so the next seat facing the same deck reuses the stub rather
+        than starting a second one under another spelling.
+        """
+        decks_dir = self.root / "decks"
+        if not decks_dir.is_dir():
+            return []
+        return sorted(
+            entry.name
+            for entry in decks_dir.iterdir()
+            if entry.is_dir()
+            and (entry / "NOTES.md").is_file()
+            and not (entry / "decklist.txt").exists()
+        )
+
     def _build(self, entry: Path, decklist: Path) -> DeckGuide:
         def optional(name: str) -> Path | None:
             path = entry / name

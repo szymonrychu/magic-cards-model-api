@@ -1129,6 +1129,10 @@ def build_app(
             return status
 
         clear_marker(marker_path)
+        # Before the review below is considered, so the reviewer's prompt
+        # names the same revealed deck the handover turn does. A no-op when
+        # the reflection branch already identified it.
+        identify_opponent(assignment)
         # `TERMINAL_PATHS["handover_without_reflection"]`: a handover is the
         # end of this driver's involvement however it was reached - a
         # `/release` from the lobby, a `/handover` from the Job's preStop,
@@ -1224,18 +1228,71 @@ def build_app(
         matchup-guide selection is not worth making the actual seat
         assignment newly fragile over.
         """
+        for seat in lobby_seats(game_id, uid):
+            if seat.get("player") == player:
+                return seat.get("decklist") or ""
+        return ""
+
+    def lobby_seats(game_id: str, uid: str) -> list[dict]:
+        """`GET /api/lobby/games/{id}/seats` as `uid` sees it; empty when the
+        route cannot be read."""
         try:
             with make_client(settings.game_api) as client:
                 response = client.get(f"/api/lobby/games/{game_id}/seats", params={"uid": uid})
                 if response.status_code >= 400:
-                    return ""
+                    return []
                 seats = response.json().get("seats") or []
-        except httpx.HTTPError:
-            return ""
-        for seat in seats:
-            if seat.get("player") == player:
-                return seat.get("decklist") or ""
-        return ""
+        except (httpx.HTTPError, ValueError, AttributeError):
+            return []
+        return [seat for seat in seats if isinstance(seat, dict)]
+
+    def opponent_decklist(game_id: str, uid: str, opponent: str) -> str | None:
+        """The opponent's decklist text, or `None` when it is not readable.
+
+        The same lobby route as `seat_decklist`, which hides every list but
+        the caller's own while the game runs and reveals both to the game's
+        own credentials once it is over (A2) - so this is read after game
+        over only, with the seat's (or the buddy's advisor) uid. `opponent`
+        is the name `opponent_of` recorded at dispatch; with none recorded
+        there is no seat to read.
+        """
+        if not opponent:
+            return None
+        for seat in lobby_seats(game_id, uid):
+            if seat.get("player") == opponent:
+                return seat.get("decklist") or None
+        return None
+
+    def identify_opponent(assignment: Assignment) -> None:
+        """Identify the opponent's revealed deck, once per assignment: before
+        the reflection turn, or lazily when the handover starts first.
+
+        Best effort. A list that cannot be read leaves
+        `opponent_identification` at `None`, and every prompt that names the
+        opponent then states its fallback: go by what the board showed.
+        """
+        with lock:
+            if assignment.opponent_checked:
+                return
+            assignment.opponent_checked = True
+        try:
+            assignment.stub_decks = tuple(library.stub_decks())
+            text = opponent_decklist(assignment.game_id, assignment.uid, assignment.opponent)
+            if text is None:
+                log.info("game %s: the opponent's decklist is not readable", assignment.game_id)
+                return
+            identified = library.identify(parse_decklist(text))
+        except Exception as exc:  # noqa: BLE001 - never costs the reflection or the handover
+            log.warning("could not identify the opponent in game %s: %s", assignment.game_id, exc)
+            return
+        assignment.opponent_identification = identified
+        log.info(
+            "game %s: opponent identified as %s (%s, archetype %s)",
+            assignment.game_id,
+            identified.guide.slug if identified.guide else "no guide",
+            identified.confidence,
+            identified.archetype,
+        )
 
     def register_plays(
         game_id: str, uid: str, guide: DeckGuide | None, revision: str
@@ -1749,6 +1806,7 @@ def build_app(
             return continue_play(assignment, finished, state)
 
         outcome = f"{winner} won" if winner else "the game was a draw"
+        identify_opponent(assignment)
         try:
             turn_id = push_turn(reflection_turn(assignment, settings.memory_root, outcome))
         except AgentUnavailable as exc:

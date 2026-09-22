@@ -39,6 +39,12 @@ ADVISOR_UID = "advisor-uid"
 
 DECKLIST = "4 Psychic Frog\n4 Fatal Push\n2 Consign to Memory\n"
 
+#: The opponent's list, revealed by the fake lobby once the game is over
+#: (A2: `decks_api.game_seats` hands every seat's list to the game's own
+#: credentials after game over). No archetype in this world claims it, so
+#: the driver identifies it as `guides.NONE` unless a test adds a guide.
+OPPONENT_DECKLIST = "4 Lightning Bolt\n4 Monastery Swiftspear\n4 Violent Urge\n"
+
 #: The guide's `archetype.json`, the shape `mtg-decks` writes and
 #: `guides.load_signature` reads - two clauses this world's `DECKLIST`
 #: satisfies, so the driver identifies the seat as `dimir-frog` confidently.
@@ -71,6 +77,9 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         #: Whether the handover marker existed when the session was deleted.
         "marker_at_delete": None,
         "decklist": DECKLIST,
+        #: The opponent's list, revealed post-game only; None stands in for
+        #: a lobby that never had it (a board built by `POST /api/games`).
+        "opponent_decklist": OPPONENT_DECKLIST,
         "agent": "up",
         #: With `agent` "busy", `/v1/messages` answers 409 - the wrapper still
         #: holding a turn - for the first `busy_for` pushes (every push when
@@ -157,6 +166,9 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
     probes: list[dict] = []
     #: The `uid` of every `GET .../log` read.
     log_reads: list[str | None] = []
+    #: The `uid` of every `GET /api/lobby/games/{id}/seats` read, and
+    #: whether the game was over when it was made.
+    seat_reads: list[dict] = []
     #: Every `POST /api/games/{id}/report` the driver sent, with the `uid`
     #: query credential it presented.
     problem_reports: list[dict] = []
@@ -247,17 +259,25 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         # 2b's T8 moved `decklist` off `GET /api/games/{id}` onto this
         # lobby-owned route, redacted the same way `visibility._redact_player`
         # used to redact it on the state view: present only for the entry
-        # whose own uid the caller presents.
+        # whose own uid the caller presents - until the game is over, when
+        # A2 reveals every seat's list to the game's own credentials.
         if state["game"] == "down":
             raise httpx.ConnectError("connection refused")
+        over = bool(state["winner"] or state["drawn"])
+        own = uid in ("secret-uid", ADVISOR_UID)
+        seat_reads.append({"uid": uid, "over": over})
         return {
             "seats": [
                 {
                     "player": "bob",
                     "uid": "secret-uid",
-                    "decklist": state["decklist"] if uid in ("secret-uid", ADVISOR_UID) else None,
+                    "decklist": state["decklist"] if own else None,
                 },
-                {"player": "alice", "uid": "other-uid", "decklist": None},
+                {
+                    "player": "alice",
+                    "uid": "other-uid",
+                    "decklist": state["opponent_decklist"] if own and over else None,
+                },
             ]
         }
 
@@ -430,4 +450,5 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         probes=probes,
         log_reads=log_reads,
         problem_reports=problem_reports,
+        seat_reads=seat_reads,
     )

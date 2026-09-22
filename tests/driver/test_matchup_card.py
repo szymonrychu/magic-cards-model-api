@@ -34,6 +34,7 @@ from mtg_agent.driver.matchup_card import (
     _rendering,
     generic_keep_rule,
     load_boarding_plan,
+    matchup_row,
     render_matchup_card,
     signature_index,
 )
@@ -1245,3 +1246,48 @@ def test_the_card_never_names_the_opponents_actual_deck(library, slug):
     lowered = card.text.lower()
     assert "your opponent is playing" not in lowered
     assert "you are facing" not in lowered
+
+
+# ---- the post-game guide update's lookups ------------------------------------
+#
+# D1: once the opponent's deck is revealed, the handover names the row of the
+# seat's own plan that matchup is written under, and the stubs an unguided
+# opponent's notes may already live in.
+
+
+def test_matchup_row_finds_the_plans_row_by_slugify_equality(library):
+    plan = plan_of(guide_for(library, "dimir-frog"))
+    assert matchup_row(plan, "UR Cutter Prowess") == (4, "ur cutter prowess")
+    assert matchup_row(plan, "ur-cutter-prowess") == (4, "ur cutter prowess")
+    assert matchup_row(plan, "pinnacle affinity") == (14, "pinnacle affinity")
+
+
+def test_matchup_row_answers_none_for_an_archetype_the_plan_has_no_row_for(library):
+    plan = plan_of(guide_for(library, "dimir-frog"))
+    assert matchup_row(plan, "izzet prowess") is None
+    assert matchup_row(plan, "") is None
+    assert matchup_row({}, "boros aggro") is None
+    assert matchup_row({"matchups": "not a list"}, "boros aggro") is None
+
+
+def test_matchup_row_indexes_the_raw_list_past_a_malformed_row():
+    """The index is the JSON path the propose gate names, so a non-row entry
+    in front of the match still counts."""
+    plan = {"matchups": ["junk", {"name": 5}, {"name": "Izzet Prowess"}]}
+    assert matchup_row(plan, "izzet prowess") == (2, "Izzet Prowess")
+
+
+def test_stub_decks_are_directories_with_notes_and_no_decklist(tmp_path):
+    decks = tmp_path / "decks"
+    for slug, files in {
+        "dimir-frog": ("decklist.txt", "NOTES.md"),
+        "mono-red-burn": ("NOTES.md",),
+        "amulet-titan": ("NOTES.md",),
+        "archetype-only": ("archetype.json",),
+    }.items():
+        (decks / slug).mkdir(parents=True)
+        for name in files:
+            (decks / slug / name).write_text("x\n")
+    (decks / "stray.md").write_text("not a deck\n")
+    assert GuideLibrary(tmp_path).stub_decks() == ["amulet-titan", "mono-red-burn"]
+    assert GuideLibrary(tmp_path / "absent").stub_decks() == []
