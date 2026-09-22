@@ -24,7 +24,7 @@ from magic_cards_model.models.card import Layout
 from magic_cards_model.models.game import KnownCard
 from magic_cards_model.models.mana import ManaPool
 
-from . import assets, commands, scryfall
+from . import assets, commands, player_control, scryfall
 from .affordances import cast_hints
 from .board_scope import on_one_board, read_on_one_board
 from .commands import paused_game
@@ -750,6 +750,9 @@ def _player_view(
         "own_turns_taken": game.turn.own_turns_taken(player.username)
         if game.turn is not None
         else None,
+        # CR 723.5: who is making this player's decisions right now, when it
+        # is somebody else - null while they decide for themselves (CR 723.9).
+        "decisions_made_by": player_control.controllers(game).get(player.username),
     }
 
 
@@ -1332,6 +1335,10 @@ def _state_view_on(
         "pregame": pregame_view(game, game_id),
         "active_player": active_player,
         "priority_holder": priority_holder,
+        # CR 723.5: controlled player -> the player making their decisions this
+        # turn. CR 723.3 leaves `priority_holder` on the controlled player, so
+        # this is what says whose move a held priority actually is.
+        "player_control": player_control.controllers(board),
         "players": [
             _player_view(board, player, paused_counters.get(player.username))
             for player in board.players

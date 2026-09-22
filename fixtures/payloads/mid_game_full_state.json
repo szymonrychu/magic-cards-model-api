@@ -917,9 +917,11 @@
     "alice": [],
     "bob": []
   },
+  "player_control": {},
   "players": [
     {
       "counters": {},
+      "decisions_made_by": null,
       "graveyard_count": 0,
       "hand_count": 3,
       "land_allowance": 1,
@@ -939,6 +941,7 @@
     },
     {
       "counters": {},
+      "decisions_made_by": null,
       "graveyard_count": 1,
       "hand_count": 2,
       "land_allowance": 1,

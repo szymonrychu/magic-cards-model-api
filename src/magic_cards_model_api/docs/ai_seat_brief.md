@@ -604,6 +604,28 @@ Sequencing is most of the skill: land drops first when they cost you nothing,
 threats in the order that plays around their answers, and commit only as much
 board as one card can punish.
 
+## Controlling another player's turn (CR 723)
+
+Emrakul, the Promised End (and anything else that says "you gain control of
+target opponent during that player's next turn") hands you that player's whole
+next turn. CR 723.5: you make "all choices and decisions the controlled player
+is allowed to make", including what they play. CR 723.3: they stay the active
+player and keep holding priority, and their permanents stay theirs.
+
+- Your state says so: `deciding_for` lists the players you are deciding for,
+  and each player block carries `decisions_made_by`. You see their hand while
+  you control them (CR 723.4), never their sideboard.
+- Their priority and their pending decisions are yours. `wait`, `pass`,
+  `pass-until`, `attack`, `block` and `decide` all work from your own uid;
+  `pass-until` destinations still mean YOUR turn ("mine") or theirs.
+- Their legal actions appear in your `available_actions` with
+  `acting_for: <player>`. Cast, activate or play their cards as usual - name
+  the card, the action is taken as theirs and paid only from their resources
+  (CR 723.5a).
+- You cannot make them concede (CR 723.6).
+- If `decisions_made_by` on your own block names somebody else, it is you who
+  is controlled: nothing is yours this turn but conceding.
+
 ## Passing a whole stretch at once, and when not to
 
 **`pass-until` is the default way to cross a stretch of windows you cannot act

@@ -390,6 +390,7 @@ h3 { font-size: 14px; }
 #ai-stall-banner .why { color: var(--ink-dim); }
 #ai-loading-banner { background: #17202a; border: 1px solid var(--accent); }
 #ai-loading-banner.bad { background: #2a1c1c; border-color: var(--bad); }
+#player-control-banner { background: #221a2a; border: 1px solid var(--accent); }
 
 /* --------------------------------------------------------- the board ---- */
 

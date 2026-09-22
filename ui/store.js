@@ -303,6 +303,37 @@ export const AI_STALL_SECONDS = 45;
  * (`ai_pregame.is_forced`). Its own `text` carries the ways out, so it is
  * passed through verbatim rather than paraphrased here.
  */
+// ------------------------------------------------- one player controlling another --
+//
+// CR 723.5: while one player controls another (Emrakul, the Promised End),
+// the controller "makes all choices and decisions the controlled player is
+// allowed to make" - and CR 723.3 leaves the controlled player holding
+// priority and still the active player. `players[].decisions_made_by`
+// (`serialize._player_view`) says who is really deciding.
+
+/** Who makes `player`'s decisions right now: themselves unless controlled. */
+export function decisionsMadeBy(state, player) {
+  const block = ((state && state.players) || []).find((p) => p && p.username === player);
+  return (block && block.decisions_made_by) || player;
+}
+
+/** The banner line for the viewer while a control effect touches them, or
+ * `null`. The controlled player's own passes and choices are refused by the
+ * engine, so this is what tells them why. */
+export function playerControlNotice(state) {
+  if (!state || !state.you) return null;
+  const control = state.player_control || {};
+  const deciding = control[state.you];
+  if (deciding && deciding !== state.you) {
+    return `${deciding} is making your decisions this turn (CR 723.5) - you can only watch, or concede (CR 723.6).`;
+  }
+  const mine = Object.keys(control).filter((player) => control[player] === state.you && player !== state.you);
+  if (mine.length) {
+    return `You are making ${mine.join(", ")}'s decisions this turn (CR 723.5).`;
+  }
+  return null;
+}
+
 export function aiStallNotice(state, aiPlayer, aiStatus, unchangedSeconds, grace) {
   if (!state || !aiPlayer) return null;
   if (state.winner || state.drawn) return null;
@@ -311,7 +342,7 @@ export function aiStallNotice(state, aiPlayer, aiStatus, unchangedSeconds, grace
     const held = stalled.find((entry) => entry && entry.player === aiPlayer);
     if (held) return held.text;
   }
-  if (state.priority_holder !== aiPlayer) return null;
+  if (!state.priority_holder || decisionsMadeBy(state, state.priority_holder) !== aiPlayer) return null;
   const error = aiStatus && aiStatus.last_error;
   if (error) return `${aiPlayer}'s agent reported an error: ${error}`;
   if (aiStatus && aiStatus.state === "unreachable") {

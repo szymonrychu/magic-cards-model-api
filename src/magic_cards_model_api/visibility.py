@@ -107,48 +107,69 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     # first guessing whose cards matter is simpler than trying to scope it.
     has_pending = view.get("pending_decision") is not None
     card_lookup = _card_lookup(view) if has_pending else None
+    seen = seen_by(view, viewer)
     hidden_ids = _hidden_card_ids(view, viewer) if has_pending else None
     view = dict(view)
     view["hands"] = {
-        name: (cards if name == viewer else []) for name, cards in view.get("hands", {}).items()
+        name: (cards if name in seen else []) for name, cards in view.get("hands", {}).items()
     }
     view["players"] = [_redact_player(player, viewer) for player in view.get("players", [])]
     if view.get("pregame") is not None:
         view["pregame"] = _redact_pregame(view["pregame"], viewer)
     if "exile" in view:
         view["exile"] = [
-            _redact_cast_options(_redact_facedown_card(card, viewer), viewer)
+            _redact_cast_options(_redact_facedown_card(card, viewer, seen), viewer, seen)
             for card in view["exile"]
         ]
     if "exile_pile" in view:
         view["exile_pile"] = [
-            _redact_cast_options(_redact_facedown_card(card, viewer), viewer)
+            _redact_cast_options(_redact_facedown_card(card, viewer, seen), viewer, seen)
             for card in view["exile_pile"]
         ]
     if "graveyards" in view:
         view["graveyards"] = {
-            player: [_redact_cast_options(card, viewer) for card in cards]
+            player: [_redact_cast_options(card, viewer, seen) for card in cards]
             for player, cards in view["graveyards"].items()
         }
     if "play_permissions" in view:
         view["play_permissions"] = {
-            player: [_redact_permission(entry, viewer) for entry in entries]
+            player: [_redact_permission(entry, viewer, seen) for entry in entries]
             for player, entries in view["play_permissions"].items()
         }
     view.pop("libraries", None)
     view.pop("sideboards", None)
     if "known_cards" in view:
-        view["known_cards"] = _redact_known_cards(view["known_cards"], viewer)
+        view["known_cards"] = _redact_known_cards(view["known_cards"], viewer, seen)
     for contents_key in _CONTENTS_KEYS:
         if contents_key in view:
             view[contents_key] = _own_entry_only(view[contents_key], viewer)
     if view.get("pending_decision") is not None:
         view["pending_decision"] = redact_pending_decision(
-            view["pending_decision"], viewer, card_lookup, hidden_ids
+            view["pending_decision"], viewer, card_lookup, hidden_ids, seen=seen
         )
     if viewer is not None:
         view["you"] = viewer
+        view["deciding_for"] = sorted(seen - {viewer})
     return view
+
+
+def seen_by(view: dict[str, Any], viewer: Viewer) -> frozenset[str]:
+    """The players whose in-game information `viewer` sees as its own.
+
+    Itself, and - CR 723.4 - every player it is controlling right now: "If
+    information about an object in the game would be visible to the player
+    being controlled, it's visible to both that player and the controller of
+    the player." Read off the unredacted view's own `player_control`
+    (`serialize.state_view`), so the rule rides with the board it describes.
+
+    Only objects *in the game*. The same rule's second sentence keeps "cards
+    outside the game" with the controlled player alone, which is why nothing
+    here widens a sideboard, a decklist, or a `sideboard_contents` block:
+    those stay own-entry-only, keyed on `viewer` and never on this set."""
+    if not isinstance(viewer, str):
+        return frozenset()
+    control = view.get("player_control") or {}
+    return frozenset({viewer} | {player for player, who in control.items() if who == viewer})
 
 
 #: The own-only, unordered zone summaries `serialize.state_view` adds on
@@ -168,13 +189,18 @@ def _own_entry_only(block: Any, viewer: Viewer) -> dict[str, Any]:
     return {viewer: block[viewer]}
 
 
-def _redact_known_cards(known: Any, viewer: Viewer) -> dict[str, Any]:
+def _redact_known_cards(
+    known: Any, viewer: Viewer, seen: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """`serialize._known_cards_view`, as `viewer` may see it: its own entry.
 
     What one player knows is that player's alone. A look (CR 701.20e) is
     "shown only to the specified player", and even a public reveal's memory
     is a seat's own reasoning about the board, so an opponent never reads
-    another seat's entry and a viewer who is nobody reads none.
+    another seat's entry and a viewer who is nobody reads none. The one
+    exception is CR 723.4: a player being controlled has their in-game known
+    cards (hand, library) shown to their controller too, never their
+    sideboard, which is outside the game.
 
     Fails closed. The entry is rebuilt from the parts this module
     recognises - card views that are dicts, library records with an integer
@@ -186,16 +212,31 @@ def _redact_known_cards(known: Any, viewer: Viewer) -> dict[str, Any]:
     """
     if not isinstance(known, dict) or not isinstance(viewer, str):
         return {}
-    block = known.get(viewer)
+    redacted = {}
+    for name in sorted(seen | {viewer}):
+        entry = _redact_known_entry(known.get(name), viewer, seen)
+        if entry is None:
+            continue
+        if name != viewer:
+            # CR 723.4: a controlled player's known *in-game* cards are the
+            # controller's to see too, but a sideboard is outside the game.
+            entry["sideboard"] = []
+        redacted[name] = entry
+    return redacted
+
+
+def _redact_known_entry(block: Any, viewer: str, seen: frozenset[str]) -> dict[str, Any] | None:
+    """One player's `known_cards` entry, rebuilt from the parts this module
+    recognises (see `_redact_known_cards`), or None when it is not one."""
     if not isinstance(block, dict):
-        return {}
+        return None
 
     def cards(key: str) -> list[dict[str, Any]]:
         entries = block.get(key)
         if not isinstance(entries, list):
             return []
         return [
-            _redact_known_card(card, viewer)
+            _redact_known_card(card, viewer, seen)
             for card in entries
             if isinstance(card, dict) and card.get("id")
         ]
@@ -213,17 +254,19 @@ def _redact_known_cards(known: Any, viewer: Viewer) -> dict[str, Any]:
             {
                 "index_from_top": index,
                 "source": source if isinstance(source, str) else None,
-                "card": _redact_known_card(card, viewer),
+                "card": _redact_known_card(card, viewer, seen),
             }
         )
-    return {viewer: {"hand": cards("hand"), "library": library, "sideboard": cards("sideboard")}}
+    return {"hand": cards("hand"), "library": library, "sideboard": cards("sideboard")}
 
 
-def _redact_known_card(card: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+def _redact_known_card(
+    card: dict[str, Any], viewer: Viewer, seen: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """A known hidden card's view with its owner-only affordances removed."""
-    trimmed = _redact_cast_options(card, viewer)
+    trimmed = _redact_cast_options(card, viewer, seen)
     owner = card.get("controller") or card.get("owner")
-    if "special_actions" in trimmed and owner != viewer:
+    if "special_actions" in trimmed and owner != viewer and owner not in seen:
         trimmed = {key: value for key, value in trimmed.items() if key != "special_actions"}
     return trimmed
 
@@ -274,7 +317,9 @@ def _redact_pregame(pregame: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     }
 
 
-def _redact_facedown_card(card: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+def _redact_facedown_card(
+    card: dict[str, Any], viewer: Viewer, seen: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """A card in a shared, public zone (CR 400.2), as `viewer` may see it.
 
     Exile is public - everybody sees a pile exists and roughly what is in it -
@@ -292,7 +337,7 @@ def _redact_facedown_card(card: dict[str, Any], viewer: Viewer) -> dict[str, Any
     if card.get("face_up", True) or viewer is ADMIN:
         return card
     owner = card.get("controller") or card.get("owner")
-    if viewer is not None and owner == viewer:
+    if viewer is not None and (owner == viewer or owner in seen):
         return card
     return {
         "id": card.get("id"),
@@ -307,7 +352,9 @@ def _redact_facedown_card(card: dict[str, Any], viewer: Viewer) -> dict[str, Any
     }
 
 
-def _redact_cast_options(card: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+def _redact_cast_options(
+    card: dict[str, Any], viewer: Viewer, seen: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """A graveyard/exile card's `cast_options` (`serialize._cast_options_of`),
     as `viewer` may see it.
 
@@ -334,12 +381,14 @@ def _redact_cast_options(card: dict[str, Any], viewer: Viewer) -> dict[str, Any]
     if "cast_options" not in card or viewer is ADMIN:
         return card
     owner = card.get("controller") or card.get("owner")
-    if viewer is not None and owner == viewer:
+    if viewer is not None and (owner == viewer or owner in seen):
         return card
     return {key: value for key, value in card.items() if key != "cast_options"}
 
 
-def _redact_permission(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+def _redact_permission(
+    entry: dict[str, Any], viewer: Viewer, seen: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """One `play_permissions` entry (`serialize._play_permission_view`), as
     `viewer` may see it. Every permission this engine grants today names a
     card that is already public (a flashback grant's graveyard card, a card
@@ -352,7 +401,7 @@ def _redact_permission(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     card = entry.get("card")
     if not isinstance(card, dict):
         return entry
-    return {**entry, "card": _redact_facedown_card(card, viewer)}
+    return {**entry, "card": _redact_facedown_card(card, viewer, seen)}
 
 
 def _card_lookup(view: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -405,11 +454,12 @@ def _hidden_card_ids(view: dict[str, Any], viewer: Viewer) -> set[str]:
     viewer's own (CR 400.2 makes the library and the hand hidden zones; CR
     402.3: "a player can't look at the cards in another player's hand")."""
     hidden: set[str] = set()
+    seen = seen_by(view, viewer)
     for zone_key in ("libraries", "sideboards"):
         for cards in view.get(zone_key, {}).values():
             hidden.update(card["id"] for card in cards)
     for name, cards in view.get("hands", {}).items():
-        if name != viewer:
+        if name != viewer and name not in seen:
             hidden.update(card["id"] for card in cards)
     return hidden
 
@@ -419,6 +469,8 @@ def redact_pending_decision(
     viewer: Viewer,
     card_lookup: dict[str, dict[str, Any]] | None = None,
     hidden_ids: set[str] | None = None,
+    *,
+    seen: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """A pending decision, as `viewer` may see it.
 
@@ -428,7 +480,9 @@ def redact_pending_decision(
     happening at all is not secret, only the identity of what was looked at.
     So a seat that is not the one deciding gets `{player, kind, prompt}` and
     nothing that names a card; the deciding player (and the admin, handled
-    above) sees the rest - the candidates and how many to choose.
+    above) sees the rest - the candidates and how many to choose. While that
+    player is controlled, `seen` (`seen_by`) carries them for their
+    controller, who is the one answering (CR 723.4, CR 723.5).
 
     For the deciding player, `cards` stays a bare list of ids (existing
     callers - `decide`'s own `moved`/`card_ids` - answer by id, and changing
@@ -459,7 +513,7 @@ def redact_pending_decision(
     in one of `hidden_ids` - a zone that viewer cannot see - so the id never
     points at a hidden card.
     """
-    if viewer == pending.get("player"):
+    if viewer == pending.get("player") or pending.get("player") in seen:
         if hidden_ids and pending.get("source_card_id") in hidden_ids:
             pending = {**pending, "source_card_id": None}
         cards = pending.get("cards") or ()
@@ -493,7 +547,12 @@ def redact_paused_pending(
     responses never carried it, and the state read is where it lives."""
     if viewer is ADMIN:
         return pending
-    return redact_pending_decision(pending, viewer, hidden_ids=_hidden_card_ids(view, viewer))
+    return redact_pending_decision(
+        pending,
+        viewer,
+        hidden_ids=_hidden_card_ids(view, viewer),
+        seen=seen_by(view, viewer),
+    )
 
 
 def redact_snapshot(snapshot: dict[str, Any], viewer: str) -> dict[str, Any]:

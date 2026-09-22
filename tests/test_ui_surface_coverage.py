@@ -482,6 +482,11 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         "the browser builds its target slots from `ActionTargets.slots` and from "
         "`CastHintsView.targeting.requirements`, which restate the same requirements",
     ),
+    ("ActionRow", "acting_for"): _Reason(
+        "known-gap",
+        "a controlled player's row offered to their controller (CR 723.5); the browser does "
+        "not yet act for another player - an AI seat controlling a human is the live case",
+    ),
     ("ActionRow", "activate_first"): _Reason(
         "known-gap",
         "CR 118.3c mana abilities a row the engine already calls affordable cannot be paid "

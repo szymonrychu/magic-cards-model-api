@@ -370,6 +370,10 @@ export function interpretPassOutcome(res) {
 // answer, so starting one there would spend a tick doing nothing.
 export function passButtonsFor(state) {
   if (state.priority_holder !== state.you) return [];
+  // CR 723.5: somebody else is making this player's decisions this turn, so
+  // their pass is not theirs to make (the engine refuses it).
+  const control = state.player_control || {};
+  if (control[state.you] && control[state.you] !== state.you) return [];
   if (state.pending_decision) {
     // Your own decision is answered through the decision panel, not a
     // pass, but the pass button has always stayed live alongside it (a

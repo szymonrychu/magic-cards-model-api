@@ -7,6 +7,7 @@
   },
   "command": [],
   "conceded": [],
+  "deciding_for": [],
   "drawn": false,
   "exile": [],
   "exile_pile": [],
@@ -151,9 +152,11 @@
     "alice": [],
     "bob": []
   },
+  "player_control": {},
   "players": [
     {
       "counters": {},
+      "decisions_made_by": null,
       "graveyard_count": 1,
       "hand_count": 0,
       "land_allowance": 1,
@@ -173,6 +176,7 @@
     },
     {
       "counters": {},
+      "decisions_made_by": null,
       "graveyard_count": 0,
       "hand_count": 0,
       "land_allowance": 1,

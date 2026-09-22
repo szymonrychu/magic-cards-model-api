@@ -29,7 +29,7 @@
 
 import { h, clear } from "../dom.js";
 import { STEPS, PHASE_OF } from "../priority.js";
-import { aiStallNotice, aiSeatLoadingNotice, aiSeatActivityLabel } from "../store.js";
+import { aiStallNotice, aiSeatLoadingNotice, aiSeatActivityLabel, playerControlNotice } from "../store.js";
 
 const STEP_LABELS = {
   untap: "untap",
@@ -170,6 +170,19 @@ function renderAiLoadingBanner(root, app) {
   banner.appendChild(h("span", {}, `${who}: ${notice.message}.`));
 }
 
+// ------------------------------------------------- player control banner
+
+/** CR 723: one line saying who is making whose decisions this turn, or
+ * hidden when nobody is controlled (`playerControlNotice`). */
+function renderPlayerControlBanner(root, app) {
+  const banner = root.querySelector("#player-control-banner");
+  if (!banner) return;
+  const message = playerControlNotice(app.state);
+  clear(banner);
+  banner.hidden = !message;
+  if (message) banner.appendChild(h("span", {}, message));
+}
+
 // ---------------------------------------------------------- AI stall banner
 
 // How long the board has looked exactly like this, keyed by (priority
@@ -293,6 +306,7 @@ export function mountTopbar(root, store, handlers) {
     renderAiPanel(root, app);
     renderAiLoadingBanner(root, app);
     renderAiStallBanner(root, app, handlers);
+    renderPlayerControlBanner(root, app);
   });
 }
 

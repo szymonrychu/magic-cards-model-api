@@ -310,12 +310,6 @@ def test_seatkit_20_names_the_int_agents_dsl_follow_up_gaps() -> None:
         assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
 
 
-def test_seatkit_21_is_the_current_version() -> None:
-    """API-9: API-4 through API-8's script-hint/offer/arming rework shipped
-    every shape this file's other seatkit-21 tests check for straight to
-    main without ever moving this constant - this bump is the catch-up, and
-    it is the version now in effect."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-21"
 
 
 def test_seatkit_21_names_the_why_and_advice_additions() -> None:
@@ -362,3 +356,24 @@ def test_seatkit_21_names_the_pre_bump_behaviour() -> None:
     paragraph = changelog.split("`seatkit-21`", 1)[1].split("`seatkit-20`", 1)[0]
     for term in ("harmless", "never posts an offer", "never writes a `script_run_offered`"):
         assert term in paragraph, f"the seatkit-21 paragraph does not name {term}"
+
+
+def test_seatkit_22_is_the_current_version() -> None:
+    """One player controlling another's turn (CR 723, live game 0cf08288)
+    moved the state and legal-action shapes every tool answers with."""
+    assert protocol.PROTOCOL_VERSION == "seatkit-22"
+
+
+def test_seatkit_22_names_the_player_control_fields() -> None:
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-22`", 1)[1].split("`seatkit-21`", 1)[0]
+    for term in (
+        "decisions_made_by",
+        "player_control",
+        "deciding_for",
+        "acting_for",
+        "CR 723.5",
+        "pass_until",
+    ):
+        assert term in paragraph, f"the seatkit-22 paragraph does not name {term}"

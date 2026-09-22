@@ -123,6 +123,7 @@ from .seatkit import (
     _parse_ids,
     _parse_pairs,
     card_reference,
+    decision_is_mine,
     parse_convoke,
     parse_optional_costs,
     run_action,
@@ -809,12 +810,13 @@ def build_server(seats: Seats) -> MCPServer:
             pending = answer.get("pending_decision")
             text = json.dumps(answer, indent=1)
         else:
+            state_view = payload
             _attach_script_hint(payload, seat, payload)
             _attach_draft(payload, seat, payload)
             pending = payload.get("pending_decision")
             text = json.dumps(payload, indent=1, sort_keys=True)
         modern = protocol_version is None or protocol_version in MODERN_PROTOCOL_VERSIONS
-        if isinstance(pending, dict) and pending.get("player") == seat.player and modern:
+        if decision_is_mine(pending, state_view, seat.player) and modern:
             return InputRequiredResult(request_state=text)
         return text
 
@@ -861,6 +863,14 @@ def build_server(seats: Seats) -> MCPServer:
                   again.
                 - the pregame is waiting on **you**: your own CR 103.5 mulligan
                   declaration, or your own CR 103.6 opening-hand actions.
+
+                **Controlling another player's turn (CR 723, e.g. Emrakul, the
+                Promised End).** While `deciding_for` in the state names a
+                player, their priority and their pending decisions are yours:
+                this wakes you for them even though `priority_holder` and
+                `pending_decision.player` name them (CR 723.3 keeps them the
+                active player). While `decisions_made_by` on your own player
+                block names somebody else, nothing is yours but conceding.
 
                 Waiting on somebody *else's* pregame declaration is expressly
                 not one of them. CR 103.5 has each player declare in turn order
@@ -2334,6 +2344,10 @@ def build_server(seats: Seats) -> MCPServer:
         player passes ... Then the next player in turn order receives priority."
         There is no other priority move, and this tool is it.
 
+        **Controlling another player's turn (CR 723.5).** While `deciding_for`
+        in the state names a player who holds priority, this passes it for
+        them - call it with your own uid, as always.
+
         What follows from a pass is not yours to do, and there is no tool for
         it - CR 117.4: "If all players pass in succession ... the spell or
         ability on top of the stack resolves or, if the stack is empty, the
@@ -2411,7 +2425,10 @@ def build_server(seats: Seats) -> MCPServer:
 
         `step` is the point in the turn to run to, and `whose_turn` says whose
         turn that step has to be in: "mine" (default), "opponent", or "any" for
-        whichever comes first. Legal steps, in turn order:
+        whichever comes first. "mine" is always your own turn - also while
+        you control another player's turn (CR 723, `deciding_for` in the
+        state), when the run passes their priorities and answers their combat
+        declarations with nobody, exactly as it does your own. Legal steps, in turn order:
 
             upkeep, draw, precombat_main, beginning_of_combat,
             declare_attackers, declare_blockers, combat_damage,

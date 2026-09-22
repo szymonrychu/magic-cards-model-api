@@ -2101,6 +2101,12 @@ class PlayerView(BaseModel):
     (CR 500.7, `TurnMachine.own_turns_taken`) - 0 before their first turn,
     pregame included. Optional only so a snapshot recorded before this field
     existed (schema < 17) still reads; a live view always carries it."""
+    decisions_made_by: str | None = None
+    """Who is making this player's decisions right now, when somebody else is
+    (CR 723.5 - Emrakul, the Promised End's "you gain control of target
+    opponent during that player's next turn"); `None` while they decide for
+    themselves. CR 723.3 leaves them the active player and the priority
+    holder, so this is what says a held priority is the controller's move."""
 
 
 class PlayPermissionView(BaseModel):
@@ -2255,6 +2261,11 @@ class GameStateView(BaseModel):
     pregame: PregameView | None = None
     active_player: str | None = None
     priority_holder: str | None = None
+    player_control: dict[str, str] | None = None
+    """Controlled player -> the player making their decisions this turn
+    (CR 723.5); `{}` when nobody is controlled. Public: the effect that set it
+    up is. Optional only so a snapshot recorded before it existed still
+    reads."""
     players: list[PlayerView]
     battlefield: list[CardView]
     stack: list[StackEntry]
@@ -2285,6 +2296,10 @@ class GameStateView(BaseModel):
     """Not set by `serialize.state_view` - `visibility.redact_view` stamps
     this onto the view for any non-`None` viewer, after every other field is
     already settled."""
+    deciding_for: list[str] | None = None
+    """Set beside `you` by `visibility.redact_view`: every other player whose
+    decisions `you` is making right now (CR 723.5). A priority held by, or a
+    decision addressed to, any of them is `you`'s to act on; `[]` otherwise."""
 
 
 class NewGameResponse(GameStateView):
@@ -2973,6 +2988,12 @@ class ActionRow(Action):
     """The engine's `ActionKind`, or `equip`: CR 702.6a's activation, which
     the engine's enumeration does not list and `POST .../actions/equip`
     takes (`action_rows._Rows.equip_rows`)."""
+
+    acting_for: str | None = None
+    """Set on a row that is another player's, offered to the player making
+    their decisions this turn (CR 723.5, `app._rows_while_controlling`):
+    `player` names them, and posting the row as it stands from the
+    controller's uid takes the action for them."""
 
     optional_costs: list[OptionalCostView] | None = None
     """A cast row's optional costs - kicker and its siblings, entwine and

@@ -45,6 +45,7 @@ from . import (
     lobby,
     oidc,
     opening,
+    player_control,
     protocol,
     records,
     review,
@@ -753,6 +754,36 @@ def _pause_slot_guard(
     if stored_command != command:
         raise commands.DecisionInProgressError(stored_command, stored_pending, command)
     return paused
+
+
+def _acting_as[Request](
+    game_id: str, kind: str, action: str, req: Request, uid: str | None
+) -> tuple[Request, dict[str, Any] | None]:
+    """`req` as the engine should run it while one player controls another
+    (`player_control.acting_as`, CR 723.5), or the refusal a controlled
+    player's own seat gets for reaching for a decision that is not theirs
+    this turn - recorded like any other refusal, and not at all for a dry
+    run, which is never logged (`audit_outcome`).
+
+    A no-op whenever no control effect is in force, which is almost always,
+    so every route keeps behaving exactly as it did outside a controlled turn.
+    """
+    game = game_or_404(game_id)
+    seat = game_access.seat_for_uid(game_id, uid)
+    acting, reason = player_control.acting_as(game, kind, req, seat)
+    if reason is None:
+        return acting, None
+    if getattr(req, "dry_run", False):
+        return req, {"allowed": False, "reason": reason, "log_seq": None}
+    seq = audit.record(
+        game_id,
+        action,
+        player=getattr(req, "player", None),
+        allowed=False,
+        reason=reason,
+        reasoning=getattr(req, "reasoning", None),
+    )
+    return req, {"allowed": False, "reason": reason, "log_seq": seq}
 
 
 def _run_command(
@@ -2010,22 +2041,26 @@ def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
-def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
+def action_cast(game_id: str, req: CastRequest, uid: str | None = None) -> dict[str, Any]:
     """Cast a card. `dry_run` never asks anything unscripted (it builds and
     rewinds its `Casting` against an isolated probe copy of the game - see
     `engine_api.dry_run_copy` - never through the pause/resume tape), so it
     always completes; a real cast can pause on any CR 601.2 choice this
     engine still asks interactively (`choose_targets`, `choose_a_mode`, ...)."""
+    actor = req.player
+    req, refused = _acting_as(game_id, "cast", "cast", req, uid)
+    if refused is not None:
+        return refused
     records.require_current_board(
         game_id,
         "cast",
         req.expected_seq,
-        player=req.player,
+        player=actor,
         reasoning=req.reasoning,
         dry_run=req.dry_run,
     )
-    records.require_reasoning(game_id, req.player, req.reasoning)
-    records.require_plan(game_id, req.player)
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
     result, committed, legal_before, seq = _run_command(game_id, "cast", req)
     return _respond(
         game_id,
@@ -2051,20 +2086,26 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
-def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
+def action_suspend(
+    game_id: str, req: SpecialActionRequest, uid: str | None = None
+) -> dict[str, Any]:
     """CR 116.2f/702.62a: exile a card with suspend from hand, paying its
     suspend cost, with N time counters. The free cast once the last counter
     comes off is picked up automatically by `actions/cast` - see `advance`."""
+    actor = req.player
+    req, refused = _acting_as(game_id, "suspend", "suspend", req, uid)
+    if refused is not None:
+        return refused
     records.require_current_board(
         game_id,
         "suspend",
         req.expected_seq,
-        player=req.player,
+        player=actor,
         reasoning=req.reasoning,
         dry_run=req.dry_run,
     )
-    records.require_reasoning(game_id, req.player, req.reasoning)
-    records.require_plan(game_id, req.player)
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
     result, _, legal_before, seq = _run_command(game_id, "suspend", req)
     return _respond(
         game_id,
@@ -2086,19 +2127,23 @@ def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
-def action_plot(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
+def action_plot(game_id: str, req: SpecialActionRequest, uid: str | None = None) -> dict[str, Any]:
     """CR 116.2k/702.170b: exile a card with plot from hand, paying its plot
     cost. Cast it later with `actions/cast`, `keyword: "Plot"`, on a later turn."""
+    actor = req.player
+    req, refused = _acting_as(game_id, "plot", "plot", req, uid)
+    if refused is not None:
+        return refused
     records.require_current_board(
         game_id,
         "plot",
         req.expected_seq,
-        player=req.player,
+        player=actor,
         reasoning=req.reasoning,
         dry_run=req.dry_run,
     )
-    records.require_reasoning(game_id, req.player, req.reasoning)
-    records.require_plan(game_id, req.player)
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
     result, _, legal_before, seq = _run_command(game_id, "plot", req)
     return _respond(
         game_id,
@@ -2120,20 +2165,26 @@ def action_plot(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
-def action_foretell(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
+def action_foretell(
+    game_id: str, req: SpecialActionRequest, uid: str | None = None
+) -> dict[str, Any]:
     """CR 116.2h/702.143b: pay {2} and exile a card with foretell from hand,
     face down. Cast it later with `actions/cast`, `keyword: "Foretell"`, on a
     later turn, for its printed foretell cost."""
+    actor = req.player
+    req, refused = _acting_as(game_id, "foretell", "foretell", req, uid)
+    if refused is not None:
+        return refused
     records.require_current_board(
         game_id,
         "foretell",
         req.expected_seq,
-        player=req.player,
+        player=actor,
         reasoning=req.reasoning,
         dry_run=req.dry_run,
     )
-    records.require_reasoning(game_id, req.player, req.reasoning)
-    records.require_plan(game_id, req.player)
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
     result, _, legal_before, seq = _run_command(game_id, "foretell", req)
     return _respond(
         game_id,
@@ -2155,20 +2206,24 @@ def action_foretell(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
-def action_cycle(game_id: str, req: CycleRequest) -> dict[str, Any]:
+def action_cycle(game_id: str, req: CycleRequest, uid: str | None = None) -> dict[str, Any]:
     """CR 702.29a: discard a card with cycling from hand, paying its cycling
     cost, to draw a card (or search for a typecycled one). Puts the ability on
     the stack, same as `actions/activate` - resolve it with `resolve-top`."""
+    actor = req.player
+    req, refused = _acting_as(game_id, "cycle", "cycle", req, uid)
+    if refused is not None:
+        return refused
     records.require_current_board(
         game_id,
         "cycle",
         req.expected_seq,
-        player=req.player,
+        player=actor,
         reasoning=req.reasoning,
         dry_run=req.dry_run,
     )
-    records.require_reasoning(game_id, req.player, req.reasoning)
-    records.require_plan(game_id, req.player)
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
     result, _, legal_before, seq = _run_command(game_id, "cycle", req)
     return _respond(
         game_id,
@@ -2326,6 +2381,40 @@ def _attach_target_candidates(
 _DECLARATION_KINDS = frozenset({DecisionKind.DECLARE_ATTACKERS, DecisionKind.DECLARE_BLOCKERS})
 
 
+def _rows_while_controlling(
+    game: Game, player: str, pending: PendingDecisionEngine | None
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    """`legal_action_rows` for `player`, as one player controlling another
+    changes them (CR 723).
+
+    - `player` is being controlled: CR 723.5 leaves them no choice of their
+      own but CR 723.6's concession, so that is all they are offered.
+    - `player` is controlling somebody: that player's rows are added after
+      `player`'s own, each stamped `acting_for` with their name. Their
+      `player` field names the controlled player, and every route takes the
+      row as it stands from the controller's uid. Conceding is left out -
+      CR 723.6: "The controller of another player can't make that player
+      concede."
+
+    Exactly `legal_action_rows` whenever nobody is controlled."""
+    actions, views = legal_action_rows(game, player, pending)
+    if player_control.decider(game, player) != player:
+        kept = [
+            (action, view)
+            for action, view in zip(actions, views, strict=True)
+            if view.get("kind") == "concede"
+        ]
+        return [action for action, _ in kept], [view for _, view in kept]
+    for controlled in player_control.deciding_for(game, player):
+        theirs, their_views = legal_action_rows(game, controlled, pending)
+        for action, view in zip(theirs, their_views, strict=True):
+            if view.get("kind") == "concede":
+                continue
+            actions.append(action)
+            views.append({**view, "acting_for": controlled})
+    return actions, views
+
+
 @app.get(
     "/api/games/{game_id}/legal-actions",
     response_model=LegalActionsResponse,
@@ -2411,7 +2500,13 @@ def get_legal_actions(
     at_seq = audit.last_seq(game_id)
     game = game_or_404(game_id)
     viewer = visibility.resolve_viewer(game_id, uid)
-    if viewer is not visibility.ADMIN and viewer != player:
+    if (
+        viewer is not visibility.ADMIN
+        and viewer != player
+        # CR 723.4/723.5: the player `viewer` is controlling right now - their
+        # hand is `viewer`'s to see and their choices `viewer`'s to make.
+        and not (isinstance(viewer, str) and player_control.may_decide_for(game, viewer, player))
+    ):
         raise ValueError(
             f"that uid does not open {player}'s seat - these are that player's own "
             "legal actions, and naming them is not enough to read them"
@@ -2428,7 +2523,7 @@ def get_legal_actions(
         board = commands.board_at_pause(game, paused[0], paused[1]) or game
 
     def rows() -> list[dict[str, Any]]:
-        actions, views = legal_action_rows(board, player, pending)
+        actions, views = _rows_while_controlling(board, player, pending)
         if candidates:
             _attach_target_candidates(board, actions, views)
         return views
@@ -2505,17 +2600,21 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
-def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
+def action_activate(game_id: str, req: ActivateRequest, uid: str | None = None) -> dict[str, Any]:
+    actor = req.player
+    req, refused = _acting_as(game_id, "activate_ability", "activate", req, uid)
+    if refused is not None:
+        return refused
     records.require_current_board(
         game_id,
         "activate",
         req.expected_seq,
-        player=req.player,
+        player=actor,
         reasoning=req.reasoning,
         dry_run=req.dry_run,
     )
-    records.require_reasoning(game_id, req.player, req.reasoning)
-    records.require_plan(game_id, req.player)
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
     result, _, legal_before, seq = _run_command(game_id, "activate_ability", req)
     return _respond(
         game_id,
@@ -2539,20 +2638,24 @@ def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
-def action_crew(game_id: str, req: CrewRequest) -> dict[str, Any]:
+def action_crew(game_id: str, req: CrewRequest, uid: str | None = None) -> dict[str, Any]:
     """Crew a Vehicle (CR 702.122a). Its own endpoint rather than an
     `activate` against an ability index: the cost is the creatures tapped,
     not mana, and crew is the Vehicle's ability rather than theirs."""
+    actor = req.player
+    req, refused = _acting_as(game_id, "crew", "crew", req, uid)
+    if refused is not None:
+        return refused
     records.require_current_board(
         game_id,
         "crew",
         req.expected_seq,
-        player=req.player,
+        player=actor,
         reasoning=req.reasoning,
         dry_run=req.dry_run,
     )
-    records.require_reasoning(game_id, req.player, req.reasoning)
-    records.require_plan(game_id, req.player)
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
     result, _, legal_before, seq = _run_command(game_id, "crew", req)
     return _respond(
         game_id,
@@ -2573,7 +2676,7 @@ def action_crew(game_id: str, req: CrewRequest) -> dict[str, Any]:
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
-def action_equip(game_id: str, req: EquipRequest) -> dict[str, Any]:
+def action_equip(game_id: str, req: EquipRequest, uid: str | None = None) -> dict[str, Any]:
     """Activate an Equipment's equip ability (CR 702.6a): "[Cost]: Attach this
     permanent to target creature you control. Activate only as a sorcery."
 
@@ -2582,16 +2685,20 @@ def action_equip(game_id: str, req: EquipRequest) -> dict[str, Any]:
     (`machines.keywords.equip_activation`), not one of the Equipment's
     `activated_abilities`, so there is no index to name. The legal-action row
     for it is `kind: equip`."""
+    actor = req.player
+    req, refused = _acting_as(game_id, "equip", "equip", req, uid)
+    if refused is not None:
+        return refused
     records.require_current_board(
         game_id,
         "equip",
         req.expected_seq,
-        player=req.player,
+        player=actor,
         reasoning=req.reasoning,
         dry_run=req.dry_run,
     )
-    records.require_reasoning(game_id, req.player, req.reasoning)
-    records.require_plan(game_id, req.player)
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
     result, _, legal_before, seq = _run_command(game_id, "equip", req)
     return _respond(
         game_id,
@@ -2684,7 +2791,10 @@ def _answer_declaration(
     # was (it opens no seat, and CR 608.2d's "the player announces" is about
     # a player), and an advisor uid now is too.
     viewer = game_access.seat_for_uid(game_id, uid)
-    if viewer != engine_decision.player:
+    controlled = player_control.decision_refusal(game, viewer, engine_decision.player)
+    if controlled is not None:
+        return refuse(controlled)
+    if not player_control.may_decide_for(game, viewer, engine_decision.player):
         # No enumeration on this branch, deliberately: the caller has just
         # been told this is not their decision, and "what else the deciding
         # seat could have done" is that seat's own hidden information.
@@ -2693,12 +2803,13 @@ def _answer_declaration(
         # so a refused caller who named themselves read it back out of the
         # log.
         return refuse("that uid does not open the deciding player's seat")
-    records.require_reasoning(game_id, engine_decision.player, reasoning)
-    # Same subject as the reasoning gate: the seat the server resolved, never
-    # `req.player`. `require_plan` self-exempts when this is not that seat's
-    # own turn, so a blocker declaration on the opponent's turn passes
-    # straight through it - see `records.require_plan`.
-    records.require_plan(game_id, engine_decision.player, game=game)
+    # The seat the server resolved - the controller, when it is answering for
+    # a player it controls (CR 723.5) - never `req.player`.
+    records.require_reasoning(game_id, viewer, reasoning)
+    # Same subject as the reasoning gate. `require_plan` self-exempts when
+    # this is not that seat's own turn, so a blocker declaration on the
+    # opponent's turn passes straight through it - see `records.require_plan`.
+    records.require_plan(game_id, viewer, game=game)
     # T10: computed once the deciding seat is the *resolved* viewer, and
     # reused for every branch below (including a later refusal) - always the
     # *pre*-mutation enumeration, since nothing here has touched `game` yet.
@@ -2833,17 +2944,21 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
-def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
+def action_play_land(game_id: str, req: PlayLandRequest, uid: str | None = None) -> dict[str, Any]:
+    actor = req.player
+    req, refused = _acting_as(game_id, "play_land", "play_land", req, uid)
+    if refused is not None:
+        return refused
     records.require_current_board(
         game_id,
         "play_land",
         req.expected_seq,
-        player=req.player,
+        player=actor,
         reasoning=req.reasoning,
         dry_run=req.dry_run,
     )
-    records.require_reasoning(game_id, req.player, req.reasoning)
-    records.require_plan(game_id, req.player)
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
     result, _, legal_before, seq = _run_command(game_id, "play_land", req)
     return _respond(
         game_id,
@@ -2864,7 +2979,9 @@ def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
     response_model=PassPriorityResponse,
     response_model_exclude_unset=True,
 )
-def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, Any]:
+def action_pass_priority(
+    game_id: str, req: PassPriorityRequest, uid: str | None = None
+) -> dict[str, Any]:
     """Pass priority - "I am done for now". `outcome` tells the caller what
     the pass caused: `resolve_top` (the stack's top resolved, priority goes
     round again) or `end_step` (everyone passed on an empty stack, so the
@@ -2880,6 +2997,9 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
     cleanup steps is waiting on them - so handing the pass back with
     `priority_holder: null` would be handing back a state no client, human or
     otherwise, is allowed to move."""
+    # A controller passing a controlled player's priority by that player's
+    # name is the controller's own pass to the engine (CR 723.5).
+    req, _ = _acting_as(game_id, "pass_priority", "pass_priority", req, uid)
     # `pass_shaped=True`: this is the one action whose stated reason is
     # always the same sentence, and `seatkit.pass_until` posts to this very
     # route for every pass a run makes - see `records.require_reasoning`.
@@ -3166,6 +3286,7 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     `pending_decision`, answerable through `POST .../decide` or its
     `actions/attack`/`actions/declare-blockers` aliases.
     """
+    req, _ = _acting_as(game_id, "advance", "advance", req, uid)
     records.require_current_board(
         game_id, "advance", req.expected_seq, player=req.player, reasoning=req.reasoning
     )
@@ -3922,23 +4043,37 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
     # advisor uid to the human it watches. Asking the read filter who is
     # acting is what let an advisor credential answer its human's decisions.
     player = game_access.seat_for_uid(game_id, uid)
-    if player != req.player:
+    if player is None or (
+        player != req.player and not player_control.may_decide_for(game, player, req.player)
+    ):
         # Refused before anything is enumerated: `req.player` is a request
         # field, and enumerating a seat the caller has merely *named* is
         # what put another seat's hidden information into a row the caller
-        # could then read back.
+        # could then read back. Naming a player this seat is controlling is
+        # not merely naming them (CR 723.5).
         return refuse("that uid does not open the deciding player's seat")
-    # T10: computed once the caller's uid has been agreed to open `player`'s
-    # own seat, from that seat's side of the board before this answer runs,
-    # and reused for every refusal below and the eventual success - `game`
-    # here is never touched by anything until `_resume` takes its own lock
-    # and works against its own copy.
-    legal_before = records.legal_actions_before(
-        game, player, (store.paused_command(game_id) or (None, None, None))[2]
-    )
     paused = store.paused_command(game_id)
-    if paused is None or paused[2].decision.player != req.player:
+    # CR 723.5: a decision addressed to a player somebody is controlling is
+    # that controller's to answer, and not the controlled player's own.
+    deciding = paused[2].decision.player if paused is not None else req.player
+    # T10: computed once the caller's uid has been agreed to open `player`'s
+    # own seat (or to be deciding for the player the question names), from
+    # that side of the board before this answer runs, and reused for every
+    # refusal below and the eventual success - `game` here is never touched by
+    # anything until `_resume` takes its own lock and works against its own
+    # copy.
+    legal_before = records.legal_actions_before(
+        game,
+        deciding if player_control.may_decide_for(game, player, deciding) else player,
+        paused[2] if paused is not None else None,
+    )
+    controlled = player_control.decision_refusal(game, player, deciding)
+    if controlled is not None:
+        return refuse(controlled)
+    if paused is None or not player_control.may_decide_for(game, player, deciding):
         return refuse("no pending decision for you")
+    if req.player != deciding:
+        req = req.model_copy(update={"player": deciding})
     # Which question this answer is for, when the caller said
     # (`DecideRequest.generation`). `_pause_slot_guard` already makes it
     # impossible for one command to overwrite another's live pause, so an
@@ -3956,8 +4091,8 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
             "been answered and the resolution has moved on. Re-read pending_decision "
             "and answer the question standing now."
         )
-    records.require_reasoning(game_id, req.player, req.reasoning)
-    records.require_plan(game_id, req.player)
+    records.require_reasoning(game_id, player, req.reasoning)
+    records.require_plan(game_id, player)
     command, tape, pending = paused
     engine_decision = pending.decision
     kind = engine_decision.kind

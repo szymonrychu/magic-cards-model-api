@@ -523,6 +523,17 @@
             ],
             "title": "Ability Index"
           },
+          "acting_for": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acting For"
+          },
           "activate_first": {
             "anyOf": [
               {
@@ -986,6 +997,17 @@
               }
             ],
             "title": "Ability Index"
+          },
+          "acting_for": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acting For"
           },
           "activate_first": {
             "anyOf": [
@@ -1798,6 +1820,20 @@
             "title": "Conceded",
             "type": "array"
           },
+          "deciding_for": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deciding For"
+          },
           "drawn": {
             "title": "Drawn",
             "type": "boolean"
@@ -1949,6 +1985,20 @@
             },
             "title": "Play Permissions",
             "type": "object"
+          },
+          "player_control": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Control"
           },
           "players": {
             "items": {
@@ -6013,6 +6063,20 @@
             "title": "Conceded",
             "type": "array"
           },
+          "deciding_for": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deciding For"
+          },
           "drawn": {
             "title": "Drawn",
             "type": "boolean"
@@ -6140,6 +6204,20 @@
             },
             "title": "Play Permissions",
             "type": "object"
+          },
+          "player_control": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Control"
           },
           "players": {
             "items": {
@@ -7233,6 +7311,20 @@
             "title": "Conceded",
             "type": "array"
           },
+          "deciding_for": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deciding For"
+          },
           "drawn": {
             "title": "Drawn",
             "type": "boolean"
@@ -7371,6 +7463,20 @@
             },
             "title": "Play Permissions",
             "type": "object"
+          },
+          "player_control": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Control"
           },
           "players": {
             "items": {
@@ -7698,6 +7804,20 @@
             "title": "Conceded",
             "type": "array"
           },
+          "deciding_for": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deciding For"
+          },
           "drawn": {
             "title": "Drawn",
             "type": "boolean"
@@ -7825,6 +7945,20 @@
             },
             "title": "Play Permissions",
             "type": "object"
+          },
+          "player_control": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Control"
           },
           "players": {
             "items": {
@@ -8754,6 +8888,20 @@
             "title": "Conceded",
             "type": "array"
           },
+          "deciding_for": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deciding For"
+          },
           "drawn": {
             "title": "Drawn",
             "type": "boolean"
@@ -8885,6 +9033,20 @@
             },
             "title": "Play Permissions",
             "type": "object"
+          },
+          "player_control": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Control"
           },
           "players": {
             "items": {
@@ -9509,6 +9671,17 @@
             "title": "Counters",
             "type": "object"
           },
+          "decisions_made_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decisions Made By"
+          },
           "graveyard_count": {
             "title": "Graveyard Count",
             "type": "integer"
@@ -9661,6 +9834,20 @@
             "title": "Conceded",
             "type": "array"
           },
+          "deciding_for": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deciding For"
+          },
           "drawn": {
             "title": "Drawn",
             "type": "boolean"
@@ -9804,6 +9991,20 @@
             },
             "title": "Play Permissions",
             "type": "object"
+          },
+          "player_control": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Control"
           },
           "players": {
             "items": {
@@ -10163,6 +10364,20 @@
             "title": "Conceded",
             "type": "array"
           },
+          "deciding_for": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deciding For"
+          },
           "drawn": {
             "title": "Drawn",
             "type": "boolean"
@@ -10290,6 +10505,20 @@
             },
             "title": "Play Permissions",
             "type": "object"
+          },
+          "player_control": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Control"
           },
           "players": {
             "items": {
@@ -10630,6 +10859,20 @@
             "title": "Conceded",
             "type": "array"
           },
+          "deciding_for": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deciding For"
+          },
           "drawn": {
             "title": "Drawn",
             "type": "boolean"
@@ -10781,6 +11024,20 @@
             },
             "title": "Play Permissions",
             "type": "object"
+          },
+          "player_control": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Control"
           },
           "players": {
             "items": {
@@ -11953,6 +12210,20 @@
             "title": "Conceded",
             "type": "array"
           },
+          "deciding_for": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deciding For"
+          },
           "drawn": {
             "title": "Drawn",
             "type": "boolean"
@@ -12080,6 +12351,20 @@
             },
             "title": "Play Permissions",
             "type": "object"
+          },
+          "player_control": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Control"
           },
           "players": {
             "items": {
@@ -13033,6 +13318,20 @@
             "title": "Conceded",
             "type": "array"
           },
+          "deciding_for": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deciding For"
+          },
           "destroyed": {
             "anyOf": [
               {
@@ -13198,6 +13497,20 @@
             },
             "title": "Play Permissions",
             "type": "object"
+          },
+          "player_control": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Control"
           },
           "players": {
             "items": {
@@ -14436,6 +14749,22 @@
               "title": "Game Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
           }
         ],
         "requestBody": {
@@ -14552,6 +14881,22 @@
               "title": "Game Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
           }
         ],
         "requestBody": {
@@ -14652,6 +14997,22 @@
               "title": "Game Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
           }
         ],
         "requestBody": {
@@ -14701,6 +15062,22 @@
             "schema": {
               "title": "Game Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
             }
           }
         ],
@@ -14818,6 +15195,22 @@
               "title": "Game Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
           }
         ],
         "requestBody": {
@@ -14867,6 +15260,22 @@
             "schema": {
               "title": "Game Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
             }
           }
         ],
@@ -14918,6 +15327,22 @@
               "title": "Game Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
           }
         ],
         "requestBody": {
@@ -14966,6 +15391,22 @@
             "schema": {
               "title": "Game Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
             }
           }
         ],
@@ -15017,6 +15458,22 @@
               "title": "Game Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
           }
         ],
         "requestBody": {
@@ -15066,6 +15523,22 @@
             "schema": {
               "title": "Game Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
             }
           }
         ],

@@ -1664,6 +1664,10 @@ export async function tickRun() {
   // check is: this is not a stop, just a reason to stay idle this tick.
   if (app.state.pending_decision && app.state.pending_decision.player !== you()) return;
   if (app.state.priority_holder !== you()) return;
+  // CR 723.5: somebody else is making this seat's decisions this turn, and
+  // the engine refuses this seat's own pass - stay idle, like the case above.
+  const control = app.state.player_control || {};
+  if (control[you()] && control[you()] !== you()) return;
   const run = P.forgetStartingStep(app.run, app.state);
   if (run !== app.run) store.set({ run });
   const reason = P.stopReason(app.state, run, app.stops);

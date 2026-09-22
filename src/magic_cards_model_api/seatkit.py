@@ -186,7 +186,22 @@ def scripts_enabled_here(env: Mapping[str, str] | None = None) -> bool:
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-21"
+PROTOCOL_VERSION = "seatkit-22"
+#: `seatkit-22`: one player controlling another's turn (CR 723 - Emrakul,
+#: the Promised End; live game 0cf08288 froze on it). The state gains a
+#: per-player `decisions_made_by` (who is making that player's choices, or
+#: null), a public `player_control` map (controlled -> controller), and, for
+#: a seat viewer, `deciding_for` (the players it is deciding for). CR 723.3
+#: leaves `priority_holder` and `pending_decision.player` on the controlled
+#: player, so every "is this my move" check - `pass_until`, the wait,
+#: arming, the auto-declare-nobody path, `run_action`'s release - now asks
+#: `decides_for` instead of comparing names: CR 723.5 makes the controller's
+#: move of the controlled player's priority and decisions. A legal-actions
+#: row may carry `acting_for`: the controlled player's own row, offered to
+#: the controller. A process built before this bump ignores every one of
+#: those keys, so it sees a controlled player's priority as nobody's move and
+#: stalls exactly the way the live game did - which is why this is a bump.
+#:
 #: `seatkit-21` (API-9): the changelog entry the offer/advice work owes -
 #: API-4 through API-8 shipped every shape below straight to main without
 #: ever moving this constant, so a process built against the version before
@@ -2657,6 +2672,48 @@ def board_signature(state: dict[str, Any]) -> Any:
 _NOT_THE_BOARD = frozenset({"wake_reason", "recent_log"})
 
 
+def decides_for(state: dict[str, Any], me: str) -> frozenset[str]:
+    """Every player whose held priority or pending decision is `me`'s move.
+
+    Ordinarily just `me`. CR 723.5: while one player controls another, the
+    controller "makes all choices and decisions the controlled player is
+    allowed to make", and CR 723.3 leaves the controlled player holding
+    priority and still the active player - so `priority_holder` and
+    `pending_decision.player` name the controlled player while the move is the
+    controller's. `players[].decisions_made_by` (`serialize._player_view`) is
+    what says so: this adds every player it names `me` for, and drops `me`
+    itself while somebody else is deciding for `me`, whose own priority is
+    then nothing `me` can act on (the engine refuses it, CR 723.5).
+
+    Destinations never read this: "mine" and "opponent" stay about whose
+    *turn* it is, relative to `me` (`autopass_stop_reason`)."""
+    names: set[str] = set()
+    controlled = False
+    for block in state.get("players") or ():
+        if not isinstance(block, dict) or not isinstance(block.get("username"), str):
+            continue
+        decider = block.get("decisions_made_by") or block["username"]
+        if block["username"] == me and decider != me:
+            controlled = True
+        if decider == me:
+            names.add(block["username"])
+    if not controlled:
+        names.add(me)
+    return frozenset(names)
+
+
+def holds_priority(state: dict[str, Any], me: str) -> bool:
+    """Whether the priority held right now is `me`'s to act on (`decides_for`)."""
+    holder = state.get("priority_holder")
+    return holder is not None and holder in decides_for(state, me)
+
+
+def decision_is_mine(pending: Any, state: dict[str, Any], me: str) -> bool:
+    """Whether `pending` (a `pending_decision` block) is `me`'s to answer -
+    addressed to `me`, or to a player `me` is deciding for (`decides_for`)."""
+    return isinstance(pending, dict) and pending.get("player") in decides_for(state, me)
+
+
 def compute_wake_reason(
     state: dict[str, Any],
     before: dict[str, Any] | None,
@@ -2719,28 +2776,28 @@ def compute_wake_reason(
         # rules were read in full (`mise run rules:find`) in the session that
         # changed this.
         return None
-    if pending is not None and pending.get("player") == player:
+    if decision_is_mine(pending, state, player):
         return f"a decision is waiting for you: {pending.get('prompt')}"
     if (
         state.get("step") in ("untap", "cleanup")
-        and state.get("active_player") == player
+        and state.get("active_player") in decides_for(state, player)
         and not state.get("stack")
     ):
         return "nobody gets priority in this step and it is your turn: advance the game"
-    if state.get("stack") and state.get("priority_holder") == player:
+    if state.get("stack") and holds_priority(state, player):
         # The engine refuses `advance` outright while the stack is non-empty
         # (CR 500.2, 117.4) - steer towards the one action that is ever legal
         # here, rather than let a player whose `pass` was refused for some
         # other reason fall back to `advance` and bounce off that refusal too.
         return "the stack is non-empty and you have priority: pass_priority to let it resolve"
-    if state.get("priority_holder") == player and (
+    if holds_priority(state, player) and (
         before is None or board_signature(state) != board_signature(before)
     ):
         return "you have priority and the board has changed"
     if (
         wake_to_draft
         and not draft_staged
-        and state.get("priority_holder") != player
+        and not holds_priority(state, player)
         and (before is None or board_signature(state) != board_signature(before))
     ):
         return DRAFT_TIME_WAKE_REASON
@@ -2802,8 +2859,8 @@ def _arming_moment(state: dict[str, Any], me: str) -> bool:
         return False
     pending = state.get("pending_decision")
     if pending is not None:
-        return pending.get("player") == me
-    return state.get("priority_holder") == me
+        return decision_is_mine(pending, state, me)
+    return holds_priority(state, me)
 
 
 #: Ceiling for `max_seconds` on `block_until_wake`/`pass_until` - the bound
@@ -3310,10 +3367,11 @@ def _paused(outcome: Any) -> bool:
     return isinstance(outcome, dict) and outcome.get("paused") is True
 
 
-def _addressed_to(pending: Any, player: str) -> bool:
+def _addressed_to(pending: Any, player: str, state: dict[str, Any]) -> bool:
     """Whether a paused answer's `pending_decision` is this seat's to answer
-    - the `player` it names, never merely the seat whose call paused."""
-    return isinstance(pending, dict) and pending.get("player") == player
+    - the `player` it names, or one this seat is deciding for (CR 723.5,
+    `decides_for` on `state`), never merely the seat whose call paused."""
+    return decision_is_mine(pending, state, player)
 
 
 def _waiting_on_another_seat(pending: Any) -> str:
@@ -3409,7 +3467,7 @@ def _call_watching_for_self_decision(
     while not done.wait(poll_seconds):
         state = seat.fetch_state()
         pending = state.get("pending_decision")
-        if pending is not None and pending.get("player") == seat.player:
+        if pending is not None and decision_is_mine(pending, state, seat.player):
             return SELF_DECISION_IN_FLIGHT, pending
     if "exception" in box:
         raise box["exception"]
@@ -3561,7 +3619,7 @@ def run_action(
         # surfacing mid-flight through the polling race above - see
         # `_paused`'s own docstring for why this is the common case now.
         paused_on = outcome.get("pending_decision")
-        if _addressed_to(paused_on, seat.player):
+        if _addressed_to(paused_on, seat.player, before):
             self_decision = paused_on
         else:
             # B3-10: a decision is asked of whoever the resolving object
@@ -3650,7 +3708,7 @@ def run_action(
     # `decide` the seat may hold nothing to release - and a pass posted anyway
     # is refused and recorded as this seat's refusal, inflating the audit
     # tallies (`eval_report`'s `rules_error_rate`) with a move nobody chose.
-    if release and seat.fetch_state().get("priority_holder") == seat.player:
+    if release and holds_priority(seat.fetch_state(), seat.player):
 
         def perform_pass() -> Any:
             body: dict[str, Any] = {"player": seat.player}
@@ -3663,7 +3721,7 @@ def run_action(
         pass_outcome, pass_self_decision = _call_watching_for_self_decision(seat, perform_pass)
         if pass_self_decision is None and _paused(pass_outcome):
             paused_on = pass_outcome.get("pending_decision")
-            if not _addressed_to(paused_on, seat.player):
+            if not _addressed_to(paused_on, seat.player, before):
                 return answered(
                     seat.fetch_state(),
                     outcome=outcome,
@@ -4108,23 +4166,23 @@ def _unvalidated_action_still_legal(
     if action_key == "decide":
         return (
             pending is not None
-            and pending.get("player") == player
+            and decision_is_mine(pending, state, player)
             and pending.get("kind") == action.get("decision_kind")
             and pending.get("generation") == action.get("decision_generation")
         )
     if action_key == "actions/declare-blockers":
         return (
             pending is not None
-            and pending.get("player") == player
+            and decision_is_mine(pending, state, player)
             and pending.get("kind") == "declare_blockers"
         )
     if action_key == "actions/pass-priority":
-        return state.get("priority_holder") == player
+        return holds_priority(state, player)
     if action_key == "advance":
         return (
             not state.get("stack")
             and state.get("step") in ("untap", "cleanup")
-            and state.get("active_player") == player
+            and state.get("active_player") in decides_for(state, player)
         )
     if action_key == "actions/concede":
         return not state.get("winner") and not state.get("drawn")
@@ -4309,7 +4367,7 @@ def resolve_advice_draft(
             ):
                 _pop_draft_if_same(seat, entry)
                 return {"status": "stale", "failed": "window"}
-        if state.get("priority_holder") != seat.player:
+        if not holds_priority(state, seat.player):
             return {"status": "held"}
         action = entry["action"]
         current_signature = opponent_board_signature(state, seat.player)
@@ -4484,7 +4542,9 @@ def autopass_stop_reason(
         return "the game has not started yet: the pregame (CR 103.5, CR 103.6) is still open"
     pending = state.get("pending_decision")
     pending_kind = pending.get("kind") if pending is not None else None
-    addressed_to_you = pending is not None and pending.get("player") == player
+    # CR 723.5: a decision addressed to a player this seat is controlling is
+    # this seat's to answer (`decision_is_mine`).
+    addressed_to_you = decision_is_mine(pending, state, player)
     if addressed_to_you and pending_kind not in ("declare_attackers", "declare_blockers"):
         return f"a decision is waiting for you: {pending.get('prompt')}"
 
@@ -5214,10 +5274,9 @@ def _pass_until_once(
 
         pending = state.get("pending_decision")
         pending_kind = pending.get("kind") if pending is not None else None
-        if (
-            pending is not None
-            and pending.get("player") == seat.player
-            and pending_kind in ("declare_attackers", "declare_blockers")
+        if decision_is_mine(pending, state, seat.player) and pending_kind in (
+            "declare_attackers",
+            "declare_blockers",
         ):
             # `autopass_stop_reason` above already decided not to stop for
             # this pause - either it is not addressed to this seat's combat
@@ -5304,7 +5363,7 @@ def _pass_until_once(
                 f"{frozen_on} and only they can answer it",
             )
 
-        if state.get("priority_holder") == seat.player:
+        if holds_priority(state, seat.player):
             # API-7, the load-bearing half: judged HERE, with the fresh
             # `state` this very lap already fetched, and BEFORE this seat's
             # priority is passed below - never after. Without this, a run
@@ -5407,7 +5466,7 @@ def _pass_until_once(
                 "declare_attackers",
                 "declare_blockers",
             ):
-                if self_decision.get("player") == seat.player:
+                if decision_is_mine(self_decision, state, seat.player):
                     # This very pass is what crossed into CR 508.1/CR 509.1's
                     # turn-based action, addressed to this seat itself - not
                     # a decision this seat necessarily has to break out of

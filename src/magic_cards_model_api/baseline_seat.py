@@ -171,7 +171,13 @@ from typing import Any
 from magic_cards_model.models.mana import ManaCost
 
 from .api_client import SeatApiClient
-from .seatkit import board_signature, untapped_mana_sources
+from .seatkit import (
+    board_signature,
+    decides_for,
+    decision_is_mine,
+    holds_priority,
+    untapped_mana_sources,
+)
 
 #: What the baseline says when the api asks an agent seat why it did
 #: something (`records.require_reasoning`). A policy's reason for an action
@@ -830,12 +836,12 @@ def has_turn(state: dict[str, Any], player: str) -> bool:
         )
     pending = state.get("pending_decision")
     if isinstance(pending, dict):
-        return pending.get("player") == player
-    if state.get("priority_holder") == player:
+        return decision_is_mine(pending, state, player)
+    if holds_priority(state, player):
         return True
     return bool(
         state.get("step") in ("untap", "cleanup")
-        and state.get("active_player") == player
+        and state.get("active_player") in decides_for(state, player)
         and not state.get("stack")
     )
 
@@ -886,7 +892,7 @@ def choose_move(
 
     pending = state.get("pending_decision")
     if isinstance(pending, dict):
-        if pending.get("player") != player:
+        if not decision_is_mine(pending, state, player):
             # A question standing for the other seat holds the game's one
             # pause slot (`commands.pause_is_live`), so every mutating call
             # this seat could make would be refused as another command's
@@ -914,12 +920,12 @@ def choose_move(
             )
         return Move("decide", "decide", decide_body(pending, player))
 
-    if state.get("priority_holder") == player:
+    if holds_priority(state, player):
         return _priority_move(state, actions, player, refused)
 
     if (
         state.get("step") in ("untap", "cleanup")
-        and state.get("active_player") == player
+        and state.get("active_player") in decides_for(state, player)
         and not state.get("stack")
     ):
         return Move("advance", "advance", {"player": player, "reasoning": REASONS["advance"]})
