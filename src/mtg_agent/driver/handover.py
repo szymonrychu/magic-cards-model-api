@@ -358,9 +358,18 @@ def plays_outcome_body(
     verdict: DevelopmentVerdict,
     reasons: Sequence[str],
     repushed: bool,
+    followup: bool = False,
+    deck: str | None = None,
+    opponent: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The `POST /api/games/{id}/plays-outcome` body (D2a's `PlaysOutcomeIn`)."""
-    return {
+    """The `POST /api/games/{id}/plays-outcome` body (D2a's `PlaysOutcomeIn`).
+
+    `followup` is True only on the row F1's follow-up Job files, which is
+    what keeps the api from ever scheduling a second one. `deck` and
+    `opponent` (the revealed opponent's `{slug, archetype, confidence}`) are
+    what the api builds a follow-up's assignment from, so they ride in the
+    ledger row; each is left out when not given."""
+    body: dict[str, Any] = {
         "uid": uid,
         "player": player,
         "role": role,
@@ -370,8 +379,13 @@ def plays_outcome_body(
         "no_change": list(verdict.no_change),
         "unfinished_reasons": list(reasons),
         "repushed": repushed,
-        "followup": False,
+        "followup": followup,
     }
+    if deck is not None:
+        body["deck"] = deck
+    if opponent is not None:
+        body["opponent"] = dict(opponent)
+    return body
 
 
 def local_url(http_addr: str) -> str:

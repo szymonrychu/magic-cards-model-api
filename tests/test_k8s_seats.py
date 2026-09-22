@@ -1623,3 +1623,152 @@ def test_the_grace_outlasts_the_driver_s_unreachable_retry() -> None:
     from mtg_agent.driver.app import UNREACHABLE_RETRY_SECONDS
 
     assert STALLED_GRACE_SECONDS > UNREACHABLE_RETRY_SECONDS
+
+
+# ---- F1: the follow-up DSL-development Job -----------------------------------
+#
+# One bounded Opus turn that finishes a handover which ended unfinished. It
+# runs as the ORIGINAL seat's (or advisor's) uid - the credential the game
+# already bound to that player - in a Job of its own: `mtg-followup-*`, no
+# `mtg/seat-uid` label (so the seat's own pod lookup never finds it), and its
+# own `activeDeadlineSeconds`.
+
+FOLLOWUP = {
+    "deck": "dimir-frog",
+    "decklist": "4 Psychic Frog\n",
+    "opponent": "alice",
+    "opponent_decklist": "4 Lightning Bolt\n",
+    "opponent_identification": None,
+    "outcome": "bot won",
+    "run_table": "no script runs recorded",
+    "offers": "no script offers recorded",
+    "hand_played": "no lines played by hand",
+    "candidates": {"plays": [], "lines": []},
+    "unfinished_reasons": ["nudged: the handover was still running at 23 minutes"],
+}
+
+
+def _followup_job(role: str = k8s_seats.ROLE_SEAT) -> dict:
+    return k8s_seats.build_followup_job(
+        K8sSettings.from_env(ENV),
+        game_id="g1",
+        uid="u1",
+        player="bot",
+        role=role,
+        agent=AgentSettings.review_default(),
+        followup=FOLLOWUP,
+    )
+
+
+def test_the_deadline_is_a_placeholder_and_a_seat_keeps_14400() -> None:
+    assert "__ACTIVE_DEADLINE_SECONDS__" in SEAT_JOB_PLACEHOLDERS
+    template = yaml.safe_load(TEMPLATE_PATH.read_text())
+    assert template["spec"]["activeDeadlineSeconds"] == "__ACTIVE_DEADLINE_SECONDS__"
+    job = _build()
+    assert job["spec"]["activeDeadlineSeconds"] == k8s_seats.SEAT_ACTIVE_DEADLINE_SECONDS == 14400
+
+
+def test_the_followup_job_is_its_own_job_bounded_by_its_own_deadline() -> None:
+    job = _followup_job()
+    assert job["metadata"]["name"] == k8s_seats.followup_job_name("g1", "u1")
+    assert job["metadata"]["name"] == "mtg-followup-g1-u1"
+    labels = {
+        "app.kubernetes.io/name": "mtg-agent",
+        "mtg/game-id": "g1",
+        k8s_seats.LABEL_FOLLOWUP: "u1",
+    }
+    assert job["metadata"]["labels"] == labels
+    assert job["spec"]["template"]["metadata"]["labels"] == labels
+    assert k8s_seats.LABEL_SEAT not in job["metadata"]["labels"]
+    assert job["spec"]["activeDeadlineSeconds"] == k8s_seats.FOLLOWUP_ACTIVE_DEADLINE_SECONDS
+    assert 3000 <= k8s_seats.FOLLOWUP_ACTIVE_DEADLINE_SECONDS <= 4000
+    assert _leftover_placeholders(job) == []
+
+
+def test_the_followup_job_runs_opus_as_the_original_seat() -> None:
+    from mtg_agent.driver.app import DispatchIn
+
+    job = _followup_job()
+    agent_env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
+    assert agent_env["MODEL"] == AgentSettings.review_default().model == "claude-opus-5"
+    assert agent_env["MTG_ROLE"] == "seat"
+    driver_env = {e["name"]: e.get("value") for e in _container(job, "driver")["env"]}
+    assert driver_env["SEAT_UID"] == "u1"
+    parsed = DispatchIn.model_validate_json(driver_env["DRIVER_ASSIGNMENT_JSON"])
+    assert (parsed.uid, parsed.player, parsed.role, parsed.mode) == (
+        "u1",
+        "bot",
+        "seat",
+        "followup",
+    )
+    assert parsed.followup == FOLLOWUP
+    assert parsed.agent == AgentSettings.review_default().to_wire()
+
+
+def test_an_advisors_followup_carries_its_role() -> None:
+    job = _followup_job(k8s_seats.ROLE_ADVISOR)
+    assert job["metadata"]["labels"][k8s_seats.LABEL_ROLE] == "advisor"
+    agent_env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
+    assert agent_env["MTG_ROLE"] == "advisor"
+    driver_env = {e["name"]: e.get("value") for e in _container(job, "driver")["env"]}
+    assert json.loads(driver_env["DRIVER_ASSIGNMENT_JSON"])["role"] == "advisor"
+
+
+def _start_followup(seats: K8sSeats) -> dict:
+    return seats.start_followup(
+        uid="u1",
+        game_id="g1",
+        player="bot",
+        role=k8s_seats.ROLE_SEAT,
+        agent=AgentSettings.review_default(),
+        followup=FOLLOWUP,
+    )
+
+
+def test_a_followup_is_created_once_and_deduped_by_its_job_label() -> None:
+    seats, batch, _ = make()
+    first = _start_followup(seats)
+    assert first["state"] == "scheduled" and first["job"] == "mtg-followup-g1-u1"
+    assert first["mechanism"] == "kubernetes"
+    # Another replica (a fresh K8sSeats over the same cluster) finds the Job
+    # by its label and creates nothing.
+    other = K8sSeats(K8sSettings.from_env(ENV), batch, FakeCore(), FakeDriverHttp({}))
+    again = _start_followup(other)
+    assert again["state"] == "exists" and again["job"] == first["job"]
+    assert batch.creates == 1
+
+
+def test_followup_running_reads_the_job_from_the_cluster() -> None:
+    seats, batch, _ = make()
+    assert seats.followup_running("u1") is False
+    _start_followup(seats)
+    assert seats.followup_running("u1") is True
+    batch.jobs["mtg-followup-g1-u1"].status.succeeded = 1
+    assert seats.followup_running("u1") is False
+
+
+def test_releasing_the_seat_also_deletes_its_followup_job() -> None:
+    seats, batch, _ = make()
+    seats.start(uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet"))
+    _start_followup(seats)
+    released = seats.release("u1")
+    assert "mtg-followup-g1-u1" in batch.deleted
+    assert released["followup"]["deleted"] == ["mtg-followup-g1-u1"]
+    assert seats.followup_running("u1") is False
+
+
+def test_release_followup_alone_deletes_the_followup_job() -> None:
+    seats, batch, _ = make()
+    _start_followup(seats)
+    assert seats.release_followup("u1") == {"deleted": ["mtg-followup-g1-u1"]}
+    assert batch.jobs == {}
+
+
+def test_reconcile_deletes_a_followup_job_once_its_game_is_gone() -> None:
+    """Forget or End mid-run is the hard stop: the game leaves `store.ids()`,
+    and reconcile deletes every Job labelled with it - the follow-up's too."""
+    seats, batch, _ = make()
+    _start_followup(seats)
+    report = seats.reconcile(lambda: set())
+    assert "mtg-followup-g1-u1" in report["deleted"]
+    assert batch.jobs == {}

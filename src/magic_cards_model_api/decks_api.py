@@ -334,7 +334,8 @@ class LobbyGameSummary(BaseModel):
     `MAX_LIVE_GAMES`."""
     post_game_work: bool = False
     """True while this finished game's AI is still doing its post-game work
-    - the reflection turn, the Opus review, the handover - on a seat or
+    - the reflection turn, the Opus review, the handover, and F1's follow-up
+    DSL-development Job when the handover ended unfinished - on a seat or
     advisor uid of this game (`lobby.post_game_work`). The lobby renders such
     a row "recording plays..." with no Forget, Open or End; once every runner
     has released itself (or the bounded backstop released it) this goes

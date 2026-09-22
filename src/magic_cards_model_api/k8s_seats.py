@@ -23,6 +23,15 @@ afterward. This api no longer hardcodes the wrapper's 14 env names, the
 driver's 10, or either one's console-script/module path: the template is the
 one place that shape lives, owned by whoever deploys it.
 
+F1 adds one more Job per unfinished handover, rendered from the same
+template: `build_followup_job`'s follow-up DSL-development Job, one bounded
+Opus turn run as the original seat's (or advisor's) uid, labelled
+`LABEL_FOLLOWUP` instead of `LABEL_SEAT` and bounded by
+`FOLLOWUP_ACTIVE_DEADLINE_SECONDS`. `K8sSeats.start_followup`,
+`followup_running` and `release_followup` read and write it off the cluster
+itself, so every replica answers the same; `reconcile` deletes it with its
+game like any other Job.
+
 The `memory` volume mounts the `AGENT_MEMORY_PVC` claim (default
 `mtg-agent-memory`) into every concurrent seat's Pod at once, which requires
 the claim's access mode to be `ReadWriteMany`. Today's
@@ -85,6 +94,24 @@ ROLE_ADVISOR = "advisor"
 #: at without reading a label off each one.
 _JOB_PREFIX = {ROLE_SEAT: "mtg-seat", ROLE_ADVISOR: "mtg-buddy"}
 
+#: F1's follow-up DSL-development Job carries this label instead of
+#: `LABEL_SEAT`, valued with the seat (or advisor) uid it finishes the
+#: handover of. Instead, not beside: `K8sSeats._pod` finds a seat's own pod
+#: by `LABEL_SEAT`, and a follow-up pod answering that lookup would be read
+#: as the seat itself. It is also the label the follow-up is deduped by.
+LABEL_FOLLOWUP = "mtg/followup-of"
+
+#: A seat's (or buddy's) Job deadline: the whole match plus its post-game
+#: work. The runaway-match backstop `lobby.POSTGAME_RELEASE_SECONDS` sits
+#: inside.
+SEAT_ACTIVE_DEADLINE_SECONDS = 14400
+
+#: A follow-up Job's deadline: one bounded Opus turn
+#: (`mtg_agent.driver.prompt.FOLLOWUP_BUDGET_SECONDS`, 45 minutes) plus the
+#: pod's and the agent's own boot. There is never a second follow-up, so this
+#: is the whole of its life.
+FOLLOWUP_ACTIVE_DEADLINE_SECONDS = 3600
+
 
 @dataclass(frozen=True)
 class K8sSettings:
@@ -143,6 +170,12 @@ class K8sSettings:
         )
 
 
+def followup_job_name(game_id: str, uid: str) -> str:
+    """The follow-up Job's name for `uid`'s handover in `game_id`:
+    `mtg-followup-<game>-<uid>`, one per (game, uid) by construction."""
+    return f"mtg-followup-{game_id[:8]}-{uid[:8]}"
+
+
 def job_name(game_id: str, uid: str, role: str = ROLE_SEAT) -> str:
     """This Job's name: `mtg-seat-<game>-<uid>` for a seat,
     `mtg-buddy-<game>-<uid>` for an advisor. An unknown role is named as a
@@ -182,6 +215,11 @@ SEAT_JOB_PLACEHOLDERS = (
     #: name the branches and commits it makes in its writable guides checkout.
     "__MTG_ROLE__",
     "__MTG_GAME_ID__",
+    #: `spec.activeDeadlineSeconds`: `SEAT_ACTIVE_DEADLINE_SECONDS` for a
+    #: seat or a buddy, `FOLLOWUP_ACTIVE_DEADLINE_SECONDS` for F1's follow-up.
+    #: The one placeholder whose value is an integer, not a string - the
+    #: substitution swaps the whole leaf, so it lands as a YAML number.
+    "__ACTIVE_DEADLINE_SECONDS__",
 )
 
 
@@ -197,7 +235,8 @@ def _seat_job_values(
     api_image: str,
     guides_ref: str,
     role: str = ROLE_SEAT,
-) -> dict[str, str]:
+    followup: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     assignment: dict[str, Any] = {
         "uid": uid,
         "game_id": game_id,
@@ -211,6 +250,12 @@ def _seat_job_values(
         # `DispatchIn.role` defaults to `seat` on the far end, so an absent
         # key means exactly what it always meant.
         assignment["role"] = role
+    if followup is not None:
+        # F1: the driver's `mode: "followup"` and everything it needs, built
+        # server-side at schedule time. Absent on a seat's own payload, for
+        # the same byte-identical reason as `role` above.
+        assignment["mode"] = "followup"
+        assignment["followup"] = dict(followup)
     return {
         "__GAME_ID__": game_id,
         "__SEAT_UID__": uid,
@@ -228,12 +273,16 @@ def _seat_job_values(
         "__GUIDES_REF__": guides_ref,
         "__MTG_ROLE__": role,
         "__MTG_GAME_ID__": game_id,
+        "__ACTIVE_DEADLINE_SECONDS__": (
+            SEAT_ACTIVE_DEADLINE_SECONDS if followup is None else FOLLOWUP_ACTIVE_DEADLINE_SECONDS
+        ),
     }
 
 
-def render_seat_job_template(template: Any, values: Mapping[str, str]) -> Any:
-    """Substitute `values` (a `SEAT_JOB_PLACEHOLDERS` -> string mapping) into
-    a parsed Job template, recursively.
+def render_seat_job_template(template: Any, values: Mapping[str, Any]) -> Any:
+    """Substitute `values` (a `SEAT_JOB_PLACEHOLDERS` -> value mapping; every
+    value a string but `__ACTIVE_DEADLINE_SECONDS__`'s integer) into a parsed
+    Job template, recursively.
 
     Operates on already-parsed YAML (dicts/lists/scalars), not on raw text:
     every placeholder is the WHOLE value of some string leaf, so a leaf
@@ -309,6 +358,72 @@ def build_job(
     }
     job["spec"]["template"]["metadata"]["labels"] = labels
     return job
+
+
+def build_followup_job(
+    settings: K8sSettings,
+    *,
+    game_id: str,
+    uid: str,
+    player: str,
+    role: str,
+    agent: AgentSettings,
+    followup: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Render F1's follow-up DSL-development Job for `uid`'s unfinished
+    handover in `game_id`, from the same template a seat renders from.
+
+    The same pod - guides clone, agent, driver - because the follow-up is
+    the same work the handover did: the agent commits through `mcp-seat` in
+    a writable /guides clone, and the driver pushes one turn and files the
+    `plays_outcome` row. What differs, all set here:
+
+    - it runs as the ORIGINAL `uid` and `role`: the credential this game
+      already bound to `player` (`game_access`), so it can act as that
+      seat's player and nobody else, and no credential is minted or widened;
+    - `agent` is the caller's (`AgentSettings.review_default()`, Opus);
+    - the assignment carries `mode: "followup"` and `followup`, the payload
+      built server-side from the ledger, so the driver pushes no turn 0;
+    - its name is `followup_job_name`, and it is labelled `LABEL_FOLLOWUP`
+      instead of `LABEL_SEAT` (see that label) - `LABEL_GAME` stays, so
+      reconcile deletes it the moment its game is forgotten or ended;
+    - `activeDeadlineSeconds` is `FOLLOWUP_ACTIVE_DEADLINE_SECONDS`.
+    """
+    labels = {LABEL_APP: APP_LABEL_VALUE, LABEL_GAME: game_id, LABEL_FOLLOWUP: uid}
+    if role != ROLE_SEAT:
+        labels[LABEL_ROLE] = role
+    values = _seat_job_values(
+        game_id=game_id,
+        uid=uid,
+        player=player,
+        api_url=settings.api_url,
+        mcp_url=settings.mcp_url,
+        agent=agent,
+        agent_image=settings.agent_image,
+        api_image=settings.api_image,
+        guides_ref=settings.guides_ref,
+        role=role,
+        followup=followup,
+    )
+    job = render_seat_job_template(_load_seat_job_template(settings.job_template_path), values)
+    job["metadata"]["name"] = followup_job_name(game_id, uid)
+    job["metadata"]["namespace"] = settings.namespace
+    job["metadata"]["labels"] = labels
+    job["metadata"]["annotations"] = {
+        "mtg/player": player,
+        "mtg/model": agent.model,
+        "mtg/effort": agent.effort,
+        "mtg/followup": "the DSL development an unfinished handover left open",
+    }
+    job["spec"]["template"]["metadata"]["labels"] = labels
+    return job
+
+
+def _job_finished(job: Any) -> bool:
+    """A Job that has run to an end: a pod succeeded or failed (every Job
+    here has `backoffLimit: 0`)."""
+    status = getattr(job, "status", None)
+    return bool(getattr(status, "succeeded", 0)) or bool(getattr(status, "failed", 0))
 
 
 def _default_http(base: str) -> httpx.Client:
@@ -633,11 +748,25 @@ class K8sSeats:
             "activity": activity if isinstance(activity, dict) else None,
         }
 
+    def _release_followup_quietly(self, uid: str) -> dict[str, Any]:
+        try:
+            return self.release_followup(uid)
+        except Exception as exc:  # noqa: BLE001 - a release never 500s its caller
+            logger.warning("could not release the follow-up of %s: %s", uid, exc)
+            return {"deleted": [], "reason": str(exc)}
+
     def release(self, uid: str) -> dict[str, Any]:
+        """Let go of `uid`: tell its driver, delete its Job - and its F1
+        follow-up Job, if one runs, whether or not this process started the
+        seat itself (the follow-up is found in the cluster by its label)."""
+        followup = self._release_followup_quietly(uid)
         with self._lock:
             seat = self._seats.pop(uid, None)
         if seat is None:
-            return {"uid": uid, "mechanism": None, "deleted": False}
+            result: dict[str, Any] = {"uid": uid, "mechanism": None, "deleted": False}
+            if followup["deleted"]:
+                result.update(mechanism="kubernetes", followup=followup)
+            return result
         try:
             pod = self._pod(uid)
         except Exception as exc:  # noqa: BLE001 - the Job is deleted regardless
@@ -670,17 +799,102 @@ class K8sSeats:
             deleted = False
             reason = str(exc)
             logger.warning("could not delete job %s for %s: %s", seat["job"], uid, exc)
-        result: dict[str, Any] = {
+        result = {
             "uid": uid,
             "mechanism": "kubernetes",
             "job": seat["job"],
             "deleted": deleted,
+            "followup": followup,
         }
         if reason is not None:
             result["reason"] = reason
         return result
 
     stop = release
+
+    # -- F1: the follow-up DSL-development Job -------------------------------
+    def _followup_jobs(self, uid: str) -> list[Any]:
+        """Every follow-up Job of `uid` in the cluster, read from the
+        cluster itself - never from this process's cache - so every replica
+        answers the same. Filtered on the labels here as well as in the
+        selector, so a lister that ignores the selector cannot widen it."""
+        jobs = self.batch.list_namespaced_job(
+            self.settings.namespace, label_selector=f"{LABEL_FOLLOWUP}={uid}"
+        ).items
+        return [job for job in jobs if (job.metadata.labels or {}).get(LABEL_FOLLOWUP) == uid]
+
+    def start_followup(
+        self,
+        *,
+        uid: str,
+        game_id: str,
+        player: str,
+        role: str,
+        agent: AgentSettings,
+        followup: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Create `uid`'s one follow-up Job (`build_followup_job`), unless the
+        cluster already holds one for it: deduped by `LABEL_FOLLOWUP`, and
+        a 409 AlreadyExists on the deterministic name reads the same. The
+        answer's `state` is `scheduled` or `exists`. A create failure
+        raises, for the registry to report."""
+        name = followup_job_name(game_id, uid)
+        base = {
+            "uid": uid,
+            "mechanism": "kubernetes",
+            "job": name,
+            "game_id": game_id,
+            "player": player,
+            "role": role,
+        }
+        if any(
+            (job.metadata.labels or {}).get(LABEL_GAME) == game_id
+            for job in self._followup_jobs(uid)
+        ):
+            return {**base, "state": "exists"}
+        body = build_followup_job(
+            self.settings,
+            game_id=game_id,
+            uid=uid,
+            player=player,
+            role=role,
+            agent=agent,
+            followup=followup,
+        )
+        try:
+            self.batch.create_namespaced_job(self.settings.namespace, body=body)
+        except ApiException as exc:
+            if exc.status != 409:
+                raise
+            return {**base, "state": "exists"}
+        logger.info("follow-up job %s created for %s (%s)", name, player, role)
+        return {**base, "state": "scheduled"}
+
+    def followup_running(self, uid: str) -> bool:
+        """Whether a follow-up Job of `uid` is still in the cluster and has
+        not run to an end. Raises when the cluster cannot be read - the
+        caller decides what an unknown answer means."""
+        return any(not _job_finished(job) for job in self._followup_jobs(uid))
+
+    def release_followup(self, uid: str) -> dict[str, Any]:
+        """Delete every follow-up Job of `uid`: End game, and the post-game
+        backstop, stop it here; Forget reaches it through `reconcile`. Its
+        pod's preStop hands the driver a `/handover`, which in follow-up
+        mode stops the turn and writes the marker at once."""
+        deleted: list[str] = []
+        for job in self._followup_jobs(uid):
+            try:
+                self.batch.delete_namespaced_job(
+                    job.metadata.name,
+                    self.settings.namespace,
+                    body=k8s_client.V1DeleteOptions(propagation_policy="Background"),
+                )
+            except ApiException as exc:
+                if exc.status != 404:
+                    logger.warning("could not delete follow-up job %s: %s", job.metadata.name, exc)
+                    continue
+            deleted.append(job.metadata.name)
+        return {"deleted": deleted}
 
     # -- tracking ------------------------------------------------------------
     def reconcile(self, live_game_ids: Callable[[], set[str]]) -> dict[str, list[str]]:

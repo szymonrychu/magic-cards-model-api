@@ -176,6 +176,7 @@ NOT_PLAY = frozenset(
         "patch_player",
         "plan_declared",
         "plays_outcome",
+        "plays_outcome_followup",
         "pregame_overruled",
         "pregame_settle",
         "pregame_settled",

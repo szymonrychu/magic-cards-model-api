@@ -2389,3 +2389,145 @@ def handover_nudge(assignment: Assignment) -> str:
         '--reason "<why>"` (or `--line "<line>"`) - then end the turn.'
         f"\n\n{opponent_block(assignment)}"
     )
+
+
+# -- F1: the follow-up DSL-development turn ---------------------------------------
+
+#: The follow-up's one turn's budget: 45 minutes, far more than the 28 a
+#: handover has, because the follow-up does nothing else - no game, no
+#: reflection, no review. The Job's own deadline
+#: (`k8s_seats.FOLLOWUP_ACTIVE_DEADLINE_SECONDS`, 3600 s) leaves room around
+#: it for the pod's and the agent's boot.
+FOLLOWUP_BUDGET_SECONDS = 2700.0
+
+#: When the follow-up's one "push now" nudge goes out: 40 minutes in, five
+#: before its budget runs out - the same five minutes the handover leaves.
+FOLLOWUP_NUDGE_AFTER_SECONDS = 2400.0
+
+#: The first words of the follow-up turn.
+FOLLOWUP_OPENING = "Finish the DSL development this game's handover left unfinished."
+
+
+def followup_turn(
+    assignment: Assignment,
+    outcome: str,
+    reasons: Sequence[str],
+    *,
+    run_table: str,
+    offers: str,
+    hand_played: str,
+    evidence: str,
+    candidates: DevelopmentCandidates,
+) -> str:
+    """F1's one follow-up turn: a fresh Opus session, in a fresh /guides
+    clone, finishing the DSL development an unfinished handover left open.
+
+    It knows the game only through what the api read off the ledger when it
+    scheduled this Job - `run_table`, `offers`, `hand_played` and
+    `candidates`, and why the handover was `reasons` unfinished - plus the
+    cross-game `evidence` read off this clone. What already landed is on
+    mtg-decks main, so the turn starts by reading that rather than redoing
+    it. One turn, no play and no continuation: it ends when the work has
+    landed or each command said why it could not."""
+    slug = assignment.deck_slug
+    game = assignment.game_id
+    budget = int(FOLLOWUP_BUDGET_SECONDS // 60)
+    listed = "\n".join(f"- {reason}" for reason in reasons) or "- (no reason was recorded)"
+    return f"""{FOLLOWUP_OPENING}
+
+You are a follow-up, not the seat that played: game {game} is over ({outcome}),
+and the handover of `{assignment.player}`'s {assignment.role} ended unfinished.
+You have {budget} minutes, one turn, and this game's post-game work only. Do
+not play and do not open the game: everything you need is below or in
+/guides.
+
+## Why the handover was unfinished
+
+{listed}
+
+## What to do
+
+1. See what already landed on mtg-decks main for this game, so you redo
+   nothing: `git -C /guides log --oneline origin/main --grep 'Game-Id: {game}'`
+   lists this game's admits, and `git -C /guides log --oneline -5 origin/main
+   -- decks/` the latest guide changes.
+2. Priority updates, only if step 1 shows no admit for this game yet: from the
+   run table below, `mcp-seat plays priority <play-id> --delta N --deck {slug}
+   --game-id {game}` for scripts that actually ran, at most 5 per game, then
+   `mcp-seat plays admit --deck {slug} --game-id {game}`.
+3. The three guide updates under "Guide updates", unless step 1 shows they
+   landed: land them with `{guides_propose_command(assignment)}`.
+4. The mandatory script development: answer every entry under "Development
+   candidates" - land at least one conditions or advice-only change through
+   `mcp-seat plays admit --deck {slug} --game-id {game}`, or run the
+   candidate's own `mcp-seat plays no-change` command with the reason no
+   change is right. A priority change alone does not count. Check your files
+   with `mcp-seat plays check --root /guides --deck {slug}` first: every
+   conflict it reports needs its conditions extended so that at most one play
+   applies. {retire_by_deletion(assignment)}
+5. Read each command's `result`: `admitted` is live on main; `conflict` leaves
+   both sides between conflict markers - resolve them keeping both sides'
+   intent and run the same command again; `error` with `retryable: true` - run
+   it again; anything else - fix what it names and run it again.
+6. Stay within the allowed guide fields: `matchups[].play_plan` and
+   `matchups[].notes` in your deck's newest `boarding-plan.json` (or a
+   row appended with `origin: "seat"`), plus the `NOTES.md` of each deck you
+   pass to `guides propose`. Never `git stash` in /guides.
+
+End the turn once the work has landed, or each command said why it could not.
+Wait for every subagent you start to report back first: the pod stops when
+this turn ends.
+
+## Guide updates
+
+{guide_updates(assignment)}
+
+## What goes in the guide, and what does not
+
+{NOTES_ROUTING}
+
+## Development candidates
+
+{development_candidates_block(assignment, candidates)}
+
+## Script runs this game
+
+{run_table}
+
+## Script offers this game
+
+`declined` and `passed over` rows are development candidates.
+
+{offers}
+
+## Lines played by hand this game
+
+A line marked `candidate` was played by hand more than once: a play could
+make it for you.
+
+{hand_played}
+
+## Cross-game evidence
+
+Each play's offers across this deck's recent games, from the evidence files
+committed on main. `declined_games` counts distinct games with at least one
+decline.
+
+{evidence}
+"""
+
+
+def followup_nudge(assignment: Assignment) -> str:
+    """The one message a follow-up still running at
+    `FOLLOWUP_NUDGE_AFTER_SECONDS` gets."""
+    slug = assignment.deck_slug
+    game = assignment.game_id
+    return (
+        f"{int(FOLLOWUP_NUDGE_AFTER_SECONDS // 60)} minutes into the follow-up: push now. "
+        "Stop any subagent or background task still running, run "
+        f"`mcp-seat plays admit --deck {slug} --game-id {game}` and "
+        f"`{guides_propose_command(assignment)}` with what you have, and answer every "
+        "development candidate still open with its own "
+        f"`mcp-seat plays no-change --deck {slug} --game-id {game} --play <play-id> "
+        '--reason "<why>"` (or `--line "<line>"`) - then end the turn.'
+    )

@@ -360,6 +360,10 @@ class AiSeatRegistry:
         #: right for a seat too. Written and cleared in lockstep with
         #: `_unavailable`.
         self._fallbacks: dict[str, dict[str, Any]] = {}
+        #: uid -> game id, for every F1 follow-up Job this process scheduled.
+        #: A cache for `finishing` and `release` only: the cluster is what
+        #: says whether one runs (`followup_running`).
+        self._followups: dict[str, str] = {}
         self._lock = threading.Lock()
 
     def _dispatch_to_driver(
@@ -772,10 +776,18 @@ class AiSeatRegistry:
         fallback, and any error reading the answer - a registry that cannot
         tell must not hold a finished game's row in "recording plays..."
         forever.
+
+        F1's follow-up is post-game work too: a follow-up Job this registry
+        scheduled for `uid` that is still running counts as finishing.
+        `lobby.post_game_work` also reads the ledger for the follow-ups
+        another replica scheduled (`followup_running`).
         """
         with self._lock:
             dispatched = self._dispatched.get(uid)
             runner = self._runners.get(uid)
+            followup = uid in self._followups
+        if followup and self.followup_running(uid):
+            return True
         try:
             if dispatched is not None:
                 if dispatched.get("mechanism") == "kubernetes":
@@ -787,6 +799,64 @@ class AiSeatRegistry:
             return runner is not None and bool(runner.running())
         except Exception:  # noqa: BLE001 - an unanswerable seat is not finishing
             return False
+
+    def start_followup(
+        self, *, uid: str, game_id: str, player: str, role: str, followup: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Schedule F1's follow-up DSL-development Job for `uid`'s unfinished
+        handover: one bounded Opus turn (`AgentSettings.review_default()`)
+        run as `uid` itself - the credential `game_access` already binds to
+        `player` - so it can act as that player and nobody else, and nothing
+        is minted or widened.
+
+        Kubernetes mode only: a follow-up needs a pod of its own with a
+        fresh /guides clone. Every other mode answers `state: unavailable`
+        with the reason. Never raises: a cluster that refuses answers
+        `state: failed`. `followup` is the payload `app.py` built from the
+        ledger; `state` is otherwise `scheduled`, or `exists` when the
+        cluster already held this uid's follow-up."""
+        mode = ai_seat_mode()
+        if mode != "kubernetes":
+            return {
+                "uid": uid,
+                "mechanism": None,
+                "state": "unavailable",
+                "reason": (
+                    f"AI_SEAT_MODE={mode}: a follow-up runs only as a kubernetes Job, "
+                    "with a /guides clone of its own"
+                ),
+            }
+        try:
+            status = k8s_seats.get().start_followup(
+                uid=uid,
+                game_id=game_id,
+                player=player,
+                role=role,
+                agent=AgentSettings.review_default(),
+                followup=followup,
+            )
+        except Exception as exc:  # noqa: BLE001 - report, never raise
+            return {
+                "uid": uid,
+                "mechanism": "kubernetes",
+                "state": "failed",
+                "reason": f"kubernetes follow-up scheduling failed: {exc}",
+            }
+        with self._lock:
+            self._followups[uid] = game_id
+        return status
+
+    def followup_running(self, uid: str) -> bool | None:
+        """Whether `uid`'s F1 follow-up Job is still running, read off the
+        cluster (any replica answers the same); `False` in any mode but
+        kubernetes, where none is ever scheduled; `None` when the cluster
+        cannot be read."""
+        if ai_seat_mode() != "kubernetes":
+            return False
+        try:
+            return bool(k8s_seats.get().followup_running(uid))
+        except Exception:  # noqa: BLE001 - unknown, and the caller says what that means
+            return None
 
     def mechanism(self, uid: str) -> str | None:
         """What this registry holds for `uid` - `subprocess`, `wrapper` or
@@ -890,6 +960,7 @@ class AiSeatRegistry:
             dispatched = self._dispatched.pop(uid, None)
             unavailable = self._unavailable.pop(uid, None)
             self._fallbacks.pop(uid, None)
+            followup = self._followups.pop(uid, None)
         mechanism = dispatched.get("mechanism") if dispatched is not None else None
         if mechanism is None and runner is not None:
             mechanism = "subprocess"
@@ -908,6 +979,19 @@ class AiSeatRegistry:
                 released["driver"] = k8s_seats.get().release(uid)
             else:
                 released["driver"] = self._release_from_driver(dispatched)
+        elif followup is not None:
+            # F1's follow-up Job this process scheduled, when the seat's own
+            # dispatch is no longer held here (it finished and was
+            # forgotten). A follow-up another replica scheduled is stopped
+            # by that replica's reconcile once End or Forget takes the game
+            # out of the live set.
+            try:
+                deleted = k8s_seats.get().release_followup(uid)
+            except Exception as exc:  # noqa: BLE001 - a release never raises
+                deleted = {"deleted": [], "reason": str(exc)}
+            if deleted["deleted"]:
+                released["mechanism"] = "kubernetes"
+                released["driver"] = {"followup": deleted}
         return released
 
 

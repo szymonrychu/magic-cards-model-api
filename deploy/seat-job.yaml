@@ -30,10 +30,22 @@
 #   __AGENT_IMAGE__ / __API_IMAGE__ - the pushed images this deploy pinned
 #   __GUIDES_REF__             - which deck-guides revision to check out (must be main)
 #   __MTG_ROLE__ / __MTG_GAME_ID__ - the agent container's own role and game
+#   __ACTIVE_DEADLINE_SECONDS__ - the Job's deadline, an integer: 14400 for a
+#                                seat or a buddy, 3600 for a follow-up (below)
+#
+# F1's follow-up DSL-development Job renders from this same file
+# (`k8s_seats.build_followup_job`): one bounded Opus turn that finishes the
+# DSL development an unfinished handover left open, run as the original
+# seat's (or buddy's) own uid. It differs only in code: the
+# `mtg-followup-*` name, an `mtg/followup-of: <uid>` label INSTEAD of
+# `mtg/seat-uid` (so the seat's own pod lookup never finds it),
+# `mode: "followup"` plus its server-built payload inside
+# `__ASSIGNMENT_JSON__`, Opus in `__MODEL__`, and its own deadline. It keeps
+# `mtg/game-id`, so reconcile deletes it the moment its game is forgotten.
 #
 # Everything else in this file is deliberately NOT a placeholder - it is
 # deploy-time configuration (secrets, the memory PVC name, the guides repo
-# URL, the job deadline/ttl, the spellslinger URL) that used to be
+# URL, the job ttl, the spellslinger URL) that used to be
 # read from `K8sSettings`/env and is now baked into this committed file, the
 # same way `deploy/k8s/*.yaml` already bakes its own. One known gap this
 # leaves, accepted for this task (see T9's report):
@@ -89,7 +101,7 @@ metadata:
     mtg/effort: high
 spec:
   backoffLimit: 0
-  activeDeadlineSeconds: 14400
+  activeDeadlineSeconds: __ACTIVE_DEADLINE_SECONDS__
   ttlSecondsAfterFinished: 600
   template:
     metadata:
@@ -103,8 +115,10 @@ spec:
       # development included: the driver's handover gives up at 1680s, its
       # preStop waits 1740s for that, the agent's preStop waits up to 1760s
       # for the marker (and for its own last push), and both finish inside
-      # this grace before the kubelet sends SIGKILL. activeDeadlineSeconds
-      # (14400) is far longer, so it never cuts the grace short.
+      # this grace before the kubelet sends SIGKILL. A seat's
+      # activeDeadlineSeconds (14400) is far longer, so it never cuts the
+      # grace short. A follow-up's driver writes the marker at once when its
+      # Job is deleted, so its preStops return straight away.
       terminationGracePeriodSeconds: 1800
       automountServiceAccountToken: false
       imagePullSecrets:

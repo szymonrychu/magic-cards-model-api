@@ -788,6 +788,9 @@ def test_a_handover_that_answered_every_candidate_is_complete_with_no_re_push(wo
         "unfinished_reasons": [],
         "repushed": False,
         "followup": False,
+        # F1: what the api builds a follow-up's assignment from. The game is
+        # still running here, so no opponent list was revealed to identify.
+        "deck": "dimir-frog",
     }
     wait_for(lambda: world.state["deleted"] == 1)
     assert repush_turns(world) == []

@@ -152,6 +152,28 @@ itself is **not** deleted: it is still there to open, still refuses every
 action with "the game is over", and still has a review. End game is the hard
 stop at any time, and the only thing that clears the row.
 
+**An unfinished handover gets one follow-up.** Every handover files a
+`plays_outcome` row (`POST /api/games/{id}/plays-outcome`). When it says
+`unfinished` - nudged, timed out, a write that did not land, development
+still open after the re-push - the api schedules one **follow-up
+DSL-development Job** for that seat or buddy (`lobby.schedule_followup`,
+kubernetes mode only): a fresh `/guides` clone and one bounded Opus turn
+(`AgentSettings.review_default()`, 45 minutes with a nudge at 40, the Job's
+own `activeDeadlineSeconds: 3600`) that finishes the guide updates and the
+mandatory script development. It runs as the original seat's (or buddy's)
+own uid, so it can act as that player and nobody else. Its assignment is
+built server-side from the ledger when it is scheduled - the deck, the
+revealed opponent, the run, offer and hand-played tables and the unfinished
+reasons - so a later archive costs it nothing. It files its own
+`plays_outcome` row with `followup: true`, and that row never schedules
+another: one follow-up per (game, uid), deduped by the Job's
+`mtg/followup-of` label and by the ledger's `plays_outcome_followup` row.
+Every other `AI_SEAT_MODE` records that row as `unavailable`. While it runs
+the lobby row stays "recording plays...", bounded by the follow-up's own
+window (`lobby.FOLLOWUP_RELEASE_SECONDS`); End game deletes the Job at once,
+and Forget has reconcile delete it within a minute - its driver stops the
+turn and files the outcome as `stopped`.
+
 ## Play against a continuous agent
 
 `docker compose up --build` brings up three containers, running the

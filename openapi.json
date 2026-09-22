@@ -9784,7 +9784,7 @@
       },
       "PlaysOutcomeIn": {
         "additionalProperties": false,
-        "description": "`POST /api/games/{game_id}/plays-outcome` - the driver's record of\nwhat one handover did to the DSL (`audit.PLAYS_OUTCOME_ACTION`), built\nfrom the guides clone's results journal after the handover turn.\n\nGated like `AiReviewIn`: post-game only, and `uid` must be `player`'s own\ncredential - an AI seat's own seat uid (`role: seat`), or an advisor uid\nfor the human it watches (`role: advisor`). Never a controlled player's:\nCR 723.5 hands a controller in-game decisions, not the post-game record.\n\n`state` is `complete` when the handover landed a DSL change or a\nno-change for every candidate, and `unfinished` otherwise, with\n`unfinished_reasons` saying why (nudged, timed out, an admit or propose\nthat did not succeed, a re-push that did not satisfy). `repushed` says\nthe one re-push turn ran; `followup` that this row comes from the\nfollow-up DSL-development Job rather than the handover itself.",
+        "description": "`POST /api/games/{game_id}/plays-outcome` - the driver's record of\nwhat one handover did to the DSL (`audit.PLAYS_OUTCOME_ACTION`), built\nfrom the guides clone's results journal after the handover turn.\n\nGated like `AiReviewIn`: post-game only, and `uid` must be `player`'s own\ncredential - an AI seat's own seat uid (`role: seat`), or an advisor uid\nfor the human it watches (`role: advisor`). Never a controlled player's:\nCR 723.5 hands a controller in-game decisions, not the post-game record.\n\n`state` is `complete` when the handover landed a DSL change or a\nno-change for every candidate, and `unfinished` otherwise, with\n`unfinished_reasons` saying why (nudged, timed out, an admit or propose\nthat did not succeed, a re-push that did not satisfy). `repushed` says\nthe one re-push turn ran; `followup` that this row comes from the\nfollow-up DSL-development Job rather than the handover itself.\n\nAn `unfinished` row that is not a follow-up's own schedules F1's one\nfollow-up Job for this (game, uid) in kubernetes mode\n(`lobby.schedule_followup`); `deck` and `opponent` are what that Job's\nassignment is built from, so they ride in the row.",
         "properties": {
           "admitted": {
             "items": {
@@ -9792,6 +9792,18 @@
             },
             "title": "Admitted",
             "type": "array"
+          },
+          "deck": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deck"
           },
           "followup": {
             "default": false,
@@ -9804,6 +9816,16 @@
             },
             "title": "No Change",
             "type": "array"
+          },
+          "opponent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlaysOutcomeOpponent"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "player": {
             "minLength": 1,
@@ -9883,6 +9905,50 @@
         "title": "PlaysOutcomeNoChange",
         "type": "object"
       },
+      "PlaysOutcomeOpponent": {
+        "additionalProperties": false,
+        "description": "The revealed opponent as the driver identified it post-game (A2):\nthe guided deck's `slug` when there is one, the `archetype` the list\nresolved to, and how sure the classifier was. What F1's follow-up is\nhanded when the opponent's list is no longer readable.",
+        "properties": {
+          "archetype": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archetype"
+          },
+          "confidence": {
+            "enum": [
+              "confident",
+              "low",
+              "none"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          }
+        },
+        "required": [
+          "confidence"
+        ],
+        "title": "PlaysOutcomeOpponent",
+        "type": "object"
+      },
       "PlaysOutcomeProposed": {
         "additionalProperties": false,
         "description": "One `guides propose` of the handover: the commit it landed (`sha`),\nor, when it landed nothing, its result (`conflict`, `refused`, ...).",
@@ -9918,6 +9984,25 @@
       "PlaysOutcomeResponse": {
         "description": "`POST .../plays-outcome`'s answer, shaped like `AiReviewResponse`:\nthis mutates no `Game` either.",
         "properties": {
+          "followup": {
+            "anyOf": [
+              {
+                "enum": [
+                  "scheduled",
+                  "exists",
+                  "deduped",
+                  "unavailable",
+                  "skipped",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Followup"
+          },
           "log_seq": {
             "title": "Log Seq",
             "type": "integer"
@@ -16855,7 +16940,7 @@
     },
     "/api/games/{game_id}/plays-outcome": {
       "post": {
-        "description": "Record what one handover did to the DSL - `audit.PLAYS_OUTCOME_ACTION`,\nfiled by the seat's or the advisor's own driver after the handover turn\n(`schemas.PlaysOutcomeIn`).\n\nGated like `declare_ai_review`: against `store.archived`, so a game the\nlobby has already ended still takes one; post-game only (409 before);\nand the uid binds to exactly one player. A seat uid speaks for its own\nseat only, and only for an AI seat (`archived.ai_players`) - a human's\nown uid opens their seat but no driver of theirs ever runs a handover.\nAn advisor uid speaks for the human it watches; its lookup reads the\nlive game, so it is refused once the game is soft-deleted (the driver\nfiles before it retires). `game_access`'s `OWN_PLAYER_ROUTES` refuses a\nseat uid naming another player before this runs; the checks here are\nthe same binding, restated where the row is written. The role must\nmatch the credential (400), so the ledger cannot claim an advisor's\nhandover was a seat's. The uid itself is never recorded.",
+        "description": "Record what one handover did to the DSL - `audit.PLAYS_OUTCOME_ACTION`,\nfiled by the seat's or the advisor's own driver after the handover turn\n(`schemas.PlaysOutcomeIn`).\n\nGated like `declare_ai_review`: against `store.archived`, so a game the\nlobby has already ended still takes one; post-game only (409 before);\nand the uid binds to exactly one player. A seat uid speaks for its own\nseat only, and only for an AI seat (`archived.ai_players`) - a human's\nown uid opens their seat but no driver of theirs ever runs a handover.\nAn advisor uid speaks for the human it watches; its lookup reads the\nlive game, so it is refused once the game is soft-deleted (the driver\nfiles before it retires). `game_access`'s `OWN_PLAYER_ROUTES` refuses a\nseat uid naming another player before this runs; the checks here are\nthe same binding, restated where the row is written. The role must\nmatch the credential (400), so the ledger cannot claim an advisor's\nhandover was a seat's. The uid itself is never recorded.\n\n**An `unfinished` row schedules F1's follow-up** - unless it is itself\na follow-up's (`followup: true`), which is what makes a second one\nimpossible. `lobby.schedule_followup` dedupes it per (game, uid),\nschedules the Job in kubernetes mode (or records it `unavailable`), and\nthe answer's `followup` says which. The follow-up runs as this same\n`uid`, so it can only ever speak for the player this route just bound\nit to. Its assignment is built here, from the ledger, at schedule time\n(`_followup_payload`).",
         "operationId": "declare_plays_outcome_api_games__game_id__plays_outcome_post",
         "parameters": [
           {

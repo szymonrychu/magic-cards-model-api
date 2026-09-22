@@ -752,6 +752,43 @@ it -
 `activeDeadlineSeconds`/`ttlSecondsAfterFinished` on each Job are the whole
 backstop.
 
+### The follow-up DSL-development Job
+
+A seat's (or buddy's) handover that ends `unfinished` gets one more Job:
+`mtg-followup-<game>-<uid>`, rendered from the same `deploy/seat-job.yaml`
+by `k8s_seats.build_followup_job`. Same pod shape - guides clone, agent,
+driver - with four differences, all set in code:
+
+- **the credential is the original one.** The driver runs as the seat's (or
+  advisor's) own uid and role, the credential `game_access` already binds to
+  that player; nothing is minted and nothing is widened.
+- **Opus, one turn.** `__MODEL__` is `AgentSettings.review_default()`, and
+  the assignment carries `mode: "followup"` plus the payload the api built
+  from the ledger. The driver pushes no turn 0 and plays nothing: one
+  45-minute turn (a nudge at 40), then its `plays_outcome` row with
+  `followup: true`, then it retires and the Job completes.
+- **its own label and deadline.** It carries `mtg/followup-of: <uid>`
+  *instead of* `mtg/seat-uid`, so the seat's own pod lookup never finds it,
+  and `activeDeadlineSeconds: 3600` through the template's
+  `__ACTIVE_DEADLINE_SECONDS__` placeholder (a seat's stays 14400).
+- **one per (game, uid).** Deduped by that label in the cluster and by the
+  `plays_outcome_followup` ledger row; the follow-up's own outcome never
+  schedules another.
+
+It keeps `mtg/game-id`, so the hard stops are the ones every seat Job has:
+End game deletes it through the registry's release, Forget has the
+reconcile loop delete it (its game left the live set), and its preStop
+`/handover` makes the driver stop the turn and write the marker at once.
+While it runs, `GET /api/lobby/games` reports the finished game with
+`post_game_work: true` for up to `lobby.FOLLOWUP_RELEASE_SECONDS`. The
+existing RBAC (`jobs` create/list/delete) and NetworkPolicy
+(`app.kubernetes.io/name: mtg-agent`) already cover it.
+
+```sh
+kubectl -n mtg-engine get jobs -l mtg/followup-of          # every follow-up
+kubectl -n mtg-engine logs job/mtg-followup-<game>-<uid> -c driver
+```
+
 ### Per-seat MCP config, not a ConfigMap
 
 The old `20-configmap-mcp.yaml` supplied one `mcp.base.json`, mounted once,

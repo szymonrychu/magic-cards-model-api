@@ -9,6 +9,7 @@ one origin.
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 import os
 from collections.abc import Sequence
@@ -57,6 +58,12 @@ from . import (
 from .action_rows import legal_action_rows
 from .board_scope import read_on_one_board
 from .playscripts.hypothetical_facts import build_hypothetical_facts
+from .playscripts.report import (
+    development_candidates,
+    hand_played_summary,
+    offer_table,
+    script_run_table,
+)
 from .repository import RECENT_RECORDS_WINDOW, ArchivedGame, GameUnloadable
 from .repository_postgres import VersionConflict
 from .schemas import (
@@ -143,6 +150,8 @@ from .schemas import (
 )
 from .serialize import state_view
 from .store import known_players, new_seat_uids, player_for_advisor_uid, store
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
 # `FastAPI.__init__` has no `route_class` parameter of its own (it silently
@@ -3869,7 +3878,16 @@ def declare_plays_outcome(game_id: str, req: PlaysOutcomeIn) -> dict[str, Any]:
     seat uid naming another player before this runs; the checks here are
     the same binding, restated where the row is written. The role must
     match the credential (400), so the ledger cannot claim an advisor's
-    handover was a seat's. The uid itself is never recorded."""
+    handover was a seat's. The uid itself is never recorded.
+
+    **An `unfinished` row schedules F1's follow-up** - unless it is itself
+    a follow-up's (`followup: true`), which is what makes a second one
+    impossible. `lobby.schedule_followup` dedupes it per (game, uid),
+    schedules the Job in kubernetes mode (or records it `unavailable`), and
+    the answer's `followup` says which. The follow-up runs as this same
+    `uid`, so it can only ever speak for the player this route just bound
+    it to. Its assignment is built here, from the ledger, at schedule time
+    (`_followup_payload`)."""
     archived = store.archived(game_id)
     if archived is None:
         raise KeyError(f"no game {game_id}")
@@ -3896,7 +3914,67 @@ def declare_plays_outcome(game_id: str, req: PlaysOutcomeIn) -> dict[str, Any]:
         audit.PLAYS_OUTCOME_ACTION,
         **req.model_dump(exclude={"uid"}),
     )
-    return {"recorded": True, "log_seq": seq, "player": req.player}
+    answer: dict[str, Any] = {"recorded": True, "log_seq": seq, "player": req.player}
+    if req.state == "unfinished" and not req.followup:
+        try:
+            answer["followup"] = lobby.schedule_followup(
+                game_id,
+                uid=req.uid,
+                player=req.player,
+                role=role,
+                payload=lambda: _followup_payload(game_id, req, archived),
+            )
+        except Exception as exc:  # noqa: BLE001 - the outcome row is already recorded
+            logger.warning(
+                "follow-up for %s in game %s not scheduled: %s", req.player, game_id, exc
+            )
+            answer["followup"] = "failed"
+    return answer
+
+
+def _followup_payload(game_id: str, req: PlaysOutcomeIn, archived: ArchivedGame) -> dict[str, Any]:
+    """F1's follow-up assignment, built from the ledger when the follow-up
+    is scheduled - so a later archive, or a Forget, costs it nothing it
+    needs.
+
+    The tables are the ones the handover itself read: `script_run_table`,
+    `offer_table`, `hand_played_summary` and the development candidates,
+    computed over this game's log exactly as `req.uid` reads it
+    (`game_log` - the seat's own redacted view, never more). The decklists
+    are the ones A2 reveals to this game's own credentials once it is over;
+    the follow-up identifies the opponent from the list with its own guides
+    corpus, and falls back to the identification the handover recorded in
+    the row (`opponent`). `deck` is the row's, else the deck the seat
+    registered its scripts under."""
+    player = req.player
+    rows = game_log(game_id, req.uid)["log"]
+    decklists = store.decklists(game_id)
+    game = archived.game
+    names = [p.username for p in game.players] if game is not None else list(decklists)
+    opponent = next((name for name in names if name != player), "")
+    registered = store.scripts(game_id, req.uid) or {}
+    candidates = development_candidates(rows, game_id, player)
+    if game is not None and game.winner:
+        outcome = f"{game.winner} won"
+    elif game is not None and game.drawn:
+        outcome = "the game was a draw"
+    else:
+        outcome = "the game is over"
+    return {
+        "deck": req.deck or registered.get("deck_slug"),
+        "decklist": decklists.get(player, ""),
+        "opponent": opponent,
+        "opponent_decklist": decklists.get(opponent) or None,
+        "opponent_identification": (
+            req.opponent.model_dump() if req.opponent is not None else None
+        ),
+        "outcome": outcome,
+        "run_table": script_run_table(rows, game_id, player),
+        "offers": offer_table(rows, game_id, player),
+        "hand_played": hand_played_summary(rows, game_id, player),
+        "candidates": {"plays": list(candidates.plays), "lines": list(candidates.lines)},
+        "unfinished_reasons": list(req.unfinished_reasons),
+    }
 
 
 # -- play scripts -----------------------------------------------------------

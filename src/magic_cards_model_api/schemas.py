@@ -500,6 +500,17 @@ class PlaysOutcomeNoChange(RequestModel):
     reason: Stated
 
 
+class PlaysOutcomeOpponent(RequestModel):
+    """The revealed opponent as the driver identified it post-game (A2):
+    the guided deck's `slug` when there is one, the `archetype` the list
+    resolved to, and how sure the classifier was. What F1's follow-up is
+    handed when the opponent's list is no longer readable."""
+
+    slug: Stated | None = None
+    archetype: Stated | None = None
+    confidence: Literal["confident", "low", "none"]
+
+
 class PlaysOutcomeIn(RequestModel):
     """`POST /api/games/{game_id}/plays-outcome` - the driver's record of
     what one handover did to the DSL (`audit.PLAYS_OUTCOME_ACTION`), built
@@ -515,7 +526,12 @@ class PlaysOutcomeIn(RequestModel):
     `unfinished_reasons` saying why (nudged, timed out, an admit or propose
     that did not succeed, a re-push that did not satisfy). `repushed` says
     the one re-push turn ran; `followup` that this row comes from the
-    follow-up DSL-development Job rather than the handover itself."""
+    follow-up DSL-development Job rather than the handover itself.
+
+    An `unfinished` row that is not a follow-up's own schedules F1's one
+    follow-up Job for this (game, uid) in kubernetes mode
+    (`lobby.schedule_followup`); `deck` and `opponent` are what that Job's
+    assignment is built from, so they ride in the row."""
 
     uid: Stated
     """The filing credential - never recorded in the row."""
@@ -528,6 +544,9 @@ class PlaysOutcomeIn(RequestModel):
     unfinished_reasons: list[Stated] = Field(default_factory=list)
     repushed: bool = False
     followup: bool = False
+    deck: Stated | None = None
+    """The deck slug the seat played, as its driver identified it."""
+    opponent: PlaysOutcomeOpponent | None = None
 
 
 class PlaysOutcomeResponse(BaseModel):
@@ -538,6 +557,14 @@ class PlaysOutcomeResponse(BaseModel):
     log_seq: int
     """The `records` row this outcome became."""
     player: str
+    followup: (
+        Literal["scheduled", "exists", "deduped", "unavailable", "skipped", "failed"] | None
+    ) = None
+    """What an `unfinished` row did about F1's follow-up Job: `scheduled`
+    (or `exists`, the cluster already held it), `deduped` (the ledger
+    already names one for this uid), `unavailable` (not kubernetes mode),
+    `skipped` (the post-game backstop already released this game) or
+    `failed` (the cluster refused). Absent for any other row."""
 
 
 class AdviceIn(RequestModel):

@@ -44,6 +44,17 @@ process exits, its restart policy brings up a fresh container with a fresh
 conversation, and the next game starts from the notes on disk rather than
 from a session that remembers the last one. The driver itself is not
 recycled - it is the thing that survives to dispatch the next match.
+
+**A follow-up is not a match (F1).** When a handover's `plays_outcome` row
+says `unfinished`, the api schedules one follow-up Job whose assignment says
+`mode: "followup"`. Such a driver pushes no turn 0 and plays nothing: it
+pushes one `prompt.followup_turn`, waits on it for `FOLLOWUP_BUDGET_SECONDS`
+with one nudge, reads the results journal, files its own `plays_outcome`
+with `followup: true` (which the api never follows up again), and retires.
+The turn runs as the handover-kind work it is, so `turn_done` routes its
+completion to it and the seat-never-idle continuation never sees it; a
+`/handover` or `/release` while it runs - its Job deleted because the game
+was ended or forgotten - is the hard stop.
 """
 
 from __future__ import annotations
@@ -73,7 +84,14 @@ from magic_cards_model_api.playscripts.report import (
 )
 
 from .config import DriverSettings
-from .guides import DeckGuide, GuideLibrary, ScriptsRegistration, parse_decklist
+from .guides import (
+    CONFIDENT,
+    DeckGuide,
+    GuideLibrary,
+    Identification,
+    ScriptsRegistration,
+    parse_decklist,
+)
 from .handover import (
     HANDOVER_BACKOFF_MAX_SECONDS,
     HANDOVER_BACKOFF_START_SECONDS,
@@ -92,9 +110,13 @@ from .handover import (
     write_marker,
 )
 from .prompt import (
+    FOLLOWUP_BUDGET_SECONDS,
+    FOLLOWUP_NUDGE_AFTER_SECONDS,
     Assignment,
     advisor_turn_zero,
     continue_turn,
+    followup_nudge,
+    followup_turn,
     handover_nudge,
     handover_repush,
     handover_turn,
@@ -210,6 +232,18 @@ class DispatchIn(BaseModel):
     Defaulted, so a dispatch body written before roles existed - and
     `k8s_seats`' own `DRIVER_ASSIGNMENT_JSON`, which writes the key only for
     a non-default role - reads back as a seat, unchanged."""
+    mode: Literal["play", "followup"] = "play"
+    """`play` (a match: turn 0, the game, the reflection, the handover) or
+    `followup` - F1's one bounded DSL-development turn for a handover that
+    ended unfinished (`assign_followup`). Defaulted, and written by
+    `k8s_seats` only on a follow-up Job, so every other payload reads as a
+    match, unchanged."""
+    followup: dict | None = None
+    """A follow-up's payload, built by the api from the ledger when it
+    scheduled the Job: `deck`, `decklist`, `opponent`, `opponent_decklist`,
+    `opponent_identification`, `outcome`, `run_table`, `offers`,
+    `hand_played`, `candidates` (`{plays, lines}`) and
+    `unfinished_reasons`."""
 
 
 class HandoverIn(BaseModel):
@@ -1096,23 +1130,36 @@ def build_app(
         status rather than kept per wait."""
         with lock:
             done = handover["done"]
+            stop = handover.get("stop")
+            budget = handover.get("budget", HANDOVER_BUDGET_SECONDS)
+            nudge_after = handover.get("nudgeAfter", NUDGE_AFTER_SECONDS)
+            nudge_text = handover.get("nudgeText") or handover_nudge
         while not done.wait(POLL_SECONDS):
+            if stop is not None and stop.is_set():
+                return "stopped"
             elapsed = now() - started
-            if elapsed >= HANDOVER_BUDGET_SECONDS:
+            if elapsed >= budget:
                 return "timeout"
             with lock:
-                nudge = elapsed >= NUDGE_AFTER_SECONDS and not handover["status"]["nudged"]
+                nudge = elapsed >= nudge_after and not handover["status"]["nudged"]
                 if nudge:
                     handover["status"]["nudged"] = True
             if nudge:
-                wrapper_post("/v1/probe", {"text": handover_nudge(assignment)})
+                wrapper_post("/v1/probe", {"text": nudge_text(assignment)})
         return "done"
 
-    def push_and_await(assignment: Assignment, handover: dict, text: str, started: float) -> str:
+    def push_and_await(
+        assignment: Assignment,
+        handover: dict,
+        text: str,
+        started: float,
+        push: Callable[[Assignment, str, float], str] | None = None,
+    ) -> str:
         """Push one handover-owned turn and wait for it: the handover turn,
-        or its one re-push. The 409 back-off is measured from this push; the
+        its one re-push, or a follow-up's one turn (`push` is then
+        `push_followup`). The 409 back-off is measured from this push; the
         budget, from the handover's own start."""
-        turn_id = push_handover(assignment, text, now())
+        turn_id = (push or push_handover)(assignment, text, now())
         with lock:
             handover["turnId"] = turn_id
             key = "turnId" if handover["status"]["turnId"] is None else "repushTurnId"
@@ -1190,6 +1237,8 @@ def build_app(
             verdict=verdict,
             reasons=reasons,
             repushed=repushed,
+            deck=assignment.guide.slug if assignment.guide is not None else None,
+            opponent=opponent_summary(assignment),
         )
         with lock:
             handover["status"]["playsOutcome"] = body["state"]
@@ -1258,6 +1307,15 @@ def build_app(
         with lock:
             active = current["handover"]
             if active is not None:
+                if active.get("stop") is not None and not active["stop"].is_set():
+                    # A follow-up (F1): its Job is being deleted - the game
+                    # was ended or forgotten - so this is the hard stop, not
+                    # a handover. `run_followup` interrupts the turn, files
+                    # the outcome and writes the marker at once.
+                    active["status"]["stopReason"] = (
+                        f"stopped: the follow-up was ended from outside ({outcome or 'killed'})"
+                    )
+                    active["stop"].set()
                 return dict(active["status"])
             assignment = current["assignment"]
             if assignment is None and current["lastHandover"] is not None:
@@ -1542,7 +1600,11 @@ def build_app(
         """The whole of a dispatch: claim the seat, learn its deck, write
         the briefing, and push turn 0. Used both by `POST /dispatch` and by
         the startup hook that self-dispatches a per-game Job's own match
-        from `DRIVER_ASSIGNMENT_JSON` - one code path either way."""
+        from `DRIVER_ASSIGNMENT_JSON` - one code path either way. A
+        `mode: "followup"` body is F1's follow-up, not a match
+        (`assign_followup`)."""
+        if body.mode == "followup":
+            return assign_followup(body)
         with lock:
             existing = current["assignment"]
             if existing is not None and existing.uid == body.uid:
@@ -1684,6 +1746,275 @@ def build_app(
             "candidates": [c.slug for c in identified.candidates],
             "pending": False,
         }
+
+    # -- F1: the follow-up DSL-development turn ------------------------------
+
+    def opponent_summary(assignment: Assignment) -> dict | None:
+        """The revealed opponent as the `plays_outcome` row records it
+        (`{slug, archetype, confidence}`), or `None` when it was never
+        identified. What the api hands a follow-up when the list itself is
+        no longer readable."""
+        identified = assignment.opponent_identification
+        if identified is None:
+            return None
+        return {
+            "slug": identified.guide.slug if identified.guide is not None else None,
+            "archetype": identified.archetype,
+            "confidence": identified.confidence,
+        }
+
+    def own_identification(payload: dict) -> Identification:
+        """The seat's own deck for a follow-up: the deck the handover
+        recorded when this checkout has its guide, else what the seat's own
+        list identifies as - the same classifier its dispatch ran."""
+        guide = library.get(str(payload["deck"])) if payload.get("deck") else None
+        if guide is not None:
+            signature = guide.signature()
+            return Identification(
+                CONFIDENT, guide=guide, archetype=signature.name if signature else None
+            )
+        return library.identify(parse_decklist(str(payload.get("decklist") or "")))
+
+    def followup_opponent(payload: dict) -> Identification | None:
+        """The opponent for a follow-up: identified from the revealed list
+        the api copied into the payload, else rebuilt from the
+        identification the handover recorded, else unknown."""
+        text = payload.get("opponent_decklist")
+        if text:
+            return library.identify(parse_decklist(str(text)))
+        recorded = payload.get("opponent_identification")
+        if not isinstance(recorded, dict) or not recorded.get("confidence"):
+            return None
+        slug = recorded.get("slug")
+        return Identification(
+            str(recorded["confidence"]),
+            guide=library.get(str(slug)) if slug else None,
+            archetype=recorded.get("archetype"),
+        )
+
+    def push_followup(assignment: Assignment, text: str, started: float) -> str:
+        """Push the follow-up's one turn. The agent container boots beside
+        this driver, so a retryable refusal is waited out for
+        `agent_boot_wait` - and never past the hard stop."""
+        deadline = time.monotonic() + settings.agent_boot_wait
+        while True:
+            with lock:
+                active = current["handover"]
+                stopped = active is not None and active.get("stop") is not None
+                stopped = stopped and active["stop"].is_set()
+            if stopped:
+                raise RuntimeError("the follow-up was stopped before its turn was pushed")
+            try:
+                turn_id = push_turn(text)
+            except AgentUnavailable as exc:
+                if not exc.retryable or time.monotonic() >= deadline:
+                    raise
+                time.sleep(settings.agent_retry_interval)
+                continue
+            with lock:
+                if current["assignment"] is assignment:
+                    current["pending"] = False
+            return turn_id
+
+    def followup_reasons(
+        state: str, error: str | None, nudged: bool, stop_reason: str | None, verdict: Any
+    ) -> list[str]:
+        """Why a follow-up counts as unfinished - empty when it is complete.
+        Its own words, not the handover's: its budget, its nudge, and no
+        re-push, because a follow-up is one turn."""
+        reasons: list[str] = []
+        if nudged:
+            reasons.append(
+                "nudged: the follow-up was still running at "
+                f"{int(FOLLOWUP_NUDGE_AFTER_SECONDS // 60)} minutes"
+            )
+        if state == "stopped":
+            reasons.append(stop_reason or "stopped: the follow-up was ended from outside")
+        elif state == "timeout":
+            reasons.append(
+                "timeout: the follow-up turn did not end within "
+                f"{int(FOLLOWUP_BUDGET_SECONDS // 60)} minutes"
+            )
+        elif state == "failed":
+            reasons.append(f"failed: {error or 'the follow-up turn could not be run'}")
+        if verdict.last_write_failed:
+            reasons.append(f"the last write did not land: {verdict.last_write_failed}")
+        if not verdict.satisfied:
+            reasons.append(
+                "development still open after the follow-up: " + "; ".join(verdict.missing)
+            )
+        return reasons
+
+    def run_followup(assignment: Assignment, followup: dict, text: str) -> None:
+        """The follow-up's background half: push its one turn, wait on it
+        (budget, one nudge, the hard stop), read the journal, file the
+        `plays_outcome` row with `followup: true`, write the marker, retire.
+        Never a re-push and never a continuation: one bounded turn."""
+        state, error = "failed", None
+        try:
+            state = push_and_await(assignment, followup, text, now(), push=push_followup)
+        except Exception as exc:  # noqa: BLE001 - every failure still files and retires
+            state, error = "failed", str(exc)
+            log.error("follow-up for game %s failed: %s", assignment.game_id, exc)
+        with lock:
+            if followup["stop"].is_set():
+                state = "stopped"
+            stop_reason = followup["status"].get("stopReason")
+            nudged = bool(followup["status"]["nudged"])
+            candidates = followup["candidates"]
+        if state == "stopped":
+            interrupted = wrapper_post("/v1/interrupt")
+            with lock:
+                followup["status"]["interrupted"] = interrupted
+        try:
+            verdict = assess(
+                read_journal(settings.guides_root, assignment.game_id, assignment.role),
+                candidates,
+            )
+            body = plays_outcome_body(
+                uid=assignment.uid,
+                player=assignment.player,
+                role=assignment.role,
+                verdict=verdict,
+                reasons=followup_reasons(state, error, nudged, stop_reason, verdict),
+                repushed=False,
+                followup=True,
+                deck=assignment.guide.slug if assignment.guide is not None else None,
+                opponent=opponent_summary(assignment),
+            )
+            with lock:
+                followup["status"]["playsOutcome"] = body["state"]
+            post_plays_outcome(assignment, body)
+        except Exception as exc:  # noqa: BLE001 - the marker and the retire still happen
+            log.error("follow-up outcome for game %s failed: %s", assignment.game_id, exc)
+            error = error or str(exc)
+        with lock:
+            followup["status"].update(state=state, error=error)
+            status = dict(followup["status"])
+        try:
+            write_marker(marker_path, status)
+        except OSError as exc:
+            log.error("could not write the follow-up marker %s: %s", marker_path, exc)
+        log.info("follow-up for game %s: %s", assignment.game_id, state)
+        with lock:
+            ours = current["assignment"] is assignment
+        if ours:
+            retire(assignment)
+
+    def assign_followup(body: DispatchIn) -> dict:
+        """Take F1's follow-up: build the assignment from the payload the api
+        read off the ledger, and push the one follow-up turn - no turn 0, no
+        game read, no scripts registered.
+
+        The assignment is marked `reflected` and its review `considered`
+        from the start: the game is over and its review was the handover's
+        to file, so `/status` never reads the follow-up as a stranded seat,
+        no continuation can ever be pushed for it, and `retire` files no
+        second review. Its turn is held as handover-kind work
+        (`current["handover"]`), which is what routes its `/turn-done` here
+        and makes a `/handover` or `/release` the hard stop."""
+        payload = body.followup or {}
+        with lock:
+            existing = current["assignment"]
+            if existing is not None:
+                if existing.uid == body.uid and existing.game_id == body.game_id:
+                    return {"mode": "followup", "alreadyRunning": True}
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"this agent is already working on game {existing.game_id}",
+                )
+        opponent = followup_opponent(payload)
+        assignment = Assignment(
+            game_id=body.game_id,
+            uid=body.uid,
+            player=body.player,
+            opponent=str(payload.get("opponent") or ""),
+            api_base=body.api_base or settings.game_api,
+            decklist=parse_decklist(str(payload.get("decklist") or "")),
+            identification=own_identification(payload),
+            guides_revision=guides_revision(settings.guides_root),
+            agent=body.agent,
+            role=body.role,
+            opponent_identification=opponent,
+            opponent_checked=True,
+            stub_decks=tuple(library.stub_decks()),
+        )
+        raw = payload.get("candidates") or {}
+        candidates = DevelopmentCandidates(
+            plays=tuple(str(play) for play in raw.get("plays") or ()),
+            lines=tuple(str(line) for line in raw.get("lines") or ()),
+        )
+        reasons = [str(reason) for reason in payload.get("unfinished_reasons") or ()]
+        text = followup_turn(
+            assignment,
+            str(payload.get("outcome") or "the game is over"),
+            reasons,
+            run_table=str(payload.get("run_table") or "no script run table was recorded"),
+            offers=str(payload.get("offers") or "no script offer table was recorded"),
+            hand_played=str(payload.get("hand_played") or "no hand-played table was recorded"),
+            evidence=evidence_table(settings.guides_root, assignment.deck_slug),
+            candidates=candidates,
+        )
+        followup: dict[str, Any] = {
+            "status": {
+                "handoverId": uuid.uuid4().hex,
+                "kind": "followup",
+                "state": "running",
+                "outcome": payload.get("outcome"),
+                "gameId": assignment.game_id,
+                "player": assignment.player,
+                "role": assignment.role,
+                "turnId": None,
+                "interrupted": False,
+                "nudged": False,
+                "repushed": False,
+                "playsOutcome": None,
+                "error": None,
+                "marker": str(marker_path),
+            },
+            "done": threading.Event(),
+            "stop": threading.Event(),
+            "turnId": None,
+            "finished": set(),
+            "candidates": candidates,
+            "budget": FOLLOWUP_BUDGET_SECONDS,
+            "nudgeAfter": FOLLOWUP_NUDGE_AFTER_SECONDS,
+            "nudgeText": followup_nudge,
+        }
+        with lock:
+            if current["assignment"] is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"this agent is already working on game {current['assignment'].game_id}",
+                )
+            clear_locked()
+            current.update(
+                assignment=assignment,
+                reflected=True,
+                aiReviewConsidered=True,
+                pending=True,
+                lastError=None,
+                handover=followup,
+                lastHandover=followup,
+            )
+        clear_marker(marker_path)
+        settings.workspace.mkdir(parents=True, exist_ok=True)
+        sync_agent_settings(body.agent)
+        log.info(
+            "follow-up for game %s (%s, %s): deck=%s, %d reason(s)",
+            assignment.game_id,
+            assignment.player,
+            assignment.role,
+            assignment.deck_slug,
+            len(reasons),
+        )
+        threading.Thread(
+            target=run_followup,
+            args=(assignment, followup, text),
+            daemon=True,
+            name="driver-followup",
+        ).start()
+        return {"mode": "followup", "deck": assignment.deck_slug, "pending": True}
 
     @app.post("/dispatch", status_code=202)
     def dispatch(body: DispatchIn) -> dict:

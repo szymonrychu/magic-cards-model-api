@@ -66,6 +66,18 @@ finished row. An api restart loses the timer; the lazy check and the Job's own
 `activeDeadlineSeconds: 14400` (`deploy/seat-job.yaml`) are the backstop for
 that. End game (`reset_game`) stays the hard stop at any time.
 
+**An unfinished handover gets one follow-up (F1).** When a seat's or an
+advisor's `plays_outcome` row says `unfinished`, `schedule_followup` starts
+one follow-up DSL-development Job for that (game, uid) - kubernetes mode
+only; any other mode records it `unavailable` - deduped by the Job's label
+and by the ledger's `plays_outcome_followup` row. It runs as the original
+uid, so it acts as that seat's player and nobody else. While it runs the
+game still has post-game work (`post_game_work`), bounded by its own window
+(`FOLLOWUP_RELEASE_SECONDS` from the scheduling row) rather than the
+handover's; `release_overdue` then stops it with everything else, End game
+stops it at once, and Forget has reconcile delete it
+(`k8s_seats.K8sSeats.reconcile`: its game left the live set).
+
 Nothing here resets a game nobody asked about. `store.register_ui_game` is set
 by `POST /api/lobby/games` alone; a game booted by `serve.py --match` or by
 `POST /api/games` is somebody else's, and both routes reach this function only
@@ -80,7 +92,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from . import ai_pregame, ai_seat, audit
+from . import ai_pregame, ai_seat, audit, k8s_seats
 from .repository import RECENT_RECORDS_WINDOW, GameUnloadable
 from .store import known_players, store
 
@@ -119,6 +131,18 @@ reflection turn (`DRIVER_REFLECTION_ALLOWANCE_SECONDS`), then the handover
 review thread (`DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT`, 1330s) - about an hour,
 3610s. Past that the driver has overrun every allowance it has, so holding
 the row in "recording plays..." any longer only hides a stuck pod."""
+
+#: What `schedule_followup` records itself under (`audit.
+#: PLAYS_OUTCOME_FOLLOWUP_ACTION`).
+FOLLOWUP_ACTION = audit.PLAYS_OUTCOME_FOLLOWUP_ACTION
+
+FOLLOWUP_RELEASE_SECONDS = float(k8s_seats.FOLLOWUP_ACTIVE_DEADLINE_SECONDS + 120)
+"""How long after its `plays_outcome_followup` row a follow-up may keep a
+finished game in "recording plays..." before `release_overdue` stops it: the
+follow-up Job's own `activeDeadlineSeconds` (3600 s, which already covers
+its pod's boot and its one 45-minute turn) plus two minutes for the pod's
+teardown. Past that the Job has been killed by its own deadline, so the row
+is only waiting on a stuck pod."""
 
 #: The wall clock `post_game_work` measures the bound on, against the
 #: `game_over` row's own `ts`. A module attribute so a test can move it.
@@ -252,8 +276,9 @@ def retire_game(game_id: str) -> dict[str, Any]:
     return covered
 
 
-def _arm_release_timer(game_id: str) -> None:
-    timer = threading.Timer(POSTGAME_RELEASE_SECONDS, _release_timer_fired, args=(game_id,))
+def _arm_release_timer(game_id: str, delay: float | None = None) -> None:
+    delay = POSTGAME_RELEASE_SECONDS if delay is None else delay
+    timer = threading.Timer(delay, _release_timer_fired, args=(game_id,))
     timer.daemon = True
     timer.name = f"postgame-release-{game_id}"
     with _timers_lock:
@@ -265,11 +290,18 @@ def _arm_release_timer(game_id: str) -> None:
 
 
 def _release_timer_fired(game_id: str) -> None:
+    deadline = _followup_deadline(_followup_rows(game_id))
+    if deadline is not None and deadline > clock():
+        # A follow-up was scheduled after this timer was armed: its own
+        # window is still open, so wait that out instead.
+        _arm_release_timer(game_id, deadline - clock())
+        return
     try:
         release_overdue(game_id)
     finally:
         with _timers_lock:
-            _release_timers.pop(game_id, None)
+            if _release_timers.get(game_id) is threading.current_thread():
+                _release_timers.pop(game_id, None)
 
 
 def _cancel_release_timer(game_id: str) -> None:
@@ -295,6 +327,123 @@ def _ended_at(game_id: str) -> float | None:
 
 def _overdue_reason() -> str:
     return f"post-game work overran {int(POSTGAME_RELEASE_SECONDS)}s"
+
+
+def _stamp(payload: dict[str, Any]) -> float | None:
+    try:
+        return datetime.fromisoformat(str(payload.get("ts"))).timestamp()
+    except ValueError:
+        return None
+
+
+FollowupRows = tuple[dict[tuple[str, str], float | None], set[tuple[str, str]]]
+
+
+def _followup_rows(game_id: str) -> FollowupRows:
+    """`(scheduled, filed)` off the bounded window, in one read: each
+    `(player, role)` whose follow-up was scheduled, with its row's stamp,
+    and each whose follow-up has filed its own `plays_outcome` row
+    (`followup: true`)."""
+    scheduled: dict[tuple[str, str], float | None] = {}
+    filed: set[tuple[str, str]] = set()
+    for row in store.recent_records(game_id, RECENT_RECORDS_WINDOW):
+        payload = row["payload"]
+        detail = payload.get("detail") or {}
+        key = (detail.get("player"), detail.get("role"))
+        if payload.get("action") == FOLLOWUP_ACTION and detail.get("state") == "scheduled":
+            scheduled[key] = _stamp(payload)
+        elif payload.get("action") == audit.PLAYS_OUTCOME_ACTION and detail.get("followup"):
+            filed.add(key)
+    return scheduled, filed
+
+
+def _followup_running(game_id: str, rows: FollowupRows) -> bool:
+    """Whether a follow-up of `game_id` is still running: the ledger
+    scheduled one, and the cluster says its Job has not ended
+    (`AiSeatRegistry.followup_running`) - or, with the cluster unreadable,
+    it has not filed its own outcome yet."""
+    scheduled, filed = rows
+    if not scheduled:
+        return False
+    for uid, player, role in _runner_uids(game_id):
+        key = (player, role)
+        if key not in scheduled:
+            continue
+        live = ai_seat.registry.followup_running(uid)
+        if live or (live is None and key not in filed):
+            return True
+    return False
+
+
+def _followup_deadline(rows: FollowupRows) -> float | None:
+    """When the newest scheduled follow-up's window closes, or `None` when
+    none was scheduled (or its stamp does not parse)."""
+    stamps = [stamp for stamp in rows[0].values() if stamp is not None]
+    return max(stamps) + FOLLOWUP_RELEASE_SECONDS if stamps else None
+
+
+def schedule_followup(
+    game_id: str,
+    *,
+    uid: str,
+    player: str,
+    role: str,
+    payload: Callable[[], dict[str, Any]],
+) -> str:
+    """F1: schedule the one follow-up DSL-development Job for `uid`'s
+    unfinished handover in `game_id`, and record what happened as
+    `plays_outcome_followup`. Returns that row's `state`, or `deduped`.
+
+    At most one per (game, uid): a `plays_outcome_followup` row already in
+    the ledger for this player and role (whatever its state) dedupes it
+    here, and the Job's own label dedupes it in the cluster
+    (`K8sSeats.start_followup`). `payload` builds the assignment - read off
+    the ledger now, so a later archive costs the follow-up nothing - and is
+    called only when a Job will actually be asked for.
+
+    Not scheduled once `release_overdue` has already let this game's
+    runners go: the post-game window is spent (`skipped`). A scheduled
+    follow-up re-arms the release timer for `FOLLOWUP_RELEASE_SECONDS`.
+    """
+    for entry in audit.entries(game_id):
+        detail = entry.get("detail") or {}
+        if (
+            entry.get("action") == FOLLOWUP_ACTION
+            and detail.get("player") == player
+            and detail.get("role") == role
+        ):
+            return "deduped"
+    if _already_released_overdue(game_id):
+        status: dict[str, Any] = {
+            "state": "skipped",
+            "reason": "the post-game backstop already released this game's runners",
+        }
+    else:
+        try:
+            built = payload() if ai_seat.ai_seat_mode() == "kubernetes" else {}
+        except Exception as exc:  # noqa: BLE001 - recorded as the follow-up's failure
+            status = {"state": "failed", "reason": f"the assignment could not be built: {exc}"}
+        else:
+            status = ai_seat.registry.start_followup(
+                uid=uid, game_id=game_id, player=player, role=role, followup=built
+            )
+    state = "scheduled" if status["state"] in ("scheduled", "exists") else status["state"]
+    detail = {"player": player, "role": role, "state": state}
+    if status.get("job"):
+        detail["job"] = status["job"]
+    if status.get("reason"):
+        detail["reason"] = status["reason"]
+    if state == "scheduled":
+        detail["deadline_seconds"] = k8s_seats.FOLLOWUP_ACTIVE_DEADLINE_SECONDS
+    note = (
+        f"follow-up DSL development for {player} ({role}): {state}"
+        + (f" as {detail['job']}" if detail.get("job") else "")
+        + (f" - {detail['reason']}" if detail.get("reason") else "")
+    )
+    audit.record(game_id, FOLLOWUP_ACTION, note=note, **detail)
+    if state == "scheduled":
+        _arm_release_timer(game_id, FOLLOWUP_RELEASE_SECONDS)
+    return status["state"] if status["state"] == "exists" else state
 
 
 def _already_released_overdue(game_id: str) -> bool:
@@ -352,6 +501,12 @@ def post_game_work(game_id: str) -> bool:
     `POSTGAME_RELEASE_SECONDS`, this runs `release_overdue` and answers
     `False` - the lazy half of the backstop, which still works after an api
     restart lost `retire_game`'s timer.
+
+    F1's follow-up is post-game work too (`_followups_running`): while one
+    runs this stays true, and its own window (`FOLLOWUP_RELEASE_SECONDS`
+    after it was scheduled) replaces the handover's bound - it never
+    starts before the handover ends, so the handover's bound would cut
+    most follow-ups short.
     """
     try:
         game = store.get(game_id)
@@ -359,8 +514,16 @@ def post_game_work(game_id: str) -> bool:
         return False
     if game is None or not game.is_over:
         return False
-    if not any(ai_seat.registry.finishing(uid) for uid, _, _ in _runner_uids(game_id)):
+    rows = _followup_rows(game_id)
+    if not _followup_running(game_id, rows) and not any(
+        ai_seat.registry.finishing(uid) for uid, _, _ in _runner_uids(game_id)
+    ):
         return False
+    deadline = _followup_deadline(rows)
+    if deadline is not None:
+        if clock() > deadline:
+            return release_overdue(game_id)
+        return True
     ended_at = _ended_at(game_id)
     if ended_at is not None and clock() - ended_at > POSTGAME_RELEASE_SECONDS:
         return release_overdue(game_id)
@@ -446,9 +609,12 @@ def _note(covered: dict[str, Any], reason: str) -> str:
 
 
 __all__ = [
+    "FOLLOWUP_ACTION",
+    "FOLLOWUP_RELEASE_SECONDS",
     "POSTGAME_RELEASE_SECONDS",
     "post_game_work",
     "release_overdue",
     "reset_game",
     "retire_game",
+    "schedule_followup",
 ]

@@ -116,6 +116,14 @@ AI_REVIEW_FAILED_ACTION = "ai_review_failed"
 #: loud, for `AI_REVIEW_FAILED_ACTION`'s reason: it names no seat's move.
 PLAYS_OUTCOME_ACTION = "plays_outcome"
 
+#: What the api did about F1's follow-up DSL-development Job when an
+#: `unfinished` `plays_outcome` row came in (`lobby.schedule_followup`):
+#: `state` is `scheduled` (with its `job`), `unavailable` in any mode but
+#: kubernetes, `skipped` or `failed` (with a `reason`). At most one per
+#: (game, player, role) - it is also the ledger half of the dedup. Not loud:
+#: it names no seat's move.
+PLAYS_OUTCOME_FOLLOWUP_ACTION = "plays_outcome_followup"
+
 #: An advisor's proposal: one action it says its human should take, validated
 #: against the engine where the request shape allowed it, recorded but never
 #: performed (`POST /api/games/{id}/advice`, `schemas.AdviceIn`). The row
