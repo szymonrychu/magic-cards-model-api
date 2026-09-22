@@ -1170,14 +1170,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     until.add_argument(
-        "--no-stop-when-attacked",
+        "--stop-when-attacked",
         action="store_true",
         help=(
-            "run straight through your own declare-blockers step. YOU WILL "
-            "BLOCK NOTHING AND TAKE THE WHOLE ATTACK. Declaring blockers is a "
-            "turn-based action that does not use the stack (CR 509.1), so "
-            "--no-stop-on-stack's condition cannot catch it for you. Only for "
-            "a board that cannot block or a life total the attack cannot reach"
+            "T2: opt in to stopping at your own declare-blockers step (off by "
+            "default). Declaring blockers is a turn-based action that does not "
+            "use the stack (CR 509.1), so --no-stop-on-stack's condition cannot "
+            "catch it for you either way; without this flag a run through the "
+            "opponent's turn blocks nothing and takes the whole attack. Turn "
+            "this on when a board that could actually block is on the way"
         ),
     )
     until.add_argument(
@@ -1195,17 +1196,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     until.add_argument(
-        "--no-stop-when-you-can-attack",
+        "--stop-when-you-can-attack",
         action="store_true",
         help=(
-            "run straight through your own declare-attackers step. YOU WILL "
-            "ATTACK WITH NOTHING that turn. Declaring attackers does not use "
-            "the stack either (CR 508.1), and skipping it is silent - the "
-            "engine treats a player who never declares as declaring nobody, so "
-            "the turn just produces no attack and nothing says why. Left on, a "
-            "run aimed past combat stops in your declare-attackers step every "
-            "turn, which is the point. Switching it off is the deliberate "
-            "'I am not attacking this turn'"
+            "T2: opt in to stopping at your own declare-attackers step (off by "
+            "default). Declaring attackers does not use the stack either (CR "
+            "508.1), and skipping it is silent - the engine treats a player who "
+            "never declares as declaring nobody, so the turn just produces no "
+            "attack and nothing says why. Turn this on for a run aimed past "
+            "combat when you want to be asked before your attack goes by; "
+            "without it that attack is skipped every time, on purpose"
         ),
     )
     arm_flags(until)
@@ -1989,8 +1989,8 @@ def run(argv: list[str] | None = None) -> int:
                 until_step=args.step,
                 whose_turn=args.whose_turn,
                 stop_on_stack=not args.no_stop_on_stack,
-                stop_when_attacked=not args.no_stop_when_attacked,
-                stop_when_you_can_attack=not args.no_stop_when_you_can_attack,
+                stop_when_attacked=args.stop_when_attacked,
+                stop_when_you_can_attack=args.stop_when_you_can_attack,
                 resume=json.loads(args.resume) if args.resume else None,
                 reasoning=args.reasoning,
                 max_seconds=args.max_seconds,

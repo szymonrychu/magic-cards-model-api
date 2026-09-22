@@ -485,7 +485,9 @@ def test_a_run_stops_when_this_seat_is_being_attacked(client, game, monkeypatch)
     stage_an_attack_on_bob(client, game)
 
     with Opponent(game, "alice"):
-        result = run_to_stop(bob, until_step="upkeep", whose_turn="mine")
+        # T2: this stop is opt-in now - the test names the toggle it is
+        # actually testing rather than leaning on a default.
+        result = run_to_stop(bob, until_step="upkeep", whose_turn="mine", stop_when_attacked=True)
 
     # CR 509.1: declaring blockers is the first thing that happens in the
     # declare-blockers step, and a read during the pause shows the step the
@@ -538,7 +540,11 @@ def test_the_attacked_stop_does_not_fire_on_the_attacking_seat(client, game, mon
     stage_an_attack_on_bob(client, game)
 
     with Opponent(game, "bob"):
-        result = run_to_stop(alice, until_step="end_step", whose_turn="mine")
+        # T2: on, so the guard being proven is "does not fire on the
+        # attacker", not merely "the stop was off anyway".
+        result = run_to_stop(
+            alice, until_step="end_step", whose_turn="mine", stop_when_attacked=True
+        )
 
     assert result["stopped_because"] == "reached your end step", result["stopped_because"]
     assert result["state"]["step"] == "end_step"
@@ -574,6 +580,7 @@ def test_a_run_stops_in_your_own_declare_attackers_step(client, game, monkeypatc
             alice,
             until_step="postcombat_main",
             whose_turn="mine",
+            stop_when_you_can_attack=True,  # T2: opt-in now
         )
 
     # CR 508.1: declaring attackers is the first thing in the declare-attackers
@@ -607,6 +614,7 @@ def test_the_attackers_stop_does_not_guess_whether_anything_could_attack(client,
             alice,
             until_step="postcombat_main",
             whose_turn="mine",
+            stop_when_you_can_attack=True,  # T2: opt-in now
         )
 
     # See `test_a_run_stops_in_your_own_declare_attackers_step`'s note: the
@@ -653,7 +661,11 @@ def test_the_attackers_stop_does_not_fire_on_the_defending_seat(client, game, mo
     set_step(client, game, "precombat_main")
 
     with Opponent(game, "alice"):
-        result = run_to_stop(bob, until_step="upkeep", whose_turn="mine")
+        # T2: on, so the guard being proven is "does not fire on the
+        # defender", not merely "the stop was off anyway".
+        result = run_to_stop(
+            bob, until_step="upkeep", whose_turn="mine", stop_when_you_can_attack=True
+        )
 
     assert result["stopped_because"] == "reached your upkeep", result["stopped_because"]
     assert result["state"]["active_player"] == "bob"
@@ -688,6 +700,7 @@ def test_a_run_started_in_its_own_declare_attackers_step_still_moves(client, gam
             alice,
             until_step="postcombat_main",
             whose_turn="mine",
+            stop_when_you_can_attack=True,  # T2: opt-in now - this is its own test
         )
 
     assert result["stopped_because"] == "reached your postcombat main", result["stopped_because"]
@@ -722,6 +735,7 @@ def test_a_run_started_in_its_own_declare_blockers_step_still_moves(client, game
             bob,
             until_step="postcombat_main",
             whose_turn="any",
+            stop_when_attacked=True,  # T2: opt-in now - this is its own test
         )
 
     assert result["stopped_because"] == "reached the next postcombat main", result[
@@ -756,9 +770,12 @@ def test_the_stamp_only_covers_the_occurrence_the_run_started_in(client, game, m
     assert pending is not None and pending["kind"] == "declare_attackers", pending
 
     run = seatkit.start_autopass(started_in, "postcombat_main", "mine")
-    assert seatkit.autopass_stop_reason(started_in, run, "alice") is None, (
-        "the pause the run began already sitting on is exempt"
-    )
+    # T2: opt-in now - passed explicitly since this test is about the
+    # started-in exemption on this very condition, not about its default.
+    assert (
+        seatkit.autopass_stop_reason(started_in, run, "alice", stop_when_you_can_attack=True)
+        is None
+    ), "the pause the run began already sitting on is exempt"
 
     # Answer the pause for real - CR 508.1a's "if any" makes "nobody" legal.
     # The board is still in the same declare-attackers step, so the stamp
@@ -777,9 +794,10 @@ def test_the_stamp_only_covers_the_occurrence_the_run_started_in(client, game, m
 
     seatkit.forget_starting_occurrence(run, later)
     assert run["started_step"] is None, "the stamp survived the board leaving its occurrence"
-    assert seatkit.autopass_stop_reason(started_in, run, "alice") is not None, (
-        "with the stamp cleared, the very same pause must stop the run again"
-    )
+    assert (
+        seatkit.autopass_stop_reason(started_in, run, "alice", stop_when_you_can_attack=True)
+        is not None
+    ), "with the stamp cleared, the very same pause must stop the run again"
 
 
 # -- the other stops ---------------------------------------------------------
@@ -984,6 +1002,11 @@ def test_a_non_retryable_hand_back_is_never_retried_by_the_bounded_wait(monkeypa
             "until": {"step": "postcombat_main", "whose_turn": "mine"},
             "state": {},
             "available_actions": {},
+            # T1: a real `_pass_until_once` call always carries this too
+            # (`_fill_answer_extras` only fetches it when it is missing) -
+            # this fake's own shape has to match or `pass_until` tries to
+            # fetch it for real off a bare `SimpleNamespace` seat.
+            "recent_log": {},
             "resume": {"step": "postcombat_main"},
             "retryable": False,
         }
@@ -1032,7 +1055,14 @@ def test_a_multi_call_run_still_stops_at_its_own_declare_attackers_step(client, 
     set_step(client, game, "upkeep")
 
     with Opponent(game, "bob"):
-        result = run_to_stop(alice, until_step="postcombat_main", whose_turn="mine")
+        result = run_to_stop(
+            alice,
+            until_step="postcombat_main",
+            whose_turn="mine",
+            # T2: both opt-in now - "every stop on" above means passing both.
+            stop_when_attacked=True,
+            stop_when_you_can_attack=True,
+        )
 
     assert result["calls"] > 1, (
         "this test is only meaningful if the run really did span several calls"
@@ -1041,6 +1071,154 @@ def test_a_multi_call_run_still_stops_at_its_own_declare_attackers_step(client, 
         "stopped_because"
     ]
     assert "CR 508.1" in result["stopped_because"]
+
+
+# -- T1: the retry loop must not pay for hand-backs it throws away -----------
+
+
+def test_pass_until_retries_fetch_available_actions_and_recent_log_once(client, game, monkeypatch):
+    """Every retryable hand-back `pass_until`'s own bounded wait threw away
+    and retried used to pay for a `GET .../legal-actions` and a `GET
+    .../log` it never got to keep - `_pass_until_once`'s own `answer`/
+    `handed_back` fetched both unconditionally, on every intermediate
+    hand-back as well as the final one. Only the answer this call actually
+    returns should ever pay for either (T1). bob never acts here, so this
+    really does retry several times inside one bounded call before giving up
+    at the deadline - that repetition is the whole point of the test."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.02)
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    set_step(client, game, "upkeep")
+
+    once_calls: list[Any] = []
+    real_once = seatkit._pass_until_once
+
+    def counting_once(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        once_calls.append(1)
+        return real_once(*args, **kwargs)
+
+    monkeypatch.setattr(seatkit, "_pass_until_once", counting_once)
+
+    actions_calls: list[Any] = []
+    real_available_actions = seatkit.available_actions
+
+    def counting_available_actions(seat: Any, state: dict[str, Any]) -> dict[str, Any]:
+        actions_calls.append(1)
+        return real_available_actions(seat, state)
+
+    monkeypatch.setattr(seatkit, "available_actions", counting_available_actions)
+
+    log_calls: list[Any] = []
+    real_recent_log = alice.recent_log
+
+    def counting_recent_log(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        log_calls.append(1)
+        return real_recent_log(*args, **kwargs)
+
+    monkeypatch.setattr(alice, "recent_log", counting_recent_log)
+
+    result = pass_until(
+        alice,
+        until_step="postcombat_main",
+        whose_turn="mine",
+        stop_when_you_can_attack=False,
+        max_seconds=0.4,
+    )
+
+    assert result["finished"] is False, "bob never acts, so this is still waiting on him"
+    assert len(once_calls) > 1, "this test is only meaningful if the run really did retry"
+    assert len(actions_calls) == 1, (
+        f"expected exactly one legal-actions fetch for the final answer, got "
+        f"{len(actions_calls)} across {len(once_calls)} internal calls"
+    )
+    assert len(log_calls) == 1, (
+        f"expected exactly one log fetch for the final answer, got "
+        f"{len(log_calls)} across {len(once_calls)} internal calls"
+    )
+
+
+def test_pass_until_final_answer_always_carries_available_actions_and_recent_log(
+    client, game, monkeypatch
+):
+    """T1's shape guarantee: whichever return path `pass_until` takes, the
+    answer it actually hands back still carries `available_actions`/
+    `recent_log` exactly as it always has - only the thrown-away intermediate
+    hand-backs inside its own retry loop stop paying for them."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.02)
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    set_step(client, game, "upkeep")
+
+    # A single, unretried call (`max_seconds=0.0`, the default) - unchanged.
+    single = pass_until(
+        alice, until_step="postcombat_main", whose_turn="mine", stop_when_you_can_attack=False
+    )
+    assert "available_actions" in single
+    assert "recent_log" in single
+
+    # bob never acts: a retryable hand-back that rides out the deadline.
+    at_deadline = pass_until(
+        alice,
+        until_step="postcombat_main",
+        whose_turn="mine",
+        stop_when_you_can_attack=False,
+        max_seconds=0.3,
+    )
+    assert at_deadline["finished"] is False
+    assert "available_actions" in at_deadline
+    assert "recent_log" in at_deadline
+
+
+# -- T3: an honest hand-back once the run has actually waited -----------------
+
+
+def test_a_hand_back_that_never_waited_still_says_so(client, game, monkeypatch):
+    """The `max_seconds=0.0` case: the wording `pass_until` has always used
+    for a hand-back its own retry loop never got the chance to retry, which
+    is still true for it (T3)."""
+    seats, uids = wired(monkeypatch, game)
+    bob = seats.seat_for(uids["bob"])
+    set_step(client, game, "precombat_main")
+
+    result = pass_until(bob, until_step="end_step", whose_turn="mine")
+
+    assert result["finished"] is False
+    assert "this call is not waiting for it" in result["stopped_because"]
+    assert "Call again" in result["stopped_because"]
+
+
+def test_a_hand_back_that_actually_waited_says_how_long_and_how_many(client, game, monkeypatch):
+    """T3: once `pass_until`'s own bounded wait has genuinely retried at
+    least once, the hand-back it finally returns must stop claiming "this
+    call is not waiting for it" - that became false the moment this loop
+    slept and tried again - and say instead how long this call waited and how
+    many priorities it passed in total, summed across every internal retry
+    rather than merely the last one's own count."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.02)
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    set_step(client, game, "upkeep")
+
+    result = pass_until(
+        alice,
+        until_step="postcombat_main",
+        whose_turn="mine",
+        stop_when_you_can_attack=False,
+        max_seconds=0.3,
+    )
+
+    assert result["finished"] is False
+    assert "this call is not waiting for it" not in result["stopped_because"], (
+        "false the moment this loop actually waited and retried"
+    )
+    assert "this call waited about" in result["stopped_because"]
+    assert "Call again" in result["stopped_because"]
+    assert result["passes"] >= 1, (
+        "alice held priority at least once before bob's silence handed the run back"
+    )
 
 
 # -- naming a destination that cannot be run to ------------------------------
@@ -1116,6 +1294,10 @@ def drive_mcp(server: Any, uid: str) -> dict[str, Any]:
                             "player_uid": uid,
                             "step": "upkeep",
                             "whose_turn": "mine",
+                            # T2: opt-in now - this run is the CR 509.1
+                            # blocking-stop parity check, so it has to ask
+                            # for that stop rather than lean on a default.
+                            "stop_when_attacked": True,
                             "resume": resume,
                         },
                     )
@@ -1142,6 +1324,8 @@ def drive_cli(capsys: Any, uid: str, game_id: str) -> dict[str, Any]:
             "upkeep",
             "--whose-turn",
             "mine",
+            # T2: opt-in now - see `drive_mcp`'s own comment.
+            "--stop-when-attacked",
         ]
         if resume:
             argv += ["--resume", resume]
@@ -1216,20 +1400,26 @@ def test_both_front_ends_refuse_the_same_bad_destination(client, game, monkeypat
     assert "CR 514.3" in from_cli
 
 
-#: Every stop a caller may switch off, as (MCP parameter, CLI flag). Each
-#: defends against something the caller cannot see going wrong, so each
-#: defaults on, and neither front end may offer one the other does not.
-SWITCHABLE_STOPS = (
-    ("stop_on_stack", "--no-stop-on-stack"),
-    ("stop_when_attacked", "--no-stop-when-attacked"),
-    ("stop_when_you_can_attack", "--no-stop-when-you-can-attack"),
+#: The stack stop, opt-out (MCP parameter, CLI flag, off-switch): it defends
+#: against something the caller cannot see going wrong, so it defaults on.
+OPT_OUT_STOP = ("stop_on_stack", "--no-stop-on-stack")
+
+#: T2: the two combat stops, opt-in now (MCP parameter, CLI flag, on-switch):
+#: each costs a stop on every run through combat unless the caller actually
+#: wants the safety net, so each defaults off and is switched *on*. Neither
+#: front end may offer one the other does not.
+OPT_IN_STOPS = (
+    ("stop_when_attacked", "--stop-when-attacked"),
+    ("stop_when_you_can_attack", "--stop-when-you-can-attack"),
 )
 
 
-def test_the_cli_and_the_tool_default_every_stop_to_on():
-    """Each stop defends against something a seat cannot see going wrong, so
-    each defaults on in both front ends. Read off the live signature and the
-    live parser, not off a list kept by hand."""
+def test_the_cli_and_the_tool_agree_on_which_stops_default_on_and_off():
+    """T2: `stop_on_stack` still defaults on (opt-out); the two combat stops
+    default off now (opt-in). Read off the live signature and the live
+    parser, not off a list kept by hand, and pin that both front ends agree -
+    a mismatch here is a seat that stops in one and sails through in the
+    other for the exact same call."""
     import inspect
 
     server = build_server(a_server_only_introspected())
@@ -1243,23 +1433,23 @@ def test_the_cli_and_the_tool_default_every_stop_to_on():
         for action in sub.choices["pass-until"]._actions
         for option in getattr(action, "option_strings", ())
     }
-    for parameter, flag in SWITCHABLE_STOPS:
-        assert parameters[parameter].default is True, f"{parameter} must default on"
-        assert flag in flags, f"the CLI cannot switch off {parameter}, which the tool can"
+    stop_on_stack, no_stop_on_stack = OPT_OUT_STOP
+    assert parameters[stop_on_stack].default is True, f"{stop_on_stack} must default on"
+    assert no_stop_on_stack in flags, f"the CLI cannot switch off {stop_on_stack}"
+    for parameter, flag in OPT_IN_STOPS:
+        assert parameters[parameter].default is False, f"{parameter} must default off (T2)"
+        assert flag in flags, f"the CLI cannot switch on {parameter}, which the tool can"
 
     # And the tool exposes nothing switchable that the pairs above missed - a
     # fourth stop added to one front end only would be exactly this bug again.
-    switchable = {
-        name
-        for name, parameter in parameters.items()
-        if name.startswith("stop_") and parameter.default is True
-    }
-    assert switchable == {name for name, _ in SWITCHABLE_STOPS}
+    switchable = {name for name, parameter in parameters.items() if name.startswith("stop_")}
+    assert switchable == {stop_on_stack} | {name for name, _ in OPT_IN_STOPS}
 
 
-def test_the_tool_docstring_says_what_switching_each_stop_off_costs():
+def test_the_tool_docstring_says_what_each_stop_costs():
     """The docstring is an agent's only instructions. A flag it does not
-    understand is a seat that stops blocking without meaning to."""
+    understand is a seat that stops blocking without meaning to, or one that
+    never learns it has to turn a stop on."""
     import inspect
 
     server = build_server(a_server_only_introspected())
@@ -1278,8 +1468,13 @@ def test_the_tool_docstring_says_what_switching_each_stop_off_costs():
     )
     assert "NEXT occurrence" in docstring
     assert "stopped_because" in docstring
-    for parameter, _ in SWITCHABLE_STOPS:
-        assert f"`{parameter}=false`" in docstring, f"{parameter} is undocumented"
+    stop_on_stack, _ = OPT_OUT_STOP
+    assert f"`{stop_on_stack}=false`" in docstring, f"{stop_on_stack} is undocumented"
+    for parameter, _ in OPT_IN_STOPS:
+        assert f"`{parameter}=" in docstring and "true" in docstring, f"{parameter} is undocumented"
+        assert "off by default" in docstring or "default false" in docstring, (
+            f"{parameter}'s new default is not explained"
+        )
     # The bluffing half of the feature: auto-passing everything is itself a tell.
     assert "represents a trick" in docstring
     assert "pass by hand" in docstring

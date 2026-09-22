@@ -621,6 +621,10 @@ def _wait(
             until_step=until,
             whose_turn=WHOSE_TURN_FOR_AUTOPASS[when["whose_turn"]],
             stop_on_stack=True,
+            # T2: `stop_when_attacked`/`stop_when_you_can_attack` default off
+            # on `pass_until` itself now - this runner waits with every stop
+            # on regardless, explicitly, so a script's own wait cannot pass
+            # through a combat this seat needed to see.
             stop_when_attacked=True,
             stop_when_you_can_attack=True,
             resume=autopass,

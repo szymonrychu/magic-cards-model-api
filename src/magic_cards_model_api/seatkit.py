@@ -4368,8 +4368,8 @@ def autopass_stop_reason(
     player: str,
     *,
     stop_on_stack: bool = True,
-    stop_when_attacked: bool = True,
-    stop_when_you_can_attack: bool = True,
+    stop_when_attacked: bool = False,
+    stop_when_you_can_attack: bool = False,
 ) -> str | None:
     """Whether this auto-pass run must stop, and why - a pure function of the
     board, so both transports and the tests exercise the real conditions
@@ -4386,11 +4386,21 @@ def autopass_stop_reason(
        until answered, and answering is the only legal move;
     3. the named destination is reached (next occurrence, never the one the
        run started in);
-    4. this seat is the active player in its own declare-attackers step,
-       unless `stop_when_you_can_attack` is off;
+    4. this seat is the active player in its own declare-attackers step, when
+       `stop_when_you_can_attack` is on;
     5. this seat is the defending player in a declare-blockers step with
-       attackers declared, unless `stop_when_attacked` is off;
+       attackers declared, when `stop_when_attacked` is on;
     6. something new is on the stack, unless `stop_on_stack` is off.
+
+    T2: conditions 4 and 5 are opt-in, off by default - the reverse of
+    `stop_on_stack`, which stays opt-out. The owner's own run kept getting
+    stopped by a combat it had already decided not to act on (nothing to
+    attack with, nothing worth blocking with), and `pass_until` has no way to
+    tell "stop me, I might want to act" from "stop me anyway, just in case"
+    apart from the caller saying so. A caller that DOES want the safety net -
+    running through the opponent's turn with creatures that could block, or
+    its own turn with creatures that could attack - passes the matching
+    parameter `True` for that run.
 
     Conditions 4 and 5 are the two that are not merely convenience, and they
     exist for one shared reason: **both declarations are turn-based actions
@@ -4567,6 +4577,33 @@ def _window_passed_note(stopped_because: str) -> str:
     )
 
 
+def _not_waiting_yet_note(passes: int) -> str:
+    """`_pass_until_once`'s own `handed_back` suffix - the truth for a call
+    `pass_until`'s own retry loop never actually waited on: `max_seconds=0.0`
+    (the default), or a hand-back that loop had no time left to retry even
+    once. `passes` here is this one internal call's own count, which is all
+    `_pass_until_once` itself ever knows (T3) - `pass_until` replaces this
+    with `_waited_note` the moment its own loop genuinely did wait."""
+    return (
+        f" - this call is not waiting for it: {passes} priorities passed so far. "
+        "Call again (with `resume`) to keep going."
+    )
+
+
+def _waited_note(waited_seconds: float, total_passes: int) -> str:
+    """T3: `pass_until`'s honest replacement for `_not_waiting_yet_note`,
+    spliced onto its final hand-back once its own retry loop has actually
+    waited at least once. `waited_seconds` is how long this whole
+    `pass_until` call has been running, and `total_passes` is every internal
+    `_pass_until_once` call's own count added together - not merely the last
+    one's, which is all the stale note above could ever say."""
+    return (
+        f" - this call waited about {round(waited_seconds)}s for it, "
+        f"{total_passes} priorities passed in total. Call again (with `resume`) "
+        "to keep going."
+    )
+
+
 def _restate(
     result: dict[str, Any], seat: Seat, state: dict[str, Any], include_actions: bool
 ) -> None:
@@ -4574,6 +4611,22 @@ def _restate(
     if include_actions:
         result["available_actions"] = available_actions(seat, state)
     result["recent_log"] = seat.recent_log()
+
+
+def _fill_answer_extras(result: dict[str, Any], seat: Seat, include_actions: bool) -> None:
+    """T1: `available_actions`/`recent_log` for `pass_until`'s own final
+    answer - called exactly once, after its retry loop has settled on the
+    result it is actually about to return, on `result["state"]` as that loop
+    left it. Every `_pass_until_once` call inside that loop was made with
+    `include_extras=False` (skipping both), so a multi-retry run pays for
+    each exactly once here rather than once per thrown-away intermediate
+    hand-back. The `not in result` guards are for a stubbed `_pass_until_once`
+    (`test_a_non_retryable_hand_back_is_never_retried_by_the_bounded_wait`)
+    that builds its own answer, extras included - never overwritten here."""
+    if include_actions and "available_actions" not in result:
+        result["available_actions"] = available_actions(seat, result["state"])
+    if "recent_log" not in result:
+        result["recent_log"] = seat.recent_log()
 
 
 def _own_priority_wait_note(until_step: str) -> str:
@@ -4695,8 +4748,8 @@ def pass_until(
     until_step: str,
     whose_turn: str = "mine",
     stop_on_stack: bool = True,
-    stop_when_attacked: bool = True,
-    stop_when_you_can_attack: bool = True,
+    stop_when_attacked: bool = False,
+    stop_when_you_can_attack: bool = False,
     resume: dict[str, Any] | None = None,
     reasoning: str | None = None,
     max_seconds: float = 0.0,
@@ -4751,6 +4804,30 @@ def pass_until(
     nothing else to do reached for `Bash sleep` and a second call instead -
     the exact log noise the owner reported. This is that same bounded wait,
     on this tool too.
+
+    T1: every retryable hand-back this retry loop throws away used to pay for
+    a `GET .../legal-actions` and a `GET .../log` it never got to keep -
+    `_pass_until_once`'s own `answer`/`handed_back` fetched both unconditionally,
+    and a multi-retry run under `max_seconds` paid for them once per discarded
+    attempt. `_pass_until_once` is called with `include_extras=False` here for
+    exactly that reason, and `_fill_answer_extras` (below) fetches both exactly
+    once, on the answer this function is actually about to return - whichever
+    of `finished`/retryable-at-deadline/`WAIT_INTERRUPTED`/`MAX_PASSES_PER_CALL`
+    that turns out to be. `_wait_for_own_priority_at_destination`'s own further
+    wait is untouched: its `_restate` calls are genuine fresh reads, not
+    thrown-away retries.
+
+    T3: `passes` on the answer this returns is the sum of every internal
+    `_pass_until_once` call's own count, not merely the last one's - a run that
+    passed 6 priorities across 3 internal retries before finally handing back
+    used to report `passes: 0` (whatever the very last, unretried call
+    happened to see) with a hand-back reading "this call is not waiting for
+    it", which was simply false once this loop had actually waited. Once this
+    loop really has retried at least once, that clause is replaced with how
+    long this call waited and how many priorities it passed in total; a call
+    that never had to wait (`max_seconds=0.0`, the default, or a hand-back
+    this loop never got the chance to retry) keeps the original wording,
+    which is still true for it.
     """
     if seat.advise:
         # Refused up front, before a single priority is passed: see
@@ -4792,7 +4869,8 @@ def pass_until(
             refused_arm["recent_log"] = seat.recent_log()
             return refused_arm
     max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
-    deadline = time.monotonic() + max_seconds
+    call_started = time.monotonic()
+    deadline = call_started + max_seconds
     kwargs: dict[str, Any] = {
         "until_step": until_step,
         "whose_turn": whose_turn,
@@ -4806,14 +4884,23 @@ def pass_until(
         "arm_reasoning": arm_reasoning,
         "opposing_archetype": opposing_archetype,
         "inputs": inputs,
+        # T1: never fetch `available_actions`/`recent_log` inside the retry
+        # loop below - only the answer this function actually returns should
+        # ever pay for either. `_fill_answer_extras` does that fetch, exactly
+        # once, once the loop has settled on its final result.
+        "include_extras": False,
     }
     result = _pass_until_once(seat, resume=resume, **kwargs)
+    total_passes = result["passes"]
+    retried = False
     while not result["finished"] and result.get("retryable", False) and time.monotonic() < deadline:
         if should_stop is not None and should_stop():
             result["stopped_because"] = WAIT_INTERRUPTED
             break
         time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
         result = _pass_until_once(seat, resume=result.get("resume"), **kwargs)
+        total_passes += result["passes"]
+        retried = True
     retryable = result.get("retryable", False)
     result.pop("retryable", None)
     inner_arm_eligible = result.pop("_arm_eligible", True)
@@ -4821,6 +4908,24 @@ def pass_until(
     # own `answer` closure) - popped here unconditionally so it never leaks
     # to a caller, whether or not the branch below actually needs it.
     reached_run = result.pop("_reached_run", None)
+    # T1: the one fetch this whole run pays for `available_actions`/
+    # `recent_log` with - every internal retry above skipped it
+    # (`include_extras=False`). Before this point `result` carries neither
+    # key unless `_pass_until_once` built the answer directly (a stubbed
+    # `_pass_until_once` in a test, say), which `_fill_answer_extras` leaves
+    # alone.
+    _fill_answer_extras(result, seat, include_actions)
+    # T3: `passes` on a run that actually retried is not this last call's own
+    # count - `_pass_until_once` resets that counter on every call - it is
+    # every internal call's count added together, and the hand-back text (if
+    # this is one) is corrected to match once this loop has genuinely waited.
+    if retried and not result["finished"]:
+        stale_note = _not_waiting_yet_note(result["passes"])
+        if result["stopped_because"].endswith(stale_note):
+            result["stopped_because"] = result["stopped_because"][
+                : -len(stale_note)
+            ] + _waited_note(time.monotonic() - call_started, total_passes)
+    result["passes"] = total_passes
     if (
         arm
         and result["finished"]
@@ -4882,8 +4987,8 @@ def _pass_until_once(
     until_step: str,
     whose_turn: str = "mine",
     stop_on_stack: bool = True,
-    stop_when_attacked: bool = True,
-    stop_when_you_can_attack: bool = True,
+    stop_when_attacked: bool = False,
+    stop_when_you_can_attack: bool = False,
     resume: dict[str, Any] | None = None,
     reasoning: str | None = None,
     include_actions: bool = True,
@@ -4892,6 +4997,7 @@ def _pass_until_once(
     arm_reasoning: str = "",
     opposing_archetype: str = "*",
     inputs: dict[str, Any] | None = None,
+    include_extras: bool = True,
 ) -> dict[str, Any]:
     """Pass every priority this seat is *currently* able to pass, up to a named
     point in the turn - then return. Never sleeps, never waits for the
@@ -4899,6 +5005,15 @@ def _pass_until_once(
     (above) is the public entry point, and the only thing that ever calls
     this directly; its own bounded wait is what a caller who wants to wait
     at all should reach for, not a loop around this function by hand.
+
+    `include_extras` (T1, default `True`): whether the answer this returns
+    carries `available_actions`/`recent_log` at all. `pass_until`'s own retry
+    loop passes `False` for every call it makes - a hand-back that loop is
+    about to throw away and retry has no caller to hand either to - and
+    fetches both itself, once, on whichever answer it actually returns
+    (`_fill_answer_extras`). `True` (every caller other than `pass_until`'s
+    own loop, including a direct call from a test) keeps this exactly as it
+    has always been: computed inline, on every return path, unconditionally.
 
     `corpora`/`arm`/`arm_reasoning`/`opposing_archetype`/`inputs` (API-7) are
     `pass_until`'s own arming arguments, threaded straight through so the
@@ -5005,16 +5120,17 @@ def _pass_until_once(
             # explicit signal for exactly those two cases. Popped there
             # before the answer ever reaches a caller.
             result["_arm_eligible"] = False
-        if include_actions:
+        if include_actions and include_extras:
             result["available_actions"] = available_actions(seat, state)
-        result |= {
-            # A run crosses windows this seat never looks at, so it is the
-            # tool with the most to say about what happened while it was not
-            # watching - and until this it said none of it, leaving the seat
-            # to spend a second call on `game_log` to find out what it had
-            # just passed through. See `Seat.recent_log`.
-            "recent_log": seat.recent_log(),
-        }
+        if include_extras:
+            result |= {
+                # A run crosses windows this seat never looks at, so it is the
+                # tool with the most to say about what happened while it was
+                # not watching - and until this it said none of it, leaving
+                # the seat to spend a second call on `game_log` to find out
+                # what it had just passed through. See `Seat.recent_log`.
+                "recent_log": seat.recent_log(),
+            }
         if not finished:
             # A plain copy: `run` is JSON-safe by construction (see
             # `start_autopass`), and this is the token `resume_autopass`
@@ -5038,8 +5154,7 @@ def _pass_until_once(
     ) -> dict[str, Any]:
         result = answer(
             state,
-            f"{reason} - this call is not waiting for it: {passes} "
-            "priorities passed so far. Call again (with `resume`) to keep going.",
+            f"{reason}{_not_waiting_yet_note(passes)}",
             finished=False,
         )
         # Read by `pass_until`'s own bounded-wait wrapper: `retryable` says

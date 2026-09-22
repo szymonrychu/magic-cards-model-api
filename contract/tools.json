@@ -872,14 +872,14 @@
           "type_error": null
         },
         {
-          "default": true,
+          "default": false,
           "has_default": true,
           "name": "stop_when_attacked",
           "type": "bool",
           "type_error": null
         },
         {
-          "default": true,
+          "default": false,
           "has_default": true,
           "name": "stop_when_you_can_attack",
           "type": "bool",

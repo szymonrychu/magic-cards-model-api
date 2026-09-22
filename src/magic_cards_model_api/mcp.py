@@ -2393,8 +2393,8 @@ def build_server(seats: Seats) -> MCPServer:
         whose_turn: str = "mine",
         resume: str = "",
         stop_on_stack: bool = True,
-        stop_when_attacked: bool = True,
-        stop_when_you_can_attack: bool = True,
+        stop_when_attacked: bool = False,
+        stop_when_you_can_attack: bool = False,
         reasoning: str = "",
         max_seconds: float = 0.0,
         arm: str | list[str] = "",
@@ -2469,54 +2469,61 @@ def build_server(seats: Seats) -> MCPServer:
         already standing in that step is you having looked at combat and moved
         on, and stopping there would make the call do nothing at all.
 
-        ## The three stop conditions you can switch off
+        ## The three stop conditions, and which way each one defaults
 
         These are not destinations and they do not replace `step` - they are
-        extra reasons to stop *on the way there*, and all three default to true
-        because each defends against something you cannot see going wrong. They
-        are the same three ticks the human player has in their own stops panel,
-        and they mean the same thing there, so you and your opponent never stop
-        in different places.
+        extra reasons to stop *on the way there*. They are the same three ticks
+        the human player has in their own stops panel, and they mean the same
+        thing there, so you and your opponent never stop in different places -
+        but they do not all default the same way (T2).
 
-        - `stop_on_stack=false` runs straight through anything the opponent
-          casts or any trigger that goes on the stack. **This is the one that
-          gives you your chance to respond**: a spell cast in a window you were
-          passing through - your opponent's instant in your upkeep while you
-          were running to your own precombat main - is only answerable while
-          the stack still holds it, and CR 117.4 resolves it the moment all
-          players have passed in succession. Left on (the default), the run
-          hands the board back with the spell still on the stack and priority
-          still yours. Switch it off only for a stretch where you have decided
-          you are responding to nothing - no instant, no activated ability,
-          nothing worth holding up.
-        - `stop_when_attacked=false` runs straight through your own
-          declare-blockers step. **You will block nothing and take the whole
-          attack.** Declaring blockers is a turn-based action that "doesn't use
-          the stack" (CR 509.1), so nothing lands on the stack when you are
-          attacked and `stop_on_stack` cannot catch it for you. Switch this off
-          only when you have genuinely decided not to block - an empty board, or
-          a life total the attack cannot reach. The run stops whenever you are
-          the defending player in a declare-blockers step with at least one
-          attacker declared; it does not try to work out whether any block would
-          be *legal* (evasion, menace, protection, CR 509.1b) - that is the
-          engine's job, and you decide what to do with the stop.
-        - `stop_when_you_can_attack=false` runs straight through your own
-          declare-attackers step. **You will attack with nothing that turn.**
-          Declaring attackers is a turn-based action that "doesn't use the
-          stack" too (CR 508.1), so again nothing lands on the stack to catch.
-          This costs you an attack rather than the game, and the reason it
-          still stops by default is that skipping it is *silent*: the engine
-          treats a player who never declares as declaring nobody, which is
-          always legal, so the turn simply produces no attack and nothing
-          anywhere tells you why. Leaving it on means a run aimed past combat -
-          `step="postcombat_main"`, `step="end_step"` - stops in your
-          declare-attackers step every one of your turns. That is the point:
-          you are being asked before the attack goes by. Switching it off is
-          the deliberate statement "I am not attacking this turn", not a way to
-          make the call quieter. It does not check whether you control a
-          creature that could legally attack (summoning sickness, defender, tap
-          state, CR 508.1's restrictions and requirements) - that is the
-          engine's job too.
+        - `stop_on_stack` defaults **true** and defends against something you
+          cannot see coming: switching it off (`stop_on_stack=false`) runs
+          straight through anything the opponent casts or any trigger that
+          goes on the stack. **This is the one that gives you your chance to
+          respond**: a spell cast in a window you were passing through - your
+          opponent's instant in your upkeep while you were running to your own
+          precombat main - is only answerable while the stack still holds it,
+          and CR 117.4 resolves it the moment all players have passed in
+          succession. Left on (the default), the run hands the board back with
+          the spell still on the stack and priority still yours. Switch it off
+          only for a stretch where you have decided you are responding to
+          nothing - no instant, no activated ability, nothing worth holding up.
+        - `stop_when_attacked` and `stop_when_you_can_attack` are **off by
+          default** - the other way around. A run through combat with nothing
+          on the board that could block or attack does not need to be stopped
+          for either, and stopping it anyway on every single turn is exactly
+          the noise that got these switches added; pass `stop_when_attacked=true`
+          or `stop_when_you_can_attack=true` on the run where the board
+          actually has something to think about:
+            - `stop_when_attacked=true` stops the run at your own
+              declare-blockers step. Without it, the run runs straight through
+              and **you will block nothing and take the whole attack** -
+              declaring blockers is a turn-based action that "doesn't use the
+              stack" (CR 509.1), so nothing lands on the stack when you are
+              attacked and `stop_on_stack` cannot catch it for you either. Turn
+              this on when running through the opponent's turn with creatures
+              that could block; leave it off when your board could not block
+              anything anyway. The stop fires whenever you are the defending
+              player in a declare-blockers step with at least one attacker
+              declared - it does not try to work out whether any block would be
+              *legal* (evasion, menace, protection, CR 509.1b), that is the
+              engine's job, and you decide what to do with the stop.
+            - `stop_when_you_can_attack=true` stops the run at your own
+              declare-attackers step. Without it, **you will attack with
+              nothing that turn** - declaring attackers is a turn-based action
+              that "doesn't use the stack" too (CR 508.1), so again nothing
+              lands on the stack to catch, and skipping it is *silent*: the
+              engine treats a player who never declares as declaring nobody,
+              which is always legal, so the turn simply produces no attack and
+              nothing anywhere tells you why. Turn this on for a run aimed past
+              combat - `step="postcombat_main"`, `step="end_step"` - when you
+              have a creature that could attack and want to be asked before
+              that attack goes by; leave it off and that is the deliberate
+              statement "I am not attacking this turn". It does not check
+              whether you control a creature that could legally attack
+              (summoning sickness, defender, tap state, CR 508.1's restrictions
+              and requirements) - that is the engine's job too.
 
         ## Passing by hand is still a play
 

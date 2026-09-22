@@ -1052,11 +1052,9 @@ A combat stop never fires on the step you were standing in when you started
 the run - asking to pass past combat from inside it is you having already
 looked at combat.
 
-Three of those stops are yours to switch off, and each defends you against
-something you cannot see going wrong, so leave them on unless you have a reason
-you could say out loud. None of them is a destination and none of them replaces
-`step` - they are extra reasons to stop on the way there, and they combine with
-it:
+Three of those stops exist, none of them is a destination, and none of them
+replaces `step` - they are extra reasons to stop on the way there, and they
+combine with it. They do not all default the same way (T2):
 
 - `stop_on_stack=False` runs through the opponent's spells and every trigger.
   You will not get to respond to any of it. This is the stop that gives you
@@ -1064,23 +1062,26 @@ it:
   instant in your upkeep while you were running to your own precombat main -
   and CR 117.4 resolves that spell the moment all players have passed in
   succession, so the pass you have not yet made is the whole of your chance.
-  Left on, the run hands the board back with their spell still on the stack and
-  priority still yours.
-- `stop_when_attacked=False` runs through your own declare-blockers step. You
-  will block nothing and take the whole attack. Declaring blockers is a
-  turn-based action that "doesn't use the stack" (CR 509.1), so the stack stop
-  cannot catch it for you. Only for a board that cannot block anyway, or a life
-  total the attack cannot reach.
-- `stop_when_you_can_attack=False` runs through your own declare-attackers
-  step. You will attack with nothing that turn. Declaring attackers is a
-  turn-based action too (CR 508.1), so again the stack stop cannot see it, and
-  skipping it is silent: the engine treats a player who never declares as
-  declaring nobody, which is always legal, so the turn produces no attack and
-  nothing says why. Expect this one to stop you every turn on a run aimed past
-  combat - `step="postcombat_main"`, `step="end_step"` - and expect that,
-  because it is asking you before your attack goes by. Switching it off is the
-  deliberate "I am not attacking this turn", never a way to make the call
-  quieter.
+  Left on (the default - the only one of the three that is), the run hands the
+  board back with their spell still on the stack and priority still yours.
+- `stop_when_attacked=True` (off by default - opt in) stops the run at your
+  own declare-blockers step. Without it you will block nothing and take the
+  whole attack: declaring blockers is a turn-based action that "doesn't use
+  the stack" (CR 509.1), so the stack stop cannot catch it for you either way.
+  Pass this when you are running through the opponent's turn with creatures
+  that could actually block; leave it off for a board that cannot block
+  anyway, or a life total the attack cannot reach.
+- `stop_when_you_can_attack=True` (off by default - opt in) stops the run at
+  your own declare-attackers step. Without it you will attack with nothing
+  that turn: declaring attackers is a turn-based action too (CR 508.1), so
+  again the stack stop cannot see it, and skipping it is silent - the engine
+  treats a player who never declares as declaring nobody, which is always
+  legal, so the turn produces no attack and nothing says why. Turning it on
+  will stop you every turn on a run aimed past combat -
+  `step="postcombat_main"`, `step="end_step"` - which is the point when you
+  have a creature that could attack: it asks you before that attack goes by.
+  Leaving it off is the deliberate "I am not attacking this turn", not a way
+  to make the call quieter.
 
 **Do not reach for this every time.** How you pass is information your opponent
 is reading. Sitting on your priority with mana up represents a trick whether or
