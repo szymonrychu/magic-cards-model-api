@@ -319,3 +319,83 @@ def test_game_seats_still_answers_the_admin_key_in_full(
     assert response.status_code == 200, response.text
     shown = {seat["player"]: seat.get("uid") for seat in response.json()["seats"]}
     assert shown == uids, response.text
+
+
+# ---------------------------------------------------------------------------
+# A2: once the game is over, `/seats` reveals both decklists to any
+# credential of the game (see `tests/test_visibility.py` for the full CR
+# 401.2 reasoning and the advisor/admin/foreign-uid coverage; these two
+# check the same rule from this route's own boot helper).
+# ---------------------------------------------------------------------------
+
+
+def _booted_with_decks(client: TestClient) -> dict:
+    response = client.post(
+        "/api/lobby/games",
+        json={
+            "players": [
+                {"username": "alice", "decklist_text": LEGAL_DECK, "ai": False},
+                {"username": "bob", "decklist_text": LEGAL_DECK_B, "ai": False},
+            ],
+            "seed": 7,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_game_seats_reveals_both_decklists_to_a_seat_once_the_game_is_over(
+    client: TestClient,
+) -> None:
+    info = _booted_with_decks(client)
+    game_id = info["game_id"]
+    try:
+        before = client.get(
+            f"/api/lobby/games/{game_id}/seats", params={"uid": info["seat_uids"]["alice"]}
+        ).json()["seats"]
+        assert {s["player"]: s.get("decklist") for s in before} == {
+            "alice": LEGAL_DECK,
+            "bob": None,
+        }, "still hidden while the game is live"
+
+        conceded = client.post(
+            f"/api/games/{game_id}/actions/concede",
+            params={"uid": info["seat_uids"]["alice"]},
+            json={"player": "alice"},
+        )
+        assert conceded.status_code == 200, conceded.text
+
+        after = client.get(
+            f"/api/lobby/games/{game_id}/seats", params={"uid": info["seat_uids"]["bob"]}
+        ).json()["seats"]
+        assert {s["player"]: s.get("decklist") for s in after} == {
+            "alice": LEGAL_DECK,
+            "bob": LEGAL_DECK_B,
+        }, "both lists open once bob's own credential asks, post game-over"
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
+def test_game_seats_never_reveals_a_decklist_to_a_foreign_uid_even_post_game(
+    client: TestClient,
+) -> None:
+    info = _booted_with_decks(client)
+    game_id = info["game_id"]
+    try:
+        conceded = client.post(
+            f"/api/games/{game_id}/actions/concede",
+            params={"uid": info["seat_uids"]["alice"]},
+            json={"player": "alice"},
+        )
+        assert conceded.status_code == 200, conceded.text
+
+        for uid in (None, "not-a-real-uid"):
+            response = client.get(
+                f"/api/lobby/games/{game_id}/seats",
+                params={"uid": uid} if uid is not None else None,
+            )
+            assert response.status_code == 200, response.text
+            seats = response.json()["seats"]
+            assert all(not seat.get("decklist") for seat in seats), seats
+    finally:
+        client.delete(f"/api/games/{game_id}")

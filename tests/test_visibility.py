@@ -365,3 +365,96 @@ def test_an_advisor_uid_is_not_the_admin_key(client, game):
     board = state(client, game, uid=advisor)
 
     assert "libraries" not in board
+
+
+# ---------------------------------------------------------------------------
+# A2: once the game is over, both decklists open to every credential of it
+# ---------------------------------------------------------------------------
+#
+# CR 401.2 ("players can't look at or change the order of cards in a
+# library") is what `_seat_uids`'s section comment above and
+# `visibility._redact_player`'s docstring both root the pre-game-over
+# redaction in - it protects a live library from being read out of order
+# while the game is still being played. None of that is at stake once
+# `Game.is_over` (CR 104.1), so `decks_api.game_seats` widens `decklist` to
+# every seat and advisor of this game, and to the admin key, once the game
+# has ended - identifying the opponent's deck exactly is the whole point
+# (the driver otherwise has to guess an archetype from what it saw played).
+# The state view (`GET /api/games/{id}`, `visibility._redact_player`) is not
+# part of this: it stays exactly as redacted as `test_the_state_view_carries
+# _no_decklist_for_any_viewer` above already pins, before and after the game
+# ends - only the lobby's `/seats` route changes.
+
+
+def _concede(client, game_id: str, player: str, uid: str) -> None:
+    response = client.post(
+        f"/api/games/{game_id}/actions/concede",
+        params={"uid": uid},
+        json={"player": player},
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_both_decklists_open_to_every_seat_once_the_game_is_over(client):
+    info = _booted(client)
+    game_id = info["game_id"]
+    try:
+        seats = _seats(client, game_id, uid=info["seat_uids"]["alice"])
+        assert seats["alice"]["decklist"] == ALICE_DECK
+        assert not seats["bob"].get("decklist"), "still hidden before the game ends"
+
+        _concede(client, game_id, "alice", info["seat_uids"]["alice"])
+
+        for viewer in (info["seat_uids"]["alice"], info["seat_uids"]["bob"]):
+            seats = _seats(client, game_id, uid=viewer)
+            assert seats["alice"]["decklist"] == ALICE_DECK, seats
+            assert seats["bob"]["decklist"] == BOB_DECK, seats
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
+def test_both_decklists_open_to_an_advisor_once_the_game_is_over(client):
+    info = _booted(client)
+    game_id = info["game_id"]
+    try:
+        advisor = advisors_for(game_id, "alice")
+        _concede(client, game_id, "alice", info["seat_uids"]["alice"])
+
+        response = client.get(f"/api/lobby/games/{game_id}/seats", params={"uid": advisor})
+        assert response.status_code == 200, response.text
+        # Not `_seats()`: its player-keyed dict would collapse alice's seat
+        # row under the advisor's own trailing row for the same player,
+        # which carries no `decklist` key at all (`SeatDetail` has none for
+        # an advisor row) and would shadow the very field this test checks.
+        rows = {(row["player"], row.get("role")): row for row in response.json()["seats"]}
+        assert rows[("alice", None)]["decklist"] == ALICE_DECK
+        assert rows[("bob", None)]["decklist"] == BOB_DECK
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
+def test_both_decklists_open_to_the_admin_key_once_the_game_is_over(client):
+    info = _booted(client)
+    game_id = info["game_id"]
+    try:
+        _concede(client, game_id, "alice", info["seat_uids"]["alice"])
+
+        seats = _seats(client, game_id, uid=info["admin_key"])
+
+        assert seats["alice"]["decklist"] == ALICE_DECK
+        assert seats["bob"]["decklist"] == BOB_DECK
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
+def test_no_uid_and_a_foreign_uid_never_read_a_decklist_even_post_game(client):
+    info = _booted(client)
+    game_id = info["game_id"]
+    try:
+        _concede(client, game_id, "alice", info["seat_uids"]["alice"])
+
+        for uid in (None, "not-a-real-uid"):
+            seats = _seats(client, game_id, uid=uid)
+            assert all(not seat.get("decklist") for seat in seats.values()), seats
+    finally:
+        client.delete(f"/api/games/{game_id}")

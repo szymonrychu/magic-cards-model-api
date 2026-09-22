@@ -634,10 +634,26 @@ def game_seats(game_id: str, uid: str | None = None) -> dict[str, Any]:
     genuinely needed (`mtg_agent.driver.app`'s `seat_decklist`, matchup-guide
     selection - see `tests/driver/test_app.py`'s
     `test_the_real_game_server_carries_the_field_seat_decklist_reads`), and
-    it is still hidden information (CR 401.2) - so it is redacted the same
-    way `visibility._redact_player` redacted it on the old route: present
-    only for the seat whose own `uid` the caller presents, absent for every
-    other entry and for a caller with no `uid` or an unrecognised one.
+    it is still hidden information while the game is live (CR 401.2:
+    "players can't look at or change the order of cards in a library") - so
+    it is redacted the same way `visibility._redact_player` redacted it on
+    the old route: present only for the seat whose own `uid` the caller
+    presents, absent for every other entry and for a caller with no `uid` or
+    an unrecognised one.
+
+    **Once the game is over (`Game.is_over`, CR 104.1), every seat's
+    `decklist` opens to any credential of this game** - the operator, either
+    seat, or a seat's advisor (`reveal_all`, below): the driver's post-game
+    reflection identifies the opponent's deck exactly, from the list it was
+    built from, rather than deducing an archetype from what it saw played.
+    CR 401.2 protects a library that is still being drawn from in turn
+    order; there is no such library once CR 104.1 has ended the game, so
+    nothing it protects is still at stake. **This is `/seats` alone.** The
+    state view (`GET /api/games/{id}`, `visibility._redact_player`) is
+    unchanged before and after game over - it never carried `decklist` in
+    the first place (2b's T8 moved the field here), and nothing in this task
+    puts it back. A caller presenting nothing, or a uid this game does not
+    know, still reads nobody's list either way.
 
     **`uid` is scoped exactly the same way**, and for a stronger reason: a
     seat uid is not a label, it is the authority to act as that seat
@@ -654,7 +670,8 @@ def game_seats(game_id: str, uid: str | None = None) -> dict[str, Any]:
     operator's own - `visibility.ADMIN`, already trusted with the whole
     board - and a harness holding it drives both seats by design.
     """
-    if store.get(game_id) is None:
+    game = store.get(game_id)
+    if game is None:
         raise KeyError(f"no game {game_id}")
     agents = store.agent_settings(game_id)
     decklists = store.decklists(game_id)
@@ -673,6 +690,16 @@ def game_seats(game_id: str, uid: str | None = None) -> dict[str, Any]:
         if uid is None
         else (store.player_for_uid(game_id, uid) or player_for_advisor_uid(game_id, uid))
     )
+    # Once the game is over (`Game.is_over`, CR 104.1), a credential of this
+    # game - the operator, either seat, or a seat's advisor - identifies the
+    # opponent's deck exactly rather than deducing an archetype from what it
+    # saw played; see this function's own docstring above for why CR 401.2
+    # no longer applies once play has ended. A caller that presents nothing,
+    # or a uid this game does not know, still reads nobody's list:
+    # `reveal_all` is gated on the same `operator`/`own_block` resolution
+    # every other credential check on this route already uses, never widened
+    # past it.
+    reveal_all = game.is_over and (operator or own_block is not None)
     seats = []
     for seat_uid, player in store.seat_uids(game_id).items():
         status = ai_seat.registry.status(seat_uid)
@@ -698,13 +725,16 @@ def game_seats(game_id: str, uid: str | None = None) -> dict[str, Any]:
                 "ai_seat": status
                 if status is not None
                 else {"uid": seat_uid if own else None, "mechanism": None, "state": "not_started"},
-                # `own_block`, not `own`: `decklist` is still never widened to
-                # the admin key (`own_block` resolves a seat or an advisor
-                # credential, never `is_admin`), so it stays exactly as scoped
-                # as it was documented to be - the one addition is the buddy
-                # reading the deck it advises on, which is its human's own
-                # block and nothing more.
-                "decklist": decklists.get(player) if player == own_block else None,
+                # `own_block`, not `own`: while the game is live, `decklist`
+                # is never widened to the admin key (`own_block` resolves a
+                # seat or an advisor credential, never `is_admin`) - the one
+                # addition is the buddy reading the deck it advises on, which
+                # is its human's own block and nothing more. `reveal_all`
+                # (A2, above) is the one further widening, and only once the
+                # game has ended: every row's `decklist`, including the
+                # admin's, for any caller this route already trusted with
+                # its own block.
+                "decklist": (decklists.get(player) if reveal_all or player == own_block else None),
             }
         )
     # The buddies, after the seats and WITHOUT their uids - see

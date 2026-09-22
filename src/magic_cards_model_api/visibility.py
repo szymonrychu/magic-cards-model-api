@@ -299,6 +299,17 @@ def _redact_player(player: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     uid (`viewer is None`) reads nobody's, matching every other hidden field
     here: a caller that presents nothing must never see more than one that
     presents someone else's seat.
+
+    **Unchanged once the game is over, on purpose.** CR 401.2 is about a
+    library that is still being drawn from during play, in an order that
+    must stay hidden; this function has nothing to do with a finished game,
+    and A2's post-game reveal (`decks_api.game_seats`'s `reveal_all`) is
+    deliberately not made here. `decklist` in fact never reaches this
+    function at all in the current build - 2b's T8 moved the field off the
+    state view onto the lobby's `/seats` route - so this docstring's claim is
+    that even if it did, this redaction would still apply exactly as
+    written, before and after `Game.is_over` (CR 104.1): the one place this
+    api widens a post-game decklist is `/seats`, never the board state.
     """
     if "decklist" not in player or player.get("username") == viewer:
         return player
