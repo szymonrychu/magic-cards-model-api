@@ -244,15 +244,24 @@ function currentStorage() {
 
 /** "pending" (still in CR 103.5/103.6's pregame - `booted_game`'s own boot
  * leaves a game resting at turn 0 until both seats clear it), "playing",
- * "over" (a winner or a draw), "ended" (this browser ended it from the
- * lobby: soft-deleted server-side, unplayable, still reviewable), or
- * "unopenable" (the server has this game but says this build cannot decode
- * its snapshot - `row.unloadable` carries the engine's own reason, which the
- * cell's `title` shows). Checked first: it is a fact about whether the game
- * can be read at all, so nothing below it - not even "over" - is knowable. */
+ * "recording" (finished, but the AI seat's pod is still writing its
+ * guides/reflection - `decks_api.LobbyGameSummary.post_game_work`, A3 - and
+ * has not released itself yet), "over" (finished and released - a winner or
+ * a draw), "ended" (this browser ended it from the lobby: soft-deleted
+ * server-side, unplayable, still reviewable), or "unopenable" (the server
+ * has this game but says this build cannot decode its snapshot -
+ * `row.unloadable` carries the engine's own reason, which the cell's `title`
+ * shows).
+ *
+ * Checked in order: "unopenable" and "ended" are facts about whether the
+ * game can be read or is even still live at all, so both are decided before
+ * anything below them - including "recording" - is knowable. "recording" is
+ * then checked ahead of plain "over": both need `row.over`, and the only
+ * thing that tells them apart is whether the pod has released itself yet. */
 function gameState(row) {
   if (row.unloadable) return "unopenable";
   if (row.archived) return "ended";
+  if (row.over && row.postGameWork) return "recording";
   if (row.over) return "over";
   if (row.turn === 0) return "pending";
   return "playing";
@@ -323,7 +332,10 @@ function renderGamesTable(root, handlers, rows) {
     agentTd.textContent = row.model ? `${row.model} / ${row.effort || "high"}` : "-";
     const stateTd = document.createElement("td");
     const state = gameState(row);
-    stateTd.textContent = state;
+    // "recording" reads as its own sentence, not the bare state word every
+    // other row gets - it is the one state that offers nothing to click, so
+    // the cell is the only place left to say what is actually happening.
+    stateTd.textContent = state === "recording" ? "recording plays..." : state;
     // A pill, not plain text - so the one row that can actually be acted on
     // right now (`playing`) reads differently at a glance from a finished,
     // ended, or unreadable one, the same idiom `render/panels.js` already
@@ -339,56 +351,80 @@ function renderGamesTable(root, handlers, rows) {
     // reason is not here it is nowhere.
     if (row.unloadable) stateTd.setAttribute("title", row.unloadable);
     const actionsTd = document.createElement("td");
-    if (!row.archived) {
-      // No Open on a game the server cannot decode: it would fetch the board
-      // and get a 409 back (`app._game_unloadable`) every single time. End
-      // stays, and is the only thing that helps - it is also what gives the
-      // slot back, since the server counts such a row against
-      // `MAX_LIVE_GAMES` rather than assuming an unreadable game is over.
-      if (!row.unloadable) {
-        const openBtn = document.createElement("button");
-        openBtn.textContent = "Open";
-        openBtn.addEventListener("click", () => {
-          handlers.startGame({ game_id: row.gameId, uid: row.myUid, aiUid: row.aiUid });
+    // "recording" offers nothing to click at all: the pod is still writing
+    // its guides/reflection, Open would race a board that is about to be
+    // archived out from under it, and Show thinking/Forget both assume the
+    // pod has already released itself. `state` alone decides every branch
+    // below - `row.archived`/`row.over` are what `gameState` computed it
+    // from, not a second, independent gate.
+    if (state !== "recording") {
+      if (state === "pending" || state === "playing" || state === "unopenable") {
+        // No Open on a game the server cannot decode: it would fetch the
+        // board and get a 409 back (`app._game_unloadable`) every single
+        // time. End stays, and is the only thing that helps - it is also
+        // what gives the slot back, since the server counts such a row
+        // against `MAX_LIVE_GAMES` rather than assuming an unreadable game
+        // is over.
+        if (state !== "unopenable") {
+          const openBtn = document.createElement("button");
+          openBtn.textContent = "Open";
+          openBtn.addEventListener("click", () => {
+            handlers.startGame({ game_id: row.gameId, uid: row.myUid, aiUid: row.aiUid });
+          });
+          actionsTd.appendChild(openBtn);
+        }
+        const endBtn = document.createElement("button");
+        endBtn.textContent = "End";
+        endBtn.className = "danger";
+        endBtn.addEventListener("click", () => {
+          endGame(root, handlers, row).catch((e) => console.error(e));
         });
-        actionsTd.appendChild(openBtn);
+        actionsTd.appendChild(endBtn);
       }
-      const endBtn = document.createElement("button");
-      endBtn.textContent = "End";
-      endBtn.className = "danger";
-      endBtn.addEventListener("click", () => {
-        endGame(root, handlers, row).catch((e) => console.error(e));
-      });
-      actionsTd.appendChild(endBtn);
-    }
-    // The review's door - only on a finished game, and only when the page
-    // that mounted this lobby actually has somewhere to send it.
-    if (reviewable(row) && handlers.showReview) {
-      const reviewBtn = document.createElement("button");
-      reviewBtn.textContent = "Show thinking";
-      reviewBtn.className = "primary";
-      // What the reader is about to get, said before they click it: for a
-      // game whose board this build cannot decode, the whole page is rebuilt
-      // from the recorded ledger (`review.py`), and the page says so too.
-      reviewBtn.title = row.unloadable
-        ? "What the agent said it expected, and what happened next - rebuilt from the recorded ledger, because this build cannot decode this game's saved board"
-        : "What the agent said it expected, and what happened next";
-      reviewBtn.addEventListener("click", () => {
-        handlers.showReview({ gameId: row.gameId, uid: row.myUid });
-      });
-      actionsTd.appendChild(reviewBtn);
-    }
-    if (row.archived) {
-      const forgetBtn = document.createElement("button");
-      forgetBtn.textContent = "Forget";
-      forgetBtn.className = "ghost";
-      forgetBtn.title = "Drop this game from this browser's list - the review goes with it";
-      forgetBtn.addEventListener("click", () => {
-        const storage = currentStorage();
-        saveGames(storage, dropSavedGame(loadSavedGames(storage), row.gameId));
-        refreshGames(root, handlers).catch((e) => console.error(e));
-      });
-      actionsTd.appendChild(forgetBtn);
+      // The review's door - only on a finished game, and only when the page
+      // that mounted this lobby actually has somewhere to send it.
+      if (reviewable(row) && handlers.showReview) {
+        const reviewBtn = document.createElement("button");
+        reviewBtn.textContent = "Show thinking";
+        reviewBtn.className = "primary";
+        // What the reader is about to get, said before they click it: for a
+        // game whose board this build cannot decode, the whole page is
+        // rebuilt from the recorded ledger (`review.py`), and the page says
+        // so too.
+        reviewBtn.title = row.unloadable
+          ? "What the agent said it expected, and what happened next - rebuilt from the recorded ledger, because this build cannot decode this game's saved board"
+          : "What the agent said it expected, and what happened next";
+        reviewBtn.addEventListener("click", () => {
+          handlers.showReview({ gameId: row.gameId, uid: row.myUid });
+        });
+        actionsTd.appendChild(reviewBtn);
+      }
+      if (row.archived) {
+        const forgetBtn = document.createElement("button");
+        forgetBtn.textContent = "Forget";
+        forgetBtn.className = "ghost";
+        forgetBtn.title = "Drop this game from this browser's list - the review goes with it";
+        forgetBtn.addEventListener("click", () => {
+          const storage = currentStorage();
+          saveGames(storage, dropSavedGame(loadSavedGames(storage), row.gameId));
+          refreshGames(root, handlers).catch((e) => console.error(e));
+        });
+        actionsTd.appendChild(forgetBtn);
+      } else if (state === "over") {
+        // A released row - the pod has already archived nothing, so unlike
+        // the already-archived Forget above, this one has to ask the server
+        // to soft-archive the game itself before dropping it. See
+        // `forgetGame`'s own docstring for why a 404 counts as success too.
+        const forgetBtn = document.createElement("button");
+        forgetBtn.textContent = "Forget";
+        forgetBtn.className = "ghost";
+        forgetBtn.title =
+          "Archive this game and drop it from this browser's list - the review goes with it";
+        forgetBtn.addEventListener("click", () => {
+          forgetGame(root, handlers, row).catch((e) => console.error(e));
+        });
+        actionsTd.appendChild(forgetBtn);
+      }
     }
     for (const cell of [opponentTd, gameTd, startedTd, turnTd, agentTd, stateTd, actionsTd]) {
       tr.appendChild(cell);
@@ -443,6 +479,56 @@ async function endGame(root, handlers, row) {
   await refreshGames(root, handlers);
 }
 
+/** Forget a released, finished row (`gameState`'s "over": `postGameWork` has
+ * gone false) - the row `endGame`'s own Forget/End never touches, since it
+ * is not archived yet. Unlike the already-archived row's Forget (local-only,
+ * see `renderGamesTable`), this one has to make the game actually go away
+ * server-side first: `DELETE /api/lobby/games/{id}?uid=`, the very same
+ * soft-archive `endGame` performs.
+ *
+ * A 404 counts as success here, which `endGame` does not have to consider -
+ * another tab's own End or Forget, or the pod's own bounded backstop, may
+ * have archived this exact game between this row rendering and the click
+ * landing, and Forget wants the same outcome either way: gone from this
+ * browser's own list. Any other error leaves the row exactly where it was
+ * and says why in `#start-error`, same as `endGame`.
+ *
+ * The entry is *dropped outright* here, never kept as an ended one the way
+ * `endGame` keeps it - a released row already carries everything `mcm.
+ * games.v1` would otherwise need to remember (this browser was still
+ * showing it seconds ago), and the person clicking Forget rather than
+ * Show thinking has already said they do not want it kept for review. */
+async function forgetGame(root, handlers, row) {
+  try {
+    await api("DELETE", `${lobbyBase()}/games/${row.gameId}?uid=${encodeURIComponent(row.myUid)}`);
+  } catch (e) {
+    if (e.status !== 404) {
+      console.error(`could not forget game vs ${row.opponent || row.gameId}: ${e.message}`);
+      const err = $(root, "#start-error");
+      if (err) {
+        err.textContent = `could not forget the game vs ${row.opponent || row.gameId}: ${e.message}`;
+      }
+      return;
+    }
+  }
+  const storage = currentStorage();
+  saveGames(storage, dropSavedGame(loadSavedGames(storage), row.gameId));
+  await refreshGames(root, handlers);
+}
+
+/** How long between re-polls while any row is "recording" (`gameState`) -
+ * about 10s, the same order of magnitude as the pod's own reflection ->
+ * review -> handover round trip, so a page left open notices the moment it
+ * releases without hammering `GET /api/lobby/games` the way the in-game
+ * board poll (`app.js`'s `POLL_MS`, 1.2s) needs to. */
+export const RECORDING_POLL_MS = 10000;
+
+/** The one pending recording re-poll, or `null` when none is scheduled -
+ * `refreshGames` is the only thing that ever reads or writes it, so a
+ * second `refreshGames` (Open, End, Forget, the initial mount) never stacks
+ * a second timer on top of one already ticking down. */
+let recordingPollTimer = null;
+
 /** Ask the server for the game list, join it with `mcm.games.v1`, and render
  * the rows - the "on mount and after Start/End" refresh the lobby's game
  * list gets.
@@ -481,7 +567,30 @@ async function refreshGames(root, handlers) {
     console.error(`could not load the game list: ${e.message}`);
     return;
   }
-  renderGamesTable(root, handlers, lobbyViewModel(games, saved));
+  const rows = lobbyViewModel(games, saved);
+  renderGamesTable(root, handlers, rows);
+  // (f): while any row is recording, keep asking - and stop the moment a
+  // refresh (this poll firing, or Open/End/Forget triggering one sooner)
+  // finds none left. A pending timer is cleared before either branch below
+  // runs, never left ticking down underneath a fresh one.
+  if (recordingPollTimer !== null) {
+    clearTimeout(recordingPollTimer);
+    recordingPollTimer = null;
+  }
+  if (rows.some((row) => gameState(row) === "recording")) {
+    recordingPollTimer = setTimeout(() => {
+      recordingPollTimer = null;
+      refreshGames(root, handlers).catch((e) => console.error(e));
+    }, RECORDING_POLL_MS);
+    // Node (the test harness under `tests/ui_node.py`, which runs this exact
+    // module with no page ever unloading) keeps its event loop - and so the
+    // process - alive for as long as a timer is pending; a browser tab has
+    // no such thing to guard, and `unref` does not exist there, which is
+    // exactly why this is checked before it is called rather than assumed.
+    if (recordingPollTimer && typeof recordingPollTimer.unref === "function") {
+      recordingPollTimer.unref();
+    }
+  }
 }
 
 /** Mount the lobby into `root`: load the bundled deck list into both

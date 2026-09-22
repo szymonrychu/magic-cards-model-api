@@ -112,6 +112,11 @@ function archivedRow(entry) {
     // to `endedAt` below for exactly this row.
     createdAt: null,
     endedAt: entry.endedAt || null,
+    // An archived row is never "recording" - `gameState` checks `archived`
+    // before it ever looks at this field, but it is set explicitly (never
+    // left `undefined`) so every row this module hands back has the same
+    // shape.
+    postGameWork: false,
     model: entry.model || null,
     effort: entry.effort || null,
     myUid: entry.uid || null,
@@ -212,6 +217,12 @@ export function lobbyViewModel(games, saved) {
         // instead of guessing between two otherwise-identical rows.
         createdAt: g.created_at || null,
         endedAt: null,
+        // Only ever true on a finished row (`decks_api.LobbyGameSummary.
+        // post_game_work`, A3): the seat pod is still writing its guides/
+        // reflection and has not released itself yet, so `gameState` reads
+        // this alongside `over` to show "recording plays..." rather than
+        // Show thinking/Forget while that work is in flight.
+        postGameWork: Boolean(g.post_game_work),
         model: agent ? agent.model : null,
         effort: agent ? agent.effort : null,
         // The saved entry still wins where there is one; the server-supplied

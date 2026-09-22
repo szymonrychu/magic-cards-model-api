@@ -221,6 +221,11 @@ h3 { font-size: 14px; }
    reused rather than redefined, so the state cell reads differently from a
    finished or ended row at a glance, exactly the way the connection pill
    already does elsewhere on this page. */
+/* "recording plays..." is not a one-word state and offers no button beside
+   it (`render/lobby.js`'s `gameState`/`renderGamesTable`) - italic and
+   dimmed marks it as a row with nothing to click yet, rather than one more
+   plain, uncolored pill sitting among rows that are. */
+.pill.state-recording { font-style: italic; color: var(--ink-dim); }
 
 /* -------------------------------------------------------------- game ---- */
 

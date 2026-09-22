@@ -95,6 +95,7 @@ def test_lobby_rows_join_server_games_with_saved_seats() -> None:
             "recordedEnding": None,
             "endedAt": None,
             "createdAt": "2026-09-08T12:00:00+00:00",
+            "postGameWork": False,
             "model": "opus",
             "effort": "max",
             "myUid": "u1",
@@ -1168,3 +1169,470 @@ def test_the_page_offers_the_buddy_on_the_human_picker_alone() -> None:
         "ai-model-suggestions",
     ):
         assert f'id="{control}"' not in html, f"#{control} is still on the page"
+
+
+# ---------------------------------------------------------------------------
+# U1: "recording plays..." while the pod finishes its post-game work, then
+# Show thinking + Forget once it has released itself
+# ---------------------------------------------------------------------------
+#
+# `decks_api.LobbyGameSummary.post_game_work` (A3) is true on a finished row
+# for as long as the AI seat's pod is still writing guides/reflection and has
+# not released itself. `lobby_model.js` carries it through as `postGameWork`;
+# `gameState` reads it alongside `over` to tell a still-working row from a
+# released one.
+
+GAMES_RECORDING = [
+    {
+        "game_id": "g1",
+        "players": ["you", "bot"],
+        "turn_number": 11,
+        "phase": "postcombat_main",
+        "is_over": True,
+        "post_game_work": True,
+        "agents": {"bot": {"model": "opus", "effort": "max", "max_thinking_tokens": None}},
+        "seats": {"you": "u1"},
+    }
+]
+
+#: Same finished game, released: `post_game_work` has gone false.
+GAMES_RELEASED = [{**GAMES_RECORDING[0], "post_game_work": False}]
+
+
+def test_a_finished_row_carries_post_game_work_from_the_server() -> None:
+    recording = run_module(
+        "lobby_model.js", "m.lobbyViewModel(games, saved)", games=GAMES_RECORDING, saved=SAVED
+    )
+    assert recording[0]["postGameWork"] is True
+    released = run_module(
+        "lobby_model.js", "m.lobbyViewModel(games, saved)", games=GAMES_RELEASED, saved=SAVED
+    )
+    assert released[0]["postGameWork"] is False
+    # A row the server never sent `post_game_work` on (a live game, which
+    # never carries the field at all) must default to false, never
+    # `undefined` - `gameState` does a plain boolean read.
+    live = run_module("lobby_model.js", "m.lobbyViewModel(games, saved)", games=GAMES, saved=SAVED)
+    assert live[0]["postGameWork"] is False
+
+
+def test_an_archived_row_never_reports_post_game_work() -> None:
+    """An ended row is built entirely from `mcm.games.v1` - `list_lobby_games`
+    has already dropped it, so there is no server field to read, and it must
+    never be told apart from a released row by accident."""
+    rows = run_module(
+        "lobby_model.js",
+        "m.lobbyViewModel(games, saved)",
+        games=[],
+        saved=[
+            {
+                "gameId": "g1",
+                "uid": "u1",
+                "aiUid": "u2",
+                "endedAt": "2026-09-08T20:00:00Z",
+                "opponent": "bot",
+            }
+        ],
+    )
+    assert rows[0]["postGameWork"] is False
+
+
+def _lobby_row(games: list[dict[str, Any]], saved: list[dict[str, Any]] = SAVED) -> dict[str, Any]:
+    return run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          document.appendChild(tbody);
+          const errEl = document.createElement("div");
+          errEl.setAttribute("id", "start-error");
+          document.appendChild(errEl);
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+          globalThis.fetch = async (path, opts) => {
+            const method = (opts && opts.method) || "GET";
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const cells = tbody.children[0].children;
+          const actions = cells[cells.length - 1];
+          const state = cells[cells.length - 2];
+          return {
+            stateText: state.textContent,
+            labels: actions.children.map((b) => b.textContent),
+            actionCount: actions.children.length,
+          };
+        })()
+        """,
+        games=games,
+        saved=saved,
+    )
+
+
+def test_a_recording_row_shows_its_own_text_and_no_buttons_at_all() -> None:
+    result = _lobby_row(GAMES_RECORDING)
+    assert result["stateText"] == "recording plays..."
+    assert result["labels"] == []
+    assert result["actionCount"] == 0
+
+
+def test_a_released_row_offers_show_thinking_and_forget_never_open_or_end() -> None:
+    result = _lobby_row(GAMES_RELEASED)
+    assert result["stateText"] == "over"
+    assert result["labels"] == ["Show thinking", "Forget"], result["labels"]
+
+
+def test_pending_playing_and_unopenable_rows_keep_open_and_end_unaffected() -> None:
+    """(e): the new "recording"/"over" branching must not touch any other
+    state - `GAMES` (playing) still offers Open + End, same as before."""
+    result = _lobby_row(GAMES)
+    assert result["stateText"] == "playing"
+    assert result["labels"] == ["Open", "End"]
+
+
+def test_forget_on_a_released_row_archives_it_then_drops_it_from_storage() -> None:
+    """Unlike an archived row's own (local-only) Forget, a released row is
+    not archived yet - Forget here must call the same soft-archive `DELETE`
+    End uses, and only drop the row from `mcm.games.v1` (not upsert it as
+    ended) once the server has agreed."""
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          document.appendChild(tbody);
+          const errEl = document.createElement("div");
+          errEl.setAttribute("id", "start-error");
+          document.appendChild(errEl);
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+          const fetchCalls = [];
+          globalThis.fetch = async (path, opts) => {
+            const method = (opts && opts.method) || "GET";
+            fetchCalls.push(`${method} ${path}`);
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            if (method === "DELETE") {
+              return { ok: true, status: 200, json: async () => ({ archived: true }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const actions = tbody.children[0].children[tbody.children[0].children.length - 1];
+          const forget = actions.children.find((b) => b.textContent === "Forget");
+          forget.listeners.click();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return {
+            fetchCalls,
+            rowCountAfter: tbody.children.length,
+            savedAfter: JSON.parse(storageData["mcm.games.v1"] || "[]"),
+          };
+        })()
+        """,
+        games=GAMES_RELEASED,
+        saved=SAVED,
+    )
+    assert "DELETE /api/lobby/games/g1?uid=u1" in result["fetchCalls"]
+    assert result["savedAfter"] == [], "the row must be dropped outright, not kept as ended"
+
+
+def test_forget_on_a_released_row_treats_a_404_as_success_too() -> None:
+    """A race with another tab's own End/Forget may have archived the game
+    already - Forget still wants the same outcome, gone from this browser's
+    list, so a 404 counts as agreement."""
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          document.appendChild(tbody);
+          const errEl = document.createElement("div");
+          errEl.setAttribute("id", "start-error");
+          document.appendChild(errEl);
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+          globalThis.fetch = async (path, opts) => {
+            const method = (opts && opts.method) || "GET";
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            if (method === "DELETE") {
+              return { ok: false, status: 404, json: async () => ({ detail: "not found" }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const actions = tbody.children[0].children[tbody.children[0].children.length - 1];
+          const forget = actions.children.find((b) => b.textContent === "Forget");
+          forget.listeners.click();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return {
+            savedAfter: JSON.parse(storageData["mcm.games.v1"] || "[]"),
+            errorText: errEl.textContent,
+          };
+        })()
+        """,
+        games=GAMES_RELEASED,
+        saved=SAVED,
+    )
+    assert result["savedAfter"] == []
+    assert result["errorText"] == ""
+
+
+def test_forget_on_a_released_row_leaves_it_on_any_other_error() -> None:
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          document.appendChild(tbody);
+          const errEl = document.createElement("div");
+          errEl.setAttribute("id", "start-error");
+          document.appendChild(errEl);
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+          globalThis.fetch = async (path, opts) => {
+            const method = (opts && opts.method) || "GET";
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            if (method === "DELETE") {
+              return { ok: false, status: 500, json: async () => ({ detail: "boom" }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const actions = tbody.children[0].children[tbody.children[0].children.length - 1];
+          const forget = actions.children.find((b) => b.textContent === "Forget");
+          forget.listeners.click();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return {
+            rowCountAfter: tbody.children.length,
+            savedAfter: JSON.parse(storageData["mcm.games.v1"] || "[]"),
+            errorText: errEl.textContent,
+          };
+        })()
+        """,
+        games=GAMES_RELEASED,
+        saved=SAVED,
+    )
+    assert result["rowCountAfter"] == 1, "a refused Forget must leave the row in place"
+    assert result["savedAfter"] == SAVED
+    assert "boom" in result["errorText"]
+
+
+def test_archived_forget_stays_local_only_and_untouched() -> None:
+    """(e): an already-archived row's own Forget is unchanged - dropped from
+    `mcm.games.v1` with no network call at all, unlike the new released-row
+    Forget above."""
+    saved_archived = [
+        {
+            "gameId": "g1",
+            "uid": "u1",
+            "aiUid": "u2",
+            "endedAt": "2026-09-08T20:00:00Z",
+            "opponent": "bot",
+        }
+    ]
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          document.appendChild(tbody);
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+          const fetchCalls = [];
+          globalThis.fetch = async (path, opts) => {
+            const method = (opts && opts.method) || "GET";
+            fetchCalls.push(`${method} ${path}`);
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games: [] }) };
+          };
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const actions = tbody.children[0].children[tbody.children[0].children.length - 1];
+          const forget = actions.children.find((b) => b.textContent === "Forget");
+          forget.listeners.click();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return {
+            fetchCalls,
+            savedAfter: JSON.parse(storageData["mcm.games.v1"] || "[]"),
+          };
+        })()
+        """,
+        games=[],
+        saved=saved_archived,
+    )
+    assert not any(c.startswith("DELETE") for c in result["fetchCalls"]), (
+        "archived Forget must never call the network"
+    )
+    assert result["savedAfter"] == []
+
+
+# ---------------------------------------------------------------------------
+# (f): while any row is recording, the lobby re-polls on a bounded interval
+# and stops once none is
+# ---------------------------------------------------------------------------
+
+
+def test_the_lobby_repolls_while_recording_and_stops_once_released() -> None:
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          document.appendChild(tbody);
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+
+          let recording = true;
+          globalThis.fetch = async (path) => {
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            const games = recording ? recordingGames : releasedGames;
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+
+          const realSetTimeout = globalThis.setTimeout;
+          const realClearTimeout = globalThis.clearTimeout;
+          let nextId = 1;
+          const timers = new Map();
+          const scheduled = [];
+          const cleared = [];
+          globalThis.setTimeout = (fn, ms) => {
+            if (ms === m.RECORDING_POLL_MS) {
+              const id = nextId++;
+              timers.set(id, fn);
+              scheduled.push(id);
+              return id;
+            }
+            return realSetTimeout(fn, ms);
+          };
+          globalThis.clearTimeout = (id) => {
+            if (timers.has(id)) {
+              cleared.push(id);
+              timers.delete(id);
+              return;
+            }
+            return realClearTimeout(id);
+          };
+
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          await new Promise((resolve) => realSetTimeout(resolve, 20));
+          const scheduledAfterMount = scheduled.length;
+
+          // Fire the scheduled poll, this time with the game released -
+          // the re-poll itself must find nothing recording and stop, never
+          // scheduling a further one.
+          recording = false;
+          const fn = timers.get(scheduled[0]);
+          timers.delete(scheduled[0]);
+          await fn();
+          await new Promise((resolve) => realSetTimeout(resolve, 20));
+
+          return {
+            scheduledAfterMount,
+            scheduledTotal: scheduled.length,
+            clearedTotal: cleared.length,
+          };
+        })()
+        """,
+        games=None,
+        saved=SAVED,
+        recordingGames=GAMES_RECORDING,
+        releasedGames=GAMES_RELEASED,
+    )
+    assert result["scheduledAfterMount"] == 1, "a recording row must schedule exactly one re-poll"
+    assert result["scheduledTotal"] == 1, "a released row must not schedule a further re-poll"
+
+
+def test_a_live_row_never_schedules_a_recording_repoll() -> None:
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          document.appendChild(tbody);
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+          globalThis.fetch = async (path) => {
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+          const realSetTimeout = globalThis.setTimeout;
+          const scheduled = [];
+          globalThis.setTimeout = (fn, ms) => {
+            if (ms === m.RECORDING_POLL_MS) { scheduled.push(fn); return scheduled.length; }
+            return realSetTimeout(fn, ms);
+          };
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          await new Promise((resolve) => realSetTimeout(resolve, 20));
+          return { scheduled: scheduled.length };
+        })()
+        """,
+        games=GAMES,
+        saved=SAVED,
+    )
+    assert result["scheduled"] == 0
