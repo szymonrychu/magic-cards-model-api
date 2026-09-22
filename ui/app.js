@@ -12,6 +12,7 @@
 // this file has exactly one place that decides it rather than the decision
 // living twice (once for real, once reimplemented for a test).
 
+import { actingAs, decidesFor, decisionIsMine, holdsPriority as seatHoldsPriority } from "./control.js";
 import { api, withUid } from "./api.js";
 import { createStore, installPressGuard } from "./store.js";
 import { loadSymbols } from "./symbols.js";
@@ -391,10 +392,12 @@ export function planHandCardClick(card, app) {
  * `{kind: "menu", abilities, vehicle}` (more than one thing this permanent
  * could do) | `{kind: "none", reason?}` (not yours, or nothing to do). */
 export function planPermanentClick(card, app, state) {
-  const seat = state.you;
+  // CR 723.5: while this seat decides for another player, that player's
+  // decisions, combat and permanents are this seat's to use (`control.js`).
+  const seat = actingAs(state);
+  const mine = decidesFor(state);
   const pendingTargets =
-    state.pending_decision &&
-    state.pending_decision.player === seat &&
+    decisionIsMine(state, state.pending_decision) &&
     state.pending_decision.kind === "choose_targets";
   if (app.action || pendingTargets) {
     const isCandidate = Boolean(
@@ -424,26 +427,25 @@ export function planPermanentClick(card, app, state) {
   // asked: a click can attack or block while the game is genuinely waiting
   // on this seat to say so, exactly as it always could once the step
   // actually became real.
-  const pendingDeclareKind =
-    state.pending_decision && state.pending_decision.player === seat
-      ? state.pending_decision.kind
-      : null;
+  const pendingDeclareKind = decisionIsMine(state, state.pending_decision)
+    ? state.pending_decision.kind
+    : null;
   if (
     card.controller === seat &&
     state.active_player === seat &&
-    ((state.step === "declare_attackers" && state.priority_holder === seat) ||
+    ((state.step === "declare_attackers" && seatHoldsPriority(state)) ||
       pendingDeclareKind === "declare_attackers")
   ) {
     return { kind: "attack" };
   }
   if (
     state.active_player !== seat &&
-    ((state.step === "declare_blockers" && state.priority_holder === seat) ||
+    ((state.step === "declare_blockers" && seatHoldsPriority(state)) ||
       pendingDeclareKind === "declare_blockers")
   ) {
     return { kind: "block" };
   }
-  if (card.controller !== seat) return { kind: "none" };
+  if (!mine.has(card.controller)) return { kind: "none" };
   const abilities = card.abilities || [];
   const vehicle = /vehicle/i.test(card.type_line || "");
   // CR 702.6a: equip has no entry in `card.abilities` (`Game.
@@ -799,7 +801,7 @@ function startPolling() {
 
 function computeDecisionTargets(state, decisionDraft) {
   const pending = state && state.pending_decision;
-  if (!state || !pending || pending.player !== state.you || pending.kind !== "choose_targets") {
+  if (!state || !pending || !decisionIsMine(state, pending) || pending.kind !== "choose_targets") {
     return null;
   }
   const vm = viewModel(pending, decisionDraft || {});
@@ -1415,7 +1417,7 @@ function settlePin(anchor, card, plan) {
 export async function tryTarget(id) {
   const app = store.get();
   const pending = app.state.pending_decision;
-  if (pending && pending.player === you() && pending.kind === "choose_targets" && !app.action) {
+  if (pending && decisionIsMine(app.state, pending) && pending.kind === "choose_targets" && !app.action) {
     const draft = app.decisionDraft.targets || [];
     const next = draft.includes(id) ? draft.filter((t) => t !== id) : [...draft, id];
     store.set({ decisionDraft: { ...app.decisionDraft, targets: next } });
@@ -1539,7 +1541,7 @@ export async function declareNoAttackers() {
 let pendingBlocker = null;
 function toggleBlock(card) {
   const app = store.get();
-  if (card.controller === you()) {
+  if (card.controller === actingAs(app.state)) {
     pendingBlocker = card.id;
     return toast(`${card.name}: now click the attacker it blocks`);
   }
@@ -1662,12 +1664,11 @@ export async function tickRun() {
   // the question the other seat was about to answer. Checked ahead of the
   // `priority_holder` guard below for the same reason the declare_attackers
   // check is: this is not a stop, just a reason to stay idle this tick.
-  if (app.state.pending_decision && app.state.pending_decision.player !== you()) return;
-  if (app.state.priority_holder !== you()) return;
-  // CR 723.5: somebody else is making this seat's decisions this turn, and
-  // the engine refuses this seat's own pass - stay idle, like the case above.
-  const control = app.state.player_control || {};
-  if (control[you()] && control[you()] !== you()) return;
+  // CR 723.5: "this seat's" decision and priority include those of a player
+  // it is deciding for, and exclude its own while somebody controls it (the
+  // engine refuses that pass) - `control.js`.
+  if (app.state.pending_decision && !decisionIsMine(app.state, app.state.pending_decision)) return;
+  if (!seatHoldsPriority(app.state)) return;
   const run = P.forgetStartingStep(app.run, app.state);
   if (run !== app.run) store.set({ run });
   const reason = P.stopReason(app.state, run, app.stops);
@@ -1712,7 +1713,7 @@ export async function tickRun() {
     // and the next tick asks again.
     if (out.transport) return;
     const fresh = await readState();
-    if (!fresh || fresh.priority_holder !== you()) return;
+    if (!fresh || !seatHoldsPriority(fresh)) return;
     store.set({ run: null });
     return;
   }

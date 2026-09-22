@@ -459,8 +459,12 @@ export function enrichItems(items, actions) {
     if (!matching.length) return entry;
     const unreadable = unreadableModesOf(matching);
     const unaffordable = matching.every((row) => row.affordable === "no");
-    if (!unaffordable && !unreadable.length) return entry;
+    // CR 723.5: a row that is another player's, offered because this seat is
+    // making their decisions this turn (`ActionRow.acting_for`).
+    const actingFor = matching.map((row) => row.acting_for).find(Boolean);
+    if (!unaffordable && !unreadable.length && !actingFor) return entry;
     const enriched = { ...entry };
+    if (actingFor) enriched.sublabel = `for ${actingFor}`;
     if (unaffordable) {
       const reason = matching.map((row) => row.unaffordable_reason).find(Boolean);
       enriched.disabled = true;

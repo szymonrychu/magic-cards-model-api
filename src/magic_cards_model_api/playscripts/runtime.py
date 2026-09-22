@@ -68,6 +68,9 @@ from ..seatkit import (
     Seat,
     _refused,
     _unknown_outcome,
+    controlled_notice,
+    decision_is_mine,
+    holds_priority,
     is_stale,
     pass_until,
     run_action,
@@ -562,10 +565,16 @@ def _drive(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> Run
                     },
                 ),
             )
+        # CR 723.5: while somebody else makes this seat's decisions it has
+        # none of its own to script - stand down, saying who is deciding.
+        controlled = controlled_notice(state, ctx.me)
+        if controlled is not None:
+            return _end(ctx, run, play, ScriptExit(Exit.UNFORESEEN, stop_reason=controlled))
         # B8-04: `_in_when` alone is a board position, not a priority window;
         # a move sent while the other seat holds priority is refused in the
         # engine's own words. Route through `_wait` whenever either is off.
-        if not _in_when(state, play["when"], ctx.me) or state.get("priority_holder") != ctx.me:
+        # A priority this seat decides for (CR 723.5, `holds_priority`) is its own.
+        if not _in_when(state, play["when"], ctx.me) or not holds_priority(state, ctx.me):
             waited = _wait(ctx, run, play, state, wait=wait)
             if isinstance(waited, ScriptExit):
                 return _end(ctx, run, play, waited)
@@ -657,8 +666,11 @@ def _wait_for_own_priority(
                 Exit.UNFORESEEN,
                 stop_reason="the game ended while waiting for this seat's own priority",
             )
+        controlled = controlled_notice(state, ctx.me)
+        if controlled is not None:
+            return ScriptExit(Exit.UNFORESEEN, stop_reason=controlled)
         pending = state.get("pending_decision")
-        if isinstance(pending, dict) and pending.get("player") == ctx.me:
+        if decision_is_mine(pending, state, ctx.me):
             return ScriptExit(
                 Exit.UNFORESEEN,
                 stop_reason=(
@@ -666,7 +678,7 @@ def _wait_for_own_priority(
                     "for its own priority"
                 ),
             )
-        if state.get("priority_holder") == ctx.me:
+        if holds_priority(state, ctx.me):
             return state
         if not _in_when(state, when, ctx.me):
             return ScriptExit(
@@ -773,7 +785,7 @@ def _send_move(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | N
     reasoning = _suffixed(ctx, run, f"move {index + 1}/{len(play['moves'])} ({move['kind']})")
     if move["kind"] == "answer":
         pending = state.get("pending_decision")
-        if pending is None or pending.get("player") != ctx.me:
+        if pending is None or not decision_is_mine(pending, state, ctx.me):
             return ScriptExit(
                 Exit.UNFORESEEN,
                 stop_reason=f"move {index + 1} answers a decision, and none is pending for you",
@@ -816,8 +828,11 @@ def _settle(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None
         foreign = _foreign(ctx, run, state)
         if foreign is not None:
             return foreign
+        controlled = controlled_notice(state, ctx.me)
+        if controlled is not None:
+            return ScriptExit(Exit.UNFORESEEN, stop_reason=controlled)
         pending = state.get("pending_decision")
-        if pending is not None and pending.get("player") == ctx.me:
+        if pending is not None and decision_is_mine(pending, state, ctx.me):
             stopped = _answer(ctx, run, move, pending, state, reasoning)
             run.mid_resolution = True
             if stopped is not None:
@@ -830,7 +845,7 @@ def _settle(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None
         ours_on_top = ours_on_top and stack[0].get("controller") == ctx.me
         if pending is None and not ours_on_top:
             return None
-        if pending is None and state.get("priority_holder") == ctx.me:
+        if pending is None and holds_priority(state, ctx.me):
             stopped = _outcome_exit(_pass(ctx, reasoning))
             if stopped is not None:
                 return stopped
@@ -1629,7 +1644,7 @@ def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any
         item = next(
             (a for a in first["answers"] if pending and a["decision"] == pending.get("kind")), None
         )
-        if pending is None or pending.get("player") != ctx.me or item is None:
+        if pending is None or not decision_is_mine(pending, state, ctx.me) or item is None:
             return ScriptExit(
                 Exit.UNFORESEEN, stop_reason="no decision this move answers is pending"
             )

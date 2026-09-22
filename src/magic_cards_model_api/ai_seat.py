@@ -314,6 +314,28 @@ class AiSeatRunner:
         }
 
 
+def _not_stalled_while_controlled(status: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A `stalled` seat whose player somebody else is deciding for, restated.
+
+    CR 723.5: while another player controls this seat's player (Emrakul, the
+    Promised End), every choice is theirs, so an agent with nothing running
+    is exactly right - not the stranded seat `stalled` warns about. Reported
+    `idle`, with the engine's own sentence as the reason."""
+    if not status or status.get("state") != "stalled":
+        return status
+    from . import player_control
+    from .store import store
+
+    game_id, player = status.get("game_id"), status.get("player")
+    game = store.get(game_id) if isinstance(game_id, str) else None
+    if game is None or not isinstance(player, str):
+        return status
+    controller = player_control.decider(game, player)
+    if controller == player:
+        return status
+    return {**status, "state": "idle", "reason": player_control.refusal(controller, player)}
+
+
 class AiSeatRegistry:
     """Every AI seat runner this process has started, keyed by seat uid -
     process-lifetime state, same as `store.GameStore`: a restart forgets it,
@@ -790,8 +812,8 @@ class AiSeatRegistry:
             fallback = self._fallbacks.get(uid)
         if dispatched is not None:
             if dispatched.get("mechanism") == "kubernetes":
-                return k8s_seats.get().status(uid)
-            return self._live_driver_status(dispatched)
+                return _not_stalled_while_controlled(k8s_seats.get().status(uid))
+            return _not_stalled_while_controlled(self._live_driver_status(dispatched))
         if runner is not None:
             return runner.status()
         return dict(fallback) if fallback is not None else None

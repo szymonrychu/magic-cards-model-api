@@ -42,6 +42,8 @@
 // beside the two step lists rather than inside either, and both are live on
 // the same run.
 
+import { decidesFor, decisionIsMine, holdsPriority } from "./control.js";
+
 export const STEPS = [
   "untap", "upkeep", "draw", "precombat_main", "beginning_of_combat",
   "declare_attackers", "declare_blockers", "combat_damage", "end_of_combat",
@@ -248,7 +250,7 @@ function sameOccurrence(state, run) {
 // than threaded out of `stopReason` as a side value).
 export function ownUnansweredAttackDeclaration(state, stops) {
   const pending = state.pending_decision;
-  if (!pending || pending.kind !== "declare_attackers" || pending.player !== state.you) return false;
+  if (!pending || pending.kind !== "declare_attackers" || !decisionIsMine(state, pending)) return false;
   return !stops.mine.includes("declare_attackers");
 }
 
@@ -267,12 +269,14 @@ export function stopReason(state, run, stops) {
     // it is an ordinary checked stop on `stops.mine` like any other, not a
     // rule with no tick. Ticked off, nothing below can see the pause either,
     // so falling through here is what lets the run keep going.
-    const isOwnAttackDeclaration = pending.kind === "declare_attackers" && pending.player === state.you;
+    // CR 723.5: a decision addressed to a player this seat is deciding for
+    // is this seat's own (`control.js`).
+    const isOwnAttackDeclaration = pending.kind === "declare_attackers" && decisionIsMine(state, pending);
     if (isOwnAttackDeclaration) {
       if (stops.mine.includes("declare_attackers") && !sameOccurrence(state, run)) {
         return "stop at your declare attackers";
       }
-    } else if (pending.player === state.you) {
+    } else if (decisionIsMine(state, pending)) {
       // Addressed to you - unconditionally this run's business to stop for,
       // no tick, no exception. Being attacked (a `declare_blockers` pause
       // addressed to you) falls through to here too: it was never a tick
@@ -369,11 +373,10 @@ export function interpretPassOutcome(res) {
 // pending decision: a run cannot make progress past a question only you can
 // answer, so starting one there would spend a tick doing nothing.
 export function passButtonsFor(state) {
-  if (state.priority_holder !== state.you) return [];
-  // CR 723.5: somebody else is making this player's decisions this turn, so
-  // their pass is not theirs to make (the engine refuses it).
-  const control = state.player_control || {};
-  if (control[state.you] && control[state.you] !== state.you) return [];
+  // CR 723.5: a priority this seat decides for is its to pass - including a
+  // player it controls, and never its own while somebody controls it (the
+  // engine refuses that pass).
+  if (!holdsPriority(state)) return [];
   if (state.pending_decision) {
     // Your own decision is answered through the decision panel, not a
     // pass, but the pass button has always stayed live alongside it (a
@@ -382,7 +385,7 @@ export function passButtonsFor(state) {
     // past either - `interpretPassOutcome` above turns the attempt into a
     // no-op now, but there is nothing for the button to usefully do, so it
     // is not offered at all.
-    return state.pending_decision.player === state.you ? ["pass"] : [];
+    return decisionIsMine(state, state.pending_decision) ? ["pass"] : [];
   }
   return [...VERBS];
 }
@@ -408,7 +411,7 @@ export function passButtonsFor(state) {
 // button to press. Offered only to the player whose turn it is, in the one
 // step it does something in.
 export function advanceOffered(state) {
-  return state.active_player === state.you && (state.step === "untap" || state.step === "cleanup");
+  return decidesFor(state).has(state.active_player) && (state.step === "untap" || state.step === "cleanup");
 }
 
 // CR 104.3a: "A player can concede the game at any time. A player who

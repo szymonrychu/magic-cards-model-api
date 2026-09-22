@@ -20,6 +20,7 @@
 // only when its card moved or the window resized or scrolled. No scrim: the
 // board stays live around it.
 
+import { decisionIsMine } from "../control.js";
 import { clear } from "../dom.js";
 import { usesDecisionPopover, viewModel } from "../decisions.js";
 import { renderDecision } from "./decision_controls.js";
@@ -99,7 +100,7 @@ export function popoverSubject(root, app) {
   const state = app && app.state;
   if (!state || state.winner || state.drawn || state.pregame || !state.you) return null;
   const pending = state.pending_decision;
-  if (!pending || pending.player !== state.you || !usesDecisionPopover(pending)) return null;
+  if (!pending || !decisionIsMine(state, pending) || !usesDecisionPopover(pending)) return null;
   if (pending.source_card_id === null || pending.source_card_id === undefined) return null;
   const anchor = findRenderedCard(root, pending.source_card_id);
   if (!anchor) return null;

@@ -330,6 +330,24 @@ def test_a_seat_waiting_on_its_opponent_never_trips(world, clock):
     assert world.problem_reports == []
 
 
+def test_a_seat_whose_decisions_another_player_makes_never_trips(world, clock):
+    """CR 723.5: the human cast Emrakul, the Promised End and is making the
+    seat's decisions this turn. The seat holds priority by name (CR 723.3),
+    but none of it is the seat's to move - waiting that out is not a loop."""
+    world.state["board"] = SEAT_TO_ACT | {
+        "players": [
+            {"username": "bob", "decisions_made_by": "alice"},
+            {"username": "alice", "decisions_made_by": None},
+        ]
+    }
+    dispatch(world)
+    finish(world, "turn-1")
+    for turn in range(2, 9):
+        clock.now += 25
+        assert "continued" in finish(world, f"turn-{turn}"), turn
+    assert world.problem_reports == []
+
+
 def test_an_advisor_s_idle_waits_never_trip(world, clock):
     """A buddy whose human holds priority and is thinking: each continuation
     waits its 20s, finds nothing new to advise on, and ends."""

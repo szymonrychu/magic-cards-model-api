@@ -3456,3 +3456,71 @@ def test_start_stamps_run_turn_from_turns_taken_not_turn_number(
     assert out is None
     assert run.turn == 5, "run.turn must be stamped from turns_taken, not turn_number"
     assert captured["turn"] == 5
+
+
+# -- one player controlling another's turn (CR 723) ----------------------------
+#
+# CR 723.5: the controller "makes all choices and decisions the controlled
+# player is allowed to make"; CR 723.3 keeps the controlled player holding
+# priority. A script run by the controller acts on that priority; a script
+# of the controlled seat has nothing of its own to decide and stands down.
+
+
+def control_turn(client: TestClient, game_id: str, controller: str, controlled: str) -> None:
+    """`controller` gains control of `controlled`'s next turn at the end of its
+    own (the engine's own `gain_control_of_player`, Emrakul's trigger), both
+    pass it out, and the board is put in `controlled`'s precombat main."""
+    for player, land in (("alice", "Forest"), ("bob", "Island")):
+        for _ in range(4):
+            add_card(client, game_id, land, player, "library")
+    force_turn_position(game_id, Step.END_STEP, controller)
+    live = store.get(game_id)
+    assert live is not None
+    live.gain_control_of_player(controller, controlled)
+    for who in (controller, controlled):
+        passed = client.post(
+            f"/api/games/{game_id}/actions/pass-priority",
+            params={"uid": seat_uid(game_id, who)},
+            json={"player": who},
+        )
+        assert passed.json()["allowed"] is True, passed.text
+    force_turn_position(game_id, Step.PRECOMBAT_MAIN, controlled)
+    assert state(client, game_id)["player_control"] == {controlled: controller}
+
+
+def test_a_controlled_seats_script_stands_down_naming_who_decides(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    control_turn(client, game, "bob", "alice")
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+    add_card(client, game, "Forest", "alice", "hand")
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    out = result.script_exit
+    assert out.exit is Exit.UNFORESEEN, result.to_dict()
+    assert "bob is making alice's decisions this turn (CR 723.5)" in (out.stop_reason or "")
+    assert hook.posts("/actions/play-land") == []
+
+
+def test_the_controllers_script_acts_on_the_controlled_players_priority(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    control_turn(client, game, "alice", "bob")
+    alice = seat_uid(game, "alice")
+    script = tap_island_script(
+        "float",
+        when={"whose_turn": "theirs", "steps": ["precombat_main"], "stack": "empty"},
+    )
+    register(client, game, alice, script)
+    add_card(client, game, "Island", "alice", "battlefield")
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(seat, script_id="float", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert len(hook.posts("/actions/activate")) == 1

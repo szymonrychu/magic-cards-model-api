@@ -27,6 +27,7 @@
 // `handlers.onDecide` / `handlers.onPregame` - the same `decide` and
 // `pregame/mulligan` paths, with the same bodies, that the old controls used.
 
+import { decisionIsMine } from "../control.js";
 import { clear, h, patchChildren, setText } from "../dom.js";
 import { cardNode, updateCardNode } from "../cards.js";
 import {
@@ -170,7 +171,7 @@ export function windowSubject(app) {
     return { mode: "pregame", key, pending: null };
   }
   const pending = state.pending_decision;
-  if (!pending || pending.player !== you || !usesDecisionWindow(pending)) return null;
+  if (!pending || !decisionIsMine(state, pending) || !usesDecisionWindow(pending)) return null;
   return { mode: MODE_BY_KIND[pending.kind], key: decisionKey(pending), pending };
 }
 

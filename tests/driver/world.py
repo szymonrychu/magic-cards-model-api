@@ -185,7 +185,9 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
             return PlainTextResponse("<html>502 Bad Gateway</html>")
         return state["board"] | {
             "id": game_id,
-            "players": [
+            # A board may name its own player blocks (`decisions_made_by`).
+            "players": state["board"].get("players")
+            or [
                 {"username": "bob"},
                 {"username": "alice"},
             ],

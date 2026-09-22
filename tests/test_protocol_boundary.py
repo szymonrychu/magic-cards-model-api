@@ -310,8 +310,6 @@ def test_seatkit_20_names_the_int_agents_dsl_follow_up_gaps() -> None:
         assert term in paragraph, f"the seatkit-20 paragraph does not name {term}"
 
 
-
-
 def test_seatkit_21_names_the_why_and_advice_additions() -> None:
     """API-4: every kept `scripts.applicable` entry now carries `why`, and
     the new `scripts.advice` sibling block has no `call` because there is

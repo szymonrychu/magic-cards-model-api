@@ -27,6 +27,7 @@
 // every paint - so a card element `patchChildren` keeps alive and
 // `updateCardNode` rewrites in place previews whatever it shows now.
 
+import { decisionIsMine } from "./control.js";
 import { h, clear } from "./dom.js";
 import { withSymbols } from "./symbols.js";
 import { decisionCards } from "./decisions.js";
@@ -77,7 +78,7 @@ export function hoverableCards(state) {
     if (card && card.id) lookup[card.id] = card;
   };
   const pending = state.pending_decision;
-  if (pending && pending.player === state.you) decisionCards(pending).forEach(add);
+  if (decisionIsMine(state, pending)) decisionCards(pending).forEach(add);
   (state.battlefield || []).forEach(add);
   (state.stack || []).forEach(add);
   (state.exile || []).forEach(add);

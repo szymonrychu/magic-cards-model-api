@@ -30,7 +30,14 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from ..seatkit import MAX_WAIT_SECONDS, HypotheticalFactsUnavailable, Seat, scripts_enabled_here
+from ..seatkit import (
+    MAX_WAIT_SECONDS,
+    HypotheticalFactsUnavailable,
+    Seat,
+    decision_is_mine,
+    scripts_enabled_here,
+)
+from ..seatkit import holds_priority as seat_holds_priority
 from . import conditions, lint, runtime
 from .inputs import BUILTIN_INPUT, input_catalog
 from .schema import MAX_NOTE_LENGTH, WILDCARD
@@ -408,7 +415,7 @@ def _first_move_allowed(play: dict[str, Any], state: dict[str, Any], me: str) ->
     first = moves[0] if moves else None
     if not isinstance(first, dict) or first.get("kind") != "answer":
         return False
-    if pending.get("player") != me:
+    if not decision_is_mine(pending, state, me):
         return False
     answers = first.get("answers") or []
     return any(
@@ -1060,7 +1067,7 @@ def applicable_hint(
     docs = [doc for doc in corpus.get("scripts") or [] if isinstance(doc, dict)]
     if not docs:
         return None
-    holds_priority = state.get("priority_holder") == seat.player
+    holds_priority = seat_holds_priority(state, seat.player)
     armable_window = _armable_window(state, seat.player)
     if not holds_priority and not armable_window:
         return None

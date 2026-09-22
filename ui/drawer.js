@@ -17,6 +17,7 @@
 // `render/ribbon.js`'s `renderRailPass`), so holding priority never slides
 // the drawer over the board.
 
+import { decisionIsMine } from "./control.js";
 import { windowSubject, decisionKey } from "./render/decision_window.js";
 
 /**
@@ -41,7 +42,7 @@ export function promptKey(app) {
     return pregame.step !== "mulligan" && pregame.opening_hand_actor === you ? `pregame|${pregame.step}|${you}` : null;
   }
   const pending = state.pending_decision;
-  if (pending) return pending.player === you ? `decision|${decisionKey(pending)}` : null;
+  if (pending) return decisionIsMine(state, pending) ? `decision|${decisionKey(pending)}` : null;
   const action = app.action;
   return action ? `action|${action.kind}|${action.cardId}|${action.abilityIndex}` : null;
 }

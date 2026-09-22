@@ -177,3 +177,26 @@ def test_a_kubernetes_seat_that_is_not_running_yet_reports_no_activity():
     status = seats.status("u1")
     assert status["state"] == "pending"
     assert status.get("activity") is None
+
+
+def test_a_seat_another_player_is_deciding_for_is_not_stalled(driver_status, monkeypatch):
+    """CR 723.5: while the human makes the AI seat's decisions (Emrakul, the
+    Promised End), the seat has nothing to play - its driver sitting idle is
+    the right thing, and the panel must not paint it `stalled`."""
+    from magic_cards_model_api import k8s_seats
+    from magic_cards_model_api import store as store_module
+
+    driver_status.update(turnActive=False, agentBusy=False, gameId="g", reflected=False)
+    monkeypatch.setattr(k8s_seats, "stranded", lambda driver: True)
+
+    class ControlledGame:
+        class turn:
+            player_control = {"claude": "you"}
+
+    registry = started()
+    # On the class, never the shared instance: undoing an instance patch leaves
+    # a bound copy of the real method behind, shadowing every later class patch.
+    monkeypatch.setattr(type(store_module.store), "get", lambda self, game_id: ControlledGame())
+    status = registry.status("u")
+    assert status["state"] == "idle", status
+    assert "you is making claude's decisions this turn (CR 723.5)" in status["reason"]

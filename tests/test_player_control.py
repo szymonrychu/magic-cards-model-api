@@ -494,3 +494,16 @@ def test_the_controller_declares_the_controlled_players_blockers(client, game):
         client, game, "actions/declare-blockers", {"player": "alice", "blocks": []}, seat["alice"]
     )
     assert answer["allowed"] is True, answer
+
+
+def test_armed_scripts_judge_only_for_the_player_deciding():
+    """Arming (`_arming_moment`) fires on the controller's moment, never on
+    the controlled seat's - whose priority is not its own to act on."""
+    from magic_cards_model_api.seatkit import _arming_moment
+
+    board = controlled_board()
+    assert _arming_moment(board, "alice") is True
+    assert _arming_moment(board, "bob") is False
+    pending = {"player": "bob", "kind": "choose_cards", "prompt": "discard"}
+    assert _arming_moment(controlled_board(pending_decision=pending), "alice") is True
+    assert _arming_moment(controlled_board(pending_decision=pending), "bob") is False

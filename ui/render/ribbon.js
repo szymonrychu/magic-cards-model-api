@@ -47,6 +47,7 @@
 // (declare attackers), 509.1 (declare blockers), 118.9 (alternative costs),
 // 117.3c (holding priority), 700.2 (modal spells).
 
+import { actingAs, decisionIsMine } from "../control.js";
 import { clear, h, setText } from "../dom.js";
 import { flatten } from "../targeting.js";
 import { colorOptions } from "../mana.js";
@@ -213,9 +214,11 @@ function renderDeclareBlockers(app, handlers) {
 // on them, which is every combat now that nothing auto-defaults to "nobody"
 // any more.
 function renderCombatPrompt(state, app, handlers) {
-  const you = state.you;
+  // The player whose combat this seat is declaring - itself, or one it is
+  // deciding for (CR 723.5, `control.js`).
+  const you = actingAs(state);
   const pending = state.pending_decision;
-  const pendingKind = pending && pending.player === you ? pending.kind : null;
+  const pendingKind = decisionIsMine(state, pending) ? pending.kind : null;
   const attackersPending =
     (state.step === "declare_attackers" && state.active_player === you) ||
     pendingKind === "declare_attackers";
@@ -338,7 +341,7 @@ function renderPromptBox(el, app, handlers, root) {
   // paused attack/block decision has to keep falling through to
   // `renderCombatPrompt` below, not stop here.
   const isCombatDeclaration = pending && (pending.kind === "declare_attackers" || pending.kind === "declare_blockers");
-  if (pending && pending.player === state.you && !isCombatDeclaration) {
+  if (pending && decisionIsMine(state, pending) && !isCombatDeclaration) {
     // Anchored beside its rendered source card (`render/decision_popover.js`);
     // otherwise it renders here, exactly as it always has.
     el.appendChild(popoverSubject(root, app) ? renderPopoverPointer(pending) : renderDecision(pending, app, handlers));

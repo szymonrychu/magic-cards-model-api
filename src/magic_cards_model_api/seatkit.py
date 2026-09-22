@@ -2702,6 +2702,23 @@ def decides_for(state: dict[str, Any], me: str) -> frozenset[str]:
     return frozenset(names)
 
 
+def decided_by(state: dict[str, Any], me: str) -> str | None:
+    """Who is making `me`'s decisions this turn when it is somebody else
+    (CR 723.5), else None - read off `me`'s own `decisions_made_by`."""
+    for block in state.get("players") or ():
+        if isinstance(block, dict) and block.get("username") == me:
+            decider = block.get("decisions_made_by")
+            return decider if isinstance(decider, str) and decider != me else None
+    return None
+
+
+def controlled_notice(state: dict[str, Any], me: str) -> str | None:
+    """The engine's own CR 723.5 sentence while somebody else decides for
+    `me` (`player_control.refusal`), else None."""
+    decider = decided_by(state, me)
+    return None if decider is None else f"{decider} is making {me}'s decisions this turn (CR 723.5)"
+
+
 def holds_priority(state: dict[str, Any], me: str) -> bool:
     """Whether the priority held right now is `me`'s to act on (`decides_for`)."""
     holder = state.get("priority_holder")

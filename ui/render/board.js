@@ -29,6 +29,7 @@
 // `decisionTargets` instead - never both at once, since only one of the two
 // is ever live for this seat.
 
+import { decisionIsMine } from "../control.js";
 import { cardNode, updateCardNode, cardBackNode } from "../cards.js";
 import { boardLayout, seatRows, zoneRibbon } from "../board_layout.js";
 import { h, patchChildren, clear, setText } from "../dom.js";
@@ -53,7 +54,7 @@ const STACK_CAPTION_PX = 16;
 export function targetingOpts(app, id) {
   const action = app.action;
   const decision =
-    app.decisionDraft && app.state.pending_decision && app.state.pending_decision.player === app.state.you
+    app.decisionDraft && decisionIsMine(app.state, app.state.pending_decision)
       ? app.decisionTargets
       : null;
   const slots = decision ? decision.slots : action ? action.slots : [];

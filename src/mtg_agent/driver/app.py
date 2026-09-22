@@ -331,12 +331,21 @@ def board_mark(state: dict) -> tuple:
 
 def waiting_on(state: dict) -> str | None:
     """The player the game is waiting on: a pending decision's owner, else
-    the priority holder."""
+    the priority holder - or, while another player is making that player's
+    decisions (CR 723.5, `players[].decisions_made_by`), that other player,
+    since CR 723.3 leaves the controlled player holding priority by name."""
     pending = state.get("pending_decision")
     if isinstance(pending, dict) and pending.get("player"):
-        return str(pending["player"])
-    holder = state.get("priority_holder")
-    return str(holder) if holder else None
+        who: str | None = str(pending["player"])
+    else:
+        holder = state.get("priority_holder")
+        who = str(holder) if holder else None
+    for block in state.get("players") or ():
+        if isinstance(block, dict) and block.get("username") == who:
+            decider = block.get("decisions_made_by")
+            if isinstance(decider, str) and decider:
+                return decider
+    return who
 
 
 def build_app(

@@ -3,10 +3,16 @@
 // refuse anything CR 508.1a/CR 509.1a would - so these are just candidate
 // lists and draft-toggling for the screen; nothing here enforces a rule.
 
+// While this seat decides for another player (CR 723.5), "your creatures"
+// and "you are attacked" are that player's: `actingAs` (`control.js`).
+
+import { actingAs } from "./control.js";
+
 export function attackCandidates(state) {
+  const acting = actingAs(state);
   return (state.battlefield || []).filter(
     (c) =>
-      c.controller === state.you &&
+      c.controller === acting &&
       !c.tapped &&
       !c.summoning_sick &&
       /creature/i.test(c.type_line || "")
@@ -18,10 +24,11 @@ export function opponentOf(state) {
 }
 
 export function defenders(state) {
-  const opponent = opponentOf(state);
+  const acting = actingAs(state);
+  const opponent = (state.players || []).map((p) => p.username).find((u) => u !== acting) || null;
   const list = opponent ? [{ id: opponent, label: opponent }] : [];
   for (const c of state.battlefield || []) {
-    if (c.controller !== state.you && /planeswalker|battle/i.test(c.type_line || "")) {
+    if (c.controller !== acting && /planeswalker|battle/i.test(c.type_line || "")) {
       list.push({ id: c.id, label: c.name });
     }
   }
@@ -40,16 +47,18 @@ export function attackBody(draft) {
 }
 
 export function attacksAgainstYou(state) {
+  const acting = actingAs(state);
   return ((state.combat && state.combat.attacks) || []).filter(
     (a) =>
-      a.defender === state.you ||
-      (state.battlefield || []).some((c) => c.id === a.defender && c.controller === state.you)
+      a.defender === acting ||
+      (state.battlefield || []).some((c) => c.id === a.defender && c.controller === acting)
   );
 }
 
 export function blockCandidates(state) {
+  const acting = actingAs(state);
   return (state.battlefield || []).filter(
-    (c) => c.controller === state.you && !c.tapped && /creature/i.test(c.type_line || "")
+    (c) => c.controller === acting && !c.tapped && /creature/i.test(c.type_line || "")
   );
 }
 
