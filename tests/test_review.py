@@ -659,6 +659,76 @@ def test_an_ai_review_for_a_game_that_never_existed_is_a_404(client: TestClient)
 
 
 # ---------------------------------------------------------------------------
+# T16: the `ai_review` row is a deliberately dead-ended, human-facing
+# artifact - the reviewer's own write channels (T15) are the only closure
+# path, and no later prompt reads this row back. Decision (i), pinned.
+# ---------------------------------------------------------------------------
+
+
+def test_the_review_module_states_the_ai_review_row_is_never_read_back() -> None:
+    """The decision itself, pinned in words where a reader of `review.py`
+    would look for it: its own module docstring. T16 exists because the
+    `ai_review` row used to be written and never read by anything, with no
+    line anywhere saying that was the plan rather than a gap - this asserts
+    the statement is there, not merely that the behaviour happens to hold."""
+    from mtg_agent.driver import review
+
+    docstring = review.__doc__ or ""
+    assert "ai_review" in docstring
+    assert "human-facing" in docstring
+    assert "never read" in docstring or "not read" in docstring
+
+
+def test_an_ai_review_is_still_recorded_even_though_nothing_reads_it_back(
+    client: TestClient,
+) -> None:
+    """Clause (c): the row is filed exactly the same whether or not the
+    reviewer that produced it also wrote to DECKS this game - the audit trail
+    of what was found is never made conditional on there having been
+    anything to write back, or a game with no misplay would have no review
+    at all."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        filed = _ai_review(
+            client, info, text="no misplays this game; bob's every line matched the board."
+        )
+        assert filed.status_code == 200, filed.text
+
+        review_body = _review(client, game_id, key=info["admin_key"]).json()
+        reviews = [e for e in review_body["entries"] if e["action"] == audit.AI_REVIEW_ACTION]
+        assert len(reviews) == 1
+        assert reviews[0]["detail"]["text"].startswith("no misplays")
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_declare_ai_reviews_gates_are_unchanged_by_t16(client: TestClient) -> None:
+    """(b): T16 changes no gate on `declare_ai_review` - post-game only,
+    against `store.archived`, the uid must own the seat, and `req.player`
+    must be a registered AI seat. Restated here as one test that exercises
+    all three at once, rather than trusting the older, separate tests above
+    never to be edited into agreeing with each other by accident."""
+    live = _agent_game(client)
+    live_game_id = live["game_id"]
+    try:
+        still_live = _ai_review(client, live)
+        assert still_live.status_code == 409, still_live.text
+    finally:
+        client.delete(f"/api/games/{live_game_id}", params={"key": live["admin_key"]})
+
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        wrong_uid = _ai_review(client, info, player="bob", uid=info["seat_uids"]["alice"])
+        assert wrong_uid.status_code == 404, wrong_uid.text
+        not_an_ai_seat = _ai_review(client, info, player="alice", uid=info["seat_uids"]["alice"])
+        assert not_an_ai_seat.status_code == 404, not_an_ai_seat.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+# ---------------------------------------------------------------------------
 # T35: an AI review that could not be produced, recorded durably
 # ---------------------------------------------------------------------------
 

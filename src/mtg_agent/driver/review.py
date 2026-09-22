@@ -58,7 +58,28 @@ opponent - never has the race at all, since only the AI seat's driver ever
 reaches this code path. Coordinating a single generation across two
 independent per-seat containers, for a rare AIvAI-only extra API call that
 costs nothing to simply allow twice, was judged not worth the cross-pod
-locking it would take."""
+locking it would take.
+
+**T16: the `audit.AI_REVIEW_ACTION` row this module's own critique becomes
+is a human-facing artifact, and deliberately not read by any later
+prompt.** The row used to be written and then simply sit there - no test,
+no code, and no line anywhere said whether that was the closure this
+feature was built to leave open, so this states the decision rather than
+leaving it an accidental gap. The design this module implements gives the
+reviewer its own write channels (`prompt.WRITE_CHANNELS`, T15): a `guides
+propose` pull request or a `plays admit` push IS the closure, made once, by
+the same process that read the ledger and formed the opinion, while the
+game and its evidence were still in front of it. A later prompt (the next
+game's turn zero, a future handover) reading this row back and re-deriving
+action from a paraphrase of the same critique the reviewer already acted on
+directly would be a second, weaker mechanism doing the first one's job -
+weaker because a free-text summary is not the ledger, and a model reading
+it turns has to re-decide what the reviewer already decided with the real
+evidence in hand. Nothing in this codebase's own `MEMORY.md` or `ROADMAP.md`
+asks for that second mechanism, so it is not built. What the row is for
+instead is the human review page (`ui/review_model.js`'s `aiReviewsOf`,
+`GET /api/games/{id}/review`): the one place a person reads what the
+reviewer thought AND, per its own write-back clause, what it changed."""
 
 from __future__ import annotations
 
@@ -75,6 +96,8 @@ from .prompt import (
     WRITE_BARS,
     WRITE_BARS_HARD_RULES,
     WRITE_BARS_HEADING,
+    WRITE_CHANNELS,
+    WRITE_CHANNELS_HEADING,
     Assignment,
     notes_routing_after_game,
 )
@@ -406,7 +429,9 @@ def review_prompt(
 
 
 def _write_bars_block(assignment: Assignment, review_record: dict[str, Any]) -> str:
-    """`prompt.WRITE_BARS`/`WRITE_BARS_HARD_RULES`, plus this game's own
+    """`prompt.WRITE_BARS`/`WRITE_BARS_HARD_RULES` (API-13: when a write is
+    earned), `prompt.WRITE_CHANNELS` beside them (T15: where each kind of
+    write goes and how far it reaches once it lands), plus this game's own
     `playscripts.report.offer_table` (API-8) so the decline counts each bar
     is measured against are already IN the prompt rather than something the
     reviewer has to recompute by walking the ledger by hand.
@@ -422,6 +447,7 @@ def _write_bars_block(assignment: Assignment, review_record: dict[str, Any]) -> 
         [
             f"{WRITE_BARS_HEADING}\n\n{WRITE_BARS}",
             WRITE_BARS_HARD_RULES,
+            f"{WRITE_CHANNELS_HEADING}\n\n{WRITE_CHANNELS}",
             (
                 f"{assignment.player}'s own script-offer table this game, already "
                 "computed so the counts above are IN this prompt rather than something "
