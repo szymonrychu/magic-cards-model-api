@@ -1433,12 +1433,24 @@ def get_game(game_id: str, uid: str | None = None, include: str | None = None) -
     response_model=HypotheticalFactsResponse,
     response_model_exclude_unset=True,
 )
-def get_hypothetical_facts(game_id: str, uid: str | None = None) -> dict[str, Any]:
+def get_hypothetical_facts(
+    game_id: str, uid: str | None = None, horizon: str | None = None
+) -> dict[str, Any]:
     """O4's `enters_any` and O7's `unlocks`/`unlocks_by_search`/
     `unlocks_by_basic_search`: everything a play's selectors can ask about
     `uid`'s own hand and library lands and cards, computed once against the
     live game (`hypothetical_facts.build_hypothetical_facts`) rather than
     read off a polled view.
+
+    `horizon` is T4's on-demand second pass: unset (the default), the answer
+    is byte for byte what this route always returned. `horizon=next_turn`
+    additionally runs `build_hypothetical_facts(..., next_turn=True)`, adding
+    T5's `payable_any` (every hand card) and `unlocks_next` (the same lands
+    `unlocks` is already offered on) - the board with `uid`'s own untap step
+    already taken, and nothing else about the turn. Any other value is
+    refused with a 422 rather than silently ignored, the same posture
+    `get_game`'s own `include` takes. `conditions.needs_next_turn` tells a
+    caller when a play's selectors actually need this second pass at all.
 
     Only a real seat may ask - `uid` must resolve to one of this game's own
     players, never the admin key and never nobody, since a fact here is
@@ -1464,6 +1476,11 @@ def get_hypothetical_facts(game_id: str, uid: str | None = None) -> dict[str, An
     caller when a play's conditions need this at all, and the runtime caches
     the answer until the board changes rather than calling this once per
     judgement of every script it checks."""
+    if horizon is not None and horizon != "next_turn":
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown horizon value {horizon!r}; the only one is 'next_turn'",
+        )
     game = game_or_404(game_id)
     viewer = visibility.resolve_viewer(game_id, uid)
     if not isinstance(viewer, str):
@@ -1474,7 +1491,9 @@ def get_hypothetical_facts(game_id: str, uid: str | None = None) -> dict[str, An
         decision = paused[2].decision
         if decision.player == viewer and decision.kind is DecisionKind.CHOOSE_CARDS:
             candidate_ids = frozenset(str(c) for c in decision.cards)
-    return build_hypothetical_facts(game, viewer, candidate_ids=candidate_ids)
+    return build_hypothetical_facts(
+        game, viewer, candidate_ids=candidate_ids, next_turn=horizon == "next_turn"
+    )
 
 
 @app.get(

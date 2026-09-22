@@ -299,17 +299,31 @@ class _HypotheticalCache:
     is the actual invalidation guarantee this cache needs. `turn_number`/
     `step` are kept alongside the hash only because they make a hit or miss
     legible in a debugger; the hash alone would already be correct.
+
+    T4: the key also carries `horizon` (whether this call asked for the
+    `next_turn` pass) alongside `(turn_number, step, digest)`. A play naming
+    `payable_any`/`unlocks_next` and one naming only `unlocks`/`enters_any`
+    can both judge the very same board position, and the two answers are not
+    interchangeable - the horizon's answer carries extra keys the plain one
+    never does, and the plain one's `unlocks_next` is simply absent rather
+    than a stale "as of the untap step". Folding the flag into the same
+    single-slot fingerprint (rather than keeping one slot per horizon) still
+    gives each request its own answer: a fingerprint mismatch - whether the
+    board moved or only the horizon asked for changed - always refetches, so
+    a `next_turn` answer is never handed to a caller that asked for the
+    plain one, or vice versa, even though both share one cache slot and the
+    view hash's own invalidation guarantee is unchanged.
     """
 
     def __init__(self) -> None:
         self._fingerprint: tuple[Any, ...] | None = None
         self._facts: dict[str, Any] = {}
 
-    def get(self, seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
+    def get(self, seat: Seat, state: dict[str, Any], *, horizon: bool = False) -> dict[str, Any]:
         digest = hashlib.sha256(json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()
-        fingerprint = (state.get("turn_number"), state.get("step"), digest)
+        fingerprint = (state.get("turn_number"), state.get("step"), digest, horizon)
         if fingerprint != self._fingerprint:
-            fetched = seat.hypothetical_facts()
+            fetched = seat.hypothetical_facts(horizon="next_turn" if horizon else None)
             self._facts = dict(fetched.get("cards") or {}) if isinstance(fetched, dict) else {}
             self._fingerprint = fingerprint
         return self._facts
@@ -762,7 +776,11 @@ def _send_move(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | N
             )
         run.move_index, run.answer_index = index + 1, 0
         return None
-    hypo = ctx.hypothetical.get(ctx.seat, state) if conditions.needs_hypothetical(move) else None
+    hypo = (
+        ctx.hypothetical.get(ctx.seat, state, horizon=conditions.needs_next_turn(move))
+        if conditions.needs_hypothetical(move)
+        else None
+    )
     mana = conditions.untapped_mana(state, ctx.me)
     built = _move_request(move, state, ctx.me, reasoning, hypo=hypo, mana=mana)
     if isinstance(built, ScriptExit):
@@ -859,7 +877,7 @@ def _answer(
     ):
         view = seat.fetch_state(include_contents=True)
     hypo = (
-        ctx.hypothetical.get(ctx.seat, view)
+        ctx.hypothetical.get(ctx.seat, view, horizon=conditions.needs_next_turn(answers[found]))
         if conditions.needs_hypothetical(answers[found])
         else None
     )
@@ -1506,7 +1524,11 @@ def _on_side(controller: str | None, side: str, me: str) -> bool:
 
 def _evaluate(ctx: _Context, play: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     view = ctx.seat.fetch_state(include_contents=True) if conditions.needs_contents(play) else state
-    hypo = ctx.hypothetical.get(ctx.seat, view) if conditions.needs_hypothetical(play) else None
+    hypo = (
+        ctx.hypothetical.get(ctx.seat, view, horizon=conditions.needs_next_turn(play))
+        if conditions.needs_hypothetical(play)
+        else None
+    )
     return conditions.evaluate(play, view, ctx.me, ctx.inputs, ctx.catalog, hypothetical=hypo)
 
 
@@ -1610,7 +1632,9 @@ def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any
         if conditions.needs_contents(item):
             state = seat.fetch_state(include_contents=True)
         hypo = (
-            ctx.hypothetical.get(ctx.seat, state) if conditions.needs_hypothetical(item) else None
+            ctx.hypothetical.get(ctx.seat, state, horizon=conditions.needs_next_turn(item))
+            if conditions.needs_hypothetical(item)
+            else None
         )
         mana = conditions.untapped_mana(state, ctx.me)
         body = decide_body(item, pending, state, ctx.me, reasoning, hypo=hypo, mana=mana)
@@ -1621,7 +1645,9 @@ def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any
         if conditions.needs_contents(first):
             state = seat.fetch_state(include_contents=True)
         hypo = (
-            ctx.hypothetical.get(ctx.seat, state) if conditions.needs_hypothetical(first) else None
+            ctx.hypothetical.get(ctx.seat, state, horizon=conditions.needs_next_turn(first))
+            if conditions.needs_hypothetical(first)
+            else None
         )
         mana = conditions.untapped_mana(state, ctx.me)
         built = _move_request(first, state, ctx.me, reasoning, hypo=hypo, mana=mana)

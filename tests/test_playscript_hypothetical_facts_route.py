@@ -128,6 +128,95 @@ def test_no_pending_decision_exposes_no_library_land_facts_at_all(client, game):
     assert mountain_id not in body["cards"]
 
 
+# -- T4: `?horizon=next_turn` -----------------------------------------------
+
+
+def test_with_no_horizon_the_response_never_carries_the_next_turn_facts(client, game):
+    add_card(client, game, "Island", "alice", "battlefield", tapped=True)
+    add_card(client, game, "Mountain", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    uid = _uid(game, "alice")
+
+    body = client.get(
+        f"/api/games/{game}/playscripts/hypothetical-facts", params={"uid": uid}
+    ).json()
+
+    assert not any(
+        "payable_any" in entry or "unlocks_next" in entry for entry in body["cards"].values()
+    )
+
+
+def test_horizon_next_turn_adds_payable_any_and_unlocks_next(client, game):
+    """The end-to-end shape of T4: `?horizon=next_turn` reaches
+    `build_hypothetical_facts(..., next_turn=True)` - the same board
+    `test_payable_any_is_next_turn_when_only_the_untap_step_pays_it`
+    (`test_playscript_hypothetical_facts.py`) proves at the function level."""
+    add_card(client, game, "Island", "alice", "battlefield", tapped=True)
+    add_card(client, game, "Mountain", "alice", "hand")
+    add_card(client, game, "Preordain", "alice", "hand")
+    uid = _uid(game, "alice")
+    preordain_id = find(state(client, game)["hands"]["alice"], "Preordain")["id"]
+
+    response = client.get(
+        f"/api/games/{game}/playscripts/hypothetical-facts",
+        params={"uid": uid, "horizon": "next_turn"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["cards"][preordain_id]["payable_any"] == "next_turn"
+
+
+def test_an_unknown_horizon_value_is_refused_rather_than_ignored(client, game):
+    add_card(client, game, "Island", "alice", "hand")
+    uid = _uid(game, "alice")
+
+    response = client.get(
+        f"/api/games/{game}/playscripts/hypothetical-facts",
+        params={"uid": uid, "horizon": "next_month"},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_the_seat_only_uid_check_and_candidate_ids_still_apply_with_a_horizon(client, game):
+    """Requirement (d): the route's existing seat-only `uid` check and
+    `candidate_ids` behaviour are unchanged by the new query parameter."""
+    add_card(client, game, "Arid Mesa", "alice", "battlefield")
+    add_card(client, game, "Ragavan, Nimble Pilferer", "alice", "hand")
+    add_card(client, game, "Mountain", "alice", "library")
+    add_card(client, game, "Island", "alice", "library")
+    uid = _uid(game, "alice")
+    mesa = find(state(client, game)["battlefield"], "Arid Mesa")["id"]
+
+    resolved = _activate_and_resolve(client, game, uid, mesa)
+    pending = resolved["pending_decision"]
+    mountain_id = next(
+        card_id
+        for card_id, name in zip(pending["cards"], pending["card_labels"], strict=True)
+        if name == "Mountain"
+    )
+    unoffered = set(pending["cards"]) & {mountain_id}
+    library_ids = {str(c.id) for c in store.get(game).player("alice").library}
+    unoffered = library_ids - set(pending["cards"])
+    assert unoffered
+
+    body = client.get(
+        f"/api/games/{game}/playscripts/hypothetical-facts",
+        params={"uid": uid, "horizon": "next_turn"},
+    ).json()
+
+    assert mountain_id in body["cards"]
+    for card_id in unoffered:
+        assert card_id not in body["cards"]
+
+    refused = client.get(
+        f"/api/games/{game}/playscripts/hypothetical-facts",
+        params={"uid": "not-a-real-uid", "horizon": "next_turn"},
+    )
+    assert refused.status_code == 404
+
+
 def test_a_pending_decision_for_a_different_kind_exposes_no_library_land_facts(client, game):
     """A pending decision that is not `choose_cards` at all (here: `pay_life`,
     a shockland's own ETB prompt, raised while the search's own find is still

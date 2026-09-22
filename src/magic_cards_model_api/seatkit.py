@@ -2141,26 +2141,35 @@ class Seat:
         _trim_images(state)
         return state
 
-    def hypothetical_facts(self) -> dict[str, Any]:
+    def hypothetical_facts(self, *, horizon: str | None = None) -> dict[str, Any]:
         """O4's `enters_any`, O7's `unlocks`/`unlocks_by_search`/
-        `unlocks_by_basic_search`, and item 3's `affordable`: this seat's own
-        engine-computed facts, one HTTP call (`GET .../playscripts/
+        `unlocks_by_basic_search`, item 3's `affordable`, and - only with
+        `horizon="next_turn"` (T4) - T5's `payable_any`/`unlocks_next`: this
+        seat's own engine-computed facts, one HTTP call (`GET .../playscripts/
         hypothetical-facts`, `hypothetical_facts.build_hypothetical_facts`
         server-side). This process holds no `Game` of its own -
         `run_action`/`fetch_state` are its only way to reach one - so these
-        five selector fields cannot be answered any other way from here.
+        selector fields cannot be answered any other way from here.
         Call it only when `playscripts.conditions.needs_hypothetical` says a
-        play's selectors need it, and cache the answer (`playscripts.
+        play's selectors need it at all, `horizon="next_turn"` only when
+        `conditions.needs_next_turn` says the second, `assuming_untapped`
+        pass is actually needed too, and cache the answer (`playscripts.
         runtime`'s own cache) rather than calling this once per script
-        judged against an unchanged board.
+        judged against an unchanged board. `horizon` left out (the default)
+        sends no such query param at all - byte for byte the request this
+        route always received.
 
         Raises `HypotheticalFactsUnavailable` (D2) on a non-200 status or a
         body that is not JSON, rather than handing a caller a 404's error
         body or letting a bare `JSONDecodeError` escape - either one, read
-        silently, is indistinguishable from a real, empty answer."""
+        silently, is indistinguishable from a real, empty answer. Unchanged
+        by `horizon`: a broken fetch is a broken fetch either way."""
+        params: dict[str, str] = {"uid": self.uid}
+        if horizon is not None:
+            params["horizon"] = horizon
         response = self.http.get(
             f"/api/games/{self.game_id()}/playscripts/hypothetical-facts",
-            params={"uid": self.uid},
+            params=params,
         )
         self.last_state_status = response.status_code
         if response.status_code != 200:

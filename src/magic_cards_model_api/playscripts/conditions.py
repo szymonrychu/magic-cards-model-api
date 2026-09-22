@@ -85,17 +85,30 @@ def _missing_froms(node: Any):
 
 
 #: The selector fields `needs_hypothetical` walks for: O4's `enters_any`,
-#: O7's `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`, and item
+#: O7's `unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`, item
 #: 3's `affordable` (it now reads `castable_now` alongside its own
-#: mana_value comparison), all engine-computed rather than read off the view
-#: - see `selectors.py`'s module docstring.
+#: mana_value comparison), and T5's `payable_any`/`unlocks_next` (T4's own
+#: `_NEXT_TURN_FIELDS`, the `next_turn` horizon), all engine-computed rather
+#: than read off the view - see `selectors.py`'s module docstring.
 _HYPOTHETICAL_FIELDS = (
     "enters_any",
     "unlocks",
     "unlocks_by_search",
     "unlocks_by_basic_search",
     "affordable",
+    "payable_any",
+    "unlocks_next",
 )
+
+#: The subset of `_HYPOTHETICAL_FIELDS` that needs the second, `next_turn`
+#: `payability_matrix` pass (`hypothetical_facts.build_hypothetical_facts(...,
+#: next_turn=True)`) rather than the ordinary one: T5's `payable_any` (hand
+#: cards) and `unlocks_next` (the lands `unlocks` is already offered on).
+#: `needs_next_turn` walks for these two alone, so a play naming only
+#: `unlocks`/`enters_any`/`unlocks_by_search`/`unlocks_by_basic_search`/
+#: `affordable` still needs `needs_hypothetical`'s ordinary fetch but never
+#: this second, costlier pass.
+_NEXT_TURN_FIELDS = ("payable_any", "unlocks_next")
 
 
 def _selector_fields(node: Any):
@@ -154,6 +167,29 @@ def needs_hypothetical(script: BaseModel | dict[str, Any]) -> bool:
     must ask the server, once, and only when this says so."""
     doc = _as_dict(script)
     return any(True for _ in _selector_fields(doc))
+
+
+def needs_next_turn(script: BaseModel | dict[str, Any]) -> bool:
+    """Must the caller ask for the `next_turn` horizon (`GET .../playscripts/
+    hypothetical-facts?horizon=next_turn`, `hypothetical_facts.
+    build_hypothetical_facts(..., next_turn=True)`) to evaluate this play's
+    conditions (or build this move, or this answer)? True exactly when a
+    selector anywhere names `payable_any` or `unlocks_next` (T5) - the two
+    facts only the second, `assuming_untapped` `payability_matrix` pass
+    answers - and false otherwise, walked by the same `_selector_fields`
+    traversal `needs_hypothetical` uses (the same `moves`/`answers`
+    exclusion: a play's own conditions are judged without its moves, a move
+    without its answers, each answer for itself alone).
+
+    A play naming only `unlocks`, `enters_any`, `unlocks_by_search`,
+    `unlocks_by_basic_search` or `affordable` still needs `needs_hypothetical`'s
+    ordinary fetch (the real-board `payability_matrix` pass answers all
+    five) but never this second, costlier pass - so this reads a narrower
+    vocabulary than `needs_hypothetical`, never the reverse: everything
+    `needs_next_turn` says True for, `needs_hypothetical` already does too
+    (`_NEXT_TURN_FIELDS` is a subset of `_HYPOTHETICAL_FIELDS`)."""
+    doc = _as_dict(script)
+    return any(key in _NEXT_TURN_FIELDS for key, _ in _selector_fields(doc))
 
 
 def _names(view: dict[str, Any], viewer: str, side: str) -> list[str]:

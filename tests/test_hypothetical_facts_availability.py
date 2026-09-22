@@ -97,6 +97,43 @@ def test_a_500_with_a_non_json_body_raises_the_typed_error(
     assert excinfo.value.status == 500
 
 
+def test_a_broken_fetch_still_raises_the_typed_error_when_a_horizon_is_asked_for(
+    client: TestClient, game: str, monkeypatch
+) -> None:
+    """T4 (f): `horizon` changes nothing about the failure handling - a
+    non-200 raises `HypotheticalFactsUnavailable` exactly as today, horizon
+    asked for or not."""
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    seats = seatkit.Seats(api="http://testserver", game_id=game)
+    alice = seat_uid(game, "alice")
+    seat, _ = hooked_seat(seats, alice, answer=_broken_hypothetical_facts(500))
+
+    with pytest.raises(HypotheticalFactsUnavailable) as excinfo:
+        seat.hypothetical_facts(horizon="next_turn")
+    assert excinfo.value.status == 500
+
+
+def test_hypothetical_facts_sends_the_horizon_as_a_query_param(
+    client: TestClient, game: str, monkeypatch
+) -> None:
+    """T4 (f): `Seat.hypothetical_facts()` sends `horizon` on the wire only
+    when a caller asks for it - the plain call carries no such param at
+    all, byte for byte what it always sent."""
+    alice = seat_uid(game, "alice")
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+
+    seat.hypothetical_facts()
+    seat.hypothetical_facts(horizon="next_turn")
+
+    gets = [
+        params
+        for method, path, params in hook.sent
+        if method == "GET" and path.endswith("/playscripts/hypothetical-facts")
+    ]
+    assert gets == [{"uid": alice}, {"uid": alice, "horizon": "next_turn"}]
+
+
 # -- run_script: turned into a ScriptExit, the run still ends ----------------
 
 

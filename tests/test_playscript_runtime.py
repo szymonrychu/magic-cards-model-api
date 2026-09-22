@@ -79,8 +79,12 @@ class Hooked:
         return response
 
     def get(self, path: str, **kwargs: Any) -> Any:
-        self.sent.append(("GET", path, None))
-        replaced = self._answer("GET", path, None) if self._answer else None
+        # T4: the query params a GET carries (`horizon` included) are worth
+        # recording alongside the path - previously always `None` here, since
+        # nothing before T4 ever needed to see what a GET actually asked for.
+        params = kwargs.get("params")
+        self.sent.append(("GET", path, params))
+        replaced = self._answer("GET", path, params) if self._answer else None
         if replaced is not None:
             return replaced
         return self._inner.get(path, **kwargs)
@@ -3284,17 +3288,59 @@ def test_listing_fetches_hypothetical_facts_once_for_every_script_at_one_positio
     assert len(_hypothetical_gets(hook)) == 1
 
 
+def _horizons_asked(hook: Hooked) -> list[Any]:
+    return [
+        params.get("horizon") if params else None
+        for method, path, params in hook.sent
+        if method == "GET" and path.endswith("/playscripts/hypothetical-facts")
+    ]
+
+
+def test_the_runtime_never_asks_for_the_next_turn_horizon_unless_a_play_names_it(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T4 (h): a corpus that does need the ordinary hypothetical facts
+    (`unlocks`/`enters_any`) but never names `payable_any`/`unlocks_next`
+    must never send `horizon=next_turn` - `needs_next_turn` is the runtime's
+    only trigger for that second, costlier pass."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    add_card(client, board, "Preordain", "alice", "hand")
+    scripts = [_unlocks_land_script(f"drop-unlocks-{i}", priority=50 - i) for i in range(3)]
+    register(client, board, alice, *scripts)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id=scripts[0]["id"], reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit is not None
+    horizons = _horizons_asked(hook)
+    assert horizons, "the corpus does read unlocks/enters_any, so at least one fetch must happen"
+    assert all(horizon is None for horizon in horizons), horizons
+
+
 class _StubSeat:
     """A bare stand-in for `hypothetical_facts()` call counting - the cache
     under test (`runtime._HypotheticalCache`) reads nothing else off a seat."""
 
-    def __init__(self, cards: dict[str, Any]) -> None:
+    def __init__(
+        self, cards: dict[str, Any], *, horizon_cards: dict[str, Any] | None = None
+    ) -> None:
         self.calls = 0
+        self.horizons_asked: list[str | None] = []
         self._cards = cards
+        # T4: a second answer, distinct from the plain one, so a test can
+        # tell the cache actually asked for `horizon="next_turn"` rather than
+        # replaying the plain fetch's own answer.
+        self._horizon_cards = cards if horizon_cards is None else horizon_cards
 
-    def hypothetical_facts(self) -> dict[str, Any]:
+    def hypothetical_facts(self, *, horizon: str | None = None) -> dict[str, Any]:
         self.calls += 1
-        return {"cards": self._cards, "notices": []}
+        self.horizons_asked.append(horizon)
+        cards = self._horizon_cards if horizon == "next_turn" else self._cards
+        return {"cards": cards, "notices": []}
 
 
 def test_hypothetical_cache_reuses_the_answer_at_an_unchanged_position() -> None:
@@ -3317,6 +3363,36 @@ def test_hypothetical_cache_refetches_once_the_position_changes() -> None:
     cache.get(seat, state1)
     cache.get(seat, state2)
     assert seat.calls == 2, "a changed board must be refetched, never served stale"
+
+
+def test_hypothetical_cache_keys_on_the_horizon_flag_too() -> None:
+    """T4 (g): the plain answer and the `next_turn` horizon's answer are
+    never the same cache slot, even at one unchanged board position - two
+    distinct fetches, two distinct answers."""
+    seat = _StubSeat(
+        {"x": {"payable_any": "no"}}, horizon_cards={"x": {"payable_any": "next_turn"}}
+    )
+    cache = runtime._HypotheticalCache()
+    state1 = {"turn_number": 1, "step": "precombat_main", "hands": {"alice": []}}
+
+    plain = cache.get(seat, state1)
+    horizon = cache.get(seat, dict(state1), horizon=True)
+
+    assert seat.calls == 2, "the next_turn horizon must never reuse the plain answer, or vice versa"
+    assert seat.horizons_asked == [None, "next_turn"]
+    assert plain == {"x": {"payable_any": "no"}}
+    assert horizon == {"x": {"payable_any": "next_turn"}}
+    assert plain != horizon
+
+
+def test_hypothetical_cache_still_reuses_a_repeated_horizon_answer() -> None:
+    seat = _StubSeat({"x": {}}, horizon_cards={"x": {"payable_any": "next_turn"}})
+    cache = runtime._HypotheticalCache()
+    state1 = {"turn_number": 1, "step": "precombat_main", "hands": {"alice": []}}
+
+    cache.get(seat, state1, horizon=True)
+    cache.get(seat, dict(state1), horizon=True)
+    assert seat.calls == 1, "the same horizon asked twice at the same position must not refetch"
 
 
 # -- the once-per-turn ledger key's own identity ------------------------------

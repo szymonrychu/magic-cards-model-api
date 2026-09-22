@@ -33,6 +33,7 @@ from magic_cards_model_api.playscripts.conditions import (
     evaluate,
     needs_contents,
     needs_hypothetical,
+    needs_next_turn,
 )
 from magic_cards_model_api.playscripts.inputs import input_catalog
 from magic_cards_model_api.playscripts.selectors import HypotheticalRequired, matches
@@ -925,6 +926,58 @@ def test_needs_hypothetical_reads_only_what_the_caller_is_about_to_evaluate():
 def test_needs_contents_is_also_true_for_unlocks_by_search():
     assert needs_contents(play(true=[count("hand", "me", ">=", 1, {"unlocks_by_search": True})]))
     assert not needs_contents(play(true=[count("hand", "me", ">=", 1, {"unlocks": True})]))
+
+
+# -- T4: needs_next_turn, the on-demand `horizon=next_turn` gate ------------------
+
+
+def test_needs_hypothetical_is_also_true_for_payable_any_and_unlocks_next():
+    assert needs_hypothetical(play(true=[count("hand", "me", ">=", 1, {"payable_any": ["now"]})]))
+    assert needs_hypothetical(play(true=[count("hand", "me", ">=", 1, {"unlocks_next": True})]))
+
+
+def test_needs_next_turn_is_false_for_a_play_that_names_only_unlocks():
+    """A play naming `unlocks` alone needs the ordinary hypothetical facts
+    (`needs_hypothetical`) but never the second, `next_turn` pass - `unlocks`
+    is answered by the real-board matrix alone."""
+    assert not needs_next_turn(play(true=[count("hand", "me", ">=", 1, {"unlocks": True})]))
+    assert not needs_next_turn(FETCH_SHOCK)
+    assert not needs_next_turn(
+        play(true=[count("hand", "me", ">=", 1, {"unlocks_by_search": True})])
+    )
+    assert not needs_next_turn(
+        play(true=[count("hand", "me", ">=", 1, {"enters_any": ["untapped"]})])
+    )
+
+
+def test_needs_next_turn_is_true_for_a_play_naming_payable_any():
+    assert needs_next_turn(play(true=[count("hand", "me", ">=", 1, {"payable_any": ["now"]})]))
+
+
+def test_needs_next_turn_is_true_for_a_play_naming_unlocks_next():
+    assert needs_next_turn(play(true=[count("hand", "me", ">=", 1, {"unlocks_next": True})]))
+
+
+def test_needs_next_turn_reads_a_stack_top_selector_too():
+    top = {
+        "kind": "stack_top",
+        "controller": "opponent",
+        "select": {"payable_any": ["now"]},
+    }
+    assert needs_next_turn(play(true=[top]))
+
+
+def test_needs_next_turn_reads_a_payable_any_named_inside_a_pick_prefer():
+    """`payable_any` inside an answer's `pick.prefer` is named on the answer
+    itself, but the same `moves`/`answers` exclusion `needs_hypothetical`
+    already follows (`test_needs_hypothetical_reads_only_what_the_caller_is_
+    about_to_evaluate`) means the play and the move it sits inside of never
+    see it: only the answer itself, read on its own, does."""
+    move = copy.deepcopy(FETCH_SHOCK["moves"][0])
+    move["answers"][0]["pick"]["prefer"] = [{"payable_any": ["now"]}]
+    assert needs_next_turn(move["answers"][0])
+    assert not needs_next_turn(move)
+    assert not needs_next_turn(play(moves=[move]))
 
 
 def test_needs_contents_is_also_true_for_unlocks_by_basic_search():
