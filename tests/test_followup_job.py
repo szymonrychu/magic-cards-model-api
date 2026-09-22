@@ -457,3 +457,25 @@ def test_the_handovers_timer_waits_out_an_open_followup_window(
         for e in audit.entries(game_id)
         if str(e["detail"].get("reason", "")).startswith("post-game work overran")
     ]
+
+
+def test_an_unfinished_outcome_after_end_game_schedules_nothing(
+    client: TestClient, cluster: SimpleNamespace
+) -> None:
+    """End game releases the seat, and its pod's preStop handover can still
+    file `unfinished` afterwards (the route reads `store.archived`). The
+    game is gone, so no follow-up Job is created: the row says `skipped`."""
+    booted = boot(client)
+    game_id = booted["game_id"]
+    ended = client.delete(
+        f"/api/lobby/games/{game_id}", params={"uid": booted["seat_uids"]["alice"]}
+    )
+    assert ended.status_code == 200, ended.text
+
+    answer = outcome(client, booted)
+
+    assert answer["followup"] == "skipped"
+    assert followup_jobs(cluster.batch) == {}
+    [row] = followup_rows(game_id)
+    assert (row["player"], row["state"]) == ("bob", "skipped")
+    assert "ended" in row["reason"]

@@ -401,7 +401,9 @@ def schedule_followup(
     the ledger now, so a later archive costs the follow-up nothing - and is
     called only when a Job will actually be asked for.
 
-    Not scheduled once `release_overdue` has already let this game's
+    Not scheduled once the game has been ended or forgotten (it left the
+    live set, so reconcile would only delete the Job again - End game is
+    the hard stop), nor once `release_overdue` has already let this game's
     runners go: the post-game window is spent (`skipped`). A scheduled
     follow-up re-arms the release timer for `FOLLOWUP_RELEASE_SECONDS`.
     """
@@ -413,8 +415,14 @@ def schedule_followup(
             and detail.get("role") == role
         ):
             return "deduped"
-    if _already_released_overdue(game_id):
-        status: dict[str, Any] = {
+    status: dict[str, Any]
+    if _gone(game_id):
+        status = {
+            "state": "skipped",
+            "reason": "the game was already ended; End game is the hard stop",
+        }
+    elif _already_released_overdue(game_id):
+        status = {
             "state": "skipped",
             "reason": "the post-game backstop already released this game's runners",
         }
@@ -444,6 +452,15 @@ def schedule_followup(
     if state == "scheduled":
         _arm_release_timer(game_id, FOLLOWUP_RELEASE_SECONDS)
     return status["state"] if status["state"] == "exists" else state
+
+
+def _gone(game_id: str) -> bool:
+    """Whether `game_id` has left the live set (ended or forgotten). A row
+    this build cannot decode is still there, so it is not gone."""
+    try:
+        return store.get(game_id) is None
+    except GameUnloadable:
+        return False
 
 
 def _already_released_overdue(game_id: str) -> bool:
