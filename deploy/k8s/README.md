@@ -321,8 +321,9 @@ shadow each other.
 Every seat Job's `guides` initContainer makes a **writable** clone of the
 private deck-guides repo, `szymonrychu/mtg-decks` (`deploy/guides-clone.sh`:
 `main` fetched with `--filter=blob:none`, a local `main` tracking
-`origin/main`), and the agent commits guide changes in it, pushes a branch and
-opens a pull request. So the token needs write access, to that one repo only.
+`origin/main`), and the agent commits guide and play-script changes in it and
+pushes them straight to `main`. So the token needs write access, to that one
+repo only.
 
 Create a **fine-grained PAT** (GitHub - Settings - Developer settings -
 Fine-grained tokens) with:
@@ -331,7 +332,6 @@ Fine-grained tokens) with:
 |---|---|
 | Repository access | Only select repositories: `szymonrychu/mtg-decks` |
 | Contents | Read and write |
-| Pull requests | Read and write |
 | Metadata | Read-only (GitHub adds it automatically) |
 | Workflows | **No access** - never grant it: it would let a pushed branch rewrite the repo's CI |
 | everything else | No access |

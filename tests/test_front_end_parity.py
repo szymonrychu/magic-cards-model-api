@@ -807,7 +807,7 @@ CLI_ONLY_COMMANDS = {
     ),
     "guides": (
         "`guides propose` commits a matchup play_plan / notes edit with the "
-        "regenerated guides and opens a pull request from the pod's guides "
+        "regenerated guides and pushes it to mtg-decks main from the pod's guides "
         "checkout; no seat, no game, and nothing an MCP server holds"
     ),
 }
@@ -822,7 +822,7 @@ CLI_ONLY_SUBCOMMANDS = {
         "admit": "commits, gates and pushes play-script changes to mtg-decks main",
     },
     "guides": {
-        "propose": "opens a guides pull request from the pod's guides clone",
+        "propose": "pushes a deck-guide edit to mtg-decks main from the pod's guides clone",
     },
 }
 

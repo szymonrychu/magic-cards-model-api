@@ -1,11 +1,12 @@
 """Shared scaffolding for `plays admit` and `guides propose`: tmp bare git
-repos shaped like mtg-decks, isolated git config with the A13 credential
-helper, and a fake GitHub REST server.
+repos shaped like mtg-decks and isolated git config with the A13 credential
+helper.
 
 The api repo is tested by ordinary practice, so the stand-ins here are
-legitimate: a `scripts/check_plays.py` and a `scripts/render_guides.py` small
-enough to read, a bare repo standing in for github.com, and an HTTP server
-standing in for the pulls endpoint.
+legitimate: a `scripts/check_plays.py`, a `scripts/render_guides.py` and a
+`scripts/verify_sidecars.py` small enough to read, and a bare repo standing
+in for github.com. Both commands push straight to main; neither talks to the
+GitHub REST API, so there is no fake of it.
 """
 
 from __future__ import annotations
@@ -14,9 +15,7 @@ import importlib
 import json
 import shutil
 import subprocess
-import threading
 from collections.abc import Callable
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -24,7 +23,6 @@ from typing import Any
 from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG, make_root
 
 TOKEN = "ghp_TESTTOKEN0123456789abcdefSECRET"
-REPO = "szymonrychu/mtg-decks"
 GAME = "g-2026-0913-a"
 RUN_NEW = f"{SLUG}-modern-2026-09-10"
 RUN_OLD = f"{SLUG}-modern-2026-08-01"
@@ -78,6 +76,47 @@ for deck in args.deck:
 print("OK: guides")
 """
 
+#: `scripts/verify_sidecars.py --domain 3 <wiki>`: fails when the env asks it
+#: to, and logs every call so a test can see which wiki it was handed.
+VERIFY_SIDECARS = """\
+import argparse
+import json
+import os
+import sys
+
+parser = argparse.ArgumentParser()
+parser.add_argument("wiki")
+parser.add_argument("--domain", type=int)
+args = parser.parse_args()
+log = os.environ.get("MTG_TEST_SIDECARS_LOG")
+if log:
+    with open(log, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps([args.domain, args.wiki]) + "\\n")
+if os.environ.get("MTG_TEST_SIDECARS_FAIL"):
+    print("GAP: matchups[2] is not in the boarding field", file=sys.stderr)
+    sys.exit(1)
+print("OK: sidecars")
+"""
+
+#: The second guided deck `seed_guides(extra_deck=True)` adds.
+OTHER = "dimir-frog"
+OTHER_RUN = f"{OTHER}-modern-2026-09-11"
+OTHER_PLAN = f"decks/{OTHER}/analysis/{OTHER_RUN}/domain3-matchup-threat/boarding-plan.json"
+
+#: The seeded NOTES.md: several sections, so an upstream edit to one part and
+#: a seat's edit to another merge cleanly.
+NOTES_TEXT = """\
+# notes
+
+## Mulligans
+- keep a two-lander with Bolt
+
+## Sideboarding
+- bring in Path against big threats
+
+## Matchups
+"""
+
 
 def boarding_plan(tactic: str = "race them") -> dict[str, Any]:
     return {
@@ -128,12 +167,15 @@ def seed_guides(
     check_plays: bool = True,
     render_guides: bool = True,
     card_data: bool = True,
+    verify_sidecars: bool = True,
+    extra_deck: bool = False,
 ) -> Path:
     """A bare repo whose main is a small mtg-decks: plays, a newest and an
     older analysis run with a boarding plan each, the deck's authored files,
     the gate and the renderer. Returns the bare repo path. `card_data=False`
     seeds a clone that never had `meta/card-data.json`, for the fail-closed
-    gate test."""
+    gate test. `extra_deck=True` adds a second guided deck, `OTHER`
+    (archetype "dimir frog"); `verify_sidecars=False` leaves that gate out."""
     work = make_root(tmp_path / "seed")
     if not card_data:
         shutil.rmtree(work / "meta")
@@ -146,17 +188,31 @@ def seed_guides(
     (work / OLD_PLAN).write_text(dump(boarding_plan("old tactic")), encoding="utf-8")
     (work / PLAN).write_text(dump(boarding_plan()), encoding="utf-8")
     (deck / "decklist.txt").write_text("4 Lightning Bolt\n", encoding="utf-8")
-    (deck / "NOTES.md").write_text("# notes\n", encoding="utf-8")
-    for name in ("shell.json", "archetype.json", "sim-profiles.json", "evidence-spec.json"):
+    (deck / "NOTES.md").write_text(NOTES_TEXT, encoding="utf-8")
+    for name in ("shell.json", "sim-profiles.json", "evidence-spec.json"):
         (deck / name).write_text("{}\n", encoding="utf-8")
+    (deck / "archetype.json").write_text(dump({"archetype": "boros aggro"}), encoding="utf-8")
+    decks = [f"decks/{SLUG}"]
+    if extra_deck:
+        other = work / "decks" / OTHER
+        (work / OTHER_PLAN).parent.mkdir(parents=True)
+        plan = boarding_plan("grow the frog") | {"deck": OTHER, "archetype": "dimir frog"}
+        plan["matchups"][0]["name"] = "boros aggro"
+        (work / OTHER_PLAN).write_text(dump(plan), encoding="utf-8")
+        (other / "decklist.txt").write_text("4 Psychic Frog\n", encoding="utf-8")
+        (other / "NOTES.md").write_text("# frog notes\n", encoding="utf-8")
+        (other / "archetype.json").write_text(dump({"archetype": "dimir frog"}), "utf-8")
+        decks.append(f"decks/{OTHER}")
     (deck / "evidence").mkdir()
     (deck / "evidence" / "run.json").write_text("{}\n", encoding="utf-8")
     (work / "scripts").mkdir()
     if check_plays:
         (work / "scripts" / "check_plays.py").write_text(CHECK_PLAYS, encoding="utf-8")
     (work / "scripts" / "render_guides.py").write_text(RENDER_GUIDES, encoding="utf-8")
+    if verify_sidecars:
+        (work / "scripts" / "verify_sidecars.py").write_text(VERIFY_SIDECARS, encoding="utf-8")
     subprocess.run(
-        ["python3", "scripts/render_guides.py", "write", "--deck", f"decks/{SLUG}"],
+        ["python3", "scripts/render_guides.py", "write", *(f"--deck={d}" for d in decks)],
         cwd=work,
         check=True,
         capture_output=True,
@@ -187,79 +243,21 @@ def branches(bare: Path) -> set[str]:
     return set(out.split()) if out else set()
 
 
-def compete(bare: Path, where: Path, tag: str) -> None:
-    """Land an unrelated commit on origin main from another clone."""
+def compete(bare: Path, where: Path, tag: str, notes: str | None = None) -> None:
+    """Land a commit on origin main from another clone: a line appended to
+    the deck's NOTES.md, or, with `notes`, that whole text in its place."""
     other = where if where.exists() else clone(bare, where)
     git(other, "pull", "-q", "--rebase", "origin", "main")
-    notes = other / "decks" / SLUG / "NOTES.md"
-    notes.write_text(notes.read_text(encoding="utf-8") + f"- {tag}\n", encoding="utf-8")
+    path = other / "decks" / SLUG / "NOTES.md"
+    text = notes if notes is not None else path.read_text(encoding="utf-8") + f"- {tag}\n"
+    path.write_text(text, encoding="utf-8")
     git(other, "commit", "-q", "-am", f"competitor {tag}")
     git(other, "push", "-q", "origin", "HEAD:main")
 
 
-class FakeGitHub:
-    """The REST pulls endpoint: records every request, answers 201 with a PR url."""
-
-    def __init__(self) -> None:
-        self.requests: list[dict[str, Any]] = []
-        fake = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def _record(self) -> dict[str, Any]:
-                length = int(self.headers.get("Content-Length") or 0)
-                raw = self.rfile.read(length) if length else b""
-                entry = {
-                    "method": self.command,
-                    "path": self.path,
-                    "headers": {k.lower(): v for k, v in self.headers.items()},
-                    "body": json.loads(raw) if raw else None,
-                }
-                fake.requests.append(entry)
-                return entry
-
-            def _answer(self, status: int, doc: Any) -> None:
-                data = json.dumps(doc).encode()
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-
-            def do_POST(self) -> None:  # noqa: N802
-                self._record()
-                if self.path == f"/repos/{REPO}/pulls":
-                    number = sum(1 for r in fake.requests if r["method"] == "POST")
-                    self._answer(
-                        201,
-                        {"number": number, "html_url": f"https://github.com/{REPO}/pull/{number}"},
-                    )
-                else:
-                    self._answer(404, {"message": "Not Found"})
-
-            def do_GET(self) -> None:  # noqa: N802
-                self._record()
-                self._answer(200, [])
-
-            def log_message(self, *args: Any) -> None:
-                return None
-
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
-
-    def pulls(self) -> list[dict[str, Any]]:
-        return [r for r in self.requests if r["method"] == "POST"]
-
-    def close(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
-
-
-def isolate_git(tmp_path: Path, monkeypatch, github: FakeGitHub) -> Path:
+def isolate_git(tmp_path: Path, monkeypatch) -> Path:
     """HOME with the A13 ~/.gitconfig credential helper reading a tmp token
-    file, no system config, and the GitHub endpoint pointed at the fake.
-    Returns the token file."""
+    file, and no system config. Returns the token file."""
     from mtg_agent.wrapper.bootstrap import write_gitconfig
 
     home = tmp_path / "home"
@@ -268,14 +266,12 @@ def isolate_git(tmp_path: Path, monkeypatch, github: FakeGitHub) -> Path:
     token_file.parent.mkdir()
     token_file.write_text(TOKEN, encoding="utf-8")
     write_gitconfig(SimpleNamespace(home_dir=home), token_file=token_file)
-    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_GLOBAL", "GH_PAT_FILE"):
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_GLOBAL"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("MTG_ROLE", "seat")
-    monkeypatch.setenv("MTG_GITHUB_API", github.url)
-    monkeypatch.setenv("MTG_GITHUB_REPO", REPO)
     return token_file
 
 

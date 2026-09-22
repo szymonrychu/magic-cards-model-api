@@ -275,7 +275,7 @@ def test_the_review_runs_in_the_agents_own_workspace_and_home(
 ) -> None:
     """D-2, the deliberate part: a throwaway HOME cannot reach
     `~/.gitconfig`'s credential helper, so no `mcp-seat` run inside it could
-    ever push a branch or open a pull request. The review runs in the
+    ever push to mtg-decks main. The review runs in the
     workspace, as the agent, or it cannot do the job at all."""
     seen = _captured(monkeypatch, tmp_path)
     settings = seen["settings"]
@@ -343,9 +343,8 @@ def test_the_reviewer_commits_under_its_own_role_not_the_seats(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """T14 gave the reviewer `gitwork.REVIEWER_ROLE` precisely because it is
-    a THIRD proposer for the same game and deck: sharing `MTG_ROLE` with the
-    seat means sharing `seat/<game>-<deck>-<role>-guides`, and two proposers
-    on one branch lose one of the two proposals."""
+    a THIRD writer for the same game and deck: sharing `MTG_ROLE` with the
+    seat would author the reviewer's commits on main as the seat's."""
     from magic_cards_model_api.playscripts import gitwork
 
     monkeypatch.setenv("MTG_ROLE", "seat")
@@ -370,18 +369,25 @@ def test_the_variables_mcp_seat_reads_are_named_through(
     for name in oneshot.PASSED_THROUGH:
         assert env[name] == f"value-of-{name}"
     assert "MTG_GAME_ID" in oneshot.PASSED_THROUGH
-    assert "MTG_GITHUB_REPO" in oneshot.PASSED_THROUGH
     # `seat_cli` reads WORKSPACE for its drafts directory; it is the
     # wrapper's own setting, not something to pick off the environment.
     assert env["WORKSPACE"] == str(settings.workspace)
 
 
+def test_nothing_for_the_retired_github_rest_path_is_passed_through() -> None:
+    """Guide edits and play admits push straight to main through git's own
+    credential helper; nothing reads a GitHub API host, a repository name or
+    the token file's path off the environment any more."""
+    for retired in ("MTG_GITHUB_REPO", "MTG_GITHUB_API", "GH_PAT_FILE"):
+        assert retired not in oneshot.PASSED_THROUGH
+
+
 def test_an_unset_passthrough_variable_is_left_out_rather_than_blanked(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`gitwork.github_repo` treats an empty `MTG_GITHUB_REPO` and an absent
-    one alike, but `os.environ` does not: an empty string is a value, and a
-    future reader that only checks presence would see one."""
+    """An empty variable and an absent one are not alike in `os.environ`: an
+    empty string is a value, and a reader that only checks presence would see
+    one."""
     for name in oneshot.PASSED_THROUGH:
         monkeypatch.delenv(name, raising=False)
     env = _captured(monkeypatch, tmp_path)["env"]
@@ -424,7 +430,7 @@ def test_a_tool_using_review_is_given_more_time_than_a_tool_less_one() -> None:
     """Re-justified for the tool surface this task gives the review: the
     process can now wait up to `gitwork.CHECKOUT_LOCK_TIMEOUT` (300s) for
     the guides checkout before it does any work at all, then run several
-    `mcp-seat` commands that fetch, rebase, push and open a pull request.
+    `mcp-seat` commands that fetch, merge or rebase, gate and push.
     The old 600s covered a model call and nothing else."""
     from magic_cards_model_api.playscripts.gitwork import CHECKOUT_LOCK_TIMEOUT
 

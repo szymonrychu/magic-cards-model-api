@@ -14,11 +14,12 @@
   is the intended form.
 - `admit` - `mcp-seat plays priority` and `mcp-seat plays admit`: a guides
   clone's play-script change, gated and ratcheted, onto mtg-decks main.
-- `guides_propose` - `mcp-seat guides propose`: a matchup plan edit and its
-  regenerated guides as a pull request.
+- `guides_propose` - `mcp-seat guides propose`: NOTES.md and matchup plan
+  edits (stub decks and appended seat rows included) and their regenerated
+  guides, pushed to mtg-decks main.
 - `content_gate` - the heuristic `guides propose` judges its added TEXT with:
   play content goes in the guide, a system problem goes to `report_problem`.
   Not applied to `plays admit`, for the reason its docstring gives.
-- `gitwork` - the git and GitHub REST plumbing both share.
+- `gitwork` - the git plumbing both share.
 - `report` - the compact per-script run table a handover prompt carries.
 """

@@ -67,7 +67,7 @@ no code, and no line anywhere said whether that was the closure this
 feature was built to leave open, so this states the decision rather than
 leaving it an accidental gap. The design this module implements gives the
 reviewer its own write channels (`prompt.WRITE_CHANNELS`, T15): a `guides
-propose` pull request or a `plays admit` push IS the closure, made once, by
+propose` push or a `plays admit` push IS the closure, made once, by
 the same process that read the ledger and formed the opinion, while the
 game and its evidence were still in front of it. A later prompt (the next
 game's turn zero, a future handover) reading this row back and re-deriving

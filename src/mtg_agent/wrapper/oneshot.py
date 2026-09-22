@@ -24,8 +24,8 @@ it is now asked to do: `~/.gitconfig` - the credential helper for
 github.com and `safe.directory = /guides`, written by
 `bootstrap.write_gitconfig` - lives in `settings.home_dir`, the seat's MCP
 servers live in `settings.workspace / ".mcp.json"` (written by
-`bootstrap.merge_mcp`), and no `mcp-seat` run outside them could push a
-branch or open a pull request. So the review now runs with `cwd =
+`bootstrap.merge_mcp`), and no `mcp-seat` run outside them could push to
+mtg-decks main. So the review now runs with `cwd =
 settings.workspace` and `HOME = settings.home_dir`, as the agent.
 
 What that costs, and what pays for it:
@@ -149,8 +149,8 @@ REVIEW_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep", "Bash")
 #:   (at most 5 per call and per game), recorded for `admit`.
 #: - `mcp-seat plays admit` - takes those play-script changes to mtg-decks
 #:   main, gate included.
-#: - `mcp-seat guides propose` - the matchup-plan and NOTES.md edit, as a
-#:   pull request the owner merges by hand.
+#: - `mcp-seat guides propose` - the matchup-plan and NOTES.md edit, pushed
+#:   straight to mtg-decks main after its gates.
 REVIEW_BASH_RULES = (
     "Bash(mcp-seat plays check:*)",
     "Bash(mcp-seat plays priority:*)",
@@ -214,12 +214,6 @@ REVIEW_STOP_HOOK_SINK = "http://127.0.0.1:1/internal/turn-complete"
 #:
 #: - `MTG_GAME_ID` - `plays priority`'s `--game-id` default, which is how
 #:   the per-game priority bound is attributed.
-#: - `MTG_GITHUB_REPO` / `MTG_GITHUB_API` - `gitwork.github_repo` and
-#:   `open_pull_request`: which repository the pull request is opened
-#:   against, and which API host answers.
-#: - `GH_PAT_FILE` - where the mounted token file is, when it is not at
-#:   `bootstrap.GH_TOKEN_FILE`. `gitwork.github_token` reads the file, never
-#:   an env var, so the token itself never enters this environment.
 #: - `GIT_COMMITTER_NAME` / `GIT_COMMITTER_EMAIL` - who the commits in the
 #:   checkout are committed by (the AUTHOR is `gitwork.identity`, which
 #:   derives from `MTG_ROLE` below).
@@ -228,9 +222,6 @@ REVIEW_STOP_HOOK_SINK = "http://127.0.0.1:1/internal/turn-complete"
 #: the container's own value is the seat's.
 PASSED_THROUGH = (
     "MTG_GAME_ID",
-    "MTG_GITHUB_REPO",
-    "MTG_GITHUB_API",
-    "GH_PAT_FILE",
     "GIT_COMMITTER_NAME",
     "GIT_COMMITTER_EMAIL",
 )
@@ -276,10 +267,9 @@ def _env_for(settings: Settings) -> dict[str, str]:
     - `WORKSPACE` - `seat_cli` reads it for the drafts directory. Taken from
       `Settings`, not from the environment: it is the wrapper's own setting.
     - `MTG_ROLE` - forced to `gitwork.REVIEWER_ROLE`. The container's own
-      value is the SEAT's, and the review is a third proposer for the same
-      game and the same deck: sharing the role means sharing
-      `seat/<game>-<deck>-<role>-guides`, and two proposers on one branch
-      lose one of the two proposals.
+      value is the SEAT's, and the review is a third writer for the same
+      game and the same deck: sharing the role would author its commits on
+      main as the seat's.
     - `CCW_INTERNAL_URL` - `REVIEW_STOP_HOOK_SINK`, see the module
       docstring.
     - `PASSED_THROUGH` - the rest of what `mcp-seat` reads, one named key at

@@ -90,8 +90,8 @@ class Settings:
     #: bounded at `CHECKOUT_LOCK_TIMEOUT` = 300s, because the handover turn
     #: is working the same clone concurrently (defect D-1). A budget that
     #: could be half-spent before any work starts has to leave room for the
-    #: work: 1200 is that wait plus a model call plus a fetch, a rebase, up
-    #: to three push attempts and a pull request.
+    #: work: 1200 is that wait plus a model call plus a fetch, a merge or
+    #: rebase, the gates and up to three push attempts.
     #:
     #: Every timeout stacked on top of this one must outlast it -
     #: `driver.app.REVIEW_HTTP_TIMEOUT` (the driver's own client timeout for

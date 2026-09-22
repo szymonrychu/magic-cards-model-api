@@ -20,8 +20,8 @@ pass it, plus the precedence cases (the file-path allowlist answers first,
 `plays admit` is never asked) and the fail-closed shapes reachable only from
 a plan that was ALREADY the wrong shape when this proposal started.
 
-Runs against the same tmp bare repo and fake GitHub REST server as
-`test_guides_propose` (`guides_git_testkit`).
+Runs against the same tmp bare repo as `test_guides_propose`
+(`guides_git_testkit`).
 """
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ from guides_git_testkit import (
     GAMEPLAN,
     OLD_PLAN,
     PLAN,
-    FakeGitHub,
     branches,
     cli,
     clone,
@@ -54,7 +53,6 @@ from magic_cards_model_api.playscripts import content_gate
 from magic_cards_model_api.playscripts.gitwork import SUCCESS
 
 NOTES = f"decks/{SLUG}/NOTES.md"
-BRANCH = f"seat/{GAME}-{SLUG}-seat-guides"
 
 #: PR 132's actual content, and the worked example T37 put in both write-back
 #: prompts: every word of it is true and it is still a report, because the
@@ -77,11 +75,8 @@ PLAY_PROSE = (
 
 
 @pytest.fixture
-def github(tmp_path, monkeypatch):
-    fake = FakeGitHub()
-    isolate_git(tmp_path, monkeypatch, fake)
-    yield fake
-    fake.close()
+def isolated(tmp_path, monkeypatch):
+    return isolate_git(tmp_path, monkeypatch)
 
 
 @pytest.fixture
@@ -92,7 +87,7 @@ def render_log(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def bare(tmp_path, github):
+def bare(tmp_path, isolated):
     return seed_guides(tmp_path)
 
 
@@ -103,6 +98,11 @@ def root(tmp_path, bare):
 
 def propose(capsys, root: Path):
     return cli(capsys, "guides", "propose", "--deck", SLUG, "--game-id", GAME, "--root", str(root))
+
+
+def landed(bare: Path) -> bool:
+    """The proposal is main's newest commit."""
+    return git(bare, "log", "-1", "--format=%s", "main") == f"Guides: {SLUG} after game {GAME}"
 
 
 def admit(capsys, root: Path):
@@ -138,7 +138,7 @@ def test_the_content_refusal_is_a_distinct_outcome_and_never_a_success():
 
 
 def test_the_canonical_system_problem_is_refused_and_names_the_report_tool(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     append_notes(root, CANONICAL_VIOLATION)
 
@@ -148,14 +148,13 @@ def test_the_canonical_system_problem_is_refused_and_names_the_report_tool(
     assert "report_problem" in result["message"]
     # It says WHY this text was judged a system problem, quoting what it read.
     assert "hold_priority" in result["message"]
-    # Nothing was rendered, branched, pushed or opened.
+    # Nothing was rendered, committed or pushed.
     assert rendered_log(render_log) == []
     assert branches(bare) == {"main"}
-    assert github.pulls() == []
 
 
 def test_the_content_refusal_is_told_apart_from_the_file_path_refusal(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     (root / f"decks/{SLUG}/decklist.txt").write_text("4 Ragavan\n", encoding="utf-8")
     rc, result, _, _ = propose(capsys, root)
@@ -167,7 +166,7 @@ def test_the_content_refusal_is_told_apart_from_the_file_path_refusal(
 
 
 def test_the_refusal_runs_before_any_commit_or_push_and_leaves_the_text_alone(
-    capsys, monkeypatch, root, bare, github, render_log
+    capsys, monkeypatch, root, bare, isolated, render_log
 ):
     calls = interpose(monkeypatch)
     before = main_sha(bare)
@@ -181,9 +180,9 @@ def test_the_refusal_runs_before_any_commit_or_push_and_leaves_the_text_alone(
     # truncation, no filtering of the legitimate half.
     assert (root / NOTES).read_text(encoding="utf-8") == written
     assert PLAY_PROSE in written and CANONICAL_VIOLATION in written
-    # Nothing was committed, branched or pushed.
+    # Nothing was committed or pushed.
     argv = [" ".join(c["argv"]) for c in calls]
-    assert not [a for a in argv if " commit" in a or " push" in a or " switch -q -c" in a]
+    assert not [a for a in argv if " commit" in a or " push" in a]
     assert main_sha(bare) == before
     assert branches(bare) == {"main"}
     assert git(root, "symbolic-ref", "--short", "HEAD") == "main"
@@ -193,18 +192,17 @@ def test_the_refusal_runs_before_any_commit_or_push_and_leaves_the_text_alone(
 
 
 def test_a_proposal_the_gate_cannot_read_is_refused_rather_than_admitted(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     (root / NOTES).write_bytes(b"# notes\n- \xff\xfe not text\n")
     rc, result, _, _ = propose(capsys, root)
     assert (rc, result["result"]) == (1, content_gate.CONTENT_REFUSED), result
     assert "could not decide" in result["message"].lower()
     assert branches(bare) == {"main"}
-    assert github.pulls() == []
 
 
 def test_a_plan_note_shape_the_gate_cannot_read_is_refused_rather_than_admitted(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     edit_plan(root, lambda doc: doc["matchups"][0].__setitem__("notes", "not a list"))
     rc, result, _, _ = propose(capsys, root)
@@ -216,15 +214,15 @@ def test_a_plan_note_shape_the_gate_cannot_read_is_refused_rather_than_admitted(
 # -- (b) the happy path still works: the gate does not break what it guards ----------
 
 
-def test_ordinary_play_prose_still_becomes_a_pull_request(capsys, root, bare, github, render_log):
+def test_ordinary_play_prose_still_lands_on_main(capsys, root, bare, isolated, render_log):
     append_notes(root, PLAY_PROSE)
     rc, result, _, _ = propose(capsys, root)
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
-    assert BRANCH in branches(bare)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert landed(bare)
 
 
-def test_a_plan_play_plan_and_notes_edit_still_becomes_a_pull_request(
-    capsys, root, bare, github, render_log
+def test_a_plan_play_plan_and_notes_edit_still_lands_on_main(
+    capsys, root, bare, isolated, render_log
 ):
     def change(doc):
         doc["matchups"][0]["play_plan"]["our_tactic"] = "go under the frog"
@@ -232,13 +230,13 @@ def test_a_plan_play_plan_and_notes_edit_still_becomes_a_pull_request(
 
     edit_plan(root, change)
     rc, result, _, _ = propose(capsys, root)
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
+    assert (rc, result["result"]) == (0, "admitted"), result
 
 
 # -- the plan's own editable fields are judged too ----------
 
 
-def test_a_system_problem_in_a_matchup_note_is_refused(capsys, root, bare, github, render_log):
+def test_a_system_problem_in_a_matchup_note_is_refused(capsys, root, bare, isolated, render_log):
     edit_plan(
         root,
         lambda doc: doc["matchups"][0]["notes"].append(
@@ -250,7 +248,7 @@ def test_a_system_problem_in_a_matchup_note_is_refused(capsys, root, bare, githu
     assert "report_problem" in result["message"]
 
 
-def test_a_system_problem_in_a_play_plan_value_is_refused(capsys, root, bare, github, render_log):
+def test_a_system_problem_in_a_play_plan_value_is_refused(capsys, root, bare, isolated, render_log):
     edit_plan(
         root,
         lambda doc: doc["matchups"][0]["play_plan"].__setitem__(
@@ -265,7 +263,7 @@ def test_a_system_problem_in_a_play_plan_value_is_refused(capsys, root, bare, gi
 
 
 def test_pre_existing_system_text_never_refuses_a_clean_edit(
-    capsys, tmp_path, bare, github, render_log
+    capsys, tmp_path, bare, isolated, render_log
 ):
     """A deck whose NOTES.md ALREADY trips the gate must stay editable -
     otherwise T40's clean-up could never be proposed."""
@@ -279,11 +277,11 @@ def test_pre_existing_system_text_never_refuses_a_clean_edit(
     rc, result, _, _ = cli(
         capsys, "guides", "propose", "--deck", SLUG, "--game-id", GAME, "--root", str(root)
     )
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
+    assert (rc, result["result"]) == (0, "admitted"), result
 
 
 def test_pre_existing_system_text_in_a_matchup_note_never_refuses_a_clean_edit(
-    capsys, tmp_path, bare, github, render_log
+    capsys, tmp_path, bare, isolated, render_log
 ):
     dirty = clone(bare, tmp_path / "dirty-seed")
     doc = json.loads((dirty / PLAN).read_text(encoding="utf-8"))
@@ -297,13 +295,13 @@ def test_pre_existing_system_text_in_a_matchup_note_never_refuses_a_clean_edit(
     rc, result, _, _ = cli(
         capsys, "guides", "propose", "--deck", SLUG, "--game-id", GAME, "--root", str(root)
     )
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
+    assert (rc, result["result"]) == (0, "admitted"), result
 
 
 # -- (g) the gate is NOT applied to `plays admit` ----------
 
 
-def test_plays_admit_is_not_content_gated(capsys, root, bare, github):
+def test_plays_admit_is_not_content_gated(capsys, root, bare, isolated):
     """Every play `intent` in the DECKS corpus carries a "Limits:" clause about
     the DSL's own vocabulary gaps, in exactly the register this gate refuses."""
     play = copy.deepcopy(FETCH_SURVEIL) | {
@@ -337,6 +335,22 @@ def test_added_plan_passages_reports_only_the_new_strings():
     before = {"matchups": [{"play_plan": {"our_tactic": "race"}, "notes": ["old"]}]}
     after = {"matchups": [{"play_plan": {"our_tactic": "grind"}, "notes": ["old", "new"]}]}
     assert sorted(content_gate.added_plan_passages(before, after)) == ["grind", "new"]
+
+
+def test_added_plan_passages_judges_an_appended_rows_name_too():
+    row = {"name": "the api returned a 422", "origin": "seat", "play_plan": {"keep": "k"}}
+    before = {"matchups": [{"name": "dimir frog", "play_plan": {}, "notes": []}]}
+    after = {"matchups": [*before["matchups"], {**row, "notes": ["n"]}]}
+    assert sorted(content_gate.added_plan_passages(before, after)) == sorted(
+        ["the api returned a 422", "k", "n"]
+    )
+    assert content_gate.system_problem_reasons(["the api returned a 422"])
+
+
+def test_an_existing_rows_name_is_never_new_text():
+    before = {"matchups": [{"name": "dimir frog", "notes": []}]}
+    after = {"matchups": [{"name": "dimir frog", "notes": ["hold Bolt"]}]}
+    assert content_gate.added_plan_passages(before, after) == ["hold Bolt"]
 
 
 def test_added_plan_passages_refuses_to_guess_at_a_shape_it_cannot_read():
@@ -515,21 +529,20 @@ def test_a_real_accepted_notes_passage_is_not_judged_a_system_problem(name):
 
 
 @pytest.mark.parametrize("name", REAL_PLAY_PROSE)
-def test_a_real_accepted_notes_passage_still_becomes_a_pull_request(
-    capsys, root, bare, github, render_log, name
+def test_a_real_accepted_notes_passage_still_lands_on_main(
+    capsys, root, bare, isolated, render_log, name
 ):
     append_notes(root, "\n" + notes_fixture(name))
     rc, result, _, _ = propose(capsys, root)
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
-    assert BRANCH in branches(bare)
-    assert len(github.pulls()) == 1
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert landed(bare)
 
 
 # -- (c) only ADDED text is judged, over real committed system text ----------
 
 
 def test_a_real_accepted_system_section_already_committed_still_takes_a_clean_addition(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     """`dimir-frog/NOTES.md` really does carry a section about the evidence
     harness. A gate that re-judged committed text would freeze that file."""
@@ -538,12 +551,12 @@ def test_a_real_accepted_system_section_already_committed_still_takes_a_clean_ad
 
     rc, result, _, _ = propose(capsys, root)
 
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
-    assert BRANCH in branches(bare)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert landed(bare)
 
 
 def test_a_clean_passage_inserted_between_pre_existing_system_lines_is_still_only_added_text(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     """Appending is the easy shape: one trailing opcode with nothing after it
     to get wrong. Inserting into the MIDDLE puts pre-existing system lines on
@@ -570,11 +583,11 @@ def test_a_clean_passage_inserted_between_pre_existing_system_lines_is_still_onl
 
     rc, result, _, _ = propose(capsys, root)
 
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
+    assert (rc, result["result"]) == (0, "admitted"), result
 
 
 def test_a_replace_span_between_system_lines_adds_only_the_rewritten_lines(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     """The other opcode `added_lines` walks, actually produced: one accepted
     passage overwritten by another between pre-existing system lines.
@@ -600,12 +613,12 @@ def test_a_replace_span_between_system_lines_adds_only_the_rewritten_lines(
 
     rc, result, _, _ = propose(capsys, root)
 
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
-    assert BRANCH in branches(bare)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert landed(bare)
 
 
 def test_system_prose_pasted_over_a_passage_is_read_through_the_replace_span(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     """The same opcode in the other direction, which is what stops the test
     above from passing for the wrong reason: a gate that walked only `insert`
@@ -628,11 +641,10 @@ def test_system_prose_pasted_over_a_passage_is_read_through_the_replace_span(
     assert "kill_turn_mean" in result["message"]
     assert rendered_log(render_log) == []
     assert branches(bare) == {"main"}
-    assert github.pulls() == []
 
 
 def test_deleting_the_pre_existing_system_text_is_proposable(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     """The clean-up has to be possible, or the gate has made the violation
     permanent - which is the one outcome worse than having let it in."""
@@ -641,11 +653,11 @@ def test_deleting_the_pre_existing_system_text_is_proposable(
 
     rc, result, _, _ = propose(capsys, root)
 
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
+    assert (rc, result["result"]) == (0, "admitted"), result
 
 
 def test_moving_a_pre_existing_matchup_note_to_another_matchup_is_not_new_text(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     """A note already in the plan is not new however it moved - the same rule
     as NOTES.md, on the one field the plan lets a seat rewrite."""
@@ -660,14 +672,14 @@ def test_moving_a_pre_existing_matchup_note_to_another_matchup_is_not_new_text(
 
     edit_plan(root, move)
     rc, result, _, _ = propose(capsys, root)
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
+    assert (rc, result["result"]) == (0, "admitted"), result
 
 
 # -- (d) fail closed, on shapes T38's two cases do not reach ----------
 
 
 def test_a_committed_matchup_shape_the_gate_cannot_read_freezes_the_deck_closed(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     """The corrupt matchup is UNCHANGED, so the plan-key check has nothing to
     say about it and the gate is the first thing that meets it. It refuses:
@@ -683,7 +695,6 @@ def test_a_committed_matchup_shape_the_gate_cannot_read_freezes_the_deck_closed(
     assert "could not decide" in result["message"].lower()
     assert "matchups[2]" in result["message"]
     assert branches(bare) == {"main"}
-    assert github.pulls() == []
 
 
 def test_a_plan_whose_matchups_are_not_a_list_is_undecidable_at_the_gate():
@@ -699,7 +710,7 @@ def test_a_plan_whose_matchups_are_not_a_list_is_undecidable_at_the_gate():
 
 
 def test_a_plan_whose_matchups_are_not_a_list_is_refused_by_the_key_check_first(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, isolated, render_log
 ):
     """Which refusal a seat sees matters, because the remedy differs: this one
     is a plan shape the allowlist owns, so it stays the file-path `refused`."""
@@ -719,7 +730,7 @@ def test_a_plan_whose_matchups_are_not_a_list_is_refused_by_the_key_check_first(
 
 
 def test_the_undecided_refusal_leaves_the_text_alone_and_commits_nothing(
-    capsys, monkeypatch, root, bare, github, render_log
+    capsys, monkeypatch, root, bare, isolated, render_log
 ):
     """Fail-closed still has to obey the same promise the content refusal
     makes: the seat keeps its bytes and nothing reaches origin."""
@@ -733,7 +744,7 @@ def test_the_undecided_refusal_leaves_the_text_alone_and_commits_nothing(
     assert (rc, result["result"]) == (1, content_gate.CONTENT_REFUSED), result
     assert (root / NOTES).read_bytes() == raw
     argv = [" ".join(c["argv"]) for c in calls]
-    assert not [a for a in argv if " commit" in a or " push" in a or " switch -q -c" in a]
+    assert not [a for a in argv if " commit" in a or " push" in a]
     assert main_sha(bare) == before
     assert rendered_log(render_log) == []
 
@@ -792,7 +803,7 @@ def test_the_real_corpus_carries_play_intents_this_gate_would_refuse():
 
 @pytest.mark.parametrize("relative", [LIMITS_PLAY, SYSTEM_PLAY], ids=["limits-clause", "names-api"])
 def test_a_real_corpus_play_intent_is_admitted_however_it_reads(
-    capsys, root, bare, github, relative
+    capsys, root, bare, isolated, relative
 ):
     """A real intent out of the corpus, verbatim, on a play `plays admit` has
     to take.
@@ -837,7 +848,7 @@ FORBIDDEN_PATHS = [
 
 @pytest.mark.parametrize("path", FORBIDDEN_PATHS)
 def test_a_forbidden_file_carrying_system_text_is_still_the_file_path_refusal(
-    capsys, root, bare, github, render_log, path
+    capsys, root, bare, isolated, render_log, path
 ):
     """The two refusals have different remedies - revert the file, versus
     reword the sentence - so a file that is outside the allowlist has to be
@@ -852,7 +863,6 @@ def test_a_forbidden_file_carrying_system_text_is_still_the_file_path_refusal(
     assert "report_problem" not in result["message"]
     assert rendered_log(render_log) == []
     assert branches(bare) == {"main"}
-    assert github.pulls() == []
 
 
 FORBIDDEN_PLAN_KEYS = [
@@ -867,7 +877,7 @@ FORBIDDEN_PLAN_KEYS = [
     ("where", "change"), FORBIDDEN_PLAN_KEYS, ids=[k[0] for k in FORBIDDEN_PLAN_KEYS]
 )
 def test_a_forbidden_plan_key_carrying_system_text_is_still_the_file_path_refusal(
-    capsys, root, bare, github, render_log, where, change
+    capsys, root, bare, isolated, render_log, where, change
 ):
     edit_plan(root, change)
     rc, result, _, _ = propose(capsys, root)
@@ -878,7 +888,7 @@ def test_a_forbidden_plan_key_carrying_system_text_is_still_the_file_path_refusa
 
 
 def test_the_file_path_refusal_is_reached_before_the_content_gate_runs(
-    capsys, monkeypatch, root, bare, github, render_log
+    capsys, monkeypatch, root, bare, isolated, render_log
 ):
     """ "Before anything runs" said as a test rather than as an ordering in the
     source: the gate is made to explode, and a forbidden file still refuses."""

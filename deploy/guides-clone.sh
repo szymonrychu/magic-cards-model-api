@@ -1,8 +1,8 @@
 #!/bin/sh
 # Check the deck-guides corpus (github.com/szymonrychu/mtg-decks) out into
 # the seat Job's guides volume as a WRITABLE clone: a local `main` tracking
-# `origin/main`, with full history, so the agent can commit a guide change,
-# rebase it on `origin/main` and push a branch for a pull request.
+# `origin/main`, with full history, so the agent can commit a guide or play
+# change on top of `origin/main` and push it straight to main.
 #
 # Baked into the agent image by Dockerfile.agent and run by the `guides`
 # initContainer in deploy/seat-job.yaml. `tests/test_k8s_seats.py` runs this

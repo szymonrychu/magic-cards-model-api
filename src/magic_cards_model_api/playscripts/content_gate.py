@@ -167,10 +167,12 @@ def added_lines(before: str | None, after: str) -> list[str]:
 def added_plan_passages(before: Any, after: Any) -> list[str]:
     """The strings in the boarding plan's editable fields that are new.
 
-    Only `matchups[].play_plan` and `matchups[].notes` can change at all -
+    Only `matchups[].play_plan` and `matchups[].notes` can change on an
+    existing row, and an appended seat row adds its `name` too -
     `guides_propose.forbidden_plan_changes` has already refused anything else
     - so those are the only fields read here. A string that was already
-    somewhere in those fields is not new, however it moved.
+    somewhere in those fields is not new, however it moved, so an existing
+    row's name is never judged again.
 
     Raises `Undecidable` when a field is not the shape it is supposed to be,
     rather than guessing at what the seat meant.
@@ -189,6 +191,8 @@ def _plan_strings(plan: Any) -> list[str]:
     for index, matchup in enumerate(matchups):
         if not isinstance(matchup, dict):
             raise Undecidable(f"matchups[{index}] is not a JSON object")
+        if isinstance(matchup.get("name"), str):
+            found.append(matchup["name"])
         notes = matchup.get("notes")
         if notes is not None and (
             not isinstance(notes, list) or any(not isinstance(n, str) for n in notes)

@@ -191,12 +191,14 @@ def test_env_example_lists_every_variable_compose_requires(compose):
 def test_env_example_documents_the_pat_scope() -> None:
     """O1's fine-grained token instructions, so the owner action in the plan
     can be followed straight from this file: repo szymonrychu/mtg-decks only,
-    Contents and Pull requests read and write, Workflows left at no access."""
+    Contents read and write, Workflows left at no access. Guide edits and
+    play admits push straight to main, so the token needs no access to pull
+    requests at all."""
     example = (ROOT / ".env.example").read_text()
     assert "MTG_DECKS_GH_PAT=" in example
     assert "szymonrychu/mtg-decks" in example
     assert "Contents" in example
-    assert "Pull requests" in example
+    assert "Pull requests" not in example
     assert "Workflows" in example
     assert "read and write" in example.lower()
 

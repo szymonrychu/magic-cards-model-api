@@ -1274,14 +1274,11 @@ HANDOVER_PINS = (
     "`mcp-seat plays priority <play-id> --delta N --deck dimir-frog --game-id g-1`",
     "Land scripts with `mcp-seat plays admit --deck dimir-frog --game-id g-1`",
     "propose guides with `mcp-seat guides propose --deck dimir-frog --game-id g-1`",
-    "mtg-decks has no CI budget, so its ci and automerge workflows never run",
-    "the owner reviews and merges it by hand",
-    "Do not wait for that pull request",
-    "it is not live until the owner merges it",
+    "Both push straight to mtg-decks main",
+    "nobody reviews or merges them afterwards",
+    "resolve them keeping both sides' intent and run the same command again",
     "Edit only `matchups[].play_plan` and `matchups[].notes`",
     "`decks/dimir-frog/NOTES.md`",
-    # Game 8a55cab7: both seats proposed on one branch, so one PR mixed decks.
-    "on its own `seat/<game-id>-<deck>-<role>-guides` branch",
     # Game 8a55cab7: the turn ended with a script subagent still running.
     "Wait for every subagent and background task you started to report back before you "
     "end the turn",
@@ -1376,17 +1373,50 @@ def test_briefs_name_the_priority_limit_refusal_and_the_game_id(brief):
     assert "mcp-seat plays priority <play-id> --delta N --deck SLUG --game-id GAME" in section
 
 
+#: Guide edits push straight to main: no branch, no pull request, nobody
+#: merging by hand. None of that may survive in what a seat is told.
+RETIRED_GUIDES_WORDING = (
+    "-guides`",
+    "pull request",
+    "pr_opened",
+    "pr_url",
+    "awaiting_owner_review",
+    "owner reviews",
+    "owner merges",
+    "merges it by hand",
+    "merges the PR by hand",
+)
+
+
 @pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
-def test_briefs_name_the_per_seat_guides_branch_and_the_subagent_wait(brief):
+def test_briefs_push_guides_to_main_and_name_the_subagent_wait(brief):
     section = _flat(
         _section((BRIEFS / brief).read_text(), "## Play scripts and guides, for handover")
     )
-    assert "`seat/GAME-SLUG-ROLE-guides`" in section
+    for retired in RETIRED_GUIDES_WORDING:
+        assert retired not in section, retired
+    assert "mcp-seat guides propose --deck SLUG [--deck SLUG ...] --game-id GAME" in section
+    assert "straight to mtg-decks main" in section
+    assert '`origin: "seat"`' in section
+    assert "stub" in section
+    assert "conflict marker" in section
+    assert "`retryable: true`" in section
     assert "Wait for every subagent and background task you started to report back" in section
 
 
-def test_the_play_script_spec_names_the_per_seat_guides_branch():
-    assert "`seat/<game-id>-<deck>-<role>-guides`" in _flat(SPEC.read_text())
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+def test_the_handover_turn_carries_no_pull_request_wording(guide, role):
+    text = _flat(_handover(guide, role))
+    for retired in RETIRED_GUIDES_WORDING:
+        assert retired not in text, retired
+
+
+def test_the_play_script_spec_pushes_guide_edits_to_main():
+    spec = _flat(SPEC.read_text())
+    assert "`seat/<game-id>-<deck>-<role>-guides`" not in spec
+    assert "proposed by PR, merged by the owner" not in spec
+    assert "awaiting_owner_review" not in spec
+    assert "## Guide edits: pushed to main by the seat" in SPEC.read_text()
 
 
 @pytest.mark.parametrize("rule", PRIORITY_RULES)

@@ -227,15 +227,14 @@ writable into the agent - the agent's writes go to `agent-guides` and get
 pushed upstream, not to your local clone.
 
 **Handover.** The agent can edit a deck's guide mid-play (`boarding-plan.json`
-matchup notes, `NOTES.md`) and hand it over with `mcp-seat guides propose`:
-render, commit, push the proposer's own `seat/<game-id>-<deck>-<role>-guides`
-branch and open a pull request,
-returning at once with `awaiting_owner_review` and the PR's URL. mtg-decks is
-a private repo with no GitHub Actions budget, so its `ci` and `automerge`
-workflows never run there - the command never waits on either, and the guide
-edit is not live until the owner reviews and merges the PR by hand. Play
-scripts are unaffected: `mcp-seat plays admit` still pushes straight to
-mtg-decks main after the in-pod gate. That handover runs at the natural
+matchup notes and appended `origin: "seat"` rows, `NOTES.md`, a stub deck's
+`NOTES.md` for an opponent archetype with no guide) and hand it over with
+`mcp-seat guides propose --deck SLUG [--deck SLUG ...]`: render, gate, commit
+and push straight to mtg-decks main, the same as `mcp-seat plays admit` does
+for play scripts. Nobody reviews or merges either afterwards. When main moved
+under the edit it is replayed onto it; a clash comes back as `conflict` with
+the markers left in the files for the agent to resolve and run again, and
+three lost push races come back as a retryable `error`. That handover runs at the natural
 points where the agent stops playing: when a game ends, and when the driver's
 `POST /release` is called (a human taking the seat back, or a buddy standing
 down). A plain `docker compose stop` or `docker compose down` does **not**

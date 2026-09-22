@@ -898,9 +898,8 @@ over. Each prints one JSON object, and its `result` says what happened:
   priority first.
 - `mcp-seat plays admit --deck SLUG --game-id GAME` takes your changes under
   `decks/*/plays/` to mtg-decks main. It commits them, rebases onto origin,
-  runs the plays gate, and pushes without forcing. After three races it opens
-  a pull request instead. Results:
-  - `admitted` (with `sha`) or `pr_opened` (with `pr_url`): done.
+  runs the plays gate, and pushes without forcing. Results:
+  - `admitted` (with `sha`): done.
   - `nothing_to_admit`: there was nothing to take.
   - `refused`: you changed something outside the plays directories. Revert
     those `files`.
@@ -910,15 +909,36 @@ over. Each prints one JSON object, and its `result` says what happened:
   - `conflict_regression`: your change makes two plays able to apply at the
     same moment. Extend their conditions so that at most one applies.
     Reordering priority never resolves a conflict.
-- `mcp-seat guides propose --deck SLUG --game-id GAME` covers the matchup
-  advice. Edit only `matchups[].play_plan` and `matchups[].notes` in the
-  deck's newest `boarding-plan.json`, plus `decks/SLUG/NOTES.md`. The command
-  regenerates the guides, pushes its own `seat/GAME-SLUG-ROLE-guides` branch
-  (ROLE is `seat` or `advisor`, so every seat and buddy has its own), opens a pull
-  request and returns at once with `awaiting_owner_review` and its `pr_url` -
-  it never waits for checks or a merge. mtg-decks has no CI budget, so the
-  owner reviews and merges the pull request by hand; the edit is not live
-  until then, so do not wait for it. Any other change is `refused`.
+  - `error` with `retryable: true`: main moved under three pushes in a row.
+    Your change is back in the tree, uncommitted, on the newest origin/main;
+    run the same command again.
+- `mcp-seat guides propose --deck SLUG [--deck SLUG ...] --game-id GAME`
+  covers the matchup advice, for every deck you name in one call. For a deck
+  with a guide, edit only `matchups[].play_plan` and `matchups[].notes` in
+  the deck's newest `boarding-plan.json`, plus `decks/SLUG/NOTES.md`. You may
+  also append a matchup row for an archetype the plan has no row for, in
+  exactly this shape: `name` (a name no row has yet), `origin: "seat"`,
+  `play_plan` with the five strings `keep`, `goldfish_for`, `watch_for`,
+  `posture` and `posture_why`, and `notes` as a list of strings. For an
+  opponent archetype with no guide at all, write a stub deck:
+  `decks/SLUG/NOTES.md` and nothing else, where SLUG is the archetype's name
+  in lower case with dashes (`izzet-prowess`); a stub whose name matches a
+  guided deck is refused - write to that deck instead. The command
+  regenerates the guides, runs the repo's own checks, commits and pushes
+  straight to mtg-decks main: `admitted` means the edit is live. Any other
+  change is `refused`, and a change under a deck you did not name says which
+  `--deck` is missing.
+  - `conflict`: someone changed the same lines on main first. The listed
+    `files` now hold both sides between conflict marker lines (`<<<<<<<
+    yours`, `=======`, `>>>>>>> origin/main`). Edit each block into one text
+    that keeps both sides' intent, delete the marker lines, and run the same
+    command again; a file still holding a marker is `refused`.
+  - `error` with `retryable: true`: main moved under three pushes in a row.
+    Your edit is in the tree, uncommitted, on the newest origin/main; run the
+    same command again.
+  - `gate_failed`: the guides did not render or the repo's own check
+    (`verify_sidecars`) rejected the plan; read `output`, fix it, and run it
+    again.
   - `refused_content`: what you wrote reads as a system problem rather than
     as how the deck is piloted, so none of the proposal landed. The message
     quotes the sentence it read that way. This is a check and not a verdict

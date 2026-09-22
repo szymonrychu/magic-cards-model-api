@@ -1,13 +1,14 @@
 """`mcp-seat guides propose`: a seat's matchup play_plan / notes edit and its
-NOTES.md become regenerated guides on a pushed branch and a pull request,
-never a push to main. mtg-decks is private with no GitHub Actions budget, so
-its `ci` and `automerge` workflows never run there; the pull request sits
-`awaiting_owner_review` until the owner merges it by hand, and this command
-never polls for its checks or merge state - it returns the moment the PR is
-open.
+NOTES.md become regenerated guides pushed straight to mtg-decks main, never
+forced, after the in-pod gates. There is no branch and no review step after
+it: a guide edit is live the moment this returns `admitted`.
 
-Runs against a tmp bare repo and a fake GitHub REST server
-(`guides_git_testkit`).
+When origin main moved under the edit, the edit is replayed onto it with a
+3-way merge. A clash is returned as `conflict` with git's markers written into
+the working tree and no rebase or merge state left behind; the agent resolves
+the markers and runs the same command again, and every gate runs again.
+
+Runs against a tmp bare repo (`guides_git_testkit`).
 """
 
 from __future__ import annotations
@@ -20,16 +21,19 @@ from guides_git_testkit import (
     GAME,
     GAMEPLAN,
     OLD_PLAN,
+    OTHER,
+    OTHER_PLAN,
     PLAN,
-    REPO,
+    RUN_NEW,
     TOKEN,
-    FakeGitHub,
     branches,
     cli,
     clone,
+    compete,
     dump,
     git,
     interpose,
+    is_main_push,
     isolate_git,
     main_sha,
     seed_guides,
@@ -40,16 +44,29 @@ from playscript_testkit import SLUG
 from magic_cards_model_api.playscripts.content_gate import CONTENT_REFUSED
 
 NOTES = f"decks/{SLUG}/NOTES.md"
-BRANCH = f"seat/{GAME}-{SLUG}-seat-guides"
-ADVISOR_BRANCH = f"seat/{GAME}-{SLUG}-advisor-guides"
+OTHER_NOTES = f"decks/{OTHER}/NOTES.md"
+OTHER_GAMEPLAN = f"decks/{OTHER}/GAMEPLAN_GUIDE.md"
+STUB = "izzet-prowess"
+STUB_NOTES = f"decks/{STUB}/NOTES.md"
+WIKI = f"decks/{SLUG}/analysis/{RUN_NEW}"
+
+SEAT_ROW = {
+    "name": "eldrazi tron",
+    "origin": "seat",
+    "play_plan": {
+        "keep": "hands with a one-drop and Bolt",
+        "goldfish_for": "a turn four kill before Karn lands",
+        "watch_for": "Chalice of the Void on one",
+        "posture": "race",
+        "posture_why": "their late game beats ours, so the clock is the plan",
+    },
+    "notes": ["Bolt the Matter Reshaper only when it blocks."],
+}
 
 
 @pytest.fixture
-def github(tmp_path, monkeypatch):
-    fake = FakeGitHub()
-    isolate_git(tmp_path, monkeypatch, fake)
-    yield fake
-    fake.close()
+def isolated(tmp_path, monkeypatch):
+    return isolate_git(tmp_path, monkeypatch)
 
 
 @pytest.fixture
@@ -60,8 +77,15 @@ def render_log(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def bare(tmp_path, github):
-    return seed_guides(tmp_path)
+def sidecars_log(tmp_path, monkeypatch):
+    log = tmp_path / "sidecars.log"
+    monkeypatch.setenv("MTG_TEST_SIDECARS_LOG", str(log))
+    return log
+
+
+@pytest.fixture
+def bare(tmp_path, isolated):
+    return seed_guides(tmp_path, extra_deck=True)
 
 
 @pytest.fixture
@@ -69,14 +93,15 @@ def root(tmp_path, bare):
     return clone(bare, tmp_path / "guides")
 
 
-def propose(capsys, root: Path):
-    return cli(capsys, "guides", "propose", "--deck", SLUG, "--game-id", GAME, "--root", str(root))
+def propose(capsys, root: Path, *decks: str):
+    flags = [arg for deck in (decks or (SLUG,)) for arg in ("--deck", deck)]
+    return cli(capsys, "guides", "propose", *flags, "--game-id", GAME, "--root", str(root))
 
 
-def edit_plan(root: Path, change) -> None:
-    doc = json.loads((root / PLAN).read_text(encoding="utf-8"))
+def edit_plan(root: Path, change, plan: str = PLAN) -> None:
+    doc = json.loads((root / plan).read_text(encoding="utf-8"))
     change(doc)
-    (root / PLAN).write_text(dump(doc), encoding="utf-8")
+    (root / plan).write_text(dump(doc), encoding="utf-8")
 
 
 def good_edit(doc) -> None:
@@ -85,69 +110,205 @@ def good_edit(doc) -> None:
     doc["matchups"][1]["notes"] = ["Board in all three."]
 
 
-def rendered_log(log: Path) -> list:
+def logged(log: Path) -> list:
     if not log.exists():
         return []
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
 
 
-def test_render_runs_and_the_generated_guides_are_committed_on_a_pr_branch(
-    capsys, monkeypatch, root, bare, github, render_log
+def status(root: Path) -> list[str]:
+    """The changed paths, staged or not."""
+    out = git(root, "status", "--porcelain", "--untracked-files=all")
+    return sorted(line[3:] if line[2:3] == " " else line[2:] for line in out.splitlines())
+
+
+def untouched(root: Path, bare: Path, before: str) -> None:
+    """Nothing reached origin and the clone is still on the same main."""
+    assert main_sha(bare) == before
+    assert branches(bare) == {"main"}
+    assert git(root, "symbolic-ref", "--short", "HEAD") == "main"
+    assert git(root, "rev-parse", "HEAD") == before
+
+
+def no_merge_state(root: Path) -> None:
+    for name in ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD"):
+        assert not (root / ".git" / name).exists(), name
+
+
+# -- the happy path: straight to main ---------------------------------------------------------
+
+
+def test_an_edit_is_rendered_committed_and_pushed_to_main(
+    capsys, monkeypatch, root, bare, render_log, sidecars_log
 ):
     monkeypatch.setenv("MTG_ROLE", "advisor")
     calls = interpose(monkeypatch)
-    main_before = main_sha(bare)
     edit_plan(root, good_edit)
     (root / NOTES).write_text("# notes\n- the frog is a race\n", encoding="utf-8")
 
     rc, result, out, err = propose(capsys, root)
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
-    assert result["pr_url"] == f"https://github.com/{REPO}/pull/1"
-    assert result["branch"] == ADVISOR_BRANCH
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert result["sha"] == main_sha(bare) == git(root, "rev-parse", "HEAD")
+    assert "pr_url" not in result and "branch" not in result
+    assert branches(bare) == {"main"}
 
-    assert rendered_log(render_log) == [["write", [f"decks/{SLUG}"]], ["check", [f"decks/{SLUG}"]]]
-    assert main_sha(bare) == main_before
-    assert ADVISOR_BRANCH in branches(bare)
-    changed = git(bare, "diff", "--name-only", "main", ADVISOR_BRANCH).splitlines()
+    assert logged(render_log) == [["write", [f"decks/{SLUG}"]], ["check", [f"decks/{SLUG}"]]]
+    assert logged(sidecars_log) == [[3, WIKI]]
+    changed = git(bare, "diff", "--name-only", "main~1", "main").splitlines()
     assert sorted(changed) == sorted([PLAN, NOTES, GAMEPLAN])
-    guide = git(bare, "show", f"{ADVISOR_BRANCH}:{GAMEPLAN}")
+    guide = git(bare, "show", f"main:{GAMEPLAN}")
     assert "go under the frog" in guide and "Board in all three." in guide
-    assert git(bare, "log", "-1", "--format=%an|%ae", ADVISOR_BRANCH) == (
-        f"mtg-buddy {SLUG}|mtg-buddy@mtg-trainer.invalid"
+    assert git(bare, "log", "-1", "--format=%an|%ae|%s", "main") == (
+        f"mtg-buddy {SLUG}|mtg-buddy@mtg-trainer.invalid|Guides: {SLUG} after game {GAME}"
     )
-    assert trailers(bare, ADVISOR_BRANCH, "Game-Id") == [GAME]
+    assert trailers(bare, "main", "Game-Id") == [GAME]
+    assert status(root) == []
+    no_merge_state(root)
 
-    (pull,) = github.pulls()
-    assert (pull["body"]["head"], pull["body"]["base"]) == (ADVISOR_BRANCH, "main")
-    assert pull["headers"]["authorization"] == f"Bearer {TOKEN}"
-    # The PR body sends merging to a human - mtg-decks has no CI/automerge to
-    # rely on - and the command never polls the fake server for anything else.
-    assert "automerge" not in pull["body"]["body"].lower()
-    assert "review and merge this by hand" in pull["body"]["body"].lower()
-    assert len(github.requests) == 1
-    # The clone is back on an untouched main; the change lives on the branch.
-    assert git(root, "symbolic-ref", "--short", "HEAD") == "main"
-    assert git(root, "rev-parse", "HEAD") == main_before
-    assert git(root, "status", "--porcelain") == ""
-
+    # Never forced, never a branch, never the GitHub REST API.
+    pushes = [c["argv"] for c in calls if c["argv"][:2] == ["git", "push"]]
+    assert pushes == [["git", "push", "origin", "HEAD:refs/heads/main"]]
     assert TOKEN not in out + err
     assert all(TOKEN not in " ".join(c["argv"]) for c in calls)
     assert all(TOKEN not in json.dumps(c["env"]) for c in calls)
     assert TOKEN not in (root / ".git" / "config").read_text(encoding="utf-8")
 
 
-def test_notes_md_alone_is_proposed(capsys, root, bare, render_log):
+def test_notes_md_alone_is_admitted_without_the_sidecar_gate(
+    capsys, root, bare, render_log, sidecars_log
+):
     (root / NOTES).write_text("# notes\n- new\n", encoding="utf-8")
     rc, result, _, _ = propose(capsys, root)
-    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
-    assert git(bare, "diff", "--name-only", "main", BRANCH).splitlines() == [NOTES]
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert git(bare, "diff", "--name-only", "main~1", "main").splitlines() == [NOTES]
+    assert logged(sidecars_log) == []
 
 
-def test_nothing_to_propose(capsys, root, bare, github, render_log):
+def test_nothing_to_propose(capsys, root, bare, render_log):
+    before = main_sha(bare)
     rc, result, _, _ = propose(capsys, root)
     assert (rc, result["result"]) == (0, "nothing_to_admit")
-    assert branches(bare) == {"main"}
-    assert github.pulls() == []
+    untouched(root, bare, before)
+
+
+def test_a_local_commit_not_on_origin_main_is_refused(capsys, root, bare, render_log):
+    (root / NOTES).write_text("# notes\n- committed by hand\n", encoding="utf-8")
+    git(root, "commit", "-q", "-am", "by hand")
+    head = git(root, "rev-parse", "HEAD")
+    before = main_sha(bare)
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert "a local commit not on origin/main" in result["message"]
+    assert git(root, "rev-parse", "HEAD") == head
+    assert main_sha(bare) == before
+
+
+# -- (a) several decks in one call ---------------------------------------------------------
+
+
+def test_two_decks_are_one_commit_rendered_together(capsys, root, bare, render_log, sidecars_log):
+    edit_plan(root, good_edit)
+    edit_plan(root, good_edit, OTHER_PLAN)
+    (root / OTHER_NOTES).write_text("# frog notes\n- they race well\n", encoding="utf-8")
+
+    rc, result, _, _ = propose(capsys, root, SLUG, OTHER, SLUG)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    decks = [f"decks/{SLUG}", f"decks/{OTHER}"]
+    assert logged(render_log) == [["write", decks], ["check", decks]]
+    assert sorted(w for _, w in logged(sidecars_log)) == sorted(
+        [WIKI, str(Path(OTHER_PLAN).parent.parent.as_posix())]
+    )
+    assert git(bare, "rev-list", "--count", "main~1..main") == "1"
+    assert git(bare, "log", "-1", "--format=%an|%s", "main") == (
+        f"mtg-seat {SLUG}|Guides: {SLUG}, {OTHER} after game {GAME}"
+    )
+    changed = git(bare, "diff", "--name-only", "main~1", "main").splitlines()
+    assert sorted(changed) == sorted([PLAN, GAMEPLAN, OTHER_PLAN, OTHER_NOTES, OTHER_GAMEPLAN])
+
+
+def test_a_change_under_a_deck_not_listed_is_refused_naming_the_missing_deck(
+    capsys, root, bare, render_log
+):
+    before = main_sha(bare)
+    edit_plan(root, good_edit)
+    (root / OTHER_NOTES).write_text("# frog notes\n- sneaked in\n", encoding="utf-8")
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert f"--deck {OTHER}" in result["message"]
+    assert result["files"] == [OTHER_NOTES]
+    assert logged(render_log) == []
+    untouched(root, bare, before)
+    assert status(root) == sorted([OTHER_NOTES, PLAN])
+
+
+def test_every_deck_name_is_checked(capsys, root, bare):
+    (root / NOTES).write_text("# notes\n- new\n", encoding="utf-8")
+    rc, result, _, _ = propose(capsys, root, SLUG, "../main")
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert "../main" in result["message"]
+
+
+# -- (b) stub decks ---------------------------------------------------------------------------
+
+
+def test_a_new_stub_deck_is_created_and_never_rendered(
+    capsys, root, bare, render_log, sidecars_log
+):
+    (root / STUB_NOTES).parent.mkdir(parents=True)
+    (root / STUB_NOTES).write_text(
+        "# izzet prowess\n- they chain cantrips into a big prowess turn\n", encoding="utf-8"
+    )
+    rc, result, _, _ = propose(capsys, root, STUB)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert logged(render_log) == []
+    assert logged(sidecars_log) == []
+    assert git(bare, "diff", "--name-only", "main~1", "main").splitlines() == [STUB_NOTES]
+    assert git(bare, "ls-tree", "-r", "--name-only", "main", f"decks/{STUB}") == STUB_NOTES
+
+    # An existing stub takes further NOTES.md edits, beside a guided deck's.
+    with (root / STUB_NOTES).open("a", encoding="utf-8") as handle:
+        handle.write("- Bolt the Swiftspear on sight\n")
+    edit_plan(root, good_edit)
+    rc, result, _, _ = propose(capsys, root, SLUG, STUB)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert logged(render_log) == [["write", [f"decks/{SLUG}"]], ["check", [f"decks/{SLUG}"]]]
+
+
+@pytest.mark.parametrize("name", ["decklist.txt", "archetype.json", "GAMEPLAN_GUIDE.md"])
+def test_a_stub_never_gets_any_other_file(capsys, root, bare, render_log, name):
+    before = main_sha(bare)
+    (root / STUB_NOTES).parent.mkdir(parents=True)
+    (root / STUB_NOTES).write_text("# izzet prowess\n- tempo\n", encoding="utf-8")
+    (root / f"decks/{STUB}/{name}").write_text("4 Lightning Bolt\n", encoding="utf-8")
+    rc, result, _, _ = propose(capsys, root, STUB)
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert result["files"] == [f"decks/{STUB}/{name}"]
+    untouched(root, bare, before)
+
+
+def _rename_archetype(bare: Path, tmp_path: Path, name: str) -> None:
+    other = clone(bare, tmp_path / "renamer")
+    (other / f"decks/{SLUG}/archetype.json").write_text(dump({"archetype": name}), "utf-8")
+    git(other, "commit", "-q", "-am", "rename the archetype")
+    git(other, "push", "-q", "origin", "HEAD:main")
+
+
+def test_a_new_stub_colliding_with_a_guided_deck_is_refused(
+    capsys, tmp_path, root, bare, render_log
+):
+    _rename_archetype(bare, tmp_path, "Boros Energy")
+    git(root, "pull", "-q", "origin", "main")
+    before = main_sha(bare)
+    (root / "decks/boros-energy").mkdir()
+    (root / "decks/boros-energy/NOTES.md").write_text("# boros\n- fast\n", encoding="utf-8")
+    rc, result, _, _ = propose(capsys, root, "boros-energy")
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert SLUG in result["message"]
+    assert logged(render_log) == []
+    untouched(root, bare, before)
+
+
+# -- (c) the boarding plan's fields --------------------------------------------------------
 
 
 def _set(path, value):
@@ -166,15 +327,14 @@ FORBIDDEN_KEYS = [
     ("matchups[0].stance", _set(("matchups", 0, "stance"), "hate")),
     ("matchups[0].extra", _set(("matchups", 0, "extra"), "new key")),
     ("gaps", _set(("gaps",), [])),
-    ("matchups", lambda doc: doc["matchups"].pop()),
-    ("matchups", lambda doc: doc["matchups"].reverse()),
+    ("matchups[1]", lambda doc: doc["matchups"].pop()),
+    ("matchups[0].name", lambda doc: doc["matchups"].reverse()),
 ]
 
 
 @pytest.mark.parametrize(("where", "change"), FORBIDDEN_KEYS, ids=[f[0] for f in FORBIDDEN_KEYS])
-def test_a_forbidden_boarding_plan_key_is_refused(
-    capsys, root, bare, github, render_log, where, change
-):
+def test_a_forbidden_boarding_plan_key_is_refused(capsys, root, bare, render_log, where, change):
+    before = main_sha(bare)
     edit_plan(root, change)
     rc, result, _, _ = propose(capsys, root)
     assert (rc, result["result"]) == (1, "refused"), result
@@ -182,9 +342,76 @@ def test_a_forbidden_boarding_plan_key_is_refused(
     # outside the allowlist is to revert it, not to reword it.
     assert result["result"] != CONTENT_REFUSED
     assert where in result["message"]
-    assert rendered_log(render_log) == []
-    assert branches(bare) == {"main"}
-    assert github.pulls() == []
+    assert logged(render_log) == []
+    untouched(root, bare, before)
+
+
+def test_an_appended_seat_row_is_admitted(capsys, root, bare, render_log, sidecars_log):
+    edit_plan(root, lambda doc: doc["matchups"].append(SEAT_ROW))
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    landed = json.loads(git(bare, "show", f"main:{PLAN}"))
+    assert landed["matchups"][-1] == SEAT_ROW
+    assert "eldrazi tron" in git(bare, "show", f"main:{GAMEPLAN}")
+    assert logged(sidecars_log) == [[3, WIKI]]
+
+
+def _row(**changes):
+    row = json.loads(json.dumps(SEAT_ROW))
+    for key, value in changes.items():
+        if value is None:
+            row.pop(key)
+        else:
+            row[key] = value
+    return row
+
+
+BAD_ROWS = [
+    ("matchups[2].origin", _row(origin=None)),
+    ("matchups[2].origin", _row(origin="research")),
+    ("matchups[2].stance", _row(stance="race")),
+    ("matchups[2].name", _row(name="")),
+    ("matchups[2].name", _row(name="Dimir  Frog")),
+    ("matchups[2].play_plan.watch_for", _row(play_plan={**SEAT_ROW["play_plan"], "watch_for": 3})),
+    (
+        "matchups[2].play_plan.keep",
+        _row(play_plan={k: v for k, v in SEAT_ROW["play_plan"].items() if k != "keep"}),
+    ),
+    ("matchups[2].play_plan.extra", _row(play_plan={**SEAT_ROW["play_plan"], "extra": "x"})),
+    ("matchups[2].notes", _row(notes="not a list")),
+    ("matchups[2].notes", _row(notes=None)),
+    ("matchups[2]", "not an object"),
+]
+
+
+@pytest.mark.parametrize(
+    ("where", "row"), BAD_ROWS, ids=[f"{w}-{i}" for i, (w, _) in enumerate(BAD_ROWS)]
+)
+def test_a_bad_appended_row_is_refused_with_its_json_path(
+    capsys, root, bare, render_log, where, row
+):
+    before = main_sha(bare)
+    edit_plan(root, lambda doc: doc["matchups"].append(row))
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert where in result["message"], result["message"]
+    assert logged(render_log) == []
+    untouched(root, bare, before)
+
+
+def test_two_appended_rows_with_one_name_are_refused(capsys, root, bare, render_log):
+    second = _row(name="Eldrazi Tron")
+    edit_plan(root, lambda doc: doc["matchups"].extend([SEAT_ROW, second]))
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert "matchups[3].name" in result["message"]
+
+
+def test_a_system_problem_in_an_appended_row_is_refused_content(capsys, root, bare, render_log):
+    row = _row(play_plan={**SEAT_ROW["play_plan"], "watch_for": "the api returned a 422"})
+    edit_plan(root, lambda doc: doc["matchups"].append(row))
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, CONTENT_REFUSED), result
 
 
 FORBIDDEN_FILES = [
@@ -204,41 +431,36 @@ FORBIDDEN_FILES = [
 
 
 @pytest.mark.parametrize("path", FORBIDDEN_FILES)
-def test_a_forbidden_file_is_refused(capsys, root, bare, github, render_log, path):
+def test_a_forbidden_file_is_refused(capsys, root, bare, render_log, path):
+    before = main_sha(bare)
     edit_plan(root, good_edit)
     (root / path).write_text("changed\n", encoding="utf-8")
     rc, result, _, _ = propose(capsys, root)
     assert (rc, result["result"]) == (1, "refused"), result
     assert result["result"] != CONTENT_REFUSED
     assert path in result["files"]
-    assert rendered_log(render_log) == []
-    assert branches(bare) == {"main"}
-    assert github.pulls() == []
+    assert logged(render_log) == []
+    untouched(root, bare, before)
 
 
-def test_a_render_check_failure_is_gate_failed_and_leaves_the_edit(
-    capsys, monkeypatch, root, bare, github, render_log
+def test_an_unrelated_plays_edit_is_refused_before_anything_is_reset(
+    capsys, tmp_path, root, bare, render_log
 ):
-    monkeypatch.setenv("MTG_TEST_RENDER_CHECK_FAIL", "1")
-    edit_plan(root, good_edit)
-    rc, result, _, _ = propose(capsys, root)
-    assert (rc, result["result"]) == (1, "gate_failed"), result
-    assert branches(bare) == {"main"}
-    assert github.pulls() == []
-    assert git(root, "symbolic-ref", "--short", "HEAD") == "main"
-    assert git(root, "branch", "--list", BRANCH) == ""
-    # The agent's edit stays for it to fix; the half-rendered guide does not.
-    assert git(root, "status", "--porcelain") == f"M {PLAN}"
+    """`reset --hard` is only safe because the allowlist refuses everything
+    else first: with origin main moved and a play edited beside the guide
+    edit, the play edit must survive untouched."""
+    compete(bare, tmp_path / "competitor", "upstream moved")
+    play = root / f"decks/{SLUG}/plays/fetch-untapped-shock.json"
+    play.write_text(play.read_text(encoding="utf-8").replace('"priority": 60', '"priority": 61'))
+    edited = play.read_text(encoding="utf-8")
+    (root / NOTES).write_text("# notes\n- mine\n", encoding="utf-8")
+    head = git(root, "rev-parse", "HEAD")
 
-
-def test_a_missing_renderer_is_gate_failed(capsys, tmp_path, github):
-    bare = seed_guides(tmp_path, render_guides=False)
-    root = clone(bare, tmp_path / "guides")
-    edit_plan(root, good_edit)
     rc, result, _, _ = propose(capsys, root)
-    assert (rc, result["result"]) == (1, "gate_failed"), result
-    assert "render_guides.py" in result["message"]
-    assert branches(bare) == {"main"}
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert play.read_text(encoding="utf-8") == edited
+    assert (root / NOTES).read_text(encoding="utf-8") == "# notes\n- mine\n"
+    assert git(root, "rev-parse", "HEAD") == head
 
 
 def test_the_newest_run_is_the_one_allowed(capsys, root, bare, render_log):
@@ -248,26 +470,237 @@ def test_the_newest_run_is_the_one_allowed(capsys, root, bare, render_log):
     (root / OLD_PLAN).write_text(dump(doc), encoding="utf-8")
     rc, result, _, _ = propose(capsys, root)
     assert result["result"] == "refused"
-    assert result["result"] != CONTENT_REFUSED
     assert result["files"] == [OLD_PLAN]
     assert branches(bare) == {"main"}
 
 
-# ---- one branch and one pull request per proposing seat -----------------------------------
-# Live, game 8a55cab7: the boros seat and the frog seat both proposed on
-# `seat/<game>-guides`, so mtg-decks PR #123 carried both decks' commits.
+def test_a_new_run_directory_does_not_become_the_editable_plan(capsys, root, bare, render_log):
+    """The newest plan is read off HEAD, so a run the agent adds is not it."""
+    newer = PLAN.replace(RUN_NEW, f"{SLUG}-modern-2026-12-31")
+    (root / newer).parent.mkdir(parents=True)
+    (root / newer).write_text((root / PLAN).read_text(encoding="utf-8"), encoding="utf-8")
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert result["files"] == [newer]
 
 
-def test_the_branch_names_the_game_the_deck_and_the_role():
-    from magic_cards_model_api.playscripts.guides_propose import guides_branch
+# -- (d) conflict markers -------------------------------------------------------------------
 
-    assert guides_branch("g1", "boros-aggro", "seat") == "seat/g1-boros-aggro-seat-guides"
-    assert guides_branch("g1", "dimir-frog", "seat") == "seat/g1-dimir-frog-seat-guides"
-    assert guides_branch("g1", "dimir-frog", "advisor") == "seat/g1-dimir-frog-advisor-guides"
+MARKED = "# notes\n<<<<<<< yours\n- mine\n=======\n- theirs\n>>>>>>> origin/main\n"
 
 
-def test_a_seat_and_a_buddy_of_one_game_each_open_their_own_pull_request(
-    capsys, monkeypatch, tmp_path, bare, github, render_log
+def test_conflict_markers_in_notes_are_refused(capsys, root, bare, render_log):
+    before = main_sha(bare)
+    (root / NOTES).write_text(MARKED, encoding="utf-8")
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert result["files"] == [NOTES]
+    assert "marker" in result["message"]
+    untouched(root, bare, before)
+
+
+def test_conflict_markers_in_the_plan_are_refused_before_it_is_parsed(capsys, root, bare):
+    text = (root / PLAN).read_text(encoding="utf-8")
+    marked = text.replace(
+        '"our_tactic": "race them"',
+        '<<<<<<< yours\n"our_tactic": "a"\n=======\n"our_tactic": "b"\n>>>>>>> origin/main',
+    )
+    (root / PLAN).write_text(marked, encoding="utf-8")
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert result["files"] == [PLAN]
+    assert "marker" in result["message"]
+    assert "JSON" not in result["message"]
+
+
+def test_a_line_merely_mentioning_equals_signs_is_not_a_marker(capsys, root, bare, render_log):
+    (root / NOTES).write_text("# notes\n- ======= is not a marker here\n", encoding="utf-8")
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+
+
+# -- (e) origin main moved: merge, conflict, retries -------------------------------------------
+
+
+def _edit_mulligans(root: Path, text: str) -> None:
+    notes = root / NOTES
+    notes.write_text(
+        notes.read_text(encoding="utf-8").replace("- keep a two-lander with Bolt", text),
+        encoding="utf-8",
+    )
+
+
+def test_an_upstream_edit_to_another_part_of_the_file_merges_cleanly(
+    capsys, tmp_path, root, bare, render_log
+):
+    compete(bare, tmp_path / "competitor", "upstream matchup line")
+    _edit_mulligans(root, "- keep a two-lander only on the play")
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    landed = git(bare, "show", f"main:{NOTES}")
+    assert "- keep a two-lander only on the play" in landed
+    assert "- upstream matchup line" in landed
+    assert git(bare, "log", "-1", "--format=%s", "main~1") == "competitor upstream matchup line"
+    assert status(root) == []
+    no_merge_state(root)
+
+
+def test_a_race_on_the_push_is_retried_and_merged(capsys, monkeypatch, tmp_path, root, bare):
+    pushes: list[list[str]] = []
+
+    def race(argv):
+        if is_main_push(argv):
+            pushes.append(argv)
+            if len(pushes) == 1:
+                compete(bare, tmp_path / "competitor", "first")
+
+    interpose(monkeypatch, race)
+    edit_plan(root, good_edit)
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert len(pushes) == 2
+    assert git(bare, "log", "-1", "--format=%s", "main~1") == "competitor first"
+    assert git(bare, "rev-list", "--count", "main~1..main") == "1"
+    assert "go under the frog" in git(bare, "show", f"main:{GAMEPLAN}")
+    assert status(root) == []
+
+
+def test_the_same_lines_changed_upstream_are_a_conflict_the_agent_resolves(
+    capsys, tmp_path, root, bare, render_log
+):
+    old_head = git(root, "rev-parse", "HEAD")
+    theirs = (
+        (root / NOTES)
+        .read_text(encoding="utf-8")
+        .replace("- keep a two-lander with Bolt", "- mulligan every two-lander")
+    )
+    compete(bare, tmp_path / "competitor", "theirs", notes=theirs)
+    upstream = main_sha(bare)
+    _edit_mulligans(root, "- keep a two-lander on the draw")
+
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "conflict"), result
+    assert result["files"] == [NOTES]
+    assert (result["base_sha"], result["upstream_sha"]) == (old_head, upstream)
+    assert "same command" in result["message"]
+    assert main_sha(bare) == upstream
+    # The clone is on the new upstream, the markers are in the tree for the
+    # agent, and git holds no rebase or merge state.
+    assert git(root, "rev-parse", "HEAD") == upstream
+    no_merge_state(root)
+    marked = (root / NOTES).read_text(encoding="utf-8")
+    assert "<<<<<<< yours" in marked and ">>>>>>> origin/main" in marked
+    assert "- keep a two-lander on the draw" in marked and "- mulligan every two-lander" in marked
+    assert logged(render_log) == []
+
+    # Unresolved, the same command refuses on the markers.
+    rc, again, _, _ = propose(capsys, root)
+    assert (rc, again["result"]) == (1, "refused"), again
+
+    resolved = theirs.replace(
+        "- mulligan every two-lander", "- mulligan a two-lander on the play, keep it on the draw"
+    )
+    (root / NOTES).write_text(resolved, encoding="utf-8")
+    rc, done, _, _ = propose(capsys, root)
+    assert (rc, done["result"]) == (0, "admitted"), done
+    assert git(bare, "show", f"main:{NOTES}") + "\n" == resolved
+    assert git(bare, "rev-parse", "main~1") == upstream
+
+
+def test_a_plan_conflict_leaves_markers_the_gates_refuse(capsys, tmp_path, root, bare):
+    other = clone(bare, tmp_path / "planner")
+    edit_plan(other, _set(("matchups", 0, "play_plan", "our_tactic"), "their tactic"))
+    git(other, "commit", "-q", "-am", "their tactic")
+    git(other, "push", "-q", "origin", "HEAD:main")
+    edit_plan(root, _set(("matchups", 0, "play_plan", "our_tactic"), "my tactic"))
+
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "conflict"), result
+    assert result["files"] == [PLAN]
+    marked = (root / PLAN).read_text(encoding="utf-8")
+    assert "<<<<<<< yours" in marked and "my tactic" in marked and "their tactic" in marked
+    no_merge_state(root)
+
+
+def test_three_races_are_a_retryable_error_with_the_edit_left_in_the_tree(
+    capsys, monkeypatch, tmp_path, root, bare, render_log
+):
+    pushes: list[list[str]] = []
+
+    def race(argv):
+        if is_main_push(argv):
+            pushes.append(argv)
+            compete(bare, tmp_path / "competitor", f"race {len(pushes)}")
+
+    interpose(monkeypatch, race)
+    edit_plan(root, good_edit)
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "error"), result
+    assert result["retryable"] is True
+    assert len(pushes) == 3
+    assert git(bare, "log", "-1", "--format=%s", "main") == "competitor race 3"
+    assert branches(bare) == {"main"}
+    # The edit is uncommitted on the newest upstream it fetched; the rendered
+    # guide is put back.
+    assert git(root, "rev-parse", "HEAD") == git(bare, "rev-parse", "main~1")
+    assert status(root) == [PLAN]
+    no_merge_state(root)
+
+
+# -- the gates -------------------------------------------------------------------------------
+
+
+def test_a_render_check_failure_is_gate_failed_and_leaves_the_edit(
+    capsys, monkeypatch, root, bare, render_log
+):
+    before = main_sha(bare)
+    monkeypatch.setenv("MTG_TEST_RENDER_CHECK_FAIL", "1")
+    edit_plan(root, good_edit)
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "gate_failed"), result
+    untouched(root, bare, before)
+    # The agent's edit stays for it to fix; the half-rendered guide does not.
+    assert status(root) == [PLAN]
+
+
+def test_a_missing_renderer_is_gate_failed(capsys, tmp_path, isolated):
+    bare = seed_guides(tmp_path, render_guides=False)
+    root = clone(bare, tmp_path / "guides")
+    edit_plan(root, good_edit)
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "gate_failed"), result
+    assert "render_guides.py" in result["message"]
+    assert branches(bare) == {"main"}
+
+
+def test_a_verify_sidecars_failure_is_gate_failed(capsys, monkeypatch, root, bare, render_log):
+    before = main_sha(bare)
+    monkeypatch.setenv("MTG_TEST_SIDECARS_FAIL", "1")
+    edit_plan(root, lambda doc: doc["matchups"].append(SEAT_ROW))
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "gate_failed"), result
+    assert "verify_sidecars" in result["message"]
+    assert "not in the boarding field" in result["output"]
+    untouched(root, bare, before)
+    assert status(root) == [PLAN]
+
+
+def test_a_missing_verify_sidecars_fails_closed(capsys, tmp_path, isolated):
+    bare = seed_guides(tmp_path, verify_sidecars=False)
+    before = main_sha(bare)
+    root = clone(bare, tmp_path / "guides")
+    edit_plan(root, good_edit)
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, "gate_failed"), result
+    assert "verify_sidecars.py" in result["message"]
+    assert main_sha(bare) == before
+
+
+# -- roles -------------------------------------------------------------------------------------
+
+
+def test_a_seat_and_a_buddy_of_one_game_both_land_on_main(
+    capsys, monkeypatch, tmp_path, bare, render_log
 ):
     seat_clone = clone(bare, tmp_path / "seat-guides")
     buddy_clone = clone(bare, tmp_path / "buddy-guides")
@@ -275,55 +708,25 @@ def test_a_seat_and_a_buddy_of_one_game_each_open_their_own_pull_request(
     monkeypatch.setenv("MTG_ROLE", "seat")
     edit_plan(seat_clone, good_edit)
     rc, seat, _, _ = propose(capsys, seat_clone)
-    assert (rc, seat["result"]) == (0, "awaiting_owner_review"), seat
+    assert (rc, seat["result"]) == (0, "admitted"), seat
 
     monkeypatch.setenv("MTG_ROLE", "advisor")
-    (buddy_clone / NOTES).write_text("# notes\n- the buddy saw a race\n", encoding="utf-8")
+    _edit_mulligans(buddy_clone, "- the buddy keeps a two-lander")
     rc, buddy, _, _ = propose(capsys, buddy_clone)
-    assert (rc, buddy["result"]) == (0, "awaiting_owner_review"), buddy
+    assert (rc, buddy["result"]) == (0, "admitted"), buddy
 
-    assert (seat["branch"], buddy["branch"]) == (BRANCH, ADVISOR_BRANCH)
-    assert seat["pr_url"] != buddy["pr_url"]
-    assert [p["body"]["head"] for p in github.pulls()] == [BRANCH, ADVISOR_BRANCH]
-    assert {BRANCH, ADVISOR_BRANCH} <= branches(bare)
-    # Each branch carries its own proposer's one commit and nothing else.
-    for branch, author in ((BRANCH, "mtg-seat"), (ADVISOR_BRANCH, "mtg-buddy")):
-        log = git(bare, "log", "--format=%an", f"main..{branch}").splitlines()
-        assert log == [f"{author} {SLUG}"], (branch, log)
-
-
-def test_the_same_seat_proposing_again_reuses_its_own_branch(
-    capsys, root, bare, github, render_log
-):
-    edit_plan(root, good_edit)
-    rc, first, _, _ = propose(capsys, root)
-    assert (rc, first["result"]) == (0, "awaiting_owner_review"), first
-    rc, again, _, _ = propose(capsys, root)
-    assert (rc, again["result"]) == (0, "awaiting_owner_review"), again
-    assert first["branch"] == again["branch"] == BRANCH
-    assert [p["body"]["head"] for p in github.pulls()] == [BRANCH, BRANCH]
-    assert branches(bare) == {"main", BRANCH}
+    assert branches(bare) == {"main"}
+    log = git(bare, "log", "--format=%an", "-2", "main").splitlines()
+    assert log == [f"mtg-buddy {SLUG}", f"mtg-seat {SLUG}"]
 
 
 # -- T14 (defect D-1): the /guides checkout is entered by one writer at a time --
 
-REVIEWER_BRANCH = f"seat/{GAME}-{SLUG}-reviewer-guides"
 
+def test_there_is_no_guides_branch_any_more():
+    from magic_cards_model_api.playscripts import guides_propose
 
-def test_the_reviewer_gets_a_role_whose_branch_cannot_collide():
-    """The reviewer is a THIRD proposer for the same game and the same deck.
-    Two proposers sharing a branch name is the collision this exists to
-    prevent, so its branch must differ from the seat's and from the
-    buddy's."""
-    from magic_cards_model_api.playscripts.gitwork import REVIEWER_ROLE, ROLE_NAMES
-    from magic_cards_model_api.playscripts.guides_propose import guides_branch
-
-    assert REVIEWER_ROLE in ROLE_NAMES
-    reviewer = guides_branch(GAME, SLUG, REVIEWER_ROLE)
-    seat = guides_branch(GAME, SLUG, "seat")
-    buddy = guides_branch(GAME, SLUG, "advisor")
-    assert reviewer == REVIEWER_BRANCH
-    assert len({reviewer, seat, buddy}) == 3
+    assert not hasattr(guides_propose, "guides_branch")
 
 
 def test_the_reviewer_role_is_accepted_by_the_container_role_read(monkeypatch):
@@ -429,7 +832,7 @@ def test_the_checkout_lock_is_held_across_processes(tmp_path):
         holder.join(5.0)
 
 
-def test_propose_takes_the_checkout_lock(capsys, root, bare, github, render_log, monkeypatch):
+def test_propose_takes_the_checkout_lock(capsys, root, bare, render_log, monkeypatch):
     """`guides propose` does its git work under the lock, so the reviewer's
     own write channel cannot be inside the same checkout at the same time."""
     from magic_cards_model_api.playscripts import gitwork
@@ -444,7 +847,7 @@ def test_propose_takes_the_checkout_lock(capsys, root, bare, github, render_log,
     monkeypatch.setattr(gitwork, "checkout_lock", watched)
     edit_plan(root, good_edit)
     rc, body, _, _ = propose(capsys, root)
-    assert (rc, body["result"]) == (0, "awaiting_owner_review"), body
+    assert (rc, body["result"]) == (0, "admitted"), body
     assert taken == [str(root.resolve())]
 
 
@@ -479,7 +882,7 @@ def test_the_checkout_lock_gives_up_rather_than_waiting_for_ever(tmp_path):
 
 
 def test_a_handover_write_waits_for_a_review_in_flight_and_never_interleaves(
-    capsys, root, bare, github, render_log
+    capsys, root, bare, render_log
 ):
     """Clause (d), at the command level rather than the primitive's: with the
     reviewer's own write channel inside the checkout, the handover turn's
@@ -521,4 +924,4 @@ def test_a_handover_write_waits_for_a_review_in_flight_and_never_interleaves(
         thread.join(30.0)
 
     assert order == ["review in", "handover asked", "review out", "handover done"], order
-    assert outcome and outcome[0]["result"] == "awaiting_owner_review", outcome
+    assert outcome and outcome[0]["result"] == "admitted", outcome

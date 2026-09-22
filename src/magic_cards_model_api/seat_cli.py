@@ -57,12 +57,15 @@ Two commands are not seat actions at all, and need no `--uid`:
   `scripts/check_plays.py`.
 - `plays priority`, `plays admit` and `guides propose` work the pod's guides
   clone (default `/guides`): edit a play's priority, take play-script changes
-  to mtg-decks main, and propose a matchup-plan edit as a pull request the
-  owner reviews and merges by hand (mtg-decks is private with no CI budget,
-  so its `ci`/`automerge` workflows never run; `guides propose` never waits
-  on either). Each prints one JSON result and exits 0 on admitted / pr_opened
-  / awaiting_owner_review / nothing_to_admit (or a priority set), 1
-  otherwise; see `playscripts.admit` and `playscripts.guides_propose`.
+  to mtg-decks main, and take a deck-guide edit (NOTES.md and a boarding
+  plan's play_plan / notes, for one or more `--deck`s, stub decks included)
+  straight to mtg-decks main after the in-pod gates. Each prints one JSON
+  result and exits 0 on admitted / nothing_to_admit (or a priority set), 1
+  otherwise: conflict (resolve the markers left in the files, then run the
+  same command again), refused, gate_failed, and `error` - with
+  `retryable: true` when main kept moving for three pushes and the change
+  was left uncommitted in the tree. See `playscripts.admit` and
+  `playscripts.guides_propose`.
   `guides propose` additionally gates what the text SAYS: new prose reading
   as a system problem rather than as how the deck is piloted is
   `refused_content` (its own outcome, not the file-path `refused`) and goes
@@ -1447,9 +1450,10 @@ def build_parser() -> argparse.ArgumentParser:
     admit = plays_sub.add_parser(
         "admit",
         help=(
-            "commit, rebase, gate and push decks/*/plays/** changes to mtg-decks main "
-            "(a pull request after 3 non-fast-forward pushes); prints admitted | pr_opened | "
-            "refused | conflict | gate_failed | conflict_regression | nothing_to_admit"
+            "commit, rebase, gate and push decks/*/plays/** changes to mtg-decks main; "
+            "prints admitted | refused | conflict | gate_failed | conflict_regression | "
+            "error (retryable: main moved under 3 pushes, the change is left uncommitted - run "
+            "it again) | nothing_to_admit"
         ),
     )
     _guides_target(admit, game=True)
@@ -1457,29 +1461,40 @@ def build_parser() -> argparse.ArgumentParser:
     guides = sub.add_parser(
         "guides",
         help=(
-            "CLI-only: propose a deck-guide edit as a pull request the owner merges by hand "
-            "(no seat, no game, no API)"
+            "CLI-only: push a deck-guide edit straight to mtg-decks main after the in-pod "
+            "gates (no seat, no game, no API)"
         ),
     )
     guides_sub = guides.add_subparsers(dest="guides_command", required=True)
     propose = guides_sub.add_parser(
         "propose",
         help=(
-            "render and commit a matchups[].play_plan / notes edit of the newest boarding plan "
-            "and NOTES.md, push seat/<game-id>-<deck>-<role>-guides and open a pull request "
-            "the owner merges by hand - returns at once, never waits on CI or automerge; "
-            "prints awaiting_owner_review | refused | refused_content | gate_failed | "
-            "nothing_to_admit, where refused_content means the new text reads as a system "
-            "problem and belongs in the report_problem tool"
+            "take decks/<deck>/NOTES.md and matchups[].play_plan / notes of the newest "
+            'boarding plan (plus appended rows with origin "seat") for every --deck, or a '
+            "stub deck's NOTES.md alone, onto origin main, render and gate them, commit and "
+            "push to main; prints admitted | conflict | refused | refused_content | "
+            "gate_failed | error (retryable) | nothing_to_admit. conflict leaves both sides "
+            "between markers in the files: resolve them and run the same command again. "
+            "refused_content means the new text reads as a system problem and belongs in "
+            "the report_problem tool"
         ),
     )
-    _guides_target(propose, game=True)
+    _guides_target(propose, game=True, many=True)
 
     return parser
 
 
-def _guides_target(parser: argparse.ArgumentParser, *, game: bool) -> None:
-    parser.add_argument("--deck", required=True, metavar="SLUG", help="the deck's slug")
+def _guides_target(parser: argparse.ArgumentParser, *, game: bool, many: bool = False) -> None:
+    if many:
+        parser.add_argument(
+            "--deck",
+            required=True,
+            action="append",
+            metavar="SLUG",
+            help="a deck the edit touches; repeat it for each (duplicates are ignored)",
+        )
+    else:
+        parser.add_argument("--deck", required=True, metavar="SLUG", help="the deck's slug")
     if game:
         parser.add_argument(
             "--game-id", required=True, help="the game this change came out of (Game-Id trailer)"

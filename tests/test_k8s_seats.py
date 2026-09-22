@@ -945,7 +945,7 @@ def test_the_seat_job_images_come_from_settings_not_the_template() -> None:
 #
 # The k8s guides initContainer used to fetch `GUIDES_REF` shallow and detached,
 # read-only - fine for reading, useless for an agent that has to commit a guide
-# change and open a pull request. It now runs `deploy/guides-clone.sh`, baked
+# change and push it. It now runs `deploy/guides-clone.sh`, baked
 # into the agent image, which fetches `main` partially (`--filter=blob:none`,
 # full history, no blobs up front), checks out a local `main` tracking
 # `origin/main`, strips the token back out of the remote URL, and stamps the

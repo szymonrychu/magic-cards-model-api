@@ -728,20 +728,34 @@ move and then stopped mid-resolution (`ambiguous`, `interrupted`,
 `unforeseen`) still reports `moves_done >= 1`. The finish record and the
 resume token's own `moves_done` always agree.
 
-## Guide edits: proposed by PR, merged by the owner (2026-09-13)
+## Guide edits: pushed to main by the seat (2026-09-22)
 
-`mcp-seat guides propose` renders and commits a matchup `play_plan`/`notes`
-edit plus `NOTES.md`, pushes the proposer's own branch,
-`seat/<game-id>-<deck>-<role>-guides` (role `seat` or `advisor`, so two seats
-or a seat and its buddy never share one), and opens a pull request
-against mtg-decks main, returning at once with `awaiting_owner_review` and the
-PR's URL. mtg-decks is a private repo with no GitHub Actions budget, so its
-`ci` and `automerge` workflows never run there: the command never polls for
-checks, automerge, or merge state, and the guide edit is not live until the
-owner reviews and merges the PR by hand. Play scripts are unchanged:
-`mcp-seat plays admit` still pushes straight to mtg-decks main after the
-in-pod gate (commit, rebase, gate, push, retries, a PR only as a rare
-fallback after repeated non-fast-forward races).
+`mcp-seat guides propose --deck SLUG [--deck SLUG ...] --game-id GAME` takes a
+deck-guide edit straight to mtg-decks main; there is no branch, no pull
+request and nobody merging it afterwards (this replaces the 2026-09-13
+proposal-branch design). For each listed deck the allowlist is read off
+HEAD: a guided deck (one with `decklist.txt`) may change `NOTES.md` and
+`matchups[].play_plan` / `notes` of its newest boarding plan, and may append
+a matchup row only as `name` (new under slugify), `origin: "seat"`, a
+`play_plan` of the five strings `keep`, `goldfish_for`, `watch_for`, `posture`
+and `posture_why`, and `notes`; a stub deck (an opponent archetype with no
+guide) gets `NOTES.md` alone, and a new stub whose slug is a guided deck's
+directory or archetype name is refused. A file holding a conflict marker
+line is refused before anything parses it.
+
+Under the checkout lock the command captures the edit, fetches origin main
+and, when main moved, replays each file onto it with a 3-way merge before a
+hard reset onto origin main (safe only because the allowlist has already
+refused every other path). A clash returns `conflict` with git's markers in
+the working tree and no rebase or merge state; the agent resolves the markers
+and runs the same command again, and every gate runs again. Otherwise it
+renders the guided decks' guides (`render_guides.py write` and `check`;
+stubs are never rendered), runs `verify_sidecars.py --domain 3` on each
+changed plan's run, commits with the seat's identity and a `Game-Id` trailer,
+and pushes `HEAD:main`, never forced. After three lost races the result is
+`error` with `retryable: true` and the edit left uncommitted on the newest
+upstream. `mcp-seat plays admit` ends the same way after three races; it no
+longer falls back to anything else.
 
 ## Migration: `note` becomes required later
 

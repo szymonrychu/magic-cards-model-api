@@ -2,9 +2,9 @@
 change goes from its guides clone onto mtg-decks main, through the gate,
 never forced, and never with the token anywhere a log could see it.
 
-Everything runs against tmp bare repos standing in for github.com and a fake
-GitHub REST server standing in for the pulls endpoint (see
-`guides_git_testkit`).
+Everything runs against tmp bare repos standing in for github.com (see
+`guides_git_testkit`). After three lost races the admit is a retryable
+`error` with the change left in the tree.
 """
 
 from __future__ import annotations
@@ -16,9 +16,7 @@ from pathlib import Path
 import pytest
 from guides_git_testkit import (
     GAME,
-    REPO,
     TOKEN,
-    FakeGitHub,
     branches,
     cli,
     clone,
@@ -49,15 +47,12 @@ def _no_ambient_game(monkeypatch):
 
 
 @pytest.fixture
-def github(tmp_path, monkeypatch):
-    fake = FakeGitHub()
-    isolate_git(tmp_path, monkeypatch, fake)
-    yield fake
-    fake.close()
+def isolated(tmp_path, monkeypatch):
+    return isolate_git(tmp_path, monkeypatch)
 
 
 @pytest.fixture
-def bare(tmp_path, github):
+def bare(tmp_path, isolated):
     return seed_guides(tmp_path)
 
 
@@ -260,7 +255,7 @@ def test_an_invalid_game_id_is_refused(capsys, root):
     assert (rc, result["result"]) == (1, "refused")
 
 
-# -- non-fast-forward: retry, then a pull request ---------------------------------------
+# -- non-fast-forward: retry, then a retryable error -------------------------------------
 
 
 def test_non_fast_forward_then_success(capsys, monkeypatch, tmp_path, root, bare):
@@ -282,43 +277,44 @@ def test_non_fast_forward_then_success(capsys, monkeypatch, tmp_path, root, bare
     assert read_play(root)["priority"] == 65
 
 
-def test_three_non_fast_forwards_then_a_pull_request(
-    capsys, monkeypatch, tmp_path, root, bare, github
+def test_three_non_fast_forwards_are_a_retryable_error_with_the_change_left_in_the_tree(
+    capsys, monkeypatch, tmp_path, root, bare
 ):
     pushes: list[list[str]] = []
+    racing = [True]
 
     def race(argv):
-        if is_main_push(argv):
+        if is_main_push(argv) and racing[0]:
             pushes.append(argv)
             compete(bare, tmp_path / "competitor", f"race {len(pushes)}")
 
     calls = interpose(monkeypatch, race)
     priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
     rc, result, out, err = admit(capsys, root)
-    assert (rc, result["result"]) == (0, "pr_opened"), result
+    assert (rc, result["result"]) == (1, "error"), result
+    assert result["retryable"] is True
+    assert "pr_url" not in result and "branch" not in result
     assert len(pushes) == 3
-    branch = f"seat/{GAME}-plays"
-    assert result["branch"] == branch
-    assert result["pr_url"] == f"https://github.com/{REPO}/pull/1"
-    assert branch in branches(bare)
-    assert trailers(bare, branch, "Game-Id") == [GAME]
+    # No fallback branch: origin has main only, carrying the races.
+    assert branches(bare) == {"main"}
     assert git(bare, "log", "-1", "--format=%s", "main") == "competitor race 3"
-    (pull,) = github.pulls()
-    assert pull["path"] == f"/repos/{REPO}/pulls"
-    assert (pull["body"]["head"], pull["body"]["base"]) == (branch, "main")
-    assert pull["headers"]["authorization"] == f"Bearer {TOKEN}"
-    # Local main is back on origin/main: the change lives on the pushed branch.
+    # The commit is soft-reset: the change is back in the tree, uncommitted,
+    # on top of the newest upstream this admit fetched.
+    assert git(root, "rev-parse", "HEAD") == git(bare, "rev-parse", "main~1")
     assert git(root, "rev-parse", "HEAD") == git(root, "rev-parse", "origin/main")
-    assert git(root, "rev-parse", branch) == git(bare, "rev-parse", branch)
+    assert read_play(root)["priority"] == 65
+    assert [line[3:] for line in git(root, "status", "--porcelain").splitlines()] == [SHOCK]
+    assert not (root / ".git" / "rebase-merge").exists()
 
-    # (4) the token: read through the credential helper, never printed, never
-    # in argv or a subprocess env, never in .git/config or a commit.
+    # The GitHub REST API is never asked for anything.
+    assert ["git", "credential", "fill"] not in [c["argv"][:3] for c in calls]
     assert TOKEN not in out + err
-    assert all(TOKEN not in " ".join(c["argv"]) for c in calls)
-    assert all(TOKEN not in json.dumps(c["env"]) for c in calls)
-    assert TOKEN not in (root / ".git" / "config").read_text(encoding="utf-8")
-    assert TOKEN not in git(root, "log", "--all", "-p")
-    assert ["git", "credential", "fill"] in [c["argv"][:3] for c in calls]
+
+    # Run again once main is quiet, and it lands as one commit.
+    racing[0] = False
+    rc, again, _, _ = admit(capsys, root)
+    assert (rc, again["result"]) == (0, "admitted"), again
+    assert trailers(bare, "main", "Script-Priority") == ["fetch-untapped-shock 60->65"]
 
 
 # -- rebase: priority deltas replay, content conflicts do not ----------
@@ -361,7 +357,7 @@ def test_a_content_conflict_is_returned_with_the_commit_intact(capsys, tmp_path,
 
 
 @pytest.mark.parametrize("failure", ["check_plays_fails", "check_plays_missing", "plays_check"])
-def test_a_gate_failure_pushes_nothing(capsys, monkeypatch, tmp_path, github, failure):
+def test_a_gate_failure_pushes_nothing(capsys, monkeypatch, tmp_path, isolated, failure):
     bare = seed_guides(tmp_path, check_plays=failure != "check_plays_missing")
     root = clone(bare, tmp_path / "guides")
     before = main_sha(bare)
@@ -375,7 +371,6 @@ def test_a_gate_failure_pushes_nothing(capsys, monkeypatch, tmp_path, github, fa
     assert (rc, result["result"]) == (1, "gate_failed"), result
     assert main_sha(bare) == before
     assert branches(bare) == {"main"}
-    assert github.pulls() == []
 
 
 # -- the conflict ratchet (owner addendum) ----------
@@ -400,7 +395,7 @@ def test_a_change_adding_a_conflicting_pair_is_refused(capsys, root, bare):
     assert main_sha(bare) == before
 
 
-def test_raising_a_disabled_duplicate_into_conflict_is_refused(capsys, tmp_path, github):
+def test_raising_a_disabled_duplicate_into_conflict_is_refused(capsys, tmp_path, isolated):
     bare = seed_guides(tmp_path, (FETCH_SHOCK, FETCH_SURVEIL, play(id="spare", priority=0)))
     root = clone(bare, tmp_path / "guides")
     before = main_sha(bare)
@@ -413,7 +408,7 @@ def test_raising_a_disabled_duplicate_into_conflict_is_refused(capsys, tmp_path,
     assert main_sha(bare) == before
 
 
-def test_a_new_next_conflict_is_refused(capsys, tmp_path, github):
+def test_a_new_next_conflict_is_refused(capsys, tmp_path, isolated):
     spare_a = play(id="spare-a", priority=0)
     spare_b = play(id="spare-b", priority=0)
     chain = play(
@@ -433,7 +428,7 @@ def test_a_new_next_conflict_is_refused(capsys, tmp_path, github):
     ]
 
 
-def test_an_unrelated_change_beside_a_pre_existing_conflict_is_admitted(capsys, tmp_path, github):
+def test_an_unrelated_change_beside_a_pre_existing_conflict_is_admitted(capsys, tmp_path, isolated):
     bare = seed_guides(tmp_path, (play(id="a"), play(id="b"), FETCH_SURVEIL))
     before = conflicts_on_main(bare, tmp_path, "before")
     assert before == [("play-conflict", ["a", "b"])]
@@ -444,7 +439,7 @@ def test_an_unrelated_change_beside_a_pre_existing_conflict_is_admitted(capsys, 
     assert conflicts_on_main(bare, tmp_path, "after") == before
 
 
-def test_resolving_a_conflict_by_extending_a_condition_is_admitted(capsys, tmp_path, github):
+def test_resolving_a_conflict_by_extending_a_condition_is_admitted(capsys, tmp_path, isolated):
     bare = seed_guides(tmp_path, (play(id="a"), play(id="b"), FETCH_SURVEIL))
     root = clone(bare, tmp_path / "guides")
     b = play(id="b")
@@ -459,7 +454,7 @@ def test_resolving_a_conflict_by_extending_a_condition_is_admitted(capsys, tmp_p
     assert conflicts_on_main(bare, tmp_path, "after") == []
 
 
-def test_a_clone_without_card_data_fails_closed(capsys, tmp_path, github):
+def test_a_clone_without_card_data_fails_closed(capsys, tmp_path, isolated):
     bare = seed_guides(tmp_path, card_data=False)
     root = clone(bare, tmp_path / "guides")
     before = main_sha(bare)
@@ -469,4 +464,3 @@ def test_a_clone_without_card_data_fails_closed(capsys, tmp_path, github):
     assert "card-data.json" in (result["message"] + result.get("output", "")), result
     assert main_sha(bare) == before
     assert branches(bare) == {"main"}
-    assert github.pulls() == []

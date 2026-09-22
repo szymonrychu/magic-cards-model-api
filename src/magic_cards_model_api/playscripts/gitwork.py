@@ -1,12 +1,11 @@
-"""Git and GitHub plumbing shared by `plays admit` and `guides propose`.
+"""Git plumbing shared by `plays admit` and `guides propose`.
 
 Every command either of them runs goes through `run`, one place to read what
-reaches a subprocess. The GitHub token is read only through git's credential
-helper (the one A13's `mtg_agent.wrapper.bootstrap.write_gitconfig` writes,
-reading the mounted Secret file) and, failing that, that mounted file itself.
-It is used for exactly one thing - the `Authorization` header of a REST call -
-and is never printed, never put in argv or a subprocess environment, and
-never written to `.git/config`.
+reaches a subprocess. Both push straight to mtg-decks main and never talk to
+the GitHub REST API: git authenticates the push itself, through the
+credential helper A13's `mtg_agent.wrapper.bootstrap.write_gitconfig` writes
+(it reads the mounted Secret file each time), so no code here ever holds the
+token.
 """
 
 from __future__ import annotations
@@ -20,21 +19,18 @@ import re
 import subprocess
 import tempfile
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from mtg_agent.wrapper.bootstrap import GH_TOKEN_FILE, GUIDES_DIR
+from mtg_agent.wrapper.bootstrap import GUIDES_DIR
 
 #: The default `--root` of every command that works the pod's guides clone.
 GUIDES_ROOT = Path(GUIDES_DIR)
 MAIN = "main"
 UPSTREAM = f"origin/{MAIN}"
-DEFAULT_GITHUB_API = "https://api.github.com"
-#: Push attempts onto main before falling back to a branch and a pull request.
+#: Push attempts onto main before giving up with a retryable `error`, the
+#: change left uncommitted in the checkout for the next run.
 PUSH_ATTEMPTS = 3
 DELTAS_FILE = "mtg-plays-deltas.json"
 #: Where each game first found each play's priority, for the per-game bound.
@@ -42,11 +38,10 @@ GAME_PRIORITY_FILE = "mtg-plays-priority-games.json"
 #: How far one `plays priority` call, and one game, may move a priority.
 PRIORITY_STEP_LIMIT = 5
 PRIORITY_MIN, PRIORITY_MAX = 0, 100
-#: The post-game reviewer's own role. It is a THIRD proposer for the same
-#: game and the same deck as the seat that played it and the buddy that
-#: watched it, so it needs a role of its own: two proposers sharing a
-#: `seat/<game>-<deck>-<role>-guides` branch name is a collision that loses
-#: one of the two proposals, not a cosmetic clash.
+#: The post-game reviewer's own role. It is a THIRD writer for the same game
+#: and the same deck as the seat that played it and the buddy that watched
+#: it, so it gets a role of its own and its commits on main are authored as
+#: `mtg-reviewer`, never passed off as the seat's.
 REVIEWER_ROLE = "reviewer"
 
 #: MTG_ROLE -> the name a commit is authored under.
@@ -74,8 +69,8 @@ def checkout_lock(root: Path | str, timeout: float | None = None) -> Iterator[No
 
     **Defect D-1.** Both write channels run against the same single clone:
     `plays admit` does a fetch-and-rebase and then pushes `HEAD:main` with up
-    to three attempts, and `guides propose` commits onto its own branch and
-    pushes that. A second committer inside the same working tree during
+    to three attempts, and `guides propose` resets the checkout onto origin
+    main, commits there and pushes that. A second committer inside the same working tree during
     either sequence does not merely lose a race - it corrupts it, because the
     index, HEAD and the working tree are shared state that neither sequence
     re-reads between its steps. The post-game AI review runs on a background
@@ -133,12 +128,12 @@ def checkout_lock(root: Path | str, timeout: float | None = None) -> Iterator[No
         handle.close()
 
 
-#: The results a command prints. `error` is an infrastructure failure (no
-#: token, GitHub refused, git itself broke), never a verdict on the change.
-#: `pr_opened` is `plays admit`'s own rare fallback (3 non-fast-forward
-#: pushes); `awaiting_owner_review` is every `guides propose` pull request -
-#: mtg-decks has no CI budget, so the owner merges guide PRs by hand.
-SUCCESS = frozenset({"admitted", "pr_opened", "awaiting_owner_review", "nothing_to_admit"})
+#: The results a command exits 0 on. `error` is an infrastructure failure
+#: (git itself broke, the push was refused for a reason other than a race),
+#: never a verdict on the change; one carrying `retryable: true` means main
+#: kept moving for `PUSH_ATTEMPTS` pushes and the same command can simply be
+#: run again.
+SUCCESS = frozenset({"admitted", "nothing_to_admit"})
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 _INT = re.compile(r"-?(?:0|[1-9][0-9]*)(?![0-9.eE])")
@@ -296,14 +291,25 @@ class Git:
 
     def merge_file(self, current: str, base: str, other: str) -> str | None:
         """A three-way text merge; None when it conflicts."""
+        text, conflicted = self.merge_file_markers(current, base, other)
+        return None if conflicted else text
+
+    def merge_file_markers(self, mine: str, base: str, upstream: str) -> tuple[str, bool]:
+        """A three-way text merge and whether it conflicted. A conflicted
+        merge keeps git's markers, labelled `yours` / `base` / `origin/main`,
+        for the agent to resolve by hand."""
         with tempfile.TemporaryDirectory() as tmp:
             names = []
-            for label, text in (("current", current), ("base", base), ("other", other)):
+            for label, text in (("yours", mine), ("base", base), ("upstream", upstream)):
                 path = Path(tmp) / label
                 path.write_text(text, encoding="utf-8")
                 names.append(str(path))
-            done = self.run("merge-file", "-p", "-q", *names)
-        return done.stdout if done.returncode == 0 else None
+            done = self.run(
+                "merge-file", "-p", "-q", "-L", "yours", "-L", "base", "-L", UPSTREAM, *names
+            )
+        if done.returncode < 0 or done.returncode > 127:
+            raise Outcome("error", f"git merge-file failed: {tail(done, 10)}")
+        return done.stdout, done.returncode != 0
 
 
 # -- a play's top-level priority, edited in place ------------------------------------------
@@ -370,91 +376,3 @@ def replace_top_level_int(text: str, key: str, value: int) -> str | None:
 
 def clamp_priority(value: int) -> int:
     return max(PRIORITY_MIN, min(PRIORITY_MAX, value))
-
-
-# -- the token and the pulls endpoint --------------------------------------------------------
-
-
-def github_token(git: Git) -> str:
-    """Through git's credential helper first, then the mounted Secret file."""
-    done = run(
-        ["git", "credential", "fill"],
-        git.root,
-        input="protocol=https\nhost=github.com\n\n",
-        env=git.env,
-    )
-    if done.returncode == 0:
-        for line in done.stdout.splitlines():
-            if line.startswith("password=") and line[len("password=") :]:
-                return line[len("password=") :]
-    path = Path(os.environ.get("GH_PAT_FILE") or GH_TOKEN_FILE)
-    try:
-        token = path.read_text(encoding="utf-8").strip()
-    except OSError:
-        token = ""
-    if token:
-        return token
-    raise Outcome(
-        "error",
-        f"no GitHub token: the git credential helper answered none and {path} is not readable",
-    )
-
-
-def github_repo(git: Git) -> str:
-    """owner/name: MTG_GITHUB_REPO, else read off the origin URL."""
-    configured = os.environ.get("MTG_GITHUB_REPO", "").strip()
-    if configured:
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", configured):
-            raise Outcome("error", "MTG_GITHUB_REPO is not owner/name")
-        return configured
-    url = git.out("remote", "get-url", "origin").strip()
-    match = re.search(r"github\.com[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$", url)
-    if match is None:
-        raise Outcome("error", "origin is not a github.com repository and MTG_GITHUB_REPO is unset")
-    return f"{match.group(1)}/{match.group(2)}"
-
-
-def _github(method: str, url: str, token: str, body: dict[str, Any] | None = None) -> Any:
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode() if body is not None else None,
-        method=method,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "Content-Type": "application/json",
-            "User-Agent": "mcp-seat",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.load(response)
-
-
-def open_pull_request(git: Git, branch: str, title: str, body: str) -> str:
-    """The html_url of a pull request from `branch` into main, an already
-    open one for that branch included."""
-    api = os.environ.get("MTG_GITHUB_API", "").strip().rstrip("/") or DEFAULT_GITHUB_API
-    repo = github_repo(git)
-    token = github_token(git)
-    pulls = f"{api}/repos/{repo}/pulls"
-    try:
-        created = _github(
-            "POST", pulls, token, {"title": title, "head": branch, "base": MAIN, "body": body}
-        )
-        return str(created["html_url"])
-    except urllib.error.HTTPError as exc:
-        if exc.code == 422:
-            owner = repo.split("/")[0]
-            query = urllib.parse.urlencode({"head": f"{owner}:{branch}", "state": "open"})
-            try:
-                existing = _github("GET", f"{pulls}?{query}", token)
-            except (urllib.error.URLError, OSError, ValueError):
-                existing = []
-            if isinstance(existing, list) and existing and "html_url" in existing[0]:
-                return str(existing[0]["html_url"])
-        raise Outcome("error", f"GitHub refused the pull request: HTTP {exc.code}") from None
-    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError) as exc:
-        raise Outcome(
-            "error", f"the pull request could not be opened: {type(exc).__name__}"
-        ) from None

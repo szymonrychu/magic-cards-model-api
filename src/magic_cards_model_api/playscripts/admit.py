@@ -25,8 +25,9 @@ first found each play, and survives `admit`. A larger step is refused as
 5. ratchets conflicts: a play-conflict or next-conflict warning present after
    the change and not before it is refused (`conflict_regression`);
 6. pushes `HEAD:main`, never forced; a non-fast-forward goes back to 3, at
-   most three pushes, then the commit goes to `seat/<game>-plays` and a pull
-   request (`pr_opened`).
+   most three pushes. After the third the commit is soft-reset, the change
+   is left uncommitted on the newest upstream, and the result is `error`
+   with `retryable: true`: run the same command again.
 """
 
 from __future__ import annotations
@@ -271,23 +272,13 @@ def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
             _save_deltas(git, {})
             return result("admitted", f"pushed to {MAIN}", sha=git.head())
 
-    branch = f"seat/{game_id}-plays"
-    sha = git.head()
-    if not git.push(f"HEAD:refs/heads/{branch}"):
-        raise Outcome("error", f"{MAIN} kept moving and branch {branch} already exists on origin")
-    url = gitwork.open_pull_request(
-        git,
-        branch,
-        f"Plays: {deck} after game {game_id}",
-        f"`mcp-seat plays admit` could not push to {MAIN} after {PUSH_ATTEMPTS} "
-        f"non-fast-forward attempts, so the gated change is proposed here.\n\n"
-        f"Game-Id: {game_id}\n",
-    )
-    git.out("branch", "-f", branch, "HEAD")
-    git.out("reset", "-q", "--keep", UPSTREAM)
-    _save_deltas(git, {})
+    if committed:
+        git.out("reset", "-q", "--soft", "HEAD~1")
     return result(
-        "pr_opened", f"opened a pull request from {branch}", pr_url=url, branch=branch, sha=sha
+        "error",
+        f"{MAIN} moved under each of {PUSH_ATTEMPTS} pushes, so nothing landed; the change is "
+        f"back in the tree, uncommitted, on the newest {UPSTREAM} - run the same command again",
+        retryable=True,
     )
 
 

@@ -277,22 +277,31 @@ prints one JSON object, and its `result` says what happened:
   `priority_limit`.
 - `mcp-seat plays admit --deck SLUG --game-id GAME` takes play-script changes
   under `decks/*/plays/` to mtg-decks main, through the plays gate. Results:
-  - `admitted` or `pr_opened`: done.
+  - `admitted`: done.
   - `nothing_to_admit`: there was nothing to take.
   - `refused`: something outside the plays directories changed.
   - `conflict`: someone else changed the same lines.
   - `gate_failed`: read `output`.
   - `conflict_regression`: the change lets two plays apply at the same moment.
     Extend their conditions. Reordering priority never resolves a conflict.
-- `mcp-seat guides propose --deck SLUG --game-id GAME` handles matchup advice.
-  Edit only `matchups[].play_plan` and `matchups[].notes` of the newest
-  `boarding-plan.json`, plus `decks/SLUG/NOTES.md`. The command regenerates
-  the guides, pushes your own `seat/GAME-SLUG-ROLE-guides` branch (ROLE is
-  `advisor` for you, so no seat shares it), opens a pull request, and returns at once with its `pr_url` and
-  `awaiting_owner_review` - it never waits for checks or a merge. mtg-decks
-  has no CI budget, so the owner reviews and merges the PR by hand; the edit
-  is not live until then. Scripts are different: `plays admit` pushes
-  straight to mtg-decks main.
+  - `error` with `retryable: true`: main moved under three pushes in a row;
+    the change is back in the tree, uncommitted. Run the same command again.
+- `mcp-seat guides propose --deck SLUG [--deck SLUG ...] --game-id GAME`
+  handles matchup advice, for every deck you name in one call. For a guided
+  deck, edit only `matchups[].play_plan` and `matchups[].notes` of the newest
+  `boarding-plan.json`, plus `decks/SLUG/NOTES.md`; you may append a row for
+  an archetype the plan lacks, only as `name` (new), `origin: "seat"`,
+  `play_plan` (the five strings `keep`, `goldfish_for`, `watch_for`,
+  `posture`, `posture_why`) and `notes` (a list of strings). An opponent
+  archetype with no guide gets a stub deck, `decks/SLUG/NOTES.md` alone,
+  named like `izzet-prowess`; a stub matching a guided deck is refused. The
+  command regenerates the guides, runs the repo's own checks, and pushes
+  straight to mtg-decks main: `admitted` means the edit is live.
+  - `conflict`: main changed the same lines first. The listed `files` hold
+    both sides between conflict marker lines; edit each block into one text
+    keeping both sides' intent, delete the markers, and run the same command
+    again.
+  - `error` with `retryable: true`: main kept moving; run it again.
   - `refused_content`: what you wrote reads as a system problem rather than
     as how the deck is piloted, so none of the proposal landed. File that
     with `report_problem` instead, or reword it without the wording the
