@@ -218,8 +218,19 @@ def _redact_known_cards(
         if entry is None:
             continue
         if name != viewer:
-            # CR 723.4: a controlled player's known *in-game* cards are the
-            # controller's to see too, but a sideboard is outside the game.
+            # CR 723.4: what is visible to the controlled player now about
+            # objects in the game - their own hidden cards they know - is the
+            # controller's to see too. Their memory of another player's cards
+            # is not visible to them now and stays theirs, and a sideboard is
+            # outside the game.
+            def own(card: Any, owner: str = name) -> bool:
+                return (
+                    isinstance(card, dict)
+                    and (card.get("owner") or card.get("controller")) == owner
+                )
+
+            entry["hand"] = [card for card in entry["hand"] if own(card)]
+            entry["library"] = [record for record in entry["library"] if own(record["card"])]
             entry["sideboard"] = []
         redacted[name] = entry
     return redacted

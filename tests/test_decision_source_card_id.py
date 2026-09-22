@@ -231,7 +231,7 @@ def _pause_every_command_on(monkeypatch, pending: SimpleNamespace) -> None:
     """Every fresh command and every resumed one pauses on `pending`."""
     paused = commands.RunResult(status=commands.RunStatus.PAUSED, pending=pending)
 
-    def run(game_id: str, kind: str, request: Any):  # noqa: ANN202
+    def run(game_id: str, kind: str, request: Any, **_: Any):  # noqa: ANN202
         return paused, store.get(game_id), None, None
 
     def resume(*args: Any, **kwargs: Any):  # noqa: ANN202

@@ -756,6 +756,20 @@ def _pause_slot_guard(
     return paused
 
 
+def _acting_seat(game_id: str, player: str, uid: str | None) -> str:
+    """Who the reasoning and plan gates hold to account for an action naming
+    `player`: the seat `uid` opens when that seat is making `player`'s
+    decisions this turn (CR 723.5) - an agent controlling another player
+    answers for its own plan, never theirs - and otherwise `player`."""
+    seat = game_access.seat_for_uid(game_id, uid)
+    if seat is None or seat == player:
+        return player
+    game = store.get(game_id)
+    if game is not None and player_control.may_decide_for(game, seat, player):
+        return seat
+    return player
+
+
 def _acting_as[Request](
     game_id: str, kind: str, action: str, req: Request, uid: str | None
 ) -> tuple[Request, dict[str, Any] | None]:
@@ -787,7 +801,7 @@ def _acting_as[Request](
 
 
 def _run_command(
-    game_id: str, kind: str, request: Any
+    game_id: str, kind: str, request: Any, *, acting: tuple[Any, str | None] | None = None
 ) -> tuple[commands.RunResult, Game, records.LegalActionsBefore | None, int | None]:
     """Run `kind` fresh against `game_id`'s current committed state
     (`commands.run_command`), and settle the result into the store: commit
@@ -874,6 +888,25 @@ def _run_command(
     dry_run = getattr(request, "dry_run", False)
     with store.locked(game_id) as game:
         commands.refuse_if_over(game, kind)
+        if acting is not None:
+            # `acting` is `(the request as the caller sent it, its uid)`. The
+            # CR 723 rewrite (`_acting_as`) read the control effect before this
+            # lock; CR 723.1 ends that effect at the turn boundary, so it is
+            # asked again here, atomically with the command, and a request
+            # whose answer changed in between is refused rather than run as a
+            # player the caller no longer decides for.
+            sent, uid = acting
+            now, reason = player_control.acting_as(
+                game, kind, sent, game_access.seat_for_uid(game_id, uid)
+            )
+            if reason is not None or getattr(now, "player", None) != getattr(
+                request, "player", None
+            ):
+                raise ValueError(
+                    reason
+                    or "who is making this player's decisions changed while the request "
+                    "was in flight (CR 723.1) - read the board and act again"
+                )
         if kind != "concede":
             # A dry run is compared as the real command it asks about, and
             # never clears a stale slot - see this function's docstring.
@@ -2047,7 +2080,8 @@ def action_cast(game_id: str, req: CastRequest, uid: str | None = None) -> dict[
     `engine_api.dry_run_copy` - never through the pause/resume tape), so it
     always completes; a real cast can pause on any CR 601.2 choice this
     engine still asks interactively (`choose_targets`, `choose_a_mode`, ...)."""
-    actor = req.player
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
     req, refused = _acting_as(game_id, "cast", "cast", req, uid)
     if refused is not None:
         return refused
@@ -2061,7 +2095,7 @@ def action_cast(game_id: str, req: CastRequest, uid: str | None = None) -> dict[
     )
     records.require_reasoning(game_id, actor, req.reasoning)
     records.require_plan(game_id, actor)
-    result, committed, legal_before, seq = _run_command(game_id, "cast", req)
+    result, committed, legal_before, seq = _run_command(game_id, "cast", req, acting=(sent, uid))
     return _respond(
         game_id,
         "cast",
@@ -2092,7 +2126,8 @@ def action_suspend(
     """CR 116.2f/702.62a: exile a card with suspend from hand, paying its
     suspend cost, with N time counters. The free cast once the last counter
     comes off is picked up automatically by `actions/cast` - see `advance`."""
-    actor = req.player
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
     req, refused = _acting_as(game_id, "suspend", "suspend", req, uid)
     if refused is not None:
         return refused
@@ -2106,7 +2141,7 @@ def action_suspend(
     )
     records.require_reasoning(game_id, actor, req.reasoning)
     records.require_plan(game_id, actor)
-    result, _, legal_before, seq = _run_command(game_id, "suspend", req)
+    result, _, legal_before, seq = _run_command(game_id, "suspend", req, acting=(sent, uid))
     return _respond(
         game_id,
         "suspend",
@@ -2130,7 +2165,8 @@ def action_suspend(
 def action_plot(game_id: str, req: SpecialActionRequest, uid: str | None = None) -> dict[str, Any]:
     """CR 116.2k/702.170b: exile a card with plot from hand, paying its plot
     cost. Cast it later with `actions/cast`, `keyword: "Plot"`, on a later turn."""
-    actor = req.player
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
     req, refused = _acting_as(game_id, "plot", "plot", req, uid)
     if refused is not None:
         return refused
@@ -2144,7 +2180,7 @@ def action_plot(game_id: str, req: SpecialActionRequest, uid: str | None = None)
     )
     records.require_reasoning(game_id, actor, req.reasoning)
     records.require_plan(game_id, actor)
-    result, _, legal_before, seq = _run_command(game_id, "plot", req)
+    result, _, legal_before, seq = _run_command(game_id, "plot", req, acting=(sent, uid))
     return _respond(
         game_id,
         "plot",
@@ -2171,7 +2207,8 @@ def action_foretell(
     """CR 116.2h/702.143b: pay {2} and exile a card with foretell from hand,
     face down. Cast it later with `actions/cast`, `keyword: "Foretell"`, on a
     later turn, for its printed foretell cost."""
-    actor = req.player
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
     req, refused = _acting_as(game_id, "foretell", "foretell", req, uid)
     if refused is not None:
         return refused
@@ -2185,7 +2222,7 @@ def action_foretell(
     )
     records.require_reasoning(game_id, actor, req.reasoning)
     records.require_plan(game_id, actor)
-    result, _, legal_before, seq = _run_command(game_id, "foretell", req)
+    result, _, legal_before, seq = _run_command(game_id, "foretell", req, acting=(sent, uid))
     return _respond(
         game_id,
         "foretell",
@@ -2210,7 +2247,8 @@ def action_cycle(game_id: str, req: CycleRequest, uid: str | None = None) -> dic
     """CR 702.29a: discard a card with cycling from hand, paying its cycling
     cost, to draw a card (or search for a typecycled one). Puts the ability on
     the stack, same as `actions/activate` - resolve it with `resolve-top`."""
-    actor = req.player
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
     req, refused = _acting_as(game_id, "cycle", "cycle", req, uid)
     if refused is not None:
         return refused
@@ -2224,7 +2262,7 @@ def action_cycle(game_id: str, req: CycleRequest, uid: str | None = None) -> dic
     )
     records.require_reasoning(game_id, actor, req.reasoning)
     records.require_plan(game_id, actor)
-    result, _, legal_before, seq = _run_command(game_id, "cycle", req)
+    result, _, legal_before, seq = _run_command(game_id, "cycle", req, acting=(sent, uid))
     return _respond(
         game_id,
         "cycle",
@@ -2601,7 +2639,8 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
     response_model_exclude_unset=True,
 )
 def action_activate(game_id: str, req: ActivateRequest, uid: str | None = None) -> dict[str, Any]:
-    actor = req.player
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
     req, refused = _acting_as(game_id, "activate_ability", "activate", req, uid)
     if refused is not None:
         return refused
@@ -2615,7 +2654,9 @@ def action_activate(game_id: str, req: ActivateRequest, uid: str | None = None) 
     )
     records.require_reasoning(game_id, actor, req.reasoning)
     records.require_plan(game_id, actor)
-    result, _, legal_before, seq = _run_command(game_id, "activate_ability", req)
+    result, _, legal_before, seq = _run_command(
+        game_id, "activate_ability", req, acting=(sent, uid)
+    )
     return _respond(
         game_id,
         "activate",
@@ -2642,7 +2683,8 @@ def action_crew(game_id: str, req: CrewRequest, uid: str | None = None) -> dict[
     """Crew a Vehicle (CR 702.122a). Its own endpoint rather than an
     `activate` against an ability index: the cost is the creatures tapped,
     not mana, and crew is the Vehicle's ability rather than theirs."""
-    actor = req.player
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
     req, refused = _acting_as(game_id, "crew", "crew", req, uid)
     if refused is not None:
         return refused
@@ -2656,7 +2698,7 @@ def action_crew(game_id: str, req: CrewRequest, uid: str | None = None) -> dict[
     )
     records.require_reasoning(game_id, actor, req.reasoning)
     records.require_plan(game_id, actor)
-    result, _, legal_before, seq = _run_command(game_id, "crew", req)
+    result, _, legal_before, seq = _run_command(game_id, "crew", req, acting=(sent, uid))
     return _respond(
         game_id,
         "crew",
@@ -2685,7 +2727,8 @@ def action_equip(game_id: str, req: EquipRequest, uid: str | None = None) -> dic
     (`machines.keywords.equip_activation`), not one of the Equipment's
     `activated_abilities`, so there is no index to name. The legal-action row
     for it is `kind: equip`."""
-    actor = req.player
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
     req, refused = _acting_as(game_id, "equip", "equip", req, uid)
     if refused is not None:
         return refused
@@ -2699,7 +2742,7 @@ def action_equip(game_id: str, req: EquipRequest, uid: str | None = None) -> dic
     )
     records.require_reasoning(game_id, actor, req.reasoning)
     records.require_plan(game_id, actor)
-    result, _, legal_before, seq = _run_command(game_id, "equip", req)
+    result, _, legal_before, seq = _run_command(game_id, "equip", req, acting=(sent, uid))
     return _respond(
         game_id,
         "equip",
@@ -2945,7 +2988,8 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
     response_model_exclude_unset=True,
 )
 def action_play_land(game_id: str, req: PlayLandRequest, uid: str | None = None) -> dict[str, Any]:
-    actor = req.player
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
     req, refused = _acting_as(game_id, "play_land", "play_land", req, uid)
     if refused is not None:
         return refused
@@ -2959,7 +3003,7 @@ def action_play_land(game_id: str, req: PlayLandRequest, uid: str | None = None)
     )
     records.require_reasoning(game_id, actor, req.reasoning)
     records.require_plan(game_id, actor)
-    result, _, legal_before, seq = _run_command(game_id, "play_land", req)
+    result, _, legal_before, seq = _run_command(game_id, "play_land", req, acting=(sent, uid))
     return _respond(
         game_id,
         "play_land",

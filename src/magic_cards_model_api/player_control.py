@@ -154,6 +154,20 @@ def acting_as(game: Game, kind: str, request: Any, seat: str | None) -> tuple[An
     elif getattr(request, "card", None):
         zone = getattr(request, "from_zone", "hand") or "hand"
         holder = _holder_by_name(game, player, request.card, zone, theirs)
-    if holder in theirs:
+    if holder in theirs and not _has_own_action_for(game, player, card_id):
         return request.model_copy(update={"player": holder}), None
     return request, None
+
+
+def _has_own_action_for(game: Game, player: str, card_id: Any) -> bool:
+    """Whether `player` has a legal action of its own with this card - a play
+    permission it holds on a card another player owns (Hostage Taker, Gonti,
+    casting from an opponent's graveyard), which stays `player`'s own
+    (CR 723.8: a controller goes on making its own choices). Asked of the
+    engine's own enumeration rather than guessed from ownership."""
+    if card_id is None:
+        return False
+    from magic_cards_model.machines.legal_actions import legal_actions
+
+    wanted = str(card_id)
+    return any(str(action.card_id) == wanted for action in legal_actions(game, player))

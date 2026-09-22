@@ -136,7 +136,7 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from fastapi import Request, Response
+from fastapi import HTTPException, Request, Response
 from fastapi.routing import APIRoute
 from starlette.concurrency import run_in_threadpool
 
@@ -420,6 +420,117 @@ async def authorize_game_access(request: Request, game_id: str) -> None:
     rather than silently treated as anonymous."""
     if not await can_access_game(request, game_id):
         raise KeyError(f"no game {game_id}")
+    if request.method in MUTATING_METHODS:
+        reason = await _seat_mismatch(request, game_id)
+        if reason is not None:
+            raise HTTPException(status_code=403, detail=reason)
+
+
+#: The mutating routes whose subject is a player, and how to find that player:
+#: the JSON body's `player`, or the controller of the card the path names.
+#: Every other mutating route attributes itself from the credential already
+#: (`report`, `plan`, `advice`, `decide`, `attack`, `declare-blockers`, the
+#: pregame and script routes) or has no player at all.
+_BODY_PLAYER_ROUTES = frozenset(
+    f"/api/games/{{game_id}}/{rest}"
+    for rest in (
+        "actions/cast",
+        "actions/suspend",
+        "actions/plot",
+        "actions/foretell",
+        "actions/cycle",
+        "actions/activate",
+        "actions/crew",
+        "actions/equip",
+        "actions/play-land",
+        "actions/pass-priority",
+        "actions/concede",
+        "advance",
+        "resolve-top",
+        "state-based-actions",
+        "step",
+        "cards",
+    )
+)
+_CARD_ROUTES = frozenset(
+    {
+        "/api/games/{game_id}/cards/{card_id}",
+        "/api/games/{game_id}/cards/{card_id}/tap",
+        "/api/games/{game_id}/cards/{card_id}/move",
+    }
+)
+_PLAYER_PATH_ROUTES = frozenset(
+    {
+        "/api/games/{game_id}/players/{username}",
+        "/api/games/{game_id}/players/{username}/mana-pool",
+    }
+)
+_CONCEDE_ROUTE = "/api/games/{game_id}/actions/concede"
+
+
+def _card_holder(game: Any, card_id: str) -> str | None:
+    """Whose card this is for a seat binding: a permanent's controller, else
+    whoever's zone holds it, else its owner."""
+    from uuid import UUID
+
+    try:
+        card = game.find_by_id(UUID(card_id))
+    except (ValueError, TypeError):
+        return None
+    if card is None:
+        return None
+    if card.controller:
+        return str(card.controller)
+    found = game.find_owner(card)
+    return found.username if found is not None else card.owner
+
+
+async def _seat_mismatch(request: Request, game_id: str) -> str | None:
+    """Why this seat uid may not act for the player its request names, or None.
+
+    A seat uid acts for its own player, or - CR 723.5 - for a player it is
+    making the decisions of this turn. The admin key and a caller that
+    presents no seat uid at all (the owner's bearer token) are left to the
+    access gate above. Conceding is the one decision a controller never
+    makes: CR 723.6, "The controller of another player can't make that
+    player concede." """
+    template = _route_template(request)
+    if template is None:
+        return None
+    uid, key = await _credentials(request)
+    if _is_admin(game_id, uid, key):
+        return None
+    seat = seat_for_uid(game_id, uid)
+    if seat is None:
+        return None
+    subject: str | None = None
+    if template in _BODY_PLAYER_ROUTES:
+        body = await _json_body(request)
+        player = body.get("player") if body is not None else None
+        subject = player if isinstance(player, str) else None
+    elif template in _PLAYER_PATH_ROUTES:
+        subject = request.path_params.get("username")
+    elif template in _CARD_ROUTES:
+        game = store.get(game_id)
+        card_id = request.path_params.get("card_id")
+        if game is not None and card_id is not None:
+            subject = _card_holder(game, str(card_id))
+    if subject is None or subject == seat:
+        return None
+    from . import player_control
+
+    game = store.get(game_id)
+    deciding = game is not None and player_control.may_decide_for(game, seat, subject)
+    if template == _CONCEDE_ROUTE:
+        if deciding:
+            return f"{seat} cannot make {subject} concede, even while controlling them (CR 723.6)"
+        return f"that uid opens {seat}'s seat, and only {subject} may concede for {subject}"
+    if deciding:
+        return None
+    return (
+        f"that uid opens {seat}'s seat, not {subject}'s, and {seat} is not making "
+        f"{subject}'s decisions this turn - a seat acts only for its own player"
+    )
 
 
 class GameAccessRoute(APIRoute):

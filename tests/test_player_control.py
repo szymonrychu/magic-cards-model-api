@@ -507,3 +507,217 @@ def test_armed_scripts_judge_only_for_the_player_deciding():
     pending = {"player": "bob", "kind": "choose_cards", "prompt": "discard"}
     assert _arming_moment(controlled_board(pending_decision=pending), "alice") is True
     assert _arming_moment(controlled_board(pending_decision=pending), "bob") is False
+
+
+# -- review follow-ups ----------------------------------------------------------
+
+
+def raw_post(client: TestClient, game_id: str, path: str, body: Any, uid: str):
+    return client.post(f"/api/games/{game_id}/{path}", params={"uid": uid}, json=body)
+
+
+def test_the_controller_casts_the_controlled_players_spell_from_their_mana(client, game):
+    """CR 723.5a: bob's spell is paid from bob's mana. alice's own Mountain is
+    untapped the whole time and never touched."""
+    into_bobs_controlled_turn(client, game)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
+    bobs = add_card(client, game, "Mountain", "bob", "battlefield")["added"]["card_id"]
+    alices = add_card(client, game, "Mountain", "alice", "battlefield")["added"]["card_id"]
+    bolt = add_card(client, game, "Lightning Bolt", "bob", "hand")["added"]["card_id"]
+    cast = post(
+        client,
+        game,
+        "actions/cast",
+        {"player": "alice", "card_id": bolt, "targets": ["alice"], "mana_sources": [bobs]},
+        uids(game)["alice"],
+    )
+    assert cast["allowed"] is True, cast
+    board = state(client, game)
+    tapped = {c["id"]: c["tapped"] for c in board["battlefield"]}
+    assert tapped[bobs] is True and tapped[alices] is False
+
+
+def test_a_seat_naming_another_player_is_refused_on_every_action_route(client, game):
+    """A uid acts only for its own player, or for one it is deciding for."""
+    stock_libraries(client, game)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    forest = add_card(client, game, "Forest", "alice", "hand")["added"]["card_id"]
+    land = add_card(client, game, "Forest", "alice", "battlefield")["added"]["card_id"]
+    bob = uids(game)["bob"]
+    attempts = [
+        ("actions/play-land", {"player": "alice", "card_id": forest}),
+        ("actions/pass-priority", {"player": "alice"}),
+        ("advance", {"player": "alice"}),
+        ("actions/concede", {"player": "alice"}),
+        ("resolve-top", {"player": "alice"}),
+        (f"cards/{land}/tap", {"tapped": True}),
+        (f"cards/{land}/move", {"to_zone": "graveyard"}),
+    ]
+    for path, body in attempts:
+        response = raw_post(client, game, path, body, bob)
+        assert response.status_code == 403, (path, response.status_code, response.text)
+        assert "alice" in response.json()["detail"], (path, response.text)
+    assert state(client, game)["winner"] is None
+
+
+def test_a_seat_acting_for_itself_is_unchanged(client, game):
+    stock_libraries(client, game)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    forest = add_card(client, game, "Forest", "alice", "hand")["added"]["card_id"]
+    alice = uids(game)["alice"]
+    played = raw_post(
+        client, game, "actions/play-land", {"player": "alice", "card_id": forest}, alice
+    )
+    assert played.status_code == 200 and played.json()["allowed"] is True, played.text
+    passed = raw_post(client, game, "actions/pass-priority", {"player": "alice"}, alice)
+    assert passed.status_code == 200 and passed.json()["allowed"] is True, passed.text
+
+
+def test_the_controller_cannot_make_the_controlled_player_concede(client, game):
+    """CR 723.6: "The controller of another player can't make that player
+    concede." """
+    into_bobs_controlled_turn(client, game)
+    response = raw_post(client, game, "actions/concede", {"player": "bob"}, uids(game)["alice"])
+    assert response.status_code == 403, response.text
+    assert "CR 723.6" in response.json()["detail"]
+    assert state(client, game)["winner"] is None
+
+
+def test_an_ai_controller_is_not_held_to_the_controlled_players_plan(client, game):
+    """The plan gate is about the seat acting: alice (an agent seat) acting
+    for bob on bob's turn is not bob acting on his own turn."""
+    into_bobs_controlled_turn(client, game)
+    store.register_ai_players(game, ["alice", "bob"])
+    forest = add_card(client, game, "Forest", "bob", "battlefield")["added"]["card_id"]
+    response = raw_post(
+        client,
+        game,
+        "actions/activate",
+        {"player": "bob", "card_id": forest, "ability_index": 0, "reasoning": "for bob"},
+        uids(game)["alice"],
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["allowed"] is True, response.text
+
+
+def test_the_controllers_own_permission_on_a_card_bob_owns_stays_the_controllers(client, game):
+    """Hostage Taker: alice may cast bob's exiled creature "for as long as it
+    remains exiled". Cast by alice during bob's controlled turn, it is alice's
+    own cast under her own permission - never rewritten into bob's."""
+    stock_libraries(client, game)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    alice = uids(game)["alice"]
+    borrower = add_card(client, game, "Brazen Borrower", "bob", "battlefield")["added"]["card_id"]
+    lands = [
+        add_card(client, game, name, "alice", "battlefield")["added"]["card_id"]
+        for name in ("Island", "Island", "Swamp", "Swamp")
+    ]
+    taker = add_card(client, game, "Hostage Taker", "alice", "hand")["added"]["card_id"]
+    cast = post(
+        client,
+        game,
+        "actions/cast",
+        {"player": "alice", "card_id": taker, "mana_sources": lands},
+        alice,
+    )
+    assert cast["allowed"] is not False, cast
+    for _ in range(6):
+        board = state(client, game)
+        pending = board["pending_decision"]
+        if pending and pending["kind"] == "choose_targets":
+            decided = post(
+                client, game, "decide", {"player": "alice", "targets": [borrower]}, alice
+            )
+            assert decided["accepted"] is True, decided
+            continue
+        if not board["stack"]:
+            break
+        passer = board["priority_holder"]
+        post(client, game, "actions/pass-priority", {"player": passer}, uids(game)[passer])
+    exiled = [c for c in state(client, game)["exile"] if c["id"] == borrower]
+    assert exiled, "Hostage Taker exiled Brazen Borrower"
+
+    live = store.get(game)
+    assert live is not None
+    live.gain_control_of_player("alice", "bob")
+    force_turn_position(game, Step.END_STEP, "alice")
+    post(client, game, "actions/pass-priority", {"player": "alice"}, alice)
+    post(client, game, "actions/pass-priority", {"player": "bob"}, uids(game)["bob"])
+    assert state(client, game)["player_control"] == {"bob": "alice"}
+    fresh = [
+        add_card(client, game, "Island", "alice", "battlefield")["added"]["card_id"]
+        for _ in range(3)
+    ]
+    cast = post(
+        client,
+        game,
+        "actions/cast",
+        {"player": "alice", "card_id": borrower, "mana_sources": fresh},
+        alice,
+    )
+    assert cast["allowed"] is True, cast
+    assert state(client, game)["stack"][0]["controller"] == "alice"
+
+
+def test_a_control_effect_ending_mid_request_refuses_rather_than_acting(client, game, monkeypatch):
+    """CR 723.1: the effect ends at the next turn's beginning. The rewrite is
+    read again under the game lock; a request whose answer changed in between
+    (here: the effect gone by the time the lock is held) is refused, and bob's
+    land is never tapped as bob's."""
+    from magic_cards_model_api import player_control
+
+    into_bobs_controlled_turn(client, game)
+    forest = add_card(client, game, "Forest", "bob", "battlefield")["added"]["card_id"]
+    real = player_control.acting_as
+    calls = {"n": 0}
+
+    def ending(game_obj, kind, request, seat):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return request, None  # the effect is gone: alice is only alice
+        return real(game_obj, kind, request, seat)
+
+    monkeypatch.setattr(player_control, "acting_as", ending)
+    response = raw_post(
+        client,
+        game,
+        "actions/activate",
+        {"player": "alice", "card_id": forest, "ability_index": 0},
+        uids(game)["alice"],
+    )
+    assert response.status_code == 400, response.text
+    assert "CR 723.1" in response.json()["detail"]
+    assert (
+        next(c for c in state(client, game)["battlefield"] if c["id"] == forest)["tapped"] is False
+    )
+
+
+def test_the_controller_sees_none_of_the_controlled_players_memory_of_a_third():
+    """CR 723.4 widens what is visible to the controlled player *now*, about
+    objects in the game - their own hidden cards they know. What bob once
+    saw of carol's hand is bob's memory, not information visible to him, and
+    stays his alone."""
+    from magic_cards_model_api import visibility
+
+    def card(card_id: str, owner: str) -> dict:
+        return {"id": card_id, "name": card_id, "owner": owner, "controller": owner}
+
+    view = {
+        "player_control": {"bob": "alice"},
+        "hands": {"alice": [], "bob": [], "carol": []},
+        "players": [],
+        "known_cards": {
+            "bob": {
+                "hand": [card("carols-bolt", "carol"), card("bobs-own", "bob")],
+                "library": [
+                    {"index_from_top": 0, "source": "scry", "card": card("bobs-top", "bob")},
+                    {"index_from_top": 0, "source": "look", "card": card("carols-top", "carol")},
+                ],
+                "sideboard": [card("bobs-side", "bob")],
+            }
+        },
+    }
+    seen = visibility.redact_view(view, "alice")["known_cards"]["bob"]
+    assert [c["id"] for c in seen["hand"]] == ["bobs-own"]
+    assert [r["card"]["id"] for r in seen["library"]] == ["bobs-top"]
+    assert seen["sideboard"] == []

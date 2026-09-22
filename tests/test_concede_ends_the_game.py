@@ -199,9 +199,11 @@ def test_the_game_itself_is_still_there_to_read_after_a_concede(client: TestClie
     concede(client, booted)
 
     assert client.get(f"/api/games/{booted['game_id']}", params={"uid": uid}).status_code == 200
+    # bob's own seat naming bob: a seat acts only for its own player
+    # (`game_access._seat_mismatch`), so this reaches the game-over refusal.
     refused = client.post(
         f"/api/games/{booted['game_id']}/actions/pass-priority",
-        params={"uid": uid},
+        params={"uid": booted["seat_uids"]["bob"]},
         json={"player": "bob"},
     )
     assert refused.status_code == 409, refused.text
