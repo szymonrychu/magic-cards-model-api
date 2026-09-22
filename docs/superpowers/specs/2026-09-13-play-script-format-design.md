@@ -42,8 +42,10 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   `counters {name, op, n}`; `ability_text_has`; `oracle_has`;
   `searches_for_any` (0-5 basic land type words); `land_face`;
   `missing_from {zones: [1-7 zone], side: me|opponent, by: subtype|name}`;
-  `enters_any` (0-3 of `untapped`/`tapped`/`untapped_if_paid`); `unlocks`;
-  `unlocks_by_search`; `affordable {extra: n}`.
+  `enters_any` (0-3 of `untapped`/`tapped`/`untapped_if_paid`); `payable_any`
+  (0-4 of `now`/`with_a_land`/`next_turn`/`no`); `unlocks`; `unlocks_next`;
+  `unlocks_by_search`; `unlocks_by_basic_search`; `affordable {extra: n}`
+  (DEPRECATED - see below).
 - `colors_any` reads the card's `colors` by name or letter, any case, from a
   closed vocabulary: the five colors and `colorless`. `colorless` (or `C`)
   matches a card whose color set is empty (CR 105.2c, "A colorless object has
@@ -311,6 +313,17 @@ Four more selector fields the engine, not the view, answers:
   no `mana_value` (a land), or a call that never computed `untapped_mana` at
   all, never matches, mana_value aside.
 
+  **DEPRECATED, replaced by `payable_any` (T5).** `affordable` is
+  colour-blind: it compares the card's plain `mana_value` against a count of
+  untapped mana sources and so reads a double-black two-drop as affordable
+  off two white sources, since nothing about `untapped_mana` or `extra`
+  carries a colour at all. `payable_any` asks the engine whether the cost can
+  actually be paid, colours included, by running the real
+  `payability_matrix` rather than comparing two integers. `affordable` is
+  kept and still answered exactly as before - no script already written
+  stops validating - but a new play should name `payable_any: [now]` in its
+  place; see `payable_any`, `unlocks_next` below.
+
   **Item 3, why `castable_now` and not a mana_value comparison alone:**
   `mana_value <= untapped_mana + extra` alone was blind to targets -
   `legal_actions` still offers a cast row for a spell with a mandatory
@@ -337,6 +350,98 @@ Four more selector fields the engine, not the view, answers:
 `affordable` all need `hypo` now: a play using any of the five needs the
 `GET .../playscripts/hypothetical-facts` call - `needs_hypothetical` reads
 the same five-field list.
+
+### `payable_any`, `unlocks_next` (T5)
+
+Two more selector fields, answered only when the caller fetches the
+next-turn horizon (see below): they extend `enters_any`/`unlocks` one step
+further, from "what would this land do" to "how soon could this cost
+actually be paid".
+
+- `payable_any` names 0-4 words of a closed four-word vocabulary (a word
+  outside it is `malformed-play`) - one hand card's answer to "how soon
+  could this be paid for at all", **earliest wins**:
+
+  - `"now"` - payable this instant. Gated on `_has_a_payable_targeted_option`:
+    `Affordability.YES` on at least one of the card's own payable options,
+    *and* every mandatory target slot of that same option already filled.
+    Deliberately not the sibling `castable_now` reads for `affordable` -
+    that one asks `legal_actions` whether a row with legal targets exists
+    and never whether the mana is there, so a Fatal Push with the black
+    mana up and no creature to target is `castable_now` and still not
+    `"now"` here: the mana question and the target question are both asked,
+    and both must say yes.
+  - `"with_a_land"` - payable once some hand land enters, provided the land
+    drop is still there to spend. **D-3, the land-drop caveat:**
+    `PAYABLE_STATES`'s own definition of the word is "once the land drop
+    still available this turn is made", so the fact is gated on
+    `_land_drop_available` being true right now - CR 305.3 (a player can't
+    play a land at all outside their own turn) and CR 305.2a's comparison
+    of `Game.land_allowance` against `Game.lands_played` - rather than
+    answering unconditionally whenever some hand land's own column would
+    pay for the card. With the land drop already spent this turn, a card
+    only a hand land could pay for reads `"no"`, never `"with_a_land"`: the
+    word never claims a land drop the board cannot actually deliver. The
+    gate reads only that durable half of the rule; CR 305.1's own timing (a
+    main phase, an empty stack, priority in hand) is this instant's own
+    condition, satisfied again later the same turn and never satisfied at
+    all while a `candidate_ids` caller asks mid-search (CR 608.2d) - so
+    reading it would collapse every `"with_a_land"` a fetch's own answer
+    depends on. That half is named in `notices` instead of read.
+  - `"next_turn"` - payable in the `assuming_untapped` pass's own answer:
+    the same board with the untap step already taken, mana only, nothing
+    else the turn would bring (no draw, no upkeep trigger, no reply from
+    the opponent).
+  - `"no"` - none of the three.
+
+  A hand card whose printed mana cost carries an unannounced `{X}` (CR
+  107.3) gets no `payable_any` key at all, not `"no"` - the same fail-closed
+  rule `unlocks` already applies through `_has_x`: `payability_matrix` only
+  ever judges an X spell at its cheapest legal announcement, X=0 (CR
+  107.1b), and a "yes" there says nothing about the X a play actually
+  wants, so omitting the key is the honest answer and `"no"` would be a
+  false claim.
+
+- `unlocks_next` (bool): `unlocks`' own before/after comparison, read off a
+  second `payability_matrix` pass instead of the real one - the
+  `assuming_untapped` matrix, the same board with the lands already there
+  untapped and nothing else advanced. True when, in that land's own column
+  of that pass, some hand card other than the land itself is payable that
+  was not payable in that same pass's own baseline row - every fail-closed
+  rule `unlocks` already applies (an X-cost card never counts, a pair
+  carrying an engine notice is left out, the newly-payable option must have
+  its mandatory targets filled) holds here unchanged, off the one shared
+  read (`_newly_payable`) behind both fields. `unlocks_next` is a
+  **mana hypothetical, not a turn prediction**: it says nothing about whether the
+  turn will actually reach this state - no draw is simulated, no upkeep
+  trigger considered, no opponent action modeled - only "if the lands
+  already on the battlefield were untapped and nothing else changed, would
+  this land's own entry still turn something on". Offered on exactly the
+  lands `unlocks` is already offered on, never any other library card.
+
+`payable_any` and `unlocks_next` both need the next-turn horizon: the
+caller fetches `GET .../playscripts/hypothetical-facts` with
+`horizon=next_turn`, which runs `payability_matrix` a second time
+(`assuming_untapped=True`) and adds both facts off that second pass; the
+same call without it answers byte for byte what it always did, and neither
+field is present. `conditions.needs_next_turn` is what decides when to ask
+for it, the same way `conditions.needs_hypothetical` decides when the plain
+(no-horizon) fetch is needed at all: a play whose selectors name
+`payable_any` or `unlocks_next` needs the horizon fetch; a play naming only
+`enters_any`/`unlocks`/`unlocks_by_search`/`unlocks_by_basic_search`/
+`affordable` needs the plain one; a caller walking a play for what to fetch
+asks both rather than always requesting the more expensive one.
+
+**D-6, a known limit of this vocabulary: no life-paid tier.** `payable_any`
+does not distinguish a card payable only by activating a "{T}, Pay N life:
+Add ..." mana ability the player chooses themselves from one paid for with
+a plain tap - both read the same word. The life is not lost information:
+it is `Payability.life_paid` on the very row that answered, the same field
+`unlocks_life_paid` already surfaces for `unlocks` above. A future field
+wanting the distinction reads it there rather than widening this
+four-word vocabulary further.
+
+- Payable-any words: `now`, `with_a_land`, `next_turn`, `no`
 
 ## Moves
 

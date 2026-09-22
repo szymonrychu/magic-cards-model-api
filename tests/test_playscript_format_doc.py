@@ -27,6 +27,7 @@ from magic_cards_model_api.playscripts.schema import (
     MISSING_FROM_BY,
     MISSING_FROM_SIDES,
     MISSING_FROM_ZONES,
+    PAYABLE_STATES,
 )
 from magic_cards_model_api.playscripts.selectors import COLOR_LETTERS
 
@@ -132,6 +133,43 @@ def test_doc_defines_unlocks_unlocks_by_search_and_affordable() -> None:
         "supertype",
         "Basic",
     ):
+        assert phrase in section
+
+
+def test_doc_names_every_payable_state_in_schema_order() -> None:
+    assert _listed("- Payable-any words:") == list(PAYABLE_STATES)
+
+
+def test_doc_defines_payable_any_and_unlocks_next() -> None:
+    text = DOC.read_text()
+    section = text.split("### `payable_any`, `unlocks_next` (T5)", 1)[1].split("\n## ", 1)[0]
+    for phrase in (
+        "earliest wins",
+        "_has_a_payable_targeted_option",
+        '"now"',
+        '"with_a_land"',
+        '"next_turn"',
+        '"no"',
+        "D-3",
+        "land drop",
+        "assuming_untapped",
+        "before/after",
+        "mana hypothetical",
+        "not a turn prediction",
+        "horizon=next_turn",
+        "conditions.needs_next_turn",
+        "D-6",
+        "no `payable_any` key at all",
+    ):
+        assert phrase in section, phrase
+
+
+def test_doc_marks_affordable_deprecated() -> None:
+    text = DOC.read_text()
+    section = text.split(
+        "### `unlocks`, `unlocks_by_search`, `unlocks_by_basic_search`, `affordable` (O7)", 1
+    )[1].split("\n## ", 1)[0]
+    for phrase in ("DEPRECATED", "`payable_any`", "colour-blind"):
         assert phrase in section
 
 
