@@ -1299,9 +1299,12 @@ BRIEF_HANDOVER_RULES = (
     "exits, as shown in the run table.",
     "Never lower a script for `not_applicable`, or for having had no applicable window.",
     "Change a script's priority by at most 5 per game.",
-    "Finish the handover inside the time budget: do priority updates and admits first, then "
-    "optional script or guide development through subagents.",
+    "Do priority updates and admits first, then the script and guide development, through "
+    "subagents when it is large.",
     "Never `git stash` in /guides: commit through the provided commands or discard.",
+    # D2a: the briefs make post-game DSL development mandatory.
+    "Finish the handover inside the time budget. DSL development after the game is mandatory, "
+    "not a nice-to-have",
 )
 
 #: D1: the handover turn itself makes the three guide updates a required
