@@ -1675,3 +1675,38 @@ def test_an_unreadable_seats_route_is_a_missing_list_not_a_failed_reflection(wor
     world.state["opponent_decklist"] = ""
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
     assert "could not read" in _flat(world.submitted[1]["text"])
+
+
+def test_the_ai_review_prompt_carries_the_decks_cross_game_evidence(world):
+    """D2b: the reviewer's two-distinct-games bars need declines from more
+    than this one game, so its prompt carries `evidence_table` over the
+    evidence files `plays admit` committed under the guides checkout."""
+    from magic_cards_model_api.playscripts.report import evidence_table
+
+    evidence = world.settings.guides_root / "decks" / "dimir-frog" / "plays" / "evidence"
+    evidence.mkdir(parents=True)
+    for game in ("old-1", "old-2"):
+        (evidence / f"{game}.json").write_text(
+            json.dumps(
+                {
+                    "game_id": game,
+                    "deck": "dimir-frog",
+                    "opponent_archetype": "izzet prowess",
+                    "plays": {
+                        "frog-attack": {"offered": 1, "taken": 0, "passed_over": 0, "declined": 1}
+                    },
+                }
+            )
+        )
+    client, state = world.client, world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+    client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "notes"})
+    wait_for(lambda: len(world.review_requests) == 1)
+
+    prompt = world.review_requests[0]["prompt"]
+    table = evidence_table(world.settings.guides_root, "dimir-frog")
+    assert "frog-attack | 2 | 2 | 0 | 0 | 2 | 2" in table
+    assert table in prompt
+    complete_handover(client, world.submitted)

@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from magic_cards_model_api.playscripts.lint import MAX_PLAYS
+from magic_cards_model_api.playscripts.report import DevelopmentCandidates
 from mtg_agent.driver.guides import (
     CONFIDENT,
     LOW,
@@ -23,10 +25,12 @@ from mtg_agent.driver.prompt import (
     HANDOVER_OPENING,
     NOTES_ROUTING,
     NOTES_ROUTING_DURING_GAME,
+    REPUSH_OPENING,
     Assignment,
     advisor_turn_zero,
     continue_turn,
     handover_nudge,
+    handover_repush,
     handover_turn,
     memory_index,
     plan_path,
@@ -1301,11 +1305,11 @@ BRIEF_HANDOVER_RULES = (
 )
 
 #: D1: the handover turn itself makes the three guide updates a required
-#: step, so its budget rule orders them before optional development.
+#: step; D2b makes the script development after them mandatory too.
 HANDOVER_RULES = (
     *BRIEF_HANDOVER_RULES[:3],
     "Finish the handover inside the time budget: do priority updates and admits first, then "
-    "the three guide updates, then optional script development through subagents.",
+    "the three guide updates, then the mandatory script development through subagents.",
     BRIEF_HANDOVER_RULES[4],
 )
 
@@ -1322,13 +1326,29 @@ SPEC = (
 
 RUN_TABLE = "script | priority | runs | exits | reapplicable_after\nfetch-x | 50 | 2 | done=2 | 1"
 
+#: D2b: the three tables and the candidates the handover turn also carries.
+OFFERS = "play | run_id | priority | turn | step | outcome | action | reasoning\nfrog-attack | r1"
+HAND_PLAYED = "line | times | candidate\ncast Fatal Push | 2 | candidate"
+EVIDENCE = "play | games | offered | taken | passed_over | declined | declined_games\nfrog-attack"
+CANDIDATES = DevelopmentCandidates(plays=("frog-attack",), lines=("cast Fatal Push",))
 
-def _handover(guide, role: str) -> str:
+
+def _tables(candidates: DevelopmentCandidates = CANDIDATES) -> dict:
+    return {
+        "offers": OFFERS,
+        "hand_played": HAND_PLAYED,
+        "evidence": EVIDENCE,
+        "candidates": candidates,
+    }
+
+
+def _handover(guide, role: str, candidates: DevelopmentCandidates = CANDIDATES) -> str:
     return handover_turn(
         replace(assignment(guide), role=role),
         "released",
         RUN_TABLE,
         "play-conflict: fetch-x, fetch-y (whose_turn, steps)",
+        **_tables(candidates),
     )
 
 
@@ -1444,6 +1464,86 @@ def test_the_nudge_says_push_now(guide):
     assert "push now" in text.lower()
     assert text.startswith("23 minutes into the handover")
     assert "mcp-seat plays admit --deck dimir-frog --game-id g-1" in text
+
+
+# -- D2b: the mandatory DSL development step -------------------------------------
+
+
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+def test_the_handover_carries_the_offers_the_hand_lines_and_the_cross_game_evidence(guide, role):
+    text = _handover(guide, role)
+    assert OFFERS in _section(text, "## Script offers this game")
+    assert HAND_PLAYED in _section(text, "## Lines played by hand this game")
+    assert EVIDENCE in _section(text, "## Cross-game evidence")
+
+
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+def test_the_development_step_is_mandatory_and_nothing_is_called_optional(guide, role):
+    text = _flat(_handover(guide, role))
+    assert "optional" not in text.lower()
+    steps = _flat(_section(_handover(guide, role), "## What to do"))
+    assert "Develop the scripts. This step is mandatory" in steps
+    assert "at least one conditions or advice-only change" in steps
+    assert "A priority change alone does not count" in steps
+
+
+def test_every_candidate_gets_its_own_no_change_command(guide):
+    section = _flat(_section(_handover(guide, "seat"), "## Development candidates"))
+    assert (
+        "`mcp-seat plays no-change --deck dimir-frog --game-id g-1 --play frog-attack "
+        '--reason "<why no change is right>"`' in section
+    )
+    assert (
+        "`mcp-seat plays no-change --deck dimir-frog --game-id g-1 --line "
+        '"cast Fatal Push" --reason "<why no change is right>"`' in section
+    )
+
+
+def test_no_candidates_says_so(guide):
+    section = _flat(
+        _section(_handover(guide, "seat", DevelopmentCandidates()), "## Development candidates")
+    )
+    assert "none: no play was declined or passed over" in section
+
+
+def test_the_handover_retires_by_deletion_at_the_play_cap(guide):
+    steps = _flat(_section(_handover(guide, "seat"), "## What to do"))
+    assert MAX_PLAYS == 16
+    assert f"At the cap of {MAX_PLAYS} move-bearing plays" in steps
+    assert "retire the weakest play by deleting its file" in steps
+    assert "`git rm decks/dimir-frog/plays/<play-id>.json`" in steps
+    assert "in the same admit that adds the new one" in steps
+
+
+def test_the_handover_says_the_evidence_file_rides_the_admit(guide):
+    steps = _flat(_section(_handover(guide, "seat"), "## What to do"))
+    assert "this game's evidence file" in steps
+
+
+def test_the_handover_orders_guides_before_the_mandatory_development(guide):
+    steps = _flat(_section(_handover(guide, "seat"), "## What to do"))
+    assert steps.index("three guide updates") < steps.index("Develop the scripts")
+
+
+def test_the_nudge_also_demands_the_development_answer(guide):
+    text = _flat(handover_nudge(assignment(guide)))
+    assert "mcp-seat plays no-change --deck dimir-frog --game-id g-1" in text
+
+
+def test_the_re_push_names_what_is_missing_and_how_to_close_it(guide):
+    text = handover_repush(
+        assignment(guide),
+        ("no conditions or advice-only change was admitted (`dsl_change`)", "play `frog-attack`"),
+        7,
+    )
+    assert text.startswith(REPUSH_OPENING)
+    flat = _flat(text)
+    assert "- play `frog-attack`" in text
+    assert "7 minutes" in flat
+    assert "mcp-seat plays admit --deck dimir-frog --game-id g-1" in flat
+    assert "mcp-seat plays no-change --deck dimir-frog --game-id g-1" in flat
+    assert f"At the cap of {MAX_PLAYS} move-bearing plays" in flat
+    assert "optional" not in flat.lower()
 
 
 @pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
@@ -1871,7 +1971,7 @@ def seat_facing(own: DeckGuide | None, identification, stubs=(), checked=True) -
 
 
 def _handover_of(seat: Assignment, role: str = "seat") -> str:
-    return handover_turn(replace(seat, role=role), "alice won", RUN_TABLE, "(none)")
+    return handover_turn(replace(seat, role=role), "alice won", RUN_TABLE, "(none)", **_tables())
 
 
 def test_a_confident_opponent_names_the_deck_its_archetype_and_the_plans_row(tmp_path, planned):

@@ -236,6 +236,8 @@ def review_prompt(
     assignment: Assignment,
     reflection_text: str,
     review_record: dict[str, Any],
+    *,
+    evidence: str | None = None,
 ) -> str:
     """The text asked of Opus: `assignment.player`'s own reflection, then the
     game's declarations (plan vs. what actually happened), the game's whole
@@ -370,7 +372,7 @@ def review_prompt(
     # exact rendered size of before the ledger is fitted, so both are part of
     # what the ledger's own remaining budget is measured against rather than
     # unaccounted-for text appended on top of it later.
-    write_bars_block = _write_bars_block(assignment, review_record)
+    write_bars_block = _write_bars_block(assignment, review_record, evidence)
     updates_block = f"{GUIDE_UPDATES_HEADING}\n\n{guide_updates(assignment)}"
     tail_size = (
         len(record_end)
@@ -448,7 +450,13 @@ def review_prompt(
     return "\n".join(lines)
 
 
-def _write_bars_block(assignment: Assignment, review_record: dict[str, Any]) -> str:
+#: What the evidence block says when the caller read no evidence table.
+NO_EVIDENCE = "no cross-game evidence was read for this review"
+
+
+def _write_bars_block(
+    assignment: Assignment, review_record: dict[str, Any], evidence: str | None = None
+) -> str:
     """`prompt.WRITE_BARS`/`WRITE_BARS_HARD_RULES` (API-13: when a write is
     earned), `prompt.WRITE_CHANNELS` beside them (T15: where each kind of
     write goes and how far it reaches once it lands), plus this game's own
@@ -461,7 +469,14 @@ def _write_bars_block(assignment: Assignment, review_record: dict[str, Any]) -> 
     because an offer's own outcome can depend on a committing row the ledger
     cap already dropped. `offer_table` bounds its own output to
     `report.TABLE_LIMIT_BYTES` regardless, so this never re-introduces the
-    unbounded-prompt problem the ledger cap exists to prevent."""
+    unbounded-prompt problem the ledger cap exists to prevent.
+
+    D2b: `evidence` is `playscripts.report.evidence_table` over the deck's
+    committed per-game evidence files, printed beside this game's offer
+    table so a bar that needs declines "in each of 2 distinct games" is
+    measured against more than the one game in front of the reviewer. It is
+    bounded the same way, and sits after the END marker like the table: the
+    driver computed it, it is not text a seat wrote."""
     table = offer_table(review_record.get("entries") or [], assignment.game_id, assignment.player)
     return "\n\n".join(
         [
@@ -474,6 +489,13 @@ def _write_bars_block(assignment: Assignment, review_record: dict[str, Any]) -> 
                 "to recall or re-derive from the ledger above. `passed over` is not a "
                 "decline, and neither is an offer with no commitment after it - every "
                 "bar above counts `declined` rows only:\n\n" + table
+            ),
+            (
+                f"{assignment.deck_slug}'s cross-game evidence, from the evidence files "
+                "earlier games' admits committed: per play, the games it was offered in, "
+                "its summed counts, and `declined_games` - the distinct games with at "
+                "least one decline, which is what the 2 distinct games bars count. This "
+                "game is not in it yet: add its offer table above.\n\n" + (evidence or NO_EVIDENCE)
             ),
         ]
     )

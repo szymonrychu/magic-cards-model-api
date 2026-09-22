@@ -15,9 +15,16 @@ import time
 
 import pytest
 
-from magic_cards_model_api.playscripts.report import script_run_table
+from magic_cards_model_api.playscripts.report import (
+    DevelopmentCandidates,
+    evidence_record,
+    evidence_table,
+    hand_played_summary,
+    offer_table,
+    script_run_table,
+)
 from mtg_agent.driver import handover
-from mtg_agent.driver.prompt import HANDOVER_OPENING
+from mtg_agent.driver.prompt import HANDOVER_OPENING, REPUSH_OPENING
 from tests.driver.world import ADVISOR_UID, FIXTURE_PLAYS, build_world
 
 
@@ -520,3 +527,361 @@ def test_a_release_mid_game_has_no_revealed_list_and_says_so(world):
     world.client.post("/release", json={})
     handover_turn_id(world)
     assert "Opponent's deck: not revealed" in " ".join(handover_turns(world)[0]["text"].split())
+
+
+# ---- D2b: mandatory DSL development, evidence, one re-push, the outcome row ----------
+
+
+def offer_row(seq: int, script_id: str, run_id: str, game_id: str = "g-1") -> dict:
+    return {
+        "seq": seq,
+        "action": "script_run_offered",
+        "detail": {
+            "player": "bob",
+            "seat": "bob",
+            "game_id": game_id,
+            "run_id": run_id,
+            "script_id": script_id,
+            "priority": 50,
+            "advise": False,
+            "turn": 3,
+            "step": "precombat_main",
+        },
+    }
+
+
+def hand_cast(seq: int, card: str) -> dict:
+    return {
+        "seq": seq,
+        "action": "cast",
+        "detail": {"player": "bob", "allowed": True, "reasoning": "r", "card": card},
+    }
+
+
+#: A game where the seat declined `frog-attack` for a hand cast, and cast
+#: Fatal Push by hand twice: two development candidates.
+CANDIDATE_LOG = [
+    offer_row(1, "frog-attack", "run-1"),
+    hand_cast(2, "Fatal Push"),
+    hand_cast(3, "Fatal Push"),
+]
+
+
+def journal(world, *entries: dict) -> None:
+    """Append what D2a's `mcp-seat` commands would have written."""
+    world.journal.parent.mkdir(parents=True, exist_ok=True)
+    with world.journal.open("a") as handle:
+        for entry in entries:
+            handle.write(json.dumps({"ts": "t", "game_id": world.game_id, "role": "seat"} | entry))
+            handle.write("\n")
+
+
+def admit(result: str = "admitted", dsl_change: bool = True, sha: str = "abc123") -> dict:
+    return {
+        "command": "plays admit",
+        "decks": ["dimir-frog"],
+        "result": result,
+        "sha": sha,
+        "dsl_change": dsl_change,
+    }
+
+
+def no_change(reason: str = "the board never allowed it", **candidate) -> dict:
+    return (
+        {"command": "no_change", "decks": ["dimir-frog"], "result": "recorded"}
+        | candidate
+        | {"reason": reason}
+    )
+
+
+def repush_turns(world) -> list[dict]:
+    return [turn for turn in world.submitted if turn["text"].startswith(REPUSH_OPENING)]
+
+
+def outcome(world) -> dict:
+    wait_for(lambda: world.plays_outcomes)
+    return world.plays_outcomes[0]
+
+
+def test_the_journal_is_read_from_the_checkouts_git_dir(tmp_path):
+    root = tmp_path / "guides"
+    (root / ".git").mkdir(parents=True)
+    assert handover.journal_path(root) == root / ".git" / "mcm-results.jsonl"
+
+
+def test_a_linked_checkouts_journal_follows_its_gitdir_pointer(tmp_path):
+    root = tmp_path / "guides"
+    root.mkdir()
+    real = tmp_path / "elsewhere" / "git"
+    real.mkdir(parents=True)
+    (root / ".git").write_text(f"gitdir: {real}\n")
+    assert handover.journal_path(root) == real / "mcm-results.jsonl"
+
+
+def test_read_journal_keeps_this_games_lines_for_this_role_and_skips_garbage(tmp_path):
+    root = tmp_path / "guides"
+    path = root / ".git" / "mcm-results.jsonl"
+    path.parent.mkdir(parents=True)
+    lines = [
+        {"game_id": "g-1", "role": "seat", "command": "plays admit", "result": "admitted"},
+        {"game_id": "g-2", "role": "seat", "command": "plays admit", "result": "admitted"},
+        {"game_id": "g-1", "role": "reviewer", "command": "plays admit", "result": "admitted"},
+    ]
+    path.write_text(
+        json.dumps(lines[0]) + "\n{half a line\n[1, 2]\n" + "\n".join(map(json.dumps, lines[1:]))
+    )
+    assert handover.read_journal(root, "g-1", "seat") == [lines[0]]
+    assert handover.read_journal(tmp_path / "missing", "g-1", "seat") == []
+
+
+def test_a_dsl_change_admit_satisfies_the_development_step():
+    candidates = DevelopmentCandidates(plays=("frog-attack",), lines=("cast Fatal Push",))
+    verdict = handover.assess([admit()], candidates)
+    assert verdict.satisfied
+    assert verdict.missing == ()
+    assert verdict.admitted == ({"sha": "abc123", "dsl_change": True},)
+
+
+def test_a_priority_only_admit_does_not_satisfy_it_and_names_every_open_candidate():
+    candidates = DevelopmentCandidates(plays=("frog-attack",), lines=("cast Fatal Push",))
+    verdict = handover.assess([admit(dsl_change=False)], candidates)
+    assert not verdict.satisfied
+    assert "no conditions or advice-only change was admitted (`dsl_change`)" in verdict.missing
+    assert "play `frog-attack`" in verdict.missing
+    assert "line `cast Fatal Push`" in verdict.missing
+
+
+def test_a_no_change_for_every_candidate_satisfies_it():
+    candidates = DevelopmentCandidates(plays=("frog-attack",), lines=("cast Fatal Push",))
+    entries = [no_change(play="frog-attack"), no_change(line="  cast  fatal push ")]
+    verdict = handover.assess(entries, candidates)
+    assert verdict.satisfied
+    assert verdict.no_change == (
+        {"candidate": "frog-attack", "reason": "the board never allowed it"},
+        {"candidate": "cast fatal push", "reason": "the board never allowed it"},
+    )
+
+
+def test_a_no_change_for_only_some_candidates_leaves_the_rest_missing():
+    candidates = DevelopmentCandidates(plays=("frog-attack",), lines=("cast Fatal Push",))
+    verdict = handover.assess([no_change(play="frog-attack")], candidates)
+    assert not verdict.satisfied
+    assert "line `cast Fatal Push`" in verdict.missing
+    assert "play `frog-attack`" not in verdict.missing
+
+
+def test_a_game_with_no_candidates_needs_nothing():
+    assert handover.assess([], DevelopmentCandidates()).satisfied
+
+
+def test_the_last_admit_or_propose_decides_whether_the_writes_succeeded():
+    propose_failed = {"command": "guides propose", "result": "gate_failed"}
+    propose_ok = {"command": "guides propose", "result": "admitted", "sha": "def456"}
+    candidates = DevelopmentCandidates()
+    assert handover.assess([admit(), propose_failed], candidates).last_write_failed == (
+        "guides propose answered `gate_failed`"
+    )
+    assert handover.assess([propose_failed, propose_ok], candidates).last_write_failed is None
+    assert handover.assess([admit("nothing_to_admit")], candidates).last_write_failed is None
+    verdict = handover.assess([propose_failed, propose_ok], candidates)
+    assert verdict.proposed == ({"result": "gate_failed"}, {"sha": "def456", "result": "admitted"})
+
+
+def test_the_evidence_file_is_written_where_the_agent_reads_it(world):
+    world.state["log"] = CANDIDATE_LOG
+    dispatch(world)
+    world.client.post("/handover", json={})
+    handover_turn_id(world)
+    path = world.settings.workspace / "evidence" / world.game_id / "dimir-frog.json"
+    assert json.loads(path.read_text()) == evidence_record(
+        CANDIDATE_LOG, world.game_id, "bob", "dimir-frog", None
+    )
+    assert path == handover.evidence_path(world.settings.workspace, world.game_id, "dimir-frog")
+
+
+def test_the_handover_prompt_carries_the_offers_the_hand_lines_the_evidence_and_the_candidates(
+    world,
+):
+    world.state["log"] = CANDIDATE_LOG
+    dispatch(world)
+    world.client.post("/handover", json={})
+    handover_turn_id(world)
+    text = handover_turns(world)[0]["text"]
+    assert offer_table(CANDIDATE_LOG, world.game_id, "bob") in text
+    assert hand_played_summary(CANDIDATE_LOG, world.game_id, "bob") in text
+    assert evidence_table(world.settings.guides_root, "dimir-frog") in text
+    candidates = section(text, "## Development candidates")
+    assert "--play frog-attack" in candidates
+    assert '--line "cast Fatal Push"' in candidates
+    assert world.log_reads == [world.uid]
+
+
+def test_an_unanswered_candidate_gets_exactly_one_re_push_then_an_unfinished_outcome(world):
+    world.state["log"] = CANDIDATE_LOG
+    dispatch(world)
+    world.client.post("/handover", json={})
+    finish(world, handover_turn_id(world))
+
+    wait_for(lambda: repush_turns(world))
+    text = " ".join(repush_turns(world)[0]["text"].split())
+    assert "play `frog-attack`" in text
+    assert "line `cast Fatal Push`" in text
+    assert world.plays_outcomes == []
+    assert not marker(world).exists()
+
+    index = world.submitted.index(repush_turns(world)[0])
+    finish(world, f"turn-{index + 1}")
+    row = outcome(world)
+    assert row["state"] == "unfinished"
+    assert row["repushed"] is True
+    assert row["followup"] is False
+    assert any("re-push" in reason for reason in row["unfinished_reasons"])
+    status = marker_status(world)
+    assert status["state"] == "done"
+    assert status["repushed"] is True
+    wait_for(lambda: world.state["deleted"] == 1)
+    assert len(repush_turns(world)) == 1
+    assert world.events.index("plays_outcome") < world.events.index("delete")
+
+
+def test_a_re_push_that_lands_the_change_is_complete(world):
+    world.state["log"] = CANDIDATE_LOG
+    dispatch(world)
+    world.client.post("/handover", json={})
+    finish(world, handover_turn_id(world))
+    wait_for(lambda: repush_turns(world))
+    journal(world, admit())
+    index = world.submitted.index(repush_turns(world)[0])
+    finish(world, f"turn-{index + 1}")
+    row = outcome(world)
+    assert row["state"] == "complete"
+    assert row["repushed"] is True
+    assert row["admitted"] == [{"sha": "abc123", "dsl_change": True}]
+    assert row["unfinished_reasons"] == []
+
+
+def test_a_handover_that_answered_every_candidate_is_complete_with_no_re_push(world):
+    world.state["log"] = CANDIDATE_LOG
+    dispatch(world)
+    world.client.post("/handover", json={})
+    turn_id = handover_turn_id(world)
+    journal(
+        world,
+        admit(dsl_change=False),
+        no_change(play="frog-attack"),
+        no_change(line="cast Fatal Push", reason="removal is a judgement call"),
+    )
+    finish(world, turn_id)
+    row = outcome(world)
+    assert row == {
+        "game_id": world.game_id,
+        "uid": world.uid,
+        "player": "bob",
+        "role": "seat",
+        "state": "complete",
+        "admitted": [{"sha": "abc123", "dsl_change": False}],
+        "proposed": [],
+        "no_change": [
+            {"candidate": "frog-attack", "reason": "the board never allowed it"},
+            {"candidate": "cast Fatal Push", "reason": "removal is a judgement call"},
+        ],
+        "unfinished_reasons": [],
+        "repushed": False,
+        "followup": False,
+    }
+    wait_for(lambda: world.state["deleted"] == 1)
+    assert repush_turns(world) == []
+
+
+def test_a_failed_last_propose_makes_the_outcome_unfinished(world):
+    dispatch(world)
+    world.client.post("/handover", json={})
+    turn_id = handover_turn_id(world)
+    journal(world, {"command": "guides propose", "decks": ["dimir-frog"], "result": "conflict"})
+    finish(world, turn_id)
+    row = outcome(world)
+    assert row["state"] == "unfinished"
+    assert row["unfinished_reasons"] == [
+        "the last write did not land: guides propose answered `conflict`"
+    ]
+    assert row["proposed"] == [{"result": "conflict"}]
+
+
+def test_a_nudged_handover_is_unfinished(world, clock):
+    dispatch(world)
+    world.client.post("/handover", json={})
+    turn_id = handover_turn_id(world)
+    clock.now = handover.NUDGE_AFTER_SECONDS
+    wait_for(lambda: world.probes)
+    finish(world, turn_id)
+    row = outcome(world)
+    assert row["state"] == "unfinished"
+    assert "nudged: the handover was still running at 23 minutes" in row["unfinished_reasons"]
+
+
+def test_a_timed_out_handover_is_unfinished_and_never_re_pushed(world, clock):
+    world.state["log"] = CANDIDATE_LOG
+    dispatch(world)
+    world.client.post("/handover", json={})
+    handover_turn_id(world)
+    clock.now = handover.HANDOVER_BUDGET_SECONDS
+    row = outcome(world)
+    assert row["state"] == "unfinished"
+    assert "timeout: the handover turn did not end within 28 minutes" in row["unfinished_reasons"]
+    assert repush_turns(world) == []
+    assert marker_status(world)["state"] == "timeout"
+
+
+def test_the_re_push_waits_within_the_remaining_budget(world, clock):
+    world.state["log"] = CANDIDATE_LOG
+    dispatch(world)
+    world.client.post("/handover", json={})
+    finish(world, handover_turn_id(world))
+    wait_for(lambda: repush_turns(world))
+    clock.now = handover.HANDOVER_BUDGET_SECONDS
+    row = outcome(world)
+    assert row["state"] == "unfinished"
+    assert marker_status(world)["state"] == "timeout"
+    assert len(repush_turns(world)) == 1
+
+
+def test_a_failed_handover_still_posts_an_unfinished_outcome(world):
+    dispatch(world)
+    world.state["agent"] = "refusing"
+    world.client.post("/handover", json={})
+    row = outcome(world)
+    assert row["state"] == "unfinished"
+    assert any(reason.startswith("failed: ") for reason in row["unfinished_reasons"])
+    assert marker_status(world)["state"] == "failed"
+
+
+def test_an_unreachable_outcome_route_never_stops_the_retire(world):
+    dispatch(world)
+    world.client.post("/handover", json={})
+    turn_id = handover_turn_id(world)
+    world.state["game"] = "down"
+    finish(world, turn_id)
+    assert marker_status(world)["state"] == "done"
+    wait_for(lambda: world.state["deleted"] == 1)
+
+
+def test_a_re_push_the_agent_refuses_still_files_an_unfinished_outcome(world):
+    world.state["log"] = CANDIDATE_LOG
+    dispatch(world)
+    world.client.post("/handover", json={})
+    turn_id = handover_turn_id(world)
+    world.state["agent"] = "refusing"
+    finish(world, turn_id)
+    row = outcome(world)
+    assert row["state"] == "unfinished"
+    assert row["repushed"] is True
+    assert any(reason.startswith("failed: ") for reason in row["unfinished_reasons"])
+    status = marker_status(world)
+    assert status["state"] == "failed"
+    assert status["error"]
+
+
+def test_the_journal_success_results_are_gitworks():
+    from magic_cards_model_api.playscripts import gitwork
+
+    assert handover.WRITE_SUCCESS == gitwork.SUCCESS

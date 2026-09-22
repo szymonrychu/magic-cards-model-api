@@ -369,6 +369,9 @@ def test_the_variables_mcp_seat_reads_are_named_through(
     for name in oneshot.PASSED_THROUGH:
         assert env[name] == f"value-of-{name}"
     assert "MTG_GAME_ID" in oneshot.PASSED_THROUGH
+    # D2b: the reviewer's own `plays admit` picks up this game's evidence
+    # record from the directory the driver writes it to.
+    assert "MTG_EVIDENCE_DIR" in oneshot.PASSED_THROUGH
     # `seat_cli` reads WORKSPACE for its drafts directory; it is the
     # wrapper's own setting, not something to pick off the environment.
     assert env["WORKSPACE"] == str(settings.workspace)

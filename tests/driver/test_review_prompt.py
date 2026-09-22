@@ -1073,3 +1073,57 @@ def test_the_write_channels_name_seat_rows_and_stubs() -> None:
     assert '`origin: "seat"`' in text
     assert "stub" in text
     assert "--deck SLUG [--deck SLUG ...]" in text
+
+
+# ---------------------------------------------------------------------------
+# D2b: cross-game evidence beside the offer table, and retire-by-deletion at
+# the play cap.
+# ---------------------------------------------------------------------------
+
+EVIDENCE = (
+    "play | games | offered | taken | passed_over | declined | declined_games\n"
+    "frog-attack | 2 | 3 | 0 | 0 | 2 | 2"
+)
+
+
+def test_the_cross_game_evidence_table_is_in_the_prompt_after_the_record() -> None:
+    text = review_prompt(_assignment(), "r", _record(), evidence=EVIDENCE)
+    assert EVIDENCE in text
+    end = next(line for line in text.splitlines() if line.startswith("=== END GAME RECORD"))
+    assert text.index(EVIDENCE) > text.index(end)
+
+
+def test_the_evidence_table_is_tied_to_the_two_distinct_games_bars() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record(), evidence=EVIDENCE))
+    assert "cross-game evidence" in text
+    assert "`declined_games`" in text
+    assert "2 distinct games" in text
+
+
+def test_a_review_without_evidence_says_none_was_read() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "no cross-game evidence was read for this review" in text
+
+
+def test_the_review_prompt_retires_by_deletion_at_the_play_cap() -> None:
+    from magic_cards_model_api.playscripts.lint import MAX_PLAYS
+
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert MAX_PLAYS == 16
+    assert "retire-by-deletion" in text
+    assert f"at the cap of {MAX_PLAYS} move-bearing plays" in text
+    assert "in the same `plays admit` that adds the new one" in text
+
+
+def test_a_worst_case_prompt_with_full_evidence_still_stays_under_the_ceiling() -> None:
+    from mtg_agent.driver.review import PROMPT_BUDGET_CHARS
+
+    offers = _seq_all(
+        [_offer_row(f"script-{n}", f"run-{n}", turn=n, priority=n) for n in range(1, 200)]
+    )
+    entries = offers + [_row(seq, reasoning="y" * 3000) for seq in range(1000, 3000)]
+    evidence = "\n".join(
+        [EVIDENCE.splitlines()[0]] + [f"p{n} | 1 | 1 | 0 | 0 | 1 | 1" for n in range(140)]
+    )
+    text = review_prompt(_assignment(), "r" * 5000, _record(entries=entries), evidence=evidence)
+    assert len(text) <= PROMPT_BUDGET_CHARS

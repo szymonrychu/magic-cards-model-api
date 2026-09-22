@@ -62,7 +62,15 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from magic_cards_model_api.agent_settings import AgentSettings
-from magic_cards_model_api.playscripts.report import script_run_table
+from magic_cards_model_api.playscripts.report import (
+    DevelopmentCandidates,
+    development_candidates,
+    evidence_record,
+    evidence_table,
+    hand_played_summary,
+    offer_table,
+    script_run_table,
+)
 
 from .config import DriverSettings
 from .guides import DeckGuide, GuideLibrary, ScriptsRegistration, parse_decklist
@@ -74,8 +82,13 @@ from .handover import (
     MARKER_NAME,
     NUDGE_AFTER_SECONDS,
     POLL_SECONDS,
+    assess,
     clear_marker,
     conflict_warnings,
+    plays_outcome_body,
+    read_journal,
+    unfinished_reasons,
+    write_evidence,
     write_marker,
 )
 from .prompt import (
@@ -83,6 +96,7 @@ from .prompt import (
     advisor_turn_zero,
     continue_turn,
     handover_nudge,
+    handover_repush,
     handover_turn,
     plan_header,
     plan_path,
@@ -740,7 +754,12 @@ def build_app(
             return
 
         try:
-            prompt = review_prompt(assignment, reflection_text, review_record)
+            prompt = review_prompt(
+                assignment,
+                reflection_text,
+                review_record,
+                evidence=evidence_table(settings.guides_root, assignment.deck_slug),
+            )
         except Exception as exc:  # noqa: BLE001 - a malformed review record must not block retire
             log.warning(
                 "ai-review-failed[prompt]: could not build the AI review prompt for game %s: %s",
@@ -966,22 +985,65 @@ def build_app(
             return f"{winner} won"
         return "the game was a draw" if state.get("drawn") else None
 
-    def script_runs(assignment: Assignment) -> str:
-        """`script_run_table` for this game and seat, from the log the dispatched
-        uid reads (an advisor uid resolves to its human, so a buddy reads the
-        same rows). Read as the handover starts: a lobby that released the seat
-        deletes the game right after."""
+    def game_log(assignment: Assignment) -> tuple[list[dict], str | None]:
+        """This game's log as the dispatched uid reads it (an advisor uid
+        resolves to its human, so a buddy reads the same rows), and why not
+        when it could not be read. Read once, as the handover starts: a lobby
+        that released the seat deletes the game right after, and every table
+        the handover carries - and the evidence file - comes off this one
+        read."""
         try:
             with make_client(settings.game_api) as client:
                 response = client.get(
                     f"/api/games/{assignment.game_id}/log", params={"uid": assignment.uid}
                 )
             if response.status_code >= 400:
-                return f"no script run table: the game server answered {response.status_code}"
+                return [], f"the game server answered {response.status_code}"
             rows = response.json().get("log") or []
         except Exception as exc:  # noqa: BLE001 - a missing table never stops a handover
-            return f"no script run table: the game server did not answer ({exc})"
-        return script_run_table(rows, assignment.game_id, assignment.player)
+            return [], f"the game server did not answer ({exc})"
+        return [row for row in rows if isinstance(row, dict)], None
+
+    def ledger_tables(assignment: Assignment) -> dict[str, Any]:
+        """Everything the handover reads off the game log (D2b): the run,
+        offer and hand-played tables, the development candidates, and this
+        game's evidence record, written where the agent's `plays admit`
+        picks it up (`MTG_EVIDENCE_DIR`). The cross-game evidence table comes
+        off the guides checkout instead. Best effort throughout: a log that
+        cannot be read names why in every table and owes no candidates."""
+        game, seat = assignment.game_id, assignment.player
+        rows, unread = game_log(assignment)
+        evidence = evidence_table(settings.guides_root, assignment.deck_slug)
+        if unread is not None:
+            return {
+                "run_table": f"no script run table: {unread}",
+                "offers": f"no script offer table: {unread}",
+                "hand_played": f"no hand-played table: {unread}",
+                "evidence": evidence,
+                "candidates": DevelopmentCandidates(),
+            }
+        if assignment.guide is not None:
+            opponent = assignment.opponent_identification
+            try:
+                write_evidence(
+                    settings.workspace,
+                    evidence_record(
+                        rows,
+                        game,
+                        seat,
+                        assignment.deck_slug,
+                        opponent.archetype if opponent is not None else None,
+                    ),
+                )
+            except OSError as exc:
+                log.warning("could not write the evidence file for game %s: %s", game, exc)
+        return {
+            "run_table": script_run_table(rows, game, seat),
+            "offers": offer_table(rows, game, seat),
+            "hand_played": hand_played_summary(rows, game, seat),
+            "evidence": evidence,
+            "candidates": development_candidates(rows, game, seat),
+        }
 
     def wrapper_post(path: str, body: dict | None = None) -> bool:
         """POST a best-effort control message to the wrapper; False if it failed."""
@@ -1029,18 +1091,110 @@ def build_app(
     def await_handover_turn(assignment: Assignment, handover: dict, started: float) -> str:
         """`done` once the turn's `/turn-done` lands, `timeout` at the budget.
         One "push now" nudge goes out at `NUDGE_AFTER_SECONDS`, through
-        `/v1/probe`, the one wrapper route that writes into a busy turn."""
-        nudged = False
-        while not handover["done"].wait(POLL_SECONDS):
+        `/v1/probe`, the one wrapper route that writes into a busy turn - one
+        per handover, the re-push turn included, so it is read off the
+        status rather than kept per wait."""
+        with lock:
+            done = handover["done"]
+        while not done.wait(POLL_SECONDS):
             elapsed = now() - started
             if elapsed >= HANDOVER_BUDGET_SECONDS:
                 return "timeout"
-            if elapsed >= NUDGE_AFTER_SECONDS and not nudged:
-                nudged = True
-                with lock:
+            with lock:
+                nudge = elapsed >= NUDGE_AFTER_SECONDS and not handover["status"]["nudged"]
+                if nudge:
                     handover["status"]["nudged"] = True
+            if nudge:
                 wrapper_post("/v1/probe", {"text": handover_nudge(assignment)})
         return "done"
+
+    def push_and_await(assignment: Assignment, handover: dict, text: str, started: float) -> str:
+        """Push one handover-owned turn and wait for it: the handover turn,
+        or its one re-push. The 409 back-off is measured from this push; the
+        budget, from the handover's own start."""
+        turn_id = push_handover(assignment, text, now())
+        with lock:
+            handover["turnId"] = turn_id
+            key = "turnId" if handover["status"]["turnId"] is None else "repushTurnId"
+            handover["status"][key] = turn_id
+            if turn_id in handover["finished"]:
+                handover["done"].set()
+            if current["assignment"] is assignment:
+                current.update(lastTurnId=turn_id, turnActive=not handover["done"].is_set())
+        return await_handover_turn(assignment, handover, started)
+
+    def post_plays_outcome(assignment: Assignment, body: dict) -> None:
+        """File the handover's `plays_outcome` ledger row (D2a's route).
+        Best effort, like every post-game write: a refusal or an unreachable
+        game server is logged and the retire goes ahead."""
+        try:
+            with make_client(settings.game_api) as client:
+                response = client.post(f"/api/games/{assignment.game_id}/plays-outcome", json=body)
+            if response.status_code >= 400:
+                log.warning(
+                    "plays-outcome: the game server refused game %s's row: %s",
+                    assignment.game_id,
+                    response.status_code,
+                )
+        except Exception as exc:  # noqa: BLE001 - never blocks the retire
+            log.warning("plays-outcome: could not post game %s's row: %s", assignment.game_id, exc)
+
+    def settle_development(
+        assignment: Assignment, handover: dict, state: str, started: float
+    ) -> str:
+        """After the handover turn (D2b): read this game's journal, push one
+        re-push turn when the development step is still open and budget is
+        left, then file the `plays_outcome` row. Returns the handover's final
+        state (the re-push's own, when there was one); a re-push that fails
+        records its error in the status and is `failed`."""
+        with lock:
+            candidates = handover["candidates"]
+        verdict = assess(
+            read_journal(settings.guides_root, assignment.game_id, assignment.role), candidates
+        )
+        repushed = False
+        elapsed = now() - started
+        if state == "done" and not verdict.satisfied and elapsed < HANDOVER_BUDGET_SECONDS:
+            repushed = True
+            minutes_left = max(1, int((HANDOVER_BUDGET_SECONDS - elapsed) // 60))
+            with lock:
+                handover["status"]["repushed"] = True
+                handover.update(done=threading.Event(), turnId=None, finished=set())
+            log.info("game %s: development still open, re-pushing once", assignment.game_id)
+            try:
+                state = push_and_await(
+                    assignment,
+                    handover,
+                    handover_repush(assignment, verdict.missing, minutes_left),
+                    started,
+                )
+            except Exception as exc:  # noqa: BLE001 - the outcome row is still filed
+                state = "failed"
+                log.error("handover re-push for game %s failed: %s", assignment.game_id, exc)
+                with lock:
+                    handover["status"]["error"] = f"the re-push failed: {exc}"
+            verdict = assess(
+                read_journal(settings.guides_root, assignment.game_id, assignment.role),
+                candidates,
+            )
+        with lock:
+            nudged = bool(handover["status"]["nudged"])
+            error = handover["status"].get("error")
+        reasons = unfinished_reasons(
+            state=state, error=error, nudged=nudged, repushed=repushed, verdict=verdict
+        )
+        body = plays_outcome_body(
+            uid=assignment.uid,
+            player=assignment.player,
+            role=assignment.role,
+            verdict=verdict,
+            reasons=reasons,
+            repushed=repushed,
+        )
+        with lock:
+            handover["status"]["playsOutcome"] = body["state"]
+        post_plays_outcome(assignment, body)
+        return state
 
     def run_handover(
         assignment: Assignment,
@@ -1049,8 +1203,10 @@ def build_app(
         interrupt: bool,
         started: float,
     ) -> None:
-        """The handover's background half: interrupt, push, wait, then write the
-        marker whatever happened, and only then retire."""
+        """The handover's background half: interrupt, push, wait, settle the
+        mandatory development step (one re-push at most, then the
+        `plays_outcome` row), then write the marker whatever happened, and
+        only then retire."""
         state, error = "failed", None
         try:
             if isinstance(prepared, Exception):
@@ -1059,20 +1215,21 @@ def build_app(
                 interrupted = wrapper_post("/v1/interrupt")
                 with lock:
                     handover["status"]["interrupted"] = interrupted
-            turn_id = push_handover(assignment, prepared, started)
-            with lock:
-                handover["turnId"] = turn_id
-                handover["status"]["turnId"] = turn_id
-                if turn_id in handover["finished"]:
-                    handover["done"].set()
-                if current["assignment"] is assignment:
-                    current.update(lastTurnId=turn_id, turnActive=not handover["done"].is_set())
-            state = await_handover_turn(assignment, handover, started)
+            state = push_and_await(assignment, handover, prepared, started)
         except Exception as exc:  # noqa: BLE001 - every failure still writes the marker
             state, error = "failed", str(exc)
             log.error("handover for game %s failed: %s", assignment.game_id, exc)
         with lock:
             handover["status"].update(state=state, error=error)
+        try:
+            state = settle_development(assignment, handover, state, started)
+        except Exception as exc:  # noqa: BLE001 - every failure still writes the marker
+            state = "failed"
+            log.error("handover development for game %s failed: %s", assignment.game_id, exc)
+            with lock:
+                handover["status"]["error"] = str(exc)
+        with lock:
+            handover["status"]["state"] = state
             status = dict(handover["status"])
         try:
             write_marker(marker_path, status)
@@ -1117,6 +1274,10 @@ def build_app(
                     "turnId": None,
                     "interrupted": False,
                     "nudged": False,
+                    # D2b: whether the one re-push went out, and the
+                    # `plays_outcome` row's state once it is filed.
+                    "repushed": False,
+                    "playsOutcome": None,
                     "error": None,
                     "marker": str(marker_path),
                 },
@@ -1124,6 +1285,8 @@ def build_app(
                 "turnId": None,
                 # Turns that finished before the handover turn's id was known.
                 "finished": set(),
+                # What the mandatory development step must answer (D2b).
+                "candidates": DevelopmentCandidates(),
             }
             current["lastHandover"] = handover
             if assignment is not None:
@@ -1153,11 +1316,18 @@ def build_app(
             resolved = outcome or ended_outcome(assignment) or "killed"
             with lock:
                 handover["status"].update(outcome=resolved, state="running")
+            tables = ledger_tables(assignment)
+            with lock:
+                handover["candidates"] = tables["candidates"]
             prepared = handover_turn(
                 assignment,
                 resolved,
-                script_runs(assignment),
+                tables["run_table"],
                 conflict_warnings(assignment.scripts, assignment.deck_slug),
+                offers=tables["offers"],
+                hand_played=tables["hand_played"],
+                evidence=tables["evidence"],
+                candidates=tables["candidates"],
             )
         except Exception as exc:  # noqa: BLE001 - the background half records it
             prepared = exc

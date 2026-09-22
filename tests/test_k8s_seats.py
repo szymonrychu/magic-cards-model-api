@@ -1300,6 +1300,25 @@ def test_the_agent_carries_its_role_game_and_git_identity(role: str) -> None:
     assert env["GIT_COMMITTER_EMAIL"] == "mtg-agent@mtg-trainer.invalid"
 
 
+@pytest.mark.parametrize("role", ROLES)
+def test_the_agent_reads_the_drivers_evidence_directory(role: str) -> None:
+    """D2b: the driver writes this game's evidence record under its own
+    workspace (`/driver-workspace/evidence/<game>/<deck>.json`), and `plays
+    admit` in the agent container picks it up from `MTG_EVIDENCE_DIR` - the
+    same volume, mounted read-only there."""
+    from mtg_agent.driver import handover
+
+    job = _build_role(role)
+    env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
+    assert env["MTG_EVIDENCE_DIR"] == "/driver-workspace/evidence"
+    driver_env = {e["name"]: e.get("value") for e in _container(job, "driver")["env"]}
+    workspace = Path(driver_env["DRIVER_WORKSPACE"])
+    assert handover.evidence_path(workspace, "g1", "dimir-frog") == Path(
+        env["MTG_EVIDENCE_DIR"], "g1", "dimir-frog.json"
+    )
+    assert _mounts(_container(job, "agent"))["driver-workspace"]["mountPath"] == str(workspace)
+
+
 def test_role_and_game_id_reach_the_agent_through_their_own_placeholders() -> None:
     assert "__MTG_ROLE__" in SEAT_JOB_PLACEHOLDERS
     assert "__MTG_GAME_ID__" in SEAT_JOB_PLACEHOLDERS

@@ -23,6 +23,7 @@ from magic_cards_model_api.playscripts.lint import (
     MAX_ADVICE,
     MAX_PLAYS,
 )
+from magic_cards_model_api.playscripts.report import DevelopmentCandidates
 from magic_cards_model_api.playscripts.schema import (
     MAX_CONDITIONS,
     MAX_MOVES,
@@ -2139,7 +2140,10 @@ plays per deck, at most {MAX_ACTIVE_PER_ARCHETYPE} plays with priority > 0
 live together per (deck, archetype) - counted over move-bearing plays only,
 an advice-only play never enters it - at most {MAX_PREFER} `prefer`
 selectors, {MAX_CONDITIONS} conditions per `true`/`false` list,
-{MAX_MOVES} moves and {MAX_STEPS} steps per play.
+{MAX_MOVES} moves and {MAX_STEPS} steps per play. A deck already at the cap
+of {MAX_PLAYS} move-bearing plays takes a new one only by retire-by-deletion:
+delete its weakest play's file in the same `plays admit` that adds the new
+one, never in a separate admit and never by editing the retired play instead.
 
 Do not invent a rule you cannot ground in the ledger above - every condition
 you tighten or play you write has to trace to a decline this prompt actually
@@ -2161,15 +2165,78 @@ before the record began, never as a reason to edit a guide or admit a play."""
 HANDOVER_OPENING = "Hand over now: this game is finished for you."
 
 
+#: The first words of the one re-push a handover gets when its development
+#: step is still open once the handover turn ends (`app.run_handover`).
+REPUSH_OPENING = "The handover is not finished: the mandatory script development is still open."
+
+#: What `plays no-change --reason` is shown with in every command template.
+NO_CHANGE_REASON = '"<why no change is right>"'
+
+
+def no_change_command(assignment: Assignment, *, play: str = "", line: str = "") -> str:
+    """The `mcp-seat plays no-change` call that answers one development
+    candidate (D2a): a play by id, or a hand-played line by its text."""
+    target = f"--play {play}" if play else f'--line "{line}"'
+    return (
+        f"mcp-seat plays no-change --deck {assignment.deck_slug} --game-id "
+        f"{assignment.game_id} {target} --reason {NO_CHANGE_REASON}"
+    )
+
+
+def retire_by_deletion(assignment: Assignment) -> str:
+    """The play-cap rule, with this deck's own path: a new play at the cap
+    lands only by deleting the weakest one in the same admit. A seat whose
+    own list has no guide has no corpus of its own, so the path is generic."""
+    deck = assignment.deck_slug if assignment.guide is not None else "<deck>"
+    return (
+        f"At the cap of {MAX_PLAYS} move-bearing plays per deck, retire the weakest play by "
+        f"deleting its file (`git rm decks/{deck}/plays/<play-id>.json`) in "
+        "the same admit that adds the new one."
+    )
+
+
+def development_candidates_block(assignment: Assignment, candidates: DevelopmentCandidates) -> str:
+    """Every development candidate, each with the one `plays no-change` call
+    that answers it when no change is the right answer."""
+    if candidates.empty:
+        return (
+            "none: no play was declined or passed over and no line was played by hand "
+            "twice this game. The development step is answered by any conditions or "
+            "advice-only change the tables above earn; none is owed."
+        )
+    rows = [
+        f"- play `{play}` (declined or passed over): `{no_change_command(assignment, play=play)}`"
+        for play in candidates.plays
+    ]
+    rows += [
+        f"- line `{line}` (played by hand more than once): "
+        f"`{no_change_command(assignment, line=line)}`"
+        for line in candidates.lines
+    ]
+    return "\n".join(rows)
+
+
 def handover_turn(
-    assignment: Assignment, outcome: str, run_table: str, conflict_warnings: str
+    assignment: Assignment,
+    outcome: str,
+    run_table: str,
+    conflict_warnings: str,
+    *,
+    offers: str,
+    hand_played: str,
+    evidence: str,
+    candidates: DevelopmentCandidates,
 ) -> str:
     """The one handover turn, for a seat and a buddy alike: the same deck,
     the same commands and the same limits, so one prose serves both roles.
 
     `run_table` is `playscripts.report.script_run_table` for this game and
     seat; `conflict_warnings` is `handover.conflict_warnings` over the corpus
-    the seat registered."""
+    the seat registered. D2b: `offers` is `report.offer_table`, `hand_played`
+    `report.hand_played_summary`, `evidence` `report.evidence_table` over the
+    deck's committed evidence files, and `candidates`
+    `report.development_candidates` - what the mandatory development step
+    must answer, one change or one `plays no-change` at a time."""
     slug = assignment.deck_slug
     game = assignment.game_id
     budget = int(HANDOVER_BUDGET_SECONDS // 60)
@@ -2179,8 +2246,8 @@ def handover_turn(
 Outcome: {outcome}. Stop playing: whether you played this seat or advised on
 it, this turn is the handover, and it has {budget} minutes, not an hour.
 Finish the handover inside the time budget: do priority updates and admits
-first, then the three guide updates, then optional script development through
-subagents.
+first, then the three guide updates, then the mandatory script development
+through subagents.
 
 ## What to do
 
@@ -2197,15 +2264,25 @@ scripts through subagents, along with guides.
    more than 5 with `priority_limit`. Nothing else in the file changes.
 2. Admit those priority updates at once with
    `mcp-seat plays admit --deck {slug} --game-id {game}`.
+   Every admit also commits this game's evidence file - which plays were
+   offered, taken, passed over and declined - so the next game's handover
+   and review can count declines across games.
 3. Write the three guide updates under "Guide updates" below. They are
    required, not development: every game ends with them landed, or with the
    command's own answer saying why they could not.
-4. Then, with the time left, hand optional development to subagents: one
-   per new script for a line you played by hand more than once, and one per
-   script to improve. Every
+4. Develop the scripts. This step is mandatory: the handover is not done
+   until every entry under "Development candidates" below is answered. Answer
+   them by landing at least one conditions or advice-only change through
+   `plays admit` - a condition added to a play's `true`/`false` lists, or a
+   new advice-only play - or by running the candidate's own
+   `mcp-seat plays no-change` command, once per candidate, with the reason
+   no change is right. A priority change alone does not count. Hand the work
+   to subagents: one per new script for a line you played by hand more than
+   once, and one per script to improve. Every
    conflict warning below needs its conditions extended so that at most one
    play applies; priority alone never resolves a conflict. Each subagent checks
    its files with `mcp-seat plays check --root /guides --deck {slug}`.
+   {retire_by_deletion(assignment)}
 5. Land scripts with `mcp-seat plays admit --deck {slug} --game-id {game}`, and
    the three guide updates with `{guides_propose_command(assignment)}`.
    Both push straight to mtg-decks main the moment their gates pass, and
@@ -2237,13 +2314,62 @@ you end the turn: the pod stops once this turn ends, and a subagent still
 running then loses its work. End the turn once scripts and guides have landed,
 or each said why it could not.
 
+## Development candidates
+
+{development_candidates_block(assignment, candidates)}
+
 ## Script runs this game
 
 {run_table}
 
+## Script offers this game
+
+Every play your scripts offered you and what you did with it. `declined` and
+`passed over` rows are development candidates.
+
+{offers}
+
+## Lines played by hand this game
+
+Your own casts, activations and land plays that no script made. A line marked
+`candidate` was played by hand more than once: a play could make it for you.
+
+{hand_played}
+
+## Cross-game evidence
+
+Each play's offers across this deck's recent games, from the evidence files
+earlier admits committed. `declined_games` counts distinct games with at least
+one decline.
+
+{evidence}
+
 ## Conflict warnings
 
 {conflict_warnings}
+"""
+
+
+def handover_repush(assignment: Assignment, missing: Sequence[str], minutes_left: int) -> str:
+    """The one re-push turn a handover gets when its turn ended with the
+    development step still open: what is missing, and how to close it."""
+    slug = assignment.deck_slug
+    game = assignment.game_id
+    items = "\n".join(f"- {item}" for item in missing)
+    return f"""{REPUSH_OPENING}
+
+The handover turn ended, but the results journal shows this still open:
+
+{items}
+
+You have about {minutes_left} minutes. Close every item: land a conditions or
+advice-only change with `mcp-seat plays admit --deck {slug} --game-id {game}`,
+or run `mcp-seat plays no-change --deck {slug} --game-id {game} --play <play-id>
+--reason "<why>"` (or `--line "<line>"` for a hand-played line) once for each
+play and line above. A priority change alone does not count.
+{retire_by_deletion(assignment)} The "Development candidates" section of the
+handover turn has each candidate's exact command. End the turn once every item
+is closed, or each command said why it could not.
 """
 
 
@@ -2256,6 +2382,10 @@ def handover_nudge(assignment: Assignment) -> str:
         "Stop developing: stop any subagent or background task still running, run "
         f"`mcp-seat plays admit --deck {slug} --game-id {game}` and "
         f"`{guides_propose_command(assignment)}` with what you have - the three guide "
-        "updates are required, so write any still missing in a sentence or two first - "
-        f"then end the turn.\n\n{opponent_block(assignment)}"
+        "updates are required, so write any still missing in a sentence or two first. "
+        "The script development is mandatory too: every development candidate still "
+        "open gets its own "
+        f"`mcp-seat plays no-change --deck {slug} --game-id {game} --play <play-id> "
+        '--reason "<why>"` (or `--line "<line>"`) - then end the turn.'
+        f"\n\n{opponent_block(assignment)}"
     )

@@ -27,12 +27,23 @@ propose. Every bar the review prompt draws from this table counts
 `declined` rows only - an offer taken, passed over for a sibling, or never
 followed up on at all is never held against a seat the way a genuine
 decline is.
+
+D2b adds what the mandatory post-game development step reads:
+`hand_played_summary` (the seat's own casts, activations and land plays no
+script made), `development_candidates` (every declined or passed-over play
+plus every line played by hand twice), `evidence_record` (this game's
+per-play offer counts, the file `plays admit` commits to
+`decks/<deck>/plays/evidence/<game>.json`) and `evidence_table` (those files
+aggregated across games, so a "two distinct games" bar can be met).
 """
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from ..audit import SCRIPT_RUN_ACTION, SCRIPT_RUN_OFFERED_ACTION, SCRIPT_RUN_STARTED_ACTION
@@ -251,6 +262,35 @@ def offer_table(records: Iterable[Mapping[str, Any]], game_id: str, seat: str) -
     seat itself ever posts `script_run_started` - an advisor's own
     commitment is an `advice` row, which is not a committing row at all.
     """
+    lines = _offer_outcomes(records, game_id, seat)
+    if not lines:
+        return f"no script offers recorded for {seat} in {game_id}"
+
+    ordered = [
+        _offer_line(offer, outcome, action, reasoning)
+        for offer, outcome, action, reasoning in sorted(
+            lines,
+            key=lambda item: (
+                item[0].detail.get("priority") is None,
+                -(item[0].detail.get("priority") or 0),
+                item[0].seq,
+            ),
+        )
+    ]
+    return _bounded_table(OFFER_HEADER, ordered, "offer row(s)")
+
+
+#: One offer, paired: the offer itself, its outcome (`TAKEN`, `PASSED_OVER`,
+#: `DECLINED` or `OFFERED`), and for a decline the action taken instead and
+#: its reasoning.
+_Paired = tuple[_Offer, str, str | None, str | None]
+
+
+def _offer_outcomes(records: Iterable[Mapping[str, Any]], game_id: str, seat: str) -> list[_Paired]:
+    """Every offer to `seat` in `game_id`, in ledger order, paired with its
+    outcome - the one pairing `offer_table`, `evidence_record` and
+    `development_candidates` all read, so the three can never disagree about
+    what a seat declined."""
     all_records = list(records)
     offers: list[_Offer] = []
     for index, record in enumerate(all_records):
@@ -271,9 +311,6 @@ def offer_table(records: Iterable[Mapping[str, Any]], game_id: str, seat: str) -
             )
         )
 
-    if not offers:
-        return f"no script offers recorded for {seat} in {game_id}"
-
     # Offer sets: consecutive offers (already in ledger order) at the same
     # turn/step whose own `seq` are ledger-adjacent to the previous offer's.
     sets: list[list[_Offer]] = []
@@ -293,39 +330,310 @@ def offer_table(records: Iterable[Mapping[str, Any]], game_id: str, seat: str) -
         for member in offer_set:
             siblings[member.run_id] = run_ids - {member.run_id}
 
-    lines: list[tuple[Any, _Offer, str]] = []
+    paired: list[_Paired] = []
     for offer in offers:
         commitment = _committing_row(all_records, offer.index, seat)
         if commitment is None:
-            lines.append((offer, OFFERED, None, None))
+            paired.append((offer, OFFERED, None, None))
             continue
         commitment_detail = commitment.get("detail") or {}
         if commitment.get("action") == SCRIPT_RUN_STARTED_ACTION:
             started_run_id = str(commitment_detail.get("run_id"))
             if started_run_id == offer.run_id:
-                lines.append((offer, TAKEN, None, None))
+                paired.append((offer, TAKEN, None, None))
                 continue
             if started_run_id in siblings.get(offer.run_id, set()):
-                lines.append((offer, PASSED_OVER, None, None))
+                paired.append((offer, PASSED_OVER, None, None))
                 continue
         action_name = str(commitment.get("action"))
         reasoning = commitment_detail.get("reasoning")
         reasoning = reasoning.strip() if isinstance(reasoning, str) else reasoning
         reasoning_display = reasoning if reasoning else _NO_REASONING
-        lines.append((offer, DECLINED, action_name, reasoning_display))
+        paired.append((offer, DECLINED, action_name, reasoning_display))
+    return paired
 
-    ordered = [
-        _offer_line(offer, outcome, action, reasoning)
-        for offer, outcome, action, reasoning in sorted(
-            lines,
-            key=lambda item: (
-                item[0].detail.get("priority") is None,
-                -(item[0].detail.get("priority") or 0),
-                item[0].seq,
-            ),
+
+# -- D2b: the post-game development tables ---------------------------------------
+
+#: The move rows a seat can make by hand that a play could make for it, and
+#: the verb each one is printed with: a cast, an activation, a land play.
+HAND_PLAYED_KINDS = {"cast": "cast", "activate": "activate", "play_land": "play land"}
+
+#: How many times one hand-played line must repeat in a game before it is a
+#: development candidate: a line played twice is a line a script could play.
+HAND_PLAYED_REPEAT = 2
+
+HAND_PLAYED_HEADER = "line | times | candidate"
+
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def _script_spans(all_records: list[Mapping[str, Any]], game_id: str, seat: str) -> list[range]:
+    """The ledger spans `seat`'s own script runs covered in `game_id`: from a
+    run's `script_run_started` row (or its finish's `seq_start`, whichever is
+    earlier) to its `script_run` finish row (or `seq_end`, whichever is
+    later). A run with no finish yet covers nothing but its own start row -
+    a run that crashed must not swallow every later hand play."""
+    starts: dict[str, int] = {}
+    ends: dict[str, int] = {}
+    for record in all_records:
+        payload = _payload(record)
+        action = payload.get("action")
+        if action not in (SCRIPT_RUN_STARTED_ACTION, SCRIPT_RUN_ACTION):
+            continue
+        detail = payload.get("detail") or {}
+        if detail.get("seat") != seat or detail.get("game_id") != game_id:
+            continue
+        seq = record.get("seq")
+        if not isinstance(seq, int):
+            continue
+        run_id = str(detail.get("run_id"))
+        if action == SCRIPT_RUN_STARTED_ACTION:
+            starts[run_id] = min(seq, starts.get(run_id, seq))
+            continue
+        low = detail.get("seq_start")
+        high = detail.get("seq_end")
+        starts[run_id] = min(
+            [seq, starts.get(run_id, seq), *([low] if isinstance(low, int) else [])]
         )
+        ends[run_id] = max([seq, *([high] if isinstance(high, int) else [])])
+    return [range(starts[run_id], ends[run_id] + 1) for run_id in ends]
+
+
+def _card_names(all_records: list[Mapping[str, Any]]) -> dict[str, str]:
+    """Card id -> name, from every ledger row that names both (`add_card`
+    and its kin). A seat may cast by name or by id; this is how a line cast
+    by id still groups with the same card cast by name."""
+    names: dict[str, str] = {}
+    for record in all_records:
+        detail = _payload(record).get("detail") or {}
+        card_id, card = detail.get("card_id"), detail.get("card")
+        if isinstance(card_id, str) and isinstance(card, str) and not _UUID.match(card):
+            names[card_id] = card
+    return names
+
+
+def _card_label(reference: Any, names: Mapping[str, str]) -> str:
+    """The card a move names, by name where the ledger says it; an id no row
+    names prints as `card <id>`."""
+    text = str(reference or "").strip()
+    if not text:
+        return "card ?"
+    if text in names:
+        return names[text]
+    if _UUID.match(text):
+        return f"card {text}"
+    return text
+
+
+def _hand_played_counts(
+    records: Iterable[Mapping[str, Any]], game_id: str, seat: str
+) -> dict[str, int]:
+    """How often `seat` played each line by hand: its own allowed casts,
+    activations and land plays that no script run of its own covered."""
+    all_records = list(records)
+    spans = _script_spans(all_records, game_id, seat)
+    names = _card_names(all_records)
+    counts: dict[str, int] = {}
+    for record in all_records:
+        payload = _payload(record)
+        kind = HAND_PLAYED_KINDS.get(str(payload.get("action")))
+        if kind is None:
+            continue
+        detail = payload.get("detail") or {}
+        if detail.get("player") != seat or detail.get("allowed") is not True:
+            continue
+        seq = record.get("seq")
+        if isinstance(seq, int) and any(seq in span for span in spans):
+            continue
+        if payload.get("action") == "activate":
+            label = f"{kind} {_card_label(detail.get('card_id') or detail.get('card'), names)}"
+            if detail.get("ability_index") is not None:
+                label = f"{label} ability {detail['ability_index']}"
+        else:
+            label = f"{kind} {_card_label(detail.get('card') or detail.get('card_id'), names)}"
+        counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
+def hand_played_summary(records: Iterable[Mapping[str, Any]], game_id: str, seat: str) -> str:
+    """One line per line `seat` played by hand in `game_id` - its own casts,
+    activations and land plays that were allowed and that no script run of
+    its own made - grouped by kind and card, most repeated first.
+
+    A line repeated `HAND_PLAYED_REPEAT` or more times is flagged
+    `candidate`: a line the seat keeps playing by hand is a line a play
+    could make for it, and the handover must either write that play or say
+    why not (`mcp-seat plays no-change --line`). The `line` column is the
+    exact text that command takes. Bounded like every table here
+    (`_bounded_table`)."""
+    counts = _hand_played_counts(records, game_id, seat)
+    if not counts:
+        return f"no hand-played casts, activations or land plays recorded for {seat} in {game_id}"
+    ordered = [
+        f"{line} | {times} | {'candidate' if times >= HAND_PLAYED_REPEAT else '-'}"
+        for line, times in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     ]
-    return _bounded_table(OFFER_HEADER, ordered, "offer row(s)")
+    return _bounded_table(HAND_PLAYED_HEADER, ordered, "hand-played line(s)")
+
+
+@dataclass(frozen=True)
+class DevelopmentCandidates:
+    """What a handover must answer, one way or the other: every play this
+    seat declined or passed over, and every line it played by hand
+    `HAND_PLAYED_REPEAT` or more times. Each needs a conditions or
+    advice-only change landed, or a `plays no-change` naming why not."""
+
+    plays: tuple[str, ...] = ()
+    lines: tuple[str, ...] = ()
+
+    @property
+    def empty(self) -> bool:
+        return not self.plays and not self.lines
+
+
+def development_candidates(
+    records: Iterable[Mapping[str, Any]], game_id: str, seat: str
+) -> DevelopmentCandidates:
+    """`DevelopmentCandidates` for `seat` in `game_id`: the declined or
+    passed-over plays in the offer pairing `offer_table` prints, in ledger
+    order, and the `candidate` lines of `hand_played_summary`, most repeated
+    first."""
+    all_records = list(records)
+    plays: list[str] = []
+    for offer, outcome, _, _ in _offer_outcomes(all_records, game_id, seat):
+        play_id = str(offer.detail.get("script_id"))
+        if outcome in (DECLINED, PASSED_OVER) and play_id not in plays:
+            plays.append(play_id)
+    counts = _hand_played_counts(all_records, game_id, seat)
+    lines = [
+        line
+        for line, times in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        if times >= HAND_PLAYED_REPEAT
+    ]
+    return DevelopmentCandidates(plays=tuple(plays), lines=tuple(lines))
+
+
+#: The four counts one play carries in an evidence file, in print order.
+EVIDENCE_COUNTS = ("offered", "taken", "passed_over", "declined")
+
+_OUTCOME_COUNT = {TAKEN: "taken", PASSED_OVER: "passed_over", DECLINED: "declined"}
+
+
+def evidence_record(
+    records: Iterable[Mapping[str, Any]],
+    game_id: str,
+    seat: str,
+    deck: str,
+    opponent_archetype: str | None,
+) -> dict[str, Any]:
+    """This game's evidence file for `deck`: `{game_id, deck,
+    opponent_archetype, plays: {<play_id>: {offered, taken, passed_over,
+    declined}}}` - the schema `plays admit` commits to
+    `decks/<deck>/plays/evidence/<game_id>.json`.
+
+    Counted off the same offer pairing `offer_table` prints
+    (`_offer_outcomes`). `offered` is every offer of the play, whatever came
+    of it; `taken`, `passed_over` and `declined` count the offers that came
+    to each - so an offer nobody answered is counted as offered and nothing
+    else, exactly as the table treats it."""
+    plays: dict[str, dict[str, int]] = {}
+    for offer, outcome, _, _ in _offer_outcomes(records, game_id, seat):
+        play = plays.setdefault(
+            str(offer.detail.get("script_id")), dict.fromkeys(EVIDENCE_COUNTS, 0)
+        )
+        play["offered"] += 1
+        if outcome in _OUTCOME_COUNT:
+            play[_OUTCOME_COUNT[outcome]] += 1
+    return {
+        "game_id": game_id,
+        "deck": deck,
+        "opponent_archetype": opponent_archetype,
+        "plays": plays,
+    }
+
+
+#: How many of the newest evidence files `evidence_table` reads by default.
+EVIDENCE_GAMES = 20
+
+EVIDENCE_HEADER = "play | games | offered | taken | passed_over | declined | declined_games"
+
+
+def evidence_dir(root: Path | str, deck: str) -> Path:
+    """Where `plays admit` commits `deck`'s per-game evidence files."""
+    return Path(root) / "decks" / deck / "plays" / "evidence"
+
+
+def evidence_table(root: Path | str, deck: str, games: int = EVIDENCE_GAMES) -> str:
+    """One line per play across the newest `games` evidence files of `deck`
+    under `root` (a guides checkout): the games it was offered in, its
+    summed counts, and `declined_games` - how many distinct games declined
+    it at least once, which is what `WRITE_BARS`' "1 decline in each of 2
+    distinct games" bar reads. Most declined first.
+
+    Newest is by file modification time, then name: the schema carries no
+    timestamp, and a file is written once, when its game is admitted. A file
+    that does not parse, or is not the schema's shape, is skipped and the
+    table says how many were. Bounded like every table here."""
+    folder = evidence_dir(root, deck)
+    try:
+        files = [path for path in folder.glob("*.json") if path.is_file()]
+    except OSError:
+        files = []
+    files.sort(key=lambda path: (_mtime(path), path.name), reverse=True)
+    totals: dict[str, dict[str, int]] = {}
+    skipped = 0
+    read = 0
+    for path in files[: max(0, games)]:
+        try:
+            plays = json.loads(path.read_text()).get("plays")
+        except (OSError, ValueError, AttributeError):
+            skipped += 1
+            continue
+        if not isinstance(plays, Mapping):
+            skipped += 1
+            continue
+        read += 1
+        for play_id, counts in plays.items():
+            if not isinstance(counts, Mapping):
+                continue
+            row = totals.setdefault(
+                str(play_id), {"games": 0, **dict.fromkeys(EVIDENCE_COUNTS, 0), "declined_games": 0}
+            )
+            row["games"] += 1
+            for name in EVIDENCE_COUNTS:
+                value = counts.get(name)
+                row[name] += value if isinstance(value, int) and value > 0 else 0
+            declined = counts.get("declined")
+            if isinstance(declined, int) and declined > 0:
+                row["declined_games"] += 1
+    note = f"{skipped} unreadable evidence file(s) skipped" if skipped else None
+    if not totals:
+        absence = (
+            f"no cross-game evidence recorded for {deck} yet "
+            f"(decks/{deck}/plays/evidence/ holds no game)"
+        )
+        return f"{absence}; {note}" if note else absence
+    ordered = [
+        " | ".join(
+            [
+                play_id,
+                str(row["games"]),
+                *(str(row[name]) for name in EVIDENCE_COUNTS),
+                str(row["declined_games"]),
+            ]
+        )
+        for play_id, row in sorted(totals.items(), key=lambda item: (-item[1]["declined"], item[0]))
+    ]
+    header = EVIDENCE_HEADER if note is None else f"{note}\n{EVIDENCE_HEADER}"
+    return _bounded_table(header, ordered, "play row(s)")
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def _bounded_table(header: str, lines: list[str], noun: str) -> str:

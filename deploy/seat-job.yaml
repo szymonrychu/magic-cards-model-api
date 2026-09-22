@@ -274,6 +274,11 @@ spec:
           value: mtg-agent
         - name: GIT_COMMITTER_EMAIL
           value: mtg-agent@mtg-trainer.invalid
+        # Where the driver writes this game's play-offer evidence record
+        # (`<dir>/<game>/<deck>.json`, on the read-only driver-workspace
+        # mount below); `plays admit` commits it next to the deck's plays.
+        - name: MTG_EVIDENCE_DIR
+          value: /driver-workspace/evidence
         envFrom:
         - secretRef:
             name: mtg-agent

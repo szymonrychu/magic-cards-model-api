@@ -172,6 +172,9 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
     #: Every `POST /api/games/{id}/report` the driver sent, with the `uid`
     #: query credential it presented.
     problem_reports: list[dict] = []
+    #: Every `POST /api/games/{id}/plays-outcome` the driver sent (D2a's
+    #: route: the handover's DSL-development ledger row).
+    plays_outcomes: list[dict] = []
 
     game = FastAPI()
 
@@ -221,6 +224,16 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         problem_reports.append({"game_id": game_id, "uid": uid, **body})
         events.append("report")
         return {"recorded": True}
+
+    @game.post("/api/games/{game_id}/plays-outcome")
+    def post_plays_outcome(game_id: str, body: dict):
+        # D2a's route, reduced to what a driver test reads: the body the
+        # driver sent, and when. Its auth gates are D2a's own tests' job.
+        if state["game"] == "down":
+            raise httpx.ConnectError("connection refused")
+        plays_outcomes.append({"game_id": game_id, **body})
+        events.append("plays_outcome")
+        return {"recorded": True, "log_seq": len(plays_outcomes)}
 
     @game.get("/api/games/{game_id}/review")
     def get_review(game_id: str, uid: str | None = None, key: str | None = None):
@@ -453,4 +466,9 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         log_reads=log_reads,
         problem_reports=problem_reports,
         seat_reads=seat_reads,
+        plays_outcomes=plays_outcomes,
+        #: Where D2a's `mcp-seat` commands append their results journal in
+        #: this world's guides checkout (`<git-dir>/mcm-results.jsonl`); a
+        #: test writes the lines a seat's commands would have.
+        journal=tmp_path / "guides" / ".git" / "mcm-results.jsonl",
     )

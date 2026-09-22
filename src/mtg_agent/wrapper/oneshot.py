@@ -217,6 +217,8 @@ REVIEW_STOP_HOOK_SINK = "http://127.0.0.1:1/internal/turn-complete"
 #: - `GIT_COMMITTER_NAME` / `GIT_COMMITTER_EMAIL` - who the commits in the
 #:   checkout are committed by (the AUTHOR is `gitwork.identity`, which
 #:   derives from `MTG_ROLE` below).
+#: - `MTG_EVIDENCE_DIR` - where the driver wrote this game's play-offer
+#:   evidence record, which `plays admit` commits beside the deck's plays.
 #:
 #: `MTG_ROLE` is NOT in this list: it is set, not passed through, because
 #: the container's own value is the seat's.
@@ -224,6 +226,7 @@ PASSED_THROUGH = (
     "MTG_GAME_ID",
     "GIT_COMMITTER_NAME",
     "GIT_COMMITTER_EMAIL",
+    "MTG_EVIDENCE_DIR",
 )
 
 #: Never passed through from this process's own environment. `HOOK_COMMAND`
