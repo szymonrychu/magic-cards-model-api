@@ -41,6 +41,7 @@ from . import (
     decks_api,
     engine_api,
     game_access,
+    handoff,
     lobby,
     oidc,
     opening,
@@ -1398,10 +1399,33 @@ def get_game(game_id: str, uid: str | None = None, include: str | None = None) -
             status_code=422,
             detail=f"unknown include value(s) {unknown}; the only one is 'contents'",
         )
-    game = game_or_404(game_id)
-    viewer = visibility.resolve_viewer(game_id, uid)
-    view = state_view(game, game_id, include_contents="contents" in included)
-    return visibility.redact_view(view, viewer)
+
+    def read() -> dict[str, Any]:
+        game = game_or_404(game_id)
+        viewer = visibility.resolve_viewer(game_id, uid)
+        view = state_view(game, game_id, include_contents="contents" in included)
+        return visibility.redact_view(view, viewer)
+
+    # Never inside the pregame's last move. This route takes no game lock by
+    # design (`tests/test_action_flow.py`'s
+    # `test_no_deadlock_block_until_wake_never_holds_the_game_lock`), and
+    # `opening.finish_opening_hand_actions` edits the stored `Game` in place -
+    # so without this a poll could read it after the pregame ended and before
+    # CR 103.8's untap step was settled, and be handed the frozen page the
+    # settling exists to prevent.
+    #
+    # The whole read runs inside `handoff.stable_read`, not merely a wait
+    # before it: every line of `read` above runs against the live `Game` the
+    # store hands back by reference, so a check made before it starts says
+    # nothing about a handoff that opens while it is still building. The
+    # view is checked afterwards too, and rebuilt if one did - see
+    # `handoff.py`.
+    #
+    # This is not the game lock: it costs nothing unless that one mutation
+    # is actually running, so `POST /advance` and `PUT /step` still observe
+    # a priorityless step on purpose, and holding `store.locked` alone gates
+    # nothing.
+    return handoff.stable_read(game_id, read)
 
 
 @app.get(
