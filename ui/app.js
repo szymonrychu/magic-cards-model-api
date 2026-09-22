@@ -15,6 +15,7 @@
 import {
   actingAs,
   actingForCard,
+  actionPlayer,
   decidesFor,
   decisionIsMine,
   holdsPriority as seatHoldsPriority,
@@ -822,11 +823,23 @@ function refreshDecisionTargets() {
 
 // ---- actions -------------------------------------------------------------
 
+/** The request body for `app.action`, sent as `you`. The mana it offers is
+ * the untapped sources of the player the action is taken as - the viewer's
+ * own, or, for a card of a player it is controlling, that player's: CR
+ * 723.5a, "The controller of another player can use only that player's
+ * resources (cards, mana, and so on) to pay costs for that player." */
+export function actionRequestBody(app, you) {
+  const payer = actionPlayer(app.state, app.action.card);
+  return A.bodyFor(app.action, you, untappedSources(app.state, payer));
+}
+
 async function refreshAffordance() {
   const app = store.get();
   const action = app.action;
   if (!action || action.kind === "special") return;
-  const query = new URLSearchParams({ player: you() });
+  // CR 723.5: a card of a player this seat is controlling is announced as
+  // theirs, so its target candidates are read from their side.
+  const query = new URLSearchParams({ player: actionPlayer(app.state, action.card) });
   const q = A.affordanceQuery(action);
   if (q.ability_index !== undefined) query.set("ability_index", q.ability_index);
   if (q.modes) query.set("modes", q.modes.join(","));
@@ -847,7 +860,7 @@ async function previewAndMaybeFire() {
     store.set({ preview: null });
     return;
   }
-  const body = { ...A.bodyFor(action, you(), untappedSources(app.state)), dry_run: true };
+  const body = { ...actionRequestBody(app, you()), dry_run: true };
   const probe = await send("POST", gamePath(A.endpointFor(action)), body);
   if (probe === null) return;
   if (probe.allowed === false) {
@@ -869,7 +882,7 @@ async function previewAndMaybeFire() {
 export async function fire() {
   const app = store.get();
   const action = app.action;
-  const body = A.bodyFor(action, you(), untappedSources(app.state));
+  const body = actionRequestBody(app, you());
   const res = await send("POST", gamePath(A.endpointFor(action)), body);
   if (res === null) return;
   if (refused(res)) {
@@ -1858,7 +1871,11 @@ export async function approveAdvice(advice) {
 async function passForAiSeat(aiPlayer) {
   const app = store.get();
   if (!aiPlayer || !app.aiUid) return;
-  const res = await send("POST", gamePath("actions/pass-priority"), { player: aiPlayer });
+  // The AI seat's own uid, never this page's: a uid acts only for its own
+  // player (`game_access._seat_mismatch`).
+  const res = await send("POST", withUid(gamePath("actions/pass-priority"), app.aiUid), {
+    player: aiPlayer,
+  });
   if (res !== null && res.allowed === false) toast(`pass for ${aiPlayer} refused: ${res.reason}`);
   await refresh();
 }

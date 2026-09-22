@@ -67,7 +67,17 @@ export function controlledHand(state, player) {
 /** The player a hand card is played for when that is somebody this viewer is
  * deciding for, not itself - or `null`. */
 export function actingForCard(state, card) {
-  const owner = card && (card.owner || card.controller);
+  // A permanent is used by its controller (CR 723.3 leaves it with them); a
+  // card in a hidden zone is played by whoever holds it.
+  const inHand = card && card.zone && card.zone !== "battlefield";
+  const owner = card && (inHand ? card.owner || card.controller : card.controller || card.owner);
   if (!owner || owner === state.you || !decidesFor(state).has(owner)) return null;
   return owner;
+}
+
+/** The player an action with `card` is taken as: the controlled player whose
+ * card it is (CR 723.5), or this viewer. Whose sources pay for it (CR 723.5a)
+ * and whose targets it is announced against. */
+export function actionPlayer(state, card) {
+  return actingForCard(state, card) || state.you;
 }

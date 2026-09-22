@@ -4,8 +4,10 @@
 // choice - Sunbaked Canyon for {R}, not {W} - and goes first as a
 // `ManaSource` with a colour (schemas.ManaSource).
 
-export function untappedSources(state) {
-  const you = state.you;
+/** `player` defaults to the viewer; a spell cast for a player this seat is
+ * controlling names that player's sources instead (CR 723.5a). */
+export function untappedSources(state, player) {
+  const you = player || state.you;
   return (state.battlefield || [])
     .filter(
       (card) =>

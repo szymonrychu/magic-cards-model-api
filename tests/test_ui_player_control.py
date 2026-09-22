@@ -282,12 +282,56 @@ def test_nobody_elses_hand_is_offered_without_control():
 def test_a_card_played_for_another_player_says_so_in_its_menu():
     state = controlling(hands={"you": [], "claude": [CLAUDE_BOLT]})
     assert run_module("control.js", "m.actingForCard(s, c)", s=state, c=CLAUDE_BOLT) == "claude"
-    items = run_module(
-        "menus.js", "m.handMenuItems({kind: 'cast'}, c, 'claude')", c=CLAUDE_BOLT
-    )
+    items = run_module("menus.js", "m.handMenuItems({kind: 'cast'}, c, 'claude')", c=CLAUDE_BOLT)
     assert items and all(item["sublabel"].endswith("for claude") for item in items), items
 
 
 def test_a_card_of_your_own_carries_no_acting_for():
     mine = {"id": "elfcard", "name": "Llanowar Elves", "owner": "you", "zone": "hand"}
     assert run_module("control.js", "m.actingForCard(s, c)", s=controlling(), c=mine) is None
+
+
+# -- paying for the controlled player's spell (CR 723.5a) ---------------------
+
+CLAUDE_MOUNTAIN = {
+    "id": "c-mtn",
+    "name": "Mountain",
+    "controller": "claude",
+    "tapped": False,
+    "type_line": "Basic Land - Mountain",
+    "abilities": [{"index": 0, "text": "{T}: Add {R}.", "is_mana_ability": True}],
+}
+MY_MOUNTAIN = CLAUDE_MOUNTAIN | {"id": "y-mtn", "controller": "you"}
+
+
+def test_the_controlled_players_spell_is_paid_from_their_own_sources():
+    """CR 723.5a: "The controller of another player can use only that
+    player's resources (cards, mana, and so on) to pay costs for that
+    player." The body names claude's untapped sources, never the viewer's."""
+    state = controlling(
+        battlefield=[CLAUDE_MOUNTAIN, MY_MOUNTAIN], hands={"you": [], "claude": [CLAUDE_BOLT]}
+    )
+    body = run_app(
+        "(async () => { const A = await import(pathToFileURL(ACTIONS).href);"
+        " return m.actionRequestBody({state: s, action: A.begin('cast', c)}, 'you'); })()",
+        s=state,
+        c=CLAUDE_BOLT,
+        ACTIONS=str(APP_JS.parent / "actions.js"),
+    )
+    assert body["player"] == "you"
+    assert body["mana_sources"] == ["c-mtn"], body
+
+
+def test_the_controlled_players_spell_asks_for_its_targets_as_theirs():
+    state = controlling(hands={"you": [], "claude": [CLAUDE_BOLT]})
+    who = run_module("control.js", "m.actionPlayer(s, c)", s=state, c=CLAUDE_BOLT)
+    assert who == "claude"
+    mine = {"id": "mine", "name": "Shock", "owner": "you", "zone": "hand"}
+    assert run_module("control.js", "m.actionPlayer(s, c)", s=state, c=mine) == "you"
+    assert run_module("control.js", "m.actionPlayer(s, c)", s=state, c=CLAUDE_MOUNTAIN) == "claude"
+
+
+def test_untapped_sources_are_read_for_the_named_player():
+    state = controlling(battlefield=[CLAUDE_MOUNTAIN, MY_MOUNTAIN])
+    assert run_module("mana.js", "m.untappedSources(s, 'claude')", s=state) == ["c-mtn"]
+    assert run_module("mana.js", "m.untappedSources(s)", s=state) == ["y-mtn"]
