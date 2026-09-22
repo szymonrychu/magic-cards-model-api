@@ -317,3 +317,12 @@ def test_status_says_stalled_for_a_running_game_nothing_is_playing(driver_with_s
 def test_status_stays_dispatched_while_the_wrapper_holds_a_turn(driver_with_status):
     driver_with_status.update(turnActive=False, agentBusy=True, gameId="g", reflected=False)
     assert started().status("u")["state"] == "dispatched"
+
+
+def test_status_does_not_flash_stalled_at_a_turn_boundary(driver_with_status):
+    driver_with_status.update(
+        turnActive=False, agentBusy=False, gameId="g", reflected=False, idleSeconds=1.0
+    )
+    assert started().status("u")["state"] == "dispatched"
+    driver_with_status["idleSeconds"] = 600.0
+    assert started("u2").status("u2")["state"] == "stalled"

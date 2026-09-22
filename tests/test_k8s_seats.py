@@ -1578,3 +1578,29 @@ def test_status_is_idle_only_for_a_driver_with_no_game_left_to_play() -> None:
     idle = {"turnActive": False, "agentBusy": False, "pending": False, "lastError": None}
     assert _state_for(idle | {"gameId": None, "reflected": False}) == "idle"
     assert _state_for(idle | {"gameId": "g1", "reflected": True}) == "idle"
+
+
+def test_a_turn_boundary_never_flashes_stalled() -> None:
+    """Between one turn ending and the driver's continuation, across its 5s
+    unreachable-game retry, or a handover gap: nothing is playing for a
+    moment. Inside `STALLED_GRACE_SECONDS` that is still a seat at work."""
+    from magic_cards_model_api.k8s_seats import STALLED_GRACE_SECONDS
+
+    between = {
+        "turnActive": False,
+        "agentBusy": False,
+        "pending": False,
+        "lastError": None,
+        "gameId": "g1",
+        "reflected": False,
+    }
+    assert _state_for(between | {"idleSeconds": 0.0}) == "thinking"
+    assert _state_for(between | {"idleSeconds": STALLED_GRACE_SECONDS - 1}) == "thinking"
+    assert _state_for(between | {"idleSeconds": STALLED_GRACE_SECONDS}) == "stalled"
+
+
+def test_the_grace_outlasts_the_driver_s_unreachable_retry() -> None:
+    from magic_cards_model_api.k8s_seats import STALLED_GRACE_SECONDS
+    from mtg_agent.driver.app import UNREACHABLE_RETRY_SECONDS
+
+    assert STALLED_GRACE_SECONDS > UNREACHABLE_RETRY_SECONDS

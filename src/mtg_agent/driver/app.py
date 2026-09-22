@@ -131,13 +131,19 @@ RETIRE_REVIEW_JOIN_TIMEOUT = REVIEW_HTTP_TIMEOUT + 70.0
 
 #: The auto-continue loop guard. One wrapper turn is meant to cover a whole
 #: match, so a turn that ends while the game runs is followed at once by a
-#: continuation turn (`continue_turn`). A continuation that ends within
-#: `CONTINUE_QUICK_SECONDS` did no real play; `CONTINUE_QUICK_LIMIT` of those
-#: in a row means the agent ends every turn the moment it starts (a broken
-#: session, a prompt it keeps refusing), and pushing more would spin forever -
-#: so the driver stops, logs an error and files a problem report instead. A
-#: continuation that runs longer resets the count.
+#: continuation turn (`continue_turn`). A continuation is "quick" - it did no
+#: real play - when the board did not move at all while it ran (`board_mark`)
+#: AND it ended within `CONTINUE_QUICK_SECONDS` AND either the game was
+#: waiting on this very seat, or it ended within `CONTINUE_INSTANT_SECONDS`
+#: (too soon to have run even one wake-loop wait - `wait_for_priority` holds
+#: for up to 20s). A seat or buddy that waited and found the other side still
+#: thinking is not looping, however often it happens. `CONTINUE_QUICK_LIMIT`
+#: quick ones in a row means the agent ends every turn the moment it starts
+#: (a broken session, a prompt it keeps refusing), and pushing more would
+#: spin forever - so the driver stops, logs an error and files a problem
+#: report instead. Any continuation that is not quick resets the count.
 CONTINUE_QUICK_SECONDS = 30.0
+CONTINUE_INSTANT_SECONDS = 5.0
 CONTINUE_QUICK_LIMIT = 3
 
 #: How long `turn_done` waits before checking a game it could not read once
@@ -309,6 +315,30 @@ TERMINAL_PATHS = {
 UNREACHABLE_TERMINAL_PATH = "pod_killed_outright"
 
 
+def board_mark(state: dict) -> tuple:
+    """What "the game moved" is measured against: the turn, the step, who
+    holds priority, the stack's depth and whose decision is pending. Any
+    play changes at least one of them."""
+    pending = state.get("pending_decision") or {}
+    return (
+        state.get("turn_number"),
+        state.get("step"),
+        state.get("priority_holder"),
+        len(state.get("stack") or []),
+        pending.get("player") if isinstance(pending, dict) else None,
+    )
+
+
+def waiting_on(state: dict) -> str | None:
+    """The player the game is waiting on: a pending decision's owner, else
+    the priority holder."""
+    pending = state.get("pending_decision")
+    if isinstance(pending, dict) and pending.get("player"):
+        return str(pending["player"])
+    holder = state.get("priority_holder")
+    return str(holder) if holder else None
+
+
 def build_app(
     settings: DriverSettings,
     *,
@@ -383,8 +413,15 @@ def build_app(
         # mark the turn now in flight as finished.
         "continuationTurnId": None,
         "continuationStarted": 0.0,
+        # `board_mark` of the game when the continuation was pushed.
+        "continuationMark": None,
         "quickContinuations": 0,
         "doneTurns": set(),
+        # `now()` since which nothing has been playing this seat (no driver
+        # turn in flight, the wrapper not busy); None while something is.
+        # `/status` answers it as `idleSeconds`, which the game server
+        # debounces "stalled" on, so a turn boundary never flashes it.
+        "idleSince": None,
     }
 
     def clear_locked() -> None:
@@ -402,8 +439,10 @@ def build_app(
             reviewThread=None,
             continuationTurnId=None,
             continuationStarted=0.0,
+            continuationMark=None,
             quickContinuations=0,
             doneTurns=set(),
+            idleSince=None,
         )
 
     def seed_plan_file(assignment: Assignment) -> None:
@@ -423,7 +462,13 @@ def build_app(
             response = client.get(f"/api/games/{game_id}", params={"uid": uid})
             if response.status_code >= 400:
                 raise httpx.HTTPError(f"game server answered {response.status_code}")
-            return response.json()
+            try:
+                answer = response.json()
+            except ValueError as exc:
+                raise httpx.HTTPError(f"game server answered something not JSON: {exc}") from exc
+            if not isinstance(answer, dict):
+                raise httpx.HTTPError("game server answered something not a game")
+            return answer
 
     def wrapper_headers() -> dict[str, str]:
         return {"X-Wrapper-Secret": settings.wrapper_secret} if settings.wrapper_secret else {}
@@ -448,7 +493,14 @@ def build_app(
                 retryable=response.status_code in BOOTING_STATUSES,
                 status=response.status_code,
             )
-        turn_id = response.json()["turnId"]
+        try:
+            turn_id = str(response.json()["turnId"])
+        except (ValueError, KeyError, TypeError) as exc:
+            # A 2xx that is not the wrapper's answer - an ingress error page,
+            # a proxy's HTML - is an agent nobody can confirm took the turn.
+            raise AgentUnavailable(
+                f"the agent's answer carried no turn id: {exc!r}", retryable=True
+            ) from exc
         # Named seat and game, because the compose log interleaves three
         # services and "turn pushed" alone does not say who is playing what.
         with lock:
@@ -1428,18 +1480,38 @@ def build_app(
 
     @app.post("/turn-done", status_code=202)
     def turn_done(record: dict) -> dict:
-        log_turn_result(record)
+        """Claims the finished turn id before any work, so a concurrent or
+        retried duplicate delivery is ignored - and gives the claim back if
+        the work raises, so the Deliverer's retry of a delivery that failed
+        is handled rather than dropped as a duplicate."""
         finished = record.get("turnId")
+        with lock:
+            duplicate = (
+                bool(finished)
+                and finished != current["reflectionTurnId"]
+                and finished in current["doneTurns"]
+            )
+            claimed = bool(finished) and not duplicate
+            if claimed:
+                current["doneTurns"].add(finished)
+        try:
+            return handle_turn_done(record, finished, duplicate)
+        except Exception:
+            if claimed:
+                with lock:
+                    current["doneTurns"].discard(finished)
+            raise
+
+    def handle_turn_done(record: dict, finished: str | None, duplicate: bool) -> dict:
+        if not duplicate:
+            # After the duplicate check: a retried duplicate must neither
+            # clear a loop-guard `lastError` nor set a stale one.
+            log_turn_result(record)
         with lock:
             assignment = current["assignment"]
             reflected = current["reflected"]
             reflection_id = current["reflectionTurnId"]
             active = current["handover"]
-            duplicate = (
-                bool(finished) and finished != reflection_id and (finished in current["doneTurns"])
-            )
-            if finished and not duplicate:
-                current["doneTurns"].add(finished)
             if active is None:
                 # The turn the agent just finished is no longer in flight. Set
                 # before anything else here, so a continuation or reflection
@@ -1448,6 +1520,7 @@ def build_app(
                 # later one, and it has not finished.
                 if not duplicate:
                     current["turnActive"] = False
+                    current["idleSince"] = now()
             elif active["turnId"] is not None and finished == active["turnId"]:
                 current["turnActive"] = False
                 active["done"].set()
@@ -1556,25 +1629,35 @@ def build_app(
         except Exception as exc:  # noqa: BLE001 - a report must never break the driver
             log.warning("could not file a problem report for game %s: %s", assignment.game_id, exc)
 
-    def continue_play(assignment: Assignment, finished: str | None) -> dict:
+    def moved_on_locked(assignment: Assignment) -> bool:
+        return (
+            current["assignment"] is not assignment
+            or current["handover"] is not None
+            or current["reflected"]
+        )
+
+    def continue_play(assignment: Assignment, finished: str | None, state: dict) -> dict:
         """Push a continuation turn: the game is still running and nothing
         is playing the seat. See `CONTINUE_QUICK_SECONDS` for the guard."""
+        mark = board_mark(state)
         with lock:
-            if (
-                current["assignment"] is not assignment
-                or current["handover"] is not None
-                or current["reflected"]
-            ):
+            if moved_on_locked(assignment):
                 return {"ignored": "assignment moved on"}
             if finished and finished == current["continuationTurnId"]:
-                quick = now() - current["continuationStarted"] < CONTINUE_QUICK_SECONDS
+                elapsed = now() - current["continuationStarted"]
+                own_move = assignment.role != "advisor" and waiting_on(state) == assignment.player
+                quick = (
+                    mark == current["continuationMark"]
+                    and elapsed < CONTINUE_QUICK_SECONDS
+                    and (own_move or elapsed < CONTINUE_INSTANT_SECONDS)
+                )
                 current["quickContinuations"] = current["quickContinuations"] + 1 if quick else 0
             tripped = current["quickContinuations"] >= CONTINUE_QUICK_LIMIT
             if tripped:
                 reason = (
                     f"stopped auto-continuing: {current['quickContinuations']} continuation "
-                    f"turns in a row each ended within {CONTINUE_QUICK_SECONDS:g}s while "
-                    "the game was still running"
+                    f"turns in a row each ended within {CONTINUE_QUICK_SECONDS:g}s with the "
+                    "game not moving at all while it was still running"
                 )
                 current["lastError"] = reason
         if tripped:
@@ -1594,18 +1677,33 @@ def build_app(
                 exc,
             )
             with lock:
-                if current["assignment"] is assignment:
+                # A handover that took the agent first is not a failure.
+                if not moved_on_locked(assignment):
                     current["lastError"] = f"could not continue the game: {exc}"
             return {"ignored": "agent unavailable", "gameId": assignment.game_id}
         with lock:
-            if current["assignment"] is assignment:
+            raced = moved_on_locked(assignment)
+            if not raced:
                 current.update(
                     lastTurnId=turn_id,
                     turnActive=True,
                     lastError=None,
                     continuationTurnId=turn_id,
                     continuationStarted=now(),
+                    continuationMark=mark,
+                    idleSince=None,
                 )
+        if raced:
+            # A handover, a reflection or a new assignment claimed the seat
+            # while this push was on the wire. Its turn must not run on
+            # beside the handover's, and it must not overwrite that state.
+            log.warning(
+                "game %s: continuation turn %s raced a handover or retirement; interrupting it",
+                assignment.game_id,
+                turn_id,
+            )
+            wrapper_post("/v1/interrupt")
+            return {"ignored": "assignment moved on during the push", "turnId": turn_id}
         log.info(
             "game %s still running after turn %s, continuation turn %s",
             assignment.game_id,
@@ -1648,7 +1746,7 @@ def build_app(
         if not winner and not drawn:
             if agent_gone:
                 return {"ignored": "game still running"}
-            return continue_play(assignment, finished)
+            return continue_play(assignment, finished, state)
 
         outcome = f"{winner} won" if winner else "the game was a draw"
         try:
@@ -1768,7 +1866,22 @@ def build_app(
         # lock - it is one coarse word about the agent, not driver state.
         session = agent_session() or {}
         activity = session.get("activity")
+        busy = session.get("state") == "busy"
         with lock:
+            # A handover in progress is the seat being wound down on purpose,
+            # never a seat nobody is playing.
+            if (
+                current["turnActive"]
+                or busy
+                or current["assignment"] is None
+                or current["handover"] is not None
+            ):
+                current["idleSince"] = None
+            elif current["idleSince"] is None:
+                current["idleSince"] = now()
+            idle_seconds = (
+                None if current["idleSince"] is None else round(now() - current["idleSince"], 1)
+            )
             assignment = current["assignment"]
             return {
                 "agentActivity": activity if isinstance(activity, dict) else None,
@@ -1778,7 +1891,11 @@ def build_app(
                 # background task's notification, or by a message sent to
                 # the wrapper directly, is working all the same, and must
                 # never read as idle.
-                "agentBusy": session.get("state") == "busy",
+                "agentBusy": busy,
+                # How long nothing has been playing this seat, or None while
+                # something is: the game server reports `stalled` only past
+                # its own grace, so a turn boundary never flashes it.
+                "idleSeconds": idle_seconds,
                 "gameId": assignment.game_id if assignment else None,
                 "player": assignment.player if assignment else None,
                 "deck": (assignment.guide.slug if assignment and assignment.guide else None),

@@ -315,6 +315,26 @@ def _default_http(base: str) -> httpx.Client:
     return httpx.Client(base_url=base, timeout=10.0)
 
 
+#: How long a seat with a running game may have nothing playing it before it
+#: reads as `stalled`. Longer than the driver's own recovery gaps - a turn
+#: boundary before the continuation lands, its `UNREACHABLE_RETRY_SECONDS`
+#: (5s) re-check of an unreachable game - so those never flash it.
+STALLED_GRACE_SECONDS = 20.0
+
+
+def stranded(driver: dict[str, Any]) -> bool:
+    """A game still assigned and not yet reflected on, no turn in flight
+    anywhere (`turnActive`, `agentBusy`), for longer than
+    `STALLED_GRACE_SECONDS` (`idleSeconds`). A driver too old to report
+    `idleSeconds` is judged without the grace."""
+    if driver.get("turnActive") or driver.get("agentBusy"):
+        return False
+    if not driver.get("gameId") or driver.get("reflected"):
+        return False
+    idle = driver.get("idleSeconds")
+    return idle is None or idle >= STALLED_GRACE_SECONDS
+
+
 def driver_seat_state(driver: dict[str, Any]) -> str:
     """The seat state word for a reachable driver's `/status` with no error.
 
@@ -322,17 +342,20 @@ def driver_seat_state(driver: dict[str, Any]) -> str:
     (`turnActive`) or one it did not (`agentBusy`, the wrapper's own session
     state: an agent woken by a background task, or a message sent to the
     wrapper directly). `turnActive` alone used to read such an agent as
-    `idle` while it was mid-turn planning. `stalled` for a seat with a game
-    still assigned and not yet reflected on but no turn in flight: nothing is
-    playing it, which is not a healthy idle. `idle` is left for a driver with
-    no game to play.
+    `idle` while it was mid-turn planning. `stalled` for a seat `stranded`
+    says nothing has been playing past the grace, which is not a healthy
+    idle; inside the grace it is still `thinking` (a turn boundary). `idle`
+    is left for a driver with no game to play.
     """
     if driver.get("turnActive") or driver.get("agentBusy"):
         return "thinking"
     if driver.get("pending"):
         return "pending"
-    if driver.get("gameId") and not driver.get("reflected"):
+    if stranded(driver):
         return "stalled"
+    if driver.get("gameId") and not driver.get("reflected"):
+        # Inside the grace: between one turn and the next.
+        return "thinking"
     return "idle"
 
 

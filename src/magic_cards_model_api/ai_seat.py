@@ -465,17 +465,10 @@ class AiSeatRegistry:
             status["state"] = "error"
         elif answer.get("pending"):
             status["state"] = "pending"
-        elif (
-            "turnActive" in answer
-            and not answer.get("turnActive")
-            and not answer.get("agentBusy")
-            and answer.get("gameId")
-            and not answer.get("reflected")
-        ):
-            # A game still assigned, not yet reflected on, and no turn in
-            # flight anywhere: nothing is playing this seat, which is not the
-            # healthy `dispatched` - the same `stalled` `k8s_seats.
-            # driver_seat_state` reports for the kubernetes mechanism.
+        elif "turnActive" in answer and k8s_seats.stranded(answer):
+            # Nothing has played this seat past the grace: not the healthy
+            # `dispatched` - the same `stalled` `k8s_seats.driver_seat_state`
+            # reports for the kubernetes mechanism.
             status["state"] = "stalled"
         return status
 

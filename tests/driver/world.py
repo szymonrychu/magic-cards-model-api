@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.testclient import TestClient
 
 from mtg_agent.driver.app import build_app
@@ -126,6 +126,13 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         #: (`wrapper.session.State`): "busy" while claude holds a turn,
         #: whoever pushed it.
         "session_state": "ready",
+        #: Extra `GET /api/games/{id}` fields - the board position the
+        #: driver's loop guard fingerprints (`turn_number`, `step`,
+        #: `priority_holder`, `stack`, `pending_decision`).
+        "board": {},
+        #: Called (no arguments) inside `POST /v1/messages` before it
+        #: answers - a test's hook for "something happens mid-push".
+        "on_message": None,
     }
     #: The fake wrapper's own idea of its current model/effort/max_thinking_
     #: tokens - what `GET /v1/session` answers and `POST /v1/session` updates.
@@ -160,7 +167,11 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
     def get_game(game_id: str, uid: str):
         if state["game"] == "down":
             raise httpx.ConnectError("connection refused")
-        return {
+        if state["game"] == "explode":
+            raise RuntimeError("the game server fell over mid-request")
+        if state["game"] == "html":
+            return PlainTextResponse("<html>502 Bad Gateway</html>")
+        return state["board"] | {
             "id": game_id,
             "players": [
                 {"username": "bob"},
@@ -304,6 +315,11 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
             raise httpx.ConnectError("connection refused")
         if state["agent"] == "refusing":
             raise HTTPException(status_code=400, detail="text is required")
+        if state["on_message"] is not None:
+            state["on_message"]()
+        if state["agent"] == "html":
+            submitted.append(body)
+            return PlainTextResponse("<html>502 Bad Gateway</html>")
         submitted.append(body)
         events.append("message")
         return {"turnId": f"turn-{len(submitted)}"}
