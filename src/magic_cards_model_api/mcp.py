@@ -2472,10 +2472,16 @@ def build_server(seats: Seats) -> MCPServer:
         ## The three stop conditions, and which way each one defaults
 
         These are not destinations and they do not replace `step` - they are
-        extra reasons to stop *on the way there*. They are the same three ticks
-        the human player has in their own stops panel, and they mean the same
-        thing there, so you and your opponent never stop in different places -
-        but they do not all default the same way (T2).
+        extra reasons to stop *on the way there*. They check the same three
+        conditions the human play UI's own stops panel checks, but T2 means
+        they are no longer symmetric with it, on two counts: the human UI
+        treats being attacked as an unconditional rule with no tick at all -
+        a human can never turn that stop off - while its own declare-attackers
+        tick defaults ON; this tool's two matching parameters both default OFF.
+        So an opponent's human seat still always stops when attacked, and
+        still stops in its own declare-attackers step by default, while an
+        agent seat calling this tool with the defaults runs straight through
+        both unless it asks otherwise.
 
         - `stop_on_stack` defaults **true** and defends against something you
           cannot see coming: switching it off (`stop_on_stack=false`) runs

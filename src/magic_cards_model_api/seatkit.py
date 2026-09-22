@@ -4375,8 +4375,9 @@ def autopass_stop_reason(
     board, so both transports and the tests exercise the real conditions
     without a game in the loop.
 
-    Checked in the same order `ui/app.js`'s `autopilotStopReason` checks them,
-    so a human's autopilot and an agent's run stop in the same places:
+    Checked in the same order `ui/priority.js`'s own stop logic checks them -
+    see the T2 paragraph below for where a human's autopilot and an agent's
+    run no longer stop in the same places by default:
 
     1. the game is over, or has not started yet (CR 103.5's mulligan step and
        CR 103.6's opening-hand step grant nobody priority, so a run that kept
@@ -4401,6 +4402,18 @@ def autopass_stop_reason(
     running through the opponent's turn with creatures that could block, or
     its own turn with creatures that could attack - passes the matching
     parameter `True` for that run.
+
+    This is no longer symmetric with the human UI's own two stops, and it is
+    worth stating plainly rather than leaving the old "same three ticks"
+    claim standing: `ui/priority.js`'s own comment calls being attacked (a
+    `declare_blockers` pause) an *unconditional rule* with no tick at all - a
+    human can never turn that stop off, CR 509.1 or not - while a human's own
+    `declare_attackers` pause is an ordinary tick on `stops.mine`, ticked ON
+    by default. This tool's two parameters cover the same two conditions but
+    both default OFF, so neither one matches its UI counterpart's default any
+    more (condition 5 never had a UI default to match in the first place - it
+    was never a tick there). A caller that wants the human's own protections
+    back has to ask for each explicitly.
 
     Conditions 4 and 5 are the two that are not merely convenience, and they
     exist for one shared reason: **both declarations are turn-based actions
@@ -4459,8 +4472,9 @@ def autopass_stop_reason(
     questions, and guessing at them here would be a worse bug than the ones
     this prevents. "It is your declare-attackers step" and "you are being
     attacked and the game is asking you to block" are the right granularity -
-    the same granularity `ui/app.js` uses, so the human's two checkboxes and
-    these two parameters mean exactly the same thing.
+    the same granularity `ui/priority.js` checks at, for its own two stops -
+    but not the same defaults (T2's own paragraph above says exactly how they
+    differ now).
     """
     if state.get("winner"):
         return f"game over - {state['winner']} won"
@@ -4622,8 +4636,22 @@ def _fill_answer_extras(result: dict[str, Any], seat: Seat, include_actions: boo
     each exactly once here rather than once per thrown-away intermediate
     hand-back. The `not in result` guards are for a stubbed `_pass_until_once`
     (`test_a_non_retryable_hand_back_is_never_retried_by_the_bounded_wait`)
-    that builds its own answer, extras included - never overwritten here."""
-    if include_actions and "available_actions" not in result:
+    that builds its own answer, extras included - never overwritten here.
+
+    `GAME_GONE` is the one stop this never fetches `available_actions` for,
+    on top of that guard: `_pass_until_once`'s very own first check - before
+    `run`/`passes`/`answer` even exist - answers a gone game with a bare dict
+    that never carried `available_actions` in the first place, with or
+    without `include_actions`, because there is nothing left on a 404/410 game
+    to enumerate. Without this, a game that disappeared between two of
+    `pass_until`'s own retries would grow an `available_actions` (or
+    `actions_error`) key that path never had, off a wasted
+    `GET .../legal-actions` against a game already known gone."""
+    if (
+        include_actions
+        and "available_actions" not in result
+        and result.get("stopped_because") != GAME_GONE
+    ):
         result["available_actions"] = available_actions(seat, result["state"])
     if "recent_log" not in result:
         result["recent_log"] = seat.recent_log()

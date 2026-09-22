@@ -1171,6 +1171,81 @@ def test_pass_until_final_answer_always_carries_available_actions_and_recent_log
     assert "recent_log" in at_deadline
 
 
+def test_pass_until_does_not_fetch_available_actions_for_a_game_gone_mid_retry(monkeypatch):
+    """`_pass_until_once`'s very first check - before `run`/`passes`/`answer`
+    exist at all - answers `GAME_GONE` with a bare dict that has never
+    carried `available_actions`, regardless of `include_actions`: there is
+    nothing left to enumerate for a game already known gone (404/410), so
+    that path never asked. `_fill_answer_extras` must not read this bare
+    dict's missing key as "extras this run skipped and I should go fetch" -
+    a fake seat whose game disappears between `pass_until`'s own retries
+    proves the final answer never grows `available_actions` and never pays
+    for a `GET .../legal-actions` on a game already confirmed gone. No mock
+    game or client needed - this is the API's own harness code, not a
+    card-rules test, and what is under test is `pass_until`'s own retry
+    plumbing, not any particular board."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.01)
+
+    actions_calls: list[Any] = []
+    real_available_actions = seatkit.available_actions
+
+    def counting_available_actions(seat: Any, state: dict[str, Any]) -> dict[str, Any]:
+        actions_calls.append(1)
+        return real_available_actions(seat, state)
+
+    monkeypatch.setattr(seatkit, "available_actions", counting_available_actions)
+
+    class _GoneHTTP:
+        def get(self, *args: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace(status_code=404, json=lambda: {"detail": "gone"}, text="gone")
+
+    class SeatGoneMidRetry:
+        advise = False
+        player = "alice"
+        uid = "seat-1"
+        http = _GoneHTTP()
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.last_state_status = 200
+
+        def fetch_state(self) -> dict[str, Any]:
+            # The first two fetches (this call's `before`, then the while
+            # loop's own) find bob holding priority and nothing to do -
+            # pass_until's own retry loop then sleeps and calls
+            # `_pass_until_once` again, whose own first fetch (the third
+            # overall) is where the game is found gone.
+            self.calls += 1
+            if self.calls >= 3:
+                self.last_state_status = 404
+                return {}
+            self.last_state_status = 200
+            return {
+                "priority_holder": "bob",
+                "step": "upkeep",
+                "turn_number": 1,
+                "pending_decision": None,
+                "stack": [],
+            }
+
+        def recent_log(self) -> dict[str, Any]:
+            return {"entries": [], "last_seq": 0, "omitted": 0}
+
+        def game_id(self) -> str:
+            return "gone-game-id"
+
+    seat = SeatGoneMidRetry()
+    result = pass_until(seat, until_step="postcombat_main", whose_turn="mine", max_seconds=0.3)
+
+    assert result["finished"] is True
+    assert result["stopped_because"] == seatkit.GAME_GONE
+    assert actions_calls == [], "a game already known gone must never be asked for legal actions"
+    assert "available_actions" not in result, (
+        "this path never carried available_actions, with or without retries"
+    )
+    assert "recent_log" in result
+
+
 # -- T3: an honest hand-back once the run has actually waited -----------------
 
 
