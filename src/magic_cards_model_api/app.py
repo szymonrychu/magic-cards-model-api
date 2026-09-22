@@ -116,6 +116,8 @@ from .schemas import (
     PatchCardResponse,
     PatchPlayer,
     PlayLandRequest,
+    PlaysOutcomeIn,
+    PlaysOutcomeResponse,
     PregameSettleRequest,
     PregameSettleResponse,
     PutCard,
@@ -3842,6 +3844,57 @@ def declare_ai_review_failure(game_id: str, req: AiReviewFailureIn) -> dict[str,
         stage=req.stage,
         reason=req.reason,
         invoked=req.invoked,
+    )
+    return {"recorded": True, "log_seq": seq, "player": req.player}
+
+
+@app.post(
+    "/api/games/{game_id}/plays-outcome",
+    response_model=PlaysOutcomeResponse,
+    response_model_exclude_unset=True,
+)
+def declare_plays_outcome(game_id: str, req: PlaysOutcomeIn) -> dict[str, Any]:
+    """Record what one handover did to the DSL - `audit.PLAYS_OUTCOME_ACTION`,
+    filed by the seat's or the advisor's own driver after the handover turn
+    (`schemas.PlaysOutcomeIn`).
+
+    Gated like `declare_ai_review`: against `store.archived`, so a game the
+    lobby has already ended still takes one; post-game only (409 before);
+    and the uid binds to exactly one player. A seat uid speaks for its own
+    seat only, and only for an AI seat (`archived.ai_players`) - a human's
+    own uid opens their seat but no driver of theirs ever runs a handover.
+    An advisor uid speaks for the human it watches; its lookup reads the
+    live game, so it is refused once the game is soft-deleted (the driver
+    files before it retires). `game_access`'s `OWN_PLAYER_ROUTES` refuses a
+    seat uid naming another player before this runs; the checks here are
+    the same binding, restated where the row is written. The role must
+    match the credential (400), so the ledger cannot claim an advisor's
+    handover was a seat's. The uid itself is never recorded."""
+    archived = store.archived(game_id)
+    if archived is None:
+        raise KeyError(f"no game {game_id}")
+    seat = archived.seat_uids.get(req.uid)
+    advised = player_for_advisor_uid(game_id, req.uid) if seat is None else None
+    if (seat or advised) != req.player:
+        raise KeyError("that uid is not that seat in this game")
+    if seat is not None and req.player not in archived.ai_players:
+        raise KeyError("that seat is not an AI seat in this game")
+    role = "seat" if seat is not None else "advisor"
+    if req.role != role:
+        raise ValueError(f"a {role} uid files its outcome as role {role!r}, not {req.role!r}")
+    if not _post_game(archived, _gate_entries(archived)):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "this game is still in progress - a plays outcome records the "
+                "post-game handover, so it cannot be filed for a game that has "
+                "not ended"
+            ),
+        )
+    seq = audit.record(
+        game_id,
+        audit.PLAYS_OUTCOME_ACTION,
+        **req.model_dump(exclude={"uid"}),
     )
     return {"recorded": True, "log_seq": seq, "player": req.player}
 

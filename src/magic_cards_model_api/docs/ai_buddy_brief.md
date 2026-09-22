@@ -245,14 +245,30 @@ proposed; shorten it and propose again.
 
 ## Play scripts and guides, for handover
 
-Finish the handover inside the time budget: do priority updates and admits
-first, then optional script or guide development through subagents. Change a
+Finish the handover inside the time budget. DSL development after the game
+is mandatory, not a nice-to-have: before the handover turn ends you either
+land at least one conditions or advice-only change to the plays (an
+`admitted` result with `dsl_change: true`), or run `mcp-seat plays
+no-change` once for every candidate, saying why that one needs nothing. A
+candidate is every play declined or passed over this game, and every line
+your human played by hand two or more times. A handover that does neither is
+pushed back to you once, and then recorded as unfinished. Priority updates
+alone are not DSL development. Do priority updates and admits first, then the
+script and guide development, through subagents when it is large. Change a
 script's priority only for scripts that actually ran this game, with recorded
 exits, as shown in the run table. Never lower a script for `not_applicable`,
 or for having had no applicable window. Change a script's priority by at most
 5 per game. Never `git stash` in /guides: commit through the provided commands
 or discard. Wait for every subagent and background task you started to report
 back before you end the handover turn: the pod stops when that turn ends.
+
+To retire a play, delete its file (`git rm decks/SLUG/plays/<id>.json`) and
+admit; a deck at its play cap may retire its weakest play in the same admit
+that adds a new one. Each game's offer counts (offered, taken, passed over,
+declined per play) are written by the driver and land at your admit as
+`decks/SLUG/plays/evidence/GAME.json` - one file per game, never a play,
+never edited by hand; the evidence table you are shown is built from them,
+across games.
 
 A deck's guide is play review only. A system problem - an api bug, an engine
 rules gap, a tool misbehaviour, a timeout, a pod or deployment issue, a
@@ -265,7 +281,7 @@ If you are unsure, ask whether the remedy involves changing code, a tool
 argument or a deployment - if it does, it is a report. Report a problem when
 you spot it during the game, not at the handover.
 
-You never act in the game, but after it you may hand over what you saw. These
+You never act in the game, but after it you hand over what you saw. These
 commands take no `--uid` and touch no game. They work the deck-guides
 checkout at `/guides`, and your commits are authored as `mtg-buddy`. Each
 prints one JSON object, and its `result` says what happened:
@@ -276,8 +292,10 @@ prints one JSON object, and its `result` says what happened:
   away from where this game found the priority, is refused with
   `priority_limit`.
 - `mcp-seat plays admit --deck SLUG --game-id GAME` takes play-script changes
-  under `decks/*/plays/` to mtg-decks main, through the plays gate. Results:
-  - `admitted`: done.
+  under `decks/*/plays/` to mtg-decks main, through the plays gate, with this
+  game's evidence file. Results:
+  - `admitted`: done. `dsl_change: true` when a play was added, deleted, or
+    changed beyond its `priority` - the mandatory step's measure.
   - `nothing_to_admit`: there was nothing to take.
   - `refused`: something outside the plays directories changed.
   - `conflict`: someone else changed the same lines.
@@ -286,6 +304,11 @@ prints one JSON object, and its `result` says what happened:
     Extend their conditions. Reordering priority never resolves a conflict.
   - `error` with `retryable: true`: main moved under three pushes in a row;
     the change is back in the tree, uncommitted. Run the same command again.
+- `mcp-seat plays no-change --deck SLUG --game-id GAME (--play ID | --line
+  TEXT) --reason TEXT` records why one candidate needs no DSL change (a play
+  declined or passed over, or a line your human played by hand). It changes
+  nothing in /guides and prints `recorded`. Once per candidate you leave
+  alone, with a reason specific to this game.
 - `mcp-seat guides propose --deck SLUG [--deck SLUG ...] --game-id GAME`
   handles matchup advice, for every deck you name in one call. For a guided
   deck, edit only `matchups[].play_plan` and `matchups[].notes` of the newest

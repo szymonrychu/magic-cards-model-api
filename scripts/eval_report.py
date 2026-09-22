@@ -60,6 +60,11 @@ treats it.
   `for_turn` existed carries no such key and is counted as `current`,
   matching the field's own schema default rather than being dropped.
 
+- **Plays outcomes.** One line per `plays_outcome` row: whether a
+  handover's post-game DSL development finished, what it admitted (and how
+  many admits were DSL changes), proposed, and declared no-change for.
+  Listed, not scored.
+
 ## What it deliberately does not grade
 
 `review.py` refuses to grade a declared plan, and this refuses with it: "a
@@ -170,6 +175,7 @@ NOT_PLAY = frozenset(
         "patch_card",
         "patch_player",
         "plan_declared",
+        "plays_outcome",
         "pregame_overruled",
         "pregame_settle",
         "pregame_settled",
@@ -202,6 +208,11 @@ CHAIN_COMPLETE_EXIT = "chain_complete"
 #: counting as bare usage, so it gets its own branch ahead of the
 #: `NOT_PLAY` skip, the same way `SCRIPT_RUN_ACTION` does.
 PLAN_DECLARED_ACTION = "plan_declared"
+
+#: `audit.PLAYS_OUTCOME_ACTION`: what one handover did to the DSL. Not play
+#: (`NOT_PLAY`), but listed per game and seat under `plays_outcomes`, so a
+#: run shows which handovers landed a DSL change and which ended unfinished.
+PLAYS_OUTCOME_ACTION = "plays_outcome"
 
 #: `audit.ADVICE_ACTION`, named locally like every other action constant
 #: above rather than imported - this module reads `audit`'s rows, never its
@@ -801,7 +812,38 @@ def build_report(
         "stale_split": stale_split,
         "offer_split": offer_split,
         "scripts": script_tally(games),
+        "plays_outcomes": plays_outcomes(games),
     }
+
+
+def plays_outcomes(games: Sequence[GameRows]) -> list[dict[str, Any]]:
+    """One entry per `plays_outcome` row, in ledger order: who filed it, the
+    handover's state and reasons, and counts of what it admitted (and how
+    many of those were DSL changes), proposed, and declared no-change for.
+    Listed, never scored - the same raw record `review.py` would show."""
+    found: list[dict[str, Any]] = []
+    for game in games:
+        for payload in game.payloads():
+            if payload.get("action") != PLAYS_OUTCOME_ACTION:
+                continue
+            detail = payload.get("detail") or {}
+            admitted = [a for a in detail.get("admitted") or [] if isinstance(a, dict)]
+            found.append(
+                {
+                    "game_id": game.game_id,
+                    "player": detail.get("player"),
+                    "role": detail.get("role"),
+                    "state": detail.get("state"),
+                    "admitted": len(admitted),
+                    "dsl_changes": sum(1 for a in admitted if a.get("dsl_change") is True),
+                    "proposed": len(detail.get("proposed") or []),
+                    "no_change": len(detail.get("no_change") or []),
+                    "unfinished_reasons": list(detail.get("unfinished_reasons") or []),
+                    "repushed": bool(detail.get("repushed")),
+                    "followup": bool(detail.get("followup")),
+                }
+            )
+    return found
 
 
 @dataclass
@@ -1121,12 +1163,36 @@ def render(report: Mapping[str, Any]) -> str:
 
     lines.extend(_script_lines(report.get("scripts") or []))
     lines.append("")
+    lines.extend(_plays_outcome_lines(report.get("plays_outcomes") or []))
+    lines.append("")
     lines.extend(_stale_note(report))
     lines.append("")
     lines.extend(_offer_note(report))
     lines.append("")
     lines.extend(_sizing_note(report))
     return "\n".join(lines)
+
+
+def _plays_outcome_lines(outcomes: Sequence[Mapping[str, Any]]) -> list[str]:
+    """One line per handover's `plays_outcome` row."""
+    lines = ["PLAYS OUTCOMES (post-game DSL development, one row per handover)"]
+    if not outcomes:
+        lines.append("  no plays outcomes recorded")
+        return lines
+    for row in outcomes:
+        line = (
+            f"  {row['game_id']} {row['player']} ({row['role']}): {row['state']}  "
+            f"admitted {row['admitted']} (dsl {row['dsl_changes']})  "
+            f"proposed {row['proposed']}  no-change {row['no_change']}"
+        )
+        if row["repushed"]:
+            line += "  repushed"
+        if row["followup"]:
+            line += "  followup"
+        if row["unfinished_reasons"]:
+            line += f"  why: {'; '.join(str(r) for r in row['unfinished_reasons'])}"
+        lines.append(line)
+    return lines
 
 
 def _script_lines(scripts: Sequence[Mapping[str, Any]]) -> list[str]:

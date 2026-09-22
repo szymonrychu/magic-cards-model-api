@@ -159,7 +159,11 @@ __all__ = ["GameAccessRoute", "authorize_game_access", "can_access_game", "seat_
 #: `/script-runs` is the third: a buddy running play scripts in advise mode
 #: reports each run there, and a run report records what the runner did -
 #: its moves were already refused or proposed through the other routes.
-ADVISOR_POST_SUFFIXES = ("/advice", "/report", "/script-runs")
+#:
+#: `/plays-outcome` is the fourth: the buddy's driver files what its
+#: handover did to the DSL, post-game, for the human it watches - a record
+#: of work done in the guides repo, never a move in the game.
+ADVISOR_POST_SUFFIXES = ("/advice", "/report", "/script-runs", "/plays-outcome")
 
 #: The PUT routes an advisor credential may reach, and only for the corpus
 #: registered under its own uid (`{uid}` in the path must be the credential
@@ -474,6 +478,15 @@ _RESOLVE_TOP_ROUTE = "/api/games/{game_id}/resolve-top"
 _CONCEDE_ROUTE = "/api/games/{game_id}/actions/concede"
 #: Minting a seat credential: only ever for the minting seat's own player.
 _MINT_ROUTE = "/api/games/{game_id}/seats"
+#: Post-game records a seat files about its own work: the body's `player`
+#: must be the seat's own, and never a player it controls - CR 723.5 hands a
+#: controller the controlled player's in-game decisions, not that player's
+#: record. (An advisor uid is no seat, so it passes here; the route binds it
+#: to the human it watches.)
+_PLAYS_OUTCOME_ROUTE = "/api/games/{game_id}/plays-outcome"
+#: Every route whose body `player` must be the seat uid's own player, with
+#: no CR 723.5 exception.
+OWN_PLAYER_ROUTES = frozenset({_MINT_ROUTE, _PLAYS_OUTCOME_ROUTE})
 
 
 def _card_holder(game: Any, card_id: str) -> str | None:
@@ -533,7 +546,7 @@ async def _seat_mismatch(request: Request, game_id: str) -> str | None:
             f"that uid opens {seat}'s seat, and this route edits the board directly - "
             "it takes the game's admin key or its owner, never a seat"
         )
-    if template not in _BODY_PLAYER_ROUTES and template != _MINT_ROUTE:
+    if template not in _BODY_PLAYER_ROUTES and template not in OWN_PLAYER_ROUTES:
         return None
     body = await _json_body(request)
     player = body.get("player") if body is not None else None
@@ -542,6 +555,11 @@ async def _seat_mismatch(request: Request, game_id: str) -> str | None:
         return None
     if template == _MINT_ROUTE:
         return f"that uid opens {seat}'s seat, and a seat mints a credential only for itself"
+    if template in OWN_PLAYER_ROUTES:
+        return (
+            f"that uid opens {seat}'s seat, not {subject}'s - a seat files its own "
+            "post-game record only"
+        )
     from . import player_control
 
     game = store.get(game_id)

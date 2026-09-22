@@ -122,6 +122,13 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
         "this route exists precisely for the case where the seat's own "
         "post-game work could not be done."
     ),
+    ("POST", "/api/games/{game_id}/plays-outcome"): (
+        "the same exemption `POST .../ai-review` gets: a driver's post-game "
+        "record of what the handover did in the guides repo, written after "
+        "the game is over (refused before), mutating no `Game` - there is no "
+        "in-progress agent turn for `records.require_reasoning` to gate, and "
+        "each no-change it carries already has its own `reason`."
+    ),
     ("POST", "/api/games/{game_id}/advice"): (
         "`AdviceIn.reasoning` IS the reasoning, and required non-blank by the "
         "shape itself rather than by this gate - which is the stronger "

@@ -49,7 +49,9 @@ files back and goes round again; after `PUSH_ATTEMPTS` the result is `error`
 with `retryable: true` and the edit left uncommitted on the newest upstream.
 
 Nobody reviews or merges a guide edit afterwards: `admitted` means it is live
-on main.
+on main, and its `files` are the edited paths (the regenerated guides aside).
+Every run appends one line to the checkout's results journal
+(`gitwork.RESULTS_JOURNAL`), under the lock, for the driver to read.
 """
 
 from __future__ import annotations
@@ -182,11 +184,9 @@ def propose(root: Path, decks: str | Sequence[str], game_id: str) -> dict[str, A
     and not a `threading.Lock`."""
     root = Path(root).resolve()
     listed = [decks] if isinstance(decks, str) else list(dict.fromkeys(decks))
-    try:
-        with gitwork.checkout_lock(root):
-            return _propose(root, listed, game_id)
-    except Outcome as outcome:
-        return outcome.result
+    return gitwork.run_journaled(
+        root, "propose", game_id, listed, lambda: (_propose(root, listed, game_id), {})
+    )
 
 
 class _Scope:
@@ -482,7 +482,9 @@ def _attempt(git: Git, decks: list[str], game_id: str) -> dict[str, Any] | None:
     subject = f"Guides: {', '.join(touched)} after game {game_id}"
     git.out("commit", "-q", "--no-verify", "-F", "-", input=commit_message(subject, game_id, []))
     if git.push(f"HEAD:refs/heads/{MAIN}"):
-        return result("admitted", f"pushed to {MAIN}", sha=git.head(), decks=touched)
+        return result(
+            "admitted", f"pushed to {MAIN}", sha=git.head(), decks=touched, files=sorted(edits)
+        )
     git.out("reset", "-q", "--soft", "HEAD~1")
     _unwind(git, edits)
     return None

@@ -23,6 +23,7 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
 from test_card_split_labels import boot as boot_the_devourer  # noqa: E402  (the Devourer board)
@@ -820,6 +821,10 @@ CLI_ONLY_SUBCOMMANDS = {
         "check": "lints decks/<slug>/plays/*.json offline",
         "priority": "changes one play's priority in the pod's guides clone",
         "admit": "commits, gates and pushes play-script changes to mtg-decks main",
+        "no-change": (
+            "records in the guides clone's results journal why one post-game candidate "
+            "(a play or a hand-played line) needs no DSL change; no seat, no game"
+        ),
     },
     "guides": {
         "propose": "pushes a deck-guide edit to mtg-decks main from the pod's guides clone",
@@ -854,6 +859,38 @@ def test_every_cli_command_fronts_an_mcp_tool_or_is_explicitly_cli_only():
     for command, why in CLI_ONLY_COMMANDS.items():
         assert why.strip()
         assert command.replace("-", "_") not in tools
+
+
+def _handover_section(role: str) -> str:
+    from magic_cards_model_api import ai_seat
+
+    brief = ai_seat.load_brief(role)
+    start = brief.index("\n## Play scripts and guides, for handover\n")
+    end = brief.find("\n## ", start + 1)
+    return brief[start : end if end != -1 else len(brief)]
+
+
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+def test_the_briefs_document_the_mandatory_post_game_dsl_step(role):
+    """D2a: DSL development after the game is mandatory, not optional - the
+    handover lands a conditions or advice-only change, or records `plays
+    no-change` once per candidate - and the briefs say so, together with the
+    evidence files and retiring a play by deleting its file."""
+    section = _handover_section(role)
+    flat = " ".join(section.split())
+    assert "optional" not in flat.lower()
+    assert "mandatory" in flat.lower()
+    for command in (
+        "mcp-seat plays priority",
+        "mcp-seat plays admit",
+        "mcp-seat plays no-change",
+        "mcp-seat guides propose",
+    ):
+        assert command in flat, (role, command)
+    assert "--play" in flat and "--line" in flat and "--reason" in flat
+    assert "plays/evidence/" in flat
+    assert "git rm" in flat
+    assert "dsl_change" in flat
 
 
 def test_cli_only_commands_have_exactly_their_allowlisted_subcommands():

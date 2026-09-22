@@ -37,13 +37,16 @@ from magic_cards_model_api.playscripts.lint import MAX_PLAYS, check_report
 SHOCK = f"decks/{SLUG}/plays/fetch-untapped-shock.json"
 SURVEIL = f"decks/{SLUG}/plays/fetch-surveil-land.json"
 DELTAS = Path(".git") / "mtg-plays-deltas.json"
+JOURNAL = Path(".git") / "mcm-results.jsonl"
 
 
 @pytest.fixture(autouse=True)
 def _no_ambient_game(monkeypatch):
     """`plays priority` reads MTG_GAME_ID for its per-game bound; a test sets
-    it when it means to."""
+    it when it means to; `plays admit` reads MTG_EVIDENCE_DIR for the driver's
+    evidence file, likewise."""
     monkeypatch.delenv("MTG_GAME_ID", raising=False)
+    monkeypatch.delenv("MTG_EVIDENCE_DIR", raising=False)
 
 
 @pytest.fixture
@@ -67,6 +70,20 @@ def priority(capsys, root: Path, play_id: str, *flag: str):
 
 def admit(capsys, root: Path, game: str = GAME):
     return cli(capsys, "plays", "admit", "--deck", SLUG, "--game-id", game, "--root", str(root))
+
+
+def journal(root: Path) -> list[dict]:
+    """Every line of the checkout's results journal, oldest first."""
+    path = root / JOURNAL
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def last_entry(root: Path) -> dict:
+    entries = journal(root)
+    assert entries, "the command appended no journal line"
+    return entries[-1]
 
 
 def read_play(root: Path, rel: str = SHOCK) -> dict:
@@ -507,3 +524,369 @@ def test_a_clone_without_card_data_fails_closed(capsys, tmp_path, isolated):
     assert "card-data.json" in (result["message"] + result.get("output", "")), result
     assert main_sha(bare) == before
     assert branches(bare) == {"main"}
+
+
+# -- the results journal (D2a) ----------------------------------------------
+#
+# Every `plays priority`, `plays admit` and `plays no-change` run appends one
+# JSON line to `<git-dir>/mcm-results.jsonl`, which the driver reads through
+# its read-only /guides mount to decide whether the handover did its DSL work.
+
+
+def test_an_admitted_priority_change_is_journaled_without_a_dsl_change(
+    capsys, monkeypatch, root, bare
+):
+    monkeypatch.setenv("MTG_ROLE", "advisor")
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
+    set_line = last_entry(root)
+    assert set_line["command"] == "priority"
+    assert set_line["result"] == "priority_set"
+    assert set_line["decks"] == [SLUG]
+    assert set_line["role"] == "advisor"
+    assert set_line["files"] == [SHOCK]
+    assert set_line["dsl_change"] is False
+    assert set_line["game_id"] is None
+    assert isinstance(set_line["ts"], str) and set_line["ts"]
+
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert result["dsl_change"] is False
+    line = last_entry(root)
+    assert {k: line[k] for k in ("command", "game_id", "decks", "role", "result", "sha")} == {
+        "command": "admit",
+        "game_id": GAME,
+        "decks": [SLUG],
+        "role": "advisor",
+        "result": "admitted",
+        "sha": main_sha(bare),
+    }
+    assert line["files"] == [SHOCK]
+    assert line["dsl_change"] is False
+    assert len(journal(root)) == 2
+
+
+def test_a_new_play_is_a_dsl_change(capsys, root):
+    added = copy.deepcopy(FETCH_SURVEIL) | {
+        "id": "fetch-late",
+        "when": {"whose_turn": "theirs", "steps": ["upkeep"], "stack": "empty"},
+    }
+    (root / f"decks/{SLUG}/plays/fetch-late.json").write_text(dump(added), encoding="utf-8")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    line = last_entry(root)
+    assert line["dsl_change"] is True
+    assert line["files"] == [f"decks/{SLUG}/plays/fetch-late.json"]
+
+
+def test_a_retired_play_is_a_dsl_change(capsys, root, bare):
+    git(root, "rm", "-q", SURVEIL)
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert SURVEIL not in git(bare, "ls-tree", "-r", "--name-only", "main")
+    assert last_entry(root)["dsl_change"] is True
+
+
+def test_a_condition_change_beside_a_priority_change_is_a_dsl_change(capsys, root):
+    doc = read_play(root)
+    doc["priority"] = 62
+    doc["intent"] = "Crack the fetch for the shock only with a two-drop in hand."
+    (root / SHOCK).write_text(dump(doc), encoding="utf-8")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert last_entry(root)["dsl_change"] is True
+
+
+def test_a_reformatted_play_with_only_its_priority_moved_is_no_dsl_change(capsys, root):
+    doc = read_play(root)
+    doc["priority"] = 63
+    (root / SHOCK).write_text(json.dumps(doc, indent=4) + "\n", encoding="utf-8")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert last_entry(root)["dsl_change"] is False
+
+
+def test_nothing_to_admit_is_journaled(capsys, root):
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "nothing_to_admit")
+    line = last_entry(root)
+    assert (line["command"], line["result"], line["dsl_change"]) == (
+        "admit",
+        "nothing_to_admit",
+        False,
+    )
+    assert "sha" not in line
+
+
+def test_a_refused_admit_is_journaled_with_its_files(capsys, root):
+    (root / "stray.txt").write_text("changed\n", encoding="utf-8")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (1, "refused")
+    line = last_entry(root)
+    assert (line["command"], line["result"], line["files"]) == ("admit", "refused", ["stray.txt"])
+    assert "dsl_change" not in line
+
+
+def test_a_gate_failure_is_journaled(capsys, monkeypatch, root):
+    monkeypatch.setenv("MTG_TEST_GATE_FAIL", "1")
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (1, "gate_failed")
+    assert last_entry(root)["result"] == "gate_failed"
+
+
+def test_a_conflict_regression_is_journaled(capsys, root):
+    (root / f"decks/{SLUG}/plays/fetch-shock-copy.json").write_text(
+        dump(play(id="fetch-shock-copy")), "utf-8"
+    )
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (1, "conflict_regression")
+    assert last_entry(root)["result"] == "conflict_regression"
+
+
+def test_a_content_conflict_is_journaled_with_the_local_sha(capsys, tmp_path, root, bare):
+    other = clone(bare, tmp_path / "guides-b")
+    for where, text in ((root, "Thin on my main phase."), (other, "Fix on my main phase.")):
+        (where / SHOCK).write_text(dump(play(intent=text)), encoding="utf-8")
+    assert admit(capsys, root)[1]["result"] == "admitted"
+    rc, result, _, _ = admit(capsys, other)
+    assert (rc, result["result"]) == (1, "conflict")
+    line = last_entry(other)
+    assert (line["result"], line["files"], line["sha"]) == ("conflict", [SHOCK], result["sha"])
+
+
+def test_a_retryable_error_is_journaled(capsys, monkeypatch, tmp_path, root, bare):
+    def race(argv):
+        if is_main_push(argv):
+            compete(bare, tmp_path / "competitor", "race")
+
+    interpose(monkeypatch, race)
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (1, "error")
+    line = last_entry(root)
+    assert (line["command"], line["result"], line["retryable"]) == ("admit", "error", True)
+
+
+def test_a_refused_priority_is_journaled(capsys, root):
+    rc, result, _, _ = priority(capsys, root, "fetch-untapped-shock", "--delta", "9")
+    assert result["result"] == "priority_limit"
+    line = last_entry(root)
+    assert (line["command"], line["result"]) == ("priority", "priority_limit")
+
+
+def test_every_line_is_one_command(capsys, root):
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
+    admit(capsys, root)
+    no_change(capsys, root, "--play", "fetch-surveil-land", "--reason", "it never had a window")
+    assert [e["command"] for e in journal(root)] == ["priority", "admit", "no_change"]
+
+
+def test_a_journal_that_cannot_be_written_never_fails_the_command(capsys, root, bare):
+    (root / JOURNAL).mkdir()
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert result["sha"] == main_sha(bare)
+
+
+def test_the_journal_is_written_under_the_checkout_lock(capsys, monkeypatch, root):
+    from magic_cards_model_api.playscripts import gitwork
+
+    held: list[bool] = []
+    real_lock, real_append = gitwork.checkout_lock, gitwork.append_journal_line
+    depth = [0]
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def counting(*args, **kwargs):
+        with real_lock(*args, **kwargs):
+            depth[0] += 1
+            try:
+                yield
+            finally:
+                depth[0] -= 1
+
+    def spy(*args, **kwargs):
+        held.append(depth[0] > 0)
+        return real_append(*args, **kwargs)
+
+    monkeypatch.setattr(gitwork, "checkout_lock", counting)
+    monkeypatch.setattr(gitwork, "append_journal_line", spy)
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
+    admit(capsys, root)
+    no_change(capsys, root, "--line", "cast Bolt at their face", "--reason", "one game only")
+    assert held == [True, True, True]
+
+
+# -- plays no-change (D2a) -------------------------------------------------------
+
+
+def no_change(capsys, root: Path, *flags: str, game: str = GAME):
+    return cli(
+        capsys,
+        "plays",
+        "no-change",
+        "--deck",
+        SLUG,
+        "--game-id",
+        game,
+        *flags,
+        "--root",
+        str(root),
+    )
+
+
+def test_no_change_for_a_play_is_recorded(capsys, monkeypatch, root, bare):
+    before = main_sha(bare)
+    rc, result, _, _ = no_change(
+        capsys, root, "--play", "fetch-surveil-land", "--reason", "declined once, one game only"
+    )
+    assert (rc, result["result"]) == (0, "recorded"), result
+    line = last_entry(root)
+    assert line["command"] == "no_change"
+    assert line["game_id"] == GAME and line["decks"] == [SLUG] and line["role"] == "seat"
+    assert line["play"] == "fetch-surveil-land"
+    assert line["reason"] == "declined once, one game only"
+    assert "line" not in line
+    assert main_sha(bare) == before
+    assert git(root, "status", "--porcelain") == ""
+
+
+def test_no_change_for_a_hand_played_line_is_recorded(capsys, root):
+    rc, result, _, _ = no_change(
+        capsys, root, "--line", "fetch at their end step", "--reason", "already the default"
+    )
+    assert (rc, result["result"]) == (0, "recorded"), result
+    line = last_entry(root)
+    assert line["line"] == "fetch at their end step" and "play" not in line
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ("--reason", "no candidate named"),
+        ("--play", "a", "--line", "b", "--reason", "both named"),
+        ("--play", "fetch-surveil-land"),
+    ],
+)
+def test_no_change_needs_exactly_one_candidate_and_a_reason(capsys, root, flags):
+    with pytest.raises(SystemExit) as exit_:
+        no_change(capsys, root, *flags)
+    assert exit_.value.code == 2
+    assert journal(root) == []
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ("--play", "fetch-surveil-land", "--reason", "   "),
+        ("--play", "../escape", "--reason", "a path is no play id"),
+        ("--line", "  ", "--reason", "an empty line"),
+    ],
+)
+def test_no_change_refuses_a_blank_reason_or_a_bad_play_id(capsys, root, flags):
+    rc, result, _, _ = no_change(capsys, root, *flags)
+    assert (rc, result["result"]) == (1, "refused"), result
+    assert last_entry(root)["result"] == "refused"
+
+
+def test_no_change_refuses_a_bad_game_id(capsys, root):
+    rc, result, _, _ = no_change(capsys, root, "--play", "x", "--reason", "r", game="../main")
+    assert (rc, result["result"]) == (1, "refused")
+
+
+# -- evidence pickup (D2a) -------------------------------------------------------
+
+EVIDENCE = f"decks/{SLUG}/plays/evidence/{GAME}.json"
+
+
+def evidence_doc() -> dict:
+    return {
+        "game_id": GAME,
+        "deck": SLUG,
+        "opponent_archetype": "dimir frog",
+        "plays": {
+            "fetch-untapped-shock": {
+                "offered": 3,
+                "taken": 1,
+                "passed_over": 1,
+                "declined": 1,
+            }
+        },
+    }
+
+
+@pytest.fixture
+def evidence_dir(tmp_path, monkeypatch) -> Path:
+    where = tmp_path / "driver-workspace" / "evidence"
+    monkeypatch.setenv("MTG_EVIDENCE_DIR", str(where))
+    return where
+
+
+def write_evidence(evidence_dir: Path, text: str, game: str = GAME) -> None:
+    target = evidence_dir / game / f"{SLUG}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+
+
+def test_the_evidence_file_is_copied_and_pushed_with_the_change(capsys, root, bare, evidence_dir):
+    text = json.dumps(evidence_doc(), indent=2) + "\n"
+    write_evidence(evidence_dir, text)
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert git(bare, "show", f"main:{EVIDENCE}") + "\n" == text
+    line = last_entry(root)
+    assert sorted(line["files"]) == sorted([SHOCK, EVIDENCE])
+    assert line["dsl_change"] is False
+    assert result["evidence"] == EVIDENCE
+
+
+def test_an_admit_with_only_evidence_is_admitted_without_a_dsl_change(
+    capsys, root, bare, evidence_dir
+):
+    write_evidence(evidence_dir, json.dumps(evidence_doc()))
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert EVIDENCE in git(bare, "ls-tree", "-r", "--name-only", "main")
+    line = last_entry(root)
+    assert (line["result"], line["dsl_change"], line["files"]) == ("admitted", False, [EVIDENCE])
+    # Not a play: the per-game file never trips the priority bookkeeping.
+    assert trailers(bare, "main", "Script-Priority") == []
+
+
+def test_evidence_that_is_not_json_is_left_behind(capsys, root, bare, evidence_dir):
+    write_evidence(evidence_dir, "{not json")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "nothing_to_admit"), result
+    assert not (root / EVIDENCE).exists()
+    assert EVIDENCE not in git(bare, "ls-tree", "-r", "--name-only", "main")
+
+
+def test_no_evidence_file_changes_nothing(capsys, root, evidence_dir):
+    write_evidence(evidence_dir, json.dumps(evidence_doc()), game="another-game")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "nothing_to_admit"), result
+    assert "evidence" not in result
+
+
+def test_two_games_evidence_never_conflicts(capsys, tmp_path, monkeypatch, root, bare):
+    other = clone(bare, tmp_path / "guides-b")
+    for where, game in ((root, "game-one"), (other, "game-two")):
+        drop = tmp_path / f"evidence-{game}"
+        monkeypatch.setenv("MTG_EVIDENCE_DIR", str(drop))
+        write_evidence(drop, json.dumps(evidence_doc() | {"game_id": game}), game=game)
+        rc, result, _, _ = admit(capsys, where, game=game)
+        assert (rc, result["result"]) == (0, "admitted"), result
+    tracked = git(bare, "ls-tree", "-r", "--name-only", "main")
+    assert f"decks/{SLUG}/plays/evidence/game-one.json" in tracked
+    assert f"decks/{SLUG}/plays/evidence/game-two.json" in tracked
+
+
+def test_the_evidence_file_is_not_linted_as_a_play(capsys, root, evidence_dir):
+    write_evidence(evidence_dir, json.dumps(evidence_doc()))
+    admit(capsys, root)
+    rc, report, _, _ = cli(capsys, "plays", "check", "--root", str(root), "--deck", SLUG, "--json")
+    assert rc == 0, report
+    assert "evidence" not in json.dumps(report)

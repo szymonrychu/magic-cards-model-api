@@ -19,7 +19,7 @@ import re
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +61,20 @@ CHECKOUT_LOCK_TIMEOUT = 300.0
 #: how a lock file at the checkout root would have made every `admit` refuse
 #: itself with "plays admit only takes changes under decks/*/plays/").
 CHECKOUT_LOCK_NAME = "mcm-checkout.lock"
+
+#: The results journal, beside the lock inside `.git/`: one JSON line per
+#: `plays priority`, `plays admit`, `plays no-change` and `guides propose`
+#: run, `{ts, command, game_id, decks, role, result, sha?, files?,
+#: dsl_change?, ...}`. The driver reads it through its read-only /guides
+#: mount after the handover turn to learn what the seat actually landed -
+#: the command output itself only ever reaches the agent. Inside `.git/` for
+#: the lock's reason: `changed_paths()` never sees it, so it can never make
+#: an admit refuse itself.
+RESULTS_JOURNAL = "mcm-results.jsonl"
+
+#: The result keys a journal line copies from a command's own result, when
+#: the command set them.
+_JOURNALED_KEYS = ("sha", "files", "dsl_change", "retryable", "evidence")
 
 
 @contextlib.contextmanager
@@ -126,6 +140,83 @@ def checkout_lock(root: Path | str, timeout: float | None = None) -> Iterator[No
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
     finally:
         handle.close()
+
+
+def journal_path(root: Path | str) -> Path:
+    """`<git-dir>/mcm-results.jsonl`: `.git/` of a plain clone, beside the
+    checkout otherwise (the lock's own rule)."""
+    root = Path(root)
+    holder = root / ".git" if (root / ".git").is_dir() else root
+    return holder / RESULTS_JOURNAL
+
+
+def append_journal_line(root: Path | str, entry: dict[str, Any]) -> None:
+    """Append `entry` as one line. Never raises: the journal is a record of a
+    command, and a record that could not be written must not turn a push
+    that landed into a failure. One `write` of one line to a file opened for
+    append, so a line is never interleaved with another writer's."""
+    try:
+        line = json.dumps(entry, sort_keys=True, default=str) + "\n"
+        with journal_path(root).open("a", encoding="utf-8") as handle:
+            handle.write(line)
+    except Exception:  # noqa: BLE001 - see the docstring: never fail the command
+        pass
+
+
+def journal(
+    root: Path | str,
+    command: str,
+    game_id: str | None,
+    decks: list[str],
+    outcome: dict[str, Any],
+    **extra: Any,
+) -> None:
+    """One journal line for one run of `command` that ended in `outcome`.
+    The caller holds `checkout_lock`; `extra` carries what only that command
+    knows (`dsl_change`, a no-change's candidate and reason)."""
+    try:
+        who = os.environ.get("MTG_ROLE", "").strip() or "seat"
+        entry: dict[str, Any] = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "command": command,
+            "game_id": game_id,
+            "decks": list(decks),
+            "role": who,
+            "result": outcome.get("result"),
+        }
+        entry.update({k: outcome[k] for k in _JOURNALED_KEYS if k in outcome})
+        entry.update(extra)
+    except Exception:  # noqa: BLE001 - never fail the command
+        return
+    append_journal_line(root, entry)
+
+
+def run_journaled(
+    root: Path,
+    command: str,
+    game_id: str | None,
+    decks: list[str],
+    body: Callable[[], tuple[dict[str, Any], dict[str, Any]]],
+) -> dict[str, Any]:
+    """Run `body` holding the checkout, journal what it returned, return it.
+
+    `body` returns `(result, extra)`: the command's own result and what only
+    it knows for the journal line; an `Outcome` it raises is the result.
+    The line is appended under `checkout_lock`. Only a lock that could not
+    be taken at all is journaled outside it - still one `write` of one line,
+    so still never interleaved - because every run appends one line, and a
+    run that found the checkout busy is one the driver needs to see."""
+    try:
+        with checkout_lock(root):
+            try:
+                outcome, extra = body()
+            except Outcome as refused:
+                outcome, extra = refused.result, {}
+            journal(root, command, game_id, decks, outcome, **extra)
+            return outcome
+    except Outcome as busy:
+        journal(root, command, game_id, decks, busy.result)
+        return busy.result
 
 
 #: The results a command exits 0 on. `error` is an infrastructure failure

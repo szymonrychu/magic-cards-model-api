@@ -9761,6 +9761,184 @@
         "title": "PlayerView",
         "type": "object"
       },
+      "PlaysOutcomeAdmitted": {
+        "additionalProperties": false,
+        "description": "One `plays admit` of the handover that landed: its commit on\nmtg-decks main and whether it was a DSL change (a play added, deleted,\nor changed beyond its `priority`), as the results journal recorded it.",
+        "properties": {
+          "dsl_change": {
+            "title": "Dsl Change",
+            "type": "boolean"
+          },
+          "sha": {
+            "minLength": 1,
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha",
+          "dsl_change"
+        ],
+        "title": "PlaysOutcomeAdmitted",
+        "type": "object"
+      },
+      "PlaysOutcomeIn": {
+        "additionalProperties": false,
+        "description": "`POST /api/games/{game_id}/plays-outcome` - the driver's record of\nwhat one handover did to the DSL (`audit.PLAYS_OUTCOME_ACTION`), built\nfrom the guides clone's results journal after the handover turn.\n\nGated like `AiReviewIn`: post-game only, and `uid` must be `player`'s own\ncredential - an AI seat's own seat uid (`role: seat`), or an advisor uid\nfor the human it watches (`role: advisor`). Never a controlled player's:\nCR 723.5 hands a controller in-game decisions, not the post-game record.\n\n`state` is `complete` when the handover landed a DSL change or a\nno-change for every candidate, and `unfinished` otherwise, with\n`unfinished_reasons` saying why (nudged, timed out, an admit or propose\nthat did not succeed, a re-push that did not satisfy). `repushed` says\nthe one re-push turn ran; `followup` that this row comes from the\nfollow-up DSL-development Job rather than the handover itself.",
+        "properties": {
+          "admitted": {
+            "items": {
+              "$ref": "#/components/schemas/PlaysOutcomeAdmitted"
+            },
+            "title": "Admitted",
+            "type": "array"
+          },
+          "followup": {
+            "default": false,
+            "title": "Followup",
+            "type": "boolean"
+          },
+          "no_change": {
+            "items": {
+              "$ref": "#/components/schemas/PlaysOutcomeNoChange"
+            },
+            "title": "No Change",
+            "type": "array"
+          },
+          "player": {
+            "minLength": 1,
+            "title": "Player",
+            "type": "string"
+          },
+          "proposed": {
+            "items": {
+              "$ref": "#/components/schemas/PlaysOutcomeProposed"
+            },
+            "title": "Proposed",
+            "type": "array"
+          },
+          "repushed": {
+            "default": false,
+            "title": "Repushed",
+            "type": "boolean"
+          },
+          "role": {
+            "enum": [
+              "seat",
+              "advisor"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "complete",
+              "unfinished"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "uid": {
+            "minLength": 1,
+            "title": "Uid",
+            "type": "string"
+          },
+          "unfinished_reasons": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Unfinished Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "uid",
+          "player",
+          "role",
+          "state"
+        ],
+        "title": "PlaysOutcomeIn",
+        "type": "object"
+      },
+      "PlaysOutcomeNoChange": {
+        "additionalProperties": false,
+        "description": "One `plays no-change`: the candidate (a play id or a hand-played\nline) and why it needs no DSL change.",
+        "properties": {
+          "candidate": {
+            "minLength": 1,
+            "title": "Candidate",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate",
+          "reason"
+        ],
+        "title": "PlaysOutcomeNoChange",
+        "type": "object"
+      },
+      "PlaysOutcomeProposed": {
+        "additionalProperties": false,
+        "description": "One `guides propose` of the handover: the commit it landed (`sha`),\nor, when it landed nothing, its result (`conflict`, `refused`, ...).",
+        "properties": {
+          "result": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "sha": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha"
+          }
+        },
+        "title": "PlaysOutcomeProposed",
+        "type": "object"
+      },
+      "PlaysOutcomeResponse": {
+        "description": "`POST .../plays-outcome`'s answer, shaped like `AiReviewResponse`:\nthis mutates no `Game` either.",
+        "properties": {
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recorded",
+          "log_seq",
+          "player"
+        ],
+        "title": "PlaysOutcomeResponse",
+        "type": "object"
+      },
       "PregameSettleRequest": {
         "additionalProperties": false,
         "description": "Admin-only: run the whole pregame (CR 103.5's mulligan process, CR\n103.6's opening-hand actions) forward, all at once, over every seat.\n\n`BoardRead` for the same reason every other mutating request carries it:\nthis is a command like any other (`commands._run_pregame_settle`), it\nreaches the same `records.legal_actions_before` sites, and an operator\nsettling a pregame against a board that has since moved is owed the news\nthat it moved rather than a settled game they did not ask for.",
@@ -16673,6 +16851,56 @@
           }
         },
         "summary": "Set Mana Pool"
+      }
+    },
+    "/api/games/{game_id}/plays-outcome": {
+      "post": {
+        "description": "Record what one handover did to the DSL - `audit.PLAYS_OUTCOME_ACTION`,\nfiled by the seat's or the advisor's own driver after the handover turn\n(`schemas.PlaysOutcomeIn`).\n\nGated like `declare_ai_review`: against `store.archived`, so a game the\nlobby has already ended still takes one; post-game only (409 before);\nand the uid binds to exactly one player. A seat uid speaks for its own\nseat only, and only for an AI seat (`archived.ai_players`) - a human's\nown uid opens their seat but no driver of theirs ever runs a handover.\nAn advisor uid speaks for the human it watches; its lookup reads the\nlive game, so it is refused once the game is soft-deleted (the driver\nfiles before it retires). `game_access`'s `OWN_PLAYER_ROUTES` refuses a\nseat uid naming another player before this runs; the checks here are\nthe same binding, restated where the row is written. The role must\nmatch the credential (400), so the ledger cannot claim an advisor's\nhandover was a seat's. The uid itself is never recorded.",
+        "operationId": "declare_plays_outcome_api_games__game_id__plays_outcome_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaysOutcomeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaysOutcomeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Declare Plays Outcome"
       }
     },
     "/api/games/{game_id}/playscripts/hypothetical-facts": {

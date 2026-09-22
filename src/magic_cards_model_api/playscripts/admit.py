@@ -28,11 +28,30 @@ first found each play, and survives `admit`. A larger step is refused as
    most three pushes. After the third the commit is soft-reset, the change
    is left uncommitted on the newest upstream, and the result is `error`
    with `retryable: true`: run the same command again.
+
+Before step 2, `admit` picks up the driver's evidence file for this game:
+`$MTG_EVIDENCE_DIR/<game_id>/<deck>.json`, when it exists and parses as
+JSON, is copied to `decks/<deck>/plays/evidence/<game_id>.json` and lands
+with the commit - one file per game, so two games' evidence never conflicts,
+and not a play (`_play_file` takes `decks/<deck>/plays/<id>.json` only), so
+it is never linted or reprioritised. An admit carrying nothing but evidence
+is `admitted` with `dsl_change: false`.
+
+`admitted` also says what landed: `files`, and `dsl_change` - true when a
+play file was added or deleted, or changed beyond its top-level `priority`.
+
+`no-change` changes nothing: it records, for one post-game candidate (a play
+by `--play`, or a hand-played line by `--line`), why it needs no DSL change.
+
+Every `priority`, `admit` and `no-change` run appends one line to the
+checkout's results journal (`gitwork.RESULTS_JOURNAL`), under
+`gitwork.checkout_lock`, which the driver reads after the handover turn.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -57,6 +76,12 @@ from .gitwork import (
 )
 from .inputs import INPUTS_FILE
 from .lint import CardIndex, PlaysWarning, check_deck
+
+#: Where the driver drops each game's evidence record for `admit` to pick up
+#: (`<dir>/<game_id>/<deck>.json`), set on the agent container.
+EVIDENCE_DIR_ENV = "MTG_EVIDENCE_DIR"
+#: The per-game evidence files' directory under `decks/<deck>/plays/`.
+EVIDENCE_DIR = "evidence"
 
 REGRESSION_ADVICE = (
     "extend the plays' conditions so that at most one applies (an input condition such as "
@@ -129,10 +154,13 @@ def set_priority(
     value: int | None,
     game_id: str | None = None,
 ) -> dict[str, Any]:
-    try:
-        return _set_priority(Path(root).resolve(), deck, play_id, delta, value, game_id)
-    except Outcome as outcome:
-        return outcome.result
+    root = Path(root).resolve()
+
+    def body() -> tuple[dict[str, Any], dict[str, Any]]:
+        done = _set_priority(root, deck, play_id, delta, value, game_id)
+        return done, {"files": [done["path"]], "dsl_change": False}
+
+    return gitwork.run_journaled(root, "priority", game_id, [deck], body)
 
 
 def _set_priority(
@@ -220,11 +248,99 @@ def admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
     in this checkout at a time" true across processes - the handover turn's
     subagents and the reviewer's own write channel included."""
     root = Path(root).resolve()
+    return gitwork.run_journaled(
+        root, "admit", game_id, [deck], lambda: (_admit(root, deck, game_id), {})
+    )
+
+
+def no_change(
+    root: Path,
+    deck: str,
+    game_id: str,
+    *,
+    play: str | None,
+    line: str | None,
+    reason: str,
+) -> dict[str, Any]:
+    """`plays no-change`: record why one candidate needs no DSL change.
+
+    A candidate is a play the seat declined or passed over, or a line it
+    played by hand more than once; the handover must land a DSL change or
+    say, once per candidate, why none is due. Nothing in the checkout
+    changes - the journal line is the whole effect."""
+    root = Path(root).resolve()
+
+    def body() -> tuple[dict[str, Any], dict[str, Any]]:
+        check_name("deck", deck)
+        check_name("game id", game_id)
+        candidate: dict[str, str] = {}
+        if play is not None:
+            check_name("play id", play)
+            candidate["play"] = play
+        if line is not None:
+            if not line.strip():
+                raise Outcome("refused", "--line names the hand-played line; it is empty")
+            candidate["line"] = line.strip()
+        if len(candidate) != 1:
+            raise Outcome("refused", "name exactly one candidate: --play ID or --line TEXT")
+        if not reason.strip():
+            raise Outcome("refused", "--reason says why no change is due; it is empty")
+        named = candidate.get("play") or candidate.get("line")
+        done = result("recorded", f"no change for {named}: {reason.strip()}", **candidate)
+        return done, {**candidate, "reason": reason.strip()}
+
+    return gitwork.run_journaled(root, "no_change", game_id, [deck], body)
+
+
+def _pick_up_evidence(root: Path, deck: str, game_id: str) -> str | None:
+    """Copy the driver's evidence record for this game into the deck's
+    plays, returning its path; None when there is none or it is not JSON."""
+    base = os.environ.get(EVIDENCE_DIR_ENV, "").strip()
+    if not base:
+        return None
     try:
-        with gitwork.checkout_lock(root):
-            return _admit(root, deck, game_id)
-    except Outcome as outcome:
-        return outcome.result
+        text = (Path(base) / game_id / f"{deck}.json").read_bytes().decode("utf-8")
+        json.loads(text)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    rel = f"decks/{deck}/plays/{EVIDENCE_DIR}/{game_id}.json"
+    target = root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(text.encode("utf-8"))
+    return rel
+
+
+def _without_priority(text: str | None) -> Any:
+    doc = json.loads(text or "")
+    if isinstance(doc, dict):
+        doc.pop("priority", None)
+    return doc
+
+
+def _landing(git: Git) -> tuple[list[str], bool]:
+    """Every path HEAD carries over origin main, and whether any of them is
+    a DSL change: a play file added or deleted, or changed beyond its
+    top-level priority."""
+    raw = git.out("diff", "--no-renames", "--name-status", "-z", UPSTREAM, "HEAD").split("\0")
+    files: list[str] = []
+    dsl_change = False
+    for status, path in zip(raw[0::2], raw[1::2], strict=False):
+        if not path:
+            continue
+        files.append(path)
+        if not _play_file(path) or dsl_change:
+            continue
+        if status in ("A", "D"):
+            dsl_change = True
+            continue
+        try:
+            before = _without_priority(git.show(f"{UPSTREAM}:{path}"))
+            after = _without_priority(git.show(f"HEAD:{path}"))
+        except ValueError:
+            dsl_change = True
+            continue
+        dsl_change = before != after
+    return sorted(files), dsl_change
 
 
 def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
@@ -243,9 +359,15 @@ def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
             "guide edits with `mcp-seat guides propose`: " + ", ".join(outside),
             files=outside,
         )
+    evidence = _pick_up_evidence(root, deck, game_id)
+    if evidence is not None:
+        changed = git.changed_paths()
+    picked = {"evidence": evidence} if evidence is not None and evidence in changed else {}
     if not changed and not local:
         _save_deltas(git, {})
-        return result("nothing_to_admit", "no play-script change to admit")
+        return result(
+            "nothing_to_admit", "no play-script change to admit", dsl_change=False, **picked
+        )
 
     deltas = _sync_deltas(git, sorted(set(changed) | set(local)))
     committed = False
@@ -274,9 +396,17 @@ def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
                 # the agent to fix and admit again as one commit.
                 git.out("reset", "-q", "--soft", "HEAD~1")
             raise
+        files, dsl_change = _landing(git)
         if git.push(f"HEAD:refs/heads/{MAIN}"):
             _save_deltas(git, {})
-            return result("admitted", f"pushed to {MAIN}", sha=git.head())
+            return result(
+                "admitted",
+                f"pushed to {MAIN}",
+                sha=git.head(),
+                files=files,
+                dsl_change=dsl_change,
+                **picked,
+            )
 
     if committed:
         git.out("reset", "-q", "--soft", "HEAD~1")

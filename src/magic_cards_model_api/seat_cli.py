@@ -55,17 +55,20 @@ Two commands are not seat actions at all, and need no `--uid`:
   checkout's play scripts offline, and exits 0 when clean (conflict warnings
   allowed) or 1 with coded errors - the same codes as mtg-decks'
   `scripts/check_plays.py`.
-- `plays priority`, `plays admit` and `guides propose` work the pod's guides
-  clone (default `/guides`): edit a play's priority, take play-script changes
-  to mtg-decks main, and take a deck-guide edit (NOTES.md and a boarding
+- `plays priority`, `plays admit`, `plays no-change` and `guides propose`
+  work the pod's guides clone (default `/guides`): edit a play's priority,
+  take play-script changes to mtg-decks main (with the driver's per-game
+  evidence file), record why one post-game candidate needs no DSL change,
+  and take a deck-guide edit (NOTES.md and a boarding
   plan's play_plan / notes, for one or more `--deck`s, stub decks included)
   straight to mtg-decks main after the in-pod gates. Each prints one JSON
-  result and exits 0 on admitted / nothing_to_admit (or a priority set), 1
-  otherwise: conflict (resolve the markers left in the files, then run the
+  result and exits 0 on admitted / nothing_to_admit (or a priority set, or
+  a no-change recorded), 1 otherwise: conflict (resolve the markers left in the files, then run the
   same command again), refused, gate_failed, and `error` - with
   `retryable: true` when main kept moving for three pushes and the change
   was left uncommitted in the tree. See `playscripts.admit` and
-  `playscripts.guides_propose`.
+  `playscripts.guides_propose`. Every run appends one line to the clone's
+  results journal (`.git/mcm-results.jsonl`), which the driver reads.
   `guides propose` additionally gates what the text SAYS: new prose reading
   as a system problem rather than as how the deck is piloted is
   `refused_content` (its own outcome, not the file-path `refused`) and goes
@@ -1458,6 +1461,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _guides_target(admit, game=True)
 
+    unchanged = plays_sub.add_parser(
+        "no-change",
+        help=(
+            "record, for one post-game candidate - a play you declined or passed over "
+            "(--play), or a line you played by hand (--line) - why it needs no DSL change; "
+            "changes nothing in the checkout, prints recorded | refused"
+        ),
+    )
+    candidate = unchanged.add_mutually_exclusive_group(required=True)
+    candidate.add_argument("--play", metavar="ID", help="the play's id, its file stem")
+    candidate.add_argument("--line", metavar="TEXT", help="the hand-played line, in your words")
+    unchanged.add_argument(
+        "--reason", required=True, help="why this candidate needs no change to the plays"
+    )
+    _guides_target(unchanged, game=True)
+
     guides = sub.add_parser(
         "guides",
         help=(
@@ -1529,6 +1548,18 @@ def run(argv: list[str] | None = None) -> int:
                 game_id=args.game_id or os.environ.get("MTG_GAME_ID", "").strip() or None,
             ),
             frozenset({"priority_set"}),
+        )
+    if args.command == "plays" and args.plays_command == "no-change":
+        return _emit(
+            playscripts_admit.no_change(
+                args.root,
+                args.deck,
+                args.game_id,
+                play=args.play,
+                line=args.line,
+                reason=args.reason,
+            ),
+            frozenset({"recorded"}),
         )
     if args.command == "plays":
         return _emit(playscripts_admit.admit(args.root, args.deck, args.game_id))

@@ -105,6 +105,17 @@ AI_REVIEW_ACTION = "ai_review"
 #: logs its own distinct warning line for each stage.
 AI_REVIEW_FAILED_ACTION = "ai_review_failed"
 
+#: What one handover did to the DSL (`POST /api/games/{id}/plays-outcome`,
+#: `schemas.PlaysOutcomeIn`), filed by the seat's or the advisor's own driver
+#: once per finished game from the guides clone's results journal: the
+#: admits that landed and whether each was a DSL change, the proposals, each
+#: `plays no-change` with its reason, and whether the handover finished
+#: (`state: complete`) or not (`unfinished`, with its reasons). The ledger's
+#: answer to "did the post-game DSL development happen", which the pods'
+#: own logs cannot give once they roll. Gated like `AI_REVIEW_ACTION`. Not
+#: loud, for `AI_REVIEW_FAILED_ACTION`'s reason: it names no seat's move.
+PLAYS_OUTCOME_ACTION = "plays_outcome"
+
 #: An advisor's proposal: one action it says its human should take, validated
 #: against the engine where the request shape allowed it, recorded but never
 #: performed (`POST /api/games/{id}/advice`, `schemas.AdviceIn`). The row

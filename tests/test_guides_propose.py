@@ -925,3 +925,96 @@ def test_a_handover_write_waits_for_a_review_in_flight_and_never_interleaves(
 
     assert order == ["review in", "handover asked", "review out", "handover done"], order
     assert outcome and outcome[0]["result"] == "admitted", outcome
+
+
+# -- the results journal (D2a) -----------------------------------------------------------------
+
+JOURNAL = Path(".git") / "mcm-results.jsonl"
+
+
+def journal(root: Path) -> list[dict]:
+    path = root / JOURNAL
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def test_an_admitted_proposal_is_journaled(capsys, monkeypatch, root, bare, render_log):
+    monkeypatch.setenv("MTG_ROLE", "advisor")
+    edit_plan(root, good_edit)
+    (root / OTHER_NOTES).write_text("# frog notes\n- they race well\n", encoding="utf-8")
+    rc, result, _, _ = propose(capsys, root, SLUG, OTHER)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    [line] = journal(root)
+    assert {k: line[k] for k in ("command", "game_id", "decks", "role", "result", "sha")} == {
+        "command": "propose",
+        "game_id": GAME,
+        "decks": [SLUG, OTHER],
+        "role": "advisor",
+        "result": "admitted",
+        "sha": main_sha(bare),
+    }
+    assert sorted(line["files"]) == sorted([PLAN, OTHER_NOTES])
+    assert isinstance(line["ts"], str) and line["ts"]
+
+
+def test_nothing_to_propose_is_journaled(capsys, root, render_log):
+    propose(capsys, root)
+    [line] = journal(root)
+    assert (line["command"], line["result"]) == ("propose", "nothing_to_admit")
+
+
+def test_a_refused_proposal_is_journaled(capsys, root, render_log):
+    (root / "stray.txt").write_text("x\n", encoding="utf-8")
+    propose(capsys, root)
+    [line] = journal(root)
+    assert (line["result"], line["files"]) == ("refused", ["stray.txt"])
+
+
+def test_a_refused_content_proposal_is_journaled(capsys, root, render_log):
+    (root / NOTES).write_text(
+        "# notes\n- the api returned a 500 and the MCP tool timed out\n", encoding="utf-8"
+    )
+    rc, result, _, _ = propose(capsys, root)
+    assert result["result"] == CONTENT_REFUSED, result
+    assert journal(root)[-1]["result"] == CONTENT_REFUSED
+
+
+def test_a_conflicted_proposal_is_journaled_with_its_files(capsys, tmp_path, root, bare):
+    theirs = (
+        (root / NOTES)
+        .read_text(encoding="utf-8")
+        .replace("- keep a two-lander with Bolt", "- mulligan every two-lander")
+    )
+    compete(bare, tmp_path / "competitor", "theirs", notes=theirs)
+    _edit_mulligans(root, "- keep a two-lander on the draw")
+    rc, result, _, _ = propose(capsys, root)
+    assert result["result"] == "conflict", result
+    line = journal(root)[-1]
+    assert (line["result"], line["files"]) == ("conflict", [NOTES])
+
+
+def test_a_gate_failed_proposal_is_journaled(capsys, monkeypatch, root, render_log):
+    monkeypatch.setenv("MTG_TEST_RENDER_CHECK_FAIL", "1")
+    edit_plan(root, good_edit)
+    propose(capsys, root)
+    assert journal(root)[-1]["result"] == "gate_failed"
+
+
+def test_a_retryable_proposal_error_is_journaled(capsys, monkeypatch, tmp_path, root, bare):
+    def race(argv):
+        if is_main_push(argv):
+            compete(bare, tmp_path / "competitor", "race")
+
+    interpose(monkeypatch, race)
+    edit_plan(root, good_edit)
+    propose(capsys, root)
+    line = journal(root)[-1]
+    assert (line["result"], line["retryable"]) == ("error", True)
+
+
+def test_a_proposal_journal_that_cannot_be_written_never_fails_it(capsys, root, bare, render_log):
+    (root / JOURNAL).mkdir()
+    (root / NOTES).write_text("# notes\n- new\n", encoding="utf-8")
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result

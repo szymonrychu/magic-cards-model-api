@@ -469,6 +469,77 @@ class AiReviewFailureResponse(BaseModel):
     player: str
 
 
+class PlaysOutcomeAdmitted(RequestModel):
+    """One `plays admit` of the handover that landed: its commit on
+    mtg-decks main and whether it was a DSL change (a play added, deleted,
+    or changed beyond its `priority`), as the results journal recorded it."""
+
+    sha: Stated
+    dsl_change: bool
+
+
+class PlaysOutcomeProposed(RequestModel):
+    """One `guides propose` of the handover: the commit it landed (`sha`),
+    or, when it landed nothing, its result (`conflict`, `refused`, ...)."""
+
+    sha: Stated | None = None
+    result: Stated | None = None
+
+    @model_validator(mode="after")
+    def _names_one(self) -> PlaysOutcomeProposed:
+        if self.sha is None and self.result is None:
+            raise ValueError("a proposal names its sha, its result, or both")
+        return self
+
+
+class PlaysOutcomeNoChange(RequestModel):
+    """One `plays no-change`: the candidate (a play id or a hand-played
+    line) and why it needs no DSL change."""
+
+    candidate: Stated
+    reason: Stated
+
+
+class PlaysOutcomeIn(RequestModel):
+    """`POST /api/games/{game_id}/plays-outcome` - the driver's record of
+    what one handover did to the DSL (`audit.PLAYS_OUTCOME_ACTION`), built
+    from the guides clone's results journal after the handover turn.
+
+    Gated like `AiReviewIn`: post-game only, and `uid` must be `player`'s own
+    credential - an AI seat's own seat uid (`role: seat`), or an advisor uid
+    for the human it watches (`role: advisor`). Never a controlled player's:
+    CR 723.5 hands a controller in-game decisions, not the post-game record.
+
+    `state` is `complete` when the handover landed a DSL change or a
+    no-change for every candidate, and `unfinished` otherwise, with
+    `unfinished_reasons` saying why (nudged, timed out, an admit or propose
+    that did not succeed, a re-push that did not satisfy). `repushed` says
+    the one re-push turn ran; `followup` that this row comes from the
+    follow-up DSL-development Job rather than the handover itself."""
+
+    uid: Stated
+    """The filing credential - never recorded in the row."""
+    player: Stated
+    role: Literal["seat", "advisor"]
+    state: Literal["complete", "unfinished"]
+    admitted: list[PlaysOutcomeAdmitted] = Field(default_factory=list)
+    proposed: list[PlaysOutcomeProposed] = Field(default_factory=list)
+    no_change: list[PlaysOutcomeNoChange] = Field(default_factory=list)
+    unfinished_reasons: list[Stated] = Field(default_factory=list)
+    repushed: bool = False
+    followup: bool = False
+
+
+class PlaysOutcomeResponse(BaseModel):
+    """`POST .../plays-outcome`'s answer, shaped like `AiReviewResponse`:
+    this mutates no `Game` either."""
+
+    recorded: bool
+    log_seq: int
+    """The `records` row this outcome became."""
+    player: str
+
+
 class AdviceIn(RequestModel):
     """`POST /api/games/{game_id}/advice` - one action an **advisor** thinks
     its human should take, recorded and never performed.
