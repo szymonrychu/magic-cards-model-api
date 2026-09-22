@@ -44,7 +44,7 @@ def advice(id: str, **over: Any) -> dict[str, Any]:
 
 
 def test_max_plays_and_max_advice_are_the_documented_caps():
-    assert MAX_PLAYS == 12
+    assert MAX_PLAYS == 16
     assert MAX_ADVICE == 6
 
 
@@ -314,16 +314,16 @@ def test_a_chain_of_three_is_fine(root):
 
 
 def test_too_many_plays(root):
-    for i in range(13):
+    for i in range(17):
         put(root, play(id=f"p{i}", priority=0))
     assert error_codes(root) == ["too-many-plays"]
 
 
 def test_too_many_plays_message_says_advice_only_plays_are_not_counted(root):
-    for i in range(13):
+    for i in range(17):
         put(root, move_bearing(f"p{i}"))
     (error,) = [e for e in check_report(root)[0] if e.code == "too-many-plays"]
-    assert "13" in error.message and str(MAX_PLAYS) in error.message
+    assert "17" in error.message and str(MAX_PLAYS) in error.message
     assert "advice-only" in error.message
 
 
@@ -331,16 +331,16 @@ def test_too_many_plays_message_says_advice_only_plays_are_not_counted(root):
 # -- and reported separately (API-2) -------------------------------------
 
 
-def test_twelve_move_bearing_and_six_advice_only_plays_are_clean(root):
-    for i in range(12):
+def test_sixteen_move_bearing_and_six_advice_only_plays_are_clean(root):
+    for i in range(16):
         put(root, move_bearing(f"m{i}"))
     for i in range(6):
         put(root, advice(f"a{i}"))
     assert check_report(root) == ([], [])
 
 
-def test_thirteen_move_bearing_plays_trip_too_many_plays_regardless_of_advice(root):
-    for i in range(13):
+def test_seventeen_move_bearing_plays_trip_too_many_plays_regardless_of_advice(root):
+    for i in range(17):
         put(root, move_bearing(f"m{i}"))
     for i in range(6):
         put(root, advice(f"a{i}"))
@@ -350,7 +350,7 @@ def test_thirteen_move_bearing_plays_trip_too_many_plays_regardless_of_advice(ro
 
 
 def test_seven_advice_only_plays_trip_too_many_advice_regardless_of_move_bearing(root):
-    for i in range(12):
+    for i in range(16):
         put(root, move_bearing(f"m{i}"))
     for i in range(7):
         put(root, advice(f"a{i}"))

@@ -32,7 +32,7 @@ from guides_git_testkit import (
 )
 from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG, play
 
-from magic_cards_model_api.playscripts.lint import check_report
+from magic_cards_model_api.playscripts.lint import MAX_PLAYS, check_report
 
 SHOCK = f"decks/{SLUG}/plays/fetch-untapped-shock.json"
 SURVEIL = f"decks/{SLUG}/plays/fetch-surveil-land.json"
@@ -451,6 +451,49 @@ def test_resolving_a_conflict_by_extending_a_condition_is_admitted(capsys, tmp_p
     (root / f"decks/{SLUG}/plays/b.json").write_text(dump(b), "utf-8")
     rc, result, _, _ = admit(capsys, root)
     assert (rc, result["result"]) == (0, "admitted"), result
+    assert conflicts_on_main(bare, tmp_path, "after") == []
+
+
+# -- retire-and-add in one admit, at the cap (A4) ----------------------------
+
+
+def test_retire_and_add_at_the_cap_is_admitted(capsys, tmp_path, isolated):
+    """A deck already at MAX_PLAYS whose working tree deletes one play and
+    adds another nets no change in count and is admitted. The deleted play
+    (`p0`) carries a pre-existing play-conflict with `p1`; that warning must
+    vanish once `p0` is gone, never be counted as a newly introduced one."""
+    conflicting = play(id="p0"), play(id="p1")
+    filler = tuple(play(id=f"p{i}", priority=0) for i in range(2, MAX_PLAYS))
+    plays = (*conflicting, *filler)
+    assert len(plays) == MAX_PLAYS
+    bare = seed_guides(tmp_path, plays)
+    before = conflicts_on_main(bare, tmp_path, "before")
+    assert before == [("play-conflict", ["p0", "p1"])]
+
+    root = clone(bare, tmp_path / "guides")
+    git(root, "rm", "-q", f"decks/{SLUG}/plays/p0.json")
+    added = play(id="p-new", priority=0)
+    (root / f"decks/{SLUG}/plays/p-new.json").write_text(dump(added), encoding="utf-8")
+
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+
+    tracked = git(bare, "ls-tree", "-r", "--name-only", "main").splitlines()
+    assert f"decks/{SLUG}/plays/p0.json" not in tracked
+    assert f"decks/{SLUG}/plays/p-new.json" in tracked
+    play_files = [
+        p for p in tracked if p.startswith(f"decks/{SLUG}/plays/") and p.endswith(".json")
+    ]
+    assert len(play_files) == MAX_PLAYS
+
+    # The deletion landed in the pushed commit, not merely in the working
+    # tree (--no-renames: p0 and p-new are similar enough that git's default
+    # rename detection would report one R line instead of a D and an A).
+    changed = git(bare, "diff", "--no-renames", "--name-status", "main~1", "main").splitlines()
+    assert f"D\tdecks/{SLUG}/plays/p0.json" in changed
+    assert f"A\tdecks/{SLUG}/plays/p-new.json" in changed
+
+    # The conflict tied to the deleted play vanished; nothing new appeared.
     assert conflicts_on_main(bare, tmp_path, "after") == []
 
 

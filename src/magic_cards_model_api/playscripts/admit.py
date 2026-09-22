@@ -251,7 +251,13 @@ def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
     committed = False
     if changed:
         priorities = _priority_changes(git, changed)
-        git.out("add", "-A", "--", *changed)
+        # No pathspec: `outside` above already refused any change beyond
+        # decks/*/plays/**, and a pathspec-restricted `add -A -- <path>`
+        # fails with "did not match any files" for a play retired with
+        # `git rm` (fully gone from both tree and index, so no path is left
+        # to match) - a plain `add -A` stages it, and everything else, the
+        # same way `git add -A` always has.
+        git.out("add", "-A")
         message = commit_message(f"Plays: {deck} after game {game_id}", game_id, priorities)
         git.out("commit", "-q", "--no-verify", "-F", "-", input=message)
         committed = True

@@ -577,7 +577,7 @@ not because a carve-out excuses it after the fact.
 
 ### The two play caps
 
-`too-many-plays` counts move-bearing plays only: at most 12 per deck. A play
+`too-many-plays` counts move-bearing plays only: at most 16 per deck. A play
 whose `moves` is empty or absent (advice-only) is never counted toward it.
 `too-many-advice` counts exactly what `too-many-plays` leaves out: at most 6
 advice-only plays per deck, counted and capped separately, reported against
@@ -586,6 +586,19 @@ the same `plays/` directory path `too-many-plays` uses.
 its own 6-play live-together cap over priority > 0 plays never adds an
 advice-only play to an archetype's `active` set - see "Advice-only plays"
 above for why.
+
+A deck already at the `too-many-plays` cap retires a play by deleting its
+file (`git rm decks/<deck>/plays/<id>.json`) rather than lowering its
+priority to zero - a disabled play still counts toward the cap, it only
+stops counting toward `too-many-active-for-archetype`. `plays admit` takes a
+retirement and an addition in the same call: it commits the working tree as
+it stands, so a deck that deletes one play and adds another nets no change
+in the move-bearing count and is admitted at the cap, not just below it. The
+conflict ratchet (`_ratchet`) diffs the deck's warnings before and after the
+change by rebuilding the corpus at each of `origin/main` and the new commit,
+so a `play-conflict` or `next-conflict` tied only to the retired play is
+simply absent from the "after" side - it is read as a conflict that vanished,
+never as a new one to refuse.
 
 ### `advice-only-chained`
 

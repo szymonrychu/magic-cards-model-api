@@ -23,7 +23,7 @@ Corpus rules (a deck's plays together), by code:
 - `chain-too-deep`: the longest `next` chain is at most 3 plays, measured with
   every play that can reach itself left out, so a cycle is reported once as
   `next-cycle` and never masks the depth of the rest of the graph.
-- `too-many-plays`: at most 12 *move-bearing* plays per deck (a play whose
+- `too-many-plays`: at most 16 *move-bearing* plays per deck (a play whose
   `moves` is absent or empty is advice-only, per `Play`'s own docstring, and
   is never counted here - see `too-many-advice`).
 - `too-many-advice`: at most 6 advice-only plays per deck, counted and capped
@@ -140,7 +140,7 @@ EXCLUSIVITY_DIMENSIONS = (
 )
 
 MAX_CHAIN = 3
-MAX_PLAYS = 12
+MAX_PLAYS = 16
 MAX_ADVICE = 6
 MAX_ACTIVE_PER_ARCHETYPE = 6
 PHRASE_MIN_CARDS = 3
