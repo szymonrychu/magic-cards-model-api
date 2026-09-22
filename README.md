@@ -140,11 +140,17 @@ writes there. See `lobby.py`.
 **A game that ends retires itself.** Conceding is the obvious way to do that
 (CR 104.3a - the Concede button, two clicks), and a lethal-damage sweep or a
 draw is the same thing arrived at differently: the moment the game is over,
-everything End game releases is released - the pregame watcher, the seat's
-subprocess or its wrapper/kubernetes dispatch, the buddy's - and a
-`game_retired` row says so. The game itself is **not** deleted: it is still
-there to open, still refuses every action with "the game is over", and still
-has a review. Only End game clears the row.
+the pregame watcher stops and a `game_retired` row says so. Nothing else is
+released. The AI seat (and a buddy, the same way) still has post-game work
+to do on its own uid - the reflection turn, the Opus review, the handover -
+and its pod releases itself when that is done. While it works the lobby row
+reads "recording plays..." (`post_game_work` on `GET /api/lobby/games`).
+The work is bounded by `lobby.POSTGAME_RELEASE_SECONDS` (about an hour after
+the `game_over` row): past that, whatever is still running is hard-released
+once and a second `game_retired` row says "post-game work overran". The game
+itself is **not** deleted: it is still there to open, still refuses every
+action with "the game is over", and still has a review. End game is the hard
+stop at any time, and the only thing that clears the row.
 
 ## Play against a continuous agent
 
@@ -257,7 +263,9 @@ Three containers, three different things worth watching:
   it matched, `turn ... started: game=... seat=... deck=...` for every turn it
   pushes, the agent's own account of every finished turn (trimmed - the full
   text is on `GET /v1/messages/{turnId}` in the agent), the game ending, the
-  reflection turn, and the retirement that stops the agent.
+  reflection turn, the handover, and the retirement that stops the agent
+  (the driver ends its own pod after the handover; the api no longer
+  releases it at game over).
 - **agent** - session boot, turn submitted/complete with its stop reason,
   suspected stalls, interrupts, a dead `claude` with the tail of its terminal,
   and - on the `agent` logger - a running account of what the seat is doing:

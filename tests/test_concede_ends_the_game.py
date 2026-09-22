@@ -1,4 +1,13 @@
-"""Conceding a game ends it - the runners with it, not just the board.
+"""Conceding a game ends it - the pregame watcher with it, not just the board.
+
+**A3 changed what a natural ending releases.** It used to release every
+runner too, which sent the AI seat's driver down its no-reflection handover
+and filed its review against a game the seat was no longer playing (live
+game 23868a95). A natural ending now stops the pregame watcher and nothing
+else; the AI seat and any buddy finish their post-game work on their own
+uids and release themselves, with End game and a bounded backstop behind
+them (`tests/test_post_game_lifecycle.py`). The history below is the
+original task's, kept because the watcher half of it still holds.
 
 CR 104.3a ("A player can concede the game at any time. A player who concedes
 leaves the game immediately. That player loses the game.") and CR 104.2a (the
@@ -137,10 +146,13 @@ def test_a_concede_stops_the_pregame_watcher(client: TestClient) -> None:
     wait_until(lambda: not any(t.is_alive() for t in threads))
 
 
-def test_a_concede_releases_the_ai_seat(client: TestClient, subprocess_seat: None) -> None:
-    """The AI seat's own process outlives the game it was playing unless
-    something releases it. A concession is the human saying the game is over,
-    so it is."""
+def test_a_concede_does_not_release_the_ai_seat(client: TestClient, subprocess_seat: None) -> None:
+    """A3 inverted this. The AI seat's post-game work - the reflection turn,
+    the Opus review, the handover - runs on the seat's own uid after the
+    game is over, so a concession leaves the runner exactly where it was.
+    The pod releases itself once that work is done; End game and the
+    bounded backstop (`test_post_game_lifecycle.py`) are the only things
+    that release it from here."""
     booted = boot(client, seed=13, ai=True)
     ai_uid = booted["seat_uids"]["bob"]
     started = client.post(
@@ -152,8 +164,9 @@ def test_a_concede_releases_the_ai_seat(client: TestClient, subprocess_seat: Non
 
     concede(client, booted)
 
-    wait_until(lambda: not runner.running())
-    assert ai_seat.registry.status(ai_uid) is None
+    assert runner.running()
+    assert ai_seat.registry.status(ai_uid) is not None
+    runner.stop()
 
 
 def test_a_concede_writes_the_retirement_into_the_ended_games_log(client: TestClient) -> None:
@@ -172,7 +185,8 @@ def test_a_concede_writes_the_retirement_into_the_ended_games_log(client: TestCl
     assert actions.index(audit.GAME_OVER_ACTION) < actions.index("game_retired"), actions
     detail = log[actions.index("game_retired")]["detail"]
     assert detail["reason"] == "the game is over"
-    assert "seat uid(s) invalidated" in detail["note"]
+    assert detail["ai_seats_released"] == []
+    assert "pregame watcher stopped" in detail["note"]
 
 
 def test_the_game_itself_is_still_there_to_read_after_a_concede(client: TestClient) -> None:

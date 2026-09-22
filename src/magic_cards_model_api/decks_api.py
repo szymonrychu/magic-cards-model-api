@@ -332,6 +332,17 @@ class LobbyGameSummary(BaseModel):
     going": nothing about an undecodable board is knowable, which is why
     `is_over` stays `False` and the row still counts against
     `MAX_LIVE_GAMES`."""
+    post_game_work: bool = False
+    """True while this finished game's AI is still doing its post-game work
+    - the reflection turn, the Opus review, the handover - on a seat or
+    advisor uid of this game (`lobby.post_game_work`). The lobby renders such
+    a row "recording plays..." with no Forget, Open or End; once every runner
+    has released itself (or the bounded backstop released it) this goes
+    false and the row offers Show thinking and Forget.
+
+    **Computed only for an `is_over` row**, and `False` on every other one:
+    asking means polling each runner (a driver's `/status`, a pod's phase),
+    which a game still being played never needs."""
 
 
 class LobbyGamesResponse(BaseModel):
@@ -448,6 +459,7 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
             advisors = all_advisors
         elif owner is not None and not seats:
             continue
+        is_over = bool(summary["is_over"]) if summary else False
         games.append(
             {
                 "game_id": game_id,
@@ -459,7 +471,7 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
                 ),
                 "turn_number": summary["turn_number"] if summary else None,
                 "phase": summary["phase"] if summary else None,
-                "is_over": bool(summary["is_over"]) if summary else False,
+                "is_over": is_over,
                 "agents": {
                     name: settings.model_dump()
                     for name, settings in store.agent_settings(game_id).items()
@@ -472,6 +484,8 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
                 # `LobbyGameSummary.recorded_ending` for why this is not
                 # asked of every row.
                 "recorded_ending": (None if unloadable is None else _recorded_ending(game_id)),
+                # Only for a finished row - see `LobbyGameSummary.post_game_work`.
+                "post_game_work": is_over and lobby.post_game_work(game_id),
             }
         )
     games.sort(key=lambda entry: entry["created_at"] or "", reverse=True)

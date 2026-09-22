@@ -87,6 +87,11 @@ WORKING = "working"
 STARTING = "starting"
 GONE = "gone"
 
+#: The `K8sSeats.status` states in which a seat's pod is still alive, and so
+#: (after its game is over) still finishing its post-game work -
+#: `AiSeatRegistry.finishing`.
+FINISHING_K8S_STATES = frozenset({"pending", "idle", "thinking"})
+
 
 def ai_seat_mode() -> str:
     """`subprocess` (the default, a one-shot `claude --print` per game),
@@ -716,6 +721,52 @@ class AiSeatRegistry:
         if unavailable is not None:
             return unavailable
         return "no process or agent was ever started for this seat"
+
+    def finishing(self, uid: str) -> bool:
+        """Is whatever this registry started for `uid` still alive, and so
+        (once its game is over) still doing its post-game work: the
+        reflection turn, the Opus review, the handover.
+
+        The question `lobby.post_game_work` asks of every seat and advisor
+        uid of a finished game. Per mechanism:
+
+        - `kubernetes`: `K8sSeats.status` reports `pending`, `idle` or
+          `thinking` - the pod is still there. The driver ends its own Job
+          after the handover (`exit_after_match`), which reads back `gone`.
+        - `wrapper`: the driver's `/status` `gameId` is still this
+          dispatch's game. A driver that has retired, or moved on to another
+          game, is not finishing this one.
+        - `subprocess`: the process is still running.
+
+        Everything else is `False`: a uid nothing was started for, a
+        fallback, and any error reading the answer - a registry that cannot
+        tell must not hold a finished game's row in "recording plays..."
+        forever.
+        """
+        with self._lock:
+            dispatched = self._dispatched.get(uid)
+            runner = self._runners.get(uid)
+        try:
+            if dispatched is not None:
+                if dispatched.get("mechanism") == "kubernetes":
+                    status = k8s_seats.get().status(uid)
+                    return bool(status) and status.get("state") in FINISHING_K8S_STATES
+                with _driver_client(dispatched.get("driver") or driver_url()) as client:
+                    answer = client.get("/status").json()
+                return bool(answer.get("gameId")) and answer["gameId"] == dispatched.get("game_id")
+            return runner is not None and bool(runner.running())
+        except Exception:  # noqa: BLE001 - an unanswerable seat is not finishing
+            return False
+
+    def mechanism(self, uid: str) -> str | None:
+        """What this registry holds for `uid` - `subprocess`, `wrapper` or
+        `kubernetes` - or `None` when it holds nothing `release` would let go
+        of. Read off the registry alone, never the driver or the cluster."""
+        with self._lock:
+            dispatched = self._dispatched.get(uid)
+            if dispatched is not None:
+                return dispatched.get("mechanism")
+            return "subprocess" if uid in self._runners else None
 
     def status(self, uid: str) -> dict[str, Any] | None:
         """What is known about `uid` right now, or `None` for a uid nothing

@@ -948,17 +948,19 @@ def _record_game_over(game_id: str, game: Game) -> None:
     reads, scanned for an ending already written. Bounded for the same
     reason - this is on the action path too.
 
-    **And the game retires here too** (`lobby.retire_game`). The row above
-    says the game ended; the retirement is what makes that true of everything
-    this api was holding for it - the `ai_pregame` watcher thread, each seat
-    uid's runner or dispatch, each buddy's. Until this, only a human pressing
-    End game ever released any of them, so a conceded game (the reported
-    bug - CR 104.3a) left a watcher polling a finished game and an AI seat
-    still running, and in `wrapper` mode a driver still assigned to it. It
-    hangs off this function rather than off `action_concede` precisely
-    because this is the one place every committed ending funnels through, so
-    a lethal-damage sweep and a draw retire on the same line a concession
-    does. The game is not deleted - see `lobby.retire_game`.
+    **And the game retires here too** (`lobby.retire_game`), which stops
+    the `ai_pregame` watcher - a finished game has no pregame obligation
+    left to settle - and releases nothing else. The AI seat's reflection
+    turn, its Opus review and its handover are post-game work done on the
+    seat's own uid, so each seat and buddy uid stays valid and each runner
+    keeps running until the driver ends its own pod; releasing them here
+    (as this once did) sent the driver down its no-reflection handover and
+    failed the review of game 23868a95. `lobby.POSTGAME_RELEASE_SECONDS` is
+    the bound on that work, and End game stays the hard stop. It hangs off
+    this function rather than off `action_concede` because this is the one
+    place every committed ending funnels through, so a lethal-damage sweep
+    and a draw retire on the same line a concession does. The game is not
+    deleted - see `lobby.retire_game`.
     """
     if not game.is_over:
         return
@@ -1518,6 +1520,13 @@ def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, 
     `since` is the last `seq` the caller already has; only newer entries
     come back, and `last_seq` says where to resume next time.
 
+    **An ended game's log still reads for its own credentials.** End game
+    and Forget soft-delete the game, but the ledger outlives it, and a
+    seat's driver reads its own script runs off this route for its
+    handover. So a game that is gone from the live store is answered to
+    its admin key and its seat uids from the archive
+    (`_ended_game_log_viewer`), and is a 404 to anyone else.
+
     **`since` is a read bound, not a filter.** This route used to load the
     whole ledger and drop everything at or below `since` in Python, which
     made a poll cost the entire game's history - every row a full
@@ -1535,8 +1544,11 @@ def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, 
     appended between the two reads is returned *and* counted, so a client
     never resumes from a watermark past an entry it was not given.
     """
-    game_or_404(game_id)  # 404 for an unknown game, like every other endpoint
-    viewer = visibility.resolve_viewer(game_id, uid)
+    viewer = (
+        visibility.resolve_viewer(game_id, uid)
+        if store.get(game_id) is not None
+        else _ended_game_log_viewer(game_id, uid)
+    )
     last_seq = audit.last_seq(game_id)
     log = audit.entries_since(game_id, since) if last_seq > since else []
     if log:
@@ -1558,6 +1570,30 @@ def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, 
             if (redacted := visibility.redact_log_entry(entry, viewer)) is not None
         ]
     return {"log": log, "last_seq": last_seq}
+
+
+def _ended_game_log_viewer(game_id: str, uid: str | None) -> visibility.Viewer:
+    """Who `uid` is in a game End game (or Forget) has already soft-deleted,
+    for `game_log` - or a 404, exactly as for an unknown game.
+
+    The ledger outlives the game on purpose (`repository.py`'s `delete`), and
+    the seat's driver reads its own script runs off this route for its
+    handover. Before this an ended game 404'd here, so a handover that read
+    the log after an End or a Forget found no script runs at all (A3 clause
+    0, `tests/test_post_game_log.py`). Authorised against the credentials the
+    archive kept, as `game_review` and `declare_reflection` are: the game's
+    admin key or one of its seat uids, and nobody else - a caller presenting
+    nothing learns no more about an ended game than about one that never
+    existed."""
+    archived = store.archived(game_id)
+    if archived is None or not uid:
+        raise KeyError(f"no game {game_id}")
+    if archived.admin_key is not None and uid == archived.admin_key:
+        return visibility.ADMIN
+    player = archived.seat_uids.get(uid)
+    if player is None:
+        raise KeyError(f"no game {game_id}")
+    return player
 
 
 def _gate_entries(archived: ArchivedGame) -> list[dict[str, Any]] | None:

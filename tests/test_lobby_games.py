@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from test_game_agent_settings import create
 
-from magic_cards_model_api import decks_api
+from magic_cards_model_api import ai_seat, decks_api
 
 
 def test_a_second_game_does_not_end_the_first(client: TestClient) -> None:
@@ -303,3 +303,46 @@ def test_the_old_ui_prefixed_lobby_game_routes_are_gone(client: TestClient) -> N
         == 405
     )
     assert client.delete("/api/ui/games/no-such-game").status_code == 405
+
+
+def test_a_finished_row_reports_post_game_work_while_the_ai_is_finishing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A3 -> U1 contract: `LobbyGameSummary.post_game_work: bool`. True on a
+    finished row while any seat or advisor runner of that game is still
+    finishing its post-game work (the lobby shows "recording plays..." and
+    hides Forget), false once it has released itself, and false on every
+    row that is not over - the runner poll behind it is paid for over-rows
+    only."""
+    runners: dict[str, bool] = {}
+    polled: list[str] = []
+
+    def finishing(uid: str) -> bool:
+        polled.append(uid)
+        return runners.get(uid, False)
+
+    monkeypatch.setattr(ai_seat.registry, "finishing", finishing)
+    over = create(client)
+    live = create(client)
+    try:
+        runners[over["seat_uids"]["bot"]] = True
+        conceded = client.post(
+            f"/api/games/{over['game_id']}/actions/concede", json={"player": "you"}
+        )
+        assert conceded.status_code == 200, conceded.text
+
+        polled.clear()
+        rows = {g["game_id"]: g for g in client.get("/api/lobby/games").json()["games"]}
+        assert rows[over["game_id"]]["post_game_work"] is True
+        assert rows[live["game_id"]]["post_game_work"] is False
+        assert not set(polled) & set(live["seat_uids"].values()), polled
+
+        runners[over["seat_uids"]["bot"]] = False
+        rows = {g["game_id"]: g for g in client.get("/api/lobby/games").json()["games"]}
+        assert rows[over["game_id"]]["post_game_work"] is False
+    finally:
+        for created in (over, live):
+            client.delete(
+                f"/api/lobby/games/{created['game_id']}",
+                params={"uid": created["seat_uids"]["you"]},
+            )

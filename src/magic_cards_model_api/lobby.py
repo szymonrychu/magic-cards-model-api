@@ -44,16 +44,27 @@ container, because "free again once that game ends" is a promise only this
 release keeps. So it delegates here too, and the `action` argument is how the
 ended game's own transcript still says which of the two routes ended it.
 
-**A game that ends on its own retires itself, through `retire_game`.** Every
-bullet above except the delete, run from `app._record_game_over` the moment a
-committed command leaves `Game.is_over` true - a concession (CR 104.3a), a
-lethal-damage sweep, a draw, any of them. That used to be nobody's job: the
-board said the game was over and the lobby stopped counting it live, but the
-watcher kept polling it and the seat's runner kept running, because End game
-was the only thing that ever let go of either. The game itself is not deleted,
-which is the whole difference between the two: a finished game is still there
-to read, still refuses every action, and still has a review; an ended one is
-gone.
+**A game that ends on its own retires itself, through `retire_game`** - run
+from `app._record_game_over` the moment a committed command leaves
+`Game.is_over` true (a concession, CR 104.3a; a lethal-damage sweep; a draw).
+Retiring stops the pregame watcher and **nothing else**. The AI seat's work is
+not finished when the board is: its reflection turn, the Opus review and its
+handover all run after game over, on the seat's own uid, so every seat and
+advisor uid stays valid and every runner keeps running. The driver releases
+the pod itself once the handover is done (`run_handover` -> `retire` ->
+`exit_after_match` ends the Job). Releasing at game over, as this used to,
+sent the driver down its no-reflection handover and filed a review that
+failed (live game 23868a95). The game itself is not deleted either: a
+finished game is still there to read, still refuses every action, and still
+has a review; an ended one is gone.
+
+**The post-game work is bounded** (`POSTGAME_RELEASE_SECONDS`). Past that
+bound after the `game_over` row, `release_overdue` hard-releases whatever is
+still running, once. Two things call it: a daemon timer `retire_game` arms,
+and a lazy check in `post_game_work`, which the lobby listing asks for every
+finished row. An api restart loses the timer; the lazy check and the Job's own
+`activeDeadlineSeconds: 14400` (`deploy/seat-job.yaml`) are the backstop for
+that. End game (`reset_game`) stays the hard stop at any time.
 
 Nothing here resets a game nobody asked about. `store.register_ui_game` is set
 by `POST /api/lobby/games` alone; a game booted by `serve.py --match` or by
@@ -63,10 +74,14 @@ for the one game id their caller named and proved a credential for.
 
 from __future__ import annotations
 
+import threading
+import time
+from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from . import ai_pregame, ai_seat, audit
-from .repository import GameUnloadable
+from .repository import RECENT_RECORDS_WINDOW, GameUnloadable
 from .store import known_players, store
 
 DEFAULT_REASON = "ended from the lobby"
@@ -80,14 +95,49 @@ DEFAULT_ACTION = "game_reset"
 RETIRE_ACTION = "game_retired"
 RETIRE_REASON = "the game is over"
 
+#: The driver's allowances, mirrored because the api does not ship the
+#: driver package: `mtg_agent.driver.handover.HANDOVER_BUDGET_SECONDS` and
+#: `mtg_agent.driver.app.RETIRE_REVIEW_JOIN_TIMEOUT`.
+#: `tests/test_post_game_lifecycle.py` pins both against the real values.
+DRIVER_HANDOVER_BUDGET_SECONDS = 1680.0
+DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT = 1330.0
+
+#: What a reflection turn is given before the handover starts. It is one
+#: short turn that writes the agent's memory notes, far shorter than the
+#: wrapper's 1800s stall bound on an ordinary turn.
+DRIVER_REFLECTION_ALLOWANCE_SECONDS = 600.0
+
+POSTGAME_RELEASE_SECONDS = (
+    DRIVER_REFLECTION_ALLOWANCE_SECONDS
+    + DRIVER_HANDOVER_BUDGET_SECONDS
+    + DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT
+)
+"""How long after the `game_over` row a finished game's runners may keep
+doing post-game work before `release_overdue` hard-releases them: the
+reflection turn (`DRIVER_REFLECTION_ALLOWANCE_SECONDS`), then the handover
+(`DRIVER_HANDOVER_BUDGET_SECONDS`, 1680s), then `retire`'s join on the Opus
+review thread (`DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT`, 1330s) - about an hour,
+3610s. Past that the driver has overrun every allowance it has, so holding
+the row in "recording plays..." any longer only hides a stuck pod."""
+
+#: The wall clock `post_game_work` measures the bound on, against the
+#: `game_over` row's own `ts`. A module attribute so a test can move it.
+clock: Callable[[], float] = time.time
+
+#: game_id -> the daemon timer `retire_game` armed for `release_overdue`.
+_release_timers: dict[str, threading.Timer] = {}
+#: Games `release_overdue` already ran for in this process - its "once".
+_released_overdue: set[str] = set()
+_timers_lock = threading.Lock()
+
 
 def _release_runners(game_id: str) -> dict[str, Any]:
     """Let go of every live thing this api holds *beside* `game_id`'s board -
     the pregame watcher thread, whatever the registry holds for each seat uid,
     and the same for each buddy - and report what was covered.
 
-    Split out of `reset_game` for `retire_game`, which needs exactly this and
-    must not delete the game. Nothing here reads the board, which is what
+    Split out of `reset_game` for `release_overdue`, which needs exactly this
+    and must not delete the game. Nothing here reads the board, which is what
     makes it work unchanged on a game this build cannot decode.
     """
     seats = store.seat_uids(game_id)  # uid -> username
@@ -125,51 +175,196 @@ def _release_runners(game_id: str) -> dict[str, Any]:
     }
 
 
+def _runner_uids(game_id: str) -> list[tuple[str, str, str]]:
+    """`(uid, player, role)` for every seat and advisor uid of `game_id`."""
+    seats = [(uid, name, ai_seat.ROLE_SEAT) for uid, name in store.seat_uids(game_id).items()]
+    advisors = [
+        (uid, advisor.player, ai_seat.ROLE_ADVISOR)
+        for uid, advisor in store.advisor_uids(game_id).items()
+    ]
+    return seats + advisors
+
+
+def _finishing(game_id: str) -> list[str]:
+    """`player:mechanism` for each seat or advisor of `game_id` whose runner
+    is still finishing its post-game work (`AiSeatRegistry.finishing`)."""
+    names = []
+    for uid, player, role in _runner_uids(game_id):
+        if ai_seat.registry.finishing(uid):
+            label = f"{player}:{ai_seat.registry.mechanism(uid)}"
+            names.append(label if role == ai_seat.ROLE_SEAT else f"{label} ({role})")
+    return names
+
+
 def retire_game(game_id: str) -> dict[str, Any]:
-    """The game ended on its own, so let its runners go with it - and leave
-    the game itself exactly where it is.
+    """The game ended on its own: stop its pregame watcher, and leave
+    everything else - the game, its uids, its runners - exactly where it is.
 
     Called from `app._record_game_over`, the one place both `_run_command`
     and `_resume` funnel a committed ending through, so this covers every way
-    a game reaches CR 104.1 and not just the one that was reported. A
-    concession (CR 104.3a) is the case the owner hit: the board was over and
-    the winner was recorded, but the watcher kept polling a finished game and
-    the seat's runner kept running, because until this the only thing that
-    ever released either was a human pressing End game.
+    a game reaches CR 104.1. The watcher exists to settle a pregame
+    obligation, and a finished game has none left.
 
-    **It does not delete the game.** `reset_game` deletes because a human
-    asked for the game to go away; here nobody did. A finished game stays
-    readable, keeps refusing every action with `commands.GameOverError`, and
-    keeps its review reachable - End game remains the one thing that clears
-    the row.
+    **It releases no runner.** The AI seat's reflection turn, its Opus review
+    and its handover are all post-game work done on the seat's own uid; a
+    release here is what sent the driver down `handover_without_reflection`
+    and failed the review in game 23868a95. Advisors hand over too and get
+    the same treatment. The driver ends its own pod when the handover is
+    done; `release_overdue`, armed here on a daemon timer, is the bounded
+    backstop for one that does not, and End game (`reset_game`) stays the
+    hard stop.
 
-    **What the AI seat gets is End game's handover, not its own reflection
-    turn.** Releasing a `wrapper`/`kubernetes` dispatch POSTs the driver's
-    `/release`, which is `TERMINAL_PATHS["handover_without_reflection"]`: the
-    agent still gets its handover turn, and the post-game AI review is still
-    filed, but with no reflection text if the agent had not already taken its
-    reflection turn by the time this ran. That is the same trade End game has
-    always made, and matching End game is the point - the alternative is a
-    driver left assigned to a finished game, which `lobby.py`'s own docstring
-    calls permanent: it 409s every later dispatch for the life of that
-    container.
+    **It does not delete the game.** A finished game stays readable, keeps
+    refusing every action with `commands.GameOverError`, and keeps its
+    review reachable.
 
-    Recorded only when something was actually released. A game with no
-    watcher and no runner behind any uid - every harness game, every
-    `POST /api/games` game nobody started a seat for - has nothing to say
-    here, and the `game_over` row already ends its transcript honestly.
+    Recorded as `game_retired` with the payload keys it always carried
+    (`scripts/eval_report.py` reads them): nothing was invalidated or
+    released, so both counts are 0 and `ai_seats_released` is `[]`, and the
+    note names the runners left to finish. Recorded only when there is
+    something to say - a watcher stopped or a runner still finishing.
     """
-    covered = _release_runners(game_id)
-    if not (covered["watcher_stopped"] or covered["ai_seats_released"]):
+    watcher_stopped = ai_pregame.stop(game_id)
+    finishing = _finishing(game_id)
+    covered: dict[str, Any] = {
+        "seats_invalidated": 0,
+        "advisors_invalidated": 0,
+        "watcher_stopped": watcher_stopped,
+        "ai_seats_released": [],
+        "post_game_work": finishing,
+    }
+    if any(ai_seat.registry.mechanism(uid) for uid, _, _ in _runner_uids(game_id)):
+        _arm_release_timer(game_id)
+    if not (watcher_stopped or finishing):
         return covered
+    watcher = "stopped" if watcher_stopped else "was not running"
+    left = ", ".join(finishing) or "none"
     audit.record(
         game_id,
         RETIRE_ACTION,
         reason=RETIRE_REASON,
-        note=_note(covered, RETIRE_REASON),
+        note=(
+            f"{RETIRE_REASON}: pregame watcher {watcher}; nothing released, "
+            f"left to finish post-game work [{left}]"
+        ),
         **covered,
     )
     return covered
+
+
+def _arm_release_timer(game_id: str) -> None:
+    timer = threading.Timer(POSTGAME_RELEASE_SECONDS, _release_timer_fired, args=(game_id,))
+    timer.daemon = True
+    timer.name = f"postgame-release-{game_id}"
+    with _timers_lock:
+        previous = _release_timers.pop(game_id, None)
+        _release_timers[game_id] = timer
+    if previous is not None:
+        previous.cancel()
+    timer.start()
+
+
+def _release_timer_fired(game_id: str) -> None:
+    try:
+        release_overdue(game_id)
+    finally:
+        with _timers_lock:
+            _release_timers.pop(game_id, None)
+
+
+def _cancel_release_timer(game_id: str) -> None:
+    with _timers_lock:
+        timer = _release_timers.pop(game_id, None)
+        _released_overdue.discard(game_id)
+    if timer is not None:
+        timer.cancel()
+
+
+def _ended_at(game_id: str) -> float | None:
+    """The `game_over` row's `ts` as epoch seconds, or `None` when the
+    bounded window holds none (or its stamp does not parse)."""
+    for row in reversed(store.recent_records(game_id, RECENT_RECORDS_WINDOW)):
+        payload = row["payload"]
+        if payload.get("action") == audit.GAME_OVER_ACTION:
+            try:
+                return datetime.fromisoformat(str(payload.get("ts"))).timestamp()
+            except ValueError:
+                return None
+    return None
+
+
+def _overdue_reason() -> str:
+    return f"post-game work overran {int(POSTGAME_RELEASE_SECONDS)}s"
+
+
+def _already_released_overdue(game_id: str) -> bool:
+    """The "once" of `release_overdue`: this process ran it, or the ledger
+    already carries its row (an api restart forgets the first)."""
+    with _timers_lock:
+        if game_id in _released_overdue:
+            return True
+    for row in store.recent_records(game_id, RECENT_RECORDS_WINDOW):
+        payload = row["payload"]
+        if payload.get("action") == RETIRE_ACTION and str(
+            (payload.get("detail") or {}).get("reason", "")
+        ).startswith("post-game work overran"):
+            with _timers_lock:
+                _released_overdue.add(game_id)
+            return True
+    return False
+
+
+def release_overdue(game_id: str) -> bool:
+    """Hard-release every runner of a finished game whose post-game work
+    overran `POSTGAME_RELEASE_SECONDS`, through `_release_runners` - once.
+
+    Recorded as `game_retired` with reason "post-game work overran Ns" when
+    anything was actually released; a game whose runners all released
+    themselves in time has nothing to say here. Always answers `False`,
+    which is `post_game_work`'s answer once this has run: nothing is left
+    finishing.
+    """
+    if _already_released_overdue(game_id):
+        return False
+    with _timers_lock:
+        _released_overdue.add(game_id)
+    covered = _release_runners(game_id)
+    if covered["ai_seats_released"]:
+        reason = _overdue_reason()
+        audit.record(
+            game_id,
+            RETIRE_ACTION,
+            reason=reason,
+            note=_note(covered, reason),
+            **covered,
+        )
+    return False
+
+
+def post_game_work(game_id: str) -> bool:
+    """Is a finished game's AI still doing its post-game work: the game is
+    over and some seat or advisor runner is still finishing
+    (`AiSeatRegistry.finishing`).
+
+    The lobby's "recording plays..." row reads this (`LobbyGameSummary.
+    post_game_work`), which hides Forget until the pod has released itself.
+    Bounded: once the `game_over` row is older than
+    `POSTGAME_RELEASE_SECONDS`, this runs `release_overdue` and answers
+    `False` - the lazy half of the backstop, which still works after an api
+    restart lost `retire_game`'s timer.
+    """
+    try:
+        game = store.get(game_id)
+    except GameUnloadable:
+        return False
+    if game is None or not game.is_over:
+        return False
+    if not any(ai_seat.registry.finishing(uid) for uid, _, _ in _runner_uids(game_id)):
+        return False
+    ended_at = _ended_at(game_id)
+    if ended_at is not None and clock() - ended_at > POSTGAME_RELEASE_SECONDS:
+        return release_overdue(game_id)
+    return True
 
 
 def reset_game(
@@ -204,6 +399,7 @@ def reset_game(
         players = known_players(game_id)
     else:
         players = []
+    _cancel_release_timer(game_id)
     covered: dict[str, Any] = {
         "game_id": game_id,
         "players": players,
@@ -249,4 +445,10 @@ def _note(covered: dict[str, Any], reason: str) -> str:
     )
 
 
-__all__ = ["reset_game", "retire_game"]
+__all__ = [
+    "POSTGAME_RELEASE_SECONDS",
+    "post_game_work",
+    "release_overdue",
+    "reset_game",
+    "retire_game",
+]
