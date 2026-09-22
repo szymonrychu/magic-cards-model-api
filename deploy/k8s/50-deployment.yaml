@@ -125,13 +125,14 @@ spec:
             # The one server-side config for what an AI seat plays as
             # (`agent_settings.AgentSettings.default`) - 2026-09-19, owner
             # direction, cost cutting: Sonnet at high effort, for an AI seat
-            # and a buddy alike. No request may choose anything else any
+            # and a buddy alike. 2026-09-22, owner: prod playtesting plays on
+            # Opus instead; the code default (`DEFAULT_MODEL`) stays Sonnet. No request may choose anything else any
             # more (`decks_api.NewUiPlayer` carries no `agent`/`buddy_agent`
             # field). The post-game review is a separate, fixed choice
             # (`claude-opus-5` at `high`, `AgentSettings.review_default`)
             # that does not read either of these.
             - name: AGENT_DEFAULT_MODEL
-              value: claude-sonnet-5
+              value: claude-opus-5
             - name: AGENT_DEFAULT_EFFORT
               value: high
             - name: AGENT_NAMESPACE
