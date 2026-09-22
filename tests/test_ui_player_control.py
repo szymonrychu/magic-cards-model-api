@@ -253,3 +253,41 @@ def test_a_row_taken_for_another_player_says_so_in_the_menu():
     ]
     enriched = run_module("menus.js", "m.enrichItems(i, r)", i=items, r=rows)
     assert "claude" in enriched[0]["sublabel"]
+
+
+# -- the controlled player's hand (CR 723.4 shows it, CR 723.5 plays it) ------
+
+CLAUDE_BOLT = {"id": "bolt", "name": "Lightning Bolt", "owner": "claude", "zone": "hand"}
+CLAUDE_LAND = {"id": "island", "name": "Island", "owner": "claude", "zone": "hand"}
+
+
+def test_the_controlled_players_hand_is_the_controllers_to_play_from():
+    state = controlling(hands={"you": [], "claude": [CLAUDE_BOLT, CLAUDE_LAND]})
+    hand = run_module("control.js", "m.controlledHand(s, 'claude')", s=state)
+    assert [c["id"] for c in hand] == ["bolt", "island"]
+
+
+def test_nobody_elses_hand_is_offered_without_control():
+    state = controlling(
+        hands={"you": [], "claude": [CLAUDE_BOLT]},
+        player_control={},
+        players=[
+            {"username": "you", "decisions_made_by": None},
+            {"username": "claude", "decisions_made_by": None},
+        ],
+    )
+    assert run_module("control.js", "m.controlledHand(s, 'claude')", s=state) == []
+
+
+def test_a_card_played_for_another_player_says_so_in_its_menu():
+    state = controlling(hands={"you": [], "claude": [CLAUDE_BOLT]})
+    assert run_module("control.js", "m.actingForCard(s, c)", s=state, c=CLAUDE_BOLT) == "claude"
+    items = run_module(
+        "menus.js", "m.handMenuItems({kind: 'cast'}, c, 'claude')", c=CLAUDE_BOLT
+    )
+    assert items and all(item["sublabel"].endswith("for claude") for item in items), items
+
+
+def test_a_card_of_your_own_carries_no_acting_for():
+    mine = {"id": "elfcard", "name": "Llanowar Elves", "owner": "you", "zone": "hand"}
+    assert run_module("control.js", "m.actingForCard(s, c)", s=controlling(), c=mine) is None

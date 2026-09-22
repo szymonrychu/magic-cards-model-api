@@ -12,7 +12,13 @@
 // this file has exactly one place that decides it rather than the decision
 // living twice (once for real, once reimplemented for a test).
 
-import { actingAs, decidesFor, decisionIsMine, holdsPriority as seatHoldsPriority } from "./control.js";
+import {
+  actingAs,
+  actingForCard,
+  decidesFor,
+  decisionIsMine,
+  holdsPriority as seatHoldsPriority,
+} from "./control.js";
 import { api, withUid } from "./api.js";
 import { createStore, installPressGuard } from "./store.js";
 import { loadSymbols } from "./symbols.js";
@@ -1094,7 +1100,8 @@ export async function onHandCard(card, event) {
   if (plan.kind === "target") return tryTarget(plan.id);
   // `land`, `cast` and `menu` all reach the same menu: `handMenuItems` gives
   // the first two a single Play or Cast item, which is the confirm.
-  return openActionMenu(card, event, M.handMenuItems(plan, card), (key) => {
+  const actingFor = actingForCard(app.state, card);
+  return openActionMenu(card, event, M.handMenuItems(plan, card, actingFor), (key) => {
     if (key === "play") return playLand(card);
     if (key === "cast") return beginCast(card);
     // CR 709.3/CR 715.3: `cast:<face>` is the half the player picked, keyed

@@ -29,7 +29,7 @@
 // `decisionTargets` instead - never both at once, since only one of the two
 // is ever live for this seat.
 
-import { decisionIsMine } from "../control.js";
+import { controlledHand, decisionIsMine } from "../control.js";
 import { cardNode, updateCardNode, cardBackNode } from "../cards.js";
 import { boardLayout, seatRows, zoneRibbon } from "../board_layout.js";
 import { h, patchChildren, clear, setText } from "../dom.js";
@@ -611,17 +611,25 @@ export function mountBoard(root, store, handlers) {
     const you = state.you;
     const me = state.players.find((p) => p.username === you);
     const opp = state.players.find((p) => p.username !== you);
-    patchChildren(
-      els.oppHand,
-      opponentHandItems(state, opp),
-      (item) => item.key,
-      (item) => (item.card ? cardNode(item.card, FIT, {}) : cardBackNode()),
-      (el, item) => {
-        if (!item.card) return;
-        updateCardNode(el, item.card, {});
-        el.classList.add("card--known");
-      }
-    );
+    // CR 723.4/723.5: while this seat decides for the opponent, their hand
+    // is shown to it and is its to play from, through the same click a card
+    // in its own hand gets (the api takes the action as theirs).
+    const controlled = controlledHand(state, opp.username);
+    if (controlled.length) {
+      patchCards(els.oppHand, controlled, app, FIT, handlers.onHandCard);
+    } else {
+      patchChildren(
+        els.oppHand,
+        opponentHandItems(state, opp),
+        (item) => item.key,
+        (item) => (item.card ? cardNode(item.card, FIT, {}) : cardBackNode()),
+        (el, item) => {
+          if (!item.card) return;
+          updateCardNode(el, item.card, {});
+          el.classList.add("card--known");
+        }
+      );
+    }
     // Lands nearest their own controller, everything else in the row further
     // from them - so `#opp-lands` sits directly under the opponent's hand at
     // the top and `#my-lands` directly above your own hand at the bottom,

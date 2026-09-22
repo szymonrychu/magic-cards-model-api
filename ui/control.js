@@ -55,3 +55,19 @@ export function actingAs(state) {
   if (holdsPriority(state)) return state.priority_holder;
   return state ? state.you : null;
 }
+
+/** `player`'s hand as this viewer may play from it: the cards CR 723.4 shows
+ * a controller, while it is deciding for `player` (CR 723.5); `[]` otherwise,
+ * including for the viewer's own hand, which the board draws as it always has. */
+export function controlledHand(state, player) {
+  if (!state || player === state.you || !decidesFor(state).has(player)) return [];
+  return (state.hands && state.hands[player]) || [];
+}
+
+/** The player a hand card is played for when that is somebody this viewer is
+ * deciding for, not itself - or `null`. */
+export function actingForCard(state, card) {
+  const owner = card && (card.owner || card.controller);
+  if (!owner || owner === state.you || !decidesFor(state).has(owner)) return null;
+  return owner;
+}

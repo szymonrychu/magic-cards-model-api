@@ -189,7 +189,17 @@ function abilityItem(prefix, ability, match) {
  * enumeration (`plot`, `foretell`, `suspend`), so the match needs no table.
  * Cycling is an `activate_off_zone`, and its `ability_index` is the one the
  * board view printed on the offer. */
-export function handMenuItems(plan, card) {
+export function handMenuItems(plan, card, actingFor) {
+  const items = ownHandMenuItems(plan, card);
+  if (!actingFor) return items;
+  // CR 723.5: the card is another player's, played by this seat for them.
+  return items.map((entry) => ({
+    ...entry,
+    sublabel: entry.sublabel ? `${entry.sublabel} - for ${actingFor}` : `for ${actingFor}`,
+  }));
+}
+
+function ownHandMenuItems(plan, card) {
   const specialActions = (card && card.special_actions) || {};
   const cardId = card && card.id;
   const match = (kind, abilityIndex, extra) =>
