@@ -426,11 +426,11 @@ async def authorize_game_access(request: Request, game_id: str) -> None:
             raise HTTPException(status_code=403, detail=reason)
 
 
-#: The mutating routes whose subject is a player, and how to find that player:
-#: the JSON body's `player`, or the controller of the card the path names.
-#: Every other mutating route attributes itself from the credential already
-#: (`report`, `plan`, `advice`, `decide`, `attack`, `declare-blockers`, the
-#: pregame and script routes) or has no player at all.
+#: The mutating routes a seat acts through, whose subject is the JSON body's
+#: `player`. Every other mutating route either attributes itself from the
+#: credential already (`report`, `plan`, `advice`, `decide`, `attack`,
+#: `declare-blockers`, the pregame and script routes) or is board setup
+#: (`_BOARD_SETUP_ROUTES`).
 _BODY_PLAYER_ROUTES = frozenset(
     f"/api/games/{{game_id}}/{rest}"
     for rest in (
@@ -446,32 +446,44 @@ _BODY_PLAYER_ROUTES = frozenset(
         "actions/pass-priority",
         "actions/concede",
         "advance",
-        "resolve-top",
-        "state-based-actions",
-        "step",
-        "cards",
     )
 )
-_CARD_ROUTES = frozenset(
+#: Board setup and harness routes: no rules, no priority check, and no seat
+#: client (the play UI, seatkit, the MCP tools, `mcp-seat`, the baseline
+#: seat, the play-script runtime, the driver) calls any of them. They are
+#: the operator's and the test harness's - the admin key or the owner - and
+#: never a seat's: CR 723.5 hands a controller the controlled player's
+#: decisions, never an edit of the board (a life total set to 0 would be a
+#: concession CR 723.6 forbids).
+_BOARD_SETUP_ROUTES = frozenset(
     {
+        "/api/games/{game_id}/cards",
         "/api/games/{game_id}/cards/{card_id}",
         "/api/games/{game_id}/cards/{card_id}/tap",
         "/api/games/{game_id}/cards/{card_id}/move",
-    }
-)
-_PLAYER_PATH_ROUTES = frozenset(
-    {
         "/api/games/{game_id}/players/{username}",
         "/api/games/{game_id}/players/{username}/mana-pool",
+        "/api/games/{game_id}/step",
+        "/api/games/{game_id}/state-based-actions",
     }
 )
+#: Resolving the top of the stack as though every player had passed: no seat
+#: client sends it, but a seat may, only while the priority it acts on is
+#: its own to decide (CR 723.5) - never with no body standing in for a seat.
+_RESOLVE_TOP_ROUTE = "/api/games/{game_id}/resolve-top"
 _CONCEDE_ROUTE = "/api/games/{game_id}/actions/concede"
+#: Minting a seat credential: only ever for the minting seat's own player.
+_MINT_ROUTE = "/api/games/{game_id}/seats"
 
 
 def _card_holder(game: Any, card_id: str) -> str | None:
-    """Whose card this is for a seat binding: a permanent's controller, else
-    whoever's zone holds it, else its owner."""
+    """Whose card this is: a permanent's (or a stack object's) controller,
+    otherwise the player whose zone holds it (`player_control._owner_of`) -
+    a stored controller outlives zone changes, so it names nobody off the
+    battlefield and the stack."""
     from uuid import UUID
+
+    from . import player_control
 
     try:
         card = game.find_by_id(UUID(card_id))
@@ -479,21 +491,23 @@ def _card_holder(game: Any, card_id: str) -> str | None:
         return None
     if card is None:
         return None
-    if card.controller:
-        return str(card.controller)
-    found = game.find_owner(card)
-    return found.username if found is not None else card.owner
+    from magic_cards_model.models import Zone
+
+    if any(state is card for state in game.shared_zones.get(Zone.STACK, [])):
+        return str(card.controller) if card.controller else card.owner
+    return player_control._owner_of(game, card)
 
 
 async def _seat_mismatch(request: Request, game_id: str) -> str | None:
-    """Why this seat uid may not act for the player its request names, or None.
+    """Why this seat uid may not make this request, or None.
 
     A seat uid acts for its own player, or - CR 723.5 - for a player it is
-    making the decisions of this turn. The admin key and a caller that
-    presents no seat uid at all (the owner's bearer token) are left to the
-    access gate above. Conceding is the one decision a controller never
-    makes: CR 723.6, "The controller of another player can't make that
-    player concede." """
+    making the decisions of this turn. It never edits the board
+    (`_BOARD_SETUP_ROUTES`) and mints a credential only for its own player.
+    The admin key and a caller that presents no seat uid at all (the owner's
+    bearer token) are left to the access gate above. Conceding is the one
+    decision a controller never makes: CR 723.6, "The controller of another
+    player can't make that player concede." """
     template = _route_template(request)
     if template is None:
         return None
@@ -503,20 +517,31 @@ async def _seat_mismatch(request: Request, game_id: str) -> str | None:
     seat = seat_for_uid(game_id, uid)
     if seat is None:
         return None
-    subject: str | None = None
-    if template in _BODY_PLAYER_ROUTES:
-        body = await _json_body(request)
-        player = body.get("player") if body is not None else None
-        subject = player if isinstance(player, str) else None
-    elif template in _PLAYER_PATH_ROUTES:
-        subject = request.path_params.get("username")
-    elif template in _CARD_ROUTES:
+    if template == _RESOLVE_TOP_ROUTE:
+        from . import player_control
+
         game = store.get(game_id)
-        card_id = request.path_params.get("card_id")
-        if game is not None and card_id is not None:
-            subject = _card_holder(game, str(card_id))
+        holder = game.priority_holder if game is not None else None
+        if holder is not None and player_control.may_decide_for(game, seat, holder):
+            return None
+        return (
+            f"that uid opens {seat}'s seat, and {seat} does not hold the priority this "
+            "would pass - resolve-top is a seat's only while it decides that priority"
+        )
+    if template in _BOARD_SETUP_ROUTES:
+        return (
+            f"that uid opens {seat}'s seat, and this route edits the board directly - "
+            "it takes the game's admin key or its owner, never a seat"
+        )
+    if template not in _BODY_PLAYER_ROUTES and template != _MINT_ROUTE:
+        return None
+    body = await _json_body(request)
+    player = body.get("player") if body is not None else None
+    subject = player if isinstance(player, str) else None
     if subject is None or subject == seat:
         return None
+    if template == _MINT_ROUTE:
+        return f"that uid opens {seat}'s seat, and a seat mints a credential only for itself"
     from . import player_control
 
     game = store.get(game_id)

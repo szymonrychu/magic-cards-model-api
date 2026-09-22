@@ -896,9 +896,19 @@ def _run_command(
             # whose answer changed in between is refused rather than run as a
             # player the caller no longer decides for.
             sent, uid = acting
-            now, reason = player_control.acting_as(
-                game, kind, sent, game_access.seat_for_uid(game_id, uid)
-            )
+            seat = game_access.seat_for_uid(game_id, uid)
+            named = getattr(sent, "player", None)
+            if (
+                seat is not None
+                and named
+                and named != seat
+                and not player_control.may_decide_for(game, seat, named)
+            ):
+                raise ValueError(
+                    f"{seat} is no longer making {named}'s decisions - the effect ended "
+                    "at the turn boundary (CR 723.1); read the board and act again"
+                )
+            now, reason = player_control.acting_as(game, kind, sent, seat)
             if reason is not None or getattr(now, "player", None) != getattr(
                 request, "player", None
             ):
@@ -3043,6 +3053,7 @@ def action_pass_priority(
     otherwise, is allowed to move."""
     # A controller passing a controlled player's priority by that player's
     # name is the controller's own pass to the engine (CR 723.5).
+    sent = req
     req, _ = _acting_as(game_id, "pass_priority", "pass_priority", req, uid)
     # `pass_shaped=True`: this is the one action whose stated reason is
     # always the same sentence, and `seatkit.pass_until` posts to this very
@@ -3060,7 +3071,9 @@ def action_pass_priority(
     # should be able to check against a plan that was declared before it.
     records.require_plan(game_id, req.player, pass_shaped=True)
     try:
-        result, _, legal_before, seq_hint = _run_command(game_id, "pass_priority", req)
+        result, _, legal_before, seq_hint = _run_command(
+            game_id, "pass_priority", req, acting=(sent, uid)
+        )
     except ValueError as exc:  # not this player's decision to make
         # No `_run_command` attempt ever ran (the engine refused before
         # `commands.run_command` returned), so there is no `game` handed
@@ -3330,6 +3343,7 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     `pending_decision`, answerable through `POST .../decide` or its
     `actions/attack`/`actions/declare-blockers` aliases.
     """
+    sent = req
     req, _ = _acting_as(game_id, "advance", "advance", req, uid)
     records.require_current_board(
         game_id, "advance", req.expected_seq, player=req.player, reasoning=req.reasoning
@@ -3337,7 +3351,9 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     try:
-        result, committed, legal_before, seq_hint = _run_command(game_id, "advance", req)
+        result, committed, legal_before, seq_hint = _run_command(
+            game_id, "advance", req, acting=(sent, uid)
+        )
     except ValueError as exc:  # the engine's own refusal text
         # No `_run_command` attempt ever ran - fetched fresh, exactly as it
         # stood the instant this request was refused.

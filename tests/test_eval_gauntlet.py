@@ -255,46 +255,59 @@ def in_process(client, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.no_harness_credential
-def test_minting_a_seat_presents_the_credential_the_gate_requires(in_process, game) -> None:
-    """`POST /api/games/{id}/seats` is a mutating call on a `{game_id}` route,
-    so `game_access.can_access_game` requires a credential *for that game* -
-    a seat uid, the admin key, or the owner's bearer token. This caller
-    presented none, so the back door this harness is documented to rely on
-    answered 404 and `raise_for_status` aborted the whole run.
-    `tests/test_mutation_needs_a_credential.py` pins that refusal
-    deliberately; the refusal is right and the caller was wrong.
-
-    Any one seat uid opens the game (`seat_for_uid`), and this harness holds
-    them: `serve` prints them before uvicorn accepts a request.
-    """
+def test_minting_a_seat_presents_the_admin_key_serve_printed(in_process, game) -> None:
+    """`POST /api/games/{id}/seats` mints a credential for a player: the
+    game's admin key may mint for anyone, and a seat uid only for its own
+    player (`game_access._seat_mismatch`) - so this harness mints with the
+    admin key `serve` prints for the operator."""
     from magic_cards_model_api.store import store
 
-    alice_uid = next(uid for uid, name in store.seat_uids(game).items() if name == "alice")
-
-    minted = eval_gauntlet.mint_seat("http://in-process", game, "bob", alice_uid)
+    minted = eval_gauntlet.mint_seat("http://in-process", game, "bob", key=store.admin_key(game))
 
     assert store.player_for_uid(game, minted) == "bob"
-    assert minted != alice_uid
 
 
 @pytest.mark.no_harness_credential
-def test_a_printed_block_that_lost_a_uid_is_minted_with_one_this_run_holds(
-    in_process, game
-) -> None:
+def test_a_seat_uid_cannot_mint_another_players_seat(in_process, game) -> None:
+    from magic_cards_model_api.store import store
+
+    alice_uid = next(uid for uid, name in store.seat_uids(game).items() if name == "alice")
+    with pytest.raises(Exception, match="403") as refused:
+        eval_gauntlet.mint_seat("http://in-process", game, "bob", uid=alice_uid)
+    assert "403" in str(refused.value)
+
+
+@pytest.mark.no_harness_credential
+def test_a_printed_block_that_lost_a_uid_is_minted_with_the_admin_key(in_process, game) -> None:
     """The fallback exists because `_SEAT_UID` reads a console block and a
-    reworded block stops matching - so it has to work when it is reached.
-    Any one seat uid opens the game for the gate, and one is what `serve`
-    printed."""
+    reworded block stops matching - so it has to work when it is reached,
+    with the admin key `serve` printed beside the uids."""
     from magic_cards_model_api.store import store
 
     alice_uid = next(uid for uid, name in store.seat_uids(game).items() if name == "alice")
 
     uids = eval_gauntlet.resolve_uids(
-        "http://in-process", game, ["alice", "bob"], {"alice": alice_uid}
+        "http://in-process",
+        game,
+        ["alice", "bob"],
+        {"alice": alice_uid},
+        admin_key=store.admin_key(game),
     )
 
     assert uids["alice"] == alice_uid
     assert store.player_for_uid(game, uids["bob"]) == "bob"
+
+
+def test_it_reads_the_admin_key_out_of_the_servers_summary(tmp_path: Path) -> None:
+    log = tmp_path / "server.log"
+    log.write_text(
+        "game 635713ddc45a4ecf9913ba0761dbb502 ready: agent vs baseline\n"
+        "  admin key (operator only - mints seats): k3y\n"
+        "  seat uids (one per player, given out at dispatch):\n"
+        "    agent: e2777c44449b4e71b360ac9c780d6eb5\n"
+    )
+    assert eval_gauntlet.booted_admin_keys(log) == {"635713ddc45a4ecf9913ba0761dbb502": "k3y"}
+    assert eval_gauntlet.booted_games(log)[0][1] == {"agent": "e2777c44449b4e71b360ac9c780d6eb5"}
 
 
 @pytest.mark.no_harness_credential
@@ -306,7 +319,7 @@ def test_a_printed_block_with_no_uid_at_all_is_a_loud_refusal(in_process, game) 
     with pytest.raises(SystemExit) as refused:
         eval_gauntlet.resolve_uids("http://in-process", game, ["alice", "bob"], {})
 
-    assert "seat uid" in str(refused.value)
+    assert "admin key" in str(refused.value)
     assert game in str(refused.value)
 
 

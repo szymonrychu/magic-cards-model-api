@@ -70,6 +70,10 @@ class Boot:
     deck_paths: dict[str, str]
     seat_uids: dict[str, str]
     """username -> seat uid: hand one to whoever is dispatched as that player."""
+    admin_key: str | None = None
+    """The game's admin key: the operator's own credential, and the only one
+    that mints a seat for a player whose uid went missing - a seat uid mints
+    only for its own player (`game_access._seat_mismatch`)."""
 
     def summary(self) -> str:
         """The one console block: players, deck sizes, seed, hands, first
@@ -96,6 +100,8 @@ class Boot:
             f"  first player: {game.turn.active_player} "
             f"(turn {game.turn.turn_number}, {game.turn.step.value} step)"
         )
+        if self.admin_key:
+            lines.append(f"  admin key (operator only - mints seats): {self.admin_key}")
         lines.append("  seat uids (one per player, given out at dispatch):")
         for username, uid in self.seat_uids.items():
             lines.append(f"    {username}: {uid}")
@@ -248,6 +254,7 @@ def _boot_from_spec(spec: MatchSpec, *, check_legality: bool) -> Boot:
         game=game,
         deck_paths={name: path for name, path, _ in specs},
         seat_uids={name: uid for uid, name in uids.items()},
+        admin_key=store.admin_key(game_id),
     )
     _record_boot_events(boot)
     return boot

@@ -276,6 +276,19 @@ def _tail(path: Path, lines: int = 40) -> str:
 #: it: which game it booted, and the uid it handed each player.
 _READY = re.compile(r"^game ([0-9a-f]{32}) ready:", re.MULTILINE)
 _SEAT_UID = re.compile(r"^    (\S+): ([0-9a-f]{32})$", re.MULTILINE)
+_ADMIN_KEY = re.compile(r"^  admin key \(operator only[^)]*\): (\S+)$", re.MULTILINE)
+
+
+def booted_admin_keys(log_path: Path) -> dict[str, str]:
+    """Each game's admin key, as `serve`'s summary block printed it - the one
+    credential that mints a seat for a player whose uid went missing."""
+    blocks = _READY.split(log_path.read_text())
+    keys: dict[str, str] = {}
+    for index in range(1, len(blocks) - 1, 2):
+        found = _ADMIN_KEY.search(blocks[index + 1])
+        if found:
+            keys[blocks[index]] = found.group(1)
+    return keys
 
 
 def booted_games(log_path: Path) -> list[tuple[str, dict[str, str]]]:
@@ -300,35 +313,33 @@ def booted_games(log_path: Path) -> list[tuple[str, dict[str, str]]]:
     return found
 
 
-def mint_seat(api: str, game_id: str, player: str, credential: str) -> str:
-    """A seat credential for `player`, from the api's own back door,
-    presenting `credential` as this caller's own way in.
+def mint_seat(
+    api: str, game_id: str, player: str, *, key: str | None = None, uid: str | None = None
+) -> str:
+    """A seat credential for `player`, from the api's own back door.
 
-    `POST /api/games/{id}/seats` is a mutating call on a `{game_id}` route,
-    so `game_access.can_access_game` requires a credential *for that game*:
-    a uid that opens one of its seats, its admin key, or a bearer token
-    naming its owner. Presenting none - which is what this did - is a 404
-    indistinguishable from the game never existing, and
-    `response.raise_for_status()` then aborted the whole run.
-    `tests/test_mutation_needs_a_credential.py` pins that refusal
-    deliberately (an unrestricted seat credential minted for a caller who
-    proved nothing is the privilege escalation it closes), so the refusal is
-    right and this caller was the thing that was wrong.
-
-    Any one seat uid of the game is enough (`game_access.seat_for_uid`) - a
-    seat's authority is not per-route - and seat uids are exactly what this
-    harness holds: `serve` prints them before uvicorn accepts a request.
+    `POST /api/games/{id}/seats` mints for any player only with the game's
+    admin key (`key`); a seat uid mints only for its own player
+    (`game_access._seat_mismatch` - a seat that could mint any player's
+    credential could act as them). `serve` prints the admin key for exactly
+    this; a refusal raises `httpx.HTTPStatusError`.
     """
+    params = {"key": key} if key else {"uid": uid} if uid else {}
     with httpx.Client(base_url=api, timeout=30.0) as client:
         response = client.post(
-            f"/api/games/{game_id}/seats", json={"player": player}, params={"uid": credential}
+            f"/api/games/{game_id}/seats", json={"player": player}, params=params
         )
         response.raise_for_status()
         return str(response.json()["uid"])
 
 
 def resolve_uids(
-    api: str, game_id: str, players: list[str], printed_uids: dict[str, str]
+    api: str,
+    game_id: str,
+    players: list[str],
+    printed_uids: dict[str, str],
+    *,
+    admin_key: str | None = None,
 ) -> dict[str, str]:
     """Every player's seat uid for `game_id`: what `serve` printed, plus a
     freshly minted one for anything its block did not carry.
@@ -348,18 +359,17 @@ def resolve_uids(
     missing = [name for name in players if name not in uids]
     if not missing:
         return uids
-    credential = next(iter(uids.values()), None)
-    if credential is None:
+    if admin_key is None:
         raise SystemExit(
             f"eval:gauntlet: `serve`'s console block for game {game_id} carried no seat "
-            f"uid at all (wanted one for each of {players}), so there is nothing to mint "
-            f"the missing ones with: POST /api/games/{{id}}/seats requires a seat uid, "
-            f"the game's admin key, or the game's owner token, and this harness holds "
-            f"only seat uids. Read `serve`'s console: either the summary block was "
-            f"reworded (fix `_SEAT_UID`) or the games did not boot."
+            f"uid for {missing} and no admin key, so there is nothing to mint them with: "
+            f"POST /api/games/{{id}}/seats mints another player's seat only with the "
+            f"game's admin key (a seat uid mints only its own). Read `serve`'s console: "
+            f"either the summary block was reworded (fix `_SEAT_UID`/`_ADMIN_KEY`) or the "
+            f"games did not boot."
         )
     for name in missing:
-        uids[name] = mint_seat(api, game_id, name, credential)
+        uids[name] = mint_seat(api, game_id, name, key=admin_key)
     return uids
 
 
@@ -533,8 +543,11 @@ def run(args: argparse.Namespace) -> int:
                 f"{len(games)}. Its console:\n{_tail(log_path)}"
             )
         seam = HttpSeatApiClient(api)
+        admin_keys = booted_admin_keys(log_path)
         for game_id, printed_uids in games:
-            uids = resolve_uids(api, game_id, players, printed_uids)
+            uids = resolve_uids(
+                api, game_id, players, printed_uids, admin_key=admin_keys.get(game_id)
+            )
             # Any one seat's uid is enough to archive this game later
             # (`DELETE /api/games/{id}` accepts either seat's credential) -
             # this is not a per-seat action, just a way in the door.

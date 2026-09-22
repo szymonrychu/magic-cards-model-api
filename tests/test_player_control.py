@@ -556,7 +556,7 @@ def test_a_seat_naming_another_player_is_refused_on_every_action_route(client, g
     for path, body in attempts:
         response = raw_post(client, game, path, body, bob)
         assert response.status_code == 403, (path, response.status_code, response.text)
-        assert "alice" in response.json()["detail"], (path, response.text)
+        assert "seat" in response.json()["detail"], (path, response.text)
     assert state(client, game)["winner"] is None
 
 
@@ -721,3 +721,98 @@ def test_the_controller_sees_none_of_the_controlled_players_memory_of_a_third():
     assert [c["id"] for c in seen["hand"]] == ["bobs-own"]
     assert [r["card"]["id"] for r in seen["library"]] == ["bobs-top"]
     assert seen["sideboard"] == []
+
+
+# -- security review of the seat binding ---------------------------------------
+
+
+def test_a_seat_mints_a_credential_only_for_its_own_player(client, game, admin_key):
+    alice, bob = uids(game)["alice"], uids(game)["bob"]
+    stolen = client.post(f"/api/games/{game}/seats", params={"uid": bob}, json={"player": "alice"})
+    assert stolen.status_code == 403, stolen.text
+    own = client.post(f"/api/games/{game}/seats", params={"uid": alice}, json={"player": "alice"})
+    assert own.status_code == 200 and own.json()["player"] == "alice", own.text
+    admin = client.post(
+        f"/api/games/{game}/seats", params={"key": admin_key}, json={"player": "bob"}
+    )
+    assert admin.status_code == 200, admin.text
+
+
+def test_a_controller_cannot_mint_for_the_controlled_player(client, game):
+    into_bobs_controlled_turn(client, game)
+    response = client.post(
+        f"/api/games/{game}/seats", params={"uid": uids(game)["alice"]}, json={"player": "bob"}
+    )
+    assert response.status_code == 403, response.text
+
+
+def test_board_setup_routes_refuse_every_seat_uid(client, game, admin_key):
+    """No seat client edits the board: those routes are the harness's and the
+    operator's. A controller in particular may not zero the controlled
+    player's life (CR 723.6 keeps conceding theirs; CR 723.5 hands over
+    decisions, not the board)."""
+    into_bobs_controlled_turn(client, game)
+    card = add_card(client, game, "Forest", "bob", "battlefield")["added"]["card_id"]
+    for seat in ("alice", "bob"):
+        uid = uids(game)[seat]
+        attempts = [
+            ("patch", "players/bob", {"life": 0}),
+            ("put", "players/bob/mana-pool", {"add": {"G": 1}}),
+            ("post", f"cards/{card}/tap", {"tapped": True}),
+            ("post", f"cards/{card}/move", {"to_zone": "graveyard"}),
+            ("patch", f"cards/{card}", {"tapped": True}),
+            ("post", "cards", {"card": "Island", "player": seat, "zone": "hand"}),
+            ("put", "step", {"step": "end_step", "player": seat}),
+            ("post", "state-based-actions", None),
+        ]
+        for method, path, body in attempts:
+            response = getattr(client, method)(
+                f"/api/games/{game}/{path}", params={"uid": uid}, json=body
+            )
+            assert response.status_code == 403, (seat, method, path, response.text)
+    # resolve-top: alice decides bob's held priority (CR 723.5), bob does not.
+    refused = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids(game)["bob"]})
+    assert refused.status_code == 403, refused.text
+    assert player_block(state(client, game), "bob")["life"] == 20
+    admin = client.patch(
+        f"/api/games/{game}/players/bob", params={"key": admin_key}, json={"life": 19}
+    )
+    assert admin.status_code == 200, admin.text
+
+
+def test_control_ended_before_the_lock_refuses_the_controllers_pass(client, game, monkeypatch):
+    """CR 723.1: once the effect has ended, alice is not bob's decider. The
+    pass she sent in bob's name is re-checked under the lock and refused."""
+    from magic_cards_model_api import player_control
+
+    into_bobs_controlled_turn(client, game)
+    real = player_control.may_decide_for
+    calls = {"n": 0}
+
+    def ended(game_obj, seat, player):
+        calls["n"] += 1
+        return real(game_obj, seat, player) if calls["n"] == 1 else False
+
+    monkeypatch.setattr(player_control, "may_decide_for", ended)
+    response = raw_post(
+        client, game, "actions/pass-priority", {"player": "bob"}, uids(game)["alice"]
+    )
+    assert response.json()["allowed"] is False, response.text
+    assert "CR 723.1" in response.json()["reason"]
+    assert state(client, game)["priority_holder"] == "bob"
+
+
+def test_a_card_in_a_graveyard_is_held_by_that_graveyards_player(client, game):
+    """A stored controller outlives zone changes; only on the battlefield or
+    the stack does it name who holds the card."""
+    from uuid import UUID
+
+    from magic_cards_model_api import game_access
+
+    card = add_card(client, game, "Lightning Bolt", "alice", "graveyard")["added"]["card_id"]
+    live = store.get(game)
+    assert live is not None
+    stale = live.find_by_id(UUID(card))
+    assert stale is not None
+    stale.stored_controller = "bob"  # left over from bob casting it
+    assert game_access._card_holder(live, card) == "alice"

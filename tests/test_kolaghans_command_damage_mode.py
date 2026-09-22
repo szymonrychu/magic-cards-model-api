@@ -63,7 +63,9 @@ def test_the_damage_mode_renders_and_deals_its_damage(client, game):
     assert cast.status_code == 200, cast.text
     assert cast.json()["allowed"] is True, cast.json()
 
-    resolved = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["bob"]}).json()
+    # alice holds priority after her cast: resolve-top is a seat's only while it
+    # holds the priority it passes (`game_access._seat_mismatch`).
+    resolved = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]}).json()
     assert resolved.get("paused") is True, resolved
     discard = client.post(
         f"/api/games/{game}/decide",

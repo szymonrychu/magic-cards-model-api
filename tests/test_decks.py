@@ -254,5 +254,11 @@ def test_setup_boots_the_game_into_the_store(tmp_path) -> None:
         assert boot.game_id in summary
         assert "seed: 7" in summary
         assert "p1" in summary and "p2" in summary
+        # The operator's own credential: the only one that mints a seat for
+        # a player whose uid went missing (`scripts/eval_gauntlet.py`).
+        assert (
+            f"admin key (operator only - mints seats): {serve.store.admin_key(boot.game_id)}"
+            in summary
+        )
     finally:
         serve.store.delete(boot.game_id)

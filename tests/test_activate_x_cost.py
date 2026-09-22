@@ -89,9 +89,15 @@ def stock_fiend_artisan_board(client: TestClient, game_id: str) -> dict[str, Any
 
 
 def resolve_the_tutor(client: TestClient, game_id: str, uid: str) -> dict[str, Any]:
-    resolved = client.post(f"/api/games/{game_id}/resolve-top", params={"uid": uid})
+    # resolve-top is a seat's only while it holds the priority it passes
+    # (`game_access._seat_mismatch`): after a tool that auto-passed, that is
+    # the other seat, so the call goes out as whoever holds it now.
+    # The question itself is read back as `uid`, the seat it is addressed to.
+    holder = store.get(game_id).priority_holder
+    resolver = next((u for u, name in store.seat_uids(game_id).items() if name == holder), uid)
+    resolved = client.post(f"/api/games/{game_id}/resolve-top", params={"uid": resolver})
     assert resolved.status_code == 200, resolved.text
-    return resolved.json()
+    return {**resolved.json(), "pending_decision": state(client, game_id, uid)["pending_decision"]}
 
 
 def find_the_search(pending: dict[str, Any], name: str) -> list[str]:

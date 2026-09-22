@@ -420,7 +420,10 @@ def test_cascade_hit_with_modes_and_targets_announced_during_resolution(client, 
     assert mid["exile"] == []
     assert mid["play_permissions"]["alice"] == []
 
-    resolved_command = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["bob"]})
+    # The priority holder resolves it: resolve-top is a seat's only while it
+    # holds the priority it passes (`game_access._seat_mismatch`).
+    holder = client.get(f"/api/games/{game}").json()["priority_holder"]
+    resolved_command = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids[holder]})
     resolved_body = resolved_command.json()
     assert resolved_body.get("paused") is True, (
         "bob has one card, but Kolaghan's Command still asks which to discard"
