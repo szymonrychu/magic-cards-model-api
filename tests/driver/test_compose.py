@@ -359,3 +359,16 @@ def test_the_agent_image_owns_guides_so_guides_init_can_clone_into_the_named_vol
     creates = [step for step in run_steps if re.search(r"mkdir -p[^&]*\s/guides\b", step)]
     assert creates, "Dockerfile.agent never creates /guides before USER agent"
     assert re.search(r"chown -R agent:agent[^&]*\s/guides\b", creates[0])
+
+
+def test_the_agent_image_installs_jq() -> None:
+    """The seat shells out to `jq` to pick apart JSON in its own turns
+    (tool output, guide/plan files), so the agent image installs it the
+    same way as the other apt packages on that line - unpinned, alongside
+    curl/git/gnupg, in the one `apt-get install` before `USER agent`."""
+    dockerfile = (ROOT / "Dockerfile.agent").read_text()
+    before_user = dockerfile.split("\nUSER agent", 1)[0]
+    installs = re.findall(r"^\s*&& apt-get install.*$", before_user, flags=re.MULTILINE)
+    assert any(re.search(r"\bjq\b", line) for line in installs), (
+        "Dockerfile.agent never installs jq: " + dockerfile
+    )
