@@ -27,6 +27,10 @@ file and `mcp.py` must agree on it command for command:
 - `activate` holds whenever the ability turned out to be a mana ability,
   because a mana ability never uses the stack (CR 605.3b) - decided on the
   answer, in `seatkit.run_action`, since the command cannot know in advance;
+- `decide` NEVER passes priority: answering a decision is not a priority
+  action (CR 608.2d), so it only checks afterwards, and whoever the engine
+  gave priority to keeps it (CR 117.3c, CR 117.3b) - `seatkit.run_decision`.
+  `--hold` is still accepted there, and changes nothing;
 - everything else releases priority unless `--hold` is given, which is right
   for them: they use the stack, and releasing is how what you just did
   resolves.
@@ -110,6 +114,7 @@ from .seatkit import (
     parse_optional_costs,
     pass_until,
     run_action,
+    run_decision,
     wait_and_arm,
 )
 
@@ -1119,7 +1124,16 @@ def build_parser() -> argparse.ArgumentParser:
             "wrong answer to the current one. Omit it to skip the check"
         ),
     )
-    priority_flag(decide)
+    decide.add_argument(
+        "--hold",
+        action="store_true",
+        help=(
+            "no effect, kept so an old command line still parses: decide never "
+            "passes priority for you. It answers, then checks once; if the "
+            "engine gave you priority (held_priority true) it is still your "
+            "move - respond, or pass yourself with pass / pass-until"
+        ),
+    )
 
     # The two priority verbs, and the only two. CR 117.1 lists what the player
     # with priority may do ("cast spells, activate abilities, and take special
@@ -1807,17 +1821,21 @@ def run(argv: list[str] | None = None) -> int:
             if line:
                 print(line, file=sys.stderr)
 
-        def act(perform: Any, dry_run: bool = False) -> None:
+        def act(perform: Any, dry_run: bool = False, decision: bool = False) -> None:
             """Every non-dry-run action shares this: perform it, then run the
             shared release-and-wait flow, printing the combined answer.
 
             `--hold` forces holding; a special action holds by default under
-            CR 116.3 whether it was asked for or not."""
+            CR 116.3 whether it was asked for or not. `decision=True` is
+            `decide`, which never releases at all (`seatkit.run_decision`)."""
             if dry_run:
                 emit(perform(), indent=1, sort_keys=True)
                 return
-            hold = args.hold or args.command in SPECIAL_ACTIONS
-            result = run_action(seat, perform, hold_priority=hold, reasoning=args.reasoning)
+            if decision:
+                result = run_decision(seat, perform, reasoning=args.reasoning)
+            else:
+                hold = args.hold or args.command in SPECIAL_ACTIONS
+                result = run_action(seat, perform, hold_priority=hold, reasoning=args.reasoning)
             if isinstance(result, dict):
                 state_view = result.get("state")
                 _attach_script_hint(
@@ -2156,7 +2174,7 @@ def run(argv: list[str] | None = None) -> int:
                 return {"allowed": True, **answer} if isinstance(answer, dict) else answer
 
             with locked():
-                act(perform_decide)
+                act(perform_decide, decision=True)
         elif args.command == "mulligan":
             # Deliberately NOT through `act`: the pregame endpoints answer
             # immediately and block on nothing (see `opening.py`), so there is no

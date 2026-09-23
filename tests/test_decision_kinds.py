@@ -2389,7 +2389,7 @@ def test_decide_does_not_echo_the_decision_it_is_answering(client, game, monkeyp
     question that never moved."""
     import httpx
 
-    from magic_cards_model_api.seatkit import Seats, run_action
+    from magic_cards_model_api.seatkit import Seats, run_decision
 
     staged = stage_malevolent_rumble(client, game)
     uids = seats_for(client, game)
@@ -2430,7 +2430,7 @@ def test_decide_does_not_echo_the_decision_it_is_answering(client, game, monkeyp
                 return {"allowed": False, "reason": answer.get("reason"), **answer}
             return {"allowed": True, **answer}
 
-        return run_action(alice, perform, hold_priority=False)
+        return run_decision(alice, perform)
 
     r1 = decide({"player": "alice", "accept": True, "generation": may_generation})
     wake1 = r1.get("wake_reason") or ""
@@ -2462,10 +2462,11 @@ def test_decide_does_not_echo_the_decision_it_is_answering(client, game, monkeyp
     assert s2.get("pending_decision") is None, s2.get("pending_decision")
     hand_names = [c.get("name") for c in (s2.get("hands") or {}).get("alice", [])]
     assert "Wall of Omens" in hand_names, hand_names
-    # Priority released exactly as a fast decide's own final answer does
-    # (`run_action`'s auto-pass, `block_until_wake`'s `held_priority: False`).
-    assert r2["held_priority"] is False, r2
-    assert "pass_outcome" in r2, r2
+    # Exactly as a fast decide's own final answer: no pass posted on alice's
+    # behalf (`run_decision`), and the Rumble finished resolving in alice's
+    # own turn, so CR 117.3b hands her priority.
+    assert r2["held_priority"] is True, r2
+    assert "pass_outcome" not in r2, r2
 
 
 def test_a_genuinely_new_self_decision_from_a_slow_action_is_still_reported(

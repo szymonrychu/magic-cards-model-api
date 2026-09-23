@@ -1,17 +1,20 @@
-"""D16 (battle 1): `decide`'s automatic release never posts a pass the engine
-must refuse.
+"""D16 (battle 1): `decide` never posts a pass the engine must refuse - and,
+since HOLD (2026-09-23), never posts a pass at all.
 
 A decision is asked of whoever the resolving object names, not of whoever
 holds priority. bob answering a question raised while alice holds priority
 used to be followed by `run_action`'s auto-pass on bob's behalf, refused with
 "bob does not have priority, alice does" - an audit row that `eval_report`
 counts as a refusal and folds into `rules_error_rate`, for a pass no seat ever
-chose to make. The release is now attempted only when the seat actually holds
-priority after its action; when it does, the release still happens exactly as
-before.
+chose to make. D16 first limited that release to a seat actually holding
+priority; HOLD removed it from `decide` entirely (`seatkit.run_decision`), so a
+seat that holds priority after answering keeps it until it passes itself
+(CR 117.3d).
 """
 
 from __future__ import annotations
+
+import json
 
 import httpx
 from conftest import add_card, find, state
@@ -77,11 +80,10 @@ def test_a_decision_answered_without_priority_posts_no_refused_pass(
     assert "does not have priority" not in printed, printed
 
 
-def test_a_decision_answered_while_holding_priority_still_releases_it(
-    client, game, monkeypatch, capsys
-):
+def test_a_decision_answered_while_holding_priority_keeps_it(client, game, monkeypatch, capsys):
     """Steam Vents asks alice to pay 2 life as it enters, in her own main
-    phase: she holds priority, so answering without --hold passes it."""
+    phase: playing a land is a special action, so CR 116.3 leaves her with
+    priority afterward, and answering the question posts no pass for her."""
     uids = _uids(game)
     add_card(client, game, "Steam Vents", "alice", "hand")
     vents = state(client, game, uid=uids["alice"])["hands"]["alice"][0]["id"]
@@ -100,6 +102,7 @@ def test_a_decision_answered_while_holding_priority_still_releases_it(
     assert rc == 0, printed
     rows = _pass_rows(client, game, uids["alice"])
     allowed_after = [row for row in rows if row["detail"].get("allowed")]
-    assert len(allowed_after) == len(allowed_before) + 1, rows
+    assert len(allowed_after) == len(allowed_before), rows
     assert _refused(rows) == [], rows
-    assert state(client, game, uid=uids["alice"])["priority_holder"] == "bob"
+    assert state(client, game, uid=uids["alice"])["priority_holder"] == "alice"
+    assert json.loads(printed)["held_priority"] is True, printed

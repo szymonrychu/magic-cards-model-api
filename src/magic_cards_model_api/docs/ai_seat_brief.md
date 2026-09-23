@@ -57,6 +57,19 @@ resolve:
 
 A `cast` is neither, and still releases unless held.
 
+**`decide` never passes priority for you.** Answering a decision is not a
+priority action (CR 608.2d), so `decide` answers, checks once, and posts no
+pass - `--hold` on it changes nothing. Whoever the engine gives priority to
+afterwards has it: after a decision inside your own cast or activation you
+keep it (CR 117.3c), and once a spell or ability finishes resolving the active
+player receives it (CR 117.3b). Read `held_priority` in the answer. `true`
+means it is still your move: respond (the land you just fetched untapped, the
+instant you fetched it for), or pass yourself with `pass` / `pass-until`.
+This is the fix for a real lost game: a seat answered a fetched shockland's
+"pay 2 life" with the opponent's Dismember on the stack, the harness used to
+pass for it, and Dismember resolved before the seat could cast the
+Counterspell it had fetched the mana for.
+
 ## FIRST, before anything else: the pregame (CR 103.5 and CR 103.6)
 
 A game booted from decklists does not start on turn 1. It *rests* in the

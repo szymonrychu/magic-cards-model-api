@@ -44,6 +44,11 @@ seat the rest of its own phase for nothing:
   says which kind it was, so `run_action` holds on the outcome instead - see
   `added_mana`.
 
+Answering a decision is not an action at all (CR 608.2d), and `decide` never
+releases: `run_decision` answers, then only checks, and whoever the engine
+gave priority to keeps it (CR 117.3c, CR 117.3b). The pass is the seat's own
+choice (CR 117.3d), made with `pass`/`pass_until`.
+
 ## Wake conditions
 
 A blocked call returns as soon as one of these holds, for this seat:
@@ -3876,12 +3881,12 @@ def run_action(
         )
 
     pass_outcome = None
-    # D16: release only priority this seat actually holds. A decision is
-    # asked of whoever the resolving object names (bob paying life for his
-    # own shockland in alice's turn), not of the priority holder, so after
-    # `decide` the seat may hold nothing to release - and a pass posted anyway
-    # is refused and recorded as this seat's refusal, inflating the audit
-    # tallies (`eval_report`'s `rules_error_rate`) with a move nobody chose.
+    # D16: release only priority this seat actually holds - an action can
+    # end with priority somewhere else (a resolution it triggered handed it
+    # on), and a pass posted anyway is refused and recorded as this seat's
+    # refusal, inflating the audit tallies (`eval_report`'s
+    # `rules_error_rate`) with a move nobody chose. `decide` never reaches
+    # this release at all (`run_decision`).
     if release and holds_priority(seat.fetch_state(), seat.player):
 
         def perform_pass() -> Any:
@@ -3949,6 +3954,46 @@ def run_action(
     )
     if pass_outcome is not None:
         result["pass_outcome"] = pass_outcome
+    return result
+
+
+def run_decision(
+    seat: Seat,
+    perform: Any,
+    *,
+    reasoning: str | None = None,
+    include_actions: bool = True,
+) -> dict[str, Any]:
+    """Answer a pending decision (`POST .../decide`), then check once for
+    this seat's next moment to act - and **never pass priority on its
+    behalf**. Both transports' `decide` go through here.
+
+    A decision is not a priority action (CR 608.2d: the resolving effect's
+    player "announces these while applying the effect"), so answering one is
+    no reason to release anything. Whoever the engine hands priority to once
+    the answer is applied has it: CR 117.3c gives it back to a seat whose own
+    cast or activation the decision was part of, and CR 117.3b gives it to
+    the active player once a resolving spell or ability finishes. A seat
+    that ends up holding it passes by its own choice (CR 117.3d), with `pass`
+    or `pass_until` - `pass_until`'s L1 auto-pass still skips a window where
+    passing is the only legal move.
+
+    This used to be `run_action`'s default release, and it cost a live game
+    (2026-09-23): a seat answered a fetched shockland's "pay 2 life" with an
+    opponent's Dismember on the stack, the harness passed for it, the
+    opponent passed, and Dismember resolved before the seat could cast the
+    Counterspell it had fetched the mana for.
+
+    `held_priority` is read off the board the check saw rather than assumed:
+    `True` when the engine gave this seat priority, `False` when someone
+    else holds it (or nobody does). No `pass_outcome` is ever present, since
+    no pass is ever posted."""
+    result = run_action(
+        seat, perform, release=False, reasoning=reasoning, include_actions=include_actions
+    )
+    board = result.get("state")
+    if result.get("held_priority") is False and isinstance(board, dict):
+        result["held_priority"] = holds_priority(board, seat.player)
     return result
 
 

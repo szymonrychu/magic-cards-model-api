@@ -1793,7 +1793,7 @@ def test_the_handover_carries_the_worked_example_without_making_it_the_rule(guid
     example must say what it is an example of - a true observation whose
     remedy is a tool argument."""
     text = _flat(_handover(guide, role))
-    assert "hold_priority=true" in text
+    assert "a different argument on `decide`" in text
     assert "Worked example" in text
     assert text.index("Deck guide content is PLAY REVIEW ONLY.") < text.index("Worked example")
 

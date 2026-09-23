@@ -449,13 +449,6 @@
           "type_error": null
         },
         {
-          "default": false,
-          "has_default": true,
-          "name": "hold_priority",
-          "type": "bool",
-          "type_error": null
-        },
-        {
           "default": "",
           "has_default": true,
           "name": "reasoning",

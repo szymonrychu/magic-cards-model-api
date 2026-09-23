@@ -71,6 +71,11 @@ and the tools that differ say so in capitals in their own docstrings:
   ability**, whatever `hold_priority` said - a mana ability does not use the
   stack (CR 605.3b) and the auto-pass could end the step (CR 500.2) and empty
   the mana it just made (CR 500.5). See `seatkit.added_mana`.
+- `decide` **never passes priority** and has no `hold_priority` at all:
+  answering a decision is not a priority action (CR 608.2d), so it only
+  checks afterwards, and whoever the engine gave priority to keeps it
+  (CR 117.3c inside your own cast or activation, CR 117.3b after a
+  resolution). See `seatkit.run_decision`.
 - everything else releases priority unless told to hold, which is right for
   them: they use the stack, and releasing is how what you just did resolves.
 
@@ -127,6 +132,7 @@ from .seatkit import (
     parse_convoke,
     parse_optional_costs,
     run_action,
+    run_decision,
 )
 
 
@@ -1987,7 +1993,6 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         order: str = "",
         damage: str = "",
         generation: int | None = None,
-        hold_priority: bool = False,
         reasoning: str = "",
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
@@ -2312,14 +2317,19 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         ordinary play path. Answering when nothing is pending, or when the
         pending decision is not yours, is refused rather than accepted.
 
-        Answering a decision does not, itself, involve priority (CR 608.2d is
-        the resolving effect asking a question, not a priority action), but
-        follows the same shape as every other tool here for one reason:
-        answering it is very often what was blocking your own next turn at
-        priority, so waking straight back into whatever comes next saves the
-        extra round trip. Releases priority and then checks once for your
-        next moment to act, unless `hold_priority` is true - it never blocks
-        or waits."""
+        **DECIDE NEVER PASSES PRIORITY FOR YOU.** Answering a decision is not
+        a priority action (CR 608.2d is the resolving effect asking a
+        question), so this answers it and then checks once for your next
+        moment to act - it never blocks or waits, and it never posts a pass.
+        Whoever the engine gives priority to afterwards has it: after a
+        decision inside your own cast or activation you keep priority
+        (CR 117.3c), and after a spell or ability finishes resolving the
+        active player receives it (CR 117.3b). `held_priority` in the answer
+        says which: `true` means it is your move - respond (a fetched land's
+        mana, an instant) or pass yourself with `pass`/`pass_until`; `false`
+        means someone else holds priority. The old `hold_priority` parameter
+        is gone because holding is now the only behaviour; an old call that
+        still sends it is accepted and behaves exactly the same."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -2366,13 +2376,8 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
                 return {"allowed": False, "reason": answer.get("reason"), **answer}
             return {"allowed": True, **answer} if isinstance(answer, dict) else answer
 
-        return act(
-            seat,
-            perform,
-            hold_priority,
-            reasoning=reasoning,
-            protocol_version=ctx.protocol_version if ctx is not None else None,
-        )
+        result = run_decision(seat, perform, reasoning=reasoning or None)
+        return _tool_result(seat, result, ctx.protocol_version if ctx is not None else None)
 
     @server.tool(name="pass")
     @_guarded(seats)

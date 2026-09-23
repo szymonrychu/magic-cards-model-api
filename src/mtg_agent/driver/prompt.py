@@ -993,6 +993,19 @@ resolve:
 So a land drop, or tapping for mana, never costs you the rest of your main
 phase - but a `cast` still does unless you hold it.
 
+**`decide` never passes priority for you.** Answering a decision is not a
+priority action (CR 608.2d), so `decide` answers, checks once, and posts no
+pass - it has no `hold_priority` parameter at all, and sending one changes
+nothing. Whoever the engine gives priority to afterwards has it: after a
+decision inside your own cast or activation you keep it (CR 117.3c), and once
+a spell or ability finishes resolving the active player receives it
+(CR 117.3b). Read the held_priority field of the answer: true means it is
+still your move - respond with the land you just fetched or the instant you fetched
+it for, or pass yourself with `pass` / `pass_until`. A fetched shockland's
+"pay 2 life" with the opponent's removal on the stack is exactly that moment:
+you still hold priority after paying, and the removal only resolves once you
+pass.
+
 **Naming what a cost sacrifices, discards, or exiles.** Some activated
 abilities cost more than mana - Goblin Bombardment is "Sacrifice a creature:
 This enchantment deals 1 damage to any target." `activate` takes
@@ -1992,7 +2005,7 @@ yes it is a report, regardless of how it felt during the game.
 
 Worked example. A seat wrote into a deck's NOTES.md that answering a
 fetchland's search decision released priority and cost it a main phase, and
-that the fix was `hold_priority=true` on `decide`. Every word of that was
+that the fix was a different argument on `decide`. Every word of that was
 true. It is still a report and not a note: the behaviour is the api's, and
 the remedy is a tool argument. It does not belong in any deck's guide."""
 
