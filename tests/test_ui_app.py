@@ -5270,3 +5270,141 @@ def test_a_failed_menu_read_leaves_no_stale_rows_behind() -> None:
         row=X_BOUNDED_ROW,
     )
     assert result is None
+
+
+# --------------------------------------------------------------------------
+# R5: the board goes inert while a replay is open (store.replay is set)
+# --------------------------------------------------------------------------
+#
+# The replay (`render/replay.js`'s `mountReplay`) drives the same live game
+# screen the board itself uses - it hands `store.set({state: ...})` the same
+# `GameStateView` shape a real game's poll does, so the board's own cards
+# render exactly as they would for a live game. That means every click
+# handler the board wires (`onHandCard`, `onPermanent`, `onPermission`, and
+# `onPlayer`/`onStackObject`, both thin wrappers over `tryTarget`) is still
+# reachable on those cards while a replay is on screen, and none of them may
+# act: there is no action in flight to fill, and no live game underneath a
+# replay to send a mutation to. `app.js`'s `main()` wires the zone viewer's
+# own `onPermanent`/`onPermission` from the same guarded exports, so it goes
+# inert too without a test of its own.
+
+
+def test_the_store_starts_with_no_replay_open() -> None:
+    assert run_app("m.store.get().replay") is None
+
+
+def test_app_js_mounts_the_replay_door_not_the_old_review_page() -> None:
+    """The lobby's post-game door now opens the replay, not the old scroll
+    page - `render/review.js` is retired by this same task (R5's own
+    acceptance (5)), so `app.js` must import neither it nor `mountReview`
+    any more."""
+    text = APP_JS.read_text()
+    assert 'from "./render/replay.js"' in text, "app.js must import render/replay.js"
+    assert "mountReplay" in text
+    assert "render/review.js" not in text, "app.js still imports the retired review page"
+    assert "mountReview" not in text
+
+
+def test_a_hand_card_click_issues_no_api_call_while_a_replay_is_open() -> None:
+    """The acceptance's own example: with `replay` set, a hand-card click
+    that would otherwise open a one-option confirm (and, once picked, POST
+    `actions/play-land`) does nothing at all - proven here by never touching
+    `document` (left `undefined`, the same guard `test_ui_app.py`'s module
+    docstring explains) and never touching the network (`fetch` throws on
+    any call, per `run_app`'s own stub)."""
+    result = run_app(
+        """(async () => {
+          const state = {
+            you: "alice",
+            players: [{ username: "alice" }, { username: "bob" }],
+            pending_decision: null,
+            step: "precombat_main",
+            active_player: "alice",
+            priority_holder: "alice",
+            battlefield: [],
+            hands: { alice: [land] },
+            stack: [],
+          };
+          m.store.set({
+            gameId: "g1", uid: "u1", state, replay: { index: 0, count: 3 },
+            action: null,
+          });
+          await m.onHandCard(land, {});
+          return { action: m.store.get().action };
+        })()""",
+        land=MOUNTAIN,
+    )
+    assert result["action"] is None
+
+
+def test_onpermanent_onpermission_and_trytarget_are_all_inert_during_a_replay() -> None:
+    """The rest of acceptance (2)'s list: `onPermanent` (a click on a
+    battlefield card), `onPermission` (a play-permission click), and
+    `tryTarget` (what `onPlayer`/`onStackObject` both reduce to) - one guard
+    wrapper covers all four, so this drives the other three together rather
+    than repeating the same proof three times."""
+    result = run_app(
+        """(async () => {
+          const state = {
+            you: "alice",
+            players: [{ username: "alice" }, { username: "bob" }],
+            pending_decision: null,
+            step: "precombat_main",
+            active_player: "alice",
+            priority_holder: "alice",
+            battlefield: [bear],
+            hands: { alice: [land] },
+            stack: [],
+          };
+          m.store.set({
+            gameId: "g1", uid: "u1", state, replay: { index: 0, count: 3 },
+            action: null, combatDraft: {},
+          });
+          await m.onPermanent(bear, {});
+          m.onPermission({ card: land, from_zone: "graveyard" }, {});
+          await m.tryTarget("bob");
+          return { action: m.store.get().action, combatDraft: m.store.get().combatDraft };
+        })()""",
+        land=MOUNTAIN,
+        bear=OPPONENT_BEAR,
+    )
+    assert result["action"] is None
+    assert result["combatDraft"] == {}
+
+
+def test_the_guard_reads_replay_fresh_rather_than_latching_it() -> None:
+    """`replay: null` (`close()`'s own reset, `render/replay.js`) must let
+    `tryTarget` through again on the very next call - the guard reads
+    `store.get().replay` fresh every time rather than remembering that a
+    replay was ever open. Reuses the same real-target scenario
+    `test_a_second_click_on_a_chosen_target_still_unchooses_it_once_the_slot_is_full`
+    above drives `tryTarget` through, so "let through" is checked against a
+    real mutation (`action.slots`), not just the absence of a throw."""
+    result = run_app(
+        """(async () => {
+          const A = await import(pathToFileURL(actionsPath).href);
+          globalThis.document = { querySelector: () => null };
+          const state = { you: "alice", battlefield: [], pending_decision: null };
+          m.store.set({ gameId: "g1", uid: "u1", state, replay: { index: 0, count: 1 } });
+          const action = A.withAffordance(A.begin("cast", split, {}), aff);
+          m.store.set({ action });
+          await m.tryTarget("bob");
+          const duringReplay = m.store.get().action;
+          m.store.set({ replay: null });
+          await m.tryTarget("bob");
+          const afterClose = m.store.get().action;
+          return {
+            duringReplayTargets: duringReplay.slots.flatMap((s) => s.targets),
+            afterCloseTargets: afterClose.slots.flatMap((s) => s.targets),
+          };
+        })()""",
+        split=SPLIT,
+        aff=SPLIT_AFF,
+        actionsPath=str(ACTIONS_JS),
+    )
+    assert result["duringReplayTargets"] == [], (
+        "tryTarget must not fill a target while a replay is open"
+    )
+    assert result["afterCloseTargets"] == ["bob"], (
+        "tryTarget must work again once the replay is closed"
+    )

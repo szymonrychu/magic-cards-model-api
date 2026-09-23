@@ -46,13 +46,16 @@ def _rule(selector: str) -> str | None:
 def test_the_log_panel_is_gone_and_the_advisor_is_the_ribbons_last_panel() -> None:
     """`#side-panel` is the right-hand column's bottom row (`style.css`'s
     grid areas). The game log panel is removed from the play UI entirely, so
-    the advisor panel is that column's last child."""
+    the advisor panel is that column's last panel for a live game -
+    `#replay-log` (R5's Replay door, `#advice-box`'s own counterpart while
+    `#game.replaying` is set) is the only thing ever placed after it, and it
+    is the column's true last child for exactly that reason."""
     html = _index()
     assert 'id="log-box"' not in html, "the game log panel should be removed from the play UI"
     side = SIDE_PANEL.search(html)
     assert side, "could not find #side-panel in ui/index.html"
     children = re.findall(r'<div id="([\w-]+)"', side.group(1))
-    assert children[-1] == "advice-box", children
+    assert children[-2:] == ["advice-box", "replay-log"], children
 
 
 def test_log_modal_is_gone_entirely() -> None:
@@ -88,12 +91,18 @@ def test_the_advisor_panel_takes_the_remaining_height() -> None:
 
 def test_no_other_panel_in_the_ribbon_competes_for_that_height() -> None:
     """Every other child of `#side-panel` keeps its content height: none of
-    them carries a `flex` rule of its own, so the advisor alone grows."""
+    them carries a `flex` rule of its own, so the advisor alone grows.
+
+    `#replay-log` (R5) is the one exception, not a violation of this: it is
+    `#advice-box`'s own Replay-door counterpart, taking the exact same
+    flexible slot while `#game.replaying` is set - and `#game.replaying`
+    hides `#advice-box` outright when it does (`ui/style.css`'s own Replay
+    section), so the two never actually compete for the height at once."""
     css = _css()
     side = SIDE_PANEL.search(_index())
     assert side
     for child in re.findall(r'<div id="([\w-]+)"', side.group(1)):
-        if child == "advice-box":
+        if child in ("advice-box", "replay-log"):
             continue
         for block in re.findall(
             r"\n([^{}\n]*#" + re.escape(child) + r"\b[^{}\n]*)\{(.*?)\}", css, re.S

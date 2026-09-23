@@ -212,9 +212,8 @@ h3 { font-size: 14px; }
 #games-table th { color: var(--ink-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; }
 #games-table td:last-child { display: flex; gap: 6px; }
 #games-table tbody tr:hover { background: var(--bg-raised); }
-/* The short game id: a technical, secondary detail (same idiom as
-   `.review-refusal`'s monospace/faint treatment) - present for
-   disambiguation, not what a person scans the row for first. */
+/* The short game id: a technical, secondary detail, monospace and faint -
+   present for disambiguation, not what a person scans the row for first. */
 #games-table .game-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-faint); font-size: 12px; }
 /* The live game's state pill reads `ok` (green) and an unopenable one reads
    `bad` (red) - `.pill.ok`/`.pill.bad` above already carry those colors,
@@ -266,6 +265,42 @@ h3 { font-size: 14px; }
   padding-top: 52px;
 }
 
+/* The Replay door (`ui/render/replay.js`'s `mountReplay`), driving this same
+   `#game` screen rather than a page of its own: `showGame()`/`hideGame()`
+   put `replaying` on this element for exactly as long as a replay is open,
+   and everything below swaps on that one class. The live game's own
+   controls - what is being asked (`#prompt-box`), the announcement in
+   progress (`#casting-strip`), the pass/step controls
+   (`#priority-box`/`#stops-box`/`#rail-pass`), the advisor
+   (`#advice-box`), the pinned toolbar, and the AI/loading/control banners -
+   all go `none`; the transport (`#replay-bar`) and the thinking log
+   (`#replay-log`) are the only two things this class ever turns ON.
+   Neither carries `[hidden]` in the markup (`ui/index.html`) - both are
+   `none` by default just below - so nothing here has to fight `[hidden]`'s
+   own `!important` (`tests/test_ui_hidden_elements.py`'s guard is about the
+   opposite direction: an element the JS toggles with `.hidden`, which these
+   two never are - `replay.js` leaves their visibility to this class
+   entirely). Everything this class hides is either plain content with no
+   `[hidden]` of its own (`#prompt-box`, `#priority-box`, `#stops-box`,
+   `#advice-box`, `#game-toolbar`) or already starts `[hidden]` and this only
+   ever asks for `none` too (`#rail-pass`, the three banners) - so this
+   block never needs `!important` either. */
+#game.replaying #prompt-box,
+#game.replaying #casting-strip,
+#game.replaying #priority-box,
+#game.replaying #stops-box,
+#game.replaying #rail-pass,
+#game.replaying #advice-box,
+#game.replaying #game-toolbar,
+#game.replaying #ai-loading-banner,
+#game.replaying #ai-stall-banner,
+#game.replaying #player-control-banner {
+  display: none;
+}
+#replay-bar, #replay-log { display: none; }
+#game.replaying #replay-bar { display: flex; }
+#game.replaying #replay-log { display: flex; }
+
 /* The top row: the phase track on the left, Concede, Report and Lobby on the
    right, pinned across the top of the viewport at every width. `position:
    fixed` places it against the viewport, not `#game`'s grid, so it is the
@@ -300,6 +335,41 @@ h3 { font-size: 14px; }
 /* Mobile mode's rail copy of the pass verbs (`renderRailPass`); a desktop
    passes from `#priority-box` in the side panel. */
 #rail-pass { display: none; }
+
+/* The Replay door's transport (`ui/render/replay.js`): back/step-back/
+   play-pause/step-forward, the position, a scrubber, and the current
+   step's label - fixed across the bottom of the viewport (`#game-toolbar`'s
+   own idiom, mirrored to the opposite edge) rather than laid into the
+   grid, so it is one rule whether `#game`'s grid is the desktop's three
+   columns or mobile mode's single board column, and it is never inside
+   `#drawer` - see the mobile media block below for the room it leaves
+   `#drawer-toggle`. `display: none` by default (`#game.replaying` above
+   turns it on); the accent border marks it as a control, the same as
+   `#priority-box`'s. */
+#replay-bar {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 55;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+#replay-bar button { white-space: nowrap; }
+.replay-position { color: var(--ink-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+.replay-scrubber { flex: 1 1 160px; min-width: 80px; }
+/* The current step's own label (`replaySteps`'s `label`) - always its own
+   full-width line under the transport's buttons rather than fighting them
+   for room, so a long one never pushes Play off the edge of a narrow
+   window. */
+.replay-label { flex: 1 1 100%; order: 1; color: var(--ink-faint); font-size: 12px; }
+.replay-error { color: var(--warn); padding: 6px 0; white-space: pre-wrap; }
 
 /* A coarse pointer held upright gets this instead of a board (the portrait
    media block at the end of this file shows it). Above every other layer and
@@ -580,9 +650,9 @@ h3 { font-size: 14px; }
   padding: 1px 7px;
 }
 
-/* The rows as a review frame draws them (`ui/render/review.js`), and the
-   base the live board's `.fit-row`s below override: wrapping rows of fixed
-   `card-sm` cards. */
+/* The rows as a replay's own frame draws them (`ui/render/replay.js`), and
+   the base the live board's `.fit-row`s below override: wrapping rows of
+   fixed `card-sm` cards. */
 .hand-row, .battlefield-row, .stack-row {
   display: flex;
   gap: 5px;
@@ -597,14 +667,14 @@ h3 { font-size: 14px; }
   overflow-y: auto;
 }
 .battlefield-row { background: rgba(255, 255, 255, 0.017); align-content: flex-start; }
-/* In a review frame, each seat's non-lands take whatever vertical room is
+/* In a replay's frame, each seat's non-lands take whatever vertical room is
    going, with a one-`card-md` floor so the row never collapses under its
    cards. The live board's rows are sized by `#mtg-board > .fit-row` below. */
 .main-row { flex: 1 1 0; min-height: 162px; }
 /* Lands sit in the row nearest their own controller - directly under the
    opponent's hand at the top, directly above yours at the bottom. Slightly
    dimmer than the row above it, so the split reads without a label. In a
-   review frame it is content sized and never shrinks: a land row that shrinks
+   replay's frame it is content sized and never shrinks: a land row that shrinks
    cuts the bottom off whatever is tucked under a land (a Utopia Sprawl sliced
    in half under its Forest, once). On the live board the row keeps a fixed
    height instead and `ui/fit.js` sizes the cards so the pile fits it. */
@@ -731,7 +801,7 @@ h3 { font-size: 14px; }
   text-overflow: ellipsis;
 }
 
-/* A stack object as a review frame writes it: a text chip. */
+/* A stack object as a replay's frame writes it: a text chip. */
 .stack-object {
   display: flex;
   flex-direction: column;
@@ -745,33 +815,6 @@ h3 { font-size: 14px; }
 }
 .stack-object .name { font-weight: 600; }
 .stack-object .targets { color: var(--ink-dim); font-size: 11px; }
-
-/* Exile as a horizontal strip. The live board no longer has one - its zones
-   are the `#zone-ribbon` column below - but a review frame still draws its
-   exile this way (`ui/render/review.js`'s `exileRow`), because a finished
-   game's board is read as one narrow column of turns and has no room for a
-   ribbon of its own. Its own colour and its own label, so exile never reads
-   as just another row of cards. */
-.exile-row {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 4px 7px;
-  max-height: 124px;
-  overflow-y: auto;
-  border: 1px dashed var(--warn);
-  border-radius: 7px;
-  background: rgba(232, 180, 76, 0.05);
-}
-.exile-row::before {
-  content: "exile";
-  font-size: 10px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--warn);
-  margin-right: 6px;
-}
 
 /* --------------------------------------------------- the zone ribbon ---- */
 
@@ -939,8 +982,8 @@ h3 { font-size: 14px; }
    never overhangs the row below); `--depth` is one card's place in it, with
    `0` for the permanent itself. The offsets are fractions of the card width
    (`--tuck-x`/`--tuck-y`, the same ratios as `ui/fit.js`'s `TUCK_X`/`TUCK_Y`),
-   so a pile scales with its cards; `76px` is `card-sm`'s width, for a review
-   frame's rows, which have no `--card-w`.
+   so a pile scales with its cards; `76px` is `card-sm`'s width, for a
+   replay's own frame rows, which have no `--card-w`.
 
    A pile holding a tapped card (`data-tapped`, set by `patchStacks`) is at
    least one landscape card wide, and a pile with anything under it at least
@@ -1321,14 +1364,19 @@ h3 { font-size: 14px; }
   border-radius: 9px;
   padding: 10px 12px;
 }
-/* The side panel's five stacked sections: what is being asked
+/* The side panel's six stacked sections: what is being asked
    (`#prompt-box`), the announcement in progress (`#casting-strip`), the
    priority controls (`#priority-box`), the stop conditions autopilot will
    halt for (`#stops-box`), the mtg-buddy advisor's current proposal
-   (`#advice-box`, last - which takes whatever height the rest leave, so the
-   panel is exactly one viewport tall whatever is in it). The game log panel
-   that used to sit under it is removed from the play UI, so the advisor has
-   all of that room. */
+   (`#advice-box`), and the Replay door's own thinking log (`#replay-log`,
+   last). The two share the column's one flexible slot rather than both
+   claiming it: `#advice-box` takes whatever height the rest leave while a
+   live game is on screen, `#replay-log` takes it instead while
+   `#game.replaying` is set (that class also hides `#advice-box` outright -
+   see the Replay door's own CSS section) - never both at once, so the
+   column is still exactly one viewport tall whatever is in it. The game log
+   panel that used to sit under the advisor is removed from the play UI
+   entirely. */
 /* Careful with the next two rules: `#side-panel > div` above is an id *and*
    a type selector, so it outranks a bare `#prompt-box`/`#priority-box`, and
    it does - measured with `getComputedStyle` in a real browser, both of them
@@ -1385,6 +1433,54 @@ h3 { font-size: 14px; }
 .advice-status { margin-top: 8px; color: var(--ink-dim); font-size: 12px; }
 .advice-status-stale, .advice-status-unverified { color: var(--warn); }
 #advice-box button { margin-top: 10px; }
+
+/* The Replay door's thinking log (`ui/render/replay.js`): every recorded
+   reasoning/plan/advice/reflection message up to the transport's current
+   step, `seq`-ascending. `#side-panel`'s own column takes care of this
+   panel's box (`#side-panel > div` above), the same treatment
+   `#advice-box` gets - `flex: 1 1 auto; min-height: 0; overflow-y: auto`
+   is this panel's own share of that: it absorbs whatever height the rest of
+   the column leaves and scrolls a long game inside itself, exactly like the
+   advisor panel it stands in for while `#game.replaying`. `display: none`
+   by default (`#game.replaying` above turns it on) overrides the flex
+   layout this needs once it is showing. */
+#replay-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+/* One message: seat-coloured by a left border (`--you`/`--opp`, the same
+   pair every other seat-coloured mark on this page uses), never a solid
+   fill - a whole column of solid-filled bubbles would be louder than the
+   board itself. `--current` (the step the transport is on right now) is the
+   one exception to "quiet": raised off the sunken background and outlined,
+   so the eye finds it the instant a step changes without having to reread
+   every label above it. */
+.replay-msg {
+  border-left: 3px solid var(--line-bright);
+  border-radius: 4px;
+  padding: 5px 8px;
+  background: var(--bg-sunken);
+}
+.replay-msg--you { border-left-color: var(--you); }
+.replay-msg--opp { border-left-color: var(--opp); }
+.replay-msg--current { background: var(--bg-raised); outline: 1px solid var(--accent); outline-offset: -1px; }
+.replay-msg-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--ink-dim);
+  margin-bottom: 2px;
+}
+.replay-msg-text { font-size: 12px; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+/* The reconstructed-review banner (`render/replay.js`'s own
+   `reconstructedNode`): warn-coloured and never routine-dimmed, so it reads
+   as the one thing on this page that is not an ordinary recorded step. */
+.replay-reconstructed { border-left-color: var(--warn); background: rgba(232, 180, 76, 0.07); }
+.replay-refusal { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-faint); }
 
 /* A short-lived message that appears near an action and fades - a refusal
    or confirmation that does not need a whole `.notice` banner.
@@ -1754,300 +1850,6 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 /* A popover item's secondary line - a cost, e.g. "Cycle {2}". */
 .popover .option .hint { display: block; font-size: 10px; margin: 0; }
 
-/* ------------------------------------------------------------ review ---- */
-
-/* The post-game review (`ui/render/review.js`). One column of turns, read
-   top to bottom; inside each turn the one element that carries the whole
-   argument - what the agent said would happen, and what happened - is two
-   columns side by side, left to right in the order they were written. The
-   left column is deliberately the quieter one and the right the louder: the
-   claim is cheap, the outcome is the evidence. */
-
-#review { max-width: 1080px; margin: 0 auto; padding: 24px 20px 80px; }
-.review-head-inner { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
-.review-head-inner h1 { margin: 6px 0 0; }
-.review-head-inner button { align-self: flex-start; }
-.review-result { color: var(--good); font-size: 15px; font-weight: 600; }
-.review-counts { color: var(--ink-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
-.review-lede { color: var(--ink-dim); font-size: 13px; max-width: 72ch; margin: 4px 0 0; }
-.review-loading { color: var(--ink-dim); padding: 20px 0; }
-/* A review rebuilt from the ledger, because this build refuses the board
-   this game was saved with. Warn-coloured like `.review-error` and never
-   louder: nothing here failed, and every frame below it is as recorded as
-   any other review's - it is the head's result that came from the ledger
-   rather than from a final state, and the reader is told so. */
-.review-reconstructed {
-  border: 1px solid var(--warn);
-  background: rgba(232, 180, 76, 0.07);
-  border-radius: 8px;
-  padding: 12px 14px;
-  color: var(--ink-dim);
-  font-size: 13px;
-  max-width: 72ch;
-}
-.review-reconstructed strong { color: var(--warn); }
-.review-refusal { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-faint); }
-.review-error {
-  border: 1px solid var(--warn);
-  background: rgba(232, 180, 76, 0.07);
-  border-radius: 8px;
-  padding: 14px 16px;
-  color: var(--warn);
-  max-width: 72ch;
-}
-
-.rev-turn {
-  border-top: 1px solid var(--line);
-  padding: 22px 0 6px;
-}
-.rev-turn-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-size: 17px;
-  text-transform: capitalize;
-}
-.rev-turn-seq { color: var(--ink-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
-
-/* The pairing. Two columns and a rule between them, and it stays two columns
-   until the window genuinely cannot hold them - a stacked prediction and
-   outcome is a list of two paragraphs, which is exactly the reading this
-   page exists to prevent. */
-.pairing {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1.15fr);
-  gap: 0 18px;
-  align-items: stretch;
-  background: var(--bg-raised);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 14px 16px;
-  margin: 10px 0;
-}
-.pairing-rule { background: var(--line-bright); }
-.pairing-before, .pairing-after { min-width: 0; }
-.pairing-label {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--ink-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  margin-bottom: 8px;
-}
-.pairing-label .tag {
-  font-weight: 700;
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-radius: 4px;
-  padding: 1px 6px;
-  letter-spacing: 0.8px;
-}
-.pairing-after .pairing-label .tag { background: var(--good); }
-.seq { font-variant-numeric: tabular-nums; color: var(--accent); }
-.pairing-after .seq { color: var(--good); }
-.expecting-label { font-size: 11px; color: var(--ink-faint); }
-.expecting {
-  margin: 4px 0 8px;
-  padding-left: 12px;
-  border-left: 3px solid var(--accent);
-  font-size: 15px;
-  line-height: 1.4;
-}
-.because { color: var(--ink-dim); font-size: 13px; }
-.confidence { color: var(--ink-faint); font-size: 11px; margin-top: 6px; text-transform: uppercase; }
-
-.outcome-list { margin: 0; padding-left: 20px; font-size: 13px; }
-.outcome { margin: 2px 0; }
-.outcome .seq { margin-right: 6px; font-size: 11px; }
-/* The turn marker walking forward, kept in place and in order but dropped to
-   a whisper, so the opponent's actual plays are what the eye lands on. */
-.outcome.routine { color: var(--ink-faint); font-size: 12px; }
-.outcome.refused .what { color: var(--bad); }
-.outcome-empty { color: var(--ink-dim); font-size: 13px; font-style: italic; }
-.pairing-note { color: var(--ink-faint); font-size: 11px; margin-top: 8px; }
-
-.declaration-context {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin: 0 0 12px;
-  padding: 0 16px;
-  font-size: 12px;
-  color: var(--ink-dim);
-}
-.context-line { display: flex; gap: 8px; }
-.context-label {
-  flex: 0 0 150px;
-  color: var(--ink-faint);
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 0.5px;
-  padding-top: 2px;
-}
-.no-declaration { color: var(--ink-faint); font-size: 12px; font-style: italic; margin: 8px 0 12px; }
-
-/* mtg-buddy's advice: what was proposed, whether the human took it, and
-   what happened - reported, never scored (see review.py and review_model.js
-   for why). Deliberately a lighter, narrower box than `.pairing` - this is
-   one proposal and one outcome, not a two-column argument. */
-.advice {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 14px;
-  margin: 8px 0;
-  background: var(--bg-raised);
-}
-.advice-label {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--ink-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  margin-bottom: 6px;
-}
-.advice-label .tag {
-  font-weight: 700;
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-radius: 4px;
-  padding: 1px 6px;
-  letter-spacing: 0.8px;
-}
-.advice-summary { font-size: 14px; color: var(--ink); margin-bottom: 4px; }
-.advice-reasoning {
-  margin: 4px 0 8px;
-  padding-left: 12px;
-  border-left: 3px solid var(--accent);
-  font-size: 13px;
-  color: var(--ink-dim);
-  line-height: 1.4;
-}
-.advice-tag {
-  display: inline-block;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  border-radius: 4px;
-  padding: 1px 6px;
-  margin-bottom: 6px;
-}
-.advice-tag.approved { color: var(--good); border: 1px solid var(--good); }
-.advice-tag.ignored { color: var(--ink-faint); border: 1px solid var(--line); }
-.advice-outcome-empty { color: var(--ink-dim); font-size: 13px; font-style: italic; }
-/* Whether the move below this line is the move that was proposed. Both
-   outcomes carry the same `approved` tag over the same kind of frame, so this
-   line is the only thing separating "they did exactly that" from "they
-   approved it and then did something else" - and the second is the one a
-   trainer is reading the page for, so it is coloured as the divergence it is
-   rather than left as quiet prose. */
-.advice-followthrough { font-size: 12px; font-style: italic; padding: 2px 0; }
-.advice-followthrough.followed { color: var(--good); }
-.advice-followthrough.diverged { color: var(--warn); font-style: normal; }
-/* The engine's own words for an approved-but-refused proposal - the single
-   most instructive line the review can show, so it is never a quiet blank. */
-.advice-refusal { font-size: 12px; color: var(--ink-dim); padding: 4px 0; }
-.advice-refusal .seq { margin-right: 6px; font-size: 11px; }
-
-.frames { display: flex; flex-direction: column; gap: 2px; }
-/* A folded run of turn-marker rows: one quiet line that opens into them. */
-.frame-run { padding: 2px 0 2px 10px; border-left: 2px dotted var(--line); }
-.frame-run-head {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-  font-size: 11px;
-  color: var(--ink-faint);
-}
-.frame-run-head .what { flex: 1; }
-.frame-run-body { padding-left: 10px; }
-.frame { border-left: 2px solid transparent; padding: 3px 0 3px 10px; }
-.frame.routine { opacity: 0.55; }
-/* The human's one-click approval marker - never mutates the game, so it is
-   drawn as quietly as a routine row, just labelled by the advice it approves
-   rather than folded into a run of turn-marker rows (it is never routine,
-   precisely so `collapseRoutine` leaves it alone). */
-.frame.approval { opacity: 0.55; font-style: italic; }
-.frame.refused { border-left-color: var(--bad); }
-.frame:not(.routine) { border-left-color: var(--line-bright); }
-.frame-head {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-  font-size: 12px;
-  color: var(--ink-dim);
-}
-.frame-head .when { color: var(--ink-faint); font-size: 11px; }
-.frame-head .who { color: var(--ink); font-weight: 600; }
-.frame-head .what { color: var(--ink); }
-.frame-toggle { margin-left: auto; font-size: 11px; padding: 1px 8px; }
-.frame-refusal { font-size: 12px; color: var(--ink-dim); padding: 2px 0; }
-.frame-why { font-size: 13px; color: var(--ink); padding: 2px 0 4px; max-width: 84ch; }
-.frame-why .quiet { color: var(--ink-faint); }
-.refusal { color: var(--bad); }
-
-/* A frame's board: the same rows the live board uses (`.battlefield-row`,
-   `.hand-row`, `.perm-stack`, `.card`), at `card-sm`, so a reader sees the
-   table as it stood rather than a second, different rendering of it. */
-.review-board {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  background: var(--bg-sunken);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 6px;
-  margin: 6px 0 10px;
-  max-width: 900px;
-}
-.review-board .battlefield-row, .review-board .hand-row { min-height: 30px; }
-.review-board .info-row { padding: 3px 8px; }
-.review-middle { display: flex; flex-direction: column; gap: 3px; }
-.review-combat { font-size: 12px; color: var(--warn); padding: 2px 6px; }
-.review-board.empty { color: var(--ink-faint); font-size: 12px; }
-
-/* Written after the result was known, and set apart for exactly that reason:
-   everything above it is evidence recorded live, and this is not. */
-.reflection {
-  margin-top: 34px;
-  border: 1px dashed var(--line-bright);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.015);
-  padding: 16px 18px;
-}
-.reflection h2 { font-size: 15px; }
-.reflection-label { color: var(--warn); font-size: 12px; max-width: 72ch; }
-.reflection-text {
-  margin: 10px 0 4px;
-  padding-left: 12px;
-  border-left: 3px solid var(--line-bright);
-  color: var(--ink-dim);
-  white-space: pre-wrap;
-}
-.reflection-who { color: var(--ink-faint); font-size: 12px; }
-
-/* The post-game AI review: a separate, Opus-generated critique, set apart
-   the same way `.reflection` is and for the same reason - written after
-   the result, so nothing above it may rest on it. */
-.ai-review {
-  margin-top: 20px;
-  border: 1px dashed var(--line-bright);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.015);
-  padding: 16px 18px;
-}
-.ai-review h2 { font-size: 15px; }
-
-@media (max-width: 900px) {
-  .pairing { grid-template-columns: 1fr; }
-  .pairing-rule { height: 1px; margin: 12px 0; }
-}
-
 /* Three columns do not fit every window, and they give way in the order the
    player needs them least. The zone ribbon goes first: it is a reference, and
    a one-card-wide column still reads. The control ribbon never narrows - it
@@ -2182,6 +1984,11 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
     font-weight: 600;
     line-height: 1.15;
   }
+  /* `#replay-bar`'s own `left/right: 8px` would run the full width under
+     `#drawer-toggle`'s rail - the same `--rail-w + 16px` margin `#game`'s
+     own padding already reserves for it, so the transport stops short of
+     the toggle rather than sitting under it. */
+  #replay-bar { right: calc(var(--rail-w) + 16px); }
 }
 
 /* A coarse pointer held upright: ask for landscape instead of drawing a board

@@ -1182,7 +1182,7 @@ export function mountRibbon(root, store, handlers) {
     railPass: root.querySelector("#rail-pass"),
   };
   return store.subscribe((app) => {
-    if (!app.state) return;
+    if (!app.state || app.replay) return;
     renderPromptBox(els.prompt, app, handlers, root);
     renderCastingStrip(els.strip, app, handlers);
     renderPriorityBox(els.priority, app, handlers);

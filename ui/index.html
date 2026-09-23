@@ -92,18 +92,6 @@
   </table>
 </section>
 
-<!-- ================================ REVIEW =============================== -->
-<!-- The post-game review (`ui/render/review.js`): what the agent said it
-     expected, and what actually happened next, turn by turn. Reachable only
-     from a finished game's "Show thinking" button in the lobby table above,
-     and refused by `GET /api/games/{id}/review` itself (409) for a game
-     still being played - a live game's plans and per-action reasoning are
-     hidden information about how a seat intends to play. -->
-<section id="review" hidden>
-  <div id="review-head"></div>
-  <div id="review-body"></div>
-</section>
-
 <!-- ================================= GAME ================================ -->
 <section id="game" hidden>
 
@@ -141,6 +129,13 @@
        drawer closed. Hidden while this seat has nothing to pass, and never
        shown on a desktop, where `#priority-box` is the control. -->
   <div id="rail-pass" class="rail-pass" hidden></div>
+
+  <!-- The Replay door's transport (`ui/render/replay.js`): play/pause,
+       step back/forward, the scrubber and position, replacing the pass/
+       phase controls (`#priority-box`/`#stops-box`/`#rail-pass`) while
+       `#game.replaying` is set. Same rail as `#rail-pass` so it is reachable
+       in mobile mode without opening the drawer. -->
+  <div id="replay-bar" class="replay-bar"></div>
 
   <!-- the board: opponent on top, shared zones in the middle, you at the
        bottom, mirrored the way MTGO and Arena lay it out.
@@ -280,6 +275,11 @@
       <div id="priority-box"></div>
       <div id="stops-box"></div>
       <div id="advice-box"></div>
+      <!-- The Replay door's thinking log (`ui/render/replay.js`): every
+           recorded reasoning/plan/advice/reflection message, seq-aligned to
+           the transport's current step - replaces the advisor panel above
+           while `#game.replaying` is set. -->
+      <div id="replay-log" class="replay-log"></div>
     </aside>
   </div>
 

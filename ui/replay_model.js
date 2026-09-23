@@ -1,12 +1,12 @@
-// The pure replay model behind the "Replay" door that succeeds the old
-// "Show thinking" scroll page (`ui/render/review.js`, unchanged by this
-// task) - no DOM and no timers, so `tests/test_ui_replay_model.py` can ask
-// it the awkward questions directly, the same seam `ui/review_model.js` and
+// The pure replay model behind the "Replay" door that succeeded the old
+// "Show thinking" scroll page (`ui/render/review.js`, retired by R5) - no
+// DOM and no timers, so `tests/test_ui_replay_model.py` can ask it the
+// awkward questions directly, the same seam `ui/review_model.js` and
 // `ui/board_layout.js` already use.
 //
-// The replay's whole argument is different from the scroll page's: the
-// scroll page groups by turn and pairs a declaration with its outcome: this
-// module instead walks the ledger as a *sequence of decision points* a
+// The replay's whole argument was different from the scroll page's: the
+// scroll page grouped by turn and paired a declaration with its outcome;
+// this module instead walks the ledger as a *sequence of decision points* a
 // viewer steps through, one board at a time, with a thinking-log message
 // beside each one - closer to the live game than to a report. It reuses
 // `review_model.js` for everything that module already got right (parsing
@@ -371,9 +371,8 @@ function playerViewOf(seat, frame) {
  * row, or a game the store no longer held when this row was written).
  *
  * `catalogue` is `frameState`'s own second argument - printings keyed by
- * card name, joined in for the type line and art (`render/review.js`
- * already builds one this way; the replay's own render module does the
- * same).
+ * card name, joined in for the type line and art (`render/replay.js`
+ * builds one this way, via `ui/catalogue.js`'s shared batched lookup).
  *
  * This is deliberately the *fallback* view, not the omniscient one:
  * `known_cards[you]` is left empty, so `opponentHandItems` (`render/

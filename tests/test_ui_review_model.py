@@ -1,24 +1,22 @@
-"""`ui/review_model.js` - the pure half of the post-game review.
+"""`ui/review_model.js` - pure functions over `GET /api/games/{id}/review`'s
+own JSON, with no DOM, so this file can ask them the awkward questions
+directly the way `tests/test_ui_board_layout.py` asks `ui/board_layout.js`.
 
-The review page's whole argument is an ordering claim: the agent said what it
-expected *before* the rows that show what actually happened. Everything that
-decides how those two are grouped and paired lives in this module, with no
-DOM, so it can be asked the awkward questions directly the way
-`tests/test_ui_board_layout.py` asks `ui/board_layout.js`.
+What survives here, after R5 retired the old scroll page
+(`ui/render/review.js`) and trimmed this module to what the Replay door
+still builds on (`ui/replay_model.js`, `render/replay.js`):
 
-Four of these tests are the cases that break a naive implementation:
-
-- a game with no `plan_declared` row at all - every game played before the
-  declaration seam existed, and every game a human played both seats of;
-- a declaration with nothing from the opponent after it - the agent moved to
-  its next turn's declaration without the opponent ever acting, and an empty
-  outcome column must say so rather than silently disappear;
-- a refused action, whose engine-verbatim reason is the evidence and must
-  survive into the frame unedited;
-- the snapshot itself, which `audit.py` writes as one *string* per permanent
-  ("alice: Grizzly Bears (tapped) (sick) [2/2] dmg:1 (+1/+1=2)") rather than
-  as card objects - so the review's board is only as good as the parse of
-  that line.
+- the snapshot parse (`parsePermanent`/`frameState`/`cardNamesIn`), which
+  `audit.py` writes as one *string* per permanent ("alice: Grizzly Bears
+  (tapped) (sick) [2/2] dmg:1 (+1/+1=2)") rather than as card objects - so a
+  replay's fallback board is only as good as the parse of that line;
+  - a refused action's engine-verbatim reason, which must survive the parse
+    unedited;
+- `frameLabel`, the console-style row label the replay's own transport and
+  log both read;
+- `perspectiveOf`, whose seat's side of the table a replay opens on;
+- `adviceOf`, mtg-buddy's own approved/followed/refused derivation, which
+  the replay's thinking log reads exactly as the old page did.
 """
 
 from __future__ import annotations
@@ -379,196 +377,6 @@ def test_the_names_a_review_needs_printings_for_ignore_the_attach_suffix() -> No
     assert not any("attached" in name for name in names)
 
 
-# ------------------------------------------------------- turns and pairing --
-
-
-def test_turns_group_the_ledger_and_lift_each_declaration_out_of_it() -> None:
-    rows = [
-        entry(1, "pregame_keep", turn=0, step="mulligan", phase=None, detail={"player": "bob"}),
-        plan_row(2),
-        entry(3, "play_land", detail={"player": "bob", "card": "Forest"}),
-        entry(4, "pass_priority", detail={"player": "alice"}),
-    ]
-    groups = call("m.reviewTurns(rev)", rev=review(rows, [declaration(2)]))
-    assert [g["turn"] for g in groups] == [0, 1]
-    assert [len(g["declarations"]) for g in groups] == [0, 1]
-    # the declaration is the turn's header, never one of its frames
-    assert [f["seq"] for f in groups[1]["frames"]] == [3, 4]
-    assert groups[1]["declarations"][0]["plan"] == "land, Bears, hold the Bolt for her blocker"
-
-
-def test_a_plan_ahead_declarations_header_lands_on_its_target_turn_not_the_turn_written_in() -> (
-    None
-):
-    """Live-game repro, 2026-09-14 (3-player game): bob's `for_turn: "next"`
-    declaration is written while carol's turn (turn 1) is still under way -
-    the raw row's own `entry.turn` is honestly 1 - but `review.py`'s
-    `_declarations` already computed its TARGET as turn 2 (bob's own next
-    turn), which is what `declaration(...)` below stands in for. The header
-    must land in the turn-2 group (bob's own turn), never in turn-1's group
-    (carol's), where a naive "attach to whichever group is chronologically
-    open" would leave it."""
-    rows = [
-        entry(1, "pass_priority", turn=1, detail={"player": "carol"}),
-        plan_row(2, player="bob", turn=1),  # written during carol's turn
-        entry(3, "pass_priority", turn=1, detail={"player": "carol"}),
-        entry(4, "advance", turn=2, detail={"player": "alice"}),  # turn 2 begins (alice's)
-        entry(5, "play_land", turn=2, detail={"player": "bob", "card": "Forest"}),  # bob's turn
-    ]
-    declared = declaration(2, player="bob", turn=2, turns_taken=3)
-    groups = call("m.reviewTurns(rev)", rev=review(rows, [declared]))
-    assert [g["turn"] for g in groups] == [1, 2]
-    assert groups[0]["declarations"] == [], "never left behind on the turn it was written in"
-    assert len(groups[1]["declarations"]) == 1
-    assert groups[1]["declarations"][0]["turn"] == 2
-    # boundary detection is untouched - the plan row itself never appears as
-    # a frame or splits the turn-1 group it was chronologically written in
-    assert [f["seq"] for f in groups[0]["frames"]] == [1, 3]
-    assert [f["seq"] for f in groups[1]["frames"]] == [4, 5]
-
-
-def test_a_game_with_no_declarations_still_reads_back_as_turns_of_frames() -> None:
-    """Every game played before the declaration seam existed. The page has
-    no prediction to show for these and must still render the ledger."""
-    rows = [
-        entry(1, "play_land", detail={"player": "alice", "card": "Mountain"}),
-        entry(2, "cast", turn=2, detail={"player": "bob", "card": "Grizzly Bears"}),
-    ]
-    groups = call("m.reviewTurns(rev)", rev=review(rows, []))
-    assert [g["turn"] for g in groups] == [1, 2]
-    assert all(g["declarations"] == [] for g in groups)
-    assert [f["label"] for g in groups for f in g["frames"]] == [
-        "play_land Mountain",
-        "cast Grizzly Bears",
-    ]
-
-
-def test_a_declaration_pairs_with_what_the_opponent_actually_did() -> None:
-    rows = [plan_row(2), entry(3, "cast", detail={"player": "alice", "card": "Lightning Bolt"})]
-    declared = declaration(
-        2,
-        opponent_did=[
-            {
-                "seq": 3,
-                "ts": "2026-09-08T20:03:00+00:00",
-                "turn": 1,
-                "step": "precombat_main",
-                "phase": "precombat_main",
-                "action": "cast",
-                "reasoning": "the Bears have to die before they connect",
-                "detail": {"player": "alice", "card": "Lightning Bolt", "allowed": True},
-                "player": "alice",
-            }
-        ],
-    )
-    groups = call("m.reviewTurns(rev)", rev=review(rows, [declared]))
-    pairing = groups[0]["declarations"][0]
-    assert pairing["player"] == "bob"
-    assert pairing["opponent"] == "alice"
-    assert pairing["prediction"]["expecting"].startswith("alice takes the three")
-    assert [f["label"] for f in pairing["opponentDid"]] == ["cast Lightning Bolt"]
-    assert pairing["opponentDid"][0]["seq"] == 3
-    # the ordering claim the whole page rests on, stated as data
-    assert pairing["seq"] < pairing["opponentDid"][0]["seq"]
-
-
-def test_a_declaration_with_no_opponent_actions_says_so_rather_than_vanishing() -> None:
-    rows = [plan_row(2), entry(3, "play_land", detail={"player": "bob", "card": "Forest"})]
-    declared = declaration(
-        2,
-        did=[
-            {
-                "seq": 3,
-                "ts": "2026-09-08T20:03:00+00:00",
-                "turn": 1,
-                "step": "precombat_main",
-                "phase": "precombat_main",
-                "action": "play_land",
-                "reasoning": "I need the fourth land",
-                "detail": {"player": "bob", "card": "Forest"},
-                "player": "bob",
-            }
-        ],
-    )
-    pairing = call("m.reviewTurns(rev)[0].declarations[0]", rev=review(rows, [declared]))
-    assert pairing["opponentDid"] == []
-    assert [f["label"] for f in pairing["did"]] == ["play_land Forest"]
-
-
-def test_a_refused_action_keeps_the_engine_s_own_words() -> None:
-    rows = [
-        entry(
-            1,
-            "cast",
-            reasoning="I want the Bolt now",
-            detail={
-                "player": "bob",
-                "card": "Lightning Bolt",
-                "allowed": False,
-                "reason": "it is not your priority",
-            },
-        )
-    ]
-    frame = call("m.reviewTurns(rev)[0].frames[0]", rev=review(rows, []))
-    assert frame["refused"] is True
-    assert frame["reason"] == "it is not your priority"
-    assert frame["reasoning"] == "I want the Bolt now"
-    assert frame["player"] == "bob"
-
-
-def test_an_allowed_action_is_not_marked_refused() -> None:
-    rows = [entry(1, "cast", detail={"player": "bob", "card": "Grizzly Bears", "allowed": True})]
-    frame = call("m.reviewTurns(rev)[0].frames[0]", rev=review(rows, []))
-    assert frame["refused"] is False
-    assert frame["reason"] is None
-
-
-def test_the_turn_marker_walking_forward_is_marked_routine() -> None:
-    """A real game's ledger is mostly `advance`: 219 of 297 rows in the game
-    this page was built against. Marking them lets the outcome column lead
-    with what the opponent actually *did* instead of burying it under a
-    dozen identical step markers - the page still shows them, in order, just
-    not at the same weight."""
-    rows = [
-        entry(1, "advance", detail={"player": "alice", "allowed": True}),
-        entry(2, "pass_priority", detail={"player": "alice"}),
-        entry(3, "cast", detail={"player": "alice", "card": "Lightning Bolt"}),
-        entry(
-            4,
-            "advance",
-            detail={"player": "alice", "allowed": False, "reason": "it is not your priority"},
-        ),
-    ]
-    frames = call("m.reviewTurns(rev)[0].frames", rev=review(rows, []))
-    assert [f["routine"] for f in frames] == [True, True, False, False], (
-        "a refused row is never routine, whatever its action - the engine's refusal is the evidence"
-    )
-
-
-def test_runs_of_turn_marker_rows_collapse_without_being_reordered() -> None:
-    """The outcome column has to lead with what the opponent actually did,
-    and in this ledger that is one row in twelve. Consecutive routine rows
-    collapse into a single run *in place* - nothing is reordered, nothing is
-    dropped, and the run still names the `seq` span it stands for, so a
-    reader can count them and open them."""
-    rows = [
-        entry(1, "advance", detail={"player": "alice"}),
-        entry(2, "advance", detail={"player": "alice"}),
-        entry(3, "advance", detail={"player": "alice"}),
-        entry(4, "cast", detail={"player": "alice", "card": "Lightning Bolt"}),
-        entry(5, "advance", detail={"player": "alice"}),
-    ]
-    frames = call("m.reviewTurns(rev)[0].frames", rev=review(rows, []))
-    items = call("m.collapseRoutine(frames)", frames=frames)
-    assert [item["kind"] for item in items] == ["run", "frame", "frame"]
-    assert items[0]["from"] == 1
-    assert items[0]["to"] == 3
-    assert items[0]["count"] == 3
-    assert [f["seq"] for f in items[0]["frames"]] == [1, 2, 3]
-    assert items[1]["frame"]["label"] == "cast Lightning Bolt"
-    assert items[2]["frame"]["seq"] == 5, "a lone routine row is left as itself"
-
-
 def test_a_frame_label_names_the_card_the_target_and_a_zone_move() -> None:
     labels = call(
         "rows.map((r) => m.frameLabel(r))",
@@ -635,6 +443,12 @@ def test_with_no_declarations_the_perspective_falls_back_to_the_first_seat() -> 
 
 
 # ----------------------------------------------------------- the reflection --
+#
+# `reflectionOf`/`aiReviewsOf` kept exported (R5) for `tests/test_review.py`/
+# `tests/driver/test_review_filing.py`, which drive them directly against a
+# real server-filed review body - `ui/replay_model.js`'s `logMessages` reads
+# the same rows itself now, by its own `REFLECTION_ACTIONS`/
+# `AI_REVIEW_ACTIONS` scan, rather than calling either.
 
 
 def test_a_review_with_no_reflection_has_none() -> None:
@@ -758,31 +572,6 @@ def test_ai_reviews_are_ordered_by_each_players_own_seq() -> None:
 def test_the_advice_action_constants_match_what_audit_py_writes() -> None:
     assert call("m.ADVICE_ACTION") == "advice"
     assert call("m.ADVICE_APPROVED_ACTION") == "advice_approved"
-
-
-def test_an_advice_row_is_the_turns_header_not_one_of_its_frames() -> None:
-    """Mirrors `plan_declared`'s own treatment: `_declarations`'s marks are
-    `plan_declared`-only, and this stream's marks are `advice`-only - neither
-    is affected by the other existing."""
-    rows = [advice_row(2), entry(3, "play_land", detail={"player": "bob", "card": "Forest"})]
-    groups = call("m.reviewTurns(rev)", rev=review(rows, []))
-    assert len(groups[0]["advice"]) == 1
-    assert [f["seq"] for f in groups[0]["frames"]] == [3]
-    assert groups[0]["advice"][0]["summary"] == "play the Forest"
-
-
-def test_an_advice_approved_row_is_a_low_weight_frame_labelled_by_advice_seq() -> None:
-    rows = [advice_row(2), approval_row(3, advice_seq=2)]
-    frames = call("m.reviewTurns(rev)[0].frames", rev=review(rows, []))
-    assert len(frames) == 1
-    frame = frames[0]
-    assert frame["isApproval"] is True
-    assert frame["adviceSeq"] == 2
-    assert frame["label"] == "approving advice #2"
-    assert frame["routine"] is False, (
-        "not routine - it must never be folded into an unrelated run of "
-        "'advance'/'pass_priority' rows by collapseRoutine"
-    )
 
 
 def test_advice_of_prefers_the_servers_own_computed_list() -> None:

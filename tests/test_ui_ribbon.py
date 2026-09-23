@@ -355,6 +355,41 @@ def test_mounting_a_may_decision_renders_prompt_and_yes_no() -> None:
     assert "cleanup" not in result["stops"]
 
 
+def test_the_ribbon_renders_nothing_while_a_replay_is_open() -> None:
+    """R5: `app.replay` set (`render/replay.js`'s `mountReplay`, live while
+    the Replay door is open) must stop `mountRibbon`'s subscriber cold - the
+    prompt/priority/stops/casting-strip renders it owns are for a live
+    game's own decisions, none of which exist while a finished game is being
+    stepped through. This is the ONE line the ribbon carries for R5
+    (`if (!app.state || app.replay) return;`) - everything else about the
+    replay's own transport/log is `render/replay.js`'s, not this file's."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const state = baseState({
+            pending_decision: {
+              kind: "may", player: "alice", source: "Fog",
+              prompt: "Prevent all combat damage this turn?",
+            },
+          });
+          const store = makeStore(baseApp(state, { replay: { index: 0, count: 3 } }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          return {
+            prompt: document.querySelector("#prompt-box").textContent,
+            priority: document.querySelector("#priority-box").textContent,
+            stops: document.querySelector("#stops-box").textContent,
+          };
+        })()
+        """,
+    )
+    assert result["prompt"] == ""
+    assert result["priority"] == ""
+    assert result["stops"] == ""
+
+
 # -- combatConfirmKind: a paused declare_attackers/declare_blockers --------
 #
 # The dedicated "Declare attackers (CR 508.1)"/"Declare blockers (CR 509.1)"

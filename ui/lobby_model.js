@@ -221,7 +221,7 @@ export function lobbyViewModel(games, saved) {
         // post_game_work`, A3): the seat pod is still writing its guides/
         // reflection and has not released itself yet, so `gameState` reads
         // this alongside `over` to show "recording plays..." rather than
-        // Show thinking/Forget while that work is in flight.
+        // Replay/Forget while that work is in flight.
         postGameWork: Boolean(g.post_game_work),
         model: agent ? agent.model : null,
         effort: agent ? agent.effort : null,

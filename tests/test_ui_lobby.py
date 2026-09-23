@@ -422,12 +422,12 @@ def test_a_finished_game_offers_show_thinking_and_a_live_one_does_not() -> None:
 
           const shown = [];
           const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
-          m.mountLobby(document, store, { startGame: () => {}, showReview: (r) => shown.push(r) });
+          m.mountLobby(document, store, { startGame: () => {}, showReplay: (r) => shown.push(r) });
           await new Promise((resolve) => setTimeout(resolve, 20));
 
           const cell = tbody.children[0].children[tbody.children[0].children.length - 1];
           const labels = cell.children.map((b) => b.textContent);
-          const review = cell.children.find((b) => b.textContent === "Show thinking");
+          const review = cell.children.find((b) => b.textContent === "Replay");
           if (review) review.listeners.click();
           return { labels, shown };
         })()
@@ -435,7 +435,7 @@ def test_a_finished_game_offers_show_thinking_and_a_live_one_does_not() -> None:
         games=GAMES_OVER,
         saved=SAVED,
     )
-    assert "Show thinking" in result["labels"]
+    assert "Replay" in result["labels"]
     assert result["shown"] == [{"gameId": "g1", "uid": "u1"}]
 
     live = run_module(
@@ -459,7 +459,7 @@ def test_a_finished_game_offers_show_thinking_and_a_live_one_does_not() -> None:
             return { ok: true, status: 200, json: async () => ({ games }) };
           };
           const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
-          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          m.mountLobby(document, store, { startGame: () => {}, showReplay: () => {} });
           await new Promise((resolve) => setTimeout(resolve, 20));
           const cell = tbody.children[0].children[tbody.children[0].children.length - 1];
           return cell.children.map((b) => b.textContent);
@@ -468,7 +468,7 @@ def test_a_finished_game_offers_show_thinking_and_a_live_one_does_not() -> None:
         games=GAMES,
         saved=SAVED,
     )
-    assert "Show thinking" not in live, (
+    assert "Replay" not in live, (
         "a live game must never offer the review - it would hand one seat the other's plan mid-game"
     )
 
@@ -537,7 +537,7 @@ def test_an_unopenable_game_offers_end_but_never_open() -> None:
             return { ok: true, status: 200, json: async () => ({ games }) };
           };
           const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
-          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          m.mountLobby(document, store, { startGame: () => {}, showReplay: () => {} });
           await new Promise((resolve) => setTimeout(resolve, 20));
           const cells = tbody.children[0].children;
           const actions = cells[cells.length - 1];
@@ -753,11 +753,11 @@ def _actions_for(games: list[dict[str, Any]]) -> dict[str, Any]:
           };
           const shown = [];
           const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
-          m.mountLobby(document, store, { startGame: () => {}, showReview: (r) => shown.push(r) });
+          m.mountLobby(document, store, { startGame: () => {}, showReplay: (r) => shown.push(r) });
           await new Promise((resolve) => setTimeout(resolve, 20));
           const cells = tbody.children[0].children;
           const actions = cells[cells.length - 1];
-          const review = actions.children.find((b) => b.textContent === "Show thinking");
+          const review = actions.children.find((b) => b.textContent === "Replay");
           if (review) review.listeners.click();
           return {
             labels: actions.children.map((b) => b.textContent),
@@ -778,7 +778,7 @@ def test_an_unopenable_game_the_ledger_says_ended_still_offers_its_review() -> N
     the whole reading from the ledger, so hiding the door would be hiding a
     page that works."""
     result = _actions_for(GAMES_UNLOADABLE_ENDED)
-    assert result["labels"] == ["End", "Show thinking"], result["labels"]
+    assert result["labels"] == ["End", "Replay"], result["labels"]
     assert result["shown"] == [{"gameId": "g1", "uid": "u1"}]
     assert "ledger" in (result["reviewTitle"] or "").lower(), (
         "the button must say what it will show - a reading rebuilt from the "
@@ -1173,7 +1173,7 @@ def test_the_page_offers_the_buddy_on_the_human_picker_alone() -> None:
 
 # ---------------------------------------------------------------------------
 # U1: "recording plays..." while the pod finishes its post-game work, then
-# Show thinking + Forget once it has released itself
+# Replay + Forget once it has released itself
 # ---------------------------------------------------------------------------
 #
 # `decks_api.LobbyGameSummary.post_game_work` (A3) is true on a finished row
@@ -1262,7 +1262,7 @@ def _lobby_row(games: list[dict[str, Any]], saved: list[dict[str, Any]] = SAVED)
             return { ok: true, status: 200, json: async () => ({ games }) };
           };
           const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
-          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          m.mountLobby(document, store, { startGame: () => {}, showReplay: () => {} });
           await new Promise((resolve) => setTimeout(resolve, 20));
           const cells = tbody.children[0].children;
           const actions = cells[cells.length - 1];
@@ -1289,7 +1289,7 @@ def test_a_recording_row_shows_its_own_text_and_no_buttons_at_all() -> None:
 def test_a_released_row_offers_show_thinking_and_forget_never_open_or_end() -> None:
     result = _lobby_row(GAMES_RELEASED)
     assert result["stateText"] == "over"
-    assert result["labels"] == ["Show thinking", "Forget"], result["labels"]
+    assert result["labels"] == ["Replay", "Forget"], result["labels"]
 
 
 def test_pending_playing_and_unopenable_rows_keep_open_and_end_unaffected() -> None:
@@ -1335,7 +1335,7 @@ def test_forget_on_a_released_row_archives_it_then_drops_it_from_storage() -> No
             return { ok: true, status: 200, json: async () => ({ games }) };
           };
           const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
-          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          m.mountLobby(document, store, { startGame: () => {}, showReplay: () => {} });
           await new Promise((resolve) => setTimeout(resolve, 20));
           const actions = tbody.children[0].children[tbody.children[0].children.length - 1];
           const forget = actions.children.find((b) => b.textContent === "Forget");
@@ -1387,7 +1387,7 @@ def test_forget_on_a_released_row_treats_a_404_as_success_too() -> None:
             return { ok: true, status: 200, json: async () => ({ games }) };
           };
           const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
-          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          m.mountLobby(document, store, { startGame: () => {}, showReplay: () => {} });
           await new Promise((resolve) => setTimeout(resolve, 20));
           const actions = tbody.children[0].children[tbody.children[0].children.length - 1];
           const forget = actions.children.find((b) => b.textContent === "Forget");
@@ -1435,7 +1435,7 @@ def test_forget_on_a_released_row_leaves_it_on_any_other_error() -> None:
             return { ok: true, status: 200, json: async () => ({ games }) };
           };
           const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
-          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          m.mountLobby(document, store, { startGame: () => {}, showReplay: () => {} });
           await new Promise((resolve) => setTimeout(resolve, 20));
           const actions = tbody.children[0].children[tbody.children[0].children.length - 1];
           const forget = actions.children.find((b) => b.textContent === "Forget");
@@ -1493,7 +1493,7 @@ def test_archived_forget_stays_local_only_and_untouched() -> None:
             return { ok: true, status: 200, json: async () => ({ games: [] }) };
           };
           const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
-          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          m.mountLobby(document, store, { startGame: () => {}, showReplay: () => {} });
           await new Promise((resolve) => setTimeout(resolve, 20));
           const actions = tbody.children[0].children[tbody.children[0].children.length - 1];
           const forget = actions.children.find((b) => b.textContent === "Forget");
@@ -1570,7 +1570,7 @@ def test_the_lobby_repolls_while_recording_and_stops_once_released() -> None:
           };
 
           const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
-          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          m.mountLobby(document, store, { startGame: () => {}, showReplay: () => {} });
           await new Promise((resolve) => realSetTimeout(resolve, 20));
           const scheduledAfterMount = scheduled.length;
 
@@ -1627,7 +1627,7 @@ def test_a_live_row_never_schedules_a_recording_repoll() -> None:
             return realSetTimeout(fn, ms);
           };
           const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
-          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          m.mountLobby(document, store, { startGame: () => {}, showReplay: () => {} });
           await new Promise((resolve) => realSetTimeout(resolve, 20));
           return { scheduled: scheduled.length };
         })()

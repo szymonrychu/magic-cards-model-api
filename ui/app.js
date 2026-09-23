@@ -48,7 +48,7 @@ import { mountDecisionPopover } from "./render/decision_popover.js";
 import { mountAdvice } from "./render/advice.js";
 import { withoutUid } from "./advice_model.js";
 import { mountLobby } from "./render/lobby.js";
-import { mountReview } from "./render/review.js";
+import { mountReplay } from "./render/replay.js";
 import { mountTopbar, closeModal } from "./render/panels.js";
 import { mountCardPreview } from "./preview.js";
 import { mountZoneViewer } from "./render/zone_viewer.js";
@@ -95,6 +95,14 @@ export const store = createStore({
   // refreshed on the poll, for the reason `enrichActionMenu` gives: per-card
   // affordance work is banned from the 1.2s tick.
   actionRows: null,
+  // Set only while the Replay door (`render/replay.js`'s `mountReplay`) is
+  // open: `{gameId, uid, index, playing, count, exactFrames}`, or `null`
+  // whenever nothing is open. Never carries this tab's own `gameId` (the
+  // replay never calls `startGame`/writes `store.gameId`), which is what
+  // keeps `poll()` off while a replay is up - see its own `!app.gameId`
+  // guard. `guardReplay` (this file's own click handlers) reads this to
+  // keep the board's own click handlers inert while it is set.
+  replay: null,
   // The pass this seat still owes after its own cast, activation, equip or
   // cycle paused on a decision (`afterStackAction`): `{seat, generation,
   // readSeq}` - the seat that acted, the `pending_decision.generation` the
@@ -1100,13 +1108,35 @@ async function enrichActionMenu(anchor, card, items, run) {
   updatePopoverItems(anchor, menuOptions(enriched, run));
 }
 
+/** R5: a click on the board, the zone viewer or the stack must do nothing
+ * while a replay (`render/replay.js`'s `mountReplay`) is open - it drives
+ * the same store/renderers a live game does, so every card on screen is
+ * still wired to these same handlers, and none of them may mutate an
+ * action in flight (there is none) or target anything (there is no live
+ * game underneath the replay to send it to). One wrapper, applied once to
+ * each of the four handlers a replay's board can reach
+ * (`onHandCard`/`onPermanent`/`onPermission`/`tryTarget` - `onPlayer` and
+ * `onStackObject` are thin closures over `tryTarget` below, so guarding it
+ * once covers both), rather than repeating the same `if
+ * (store.get().replay) return;` line in each. Reads `store.get().replay`
+ * fresh on every call, never latched, so closing the replay
+ * (`mountReplay`'s `close()` sets it back to `null`) lets the very next
+ * click through again. */
+function guardReplay(fn) {
+  return (...args) => {
+    if (store.get().replay) return undefined;
+    return fn(...args);
+  };
+}
+
 /** Exported for `tests/test_ui_app.py` only, alongside `store`/`pinLand`/
  * `fire` - the confirm dialog is a property of the click ACTING, not of the
  * plan, so proving "every action click opens it and no selection click does"
  * means driving the real handler through the real `showPopover`. Not part of
  * any render module's handler contract; `board.js` gets these through
- * `main()`'s own handler object. */
-export async function onHandCard(card, event) {
+ * `main()`'s own handler object. Wrapped in `guardReplay` at its export
+ * below - see that function's own comment. */
+async function onHandCardImpl(card, event) {
   const app = store.get();
   const plan = planHandCardClick(card, app);
   if (plan.kind === "cancel") return cancel();
@@ -1124,6 +1154,7 @@ export async function onHandCard(card, event) {
     if (key.startsWith("special:")) return fireSpecial(card, key.slice("special:".length));
   });
 }
+export const onHandCard = guardReplay(onHandCardImpl);
 
 /** Begin announcing `card`, optionally as one named face of it (CR 709.3's
  * split half, CR 715.3's Adventure). `spellFace` rides on the action from
@@ -1170,8 +1201,9 @@ function beginCastFromPermission(card, fromZone, spellFace) {
  * it opens the same one-option confirm rather than casting on the click that
  * landed on the card. Three surfaces reach here and two of them are the
  * board itself - `#permitted-row` and the zone ribbon (`render/board.js`) -
- * with the zones popover the third (`render/panels.js`). */
-export function onPermission(permission, event) {
+ * with the zones popover the third (`render/panels.js`). Wrapped in
+ * `guardReplay` at its export below - see that function's own comment. */
+function onPermissionImpl(permission, event) {
   const card = permission.card;
   return openActionMenu(card, event, M.permissionMenuItems(permission), (key) => {
     if (key === "cast") return beginCastFromPermission(card, permission.from_zone);
@@ -1182,6 +1214,7 @@ export function onPermission(permission, event) {
     }
   });
 }
+export const onPermission = guardReplay(onPermissionImpl);
 
 export async function playLand(card) {
   store.set({ pendingRelease: null });
@@ -1213,8 +1246,10 @@ export async function cycle(card) {
   await refresh();
 }
 
-/** Exported for `tests/test_ui_app.py` only - see `onHandCard` above. */
-export async function onPermanent(card, event) {
+/** Exported for `tests/test_ui_app.py` only - see `onHandCard` above.
+ * Wrapped in `guardReplay` at its export below - see that function's own
+ * comment. */
+async function onPermanentImpl(card, event) {
   const app = store.get();
   const state = app.state;
   const plan = planPermanentClick(card, app, state);
@@ -1241,6 +1276,7 @@ export async function onPermanent(card, event) {
     if (key.startsWith("activate:")) return beginActivate(card, Number(key.slice("activate:".length)));
   });
 }
+export const onPermanent = guardReplay(onPermanentImpl);
 
 /** The menu for an Equipment permanent (`planPermanentClick`'s `equipment`
  * flag): unlike every other action click, this one has to ask the engine
@@ -1433,8 +1469,11 @@ function settlePin(anchor, card, plan) {
 }
 
 // Exported for `tests/test_ui_app.py` only, alongside `store` above - see
-// its own comment there.
-export async function tryTarget(id) {
+// its own comment there. Wrapped in `guardReplay` at its export below - see
+// that function's own comment; `onPlayer`/`onStackObject` (`main()`'s own
+// handler object) are thin closures over this same guarded export, so
+// guarding it once covers both without a wrapper of their own.
+async function tryTargetImpl(id) {
   const app = store.get();
   const pending = app.state.pending_decision;
   if (pending && decisionIsMine(app.state, pending) && pending.kind === "choose_targets" && !app.action) {
@@ -1495,6 +1534,7 @@ export async function tryTarget(id) {
   store.set({ action: { ...action, slots: fill(action.slots, slotIndex, id) } });
   return previewAndMaybeFire();
 }
+export const tryTarget = guardReplay(tryTargetImpl);
 
 function onFocusSlot(i) {
   store.set((s) => ({
@@ -2114,18 +2154,22 @@ async function main() {
   installPressGuard(store);
   await loadConfig();
   store.set({ symbols: await loadSymbols(api, apiBase()) });
-  // The post-game review, mounted before the lobby because the lobby's
-  // "Show thinking" button (only ever on a finished game - see
-  // `render/lobby.js`'s `reviewable`) opens it. Coming back from it refreshes
-  // the table, the same way leaving a game does.
-  const reviewApi = mountReview(document, {
+  // The Replay door, mounted before the lobby because the lobby's "Replay"
+  // button (only ever on a finished game - see `render/lobby.js`'s
+  // `reviewable`) opens it. It drives the live game screen itself
+  // (`#game`/`#replay-bar`/`#replay-log`), never a page of its own, so
+  // nothing else here needs to know it is up beyond `store.replay`
+  // (`guardReplay` above) and `poll()`'s own `!app.gameId` guard - a replay
+  // never sets `gameId`. Coming back from it refreshes the table, the same
+  // way leaving a game does.
+  const replayApi = mountReplay(document, store, {
     onBack: () => {
       if (lobbyApi) lobbyApi.refresh().catch((e) => console.error(e));
     },
   });
   lobbyApi = mountLobby(document, store, {
     startGame,
-    showReview: (target) => reviewApi.open(target).catch((e) => console.error(e)),
+    showReplay: (target) => replayApi.open(target).catch((e) => console.error(e)),
   });
   // A seat's graveyard, exile or command zone as cards, opened from the zone
   // counts on its player badge - the only way into a zone in mobile mode,

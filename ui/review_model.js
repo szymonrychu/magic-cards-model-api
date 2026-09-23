@@ -1,24 +1,19 @@
-// The post-game review, as pure functions over `GET /api/games/{id}/review`
-// - no DOM and no `fetch`, so `tests/test_ui_review_model.py` can ask the
-// awkward questions directly (`ui/board_layout.js` is the same seam).
-// `render/review.js` draws what this returns and decides nothing about it.
-//
-// What this module exists to protect is one ordering claim: the agent wrote
-// down what it expected *before* the rows that show what happened. That
-// claim is only as good as the grouping, so the grouping lives here, in one
-// tested place, rather than being re-derived inside a render loop.
-//
-// Nothing here grades a prediction. `review.py` says why at length and it is
-// the same reason: a score is a thing a sceptic argues with, and the raw
-// pairing is not. These functions put the two side by side and stop.
+// Pure functions over `GET /api/games/{id}/review`'s own JSON - no DOM and
+// no `fetch`, so `tests/test_ui_review_model.py` can ask the awkward
+// questions directly (`ui/board_layout.js` is the same seam). Two consumers
+// build on it: `ui/replay_model.js` (the Replay door's own steps/messages)
+// and `render/replay.js` (the exact-frame fallback's board). Nothing here
+// grades a decision or a prediction - `review.py` says why at length and it
+// is the same reason: a score is a thing a sceptic argues with, a raw
+// record is not.
 //
 // The one genuinely awkward piece is the board. `audit.record` writes
 // `serialize.snapshot(game)` on every row, and that snapshot renders each
 // permanent as *one string* - "alice: Grizzly Bears (tapped) (sick) [4/5]
 // dmg:2 (+1/+1=2)" - with hands, graveyards and exile as bare card names. So
-// a review frame's board has to be parsed back out of those lines
+// a frame's board has to be parsed back out of those lines
 // (`parsePermanent`) and joined against the printings by name
-// (`frameState`'s `catalogue`, which `render/review.js` fills from
+// (`frameState`'s `catalogue`, which `render/replay.js` fills from
 // `GET /api/cards/{name}`) before `board_layout.js` and `cards.js` can draw
 // it with the same renderers the live board uses.
 //
@@ -258,8 +253,8 @@ export function frameState(snapshot, catalogue) {
 }
 
 /** Every card name anywhere in this review, sorted and deduplicated - what
- * `render/review.js` fetches printings for so the frames are drawn with the
- * game's own art rather than text boxes. */
+ * `render/replay.js` fetches printings for so a frame's fallback board is
+ * drawn with the game's own art rather than text boxes. */
 export function cardNamesIn(review) {
   const names = new Set();
   for (const entry of (review && review.entries) || []) {
@@ -333,72 +328,17 @@ function frameOf(entry) {
   };
 }
 
-/** The declaration `review.py` already paired, reshaped for the page: the
- * prediction on one side, what the opponent actually did on the other, both
- * with the `seq` that proves which came first. `opponentDid` is left empty
- * rather than hidden when the opponent did nothing before the next
- * declaration - that is an outcome too, and the page says so. */
-function pairingOf(declared, players) {
-  const did = (declared.did || []).map(frameOf);
-  const opponentDid = (declared.opponent_did || []).map(frameOf);
-  const opponent =
-    (opponentDid.find((f) => f.player) || {}).player ||
-    (players || []).find((p) => p !== declared.player) ||
-    null;
-  return {
-    seq: declared.seq,
-    ts: declared.ts,
-    turn: declared.turn,
-    turnsTaken: declared.turns_taken === undefined ? null : declared.turns_taken,
-    player: declared.player || null,
-    opponent,
-    board_read: declared.board_read || null,
-    my_role: declared.my_role || null,
-    plan: declared.plan || null,
-    prediction: declared.prediction || null,
-    did,
-    opponentDid,
-  };
-}
-
-/** A `plan_declared` row the endpoint's own `declarations` list does not
- * cover - a payload from an older server, or a row whose window the endpoint
- * assembled differently. The prediction still shows; only the pairing is
- * empty. */
-function pairingFromRow(entry, players) {
-  const detail = entry.detail || {};
-  return pairingOf(
-    {
-      seq: entry.seq,
-      ts: entry.ts,
-      turn: entry.turn,
-      turns_taken: detail.turns_taken,
-      player: detail.player,
-      board_read: detail.board_read,
-      my_role: detail.my_role,
-      plan: detail.plan,
-      prediction: detail.prediction,
-      did: [],
-      opponent_did: [],
-    },
-    players
-  );
-}
-
 // -------------------------------------------------- mtg-buddy's advice -----
 //
-// A stream of its own, beside the declaration pairing above rather than
-// folded into it: a declaration's window runs from one `plan_declared` row
-// to the next *by any seat*, and an advice row - one per decision point,
-// potentially several a turn - would slice that window into fragments it was
-// never meant to have. `reviewTurns` below marks `PLAN_ACTION` and
-// `ADVICE_ACTION` independently for exactly that reason.
+// One piece of advice is one decision point, potentially several a turn -
+// `PLAN_ACTION`/`ADVICE_ACTION` rows are read independently, by `seq`, never
+// bucketed into a shared window.
 //
 // This mirrors `review.py`'s `_advice` line for line rather than trusting the
-// server's own computed `review.advice` alone, because `adviceOf` (like
-// `pairingOf`/`pairingFromRow` above) has to answer for a payload that
-// carries no such list at all - every game reviewed before this facility
-// existed, or a hand-assembled payload in a test.
+// server's own computed `review.advice` alone, because `adviceOf` has to
+// answer for a payload that carries no such list at all - every game
+// reviewed before this facility existed, or a hand-assembled payload in a
+// test.
 
 /** The ledger's own name for a proposal's `path` - the route's last segment,
  * hyphens turned to underscores (`/actions/play-land` -> `play_land`),
@@ -467,7 +407,8 @@ function refusedInWindow(entries, start, end, player) {
 /** Every `ADVICE_ACTION` row in `entries`, paired with whether it was
  * approved and what the seat did about it - the full derivation `adviceOf`
  * falls back to when `review.advice` is absent. See the section banner above
- * for why this is a separate pass from `reviewTurns`'s declaration pairing. */
+ * for why an advice row is read independently rather than windowed against
+ * `plan_declared`. */
 function deriveAdvice(entries) {
   const approvals = entries.filter((row) => row.action === ADVICE_APPROVED_ACTION);
   const result = [];
@@ -537,180 +478,14 @@ function reshapeServerAdvice(item) {
   };
 }
 
-/** Every piece of advice in this review, as the page reads it - `pairingOf`'s
- * mirror for the advice stream. Prefers the server's own computed `review.
- * advice` (reshaped to camelCase); falls back to deriving it directly from
- * `review.entries` for a payload that carries no such list at all. */
+/** Every piece of advice in this review, as the page reads it. Prefers the
+ * server's own computed `review.advice` (reshaped to camelCase); falls back
+ * to deriving it directly from `review.entries` for a payload that carries
+ * no such list at all. */
 export function adviceOf(review) {
   const provided = review && Array.isArray(review.advice) ? review.advice : null;
   if (provided) return provided.map(reshapeServerAdvice);
   return deriveAdvice((review && review.entries) || []);
-}
-
-/** An `ADVICE_ACTION` row `adviceOf`'s own list does not cover - the
- * row-level fallback `pairingFromRow` is for declarations. Everything the
- * row itself carries still shows; only the cross-referenced pairing
- * (`approved`/`did`/`followed`) is left at its unknown default, since
- * establishing those needs the rest of the ledger this single row does not
- * carry. */
-function adviceFromRow(row) {
-  const detail = row.detail || {};
-  return {
-    seq: row.seq,
-    ts: row.ts,
-    turn: row.turn,
-    step: row.step,
-    phase: row.phase,
-    player: detail.player || null,
-    summary: detail.summary === undefined ? null : detail.summary,
-    reasoning: row.reasoning || detail.reasoning || null,
-    path: detail.path === undefined ? null : detail.path,
-    body: detail.body === undefined ? null : detail.body,
-    basedOnSeq: detail.based_on_seq === undefined ? null : detail.based_on_seq,
-    validated: detail.validated === undefined ? null : detail.validated,
-    approved: false,
-    approvedSeq: null,
-    did: null,
-    followed: false,
-    refused: [],
-  };
-}
-
-/** One `ADVICE_APPROVED_ACTION` row as a low-weight frame: never routine (so
- * `collapseRoutine` never folds it into an unrelated run of `advance`/
- * `pass_priority` rows under that run's own fixed label), but labelled
- * plainly by the advice it approves rather than by `frameLabel`'s generic
- * "advice_approved". */
-function approvalFrameOf(entry) {
-  const detail = entry.detail || {};
-  const adviceSeq = detail.advice_seq === undefined ? null : detail.advice_seq;
-  return {
-    ...frameOf(entry),
-    isApproval: true,
-    adviceSeq,
-    label: `approving advice #${adviceSeq === null ? "?" : adviceSeq}`,
-  };
-}
-
-/**
- * The ledger as the page reads it: one group per turn, in order, each
- * carrying the declarations made in it, the advice given in it, and every
- * other row as a frame.
- *
- * A new group starts whenever the row's `turn` changes rather than by
- * bucketing on the number, so the order the ledger was written in is the
- * order the page shows - a group is a stretch of the game, never a
- * re-sorting of it.
- *
- * A `plan_declared` row is never a frame: it is the turn's header, and
- * showing it twice would make a declaration look like an action taken. An
- * `ADVICE_ACTION` row is the same - the turn's header for that piece of
- * advice - and for the identical reason. An `ADVICE_APPROVED_ACTION` row
- * *is* a frame, since it belongs to the ledger's own order of events rather
- * than to any one turn's header, just a low-weight one (`approvalFrameOf`).
- *
- * **A `plan_declared` row's own header lands on its TARGET turn, never the
- * turn it happened to be written in.** `for_turn: "next"` writes the row
- * while some other turn is still under way - `review.py`'s `pairingOf(d,
- * players).turn` is already the target (`_declarations`'s own `detail.
- * turn_number`) - so attaching it to `current`, the group open at the row's
- * own chronological position, would put the header on the wrong player's
- * turn in a 3+ player game, where `turn_number` can be shared by more than
- * one player's turn (a live-game repro, 2026-09-14). Boundary detection
- * itself is untouched: every entry's own `turn` - `plan_declared` rows
- * included - is still the honest write-time value, so the pass above still
- * sees the ledger's real order and splits groups on it exactly as before.
- * Declarations are matched to their target group in a second pass, once
- * every group exists, so a target group that has not been reached yet in
- * this same scan can still be found.
- */
-export function reviewTurns(review) {
-  const entries = [...((review && review.entries) || [])].sort((a, b) => a.seq - b.seq);
-  const players = (review && review.players) || [];
-  const declaredBySeq = new Map(
-    ((review && review.declarations) || []).map((d) => [d.seq, pairingOf(d, players)])
-  );
-  const adviceBySeq = new Map(adviceOf(review).map((a) => [a.seq, a]));
-  const groups = [];
-  const planEntries = [];
-  let current = null;
-  for (const entry of entries) {
-    if (!current || current.turn !== entry.turn) {
-      current = {
-        key: `turn-${entry.turn === null || entry.turn === undefined ? "pregame" : entry.turn}-${entry.seq}`,
-        turn: entry.turn === undefined ? null : entry.turn,
-        declarations: [],
-        advice: [],
-        frames: [],
-      };
-      groups.push(current);
-    }
-    if (entry.action === PLAN_ACTION) {
-      // Deferred to the second pass below, which knows every group's turn -
-      // including one that has not been reached yet in this forward scan.
-      planEntries.push({ entry, fallback: current });
-    } else if (entry.action === ADVICE_ACTION) {
-      current.advice.push(adviceBySeq.get(entry.seq) || adviceFromRow(entry));
-    } else if (entry.action === ADVICE_APPROVED_ACTION) {
-      current.frames.push(approvalFrameOf(entry));
-    } else {
-      current.frames.push(frameOf(entry));
-    }
-  }
-  for (const { entry, fallback } of planEntries) {
-    const pairing = declaredBySeq.get(entry.seq) || pairingFromRow(entry, players);
-    // The group whose `turn` is this declaration's own target turn - found
-    // anywhere in the ledger, not only ones already built when the row was
-    // encountered above. `fallback` (the group open when the row was
-    // written) covers the one case no group can match: the target turn has
-    // not happened yet anywhere in this ledger (an in-flight game's partial
-    // review), so the row still has somewhere honest to live rather than
-    // being silently dropped.
-    const target = groups.find((group) => group.turn === pairing.turn) || fallback;
-    target.declarations.push(pairing);
-  }
-  return groups;
-}
-
-/** The same frames, with consecutive routine rows folded into one run.
- *
- * `[{kind: "frame", frame} | {kind: "run", from, to, count, frames}]`, in the
- * order the rows were written. This is a rendering convenience and nothing
- * more: no row is dropped, none is reordered, and a run names the `seq` span
- * it stands for so a reader can count what it covers and open it. Without it
- * the one thing the opponent actually did sits eleventh in a list of twelve
- * identical step markers, which is a real ledger's ordinary shape and a
- * terrible way to show it.
- *
- * A lone routine row is left as itself: folding one row into a run that
- * says "1 row" is longer to read than the row.
- */
-export function collapseRoutine(frames) {
-  const items = [];
-  let run = [];
-  const flush = () => {
-    if (!run.length) return;
-    if (run.length === 1) items.push({ kind: "frame", frame: run[0] });
-    else {
-      items.push({
-        kind: "run",
-        from: run[0].seq,
-        to: run[run.length - 1].seq,
-        count: run.length,
-        frames: run,
-      });
-    }
-    run = [];
-  };
-  for (const frame of frames || []) {
-    if (frame.routine) run.push(frame);
-    else {
-      flush();
-      items.push({ kind: "frame", frame });
-    }
-  }
-  flush();
-  return items;
 }
 
 /** Which seat's side of the table the boards are drawn from: the seat that
@@ -734,7 +509,14 @@ export function perspectiveOf(review) {
  * every game today (see `REFLECTION_ACTIONS`). It is labelled
  * `afterTheResult` because that is the whole point of separating it: it was
  * written knowing how the game ended, so nothing on the page above it may
- * rest on it. */
+ * rest on it.
+ *
+ * Kept exported for `tests/test_review.py`/`tests/driver/test_review_
+ * filing.py`, which drive it directly against a real server-filed review
+ * body to prove the ledger's own reflection/AI-review rows are shaped the
+ * way this module still expects - `ui/replay_model.js`'s `logMessages`
+ * reads the same rows itself, by its own `REFLECTION_ACTIONS`/
+ * `AI_REVIEW_ACTIONS` scan, rather than calling this. */
 export function reflectionOf(review) {
   const carried = review && review.reflection;
   if (carried) {
@@ -782,7 +564,9 @@ export function reflectionOf(review) {
  * Ordered by each player's own winning row's `seq`, ascending - not by
  * where that player's *first* row appeared in the ledger, so a player whose
  * only review lands late does not jump ahead of one whose current review is
- * actually older. */
+ * actually older.
+ *
+ * Kept exported alongside `reflectionOf` above, for the same two tests. */
 export function aiReviewsOf(review) {
   const entries = (review && review.entries) || [];
   const byPlayer = new Map();

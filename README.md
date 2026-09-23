@@ -441,7 +441,8 @@ only) and files it separately.
 The mechanism (`mtg_agent/driver/review.py`, `mtg_agent/wrapper/oneshot.py`):
 
 1. The driver fetches the game's own `GET /api/games/{id}/review` body (the
-   same declarations/advice a human reviewer reads on the review page).
+   same declarations/advice a human reviewer reads in the Replay's own
+   thinking log - see below).
 2. It builds a prompt from that plus the reflection text just posted
    (`review.review_prompt`), and POSTs it to the AGENT container's wrapper -
    `POST /v1/review` - since the driver's own container (`Dockerfile`)
@@ -458,15 +459,52 @@ The mechanism (`mtg_agent/driver/review.py`, `mtg_agent/wrapper/oneshot.py`):
    really do run at once, and `playscripts.gitwork.checkout_lock`
    serializes them on the `/guides` clone.
 4. The result is filed under `POST /api/games/{id}/ai-review`
-   (`audit.AI_REVIEW_ACTION`), shown on the review page right after the
-   reflection (`ui/review_model.js`'s `aiReviewOf`, `ui/render/review.js`'s
-   `aiReviewNode`).
+   (`audit.AI_REVIEW_ACTION`), shown last in the Replay's log - after the
+   reflection, both written once the result is already known
+   (`ui/replay_model.js`'s `logMessages`).
 
 Every step is best-effort: an unreachable game server, an unreachable
 wrapper, or a `claude` failure logs a warning and is simply skipped - never
 blocks the handover or retirement that follows it. Not deduplicated across
-seats (see `review.py`'s own module docstring for why); the review page
-reads the newest row of its kind rather than assuming exactly one exists.
+seats (see `review.py`'s own module docstring for why); the Replay reads the
+newest row of its kind rather than assuming exactly one exists.
+
+### The Replay
+
+A finished game's lobby row offers a "Replay" button (`reviewable(row)`,
+`render/lobby.js`) instead of a Show/Open door onto a page of its own: it
+opens the *same* game screen a live game uses, driven step by step from
+`GET /api/games/{id}/review`'s ledger rather than from the poll. The pass/
+phase controls (`#priority-box`/`#stops-box`/`#rail-pass`) are replaced by a
+transport - step back, play/pause, step forward, a position counter, and a
+scrubber (`#replay-bar`) - and the side panel's advisor becomes a thinking
+log (`#replay-log`): every recorded reasoning, plan, advice, refusal,
+reflection and AI review, `seq`-ordered and seat-coloured, with the current
+step's own message marked. Autoplay starts the moment the door opens, one
+step every 5 seconds, and stops at the last one; stepping manually never
+pauses it, it only moves the next tick's window.
+
+Every non-routine ledger row (a cast, an activation, a declaration, a
+decide, a refusal - CR trainability is the whole point of this engine, so a
+refusal is a step too) is a stop; a run of `advance`/`pass_priority` rows
+folds into the *next* stop rather than becoming stops of its own
+(`ui/replay_model.js`'s `replaySteps`). Both hands are shown face up
+regardless of which seat this browser holds a uid for - a finished game's
+review is full information by design.
+
+Each step's board comes from one of two sources. A step whose `seq` is in
+the review's own `exact_frames` (R2's own addition - the engine's exact
+per-row state, kept in the `record_states` table and served only through
+`GET /api/games/{id}/review/frames/{seq}`) fetches and shows that state
+exactly, cached per `seq` and prefetched one step ahead so stepping forward
+rarely waits. Every other step - which, for a game played before R2 landed,
+is every step - falls back to the same text snapshot the ledger has always
+carried (`audit.record`'s `serialize.snapshot`, parsed back into cards by
+`ui/review_model.js`'s `frameState`): the same cards, tapped/counter/damage
+state and board shape, just not byte-identical to a live `GameStateView`
+(no exact attachment lines, exile with no owner). A response for a step the
+viewer has already left is dropped rather than clobbering the one on
+screen.
 
 ### Seeing the Jobs (`kubernetes` mode)
 

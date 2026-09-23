@@ -725,13 +725,17 @@ def test_the_control_ribbon_holds_exactly_the_five_panels_that_ask_or_advise():
     (`#prompt-box`), the announcement in progress (`#casting-strip`), the
     priority controls (`#priority-box`), the stops autopilot halts for
     (`#stops-box`), and the mtg-buddy advisor's current proposal
-    (`#advice-box`, last - which absorbs the leftover height).
+    (`#advice-box`, last for a live game - which absorbs the leftover
+    height).
 
     The game log panel (`#log-box`) used to be the last child; it is removed
     from the play UI, so the advisor takes its room
-    (`tests/test_ui_advice_layout.py` holds that half). Pinned as an ordered
-    list rather than a set of `in` checks, because this column's order is
-    the reading order a player relies on.
+    (`tests/test_ui_advice_layout.py` holds that half). `#replay-log` (R5's
+    Replay door) is the true last child - `#advice-box`'s own counterpart,
+    taking the same leftover height instead while `#game.replaying` is set,
+    never both at once. Pinned as an ordered list rather than a set of `in`
+    checks, because this column's order is the reading order a player
+    relies on.
     """
     html = (UI / "index.html").read_text()
     side = re.search(r'<aside id="side-panel">(.*?)</aside>', html, re.S)
@@ -742,6 +746,7 @@ def test_the_control_ribbon_holds_exactly_the_five_panels_that_ask_or_advise():
         "priority-box",
         "stops-box",
         "advice-box",
+        "replay-log",
     ]
 
 

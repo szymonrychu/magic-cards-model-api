@@ -412,6 +412,82 @@ def test_open_hides_lobby_shows_game_and_seeds_frame_zero() -> None:
     assert result["cardCount"] == 0
 
 
+def test_a_reconstructed_review_shows_the_notice_in_the_logs_own_head() -> None:
+    """The one behaviour `render/review.js`'s own
+    `test_a_reconstructed_review_says_so_and_quotes_the_engines_refusal`
+    pinned that this module must still promise now that the scroll page is
+    gone (R5 acceptance (5)): `review.reconstructed` means this build could
+    not decode the board this game was saved with, and a viewer must not be
+    left thinking a final board was read rather than the ledger rebuilt -
+    the engine's own refusal text, quoted verbatim, is what proves it. Shown
+    once, at the head of `#replay-log`, ahead of every step message rather
+    than folded into one of them - it is a fact about the whole review, not
+    about any one step."""
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const store = makeStore();
+          const clock = makeClock(1000);
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          const frames = {};
+          const frameFailures = [];
+          """
+        + FETCH
+        + """
+          const api = m.mountReplay(document, store, { ...clock.handlers, onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          return { logText: els.log.textContent };
+        })()
+        """,
+        review={
+            **REVIEW,
+            "reconstructed": True,
+            "unloadable": (
+                "Game snapshot was written at schema_version=3, but this build "
+                "decodes schema_version=5. Refusing to decode a mismatched snapshot."
+            ),
+            "unestablished": ["drawn", "is_over", "winner"],
+        },
+        card=CARD_ANSWER,
+    )
+    assert "schema_version=3" in result["logText"], (
+        "the engine's own words, where the viewer can see them - never a paraphrase"
+    )
+    assert "Rebuilt from the recorded ledger" in result["logText"]
+    assert "drawn" in result["logText"] and "winner" in result["logText"], (
+        "what the ledger could not establish is named, not silently dropped"
+    )
+
+
+def test_a_decodable_review_shows_no_reconstructed_notice() -> None:
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const store = makeStore();
+          const clock = makeClock(1000);
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          const frames = {};
+          const frameFailures = [];
+          """
+        + FETCH
+        + """
+          const api = m.mountReplay(document, store, { ...clock.handlers, onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          return { logText: els.log.textContent };
+        })()
+        """,
+        review=REVIEW,
+        card=CARD_ANSWER,
+    )
+    assert "Rebuilt from the recorded ledger" not in result["logText"]
+
+
 def test_a_server_error_shows_its_own_text_with_a_working_back_button_and_no_board() -> None:
     result = drive(
         """

@@ -353,7 +353,7 @@ function renderGamesTable(root, handlers, rows) {
     const actionsTd = document.createElement("td");
     // "recording" offers nothing to click at all: the pod is still writing
     // its guides/reflection, Open would race a board that is about to be
-    // archived out from under it, and Show thinking/Forget both assume the
+    // archived out from under it, and Replay/Forget both assume the
     // pod has already released itself. `state` alone decides every branch
     // below - `row.archived`/`row.over` are what `gameState` computed it
     // from, not a second, independent gate.
@@ -381,21 +381,21 @@ function renderGamesTable(root, handlers, rows) {
         });
         actionsTd.appendChild(endBtn);
       }
-      // The review's door - only on a finished game, and only when the page
+      // The replay's door - only on a finished game, and only when the page
       // that mounted this lobby actually has somewhere to send it.
-      if (reviewable(row) && handlers.showReview) {
+      if (reviewable(row) && handlers.showReplay) {
         const reviewBtn = document.createElement("button");
-        reviewBtn.textContent = "Show thinking";
+        reviewBtn.textContent = "Replay";
         reviewBtn.className = "primary";
         // What the reader is about to get, said before they click it: for a
         // game whose board this build cannot decode, the whole page is
         // rebuilt from the recorded ledger (`review.py`), and the page says
         // so too.
         reviewBtn.title = row.unloadable
-          ? "What the agent said it expected, and what happened next - rebuilt from the recorded ledger, because this build cannot decode this game's saved board"
-          : "What the agent said it expected, and what happened next";
+          ? "Step through what the agent said and what happened next - rebuilt from the recorded ledger, because this build cannot decode this game's saved board"
+          : "Step through what the agent said and what happened next";
         reviewBtn.addEventListener("click", () => {
-          handlers.showReview({ gameId: row.gameId, uid: row.myUid });
+          handlers.showReplay({ gameId: row.gameId, uid: row.myUid });
         });
         actionsTd.appendChild(reviewBtn);
       }
@@ -497,7 +497,7 @@ async function endGame(root, handlers, row) {
  * `endGame` keeps it - a released row already carries everything `mcm.
  * games.v1` would otherwise need to remember (this browser was still
  * showing it seconds ago), and the person clicking Forget rather than
- * Show thinking has already said they do not want it kept for review. */
+ * Replay has already said they do not want it kept for review. */
 async function forgetGame(root, handlers, row) {
   try {
     await api("DELETE", `${lobbyBase()}/games/${row.gameId}?uid=${encodeURIComponent(row.myUid)}`);

@@ -58,15 +58,15 @@ const AUTOPLAY_MS = 5000;
 /**
  * Mount the replay's transport bar (`#replay-bar`) and thinking log
  * (`#replay-log`) into `root`, driving `store` and the shared `#lobby`/
- * `#game` visibility exactly the way `mountReview` does today. Returns
- * `{open({gameId, uid}), close()}`.
+ * `#game` visibility. Returns `{open({gameId, uid}), close()}`.
  *
  * `handlers.setInterval`/`clearInterval`/`now` default to the real globals;
  * a caller (this module's own tests, `tests/test_ui_replay.py`) can inject
  * a fully-controlled fake clock instead, the same seam
  * `ui/replay_model.js`'s own transport reducers already take a `now` for.
- * `handlers.onBack` is called by `close()`, same contract as
- * `mountReview`'s.
+ * `handlers.onBack` is called by `close()`, exactly the contract
+ * `ui/app.js`'s own `mountReplay(document, store, {onBack: ...})` call
+ * expects.
  */
 export function mountReplay(root, store, handlers) {
   const lobby = root.querySelector("#lobby");
@@ -225,9 +225,41 @@ export function mountReplay(root, store, handlers) {
     return actor === session.you ? "replay-msg--you" : "replay-msg--opp";
   }
 
+  /** The banner a review rebuilt from the ledger carries, or `null` - the
+   * one behaviour `render/review.js`'s own `reconstructedNode` pinned that
+   * this module keeps now that the scroll page is retired (R5's own
+   * acceptance (5)). Every step's board was still recorded when it
+   * happened - what is different is that `review.reconstructed` means this
+   * build refuses to decode the final board this game was saved with, so a
+   * viewer is owed that in the engine's own words (`review.unloadable`,
+   * quoted verbatim) rather than left thinking a final state was read.
+   * Shown once, at the head of the log - a fact about the whole review, not
+   * about any one step - so it renders unconditionally on every
+   * `renderLog()`, never re-derived per step. */
+  function reconstructedNode(review) {
+    if (!review || !review.reconstructed) return null;
+    const missing = (review.unestablished || []).length
+      ? ` Not established from that record, and shown as unknown rather than guessed: ${(review.unestablished || []).join(", ")}.`
+      : "";
+    return h(
+      "div",
+      { class: "replay-msg replay-msg--neutral replay-reconstructed" },
+      h("div", { class: "replay-msg-title" }, "Rebuilt from the recorded ledger"),
+      h(
+        "div",
+        { class: "replay-msg-text" },
+        "This build cannot decode the board this game was saved with, so every step below is the server's own append-only record of what happened, written as it happened, rather than a reading of a final state. The engine's reason: ",
+        h("span", { class: "replay-refusal" }, review.unloadable || ""),
+        missing
+      )
+    );
+  }
+
   function renderLog() {
     clear(log);
     if (!session) return;
+    const rebuilt = reconstructedNode(session.review);
+    if (rebuilt) log.appendChild(rebuilt);
     const index = session.transport.index;
     const shown = messagesAt(session.messages, session.steps, index);
     let currentEl = null;
@@ -341,10 +373,9 @@ export function mountReplay(root, store, handlers) {
         `${apiBase()}/games/${encodeURIComponent(gameId)}/review?uid=${encodeURIComponent(uid || "")}`
       );
     } catch (err) {
-      // The server's own words, never a friendlier local paraphrase - the
-      // same rule `mountReview`'s own error path follows, and for the same
-      // reason: a 409 here means the game is not over yet, and that
-      // refusal is the whole point.
+      // The server's own words, never a friendlier local paraphrase: a 409
+      // here means the game is not over yet, and that refusal is the whole
+      // point.
       const backBtn = h(
         "button",
         { class: "ghost replay-error-back", type: "button", onClick: () => close() },
@@ -376,8 +407,7 @@ export function mountReplay(root, store, handlers) {
     renderFrame(0);
     renderLog();
 
-    // The printings arrive after the page does, on purpose - the same
-    // reasoning as `mountReview`'s own catalogue load: a cold Scryfall
+    // The printings arrive after the page does, on purpose: a cold Scryfall
     // cache must never hold up the reading. Only refreshes the *fallback*
     // view - a step already showing its exact frame is left exactly as it
     // is, since the exact frame carries its own art-independent truth and

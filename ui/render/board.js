@@ -145,8 +145,9 @@ function patchCards(container, cards, app, size, onClick) {
  *
  * `decorate(el, card)` is everything about a card that is not its position
  * in the pile - here, the live board's targeting/combat classes and its
- * click. Exported with that seam because `render/review.js` draws the same
- * rows from a finished game's snapshots and needs the identical geometry
+ * click. Exported with that seam because this module itself draws the
+ * replay's own board (`app.js`'s `mountReplay`, `render/replay.js`) from a
+ * finished game's ledger snapshots and needs the identical geometry
  * (the CSS is keyed on `.perm-stack[data-under]`/`.card[data-tuck]`) with
  * none of the interaction. */
 export function patchStacks(container, entries, size, decorate) {
