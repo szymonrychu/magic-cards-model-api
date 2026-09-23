@@ -1609,6 +1609,9 @@ def test_a_background_wait_does_not_block_a_foreground_stage_advice(
     point of this setup is a `wait` with nothing to wake it early, so it
     genuinely sits in `block_until_wake`'s poll for the full bound."""
     wire(monkeypatch)
+    # The CLI's idle re-issue would otherwise keep this nothing-new wait alive
+    # for CLI_IDLE_REISSUE_SECONDS, well past the join below.
+    monkeypatch.setattr(seat_cli, "CLI_IDLE_REISSUE_SECONDS", 0.0)
     uid = advisor_uid(game)
     force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
 
@@ -1632,3 +1635,7 @@ def test_a_background_wait_does_not_block_a_foreground_stage_advice(
         "still polling - the CLI draft lock is still held across the wait"
     )
     wait_thread.join(5)
+    assert not wait_thread.is_alive(), (
+        "the background wait outlived its own --max-seconds bound and would leak "
+        "its late JSON into a later test's captured stdout"
+    )
