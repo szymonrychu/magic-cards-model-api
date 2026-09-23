@@ -30,7 +30,20 @@ def test_default_stops_are_mtgo_like() -> None:
         "theirs": ["declare_attackers", "end_step"],
         "onStack": True,
         "keepPriorityByDefault": True,
+        "askAttackers": True,
+        "askBlockers": True,
     }
+
+
+def test_ask_attackers_and_ask_blockers_start_on() -> None:
+    """The two ticks that replaced the dedicated "Declare attackers (CR
+    508.1)"/"Declare blockers (CR 509.1)" prompt boxes
+    (`render/ribbon.js`'s `renderStopsBox`), beside `onStack`. Ticked by
+    default: absent must never silently answer a real combat "none" on a
+    player's behalf."""
+    defaults = run_module("priority.js", "m.DEFAULT_STOPS")
+    assert defaults["askAttackers"] is True
+    assert defaults["askBlockers"] is True
 
 
 def test_the_stack_tick_is_a_stop_of_its_own_and_starts_on() -> None:
@@ -85,7 +98,38 @@ def test_stops_round_trip_through_storage_under_the_v2_key() -> None:
         "theirs": [],
         "onStack": False,
         "keepPriorityByDefault": False,
+        "askAttackers": True,
+        "askBlockers": True,
     }
+
+
+def test_ask_attackers_and_ask_blockers_round_trip_through_storage() -> None:
+    """Persisted the same way as the stack tick - under `mcm.stops.v2`,
+    surviving a save/load round trip including an explicit OFF."""
+    result = run_module(
+        "priority.js",
+        "(() => { " + _map_storage() + "m.saveStops(storage, { mine: [], theirs: [], "
+        "onStack: true, keepPriorityByDefault: true, askAttackers: false, askBlockers: false }); "
+        "return m.loadStops(storage); })()",
+        seed={},
+    )
+    assert result["askAttackers"] is False
+    assert result["askBlockers"] is False
+
+
+def test_ask_attackers_and_ask_blockers_absent_reads_as_ticked() -> None:
+    """A payload written before either tick existed (or a v1 payload,
+    which never carried them at all) carries neither key. Absent has to
+    mean ON, the same reading `onStack` already gets: anything else would
+    silently start auto-declining a real combat for a player who never
+    touched either checkbox."""
+    result = run_module(
+        "priority.js",
+        "m.loadStops({ getItem: () => raw })",
+        raw='{"mine": ["upkeep"], "theirs": ["end_step"], "onStack": true}',
+    )
+    assert result["askAttackers"] is True
+    assert result["askBlockers"] is True
 
 
 def test_a_v1_payload_never_carries_the_old_off_default_forward() -> None:
@@ -108,6 +152,8 @@ def test_a_v1_payload_never_carries_the_old_off_default_forward() -> None:
         "theirs": ["end_step"],
         "onStack": False,
         "keepPriorityByDefault": True,
+        "askAttackers": True,
+        "askBlockers": True,
     }
 
 
@@ -139,6 +185,8 @@ def test_stops_saved_before_the_stack_tick_existed_read_back_with_it_on() -> Non
         "theirs": ["end_step"],
         "onStack": True,
         "keepPriorityByDefault": True,
+        "askAttackers": True,
+        "askBlockers": True,
     }
 
 
@@ -260,41 +308,24 @@ def test_pass_until_stops_at_every_step_tick_on_the_right_side() -> None:
         assert wrong_side is None, step
 
 
-def test_pass_until_stops_at_your_own_declare_attackers_step_when_ticked() -> None:
+def test_pass_until_stops_at_your_own_declare_attackers_decision_unconditionally() -> None:
     """Declaring attackers is a turn-based action that does not use the stack
     (CR 508.1), and the pause that asks for it does not move `state.step`
     there either - the transition that would is what never finished (see
     `seatkit.autopass_stop_reason`'s docstring for the server-side twin of
     this reasoning). `state.pending_decision` is what announces it instead,
-    stamped the moment the question is asked. `declare_attackers` on `mine`
-    (on by default - `DEFAULT_STOPS`) is what stops the run: an ordinary
-    checked stop like any other, not a rule with no tick."""
-    assert "declare_attackers" in run_module("priority.js", "m.DEFAULT_STOPS")["mine"]
-    later = board(
-        step="beginning_of_combat",
-        pending_decision={
-            "player": "alice",
-            "kind": "declare_attackers",
-            "prompt": "Declare attackers",
-        },
-    )
-    reason = run_module(
-        "priority.js",
-        "m.stopReason(later, m.startRun('pass_until', start), m.DEFAULT_STOPS)",
-        start=board(step="upkeep"),
-        later=later,
-    )
-    assert reason == "stop at your declare attackers"
+    stamped the moment the question is asked.
 
-
-def test_pass_until_runs_through_your_own_declare_attackers_step_when_unticked() -> None:
-    """The owner's overrule of the old unconditional rule: untick
-    `declare_attackers` from `stops.mine` and the run keeps going straight
-    through the pause, the same as any other step whose tick is off. Nothing
-    else in `stopReason` can see it either - it never touches the stack (CR
-    508.1) and `state.step` never moves to name it - so the run does not stop
-    at all. Answering the pause itself (declaring nobody) is the harness's
-    job, not `stopReason`'s: this only says whether the run should look up."""
+    This used to be a checked stop on `stops.mine`, tick-gated the same way a
+    step is. The owner replaced that with `render/ribbon.js`'s "Ask me to
+    declare attackers" stops-box tick, read only by `app.js`'s own
+    `maybeAutoAnswerCombatDeclaration` - which runs on every poll/refresh
+    tick, independently of whether a run is executing, and answers "none"
+    before `stopReason` is ever asked about a pause that tick (or a possible
+    declaration) rules out. Whatever is still standing by the time
+    `stopReason` sees it is therefore always a real question, so this now
+    stops the run unconditionally - no tick here can run through it, `stops`
+    below is deliberately empty to prove that."""
     later = board(
         step="beginning_of_combat",
         pending_decision={
@@ -310,73 +341,15 @@ def test_pass_until_runs_through_your_own_declare_attackers_step_when_unticked()
         start=board(step="upkeep"),
         later=later,
     )
-    assert reason is None
-
-
-def test_own_unticked_attack_declaration_is_flagged_for_auto_answer() -> None:
-    """`stopReason` not stopping is not the same as the game progressing:
-    the pause is a `pending_decision`, and passing priority cannot answer a
-    `declare_attackers` question (CR 508.1 is a turn-based action, not a
-    priority action). `ownUnansweredAttackDeclaration` is the pure check
-    `app.js`'s `tickRun` uses to know when it must submit "no attackers"
-    itself to unfreeze the game - true exactly when `stopReason` would have
-    fallen through this exact pause rather than stopped for it."""
-    pending = {"player": "alice", "kind": "declare_attackers", "prompt": "Declare attackers"}
-    state = board(step="beginning_of_combat", pending_decision=pending)
-    unticked = {"mine": [], "theirs": []}
-    ticked = {"mine": ["declare_attackers"], "theirs": []}
-    assert (
-        run_module(
-            "priority.js",
-            "m.ownUnansweredAttackDeclaration(state, stops)",
-            state=state,
-            stops=unticked,
-        )
-        is True
-    )
-    assert (
-        run_module(
-            "priority.js",
-            "m.ownUnansweredAttackDeclaration(state, stops)",
-            state=state,
-            stops=ticked,
-        )
-        is False
-    )
-
-
-def test_own_unticked_attack_declaration_ignores_everything_else() -> None:
-    """False whenever the pause is not exactly this seat's own unanswered
-    `declare_attackers`: no pending decision at all, a different kind
-    (`declare_blockers`), or the same kind addressed to someone else."""
-    stops = {"mine": [], "theirs": []}
-    no_pending = board(step="beginning_of_combat", pending_decision=None)
-    wrong_kind = board(
-        step="beginning_of_combat",
-        pending_decision={"player": "alice", "kind": "declare_blockers", "prompt": "x"},
-    )
-    someone_elses = board(
-        step="beginning_of_combat",
-        pending_decision={"player": "bob", "kind": "declare_attackers", "prompt": "x"},
-    )
-    for state in (no_pending, wrong_kind, someone_elses):
-        assert (
-            run_module(
-                "priority.js",
-                "m.ownUnansweredAttackDeclaration(state, stops)",
-                state=state,
-                stops=stops,
-            )
-            is False
-        )
+    assert reason == "a decision is pending"
 
 
 def test_a_pending_declare_blockers_decision_still_stops_unconditionally() -> None:
-    """Unlike `declare_attackers`, being attacked was never a tick and stays
-    that way - the owner has not asked for it to become one. This drives the
-    same `state.pending_decision` path the fix above touches (rather than
-    `attackedNow`'s own step/combat check) to pin that the two kinds did not
-    accidentally start sharing the same tick-gated treatment."""
+    """`declare_blockers` was always unconditional and stays that way - now
+    joined by `declare_attackers` above rather than the two kinds splitting
+    across different treatments. This drives the same `state.pending_decision`
+    path (rather than `attackedNow`'s own step/combat check) to pin that both
+    kinds share it."""
     later = board(
         step="beginning_of_combat",
         pending_decision={

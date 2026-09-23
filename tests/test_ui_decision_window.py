@@ -1382,7 +1382,12 @@ def test_complex_kinds_go_to_the_window_and_small_kinds_stay_in_the_prompt_box()
     assert "waiting on bob" in result["pregameTheirs"]["prompt"]
     assert result["opponents"] is False
     assert result["combat"]["window"] is False
-    assert "Declare attackers" in result["combat"]["prompt"]
+    # The dedicated "Declare attackers (CR 508.1)" prompt box is gone
+    # (`render/ribbon.js`'s `combatConfirmKind`) - with no battlefield
+    # override, `attackCandidates` is empty, so this falls all the way
+    # through to the plain click hint. The assertion this test actually
+    # exists for is the one above: the decision window never opens for it.
+    assert "click a card to play it" in result["combat"]["prompt"]
 
 
 def test_the_prompt_box_pointer_restores_a_minimized_window() -> None:

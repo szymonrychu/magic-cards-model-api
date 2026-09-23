@@ -192,8 +192,10 @@ def test_a_decision_addressed_to_the_controlled_seat_stops_the_controllers_autop
 def test_the_controlled_seats_attack_is_the_controllers_to_declare():
     pending = {"player": "claude", "kind": "declare_attackers", "prompt": "attack?"}
     state = controlling(pending_decision=pending)
-    stops = {"mine": [], "theirs": []}
-    assert run_module("priority.js", "m.ownUnansweredAttackDeclaration(s, t)", s=state, t=stops)
+    # CR 723.5: the controlled seat's own `declare_attackers` pause is this
+    # controller's to answer, exactly like any other decision addressed to
+    # the seat it is deciding for.
+    assert run_module("control.js", "m.decisionIsMine(s, s.pending_decision)", s=state)
     plan = run_app(
         "m.planPermanentClick(c, {action: null, decisionDraft: {}}, s)", c=BEARS, s=state
     )

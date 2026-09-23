@@ -21,19 +21,31 @@
 // A stop is one of three kinds, and only the first is a tick:
 //
 //   1. a *checked stop* - a step on `stops.mine`/`stops.theirs`, or the
-//      `stops.onStack` tick. Your own `declare_attackers` pause counts here
-//      too, even though it arrives as `state.pending_decision` rather than a
-//      `state.step` match (declaring attackers doesn't use the stack, CR
-//      508.1, and doesn't move `state.step` until it is answered) - it reads
-//      `stops.mine` exactly like any other step tick, and unticking it runs
-//      the pass straight through, which silently declares no attackers for
-//      that combat (the harness answers the frozen pause with "nobody" -
-//      declaring nobody is always legal). Ticked by default for that reason;
-//   2. an *unconditional rule* - being attacked (a `declare_blockers` pause),
-//      any other pending decision, the game being over. There is no tick for
-//      these and there never was - the owner has asked only `declare_attackers`
-//      to move into kind 1, not this one;
+//      `stops.onStack` tick;
+//   2. an *unconditional rule* - any pending decision addressed to this seat
+//      (a `may`, a `declare_blockers` pause, and now a `declare_attackers`
+//      pause too - see below), the game being over. There is no tick for
+//      these;
 //   3. the `pass` verb's own "one priority, then stop".
+//
+// `declare_attackers`/`declare_blockers` (CR 508.1, CR 509.1) used to split
+// across both of the first two kinds - `declare_attackers` was a checked stop
+// on `stops.mine`, `declare_blockers` was unconditional - because unticking
+// `stops.mine`'s `declare_attackers` entry was the only way to skip the
+// question while a `pass`/`pass_until` run was under way, and there was no
+// such skip for `declare_blockers` at all. The owner replaced both with
+// `render/ribbon.js`'s "Ask me to declare attackers"/"Ask me to declare
+// blockers" stops-box ticks (`stops.askAttackers`/`askBlockers`, beside
+// `onStack`), which `app.js`'s own auto-answer (`maybeAutoAnswerCombatDeclaration`)
+// consults on *every* poll/refresh tick, not only while a run is executing -
+// a player who is not running anything still has the pause answered "none"
+// for them the instant it is impossible or unticked. Because that happens
+// before `stopReason` is ever asked about the same pause, both declarations
+// are uniformly kind 2 here now: whichever one is still outstanding by the
+// time `stopReason` sees it is one the auto-answer left alone (ticked, and a
+// real declaration is possible), and it stops the run unconditionally, the
+// same as any other decision addressed to this seat - `render/ribbon.js`'s
+// own combat-confirm mode is what takes over from there, not a resumed run.
 //
 // The `onStack` tick is deliberately NOT a destination. The owner's case for
 // it is "I'm passing until my pre-combat-main, but opponent casts a spell in
@@ -87,16 +99,31 @@ export const VERB_LABELS = {
 // activating an ability. The casting strip's per-action tick starts from
 // it and overrides it for that one action. Mana abilities and land plays
 // never auto-pass either way.
+// `askAttackers`/`askBlockers` sit beside `onStack`/`keepPriorityByDefault`
+// for the identical structural reason: neither is a step, and both fire (or
+// rather, decide whether NOT to fire) regardless of which one the board is
+// in. `render/ribbon.js`'s `renderStopsBox` draws them as "Ask me to declare
+// attackers"/"Ask me to declare blockers", and `app.js`'s own
+// `maybeAutoAnswerCombatDeclaration` is the only reader - `stopReason` below
+// never looks at either, because ticked-off is answered "none" before
+// `stopReason` is ever asked about that pause (see this file's own header).
+// On by default, the same as every other tick here: absent has to read as
+// "ask", never as a silent auto-decline a player did not choose.
 export const DEFAULT_STOPS = {
   mine: ["precombat_main", "declare_attackers", "postcombat_main"],
   theirs: ["declare_attackers", "end_step"],
   onStack: true,
   keepPriorityByDefault: true,
+  askAttackers: true,
+  askBlockers: true,
 };
 
 // v1 was written while the keep-priority setting defaulted off, so a stored
 // `false` there records the old default rather than a choice. The setting
 // lives under v2; v1 is read only for the step ticks and the stack tick.
+// `askAttackers`/`askBlockers` are newer still than `keepPriorityByDefault`
+// and never existed in v1 either, so they get the same absent-means-ON
+// treatment `onStack` already has, on both keys.
 const STOPS_KEY = "mcm.stops.v2";
 const V1_STOPS_KEY = "mcm.stops.v1";
 
@@ -117,19 +144,25 @@ export function loadStops(storage) {
     theirs: [...DEFAULT_STOPS.theirs],
     onStack: DEFAULT_STOPS.onStack,
     keepPriorityByDefault: DEFAULT_STOPS.keepPriorityByDefault,
+    askAttackers: DEFAULT_STOPS.askAttackers,
+    askBlockers: DEFAULT_STOPS.askBlockers,
   };
   try {
     const v2 = readStops(storage, STOPS_KEY);
     const parsed = v2 || readStops(storage, V1_STOPS_KEY);
     if (!parsed) return defaults;
-    // Both absent-means-ON: a payload written before `onStack` existed must
-    // not silently take the chance to respond away, and one without
-    // `keepPriorityByDefault` must not silently start auto-passing.
+    // Absent-means-ON across the board: a payload written before a given
+    // tick existed must not silently take that tick's chance away from a
+    // player who never touched it - `onStack`'s own original reasoning,
+    // extended to `keepPriorityByDefault` and now to `askAttackers`/
+    // `askBlockers` too.
     return {
       mine: parsed.mine || [],
       theirs: parsed.theirs || [],
       onStack: parsed.onStack !== false,
       keepPriorityByDefault: v2 ? v2.keepPriorityByDefault !== false : true,
+      askAttackers: parsed.askAttackers !== false,
+      askBlockers: parsed.askBlockers !== false,
     };
   } catch {
     return defaults;
@@ -238,49 +271,25 @@ function sameOccurrence(state, run) {
   );
 }
 
-// `stopReason` not stopping at your own unticked `declare_attackers` pause
-// is not the same as the game being free to move: the pause is a
-// `pending_decision` (CR 508.1 is a turn-based action, not a priority move),
-// so passing priority cannot answer it, and it never clears on its own.
-// This is the pure predicate `app.js`'s `tickRun` checks to know when it has
-// to submit an empty attack declaration itself to unfreeze the game - true
-// exactly when the pause is addressed to you, it is your own attack step,
-// and the tick is off (the same condition `stopReason`'s own
-// `isOwnAttackDeclaration` branch falls through on, restated here rather
-// than threaded out of `stopReason` as a side value).
-export function ownUnansweredAttackDeclaration(state, stops) {
-  const pending = state.pending_decision;
-  if (!pending || pending.kind !== "declare_attackers" || !decisionIsMine(state, pending)) return false;
-  return !stops.mine.includes("declare_attackers");
-}
-
 export function stopReason(state, run, stops) {
   if (state.winner || state.drawn) return "the game is over";
   if (state.pending_decision) {
     const pending = state.pending_decision;
-    // Declaring attackers is a turn-based action that doesn't use the stack
-    // (CR 508.1), so the pause that asks for it never lands on the stack tick
-    // - and it doesn't move `state.step` to "declare_attackers" either: the
-    // transition that would is the very thing that hasn't finished yet (see
-    // `seatkit.autopass_stop_reason`'s docstring for the server-side twin of
-    // this reasoning). `pending_decision` is what announces it, stamped the
-    // moment the question is asked. This used to stop unconditionally on
-    // that account - the owner overruled it: it is your own attack step, so
-    // it is an ordinary checked stop on `stops.mine` like any other, not a
-    // rule with no tick. Ticked off, nothing below can see the pause either,
-    // so falling through here is what lets the run keep going.
     // CR 723.5: a decision addressed to a player this seat is deciding for
-    // is this seat's own (`control.js`).
-    const isOwnAttackDeclaration = pending.kind === "declare_attackers" && decisionIsMine(state, pending);
-    if (isOwnAttackDeclaration) {
-      if (stops.mine.includes("declare_attackers") && !sameOccurrence(state, run)) {
-        return "stop at your declare attackers";
-      }
-    } else if (decisionIsMine(state, pending)) {
+    // is this seat's own (`control.js`). `declare_attackers`/
+    // `declare_blockers` (CR 508.1, CR 509.1) are ordinary members of this
+    // branch now, the same as a `may` or being attacked: by the time
+    // `stopReason` is ever asked about one, `app.js`'s own
+    // `maybeAutoAnswerCombatDeclaration` has already answered "none" for
+    // every case this run could skip past (no possible declaration, or the
+    // matching "Ask me to declare ..." stops-box tick off) - see this file's
+    // own header. What is left standing here is always a real question this
+    // seat still has to answer by hand, so it stops unconditionally, no
+    // tick, no exception - `render/ribbon.js`'s combat-confirm mode is what
+    // takes over from there.
+    if (decisionIsMine(state, pending)) {
       // Addressed to you - unconditionally this run's business to stop for,
-      // no tick, no exception. Being attacked (a `declare_blockers` pause
-      // addressed to you) falls through to here too: it was never a tick
-      // and stays that way.
+      // no tick, no exception.
       return "a decision is pending";
     } else {
       // Addressed to someone else. A pause rolls the committed game back to

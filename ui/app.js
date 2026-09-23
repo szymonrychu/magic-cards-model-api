@@ -1600,6 +1600,68 @@ export async function declareNoBlockers() {
   await refresh();
 }
 
+/** The `pending_decision.generation` a combat declaration was last
+ * auto-answered for (`generationOf`, below `decide`) - `null` before any
+ * has been. Read and written only by `maybeAutoAnswerCombatDeclaration`,
+ * which is the one caller of `declareNoAttackers`/`declareNoBlockers` that
+ * runs unconditionally, every poll/refresh tick, whether or not a player
+ * asked for anything to run - so this is what keeps a decision the server
+ * has not yet cleared (a slow response, a refusal) from being auto-answered
+ * a second time on the very next tick. Reset whenever a different game
+ * starts (`startGame`): `pause_generation` counts from zero again there, and
+ * a leftover number from a previous game must never suppress this game's
+ * own first combat pause. */
+let autoAnsweredCombatGeneration = null;
+
+/** `declare_attackers`/`declare_blockers` (CR 508.1, CR 509.1) answered
+ * "none" on this seat's behalf - owner spec: automatically, the instant
+ * either is true: (a) no creature this seat could legally declare as an
+ * attacker, or no creature that could legally block any attacker, or (b)
+ * the matching "Ask me to declare ..." stops-box tick
+ * (`app.stops.askAttackers`/`askBlockers`, `render/ribbon.js`'s
+ * `renderStopsBox`, absent reading as ticked) is off. Ticked with a possible
+ * declaration leaves the pause alone entirely - `render/ribbon.js`'s own
+ * `combatConfirmKind` is what takes over from there, board clicks build
+ * `app.combatDraft`, and the Pass button submits it.
+ *
+ * `attackCandidates`/`blockCandidates` (`ui/combat.js`) are the same
+ * candidate lists the click-to-draft board interaction already trusts, read
+ * here rather than off `GET .../legal-actions` for the reason that route
+ * documents itself out of contention for this: a `declare_attackers`/
+ * `declare_blockers` pause stands while the *committed* board is still one
+ * step short of the step the declaration belongs to (`app.py`'s `advance`
+ * docstring; `serialize.py`'s `state_view` reads that same committed game),
+ * so `machines.legal_actions._attacker_actions`/`_blocker_actions`'s own
+ * step gate returns nothing for the whole freeze -
+ * `baseline_seat.attack_candidates` carries the identical verified reason
+ * for why the server's own baseline seat reads the board the same way
+ * instead of asking that route.
+ *
+ * Runs on every `tickRun` call - `poll()` and `refresh()` both end in one,
+ * regardless of whether a pass/pass_until run is active - because a player
+ * who is not running anything still needs this pause answered for the game
+ * to move at all. Returns `true` when it fired, which `tickRun` reads as its
+ * own cue to stop there for this tick rather than fall into the ordinary
+ * pass logic on a board that is about to change under it. */
+async function maybeAutoAnswerCombatDeclaration(app) {
+  const state = app.state;
+  const pending = state && state.pending_decision;
+  if (!pending || !decisionIsMine(state, pending)) return false;
+  const kind = pending.kind;
+  if (kind !== "declare_attackers" && kind !== "declare_blockers") return false;
+  const generation = generationOf(pending);
+  if (generation !== null && generation === autoAnsweredCombatGeneration) return false;
+  const possible =
+    kind === "declare_attackers" ? C.attackCandidates(state).length > 0 : C.blockCandidates(state).length > 0;
+  const asked = kind === "declare_attackers" ? app.stops.askAttackers : app.stops.askBlockers;
+  if (possible && asked !== false) return false;
+  autoAnsweredCombatGeneration = generation;
+  toast(kind === "declare_attackers" ? "no attack (auto)" : "no blocks (auto)");
+  if (kind === "declare_attackers") await declareNoAttackers();
+  else await declareNoBlockers();
+  return true;
+}
+
 // ---- priority ------------------------------------------------------------
 
 async function passOnce() {
@@ -1656,24 +1718,25 @@ async function onVerb(verb) {
 }
 
 // Exported for `tests/test_ui_app.py` only - same reason `store`/
-// `declareNoAttackers` above are: a real, awaited drive of the
-// unticked-declare_attackers auto-answer against a stubbed `fetch`.
+// `declareNoAttackers` above are: a real, awaited drive of the combat
+// auto-answer (`maybeAutoAnswerCombatDeclaration`) and the ordinary pass
+// logic against a stubbed `fetch`.
 export async function tickRun() {
   const app = store.get();
-  if (!app.run || !app.state) return;
+  if (!app.state) return;
   // Not stopping here is not the same as the game being free to move: the
-  // pause is a `pending_decision` (CR 508.1 is a turn-based action, not a
-  // priority move), so passing priority cannot answer it and nothing else
-  // clears it. Checked - and acted on - before the `priority_holder` guard
-  // below, because that value is stale for the whole freeze (`commands.py`
-  // rolls the committed game back to before the paused attempt), not just
-  // for this one case. `declareNoAttackers` submits `{attackers: []}` and
-  // itself calls `refresh()`, which is what picks the run back up (its own
-  // nested `tickRun` call): this is not a stop, so the run stays armed.
-  if (P.ownUnansweredAttackDeclaration(app.state, app.stops)) {
-    await declareNoAttackers();
-    return;
-  }
+  // pause is a `pending_decision` (CR 508.1/CR 509.1 are turn-based actions,
+  // not a priority move), so passing priority cannot answer it and nothing
+  // else clears it. Checked - and acted on - before either the `app.run`
+  // guard or the `priority_holder` guard below, and regardless of both: a
+  // player who is not running anything still needs this pause answered, and
+  // `priority_holder` is stale for the whole freeze anyway (`commands.py`
+  // rolls the committed game back to before the paused attempt).
+  // `declareNoAttackers`/`declareNoBlockers` submit an empty declaration and
+  // themselves call `refresh()`, which is what picks a live run back up (its
+  // own nested `tickRun` call) - this is not a stop, so the run stays armed.
+  if (await maybeAutoAnswerCombatDeclaration(app)) return;
+  if (!app.run) return;
   // A decision addressed to someone else freezes the game exactly the same
   // way (`priority_holder` is stale for the whole freeze, not just for the
   // declare_attackers case above) - `stopReason` no longer ends the run for
@@ -1706,7 +1769,7 @@ export async function tickRun() {
     // nothing here actually happened. Not a completed pass (do not
     // record it) and not a reason to end the run either - the next tick
     // sees the fresh pause through the normal checks
-    // (`ownUnansweredAttackDeclaration` for this seat's own combat, or the
+    // (`maybeAutoAnswerCombatDeclaration` for this seat's own combat, or the
     // "someone else's decision" guard above for anyone else's). Ending the
     // run here was the owner's report: "pass_until is also interrupted on
     // opponent's attack step".
@@ -1785,6 +1848,17 @@ async function onPregame(path, body) {
 
 function toast(text) {
   const el = document.querySelector("#toast");
+  // Defensive the same way `showInFlight` is about `document.body`: a real
+  // page always has `#toast` (`ui/index.html`), but a fake DOM built for one
+  // narrow scenario - `tests/test_ui_app.py`'s `_fetch_stub_body`, used by
+  // every planner/action test in that file, stubs `document.querySelector`
+  // to answer `null` for everything - has no reason to carry a widget this
+  // file used to call only on a refusal, which those stubs never produce.
+  // `maybeAutoAnswerCombatDeclaration` calls this on its ordinary success
+  // path too, not only on a refusal, so it is the first caller here that
+  // would otherwise crash every one of those tests on a DOM node that was
+  // never going to exist.
+  if (!el) return;
   el.textContent = text;
   el.hidden = false;
   clearTimeout(toast.timer);
@@ -1933,6 +2007,11 @@ export function leaveGame() {
  * is saved to `mcm.games.v1` first, so the reloaded/navigated page can find
  * its own `uid`/`aiUid` again. */
 export async function startGame(created, { navigate = true } = {}) {
+  // A fresh game's own `pause_generation` counts from zero again
+  // (`repository.py`), so a number left over from whatever game this tab
+  // had open before must never suppress that new game's own first combat
+  // pause (`maybeAutoAnswerCombatDeclaration`'s own dedupe guard).
+  autoAnsweredCombatGeneration = null;
   store.set({ gameId: created.game_id, uid: created.uid, aiUid: created.aiUid, log: { entries: [], lastSeq: 0 } });
   // Appends rather than overwrites: `mcm.games.v1` is a list, one entry per
   // game this browser has started or opened, not the single `{gameId, uid,
@@ -2157,6 +2236,22 @@ async function main() {
     onToggleKeepPriorityByDefault: () =>
       store.set((s) => {
         const stops = { ...s.stops, keepPriorityByDefault: s.stops.keepPriorityByDefault === false };
+        P.saveStops(localStorage, stops);
+        return { stops };
+      }),
+    // Same shape again: replaces the old dedicated "Declare attackers (CR
+    // 508.1)"/"Declare blockers (CR 509.1)" prompt boxes -
+    // `maybeAutoAnswerCombatDeclaration` reads these fresh on every tick,
+    // not `stopReason`.
+    onToggleAskAttackers: () =>
+      store.set((s) => {
+        const stops = { ...s.stops, askAttackers: s.stops.askAttackers === false };
+        P.saveStops(localStorage, stops);
+        return { stops };
+      }),
+    onToggleAskBlockers: () =>
+      store.set((s) => {
+        const stops = { ...s.stops, askBlockers: s.stops.askBlockers === false };
         P.saveStops(localStorage, stops);
         return { stops };
       }),

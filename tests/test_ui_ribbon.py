@@ -203,6 +203,7 @@ const HANDLERS = {
   onHoldPriority: NOOP, onDecisionDraft: NOOP, onDecide: NOOP, onVerb: NOOP,
   onStopRun: NOOP, onToggleStop: NOOP, onToggleStackStop: NOOP,
   onToggleKeepPriorityByDefault: NOOP,
+  onToggleAskAttackers: NOOP, onToggleAskBlockers: NOOP,
   onAttackConfirm: NOOP, onAttackNone: NOOP,
   onBlockConfirm: NOOP, onBlockNone: NOOP, onConcede: NOOP, onPregame: NOOP,
   nameOf: (id) => id,
@@ -354,18 +355,75 @@ def test_mounting_a_may_decision_renders_prompt_and_yes_no() -> None:
     assert "cleanup" not in result["stops"]
 
 
-# -- renderCombatPrompt: a paused declare_attackers/declare_blockers -------
+# -- combatConfirmKind: a paused declare_attackers/declare_blockers --------
 #
-# `state.step` and `state.priority_holder` are both frozen at whatever they
-# were *before* a combat-declaration pause (`app.py`'s `advance` docstring),
-# never the step the pause is trying to enter - so `renderCombatPrompt` reads
+# The dedicated "Declare attackers (CR 508.1)"/"Declare blockers (CR 509.1)"
+# prompt boxes are gone - replaced by the "Ask me to declare attackers"/"Ask
+# me to declare blockers" stops-box ticks (below) plus a Pass button that
+# confirms the board's own combat draft. `state.step` and
+# `state.priority_holder` are both frozen at whatever they were *before* a
+# combat-declaration pause (`app.py`'s `advance` docstring), never the step
+# the pause is trying to enter - so `combatConfirmKind` reads
 # `state.pending_decision` instead, which is stamped the moment the question
-# is actually asked. These two are the first tests this file has ever had for
-# that branch, or for `renderCombatPrompt`/`renderDeclareAttackers`/
-# `renderDeclareBlockers` at all.
+# is actually asked.
+
+ATTACKER = {
+    "id": "a1",
+    "name": "Grizzly Bears",
+    "controller": "alice",
+    "tapped": False,
+    "summoning_sick": False,
+    "type_line": "Creature",
+    "zone": "battlefield",
+}
+
+BLOCKER = {
+    "id": "b1",
+    "name": "Grizzly Bears",
+    "controller": "alice",
+    "tapped": False,
+    "summoning_sick": False,
+    "type_line": "Creature",
+    "zone": "battlefield",
+}
 
 
-def test_a_paused_declare_attackers_decision_renders_the_attack_prompt() -> None:
+def test_no_prompt_box_for_a_paused_declare_attackers_decision() -> None:
+    """No dedicated box - and no "Declare attackers"/"508.1" text anywhere -
+    while the declaration is still possible and ticked; the generic "click a
+    card to play it" hint covers it instead, same as any other moment with
+    nothing else to say."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const state = baseState({
+            step: "beginning_of_combat",
+            battlefield: [ATTACKER],
+            pending_decision: { player: "alice", kind: "declare_attackers" },
+          });
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          return document.querySelector("#prompt-box").textContent;
+        })()
+        """,
+        ATTACKER=ATTACKER,
+    )
+    assert "Declare attackers" not in result
+    assert "508.1" not in result
+    assert "click a card to play it" in result
+
+
+def test_ticked_and_possible_declare_attackers_shows_a_confirming_pass() -> None:
+    """Ticked (the default - `HANDLERS`'s `baseApp` carries no `askAttackers`
+    at all, which reads as on) with a possible declaration (`ATTACKER`:
+    alice's own, untapped, not summoning sick): `#priority-box` swaps its
+    ordinary Pass verb for one that submits `app.combatDraft` through the
+    same `onAttackConfirm` the old dedicated box's own "Attack" button
+    called - the label says plainly that this is a confirm, not a plain
+    pass."""
     result = run_module(
         "render/ribbon.js",
         FAKE_DOM
@@ -374,24 +432,80 @@ def test_a_paused_declare_attackers_decision_renders_the_attack_prompt() -> None
           const calls = [];
           const state = baseState({
             step: "beginning_of_combat",
+            battlefield: [ATTACKER],
             pending_decision: { player: "alice", kind: "declare_attackers" },
           });
-          const handlers = { ...HANDLERS, onAttackNone: () => calls.push("no-attack") };
+          const handlers = { ...HANDLERS, onAttackConfirm: () => calls.push("confirm-attack") };
           const store = makeStore(baseApp(state));
           m.mountRibbon(document, store, handlers);
           store.set({});
-          const prompt = document.querySelector("#prompt-box");
-          click(findByText(prompt, "button", "No attack"));
-          return { text: prompt.textContent, calls };
+          const box = document.querySelector("#priority-box");
+          const btn = findByText(box, "button", "Pass");
+          click(btn);
+          return { text: box.textContent, calls };
+        })()
+        """,
+        ATTACKER=ATTACKER,
+    )
+    assert "confirm attackers" in result["text"]
+    assert result["calls"] == ["confirm-attack"]
+
+
+def test_unticked_declare_attackers_offers_no_confirming_pass() -> None:
+    """Unticked, `combatConfirmKind` returns `null` even with a possible
+    declaration - `app.js`'s own `maybeAutoAnswerCombatDeclaration` is what
+    answers "none" for this case, not a render decision, so the ordinary
+    priority box (empty here: `priority_holder` is stale during the freeze,
+    same as it always was) is what shows instead."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const state = baseState({
+            step: "beginning_of_combat",
+            battlefield: [ATTACKER],
+            pending_decision: { player: "alice", kind: "declare_attackers" },
+          });
+          const stops = { mine: [], theirs: [], askAttackers: false };
+          const store = makeStore(baseApp(state, { stops }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          return document.querySelector("#priority-box").textContent;
+        })()
+        """,
+        ATTACKER=ATTACKER,
+    )
+    assert "confirm" not in result
+
+
+def test_no_possible_attackers_offers_no_confirming_pass_even_ticked() -> None:
+    """No candidate (an empty battlefield): `combatConfirmKind` returns
+    `null` regardless of the tick - `maybeAutoAnswerCombatDeclaration` again,
+    not a render decision here either."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const state = baseState({
+            step: "beginning_of_combat",
+            battlefield: [],
+            pending_decision: { player: "alice", kind: "declare_attackers" },
+          });
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          return document.querySelector("#priority-box").textContent;
         })()
         """,
     )
-    assert "Declare attackers" in result["text"]
-    assert "508.1" in result["text"]
-    assert result["calls"] == ["no-attack"]
+    assert "confirm" not in result
 
 
-def test_a_paused_declare_blockers_decision_renders_the_block_prompt() -> None:
+def test_ticked_and_possible_declare_blockers_shows_a_confirming_pass() -> None:
+    """The blockers sibling: `BLOCKER` is alice's own, untapped, so a block
+    is possible while she is being attacked and the tick is on (default)."""
     result = run_module(
         "render/ribbon.js",
         FAKE_DOM
@@ -401,21 +515,54 @@ def test_a_paused_declare_blockers_decision_renders_the_block_prompt() -> None:
           const state = baseState({
             step: "declare_attackers",
             active_player: "bob",
+            battlefield: [BLOCKER],
+            combat: { attacks: [{ attacker: "c1", defender: "alice", blockers: [] }] },
             pending_decision: { player: "alice", kind: "declare_blockers" },
           });
-          const handlers = { ...HANDLERS, onBlockNone: () => calls.push("no-blocks") };
+          const handlers = { ...HANDLERS, onBlockConfirm: () => calls.push("confirm-block") };
           const store = makeStore(baseApp(state));
           m.mountRibbon(document, store, handlers);
           store.set({});
-          const prompt = document.querySelector("#prompt-box");
-          click(findByText(prompt, "button", "No blocks"));
-          return { text: prompt.textContent, calls };
+          const box = document.querySelector("#priority-box");
+          click(findByText(box, "button", "Pass"));
+          return { text: box.textContent, calls };
         })()
         """,
+        BLOCKER=BLOCKER,
     )
-    assert "Declare blockers" in result["text"]
-    assert "509.1" in result["text"]
-    assert result["calls"] == ["no-blocks"]
+    assert "confirm blockers" in result["text"]
+    assert result["calls"] == ["confirm-block"]
+
+
+def test_the_rail_shows_the_same_confirming_pass_as_the_priority_box() -> None:
+    """Owner spec: "Mobile rail pass does the same as the ribbon pass" - the
+    rail is not hidden for a live combat declaration the way it is for every
+    other pending decision, and clicking it calls the identical handler."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          boxed("rail-pass");
+          const calls = [];
+          const state = baseState({
+            step: "beginning_of_combat",
+            battlefield: [ATTACKER],
+            pending_decision: { player: "alice", kind: "declare_attackers" },
+          });
+          const handlers = { ...HANDLERS, onAttackConfirm: () => calls.push("confirm-attack") };
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, handlers);
+          store.set({});
+          const rail = document.querySelector("#rail-pass");
+          click(findByText(rail, "button", "Pass"));
+          return { hidden: rail.hidden, calls };
+        })()
+        """,
+        ATTACKER=ATTACKER,
+    )
+    assert result["hidden"] is False
+    assert result["calls"] == ["confirm-attack"]
 
 
 def test_mounting_a_kozilek_command_action_renders_strip_with_two_slots() -> None:
@@ -1151,6 +1298,58 @@ def test_the_stops_box_offers_keep_priority_by_default_and_wires_it_up() -> None
     assert on["offered"] is True
     assert on["checked"] is True
     assert absent["checked"] is True, "a stops object with no setting must read as ticked"
+
+
+def test_the_stops_box_offers_ask_attackers_and_ask_blockers_and_wires_them_up() -> None:
+    """The two ticks that replaced the dedicated "Declare attackers (CR
+    508.1)"/"Declare blockers (CR 509.1)" prompt boxes, beside "anything on
+    the stack". Both start ticked - absent from the stops object reads as
+    ticked, the same `!== false` reading every other tick here gets."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const look = (label, handlerName, stops) => {
+            const store = makeStore(baseApp(baseState(), { stops }));
+            const toggled = [];
+            m.mountRibbon(document, store, { ...HANDLERS, [handlerName]: () => toggled.push(1) });
+            store.set({});
+            const box = document.querySelector("#stops-box");
+            const tick = findByText(box, "label", label);
+            const checkbox = tick && tick.children.find((c) => c.tagName === "input");
+            if (checkbox && checkbox.listeners && checkbox.listeners.change) {
+              checkbox.listeners.change({ target: checkbox });
+            }
+            return {
+              offered: Boolean(tick),
+              checked: checkbox ? "checked" in checkbox.attrs : null,
+              toggles: toggled.length,
+            };
+          };
+          const empty = { mine: [], theirs: [] };
+          return {
+            attackersAbsent: look("Ask me to declare attackers", "onToggleAskAttackers", empty),
+            attackersOff: look(
+              "Ask me to declare attackers", "onToggleAskAttackers",
+              { ...empty, askAttackers: false }
+            ),
+            blockersAbsent: look("Ask me to declare blockers", "onToggleAskBlockers", empty),
+            blockersOff: look(
+              "Ask me to declare blockers", "onToggleAskBlockers",
+              { ...empty, askBlockers: false }
+            ),
+          };
+        })()
+        """,
+    )
+    for key, off_key in (("attackersAbsent", "attackersOff"), ("blockersAbsent", "blockersOff")):
+        absent, off = result[key], result[off_key]
+        assert absent["offered"] is True, key
+        assert absent["checked"] is True, f"{key}: absent must read as ticked"
+        assert absent["toggles"] == 1, f"{key}: clicking the tick reaches no handler"
+        assert off["offered"] is True, off_key
+        assert off["checked"] is False, off_key
 
 
 def test_the_per_action_tick_starts_from_the_standing_default_and_reports_an_untick() -> None:

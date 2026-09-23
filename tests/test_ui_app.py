@@ -393,19 +393,30 @@ def test_declare_no_blockers_sends_an_empty_block_declaration() -> None:
     assert result["combatDraft"] == {}, "a declared block (even 'none') clears the draft"
 
 
-# -- tickRun() / unticking your own declare_attackers must not just fail to --
-# -- stop, it must actually unfreeze the game -------------------------------
+# -- tickRun() / maybeAutoAnswerCombatDeclaration ---------------------------
 #
-# `stopReason` not stopping for an unticked `declare_attackers` pause is not
-# the same as the game progressing: the pause is a `pending_decision`
-# (CR 508.1 is a turn-based action, not a priority move), so passing
-# priority cannot answer it and nothing else clears it on its own.
-# `tickRun` is exported test-only, alongside `store`/`declareNoAttackers`
-# above, and driven here the same way: a real, awaited call against the
-# stubbed `fetch`.
+# `stopReason` stopping unconditionally for a pending `declare_attackers`/
+# `declare_blockers` decision is not the same as the game progressing: the
+# pause is a `pending_decision` (CR 508.1/CR 509.1 are turn-based actions,
+# not a priority move), so passing priority cannot answer it and nothing else
+# clears it on its own. The owner replaced the old "declare_attackers" tick
+# in `stops.mine`/`stops.theirs` with two dedicated ticks -
+# `stops.askAttackers`/`askBlockers` - read only here, not by `stopReason`:
+# unticked, or with no possible declaration at all, this auto-answers "none"
+# regardless of whether a run is executing. `tickRun` is exported test-only,
+# alongside `store`/`declareNoAttackers` above, and driven here the same way:
+# a real, awaited call against the stubbed `fetch`.
+
+COMBAT_CREATURE = {
+    "id": "c1",
+    "controller": "alice",
+    "tapped": False,
+    "summoning_sick": False,
+    "type_line": "Creature",
+}
 
 
-def test_ticking_run_declares_no_attackers_when_the_tick_is_off() -> None:
+def test_ticking_run_declares_no_attackers_when_the_ask_tick_is_off() -> None:
     result = run_app(
         _fetch_stub_body()
         + """
@@ -414,20 +425,22 @@ def test_ticking_run_declares_no_attackers_when_the_tick_is_off() -> None:
             gameId: "g1", uid: "u1",
             run: { verb: "pass_until", startedTurn: 1, startedStep: "upkeep",
                    startedActive: "alice", knownStackIds: [], passes: 0, stillAtStart: false },
-            stops: { mine: [], theirs: [], onStack: true },
+            stops: { mine: [], theirs: [], onStack: true, askAttackers: false },
             state: {
               you: "alice", step: "beginning_of_combat", turn_number: 1,
-              active_player: "alice", priority_holder: "bob", battlefield: [],
+              active_player: "alice", priority_holder: "bob", battlefield: [ATTACKER],
               stack: [], combat: { attacks: [] }, winner: null, drawn: false,
               pending_decision: {
                 player: "alice", kind: "declare_attackers", prompt: "Declare attackers",
+                generation: 1,
               },
             },
           });
           await m.tickRun();
           return { calls: globalThis.__calls, run: m.store.get().run };
         })()
-        """
+        """,
+        ATTACKER=COMBAT_CREATURE,
     )
     posts = [c for c in result["calls"] if c["method"] == "POST"]
     # `declareNoAttackers` calls `poll()` when it is done, which naturally
@@ -435,7 +448,9 @@ def test_ticking_run_declares_no_attackers_when_the_tick_is_off() -> None:
     # stub's canned post-declaration state offers next - a real `pass-priority`
     # is expected here, not asserted against; what this test pins is that the
     # *first* thing that happens is the attack declaration, with the right
-    # body, exactly once.
+    # body, exactly once - a real, possible attacker (`ATTACKER`) is on the
+    # board, so this is the tick's own doing, not "nothing was possible
+    # anyway".
     attacks = [p for p in posts if p["path"] == "/api/games/g1/actions/attack?uid=u1"]
     assert len(attacks) == 1, result["calls"]
     assert posts[0] is attacks[0], "declaring no attackers must be the first thing tickRun does"
@@ -445,10 +460,11 @@ def test_ticking_run_declares_no_attackers_when_the_tick_is_off() -> None:
     )
 
 
-def test_ticking_run_does_not_declare_no_attackers_when_the_tick_is_on() -> None:
-    """The pair to the test above: ticked, the pause is an ordinary checked
-    stop (`stopReason`'s own job) and `tickRun` must not race ahead and
-    answer it on the seat's behalf."""
+def test_ticking_run_does_not_declare_no_attackers_when_the_ask_tick_is_on() -> None:
+    """The pair to the test above: ticked, with a real possible attacker on
+    the board, the pause is an ordinary unconditional stop (`stopReason`'s
+    own job now) and `tickRun` must not race ahead and answer it on the
+    seat's behalf."""
     result = run_app(
         _fetch_stub_body()
         + """
@@ -457,23 +473,192 @@ def test_ticking_run_does_not_declare_no_attackers_when_the_tick_is_on() -> None
             gameId: "g1", uid: "u1",
             run: { verb: "pass_until", startedTurn: 1, startedStep: "upkeep",
                    startedActive: "alice", knownStackIds: [], passes: 0, stillAtStart: false },
-            stops: { mine: ["declare_attackers"], theirs: [], onStack: true },
+            stops: { mine: [], theirs: [], onStack: true, askAttackers: true },
             state: {
               you: "alice", step: "beginning_of_combat", turn_number: 1,
-              active_player: "alice", priority_holder: "bob", battlefield: [],
+              active_player: "alice", priority_holder: "bob", battlefield: [ATTACKER],
               stack: [], combat: { attacks: [] }, winner: null, drawn: false,
               pending_decision: {
                 player: "alice", kind: "declare_attackers", prompt: "Declare attackers",
+                generation: 1,
               },
             },
           });
           await m.tickRun();
           return { calls: globalThis.__calls, run: m.store.get().run };
         })()
-        """
+        """,
+        ATTACKER=COMBAT_CREATURE,
     )
     posts = [c for c in result["calls"] if c["method"] == "POST"]
     assert posts == [], result["calls"]
+
+
+def test_the_auto_answer_logs_a_one_line_toast() -> None:
+    """Owner spec: a one-line log entry - "no attack (auto)"/"no blocks
+    (auto)" - alongside the auto-answer, through the same `toast()` every
+    other one-line notice in this file already uses (`stopped: ...`,
+    a refusal's own reason). A custom `document` stub here, not
+    `_fetch_stub_body`'s: that one answers every `querySelector` with `null`,
+    which is exactly what `toast()`'s own defensiveness against a missing
+    `#toast` widget is for - this test needs the real thing to read back."""
+    result = run_app(
+        """
+        globalThis.__calls = [];
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        globalThis.fetch = (path, opts) => {
+          const body = opts && opts.body ? JSON.parse(opts.body) : undefined;
+          globalThis.__calls.push({ method: opts ? opts.method : "GET", path, body });
+          if (opts && opts.method === "POST") {
+            return Promise.resolve({ ok: true, json: async () => ({ allowed: true }) });
+          }
+          if (path.includes("/log")) {
+            return Promise.resolve({ ok: true, json: async () => ({ log: [], last_seq: 0 }) });
+          }
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              you: "alice", pending_decision: null, step: "beginning_of_combat",
+              active_player: "alice", priority_holder: "bob", battlefield: [],
+              hands: { alice: [] }, stack: [], combat: { attacks: [] },
+              winner: null, drawn: false, pregame: null,
+            }),
+          });
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null,
+            stops: { mine: [], theirs: [], onStack: true, askAttackers: false },
+            state: {
+              you: "alice", step: "beginning_of_combat", turn_number: 1,
+              active_player: "alice", priority_holder: "bob", battlefield: [ATTACKER],
+              stack: [], combat: { attacks: [] }, winner: null, drawn: false,
+              pending_decision: {
+                player: "alice", kind: "declare_attackers", prompt: "Declare attackers",
+                generation: 1,
+              },
+            },
+          });
+          await m.tickRun();
+          return { text: globalThis.__toast.textContent, hidden: globalThis.__toast.hidden };
+        })()
+        """,
+        ATTACKER=COMBAT_CREATURE,
+    )
+    assert result == {"text": "no attack (auto)", "hidden": False}
+
+
+def test_ticking_run_declares_no_attackers_when_ticked_but_nothing_is_possible() -> None:
+    """Owner spec (a): no possible declaration answers "none" automatically
+    regardless of the tick - here `askAttackers` is on and the board carries
+    no candidate at all (`battlefield: []`)."""
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null,
+            stops: { mine: [], theirs: [], onStack: true, askAttackers: true },
+            state: {
+              you: "alice", step: "beginning_of_combat", turn_number: 1,
+              active_player: "alice", priority_holder: "bob", battlefield: [],
+              stack: [], combat: { attacks: [] }, winner: null, drawn: false,
+              pending_decision: {
+                player: "alice", kind: "declare_attackers", prompt: "Declare attackers",
+                generation: 1,
+              },
+            },
+          });
+          await m.tickRun();
+          return { calls: globalThis.__calls };
+        })()
+        """
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    attacks = [p for p in posts if p["path"] == "/api/games/g1/actions/attack?uid=u1"]
+    assert len(attacks) == 1, result["calls"]
+    assert attacks[0]["body"] == {"attackers": []}
+
+
+def test_the_auto_answer_runs_with_no_run_at_all() -> None:
+    """The auto-answer is not a run-only convenience: a player who is not
+    running anything still needs a pause with no possible declaration (or an
+    unticked ask) answered for the game to move - `app.run` is `null` here
+    and `tickRun` still fires it, first thing."""
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null,
+            stops: { mine: [], theirs: [], onStack: true, askBlockers: false },
+            state: {
+              you: "alice", step: "declare_attackers", turn_number: 1,
+              active_player: "bob", priority_holder: "bob", battlefield: [BLOCKER],
+              stack: [], combat: { attacks: [{ attacker: "x1", defender: "alice", blockers: [] }] },
+              winner: null, drawn: false,
+              pending_decision: {
+                player: "alice", kind: "declare_blockers", prompt: "Declare blockers",
+                generation: 1,
+              },
+            },
+          });
+          await m.tickRun();
+          return { calls: globalThis.__calls };
+        })()
+        """,
+        BLOCKER=COMBAT_CREATURE,
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    blocks = [p for p in posts if p["path"] == "/api/games/g1/actions/declare-blockers?uid=u1"]
+    assert len(blocks) == 1, result["calls"]
+    assert blocks[0]["body"] == {"player": "alice", "blocks": []}
+
+
+def test_the_auto_answer_fires_exactly_once_per_generation() -> None:
+    """A generation the server has not yet cleared (a slow response, a
+    refusal) must not be auto-answered twice: `tickRun` called a second time
+    against the identical still-pending generation sends no second POST."""
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null,
+            stops: { mine: [], theirs: [], onStack: true, askAttackers: false },
+            state: {
+              you: "alice", step: "beginning_of_combat", turn_number: 1,
+              active_player: "alice", priority_holder: "bob", battlefield: [ATTACKER],
+              stack: [], combat: { attacks: [] }, winner: null, drawn: false,
+              pending_decision: {
+                player: "alice", kind: "declare_attackers", prompt: "Declare attackers",
+                generation: 7,
+              },
+            },
+          });
+          await m.tickRun();
+          // The stub answers every POST with `{allowed: true}` and every
+          // GET state read with a canned board carrying no pending decision
+          // at all (`_fetch_stub_body`'s own default) - not the identical
+          // still-pending generation this test means to prove is not
+          // re-answered. So the pending decision (same generation) is put
+          // back by hand, exactly as if the server had not cleared it yet.
+          m.store.set((s) => ({ state: { ...s.state, pending_decision: {
+            player: "alice", kind: "declare_attackers", prompt: "Declare attackers",
+            generation: 7,
+          } } }));
+          await m.tickRun();
+          return { calls: globalThis.__calls };
+        })()
+        """,
+        ATTACKER=COMBAT_CREATURE,
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    attacks = [p for p in posts if p["path"] == "/api/games/g1/actions/attack?uid=u1"]
+    assert len(attacks) == 1, result["calls"]
 
 
 def test_ticking_run_never_passes_while_a_decision_belongs_to_someone_else() -> None:
@@ -530,7 +715,7 @@ def test_ticking_run_never_ends_over_a_pass_that_paused_instead_of_completing() 
     ending the run on exactly "the opponent's attack step", matching the
     owner's report. A paused pass must never end the run, own decision or
     the opponent's: the very next tick sees the fresh pause through the
-    normal checks (`ownUnansweredAttackDeclaration` for this seat's own
+    normal checks (`maybeAutoAnswerCombatDeclaration` for this seat's own
     combat, or the "someone else's decision" guard for anyone else's)."""
     result = run_app(
         """

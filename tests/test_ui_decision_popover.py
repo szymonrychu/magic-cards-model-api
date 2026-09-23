@@ -558,7 +558,13 @@ def test_complex_kinds_targets_combat_and_other_seats_never_anchor() -> None:
         assert entry["lit"] is False, f"{entry['label']} highlighted the source card"
     by_label = {entry["label"]: entry for entry in result}
     assert "choose a target" in by_label["choose_targets"]["prompt"]
-    assert "Declare attackers" in by_label["declare_attackers"]["prompt"]
+    # The dedicated "Declare attackers (CR 508.1)" prompt box is gone
+    # (`render/ribbon.js`'s `combatConfirmKind`) - with no battlefield
+    # override here, `attackCandidates` is empty, so this falls all the way
+    # through to the plain click hint, same as any other moment with no
+    # possible declaration and nothing else to say. The assertion this test
+    # actually exists for is above: never anchored, never lit.
+    assert "click a card to play it" in by_label["declare_attackers"]["prompt"]
 
 
 def test_the_classification_is_usesDecisionPopover_in_decisions_js() -> None:

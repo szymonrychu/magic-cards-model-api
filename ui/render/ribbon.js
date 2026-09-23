@@ -1,15 +1,19 @@
 // The right-hand ribbon: everything the game ever asks of the player that
 // is not "click something on the board" - `#prompt-box` (what is being
 // asked right now, in priority order: game over, pregame, a live decision,
-// the combat prompt, or the click hint - and nothing at all while an
-// announcement is in flight, because `#casting-strip` directly below it is
-// already saying so), `#casting-strip` (the in-flight action's own controls,
-// a panel in this ribbon rather than a row of the board), `#priority-box`
-// (the two pass verbs, plus the untap/cleanup escape hatch `priority.js`'s
-// `advanceOffered` explains), and `#stops-box` (the step ticks and the
-// `anything on the stack` tick beside them). Mobile mode repeats the two pass
-// verbs on the right rail (`#rail-pass`, `renderRailPass`), through the same
-// `onVerb`, so priority can be passed with the drawer closed. Plus the one floating
+// or the click hint - and nothing at all while an announcement is in
+// flight, because `#casting-strip` directly below it is already saying so),
+// `#casting-strip` (the in-flight action's own controls, a panel in this
+// ribbon rather than a row of the board), `#priority-box` (the two pass
+// verbs, plus the untap/cleanup escape hatch `priority.js`'s `advanceOffered`
+// explains - or, while a combat declaration is standing and possible, one
+// Pass button that confirms it instead of passing priority), and
+// `#stops-box` (the step ticks, `anything on the stack`, and the "Ask me to
+// declare attackers"/"Ask me to declare blockers" ticks beside it). Mobile
+// mode repeats the same Pass control (plain or combat-confirming) on the
+// right rail (`#rail-pass`, `renderRailPass`), through the same handlers, so
+// priority can be passed - or a declaration confirmed - with the drawer
+// closed. Plus the one floating
 // `#popover` every card-scoped "pick one of these" menu shares - anchored
 // over the card it is about, drawn on top of the board rather than into it,
 // so a click never changes the board's geometry (`ui/menus.js`).
@@ -47,7 +51,8 @@
 // (declare attackers), 509.1 (declare blockers), 118.9 (alternative costs),
 // 117.3c (holding priority), 700.2 (modal spells).
 
-import { actingAs, decisionIsMine } from "../control.js";
+import { decisionIsMine } from "../control.js";
+import { attackCandidates, blockCandidates } from "../combat.js";
 import { clear, h, setText } from "../dom.js";
 import { flatten } from "../targeting.js";
 import { colorOptions } from "../mana.js";
@@ -163,71 +168,62 @@ function renderPregame(state, app, handlers) {
     : renderOpeningHandStep(state, app, handlers);
 }
 
-// ------------------------------------------------------------- combat prompt
-
-function renderDeclareAttackers(app, handlers) {
-  const entries = Object.entries(app.combatDraft || {});
-  const box = h("div", { class: "combat-prompt" }, h("div", { class: "hint" }, "Declare attackers (CR 508.1)"));
-  box.appendChild(
-    entries.length
-      ? h("ul", { class: "combat-list" }, ...entries.map(([atk, def]) => h("li", {}, `${handlers.nameOf(atk)} -> ${handlers.nameOf(def)}`)))
-      : h("div", { class: "hint" }, "click your creatures to attack")
-  );
-  box.appendChild(
-    h(
-      "div",
-      { class: "chip-row" },
-      h("button", { class: "primary", disabled: entries.length === 0, onClick: handlers.onAttackConfirm }, "Attack"),
-      h("button", { onClick: handlers.onAttackNone }, "No attack")
-    )
-  );
-  return box;
+// ------------------------------------------------------------ combat confirm
+//
+// The dedicated "Declare attackers (CR 508.1)"/"Declare blockers (CR 509.1)"
+// prompt boxes that used to live here are gone: the owner replaced them with
+// the "Ask me to declare attackers"/"Ask me to declare blockers" ticks
+// `renderStopsBox` draws below. `app.js`'s own `maybeAutoAnswerCombatDeclaration`
+// answers "none" the moment a declaration is impossible or the matching tick
+// is off, on every poll/refresh tick - so a `declare_attackers`/
+// `declare_blockers` pause (CR 508.1, CR 509.1) is only ever still standing
+// by the time this file renders it because it is a real question: ticked,
+// and a declaration is actually possible. `combatConfirmKind` reads exactly
+// that condition, the same way `app.js`'s own check does (`ui/combat.js`'s
+// `attackCandidates`/`blockCandidates` are the shared source for both - see
+// that module's own note on why `GET .../legal-actions` cannot answer "is a
+// declaration possible" while the pause stands: the committed board it reads
+// is still frozen one step short, exactly as `baseline_seat.attack_candidates`
+// documents server-side for the identical reason). There is no dedicated box
+// for it any more: the player declares by clicking creatures on the board,
+// same as any other combat, and `#priority-box`/`#rail-pass` swap their
+// ordinary Pass verb for one that submits that draft instead
+// (`combatConfirmButton` below).
+function combatConfirmKind(app) {
+  const state = app.state;
+  const pending = state && state.pending_decision;
+  if (!pending || !decisionIsMine(state, pending)) return null;
+  const kind = pending.kind;
+  if (kind !== "declare_attackers" && kind !== "declare_blockers") return null;
+  const possible =
+    kind === "declare_attackers"
+      ? attackCandidates(state).length > 0
+      : blockCandidates(state).length > 0;
+  if (!possible) return null;
+  const asked = kind === "declare_attackers" ? app.stops.askAttackers : app.stops.askBlockers;
+  if (asked === false) return null;
+  return kind;
 }
 
-function renderDeclareBlockers(app, handlers) {
-  const entries = Object.entries(app.combatDraft || {});
-  const box = h("div", { class: "combat-prompt" }, h("div", { class: "hint" }, "Declare blockers (CR 509.1)"));
-  box.appendChild(
-    entries.length
-      ? h("ul", { class: "combat-list" }, ...entries.map(([blocker, attacker]) => h("li", {}, `${handlers.nameOf(blocker)} blocks ${handlers.nameOf(attacker)}`)))
-      : h("div", { class: "hint" }, "click one of your creatures, then the attacker it blocks")
-  );
-  box.appendChild(
-    h(
-      "div",
-      { class: "chip-row" },
-      h("button", { class: "primary", disabled: entries.length === 0, onClick: handlers.onBlockConfirm }, "Block"),
-      h("button", { onClick: handlers.onBlockNone }, "No blocks")
-    )
-  );
-  return box;
-}
-
-// A `declare_attackers`/`declare_blockers` decision paused (CR 508.1, CR
-// 509.1) freezes `state.step` at whatever it was *before* the pause, not the
-// one it is trying to enter (`app.py`'s `advance` docstring) - so
-// `state.step === "declare_attackers"` alone can only ever be true *after*
-// the decision is already answered, never while it is genuinely outstanding.
-// Reading `state.pending_decision` alongside it is what lets this prompt
-// show up for the moment it actually exists to cover: without it, a human
-// player has no combat UI at all for as long as the game is paused waiting
-// on them, which is every combat now that nothing auto-defaults to "nobody"
-// any more.
-function renderCombatPrompt(state, app, handlers) {
-  // The player whose combat this seat is declaring - itself, or one it is
-  // deciding for (CR 723.5, `control.js`).
-  const you = actingAs(state);
-  const pending = state.pending_decision;
-  const pendingKind = decisionIsMine(state, pending) ? pending.kind : null;
-  const attackersPending =
-    (state.step === "declare_attackers" && state.active_player === you) ||
-    pendingKind === "declare_attackers";
-  const blockersPending =
-    (state.step === "declare_blockers" && state.active_player !== you) ||
-    pendingKind === "declare_blockers";
-  if (attackersPending) return renderDeclareAttackers(app, handlers);
-  if (blockersPending) return renderDeclareBlockers(app, handlers);
-  return null;
+/** The Pass button `#priority-box`/`#rail-pass` show instead of the ordinary
+ * pass verbs while `combatConfirmKind` names a live combat declaration - its
+ * label says plainly that this click confirms the board's own draft
+ * (`app.combatDraft`, built by clicking creatures) rather than passing
+ * priority: CR 508.1/CR 509.1's declarations do not use the stack and are
+ * not a priority action at all, so the ordinary "Pass" verb has nothing to
+ * do here. `onAttackConfirm`/`onBlockConfirm` are the very handlers the old
+ * dedicated prompt box's own "Attack"/"Block" buttons called - `confirmAttack`/
+ * `confirmBlocks` in `app.js` - which already submit an empty draft as "no
+ * attackers"/"no blockers" (CR 508.1a/CR 509.1a's "if any"), so an empty
+ * click here needs no separate handling. */
+function combatConfirmButton(kind, handlers) {
+  const label = kind === "declare_attackers" ? "Pass (confirm attackers)" : "Pass (confirm blockers)";
+  const hint =
+    kind === "declare_attackers"
+      ? "Click your creatures to attack, then Pass to confirm - empty confirms no attackers."
+      : "Click your creatures to block, then Pass to confirm - empty confirms no blockers.";
+  const onClick = kind === "declare_attackers" ? handlers.onAttackConfirm : handlers.onBlockConfirm;
+  return h("button", { type: "button", title: hint, onClick }, label);
 }
 
 // ------------------------------------------------------------------ #prompt-box
@@ -332,14 +328,16 @@ function renderPromptBox(el, app, handlers, root) {
   // `declare_attackers`/`declare_blockers` reach `pending_decision` now
   // (pausing put both on the one tape every other kind already answers
   // through - `decisions.py`'s module docstring), but `ui/decisions.js`'s
-  // `DECISION_KINDS` deliberately carries no entry for either: the dedicated
-  // combat screen below already exists (`renderCombatPrompt`), driven by
-  // `attackBody`/`blockBody` in `ui/combat.js` - see
+  // `DECISION_KINDS` deliberately carries no entry for either - see
   // `tests/test_ui_decision_coverage.py`'s own note on this split. Routing
   // one of these two through `renderDecision` anyway would fall through
   // `viewModel`'s "no renderer for ..." placeholder instead: this seat's own
-  // paused attack/block decision has to keep falling through to
-  // `renderCombatPrompt` below, not stop here.
+  // paused attack/block decision has to keep falling through past this
+  // check rather than stop here. There is no dedicated combat screen below
+  // any more (`combatConfirmKind`'s own note above) - a still-outstanding
+  // one falls all the way through to the plain "click a card to play it"
+  // hint, because the board itself (clicking creatures) and the Pass button
+  // (`renderPriorityBox`/`renderRailPass`) are the whole of this UI now.
   const isCombatDeclaration = pending && (pending.kind === "declare_attackers" || pending.kind === "declare_blockers");
   if (pending && decisionIsMine(state, pending) && !isCombatDeclaration) {
     // Anchored beside its rendered source card (`render/decision_popover.js`);
@@ -353,16 +351,10 @@ function renderPromptBox(el, app, handlers, root) {
   // repeating its title and its Cancel here printed the same two things
   // twice, an inch apart - the browser pass on a real Kozilek's Command cast
   // is what made that obvious. This box stands down instead of saying it
-  // again; the `return` still matters, because the combat prompt and the
-  // "click a card to play it" hint below must not speak over a live cast
-  // either.
+  // again; the `return` still matters, because the "click a card to play it"
+  // hint below must not speak over a live cast either.
   if (app.action) {
     el.hidden = true;
-    return;
-  }
-  const combat = renderCombatPrompt(state, app, handlers);
-  if (combat) {
-    el.appendChild(combat);
     return;
   }
   el.appendChild(h("div", { class: "hint" }, "click a card to play it"));
@@ -981,6 +973,15 @@ function verbButton(verb, handlers) {
 
 function renderPriorityBox(el, app, handlers) {
   clear(el);
+  // A live combat declaration (`combatConfirmKind`'s own note above) takes
+  // over the box outright, ahead of the `app.run` check below: `stopReason`
+  // always stops a run for a pending decision addressed to this seat, so by
+  // the time this is non-null any run has already ended.
+  const combatKind = combatConfirmKind(app);
+  if (combatKind) {
+    el.appendChild(combatConfirmButton(combatKind, handlers));
+    return;
+  }
   if (app.run) {
     el.appendChild(h("div", { class: "hint" }, `Stop (running: ${VERB_LABELS[app.run.verb] || app.run.verb})`));
     el.appendChild(h("button", { onClick: handlers.onStopRun }, "Stop"));
@@ -1009,11 +1010,22 @@ function renderPriorityBox(el, app, handlers) {
  * the ones `#priority-box` offers, made through the same `onVerb`, and the
  * rail is hidden whenever that box offers none, while an autopass run is
  * answering (the box shows Stop instead), and while any decision is pending:
- * that question is answered in its own surface, and the drawer opens for it. */
+ * that question is answered in its own surface, and the drawer opens for it.
+ *
+ * A live combat declaration is the one pending decision that does NOT push
+ * the rail into hiding - the owner's own words, "mobile rail pass does the
+ * same as the ribbon pass": it shows the identical `combatConfirmButton`
+ * `#priority-box` does, through the same `onAttackConfirm`/`onBlockConfirm`. */
 export function renderRailPass(el, app, handlers) {
   if (!el) return;
   clear(el);
   const state = app.state;
+  const combatKind = combatConfirmKind(app);
+  if (combatKind) {
+    el.appendChild(combatConfirmButton(combatKind, handlers));
+    el.hidden = false;
+    return;
+  }
   const verbs = state && !app.run && !state.pending_decision ? passButtonsFor(state) : [];
   for (const verb of verbs) el.appendChild(verbButton(verb, handlers));
   el.hidden = verbs.length === 0;
@@ -1077,6 +1089,39 @@ function renderStopsBox(el, app, handlers) {
         onChange: () => handlers.onToggleStackStop(),
       }),
       " anything on the stack"
+    )
+  );
+  // Beside it, same reason: neither is a step, and both replace what used to
+  // be the dedicated "Declare attackers (CR 508.1)"/"Declare blockers (CR
+  // 509.1)" prompt boxes (`combatConfirmKind`'s own note above) - `app.js`'s
+  // `maybeAutoAnswerCombatDeclaration` reads these, not `stopReason`, and it
+  // reads them on every poll/refresh tick, not only while a run is
+  // executing. Ticked (the default) with a possible declaration leaves the
+  // pause standing for the board and the Pass button; unticked, or with no
+  // possible declaration either way, answers "none" automatically. Absent
+  // reads as ticked, like the stack tick (`priority.js`'s `loadStops`).
+  el.appendChild(
+    h(
+      "label",
+      { class: "stops-anything" },
+      h("input", {
+        type: "checkbox",
+        checked: app.stops.askAttackers !== false,
+        onChange: () => handlers.onToggleAskAttackers(),
+      }),
+      " Ask me to declare attackers"
+    )
+  );
+  el.appendChild(
+    h(
+      "label",
+      { class: "stops-anything" },
+      h("input", {
+        type: "checkbox",
+        checked: app.stops.askBlockers !== false,
+        onChange: () => handlers.onToggleAskBlockers(),
+      }),
+      " Ask me to declare blockers"
     )
   );
   // Beside it, not inside either step column, for the same reason: it is not
