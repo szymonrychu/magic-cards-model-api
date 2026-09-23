@@ -2362,6 +2362,155 @@ def test_the_opponents_redacted_view_carries_no_template(client, game):
     assert set(seen) == {"player", "kind", "prompt"}
 
 
+# -- X1: a self-decision race must never echo the decision it is answering --
+#
+# Prod diagnosis (2026-09-23): `seatkit._call_watching_for_self_decision`
+# polls this seat's own state every `POLL_SECONDS` (0.2s) while the mutating
+# call it wraps runs on a background thread, and hands back the first pending
+# decision addressed to this seat it sees - including the very one that call
+# is itself in the middle of answering, if the server has not committed by
+# the time a poll fires. For a `decide` call answering a standing question,
+# that question is *still pending* on every one of those early polls (it is
+# not resolved yet), so the fix has to compare identity - `(player, kind,
+# generation)` - against what was already pending when the call began, not
+# merely "is a decision addressed to me pending right now".
+
+
+def test_decide_does_not_echo_the_decision_it_is_answering(client, game, monkeypatch):
+    """The reported race, reproduced end to end through the live API: a real
+    `decide` HTTP call, slowed past `POLL_SECONDS` (not a fast unit stub -
+    `_call_watching_for_self_decision` is timed against the wall clock, so
+    the slowdown has to actually cross it), answering Malevolent Rumble's
+    `may` (`stage_malevolent_rumble`, this file's own board for exactly this
+    two-decision chain). Before the fix this never progresses at all: every
+    `decide` abandons its own in-flight call the instant the first poll sees
+    the same `may` still standing, reports it back as "raised by this very
+    call", and the next `decide` repeats the same generation against a
+    question that never moved."""
+    import httpx
+
+    from magic_cards_model_api.seatkit import Seats, run_action
+
+    staged = stage_malevolent_rumble(client, game)
+    uids = seats_for(client, game)
+    cast_and_resolve(game, "alice", staged["rumble"], staged["forests"])
+    pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    assert pending["kind"] == "may"
+    may_generation = pending["generation"]
+    may_prompt = pending["prompt"]
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    import time as real_time
+
+    import magic_cards_model_api.seatkit as sk
+
+    _orig_watch = sk._call_watching_for_self_decision
+
+    def _slow_watch(seat, perform, poll_seconds=sk.POLL_SECONDS, **kwargs):
+        """Wraps `perform` in a real sleep past `POLL_SECONDS`, then hands it
+        to the real watcher with a much shorter poll interval - the same
+        shape the prod repro uses - so the poll loop genuinely gets a chance
+        to fire mid-flight rather than merely racing a fast in-process call."""
+
+        def _slowed():
+            real_time.sleep(sk.POLL_SECONDS * 3)
+            return perform()
+
+        return _orig_watch(seat, _slowed, poll_seconds=sk.POLL_SECONDS / 4, **kwargs)
+
+    monkeypatch.setattr(sk, "_call_watching_for_self_decision", _slow_watch)
+
+    seats = Seats(api="http://testserver", game_id=game)
+    alice = seats.seat_for(uids["alice"])
+
+    def decide(body):
+        def perform():
+            answer = alice.call_json("POST", f"/api/games/{game}/decide", body)
+            if isinstance(answer, dict) and answer.get("accepted") is False:
+                return {"allowed": False, "reason": answer.get("reason"), **answer}
+            return {"allowed": True, **answer}
+
+        return run_action(alice, perform, hold_priority=False)
+
+    r1 = decide({"player": "alice", "accept": True, "generation": may_generation})
+    wake1 = r1.get("wake_reason") or ""
+    assert may_prompt not in wake1, (
+        f"decide(accept=true) echoed the very decision it was answering back "
+        f"as newly raised: {wake1!r}"
+    )
+    p1 = r1["state"].get("pending_decision") or {}
+    assert p1.get("kind") == "choose_cards", r1
+    assert p1.get("generation") == may_generation + 1, r1
+
+    r2 = decide({"player": "alice", "card_ids": [staged["wall"]], "generation": p1["generation"]})
+    wake2 = r2.get("wake_reason") or ""
+    assert may_prompt not in wake2, (
+        f"decide(card_ids=...) echoed the ORIGINAL may decision back as newly "
+        f"raised, even though the generation had already moved past it: {wake2!r}"
+    )
+    s2 = r2["state"]
+    assert s2.get("pending_decision") is None, s2.get("pending_decision")
+    hand_names = [c.get("name") for c in (s2.get("hands") or {}).get("alice", [])]
+    assert "Wall of Omens" in hand_names, hand_names
+    # Priority released exactly as a fast decide's own final answer does
+    # (`run_action`'s auto-pass, `block_until_wake`'s `held_priority: False`).
+    assert r2["held_priority"] is False, r2
+    assert "pass_outcome" in r2, r2
+
+
+def test_a_genuinely_new_self_decision_from_a_slow_action_is_still_reported(
+    client, game, monkeypatch
+):
+    """Regression guard for the fix above: nothing pending on this seat
+    before the call means there is nothing to ignore, so a decision this
+    seat's own slow action genuinely raises for the first time - Steam
+    Vents' `pay_life` (CR 614.12a), which pauses the moment the land itself
+    is played rather than through a follow-up call - must still surface as
+    `in_flight_action`, "raised by this very call", exactly as before this
+    task."""
+    import httpx
+
+    from magic_cards_model_api.seatkit import Seats, run_action
+
+    add_card(client, game, "Steam Vents", "alice", "hand")
+    uids = seats_for(client, game)
+    land = state(client, game, uid=uids["alice"])["hands"]["alice"][0]
+    assert state(client, game, uid=uids["alice"]).get("pending_decision") is None
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    import time as real_time
+
+    import magic_cards_model_api.seatkit as sk
+
+    _orig_watch = sk._call_watching_for_self_decision
+
+    def _slow_watch(seat, perform, poll_seconds=sk.POLL_SECONDS, **kwargs):
+        def _slowed():
+            real_time.sleep(sk.POLL_SECONDS * 3)
+            return perform()
+
+        return _orig_watch(seat, _slowed, poll_seconds=sk.POLL_SECONDS / 4, **kwargs)
+
+    monkeypatch.setattr(sk, "_call_watching_for_self_decision", _slow_watch)
+
+    seats = Seats(api="http://testserver", game_id=game)
+    alice = seats.seat_for(uids["alice"])
+
+    def perform():
+        return alice.call_json(
+            "POST",
+            f"/api/games/{game}/actions/play-land",
+            {"player": "alice", "card_id": land["id"]},
+        )
+
+    result = run_action(alice, perform, hold_priority=True)
+    assert result.get("in_flight_action") is True, result
+    wake = result.get("wake_reason") or ""
+    assert "raised by this very call" in wake, wake
+    pending = result["state"].get("pending_decision") or {}
+    assert pending.get("kind") == "pay_life", pending
+
+
 # -- generation, on the MCP decide tool -------------------------------------
 
 

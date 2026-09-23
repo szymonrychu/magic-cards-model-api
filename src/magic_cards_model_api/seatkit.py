@@ -3434,7 +3434,10 @@ SELF_DECISION_IN_FLIGHT = "SELF_DECISION_IN_FLIGHT"
 
 
 def _call_watching_for_self_decision(
-    seat: Seat, perform: Any, poll_seconds: float = POLL_SECONDS
+    seat: Seat,
+    perform: Any,
+    poll_seconds: float = POLL_SECONDS,
+    ignore: dict[str, Any] | None = None,
 ) -> tuple[Any, dict[str, Any] | None]:
     """Run `perform` (one mutating call) on a background thread while polling
     this seat's own state for a decision addressed to it, so a decision that
@@ -3468,6 +3471,26 @@ def _call_watching_for_self_decision(
     this way has to answer it (`decide`) as a genuinely separate request
     before checking state or the game log for what the abandoned call itself
     ended up doing.
+
+    `ignore` (X1, 2026-09-23 prod diagnosis): the `pending_decision` already
+    standing on this seat when the caller started - `before['pending_
+    decision']` in `run_action`/`_pass_until_once` below - passed in whenever
+    `perform` is itself what answers that very decision (a `decide` call, or
+    `_pass_until_once`'s own "declare nobody"). Until the server actually
+    commits `perform`'s request, that same decision keeps showing up on every
+    poll - it is not yet resolved, not a fresh one - so without this, the
+    first poll to land after `perform` takes longer than `poll_seconds`
+    reported it back as SELF_DECISION_IN_FLIGHT, abandoned `perform`'s own
+    call before its answer was ever read, and left the caller re-sending the
+    same now-superseded generation against a question that had not moved.
+    Compared by `(player, kind, generation)`: `generation` is monotonic per
+    game (`decisions.PendingDecision.generation`, bumped only when the
+    standing question is replaced), so a poll that sees the same triple is
+    seeing the same standing question, still unresolved - never a new one to
+    ignore by accident. A *different* decision landing on this same seat
+    mid-flight - an ETB trigger this call's own resolution raises, or the
+    very next question in a chain once `perform` genuinely commits - carries
+    a different generation and is reported exactly as before.
     """
     done = threading.Event()
     box: dict[str, Any] = {}
@@ -3480,11 +3503,22 @@ def _call_watching_for_self_decision(
         finally:
             done.set()
 
+    def _is_the_ignored_decision(pending: dict[str, Any]) -> bool:
+        return ignore is not None and (
+            pending.get("generation"),
+            pending.get("player"),
+            pending.get("kind"),
+        ) == (ignore.get("generation"), ignore.get("player"), ignore.get("kind"))
+
     threading.Thread(target=call, daemon=True).start()
     while not done.wait(poll_seconds):
         state = seat.fetch_state()
         pending = state.get("pending_decision")
-        if pending is not None and decision_is_mine(pending, state, seat.player):
+        if (
+            pending is not None
+            and decision_is_mine(pending, state, seat.player)
+            and not _is_the_ignored_decision(pending)
+        ):
             return SELF_DECISION_IN_FLIGHT, pending
     if "exception" in box:
         raise box["exception"]
@@ -3614,7 +3648,9 @@ def run_action(
     # the auto-pass below - sent after this action has itself moved the
     # ledger - names nothing and is never refused as stale.
     seat.send_expected_seq_once(seat.last_seq)
-    outcome, self_decision = _call_watching_for_self_decision(seat, perform)
+    outcome, self_decision = _call_watching_for_self_decision(
+        seat, perform, ignore=before.get("pending_decision")
+    )
     if self_decision is None and is_stale(outcome):
         # The board moved between this seat's read and this call - a lost
         # race, not a misread. Ask the board what it actually is (the house
@@ -3630,7 +3666,9 @@ def run_action(
         seat.recent_log()  # re-read: this is what moves `seat.last_seq` on
         seat.send_expected_seq_once(seat.last_seq)
         before = seat.fetch_state()
-        outcome, self_decision = _call_watching_for_self_decision(seat, perform)
+        outcome, self_decision = _call_watching_for_self_decision(
+            seat, perform, ignore=before.get("pending_decision")
+        )
     if self_decision is None and _paused(outcome):
         # `perform()` itself paused (`commands.py`) rather than a decision
         # surfacing mid-flight through the polling race above - see
@@ -5327,7 +5365,9 @@ def _pass_until_once(
                 # different `path`/`body` than the one built for it.
                 return seat.call_json("POST", path, body)
 
-            outcome, self_decision = _call_watching_for_self_decision(seat, perform_declare)
+            outcome, self_decision = _call_watching_for_self_decision(
+                seat, perform_declare, ignore=pending
+            )
             if self_decision is None and _paused(outcome):
                 self_decision = outcome.get("pending_decision")
             if self_decision is not None:

@@ -528,6 +528,55 @@ def test_a_run_told_not_to_stop_when_attacked_runs_through_its_own_blockers_step
     assert bob_life == 18, f"the unblocked bear should have hit for 2, life is {bob_life}"
 
 
+def test_a_run_does_not_echo_its_own_declare_blockers_decision_when_the_commit_is_slow(
+    client, game, monkeypatch
+):
+    """X1's stale-echo fix (`seatkit.py`'s `_call_watching_for_self_decision`),
+    exercised here for `_pass_until_once`'s own CR 509.1 "declare nobody" call
+    (`perform_declare`) rather than `decide`: the same test above proves bob's
+    run auto-answers his own `declare_blockers` with "nobody" and the
+    unblocked bear connects, but that only ever exercised the fast path -
+    `perform_declare`'s commit lands well inside `POLL_SECONDS` every time,
+    so the poll never got a chance to see the still-pending decision it is
+    itself in the middle of answering. Slowed past `POLL_SECONDS`, the same
+    race `test_decision_kinds.py::test_decide_does_not_echo_the_decision_it_
+    is_answering` reproduces for `decide` reproduces here too: before the
+    fix, the poll sees bob's own `declare_blockers` still standing, reports
+    it back as a decision this very "nobody" call raised, and the run hands
+    the board back instead of the turn-based action actually completing -
+    the bear never connects because combat itself never left the frozen
+    declare-blockers step."""
+    seats, uids = wired(monkeypatch, game)
+    bob = seats.seat_for(uids["bob"])
+    stock_libraries(client, game)
+    stage_an_attack_on_bob(client, game)
+
+    _orig_watch = seatkit._call_watching_for_self_decision
+
+    def _slow_watch(seat, perform, poll_seconds=seatkit.POLL_SECONDS, **kwargs):
+        def _slowed():
+            time.sleep(seatkit.POLL_SECONDS * 3)
+            return perform()
+
+        return _orig_watch(seat, _slowed, poll_seconds=seatkit.POLL_SECONDS / 4, **kwargs)
+
+    monkeypatch.setattr(seatkit, "_call_watching_for_self_decision", _slow_watch)
+
+    with Opponent(game, "alice"):
+        result = run_to_stop(
+            bob,
+            until_step="upkeep",
+            whose_turn="mine",
+            stop_when_attacked=False,
+        )
+
+    assert "raised by this very call" not in result["stopped_because"], result["stopped_because"]
+    assert result["stopped_because"] == "reached your upkeep", result["stopped_because"]
+    assert result["state"]["step"] == "upkeep"
+    bob_life = next(p for p in result["state"]["players"] if p["username"] == "bob")["life"]
+    assert bob_life == 18, f"the unblocked bear should have hit for 2, life is {bob_life}"
+
+
 def test_the_attacked_stop_does_not_fire_on_the_attacking_seat(client, game, monkeypatch):
     """The same board from the other side. alice is the *attacking* player, so
     her own declare-blockers step is not a step she owes an action in - the
