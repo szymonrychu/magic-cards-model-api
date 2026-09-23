@@ -551,8 +551,11 @@ function renderAltCosts(action, handlers) {
     // answer (`chosen.candidates`, `AlternativeCostView.candidates`), never
     // the whole hand: Solitude's evoke is "Exile a white card from your
     // hand", and offering a blue one is a click that comes back refused.
+    // Never "from your hand" here, on purpose - Sneak's own candidate is an
+    // unblocked *battlefield* creature (CR 702.190a), and naming the wrong
+    // zone is worse than naming none.
     const candidates = chosen.candidates || [];
-    step.appendChild(h("div", { class: "hint" }, `pay it with ${chosen.requires} card(s) from your hand:`));
+    step.appendChild(h("div", { class: "hint" }, `pay it with ${chosen.requires} object(s):`));
     step.appendChild(
       candidates.length
         ? h(

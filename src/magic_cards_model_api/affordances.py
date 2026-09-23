@@ -843,16 +843,31 @@ def _cards_in_reach(game: Game, component: Any, caster: str) -> list[CardState]:
     legality is asked - the pool `_alternative_cost_candidates` filters.
 
     The zone follows the kind, the way the engine's own `why_not` checks do:
-    tapping and sacrificing look at the battlefield (CR 701.21a's "you can
-    only sacrifice something you control" narrows it to this player's own),
-    discarding is hand-only by definition (CR 701.9a), and exiling reads the
-    component's own `zone`, which is why Force of Negation exiles from hand
-    and Abhorrent Oculus from a graveyard.
+    tapping, sacrificing and returning to hand all look at the battlefield
+    (CR 701.21a's "you can only sacrifice something you control" narrows it
+    to this player's own, and CR 702.49a's ninjutsu/CR 702.190a's sneak name
+    an *attacking* creature the same way - only a permanent on the
+    battlefield can be), discarding is hand-only by definition (CR 701.9a),
+    and exiling reads the component's own `zone`, which is why Force of
+    Negation exiles from hand and Abhorrent Oculus from a graveyard.
+
+    `RETURN_TO_HAND`'s own reach is every battlefield permanent the caster
+    controls, exactly like `TAP`/`SACRIFICE` - `_alternative_cost_candidates`
+    below is what actually narrows that down to the ones currently unblocked
+    (CR 509.1h), by asking each one's own `why_not` the same way every other
+    kind here is filtered. Before this, Sneak's `requires` read 1 correctly
+    but `candidates` came back `[]` unconditionally: a seat, or the web UI's
+    alt-cost chips, had no way to discover which attacker could pay it.
     """
     from magic_cards_model.machines.cost import ComponentKind
 
     kind = ComponentKind(component.kind)
-    if kind in (ComponentKind.TAP, ComponentKind.UNTAP, ComponentKind.SACRIFICE):
+    if kind in (
+        ComponentKind.TAP,
+        ComponentKind.UNTAP,
+        ComponentKind.SACRIFICE,
+        ComponentKind.RETURN_TO_HAND,
+    ):
         return [
             card
             for card in game.shared_zones.get(Zone.BATTLEFIELD, [])

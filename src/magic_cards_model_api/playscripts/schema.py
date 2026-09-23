@@ -144,6 +144,8 @@ CAST_COSTS = (
     "morph",
     "plot",
     "printed",
+    "prowl",
+    "sneak",
     "warp",
 )
 #: The decision kinds an answer may name: every `DecisionKind` the api can

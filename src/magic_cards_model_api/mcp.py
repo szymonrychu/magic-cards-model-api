@@ -1241,6 +1241,23 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
                   mana cost. You do not need one of these to cast from hand; it is
                   offered when the cheaper cost is what you want, and the card's own
                   `cast_options` entry says whether it is available right now.
+                - `"Sneak"` (CR 702.190a) - a HAND card, cast during **your own
+                  declare blockers step only** (any time you could cast an
+                  instant there), by also returning an unblocked attacker you
+                  control to its owner's hand. Michelangelo's Technique's own
+                  reminder text: "You may cast this spell for {3}{G} if you also
+                  return an unblocked attacker you control to hand during the
+                  declare blockers step." That attacker is named in `choosing`,
+                  exactly like Solitude's evoke pitch below - `choosing` is read
+                  by both `keyword` and `alternative_cost` announcements alike.
+                  A permanent spell cast this way enters tapped and attacking the
+                  same player or planeswalker the returned creature was attacking
+                  (CR 702.190b) - nothing else to send for that half, the engine
+                  works it out from the creature named. `cast_options`'
+                  `usable_now`/`why_not` on the card say whether the window is
+                  open and, once it is, `GET .../affordances/{card_id}`'s
+                  `alternative_costs[i].candidates` names which of your
+                  creatures actually qualify.
                 - a printed sentence opening one of the above from an extra zone
                   (CR 604.6/CR 113.6f), or a keyword another permanent's static
                   ability is granting the spell right now (CR 610.5, CR 611.3d) -
@@ -1271,8 +1288,11 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
                   you to supply. Solitude's evoke cost is not mana at all: it reads
                   "Exile a white card from your hand" (CR 702.74a), and `choosing`
                   is the white card. So is the black card Grief's exiles, the blue
-                  card pitched to Force of Negation, and the Mountains sacrificed
-                  to Fireblast. **Announce the cost and name its objects in the
+                  card pitched to Force of Negation, the Mountains sacrificed
+                  to Fireblast, and the unblocked attacker Sneak returns to hand
+                  (CR 702.190a) - not a hand card at all for that last one, a
+                  battlefield permanent you control, same field regardless.
+                  **Announce the cost and name its objects in the
                   same call**: `cast(card="Solitude", keyword="Evoke",
                   choosing="<a white card in your hand>")`. Leaving it out is
                   refused with the engine's own count - "exile needs 1 card(s)

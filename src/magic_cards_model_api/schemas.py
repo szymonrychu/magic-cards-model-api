@@ -978,6 +978,13 @@ class CastRequest(BoardRead):
       `"Bestow"`, `"Warp"` - a card in HAND, cast for that keyword's cost
       rather than its printed mana cost (CR 702.74a, 702.109a, 702.37a,
       702.37b, 702.168a, 702.103a, 702.185a).
+    - `"Sneak"` (CR 702.190a) - a card in HAND, castable only during its
+      caster's own declare blockers step, whose cost also returns an
+      unblocked attacker the caster controls to its owner's hand (named in
+      `choosing`, same as Solitude's evoke pitch). A permanent spell cast
+      this way enters tapped and attacking whoever the returned creature was
+      attacking (CR 702.190b) - the engine reads that off the creature
+      named, nothing else to announce for it.
     - a printed CR 604.6/CR 113.6f sentence ("You may cast this card from
       your graveyard using its X ability") opening one of the above keywords
       in a zone it does not otherwise reach - `keyword` is still that
@@ -1026,7 +1033,9 @@ class CastRequest(BoardRead):
     choosing: list[UUID] | None = None
     """The objects an alternative cost requires the caster to supply - the
     cards pitched to Force of Negation, the Mountains sacrificed to Fireblast,
-    the white card Solitude's evoke exiles (CR 702.74a).
+    the white card Solitude's evoke exiles (CR 702.74a), the unblocked
+    attacker Sneak returns to its owner's hand (CR 702.190a) - a battlefield
+    creature the caster controls, not a hand card, for that last one.
     `alternative_costs[i].requires` says how many are needed, and that same
     view's `candidates` says which cards actually qualify.
 
