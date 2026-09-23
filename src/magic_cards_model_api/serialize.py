@@ -1301,6 +1301,46 @@ def state_view(game: Game, game_id: str, *, include_contents: bool = False) -> d
     )
 
 
+def frame_view(game: Game, game_id: str, *, you: str | None) -> dict[str, Any]:
+    """R2's post-game replay frame: `game` exactly as `store.record_state`
+    decoded it for one `records` row, viewed the same way `state_view`
+    builds any other board - `_state_view_on` on one layered board
+    (`read_on_one_board`) - but with no paused-command or pause-generation
+    lookup, because a recorded state is never mid-pause: `put_record_state`
+    is called with the game `audit.record` already read back from the store
+    right after a command committed, and a paused command's own question is
+    a separate, live-only concern (`state_view`'s `paused`/`overlay`/
+    `known_paused`) that a historical frame has no analogue for. `game` is
+    passed as both the turn/stack/combat game and the zone/player board -
+    there is no separate "paused board" here, unlike `state_view`.
+
+    **Omniscient by design, exactly like `app.game_review`'s own entries**:
+    this is reachable only from behind `app._review_access`'s post-game
+    gate, so both hands are left in full rather than redacted through
+    `visibility.redact_view` - there is no hidden information left to
+    protect once a game is over, and `game_review` already shows both
+    seats' plans and reasoning side by side for the same reason.
+    `libraries`/`sideboards` are still popped (CR 401.2: nobody may look at
+    a library, not even their own - the same field `redact_view` always
+    drops), but the counts on each player's own block are untouched. `you`
+    is the viewing seat's own username, or `None` for the admin key - set
+    directly here rather than by `redact_view`, since that function's own
+    redaction (blanking the opponent's hand) is exactly what this view must
+    not apply.
+    """
+    view = read_on_one_board(
+        lambda: _state_view_on(
+            game_id, game, game, None, {}, _images_for(game), None, include_contents=False
+        ),
+        game,
+    )
+    view = dict(view)
+    view.pop("libraries", None)
+    view.pop("sideboards", None)
+    view["you"] = you
+    return view
+
+
 def _state_view_on(
     game_id: str,
     game: Game,

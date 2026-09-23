@@ -84,7 +84,13 @@ def ending_of(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
     return _last(entries, GAME_OVER_ACTION)
 
 
-def build_review(archived: ArchivedGame, entries: list[dict[str, Any]]) -> dict[str, Any]:
+def build_review(
+    archived: ArchivedGame,
+    entries: list[dict[str, Any]],
+    *,
+    exact_frames: list[int] | None = None,
+    viewer: str | None = None,
+) -> dict[str, Any]:
     """The review of one finished (or ended) game.
 
     `entries` is `audit.entries(game_id)` - the whole ledger, oldest first,
@@ -93,6 +99,14 @@ def build_review(archived: ArchivedGame, entries: list[dict[str, Any]]) -> dict[
     and a result to head the review with - or, when this build cannot decode
     that board, says so in `archived.unloadable` and this rebuilds the head
     from the ledger instead (see the module docstring).
+
+    `exact_frames`/`viewer` are R2's own two additions, computed by the
+    caller (`app.game_review`) and simply carried into the payload here -
+    this module reads no store, so whether a `seq` has an exact state
+    recorded, and who the presented credential belongs to, are both handed
+    in rather than looked up. `exact_frames` defaults to `[]` (every review
+    built before R2 - and every direct call in `tests/test_review.py`, which
+    stays green unchanged - has none); `viewer` defaults to `None`.
     """
     game = archived.game
     ending = ending_of(entries)
@@ -124,6 +138,8 @@ def build_review(archived: ArchivedGame, entries: list[dict[str, Any]]) -> dict[
         "advice": _advice(entries),
         "ai_review_failures": _ai_review_failures(entries),
         "entries": entries,
+        "exact_frames": list(exact_frames) if exact_frames else [],
+        "viewer": viewer,
     }
 
 

@@ -439,6 +439,18 @@ def record(
         seq = _fill_seq
     else:
         seq = store.append_record(game_id, payload)
+    # R2: the exact engine state beside this row, for a post-game replay to
+    # read the board byte-exactly rather than reparsing it out of the
+    # human-readable `snapshot` string above. Best-effort and silent on
+    # failure - a replay frame that never gets recorded is strictly worse
+    # than today, never worse than the row itself failing to write: the
+    # row's own `seq` and payload, already written above, must never depend
+    # on this succeeding.
+    if game is not None:
+        try:
+            store.put_record_state(game_id, seq, game)
+        except Exception:  # noqa: BLE001 - deliberately swallowed, see above
+            logger.warning("could not record exact state for game %s seq %s", game_id, seq)
     entry = {**payload, "seq": seq}
     if action in LOUD_ACTIONS:
         # A seat filing an engine bug is the single most valuable thing in this

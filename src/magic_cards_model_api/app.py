@@ -1729,6 +1729,65 @@ def _post_game(archived: ArchivedGame, entries: list[dict[str, Any]] | None) -> 
     return review.ending_of(entries or []) is not None
 
 
+def _review_access(
+    game_id: str, uid: str | None, key: str | None
+) -> tuple[ArchivedGame, visibility.Viewer, list[dict[str, Any]]]:
+    """The credential + post-game gate every review-gated route sits behind
+    (R2): `game_review` and `game_review_frame` both call this and only
+    this, so the two routes can never drift into checking the gate two
+    slightly different ways.
+
+    Extracted verbatim from what `game_review` always did, in the same
+    order, with the same messages:
+
+    - 404 (`KeyError`, same text) for a game that was never created, or for
+      a `uid`/`key` that is neither this game's admin key nor one of its
+      seat uids - checked against the *archived* row's own credentials, so
+      this still works after the game has ended. See `game_review`'s own
+      docstring for why this is deliberately not `game_or_404`.
+    - 409 (same detail) while the game is neither over (`Game.is_over`) nor
+      ended (`archived.deleted_at`) - a review shows both seats' plans and
+      reasoning side by side, which is only ever safe post-game.
+    - the `SCRIPT_RUN_ACTIONS` filter (`visibility.hides_script_run`): a
+      play-script run row never reaches anyone but the admin key and the
+      seat it ran for, post-game exactly as it never does live.
+
+    Returns `(archived, viewer, ledger)` - the archived row, who the
+    presented credential resolves to (`visibility.ADMIN` or a seat
+    username), and the ledger already filtered by the script-run rule. Every
+    other post-game field (`declarations`, `advice`, a review's own head) is
+    built from `ledger`, never from `audit.entries` again.
+    """
+    archived = store.archived(game_id)
+    if archived is None:
+        raise KeyError(f"no game {game_id}")
+    presented = {value for value in (uid, key) if value}
+    allowed = bool(presented) and (
+        (archived.admin_key is not None and archived.admin_key in presented)
+        or bool(presented & set(archived.seat_uids))
+    )
+    if not allowed:
+        raise KeyError("that uid is no seat in this game")
+    entries = _gate_entries(archived)
+    if not _post_game(archived, entries):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "this game is still in progress - a review shows both seats' "
+                "plans and reasoning, so it is only readable once the game is "
+                "over or has been ended"
+            ),
+        )
+    viewer: visibility.Viewer = (
+        visibility.ADMIN
+        if archived.admin_key is not None and archived.admin_key in presented
+        else next(archived.seat_uids[value] for value in presented if value in archived.seat_uids)
+    )
+    ledger = entries if entries is not None else audit.entries(game_id)
+    ledger = [entry for entry in ledger if not visibility.hides_script_run(entry, viewer)]
+    return archived, viewer, ledger
+
+
 @app.get(
     "/api/games/{game_id}/review",
     response_model=GameReviewResponse,
@@ -1796,34 +1855,64 @@ def game_review(game_id: str, uid: str | None = None, key: str | None = None) ->
     is a fact about the runner, not about the game, and never reaches the
     opponent, during the game or after it.
     """
-    archived = store.archived(game_id)
-    if archived is None:
-        raise KeyError(f"no game {game_id}")
-    presented = {value for value in (uid, key) if value}
-    allowed = bool(presented) and (
-        (archived.admin_key is not None and archived.admin_key in presented)
-        or bool(presented & set(archived.seat_uids))
+    archived, viewer, ledger = _review_access(game_id, uid, key)
+    # R2: which of this review's own (already filtered) rows also have an
+    # exact engine state recorded - `[]` on a `reconstructed` review (there
+    # is no `archived.game` to have been read back from when any of those
+    # rows were written, so nothing before the schema bump was ever
+    # `put_record_state`-able) and on any older game nothing ever recorded a
+    # state for. Computed here, not inside `review.py`, so that module reads
+    # no store at all (see `review.build_review`'s own docstring).
+    exact_frames: list[int] = []
+    if archived.game is not None:
+        ledger_seqs = {entry["seq"] for entry in ledger}
+        exact_frames = sorted(seq for seq in store.record_state_seqs(game_id) if seq in ledger_seqs)
+    return review.build_review(
+        archived,
+        ledger,
+        exact_frames=exact_frames,
+        viewer=viewer if isinstance(viewer, str) else None,
     )
-    if not allowed:
-        raise KeyError("that uid is no seat in this game")
-    entries = _gate_entries(archived)
-    if not _post_game(archived, entries):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "this game is still in progress - a review shows both seats' "
-                "plans and reasoning, so it is only readable once the game is "
-                "over or has been ended"
-            ),
-        )
-    viewer: visibility.Viewer = (
-        visibility.ADMIN
-        if archived.admin_key is not None and archived.admin_key in presented
-        else next(archived.seat_uids[value] for value in presented if value in archived.seat_uids)
-    )
-    ledger = entries if entries is not None else audit.entries(game_id)
-    ledger = [entry for entry in ledger if not visibility.hides_script_run(entry, viewer)]
-    return review.build_review(archived, ledger)
+
+
+@app.get(
+    "/api/games/{game_id}/review/frames/{seq}",
+    response_model=GameStateView,
+    response_model_exclude_unset=True,
+)
+def game_review_frame(
+    game_id: str, seq: int, uid: str | None = None, key: str | None = None
+) -> dict[str, Any]:
+    """R2: one exact, byte-accurate board from a finished game's ledger -
+    `seq` of a `GET .../review` row, not a live board's turn number.
+
+    Behind the exact same gate `game_review` is: `_review_access` (404 for
+    an unknown game or a credential that is neither the admin key nor one of
+    this game's own seat uids, 409 while the game is neither over nor ended,
+    the `script_run` filter). `seq` must be one of the *filtered* ledger's
+    own rows - a row `visibility.hides_script_run` would have dropped from
+    the opponent's own `entries` is a 404 for that opponent here too, same
+    as it is missing from their `entries` list - and it must have a state
+    `audit.record` actually recorded (`store.put_record_state` is
+    best-effort; a row it failed for, or one older than R2, has none). Both
+    are answered the same way: `KeyError` -> this api's own 404.
+
+    A stored state this build cannot decode is not softened here any more
+    than it is at `GET /api/games/{id}` - `store.record_state` raises
+    `GameUnloadable`, and the app-wide handler answers 409 with the
+    decoder's own reason verbatim.
+
+    The board itself is `serialize.frame_view` - see that function's own
+    docstring for why it is omniscient (both hands, no redaction) and why it
+    needs no paused-command lookup.
+    """
+    archived, viewer, ledger = _review_access(game_id, uid, key)
+    if seq not in {entry["seq"] for entry in ledger}:
+        raise KeyError(f"no frame {seq} for game {game_id}")
+    game = store.record_state(game_id, seq)
+    if game is None:
+        raise KeyError(f"no recorded state at seq {seq} for game {game_id}")
+    return serialize.frame_view(game, game_id, you=viewer if isinstance(viewer, str) else None)
 
 
 @app.delete(

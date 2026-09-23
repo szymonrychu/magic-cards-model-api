@@ -6049,6 +6049,13 @@
             "title": "Entries",
             "type": "array"
           },
+          "exact_frames": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Exact Frames",
+            "type": "array"
+          },
           "game_id": {
             "title": "Game Id",
             "type": "string"
@@ -6093,6 +6100,17 @@
               }
             ],
             "title": "Unloadable"
+          },
+          "viewer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Viewer"
           },
           "winner": {
             "anyOf": [
@@ -17756,6 +17774,87 @@
           }
         },
         "summary": "Game Review"
+      }
+    },
+    "/api/games/{game_id}/review/frames/{seq}": {
+      "get": {
+        "description": "R2: one exact, byte-accurate board from a finished game's ledger -\n`seq` of a `GET .../review` row, not a live board's turn number.\n\nBehind the exact same gate `game_review` is: `_review_access` (404 for\nan unknown game or a credential that is neither the admin key nor one of\nthis game's own seat uids, 409 while the game is neither over nor ended,\nthe `script_run` filter). `seq` must be one of the *filtered* ledger's\nown rows - a row `visibility.hides_script_run` would have dropped from\nthe opponent's own `entries` is a 404 for that opponent here too, same\nas it is missing from their `entries` list - and it must have a state\n`audit.record` actually recorded (`store.put_record_state` is\nbest-effort; a row it failed for, or one older than R2, has none). Both\nare answered the same way: `KeyError` -> this api's own 404.\n\nA stored state this build cannot decode is not softened here any more\nthan it is at `GET /api/games/{id}` - `store.record_state` raises\n`GameUnloadable`, and the app-wide handler answers 409 with the\ndecoder's own reason verbatim.\n\nThe board itself is `serialize.frame_view` - see that function's own\ndocstring for why it is omniscient (both hands, no redaction) and why it\nneeds no paused-command lookup.",
+        "operationId": "game_review_frame_api_games__game_id__review_frames__seq__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "seq",
+            "required": true,
+            "schema": {
+              "title": "Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameStateView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Game Review Frame"
       }
     },
     "/api/games/{game_id}/script-runs": {

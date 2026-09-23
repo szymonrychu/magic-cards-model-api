@@ -2873,6 +2873,18 @@ class GameReviewResponse(BaseModel):
     full-information `snapshot` - the frames a reviewer renders. Left
     `dict[str, Any]` exactly as `GameLogResponse.log` is, and for the same
     reason."""
+    exact_frames: list[int] = Field(default_factory=list)
+    """R2: the ascending `seq`s of `entries` above that also have an exact
+    engine state recorded (`GET .../review/frames/{seq}` can serve one) -
+    the intersection of every recorded `seq` with this review's own filtered
+    ledger. Empty for a game played before R2 shipped and for a
+    `reconstructed` review, since neither has anything recorded."""
+    viewer: str | None = None
+    """R2: the seat username the presented `uid`/`key` credential belongs
+    to, or `None` when it is the admin key - the same distinction
+    `visibility.redact_view`'s own `you` field draws on a live board, handed
+    back here so a client can tell which seat's perspective a frame's `you`
+    should read as."""
 
 
 class DeleteGameResponse(BaseModel):
