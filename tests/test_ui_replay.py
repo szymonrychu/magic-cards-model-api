@@ -320,6 +320,79 @@ EXACT_102 = {
 }
 
 
+#: One `pass_until` run's own reasoning, threaded onto every pass it makes
+#: (`seatkit._pass_until_once`'s own docstring) - the exact repeated line the
+#: owner's screenshot showed four times in a row in the thinking log.
+AUTO_PASS_REASONING = "The Frog has done its job - nothing more to do this turn."
+
+# Four routine `pass_priority` rows carrying identical reasoning, all folded
+# into the one real step that follows them, then that one step itself - the
+# minimal shape of the owner's own screenshot.
+DUP_ENTRIES = [
+    entry(
+        201 + i,
+        "pass_priority",
+        reasoning=AUTO_PASS_REASONING,
+        detail={"player": "claude"},
+    )
+    for i in range(4)
+] + [
+    entry(
+        205,
+        "cast",
+        reasoning="finally, something to do",
+        detail={"player": "claude", "card": "Grizzly Bears", "allowed": True},
+    ),
+]
+
+DUP_REVIEW = {
+    "game_id": "g2",
+    "players": ["alice", "claude"],
+    "created_at": "2026-09-08T20:00:00+00:00",
+    "ended_at": None,
+    "is_over": True,
+    "winner": "claude",
+    "drawn": False,
+    "ended_seq": 205,
+    "declarations": [],
+    "exact_frames": [],
+    "entries": DUP_ENTRIES,
+}
+
+# Four separate refusals of the same illegal play - each its own step
+# (`replaySteps` never folds a refused row), so stepping through them one at
+# a time is the case that exercises a genuinely partial collapsed count.
+REPEAT_REFUSAL = "you have already played a land this turn"
+REPEAT_REFUSAL_ENTRIES = [
+    entry(
+        301 + i,
+        "play_land",
+        reasoning="taking the advice anyway",
+        detail={
+            "player": "claude",
+            "card": "Mountain",
+            "allowed": False,
+            "reason": REPEAT_REFUSAL,
+        },
+    )
+    for i in range(4)
+]
+
+REPEAT_REFUSAL_REVIEW = {
+    "game_id": "g3",
+    "players": ["alice", "claude"],
+    "created_at": "2026-09-08T20:00:00+00:00",
+    "ended_at": None,
+    "is_over": True,
+    "winner": "claude",
+    "drawn": False,
+    "ended_seq": 304,
+    "declarations": [],
+    "exact_frames": [],
+    "entries": REPEAT_REFUSAL_ENTRIES,
+}
+
+
 def drive(body: str, **bindings: Any) -> Any:
     """Mount the replay against the fake DOM and run `body` after it has
     settled, with `mountReplay` already constructed."""
@@ -957,3 +1030,84 @@ def test_the_transport_bar_has_no_pass_or_phase_controls() -> None:
         "end step stop",
     ):
         assert banned not in lowered
+
+
+def test_repeated_identical_pass_messages_collapse_into_one_with_a_count() -> None:
+    """The owner's own screenshot: a `pass_until` run's four identical
+    `pass_priority` rows, all folded into the one real step that follows
+    them, must render as one log line with a repeat count - not the same
+    text four times in a row."""
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const store = makeStore();
+          const clock = makeClock(1000);
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          const frames = {};
+          const frameFailures = [];
+          """
+        + FETCH
+        + """
+          const api = m.mountReplay(document, store, { ...clock.handlers, onBack: () => {} });
+          await api.open({ gameId: "g2", uid: "u1" });
+          return {
+            count: findAll(els.log, "replay-msg").length,
+            text: els.log.textContent,
+          };
+        })()
+        """,
+        review=DUP_REVIEW,
+        card=CARD_ANSWER,
+    )
+    assert result["count"] == 2, "the four identical passes collapse to one line beside the cast"
+    assert "x4" in result["text"]
+    assert result["text"].count(AUTO_PASS_REASONING) == 1, "the repeated text itself appears once"
+
+
+def test_stepping_through_repeated_identical_refusals_shows_the_correct_partial_count() -> None:
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const store = makeStore();
+          const clock = makeClock(1000);
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          const frames = {};
+          const frameFailures = [];
+          """
+        + FETCH
+        + """
+          const api = m.mountReplay(document, store, { ...clock.handlers, onBack: () => {} });
+          await api.open({ gameId: "g3", uid: "u1" });
+          const fwd = findAll(els.bar, "replay-step-forward")[0];
+          const back = findAll(els.bar, "replay-step-back")[0];
+
+          const t0 = els.log.textContent;
+          click(fwd);
+          const t1 = els.log.textContent;
+          click(fwd);
+          const t2 = els.log.textContent;
+          click(fwd);
+          const t3 = els.log.textContent;
+          click(back);
+          const t2b = els.log.textContent;
+
+          return { t0, t1, t2, t3, t2b };
+        })()
+        """,
+        review=REPEAT_REFUSAL_REVIEW,
+        card=CARD_ANSWER,
+    )
+    for badge in ("x2", "x3", "x4"):
+        assert badge not in result["t0"], "one refusal shown, no count badge yet"
+    assert "x2" in result["t1"]
+    assert "x3" in result["t2"]
+    assert "x4" in result["t3"]
+    assert "x3" in result["t2b"], (
+        "stepping back into the group shows the correct partial count again"
+    )

@@ -13,12 +13,14 @@
 // a text snapshot back into cards, the console-style row label, whose
 // perspective a review is drawn from) and adds nothing that duplicates it.
 //
-// Four pieces, one per section below: which ledger rows are a *step*
+// Five pieces, one per section below: which ledger rows are a *step*
 // (`replaySteps`), which rows become a *message* in the thinking log and how
-// they align to steps by `seq` (`logMessages`/`messagesAt`), a ledger row's
-// snapshot turned into the exact state-view shape the live board's own
-// renderers read (`snapshotView`/`omniscient`), and the play/pause/step
-// transport as pure reducers over an injected clock.
+// they align to steps by `seq` (`logMessages`/`messagesAt`), folding a run of
+// consecutive identical messages (a `pass_until` run's own repeated
+// reasoning, most often) into one with a repeat count (`collapseMessages`), a
+// ledger row's snapshot turned into the exact state-view shape the live
+// board's own renderers read (`snapshotView`/`omniscient`), and the
+// play/pause/step transport as pure reducers over an injected clock.
 
 import {
   PLAN_ACTION,
@@ -330,6 +332,84 @@ export function messagesAt(messages, steps, i) {
   if (index === steps.length - 1) return [...(messages || [])];
   const boundary = steps[index].seq;
   return (messages || []).filter((m) => m.seq <= boundary);
+}
+
+// ---------------------------------------------------------- collapseMessages
+
+/** Whether `a` and `b` are the same repeated occurrence, worth folding
+ * together rather than shown twice: same `actor` (including two `null`
+ * actors, which do merge - a `game_over` row has none, and two of those
+ * still repeating each other would be exactly as redundant), same `kind`,
+ * same `text`. `title` is deliberately left out of the comparison, and
+ * `seq`/`stepIndex` necessarily differ between any two real rows, so
+ * neither belongs in it either.
+ *
+ * The concrete case this exists for: `seatkit._pass_until_once` threads one
+ * `reasoning` string onto *every* individual pass a `pass_until` run makes
+ * ("I am auto-passing through this stretch" is given once for the whole
+ * run, never a fresh one per pass - its own docstring says so), so a long
+ * auto-pass run writes several `pass_priority` ledger rows that carry
+ * identical `actor`/`text` by design. That is a faithful ledger, one row
+ * per real priority pass, exactly as it should be - `audit.record` needs no
+ * change - but `logMessages` turning each of those rows into its own
+ * message is what put the same line on screen four times in a row (the
+ * owner's own screenshot). Fixing it here, at the one place that decides
+ * what a viewer sees, is the whole point of this function. */
+function sameMessage(a, b) {
+  return a.actor === b.actor && a.kind === b.kind && a.text === b.text;
+}
+
+/**
+ * `messages` (`logMessages`'s own shape, or any subset of it) with every
+ * run of *consecutive*, identical (`sameMessage`) entries folded into one,
+ * carrying `count` (how many collapsed into it), `firstSeq`/`lastSeq` and
+ * `firstStepIndex`/`lastStepIndex` - the step range the run spans. A
+ * message that never repeats comes back unchanged in every field it
+ * already had, plus `count: 1` and every `first*`/`last*` equal to its own
+ * `seq`/`stepIndex` - so a caller never has to branch on whether collapsing
+ * actually happened before reading `count`.
+ *
+ * Only ever merges what is *adjacent* in `messages` as handed in: a
+ * different message between two identical ones (whatever produced it)
+ * keeps them apart, and two messages naming different actors never merge,
+ * whatever their `kind`/`text` (`sameMessage`, above). Nothing here re-
+ * sorts or re-filters - it trusts `messages` is already in the order and
+ * subset the caller wants shown, which is exactly what makes composing
+ * this with `messagesAt` do the right thing: `render/replay.js` calls this
+ * on `messagesAt`'s own filtered output, never on the full log, so a
+ * four-row run only reads `count: 4` once every one of those four rows has
+ * actually scrolled into view - stepping backward into the middle of that
+ * same run correctly shows `count: 2` or `count: 3`, because
+ * `messagesAt` already trimmed the run down to however many of those rows
+ * are visible at that step before this function ever sees it. A run of
+ * identical *routine* rows (the `pass_until` case above) almost always
+ * collapses to a single-step range, since `logMessages` gives every folded
+ * routine row the same *next* real step's index; a run of identical
+ * *unfolded* rows - several refusals of the same illegal play in a row,
+ * say, each one its own step because `replaySteps` never folds a refusal -
+ * genuinely spans one index per row, and the range here reflects that.
+ */
+export function collapseMessages(messages) {
+  const list = messages || [];
+  const out = [];
+  for (const m of list) {
+    const last = out[out.length - 1];
+    if (last && sameMessage(last, m)) {
+      last.count += 1;
+      last.lastSeq = m.seq;
+      last.lastStepIndex = m.stepIndex;
+      continue;
+    }
+    out.push({
+      ...m,
+      count: 1,
+      firstSeq: m.seq,
+      lastSeq: m.seq,
+      firstStepIndex: m.stepIndex,
+      lastStepIndex: m.stepIndex,
+    });
+  }
+  return out;
 }
 
 // ------------------------------------------------------------- perspective

@@ -523,6 +523,154 @@ def test_messages_at_is_empty_for_an_empty_game() -> None:
     assert at0 == []
 
 
+# ========================================================= collapseMessages ==
+
+# `collapseMessages` takes `logMessages`'s own shape (or any subset of it -
+# in particular `messagesAt`'s own filtered output, which is the whole point:
+# see the two tests below that compose the two). Fixtures here are
+# hand-built message dicts rather than routed through `logMessages`, the
+# same shortcut `messagesAt`'s own unit tests do not take but the shape is
+# simple enough (`{seq, kind, actor, title, text, stepIndex}`) that building
+# it directly keeps each test to the one thing it is checking.
+
+
+def msg(seq: int, **over: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "seq": seq,
+        "kind": "pass",
+        "actor": "bob",
+        "title": "pass_priority",
+        "text": "The Frog has done its job - nothing more to do this turn.",
+        "stepIndex": 0,
+    }
+    base.update(over)
+    return base
+
+
+def test_collapse_messages_merges_a_consecutive_identical_run_with_a_count() -> None:
+    messages = [msg(1), msg(2), msg(3), msg(4)]
+    collapsed = call("m.collapseMessages(MESSAGES)", MESSAGES=messages)
+    assert len(collapsed) == 1
+    c = collapsed[0]
+    assert c["count"] == 4
+    assert c["firstSeq"] == 1
+    assert c["lastSeq"] == 4
+    assert c["firstStepIndex"] == 0
+    assert c["lastStepIndex"] == 0
+    assert c["kind"] == "pass"
+    assert c["actor"] == "bob"
+    assert c["text"] == msg(1)["text"]
+
+
+def test_collapse_messages_leaves_a_message_that_never_repeats_unchanged_in_shape() -> None:
+    collapsed = call("m.collapseMessages(MESSAGES)", MESSAGES=[msg(1)])
+    assert len(collapsed) == 1
+    c = collapsed[0]
+    assert c["count"] == 1
+    assert c["firstSeq"] == c["lastSeq"] == 1
+    assert c["firstStepIndex"] == c["lastStepIndex"] == 0
+
+
+def test_collapse_messages_keeps_a_different_message_between_two_identical_ones_separate() -> None:
+    messages = [msg(1), msg(2, text="something else"), msg(3)]
+    collapsed = call("m.collapseMessages(MESSAGES)", MESSAGES=messages)
+    assert len(collapsed) == 3
+    assert [c["count"] for c in collapsed] == [1, 1, 1]
+    assert [c["seq"] for c in collapsed] == [1, 2, 3]
+
+
+def test_collapse_messages_never_merges_different_kinds() -> None:
+    messages = [msg(1, kind="pass"), msg(2, kind="action")]
+    collapsed = call("m.collapseMessages(MESSAGES)", MESSAGES=messages)
+    assert len(collapsed) == 2
+
+
+def test_collapse_messages_never_merges_different_seats() -> None:
+    messages = [msg(1, actor="bob"), msg(2, actor="alice")]
+    collapsed = call("m.collapseMessages(MESSAGES)", MESSAGES=messages)
+    assert len(collapsed) == 2
+    assert [c["count"] for c in collapsed] == [1, 1]
+
+
+def test_collapse_messages_merges_two_actorless_messages_when_otherwise_identical() -> None:
+    messages = [
+        msg(1, kind="game_over", actor=None, title="Game over", text="bob wins"),
+        msg(2, kind="game_over", actor=None, title="Game over", text="bob wins"),
+    ]
+    collapsed = call("m.collapseMessages(MESSAGES)", MESSAGES=messages)
+    assert len(collapsed) == 1
+    assert collapsed[0]["count"] == 2
+
+
+def test_collapse_messages_spans_the_real_step_range_of_a_repeated_refusal() -> None:
+    """Distinct from the routine-pass case above: four separate refusals of
+    the same illegal play, one per real step (`replaySteps` never folds a
+    refused row - `isRoutine` is always `False` for one), so each carries
+    its own `stepIndex` and the collapsed group's range genuinely spans more
+    than one step rather than staying at the single next-step index a folded
+    run of passes always collapses to."""
+    entries = [
+        entry(
+            n,
+            "play_land",
+            detail={
+                "player": "bob",
+                "card": "Mountain",
+                "allowed": False,
+                "reason": "you have already played a land this turn",
+            },
+            reasoning="taking the advice anyway",
+        )
+        for n in range(1, 5)
+    ]
+    r = review(entries)
+    steps = call("m.replaySteps(REVIEW)", REVIEW=r)
+    assert len(steps) == 4, "an unfolded refusal is always its own step"
+    messages = call("m.logMessages(REVIEW, STEPS)", REVIEW=r, STEPS=steps)
+    collapsed = call("m.collapseMessages(MESSAGES)", MESSAGES=messages)
+    assert len(collapsed) == 1
+    assert collapsed[0]["count"] == 4
+    assert collapsed[0]["firstStepIndex"] == 0
+    assert collapsed[0]["lastStepIndex"] == 3
+
+
+def test_collapse_messages_composed_with_messages_at_shows_the_correct_partial_count() -> None:
+    """The composition `render/replay.js` actually uses: `collapseMessages`
+    over `messagesAt`'s own filtered output, never over the full log. That
+    order is what makes stepping backward *into* a run of duplicates show a
+    partial count rather than an all-or-nothing jump - `messagesAt` decides
+    which raw rows are visible yet, and `collapseMessages` only ever
+    collapses what it was actually handed."""
+    entries = [
+        entry(
+            n,
+            "play_land",
+            detail={
+                "player": "bob",
+                "card": "Mountain",
+                "allowed": False,
+                "reason": "you have already played a land this turn",
+            },
+            reasoning="taking the advice anyway",
+        )
+        for n in range(1, 5)
+    ]
+    r = review(entries)
+    steps = call("m.replaySteps(REVIEW)", REVIEW=r)
+    messages = call("m.logMessages(REVIEW, STEPS)", REVIEW=r, STEPS=steps)
+
+    shown_at_1 = call("m.messagesAt(MESSAGES, STEPS, 1)", MESSAGES=messages, STEPS=steps)
+    collapsed_at_1 = call("m.collapseMessages(MESSAGES)", MESSAGES=shown_at_1)
+    assert len(collapsed_at_1) == 1
+    assert collapsed_at_1[0]["count"] == 2, "only the first two of four refusals have happened yet"
+
+    shown_at_3 = call("m.messagesAt(MESSAGES, STEPS, 3)", MESSAGES=messages, STEPS=steps)
+    collapsed_at_3 = call("m.collapseMessages(MESSAGES)", MESSAGES=shown_at_3)
+    assert collapsed_at_3[0]["count"] == 4
+    assert collapsed_at_3[0]["firstStepIndex"] == 0
+    assert collapsed_at_3[0]["lastStepIndex"] == 3
+
+
 # ============================================================= perspective ==
 
 

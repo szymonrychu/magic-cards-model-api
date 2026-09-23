@@ -40,6 +40,7 @@ import {
   replaySteps,
   logMessages,
   messagesAt,
+  collapseMessages,
   perspective,
   snapshotView,
   omniscient,
@@ -255,23 +256,42 @@ export function mountReplay(root, store, handlers) {
     );
   }
 
+  /** The `" x4 (steps 3-6)"` badge appended to a collapsed message's own
+   * title, or `""` for a message that never repeated (`count <= 1`) - so a
+   * singleton message renders exactly as it always has. 1-indexed, matching
+   * the transport bar's own `${index + 1} / ${count}` position display: a
+   * viewer reads "step 3", never "step 2", for the board they are looking
+   * at right now. */
+  function collapsedSuffix(msg) {
+    if (!msg.count || msg.count <= 1) return "";
+    const first = msg.firstStepIndex + 1;
+    const last = msg.lastStepIndex + 1;
+    const range = first === last ? `step ${first}` : `steps ${first}-${last}`;
+    return ` x${msg.count} (${range})`;
+  }
+
   function renderLog() {
     clear(log);
     if (!session) return;
     const rebuilt = reconstructedNode(session.review);
     if (rebuilt) log.appendChild(rebuilt);
     const index = session.transport.index;
-    const shown = messagesAt(session.messages, session.steps, index);
+    // `collapseMessages` runs over `messagesAt`'s own filtered output, never
+    // the full log - that order is what makes stepping backward into the
+    // middle of a repeated run show the right partial count rather than an
+    // all-or-nothing jump (`ui/replay_model.js`'s own `collapseMessages`
+    // doc comment).
+    const shown = collapseMessages(messagesAt(session.messages, session.steps, index));
     let currentEl = null;
     for (const msg of shown) {
-      const isCurrent = msg.stepIndex === index;
+      const isCurrent = index >= msg.firstStepIndex && index <= msg.lastStepIndex;
       const el = h(
         "div",
         {
           class: `replay-msg ${messageActorClass(msg.actor)}${isCurrent ? " replay-msg--current" : ""}`,
-          dataset: { seq: String(msg.seq) },
+          dataset: { seq: String(msg.lastSeq) },
         },
-        h("div", { class: "replay-msg-title" }, msg.title || ""),
+        h("div", { class: "replay-msg-title" }, `${msg.title || ""}${collapsedSuffix(msg)}`),
         h("div", { class: "replay-msg-text" }, msg.text || "")
       );
       log.appendChild(el);
