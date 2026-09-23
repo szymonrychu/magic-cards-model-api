@@ -4458,6 +4458,31 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         # other kind's shape check above already mirrors what the engine
         # would check. Refused the same synchronous way as every check above.
         return refuse(str(exc), **detail)
+    # This answer may complete the command it resumes (`commands.
+    # _attach_notices` files any fail-closed notice the rest of the
+    # resolution raised onto `result.outcome`, generically, the moment it
+    # reaches `RunStatus.COMPLETED`) - engine 41's "you may shuffle" is the
+    # case that made this matter: a `MAY` decision that used to resolve
+    # inline inside whichever route raised it (`pass_priority`, most often)
+    # now pauses *this* route for the answer instead, so the notice that
+    # follows (Ponder's own unread-clause record, say) is filed on the
+    # `RunResult` this call produces, not on the earlier paused one. `decide`
+    # never read `outcome.get("notices")` at all before this - every sibling
+    # mutating route already does (`audit_outcome`, `state_based_actions`,
+    # `pass_priority`, ...) - so a notice raised only on the resuming half of
+    # a paused command was silently dropped from both this response and the
+    # persisted log row. `result.outcome` is either an `engine_api.Outcome`
+    # (a paused cast/activate resumed to completion) or a plain `dict`
+    # (`pass_priority`/`advance`/`state_based_actions`/...), the same
+    # duality `commands._attach_notices` itself already handles.
+    notices: list[dict[str, Any]] | None = None
+    if result.status is commands.RunStatus.COMPLETED:
+        outcome_detail = (
+            result.outcome.detail
+            if isinstance(result.outcome, engine_api.Outcome)
+            else result.outcome
+        )
+        notices = outcome_detail.get("notices") if isinstance(outcome_detail, dict) else None
     seq = audit.record(
         game_id,
         "decide",
@@ -4467,6 +4492,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         reasoning=req.reasoning,
         legal_actions_before=legal_before,
         _fill_seq=seq_hint,
+        **({"notices": notices} if notices else {}),
         **detail,
     )
     if result.status is commands.RunStatus.PAUSED:
@@ -4480,7 +4506,10 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
             "pending_decision": _paused_pending_view(game_id, next_pending, req.player),
             "log_seq": seq,
         }
-    return {"accepted": True, "log_seq": seq}
+    response: dict[str, Any] = {"accepted": True, "log_seq": seq}
+    if notices:
+        response["notices"] = visibility.redact_notices(notices, req.player)
+    return response
 
 
 # -- the pregame: CR 103.5 and CR 103.6 ---------------------------------------

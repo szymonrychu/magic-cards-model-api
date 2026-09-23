@@ -2067,6 +2067,16 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
           all (too little floating mana or too few untapped sources to pay) -
           answering `True` there is refused.
 
+          `may` alone can also carry `pending_decision.default_may`: what
+          your *silence* costs, the same shape `choose_cards`'
+          `default_cards` is below - `True`/`False` in place of the
+          engine-wide "take it when legal" every other `may` defaults to, or
+          `null` when the asker stamped no deviation. `Game.may`'s "you may
+          shuffle" clause (engine schema 41) is the one that stamps `False`:
+          shuffling ends whatever look or order the cards just above it
+          fixed, so leaving this unanswered declines rather than shuffling.
+          Check it before deciding a `may` is not worth answering.
+
           `pay_mana` alone also takes `mana_sources` (engine PR #17, B6-08):
           comma-separated ids, a subset of `pending_decision.mana_sources` -
           the payer's own untapped permanents - naming which to activate

@@ -130,6 +130,7 @@
     "default_cards": [
       "00000000-0000-0000-0000-000000000003"
     ],
+    "default_may": null,
     "exact": false,
     "generation": 1,
     "kept_label": "",

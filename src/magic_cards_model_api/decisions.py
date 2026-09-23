@@ -516,6 +516,15 @@ class PendingDecision:
     #: seat - or an autopilot answering on one's behalf - can see what
     #: *silence* would cost before it decides to stay silent.
     default_cards: tuple[str, ...] | None = None
+    #: `may` only: what an unanswered question resolves to, in place of the
+    #: engine-wide "take it" convention, or `None` when the engine stamped no
+    #: deviation - `default_cards`'s own shape, one kind over. `Game.may`'s
+    #: "you may shuffle" clause is the one caller that stamps `False`: the
+    #: shuffle ends whatever look or order the cards above it just fixed (CR
+    #: 701.20d), so silence there means declining, not the generic "take it"
+    #: every other `may` defaults to. From the engine's `Decision.default_may`
+    #: (engine schema 41).
+    default_may: bool | None = None
     #: The id of the object asking - the card or token, or the card behind an
     #: ability on the stack - from the engine's `Decision.source_id`. `None`
     #: for a question no object asks (a turn-based action such as the cleanup
@@ -610,6 +619,10 @@ class PendingDecision:
                 if getattr(decision, "default_cards", None) is None
                 else tuple(str(card_id) for card_id in decision.default_cards or ())
             ),
+            # `getattr`: an engine older than schema 41 carries no
+            # `default_may` at all, and `None` is the same "no deviation
+            # stamped" every such engine already meant by leaving it out.
+            default_may=getattr(decision, "default_may", None),
             lethal_damage=tuple(getattr(decision, "lethal_damage", ()) or ()),
             trample=bool(getattr(decision, "trample", False)),
             mana_sources=tuple(
@@ -812,6 +825,7 @@ class PendingDecision:
             "card_labels": list(self.card_labels),
             "exact": self.exact,
             "default_cards": None if self.default_cards is None else list(self.default_cards),
+            "default_may": self.default_may,
             "lethal_damage": list(self.lethal_damage),
             "trample": self.trample,
             "mana_sources": list(self.mana_sources),

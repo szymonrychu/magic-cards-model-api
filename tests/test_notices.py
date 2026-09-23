@@ -194,43 +194,78 @@ def test_an_unread_spells_notice_reaches_the_casters_own_log_after_the_opponents
     `req.player == "bob"` here). A caster whose own client only ever reads
     the response to her own requests never sees it that way.
 
-    Ponder is the still-unread vehicle on this engine build - see the
+    Strix Serenade ("Counter target artifact, creature, or planeswalker
+    spell. Its controller creates a 2/2 blue Bird creature token with
+    flying.") is the still-unread vehicle on this engine build - see the
     engine's own `tests/scenarios/test_unread_spell_text_fails_closed.py`,
-    whose docstring names it as the replacement vehicle now that Stock Up's
-    fix (this hotfix's whole reason to exist) has landed. `GET .../log`
-    polled with alice's own seat uid - the path `ui/app.js` actually polls,
-    never `pass-priority`'s own response - is where this pins the notice
-    reaching her.
+    whose docstring now names it as Ponder's replacement: the look-top-and-
+    put-back wave gave Ponder's own "look at the top three... you may
+    shuffle" clause a reader (engine schema 41's `Decision.default_may`,
+    this drift's whole reason to exist), so Ponder can no longer stand for
+    "unread" - resolving it fully now asks a `may` instead of leaving a
+    notice, and its own `Draw a card.` clause would deck alice outright in
+    this bare fixture's empty library before any notice could be read back.
+    Strix Serenade's own clause has no reader anywhere in `src/` and asks
+    nothing, so it resolves in the one pass this test already drives, the
+    same shape the pre-drift test had. `GET .../log` polled with bob's own
+    seat uid - the path `ui/app.js` actually polls, never `pass-priority`'s
+    own response - is where this pins the notice reaching him.
     """
-    add_card(client, game, "Island", "alice", "battlefield")
-    add_card(client, game, "Ponder", "alice", "hand")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "hand")
+    add_card(client, game, "Island", "bob", "battlefield")
+    add_card(client, game, "Strix Serenade", "bob", "hand")
     live = store.get(game)
-    island_id = str(_ids(live, "Island")[0])
+    forest_ids = [str(i) for i in _ids(live, "Forest")]
 
-    cast = client.post(
+    bears_cast = client.post(
         f"/api/games/{game}/actions/cast",
-        json={"player": "alice", "card": "Ponder", "mana_sources": [island_id]},
+        json={"player": "alice", "card": "Grizzly Bears", "mana_sources": forest_ids},
     )
-    assert cast.status_code == 200, cast.text
-    assert cast.json()["allowed"] is True
-    assert cast.json().get("notices", []) == [], "nothing has resolved yet - the cast is clean"
+    assert bears_cast.status_code == 200, bears_cast.text
+    assert bears_cast.json()["allowed"] is True
+    bears_spell_id = bears_cast.json()["spell_id"]
 
-    uids = {name: uid for uid, name in store.seat_uids(game).items()}
-
-    # CR 117.3b: the caster receives priority right back after casting, so
-    # alice's own pass here is expected and carries no notices - it is BOB's
-    # pass, on the empty side of the table, that resolves Ponder. That is the
-    # part the live game reproduced: the human never calls pass-priority on
-    # her own spell, her opponent does.
+    # CR 117.3b: alice gets priority right back after casting - passing it
+    # is what lets bob respond with Strix Serenade at all.
     alice_pass = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
     assert alice_pass.status_code == 200, alice_pass.text
     assert alice_pass.json().get("notices", []) == []
 
-    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
-    assert passed.status_code == 200, passed.text
-    assert passed.json().get("notices"), "bob's own pass is what resolved the spell"
+    live = store.get(game)
+    island_id = str(_ids(live, "Island", "bob")[0])
+    serenade_cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "bob",
+            "card": "Strix Serenade",
+            "targets": [bears_spell_id],
+            "mana_sources": [island_id],
+        },
+    )
+    assert serenade_cast.status_code == 200, serenade_cast.text
+    assert serenade_cast.json()["allowed"] is True
+    assert serenade_cast.json().get("notices", []) == [], (
+        "nothing has resolved yet - the cast is clean"
+    )
 
-    log = client.get(f"/api/games/{game}/log", params={"uid": uids["alice"]}).json()["log"]
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+
+    # CR 117.3b again: bob's own pass here is expected and carries no
+    # notices - it is ALICE's pass, on the empty side of the table, that
+    # resolves Strix Serenade. That is the part the live game reproduced:
+    # the human never calls pass-priority on her opponent's spell, only her
+    # own.
+    bob_pass = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert bob_pass.status_code == 200, bob_pass.text
+    assert bob_pass.json().get("notices", []) == []
+
+    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    assert passed.status_code == 200, passed.text
+    assert passed.json().get("notices"), "alice's own pass is what resolved the spell"
+
+    log = client.get(f"/api/games/{game}/log", params={"uid": uids["bob"]}).json()["log"]
     resolve_row = next(
         row
         for row in log
@@ -238,9 +273,15 @@ def test_an_unread_spells_notice_reaches_the_casters_own_log_after_the_opponents
     )
     (notice,) = resolve_row["detail"]["notices"]
     assert notice["kind"] == "unmodeled_trigger_effect_notices"
-    assert notice["source_name"] == "Ponder"
-    assert "top three cards" in notice["text"].lower()
-    # a resolved instant/sorcery's graveyard is public - alice's own read is
+    assert notice["source_name"] == "Strix Serenade"
+    assert "counter target artifact" in notice["text"].lower()
+
+    # An unread "counter" clause counters nothing - Grizzly Bears is still
+    # on the stack, waiting to resolve on its own.
+    live = store.get(game)
+    assert live.find_by_id(UUID(bears_spell_id)).zone.value == "stack"
+
+    # a resolved instant's graveyard is public - bob's own read is
     # not redacted down to "<hidden>" the way an opponent's hand card is.
     assert notice["source_name"] != "<hidden>"
 
@@ -559,26 +600,46 @@ def test_an_unread_spells_notice_reaches_the_casters_own_seat(client, game, monk
     (`LOG_HEADLINE_FIELDS`) keep `detail` whole - `notices` included -
     rather than dropping it, so an unread spell's notice needs no seat-side
     change to reach a seat the way it needs a UI change to reach a human.
-    This pins that it actually does, for a real unread spell (Ponder, the
-    engine's own replacement vehicle - see the sibling API test above)
-    rather than a notice this suite manufactures by hand, and the same shape
-    the live bug had: BOB's pass is what resolves it, not alice's own cast."""
+    This pins that it actually does, for a real unread spell (Strix
+    Serenade, the engine's own replacement vehicle now that Ponder's own
+    "you may shuffle" reads as a `may` instead of leaving a notice - see the
+    sibling API test above for why) rather than a notice this suite
+    manufactures by hand, and the same shape the live bug had: ALICE's pass
+    is what resolves it, not bob's own cast."""
     from test_seat_round_trips import call, wired
 
-    add_card(client, game, "Island", "alice", "battlefield")
-    add_card(client, game, "Ponder", "alice", "hand")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "hand")
+    add_card(client, game, "Island", "bob", "battlefield")
+    add_card(client, game, "Strix Serenade", "bob", "hand")
     live = store.get(game)
-    island_id = str(_ids(live, "Island")[0])
+    forest_ids = [str(i) for i in _ids(live, "Forest")]
     uids = {name: uid for uid, name in store.seat_uids(game).items()}
 
+    bears_cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "alice", "card": "Grizzly Bears", "mana_sources": forest_ids},
+    )
+    assert bears_cast.status_code == 200, bears_cast.text
+    bears_spell_id = bears_cast.json()["spell_id"]
+    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+
+    live = store.get(game)
+    island_id = str(_ids(live, "Island", "bob")[0])
     seats = wired(monkeypatch, game)
-    alice = seats.seat_for(uids["alice"])
+    bob = seats.seat_for(uids["bob"])
     cast_result = run_action(
-        alice,
-        lambda: alice.call_json(
+        bob,
+        lambda: bob.call_json(
             "POST",
             f"/api/games/{game}/actions/cast",
-            {"player": "alice", "card": "Ponder", "mana_sources": [island_id]},
+            {
+                "player": "bob",
+                "card": "Strix Serenade",
+                "targets": [bears_spell_id],
+                "mana_sources": [island_id],
+            },
         ),
     )
     assert cast_result["outcome"]["allowed"] is True
@@ -586,19 +647,19 @@ def test_an_unread_spells_notice_reaches_the_casters_own_seat(client, game, monk
         entry.get("detail", {}).get("notices") for entry in cast_result["recent_log"]["entries"]
     ), "nothing has resolved yet"
 
-    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
-    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
-    assert passed.json().get("notices"), "bob's own pass is what resolved the spell"
+    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    assert passed.json().get("notices"), "alice's own pass is what resolved the spell"
 
     server = build_server(seats)
-    answer = call(server, "battlefield_state", {"player_uid": uids["alice"]})
+    answer = call(server, "battlefield_state", {"player_uid": uids["bob"]})
     notice_rows = [
         entry for entry in answer["recent_log"]["entries"] if entry.get("detail", {}).get("notices")
     ]
     assert notice_rows, answer["recent_log"]
     (notice,) = notice_rows[-1]["detail"]["notices"]
     assert notice["kind"] == "unmodeled_trigger_effect_notices"
-    assert notice["source_name"] == "Ponder"
+    assert notice["source_name"] == "Strix Serenade"
 
 
 # -- redaction ---------------------------------------------------------------

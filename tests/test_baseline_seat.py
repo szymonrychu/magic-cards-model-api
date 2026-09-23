@@ -471,6 +471,30 @@ def test_a_may_question_declines_when_the_affirmative_is_illegal():
     assert body["accept"] is False
 
 
+def test_a_may_question_with_a_stated_default_takes_it_over_the_generic_one():
+    """`machines/decisions.default_answer` (engine schema 41): a `MAY`
+    decision whose caller wrote its own deviation down (`Decision
+    .default_may` - `Game.may`'s "you may shuffle" clause is the one caller
+    that stamps `False`) takes *that* answer, not the engine-wide "take it
+    when legal" every other `may` defaults to - even though the affirmative
+    is perfectly legal here. `decide_body` claims to follow `default_answer`
+    branch for branch; this is the branch a plain `affirmative_is_legal`
+    check alone cannot express."""
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.MAY, affirmative_is_legal=True, default_may=False)),
+        "alice",
+    )
+    assert body["accept"] is False
+
+
+def test_a_may_question_with_no_stated_default_still_takes_the_affirmative():
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.MAY, affirmative_is_legal=True, default_may=None)),
+        "alice",
+    )
+    assert body["accept"] is True
+
+
 def test_a_mulligan_question_keeps_the_dealt_hand():
     body = baseline_seat.decide_body(pending_view(_decision(DecisionKind.MULLIGAN)), "alice")
     assert body["accept"] is False

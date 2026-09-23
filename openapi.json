@@ -5351,6 +5351,14 @@
             ],
             "title": "Log Seq"
           },
+          "notices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Notices",
+            "type": "array"
+          },
           "paused": {
             "default": false,
             "title": "Paused",
@@ -9433,6 +9441,17 @@
               }
             ],
             "title": "Default Cards"
+          },
+          "default_may": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default May"
           },
           "exact": {
             "anyOf": [

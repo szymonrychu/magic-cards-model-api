@@ -2318,6 +2318,13 @@ class PendingDecisionView(BaseModel):
     card_labels: list[str] | None = None
     exact: bool | None = None
     default_cards: list[str] | None = None
+    default_may: bool | None = None
+    """`may` only (engine schema 41): what an unanswered question resolves
+    to, in place of the engine-wide "take it" convention - `default_cards`'s
+    own shape, one kind over (`decisions.PendingDecision.default_may`).
+    `None` when the engine stamped no deviation, in which case silence takes
+    the affirmative whenever `affirmative_is_legal` allows it. `Game.may`'s
+    "you may shuffle" clause is the one caller that stamps `False`."""
     lethal_damage: list[int] | None = None
     """`assign_combat_damage` only (CR 702.19b): the damage each of `targets`
     still needs before it counts as assigned lethal damage, aligned with it
@@ -2995,6 +3002,14 @@ class DecideResponse(BaseModel):
     reason: str | None = None
     paused: bool = False
     pending_decision: PendingDecisionView | None = None
+    notices: list[dict[str, Any]] = Field(default_factory=list)
+    """See `ActionOutcome.notices`. Only ever set on a `COMPLETED` answer:
+    an answer that itself pauses on the next question carries none yet, the
+    same way `commands._attach_notices` never runs against a `PAUSED`
+    `RunResult`. Engine 41's `MAY.default_may` is what makes this reachable
+    at all - before it, a `may` this route answers never raised a notice of
+    its own resolving, because nothing that could pause mid-resolution and
+    then complete inside `decide` yet did."""
     log_seq: int | None = None
 
 

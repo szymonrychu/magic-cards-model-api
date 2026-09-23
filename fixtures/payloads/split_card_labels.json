@@ -557,6 +557,7 @@
       "00000000-0000-0000-0000-000000000006"
     ],
     "default_cards": null,
+    "default_may": null,
     "exact": false,
     "generation": 1,
     "kept_label": "exiled",

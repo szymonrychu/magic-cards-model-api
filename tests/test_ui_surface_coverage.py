@@ -569,6 +569,12 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         "decision window starts from `cards` in the order given and offers no one-click "
         "default",
     ),
+    ("PendingDecisionView", "default_may"): _Reason(
+        "known-gap",
+        "the engine's own answer for an unanswered `may` question (engine schema 41, "
+        "`Game.may`'s own 'you may shuffle' deviation); the decision window renders the "
+        "same yes/no buttons for every `may` and offers no one-click default either way",
+    ),
     ("PendingDecisionView", "mana_sources"): _Reason(
         "known-gap",
         "the sources the engine would accept while paying (CR 608.2g); `ui/mana.js` builds "

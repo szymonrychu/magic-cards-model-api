@@ -88,6 +88,7 @@ def _every_field_set() -> Decision:
         "quality": "color",
         "exact": False,
         "default_cards": (second,),
+        "default_may": False,
         "mana_sources": (third, first),
         "lethal_damage": (2, 0),
         "default_damage": ((bears, 3), (bob, 1)),

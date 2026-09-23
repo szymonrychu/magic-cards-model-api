@@ -164,6 +164,7 @@
     "card_labels": [],
     "cards": [],
     "default_cards": null,
+    "default_may": null,
     "exact": true,
     "generation": 1,
     "kept_label": "",

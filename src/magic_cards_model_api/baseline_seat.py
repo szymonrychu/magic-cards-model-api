@@ -698,6 +698,14 @@ def decide_body(pending: dict[str, Any], player: str) -> dict[str, Any]:
         # CR 103.5/CR 103.6 are both "may", and both are decisions a scenario
         # states rather than ones an engine takes on a player's behalf.
         body["accept"] = False
+    elif kind == "may" and pending.get("default_may") is not None:
+        # `Decision.default_may` (engine schema 41): a caller's own stated
+        # deviation from the engine-wide "take it when legal" default below -
+        # `Game.may`'s "you may shuffle" clause is the one that stamps
+        # `False`, matching `machines/decisions.default_answer`'s own
+        # `decision.kind is DecisionKind.MAY and decision.default_may is not
+        # None` branch, checked ahead of the generic one.
+        body["accept"] = bool(pending["default_may"])
     elif kind in ("may", "pay_life", "pay_energy", "pay_mana"):
         body["accept"] = bool(pending.get("affirmative_is_legal", True))
     elif kind == "pay_energy_amount":
