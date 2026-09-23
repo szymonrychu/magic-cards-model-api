@@ -171,11 +171,11 @@ VALID_RESULT_WITH_WARNINGS = {
     "sideboard_size": 0,
     "support_warnings": [
         {
-            "card": "Keen-Eyed Curator",
+            "card": "Inscrutable Husk",
             "status": "silent",
             "clauses": [
                 {
-                    "text": "if it has four or more card types, put it into your hand",
+                    "text": "whenever this creature glimmers, frobnicate target zorblax",
                     "outcome": "silent",
                     "reason": "nothing in the engine reads this text",
                 }
@@ -199,8 +199,8 @@ def test_render_validation_shows_the_support_warnings_panel() -> None:
         result=VALID_RESULT_WITH_WARNINGS,
     )
     assert "May not be fully supported" in html
-    assert "Keen-Eyed Curator" in html
-    assert "four or more card types" in html
+    assert "Inscrutable Husk" in html
+    assert "glimmers" in html
     # `unaudited` renders as the softer "not verified" tier in its visible
     # text - the raw word only survives as a styling hook
     # (`support-unaudited`, a CSS class), never as something a person reads.
@@ -269,7 +269,7 @@ def test_validate_and_report_renders_support_warnings_from_the_server() -> None:
         result=VALID_RESULT_WITH_WARNINGS,
     )
     assert "May not be fully supported" in result
-    assert "Keen-Eyed Curator" in result
+    assert "Inscrutable Husk" in result
 
 
 def test_mount_lobby_populates_both_bundled_deck_selects() -> None:

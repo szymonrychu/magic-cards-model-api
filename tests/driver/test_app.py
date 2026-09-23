@@ -93,11 +93,11 @@ def test_dispatch_includes_support_warnings_in_the_briefing(world):
     real source of truth, already answered."""
     world.state["support_warnings"] = [
         {
-            "card": "Keen-Eyed Curator",
+            "card": "Inscrutable Husk",
             "status": "silent",
             "clauses": [
                 {
-                    "text": "if it has four or more card types, put it into your hand",
+                    "text": "whenever this creature glimmers, frobnicate target zorblax",
                     "outcome": "silent",
                     "reason": "nothing in the engine reads this text",
                 }
@@ -109,8 +109,8 @@ def test_dispatch_includes_support_warnings_in_the_briefing(world):
     dispatch(client)
     text = (settings.workspace / "current-game.md").read_text()
     assert "cards the engine may not fully support" in text.lower()
-    assert "Keen-Eyed Curator (silent)" in text
-    assert "four or more card types" in text
+    assert "Inscrutable Husk (silent)" in text
+    assert "glimmers" in text
 
 
 def test_dispatch_says_nothing_about_support_with_no_warnings(world):

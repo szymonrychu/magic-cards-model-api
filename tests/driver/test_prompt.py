@@ -129,11 +129,11 @@ def test_current_game_names_cards_the_engine_may_not_fully_support(tmp_path, gui
     `schemas.DeckSupportWarning` the api would have sent."""
     warnings = (
         {
-            "card": "Keen-Eyed Curator",
+            "card": "Inscrutable Husk",
             "status": "silent",
             "clauses": [
                 {
-                    "text": "reveal the top card... if it has four or more card types...",
+                    "text": "whenever this creature glimmers, frobnicate target zorblax",
                     "outcome": "silent",
                     "reason": "nothing in the engine reads this text",
                 }
@@ -143,9 +143,9 @@ def test_current_game_names_cards_the_engine_may_not_fully_support(tmp_path, gui
     )
     text = render_current_game(assignment(guide, support_warnings=warnings), tmp_path / "memory")
     assert "cards the engine may not fully support" in text.lower()
-    assert "Keen-Eyed Curator (silent)" in text
+    assert "Inscrutable Husk (silent)" in text
     assert "Alhammarret's Archive (unaudited)" in text
-    assert "four or more card types" in text
+    assert "glimmers" in text
 
 
 def test_current_game_lists_the_guide_paths_not_their_contents(tmp_path, guide):
