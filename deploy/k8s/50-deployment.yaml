@@ -134,7 +134,7 @@ spec:
             - name: AGENT_DEFAULT_MODEL
               value: claude-opus-5
             - name: AGENT_DEFAULT_EFFORT
-              value: high
+              value: medium
             - name: AGENT_NAMESPACE
               value: mtg-engine
             - name: AGENT_IMAGE
