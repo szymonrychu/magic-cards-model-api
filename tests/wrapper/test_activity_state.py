@@ -87,6 +87,9 @@ def thinking(signature: str = "sig") -> dict:
         ("Read", activity.WORKING),
         ("Write", activity.WORKING),
         ("TodoWrite", activity.WORKING),
+        ("Agent", activity.WORKING),
+        ("Agent:rules-researcher", activity.RESEARCHING_RULES),
+        ("Task:rules-researcher", activity.RESEARCHING_RULES),
     ],
 )
 def test_every_tool_this_stack_offers_has_a_state(name, expected):
@@ -409,3 +412,131 @@ def test_no_argument_card_name_or_prose_can_reach_the_published_state():
         assert secret not in published
     assert set(json.loads(published)) == {"state", "seconds", "seq"}
     assert json.loads(published)["state"] == activity.READING_CARDS
+
+
+# ---- a rules question handed to a background subagent (SUB) ----------------
+#
+# The seat launches the `rules-researcher` subagent in the background while it
+# waits, then goes straight back to `pass_until`. The launch has its own word,
+# and nothing the subagent itself does may move the seat's published state:
+# the seat is waiting, whatever its researcher is looking up.
+
+
+def agent_launch(subagent_type: str) -> dict:
+    return tool(
+        "Agent",
+        {
+            "subagent_type": subagent_type,
+            "description": "Can Consign to Memory counter a cast trigger?",
+            "prompt": "He cast Ragavan, Nimble Pilferer; can I ...",
+            "run_in_background": True,
+        },
+    )
+
+
+def test_launching_the_rules_researcher_reads_as_researching_rules():
+    line = assistant(agent_launch("rules-researcher"))
+    [(kind, name)] = list(activity.observations(line))
+    assert activity.state_for(kind, name) == activity.RESEARCHING_RULES == "researching_rules"
+
+
+def test_the_legacy_task_tool_name_maps_the_same_way():
+    line = assistant(tool("Task", {"subagent_type": "rules-researcher", "prompt": "x"}))
+    [(kind, name)] = list(activity.observations(line))
+    assert activity.state_for(kind, name) == activity.RESEARCHING_RULES
+
+
+def test_any_other_subagent_is_plain_working():
+    """A script-development subagent is not rules research; saying so would
+    be a guess, and this mapping never guesses."""
+    for payload in ({"subagent_type": "general-purpose", "prompt": "x"}, {"prompt": "x"}):
+        [(kind, name)] = list(activity.observations(assistant(tool("Agent", payload))))
+        assert activity.state_for(kind, name) == activity.WORKING
+
+
+def test_the_launch_never_leaks_its_question():
+    current = activity.CurrentActivity(now=lambda: 1000.0)
+    current.feed([assistant(agent_launch("rules-researcher"))])
+    published = json.dumps(current.snapshot())
+    for secret in ("Consign to Memory", "Ragavan", "can I"):
+        assert secret not in published
+    assert json.loads(published)["state"] == activity.RESEARCHING_RULES
+
+
+def test_a_subagent_s_own_sidechain_lines_are_not_the_seat_s_activity():
+    line = assistant(tool("mcp__spellslinger__knowledge_search", {"q": "x"}))
+    line["isSidechain"] = True
+    assert list(activity.observations(line)) == []
+
+
+def _write(path: Path, *lines: dict) -> None:
+    with path.open("a", encoding="utf-8") as handle:
+        for line in lines:
+            handle.write(json.dumps(line) + "\n")
+
+
+def test_a_background_research_launch_during_a_wait_keeps_the_seat_waiting(tmp_path):
+    """The whole sequence, tailed off disk the way the container tails it:
+    the seat launches its researcher in the background, goes back to
+    `pass_until`, and stays `waiting` while the researcher looks rules up -
+    in the seat's own file as sidechain lines, or in its own subagent
+    transcript (newer than the seat's) - and while the finished task's
+    notification is queued as a prompt."""
+    project = tmp_path / ".claude" / "projects" / "-workspace"
+    project.mkdir(parents=True)
+    session = project / "session-1.jsonl"
+    watcher = activity.ActivityWatcher(tmp_path, "tools")
+
+    _write(session, assistant(tool("mcp__mtg__pass_until", {"step": "end"})))
+    watcher.poll_once()
+    assert watcher.activity_snapshot()["state"] == activity.WAITING
+
+    _write(session, assistant(agent_launch("rules-researcher")))
+    watcher.poll_once()
+    assert watcher.activity_snapshot()["state"] == activity.RESEARCHING_RULES
+
+    _write(
+        session,
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_R",
+                        "content": "Async agent launched successfully.",
+                    }
+                ],
+            },
+        },
+        assistant(tool("mcp__mtg__pass_until", {"step": "end"})),
+    )
+    watcher.poll_once()
+    assert watcher.activity_snapshot()["state"] == activity.WAITING
+    seq = watcher.activity_snapshot()["seq"]
+
+    sidechain = assistant(tool("mcp__spellslinger__knowledge_search", {"q": "stack"}))
+    sidechain["isSidechain"] = True
+    _write(session, sidechain)
+    subagents = project / "session-1" / "subagents"
+    subagents.mkdir(parents=True)
+    _write(
+        subagents / "agent-a1.jsonl",
+        assistant(tool("mcp__spellslinger__knowledge_search", {"q": "stack"})),
+    )
+    _write(
+        session,
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": "<task-notification><tool-use-id>toolu_R</tool-use-id>"
+                "<status>completed</status></task-notification>",
+            },
+        },
+    )
+    watcher.poll_once()
+    snapshot = watcher.activity_snapshot()
+    assert snapshot["state"] == activity.WAITING
+    assert snapshot["seq"] == seq

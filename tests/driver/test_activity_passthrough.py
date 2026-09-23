@@ -56,3 +56,10 @@ def test_a_wrapper_that_predates_the_field_reports_no_activity(world):
 def test_an_activity_that_is_not_an_object_is_dropped(world):
     world.state["activity"] = "reading_cards"
     assert world.client.get("/status").json()["agentActivity"] is None
+
+
+def test_a_background_rules_research_launch_crosses_over_as_its_own_word(world):
+    """SUB: the seat hands a rules question to its background researcher
+    while it waits; the word for that crosses to the game server untouched."""
+    world.state["activity"] = {"state": "researching_rules", "seconds": 0.4, "seq": 12}
+    assert world.client.get("/status").json()["agentActivity"]["state"] == "researching_rules"

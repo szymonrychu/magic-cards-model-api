@@ -2324,3 +2324,51 @@ def test_no_driver_source_says_guides_wait_for_a_pull_request():
         text = source.read_text().lower()
         for retired in ("awaiting_owner_review", "pull request", "pr_opened", "owner review"):
             assert retired not in text, f"{source.name} still says {retired!r}"
+
+
+# SUB (owner, 2026-09-23): "Ask seat agent to orchestrate rules investigation
+# to subagents while it's passing turns." The seat never spends its own
+# priority-holding time on rules research: it hands the question to the
+# background `rules-researcher` subagent (`wrapper/bootstrap.py` renders it)
+# while it waits, and reads the answer when it next acts. Sits beside V2's
+# "pass first, plan second": launching the researcher is part of what the
+# seat does while the opponent acts, never while it holds priority.
+
+RESEARCH_HEADING = "## Rules questions go to your researcher, not onto your priority"
+
+
+def _research_rule_is_complete(section: str) -> None:
+    flat = _flat(section).lower()
+    assert "rules-researcher" in flat
+    assert "run_in_background" in flat
+    assert "in the background" in flat
+    assert "do not hold priority" in flat
+    assert "right before you pass" in flat
+    assert "next hold priority" in flat
+    assert "never wait on a subagent while you hold priority" in flat
+    assert "next decisions" in flat
+    assert "pass first" in flat
+
+
+def test_seat_prompt_hands_rules_questions_to_the_background_researcher(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    _research_rule_is_complete(_section(text, RESEARCH_HEADING))
+
+
+def test_seat_prompt_names_the_researcher_the_wrapper_renders(tmp_path, guide):
+    from mtg_agent.wrapper.bootstrap import RULES_RESEARCHER
+
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert f"`{RULES_RESEARCHER}`" in _section(text, RESEARCH_HEADING)
+
+
+def test_seat_prompt_memory_rule_points_at_the_researcher(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    rules = _flat(_section(text, "## Rules of engagement, each learned the hard way"))
+    assert "NEVER state card text or a rule from memory" in rules
+    assert "`rules-researcher`" in rules
+
+
+def test_seat_brief_hands_rules_questions_to_the_background_researcher():
+    text = (BRIEFS / "ai_seat_brief.md").read_text()
+    _research_rule_is_complete(_section(text, RESEARCH_HEADING))

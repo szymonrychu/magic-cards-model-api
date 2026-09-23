@@ -482,12 +482,13 @@ export function aiSeatLoadingNotice(aiUid, aiStatus) {
 /** Every phrase this pill can show, keyed by the state the wrapper observed.
  * Grouped hard on purpose: several `mtg` read tools are one "reading the
  * board", and every play is one "making its play" - a dozen labels flickering
- * past on a 5s poll would say less than these eight. */
+ * past on a 5s poll would say less than these nine. */
 export const AI_ACTIVITY_LABELS = {
   waiting: "waiting for priority",
   reading_board: "reading the board",
   reading_cards: "reading cards",
   reading_rules: "checking the rules",
+  researching_rules: "researching rules",
   deciding: "deciding",
   acting: "making its play",
   thinking: "thinking",

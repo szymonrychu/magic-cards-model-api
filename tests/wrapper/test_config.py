@@ -86,3 +86,18 @@ def test_effort_becomes_a_flag() -> None:
 
 def test_no_effort_no_flag() -> None:
     assert "--effort" not in Settings.from_env({"MODEL": "opus"}).claude_args(resume=False)
+
+
+# SUB (2026-09-23): the seat hands rules questions to a background
+# `rules-researcher` subagent. Its model is its own setting, cheaper than the
+# seat's, so a rules lookup never spends the seat's Opus budget.
+
+
+def test_the_rules_researcher_runs_on_sonnet_by_default():
+    assert Settings.from_env({}).rules_researcher_model == "sonnet"
+
+
+def test_the_rules_researcher_model_is_its_own_setting():
+    s = Settings.from_env({"MODEL": "opus", "RULES_RESEARCHER_MODEL": "haiku"})
+    assert s.model == "opus"
+    assert s.rules_researcher_model == "haiku"

@@ -232,3 +232,84 @@ def test_render_produces_every_file_in_one_call(tmp_path):
     assert (s.home_dir / ".claude.json").exists()
     assert (s.home_dir / ".claude" / "settings.json").exists()
     assert (s.workspace / ".mcp.json").exists()
+
+
+# ---- the rules-researcher subagent (SUB, 2026-09-23) -----------------------
+#
+# The seat hands rules questions to a background subagent while it waits, so
+# its own priority-holding time is never spent on research. The subagent is a
+# project agent under the workspace (claude's cwd), rendered from code so the
+# allowlist is pinned here rather than in a hand-edited file.
+
+
+def _frontmatter(path) -> tuple[dict[str, str], str]:
+    text = path.read_text()
+    assert text.startswith("---\n")
+    head, body = text[4:].split("\n---\n", 1)
+    fields = {}
+    for row in head.splitlines():
+        key, _, value = row.partition(":")
+        fields[key.strip()] = value.strip()
+    return fields, body
+
+
+def _names(value: str) -> list[str]:
+    return [name.strip() for name in value.split(",") if name.strip()]
+
+
+def researcher(tmp_path, **env):
+    s = settings_in(tmp_path, **env)
+    bootstrap.render(s)
+    return _frontmatter(s.workspace / ".claude" / "agents" / "rules-researcher.md")
+
+
+def test_render_writes_the_rules_researcher_as_a_project_agent(tmp_path):
+    fields, _ = researcher(tmp_path)
+    assert fields["name"] == bootstrap.RULES_RESEARCHER == "rules-researcher"
+    assert fields["description"]
+
+
+def test_the_rules_researcher_may_only_look_things_up(tmp_path):
+    fields, _ = researcher(tmp_path)
+    tools = _names(fields["tools"])
+    assert tools == list(bootstrap.RULES_RESEARCHER_TOOLS)
+    assert "mcp__spellslinger__knowledge_search" in tools
+    assert "mcp__spellslinger__resolve_cards" in tools
+    for name in tools:
+        assert name.startswith("mcp__spellslinger__") or name in {"Read", "Grep", "Glob"}, name
+
+
+def test_the_rules_researcher_can_never_act_in_the_game(tmp_path):
+    """Allowlisted by `tools`, and the game-acting and writing tools denied
+    outright on top: a subagent must never move the game or write a file."""
+    fields, _ = researcher(tmp_path)
+    tools = _names(fields["tools"])
+    assert not [name for name in tools if name.startswith("mcp__mtg")]
+    assert not {"Bash", "Write", "Edit", "NotebookEdit", "Agent", "Task"} & set(tools)
+    denied = set(_names(fields["disallowedTools"]))
+    assert {"mcp__mtg", "Bash", "Write", "Edit", "NotebookEdit", "Agent", "Task"} <= denied
+
+
+def test_the_rules_researcher_model_is_explicit_and_configurable(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    assert researcher(tmp_path / "a")[0]["model"] == "sonnet"
+    assert researcher(tmp_path / "b", RULES_RESEARCHER_MODEL="haiku")[0]["model"] == "haiku"
+
+
+def test_the_rules_researcher_answers_one_question_with_verified_citations(tmp_path):
+    _, body = researcher(tmp_path)
+    flat = " ".join(body.split())
+    assert "one rules question" in flat
+    assert "knowledge_search" in flat
+    assert "CR" in flat
+    assert "never from memory" in flat
+    assert "cannot act in the game" in flat
+
+
+def test_the_seat_itself_may_still_launch_subagents(tmp_path):
+    s = settings_in(tmp_path)
+    bootstrap.write_settings_json(s)
+    deny = json.loads((s.home_dir / ".claude" / "settings.json").read_text())["permissions"]["deny"]
+    assert "Agent" not in deny
+    assert "Task" not in deny

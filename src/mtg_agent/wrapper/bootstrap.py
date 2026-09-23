@@ -124,6 +124,74 @@ def write_claude_md(settings: Settings) -> None:
         shutil.copyfile(source, target)
 
 
+#: The seat's rules-research subagent: the seat hands it one rules question
+#: in the background while it waits, and reads the answer when it next acts
+#: (`driver/prompt.py`, "Rules questions go to your researcher").
+RULES_RESEARCHER = "rules-researcher"
+
+#: Everything it may call: the `spellslinger` rules and card lookups, and the
+#: read-only file tools for the guides. Nothing on the `mtg` server - a
+#: subagent never acts in the game - and nothing that writes or runs.
+RULES_RESEARCHER_TOOLS = (
+    "mcp__spellslinger__knowledge_search",
+    "mcp__spellslinger__resolve_cards",
+    "Read",
+    "Grep",
+    "Glob",
+)
+
+#: Denied on top of the allowlist, so a tool that is inherited by default
+#: (every MCP server the seat has) cannot slip through: the whole `mtg`
+#: server, shell and file writes, and spawning subagents of its own.
+RULES_RESEARCHER_DENY = (
+    "mcp__mtg",
+    "Bash",
+    "Write",
+    "Edit",
+    "NotebookEdit",
+    "Agent",
+    "Task",
+)
+
+RULES_RESEARCHER_PROMPT = """You answer one rules question for a Magic: the Gathering player
+who is in the middle of a game and will read your answer when they next act.
+You cannot act in the game and must not try: you have no game tools.
+
+- Look every rule up with `knowledge_search` (type "rules"), and every card's
+  text with `resolve_cards` - never from memory. The Comprehensive Rules are
+  revised every set and rule numbers move, so a CR number you did not look up
+  in this session is wrong until proven otherwise.
+- Cite the CR numbers that decide the answer, each one verified by a lookup.
+- Answer the question you were asked, for the situation it names, and stop.
+  Lead with the answer (yes / no / what happens), then the citations, then at
+  most a few lines of why. No general tutorial.
+- If the lookups do not settle it, say exactly what is unsettled rather than
+  guessing.
+"""
+
+
+def write_agents(settings: Settings) -> None:
+    """The seat's subagents, as project agents under the workspace (claude's
+    cwd). Rendered from code so the tool allowlist is pinned by tests rather
+    than living in a hand-edited file."""
+    root = settings.workspace / ".claude" / "agents"
+    root.mkdir(parents=True, exist_ok=True)
+    text = (
+        "---\n"
+        f"name: {RULES_RESEARCHER}\n"
+        "description: Answers one Magic rules question with verified CR citations, "
+        "in the background while the seat waits. Read-only; cannot act in the game.\n"
+        f"tools: {', '.join(RULES_RESEARCHER_TOOLS)}\n"
+        f"disallowedTools: {', '.join(RULES_RESEARCHER_DENY)}\n"
+        f"model: {settings.rules_researcher_model}\n"
+        "---\n"
+        f"{RULES_RESEARCHER_PROMPT}"
+    )
+    path = root / f"{RULES_RESEARCHER}.md"
+    path.write_text(text)
+    path.chmod(0o644)
+
+
 def copy_skills(settings: Settings) -> None:
     """Later directories win, so a mounted custom skill overrides a baked one
     of the same name."""
@@ -187,4 +255,5 @@ def render(settings: Settings) -> None:
     write_settings_json(settings)
     write_claude_json(settings)
     copy_skills(settings)
+    write_agents(settings)
     log.info("bootstrap rendered workspace=%s home=%s", settings.workspace, settings.home_dir)

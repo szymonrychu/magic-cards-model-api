@@ -72,6 +72,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .bootstrap import RULES_RESEARCHER
 from .metrics import Metrics
 
 log = logging.getLogger("agent")
@@ -269,6 +270,11 @@ READING_CARDS = "reading_cards"
 #: that server: it is the cards-and-rules knowledge service, so "looking
 #: something up" is the honest default for a tool this mapping has not met.
 READING_RULES = "reading_rules"
+#: Handing a rules question to its background `rules-researcher` subagent
+#: (`bootstrap.RULES_RESEARCHER`) - one observation, at the launch; the seat
+#: goes straight back to waiting, and nothing the subagent does after that is
+#: the seat's own activity (see `observations`).
+RESEARCHING_RULES = "researching_rules"
 #: Answering something the game asked it: a pending decision, a mulligan, an
 #: opening-hand action, or the plan it has to declare before it acts.
 DECIDING = "deciding"
@@ -287,6 +293,13 @@ WORKING = "working"
 
 _MTG_PREFIX = "mcp__mtg__"
 _SPELLSLINGER_PREFIX = "mcp__spellslinger__"
+
+#: The subagent-launching tool, under its current name and its old one.
+_AGENT_TOOLS = ("Agent", "Task")
+#: `Agent:rules-researcher` - a launch of that one subagent type, as
+#: `observations` names it. The type is a fixed word from this stack's own
+#: config, never the launch's question.
+_RESEARCHER_LAUNCHES = {f"{tool}:{RULES_RESEARCHER}" for tool in _AGENT_TOOLS}
 
 #: The `mtg` tools that are not plays. Everything else the server offers
 #: changes the game, so `ACTING` is its default - see `state_for`.
@@ -318,6 +331,8 @@ def state_for(kind: str, name: str) -> str | None:
     if kind != "tool":
         return None
     tool = str(name or "")
+    if tool in _RESEARCHER_LAUNCHES:
+        return RESEARCHING_RULES
     if tool.startswith(_MTG_PREFIX):
         return _MTG_STATES.get(tool[len(_MTG_PREFIX) :], ACTING)
     if tool.startswith(_SPELLSLINGER_PREFIX):
@@ -340,6 +355,10 @@ def observations(line: dict) -> Iterator[tuple[str, str]]:
     `events` skips because they carry no readable text, are exactly what
     this one wants: their presence is the evidence.
 
+    A subagent's own sidechain line is not an observation: the seat launched
+    it and went back to waiting, so its researcher's lookups must not move
+    the seat's published state off `waiting`.
+
     A `user` line carrying a `tool_result` is an observation too, and yields
     `("thinking", "")` - the same kind a `thinking` block does. This used to
     be ignored outright, which is exactly what let a real stall through
@@ -356,7 +375,7 @@ def observations(line: dict) -> Iterator[tuple[str, str]]:
     from whatever tool call preceded it.
     """
     kind = line.get("type")
-    if kind not in ("assistant", "user"):
+    if kind not in ("assistant", "user") or line.get("isSidechain"):
         return
     message = line.get("message")
     if not isinstance(message, dict):
@@ -378,7 +397,22 @@ def observations(line: dict) -> Iterator[tuple[str, str]]:
         elif block_type == "text" and str(block.get("text", "")).strip():
             yield "say", ""
         elif block_type == "tool_use":
-            yield "tool", str(block.get("name") or "")
+            yield "tool", _tool_name(block)
+
+
+def _tool_name(block: dict) -> str:
+    """The tool name, and for a `rules-researcher` launch that subagent type
+    too - the one input field read here, and only compared against a fixed
+    word, so no argument text can travel on."""
+    name = str(block.get("name") or "")
+    tool_input = block.get("input")
+    if (
+        name in _AGENT_TOOLS
+        and isinstance(tool_input, dict)
+        and tool_input.get("subagent_type") == RULES_RESEARCHER
+    ):
+        return f"{name}:{RULES_RESEARCHER}"
+    return name
 
 
 def emit(kind: str, text: str, rank: int) -> None:

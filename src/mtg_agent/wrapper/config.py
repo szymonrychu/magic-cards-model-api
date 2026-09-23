@@ -60,6 +60,10 @@ class Settings:
     claude_path: str = "claude"
     model: str = ""
     effort: str = ""
+    #: The model the seat's background `rules-researcher` subagent runs on
+    #: (`bootstrap.write_agents`). Its own setting, cheaper than the seat's:
+    #: a rules lookup is one question and a few searches, not a game.
+    rules_researcher_model: str = "sonnet"
     max_thinking_tokens: int | None = None
     workspace: Path = Path("/workspace")
     home_dir: Path = Path("/root")
@@ -137,6 +141,7 @@ class Settings:
             claude_path=_str(env, "CLAUDE_PATH", "claude"),
             model=_str(env, "MODEL", ""),
             effort=_str(env, "EFFORT", ""),
+            rules_researcher_model=_str(env, "RULES_RESEARCHER_MODEL", "sonnet"),
             max_thinking_tokens=_int_or_none(env, "MAX_THINKING_TOKENS"),
             workspace=Path(_str(env, "WORKSPACE", "/workspace")),
             home_dir=Path(_str(env, "HOME_DIR", "/root")),

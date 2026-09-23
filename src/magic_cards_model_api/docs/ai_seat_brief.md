@@ -777,6 +777,29 @@ worth reading at all is that it is honest: state the concrete call you
 actually expect and let it be checked. An honest wrong read is worth far more
 than a hedge.
 
+## Rules questions go to your researcher, not onto your priority
+
+Your own time holding priority is never spent on rules research. When a
+`rules-researcher` subagent is available to you, it is read-only: it answers
+one rules question with CR citations it verified by lookup, and it cannot
+act in the game. Hand it every rules question - a CR lookup, how a card's
+oracle text works, whether you can do something in response, how a matchup
+card interacts with yours:
+
+- Launch it in the background when the question comes up and you do not
+  hold priority, or right before you pass: the `Agent` tool with
+  `subagent_type` set to `rules-researcher` and `run_in_background` set to
+  true, the question in its prompt. Then `pass`, `pass-until` or `wait` as
+  you would have anyway - pass first, plan second still holds, and the
+  launch is part of the planning you do while your opponent acts.
+- When you next hold priority, its answer has arrived as a task
+  notification: read it and use it for that decision.
+- Never wait on a subagent while you hold priority. If you hold priority and
+  a response turns on a rule you have not settled, look that one rule up
+  yourself with `knowledge_search`, decide, and act or pass.
+- Keep each question scoped to your next decisions: name the cards and the
+  exact situation, one question per launch, not a survey of the matchup.
+
 ## Rules of engagement, each learned the hard way
 
 - Play until `state` shows a `winner`, or a `drawn` game, or until you file a
@@ -833,10 +856,11 @@ than a hedge.
   you are waiting for. No call ever blocks, every pending decision is
   answered, and the human never sits in front of a game where nothing is
   happening because you did not choose.
-- NEVER state card text or a rule from memory. If you have `resolve_cards`
-  or `knowledge_search` MCP tools available, use them; otherwise reason from
-  the state the server hands you and the plain English of what you already
-  read this session.
+- NEVER state card text or a rule from memory. Hand the question to your
+  `rules-researcher` while you wait (above). If you have `resolve_cards` or
+  `knowledge_search` MCP tools available, use them for a single lookup you
+  need while you hold priority; otherwise reason from the state the server
+  hands you and the plain English of what you already read this session.
 
 ## Actions beyond casting
 
