@@ -85,6 +85,42 @@ def test_dispatch_writes_current_game_md_into_the_workspace(world):
     assert "4 Psychic Frog" in text
 
 
+def test_dispatch_includes_support_warnings_in_the_briefing(world):
+    """Flow 6 (W2): `seat_support_warnings` reads `GET .../seats`' own
+    `support_warnings` and `dispatch` carries it into the `Assignment` that
+    `render_current_game` renders - the driver never computes this itself
+    (it has no engine dependency), it only relays what the game server, the
+    real source of truth, already answered."""
+    world.state["support_warnings"] = [
+        {
+            "card": "Keen-Eyed Curator",
+            "status": "silent",
+            "clauses": [
+                {
+                    "text": "if it has four or more card types, put it into your hand",
+                    "outcome": "silent",
+                    "reason": "nothing in the engine reads this text",
+                }
+            ],
+        }
+    ]
+    client = world.client
+    settings = world.settings
+    dispatch(client)
+    text = (settings.workspace / "current-game.md").read_text()
+    assert "cards the engine may not fully support" in text.lower()
+    assert "Keen-Eyed Curator (silent)" in text
+    assert "four or more card types" in text
+
+
+def test_dispatch_says_nothing_about_support_with_no_warnings(world):
+    client = world.client
+    settings = world.settings
+    dispatch(client)
+    text = (settings.workspace / "current-game.md").read_text()
+    assert "may not fully support" not in text.lower()
+
+
 def test_dispatch_pushes_turn_zero_with_its_own_callback_url(world):
     client = world.client
     submitted = world.submitted

@@ -28,8 +28,8 @@ from magic_cards_model.models import Card, Deck, DeckIllegal
 from pydantic import BaseModel, Field
 
 from . import scryfall
-from .decks import parse_decklist
-from .schemas import RequestModel
+from .decks import deck_support_warnings_from_cards, parse_decklist
+from .schemas import DeckSupportWarning, RequestModel
 
 router = APIRouter(prefix="/api", tags=["decks"])
 
@@ -68,6 +68,14 @@ class DeckValidation(BaseModel):
     distinction `response_model_exclude_unset=True` preserves on every route
     in this repo since T1."""
     sideboard_size: int | None = None
+    support_warnings: list[DeckSupportWarning] = []
+    """Flow 6 (W2): every distinct card this decklist names that the engine
+    does not fully support (`decks.deck_support_warnings_from_cards`),
+    worst status first - present once every name resolved to a real
+    printing (mirrors `mainboard_size`'s own "far enough" rule), empty for a
+    fully supported deck. Legality (`valid`/`errors`) is computed
+    separately and never gated on this: a card the engine does not fully
+    support can still be a perfectly legal, playable card."""
 
 
 @router.get("/decks", response_model=BundledDecksResponse, response_model_exclude_unset=True)
@@ -137,6 +145,11 @@ def validate_decklist_text(text: str) -> dict[str, Any]:
             "sideboard_size": sideboard_size,
         }
 
+    # Flow 6 (W2): every card resolved to a real printing, so it is
+    # classifiable regardless of whether the deck goes on to be legal -
+    # support and legality are two separate questions about the same cards.
+    support_warnings = deck_support_warnings_from_cards(resolved)
+
     deck = Deck(
         name="validate",
         mainboard={name: count for count, name in mainboard},
@@ -156,6 +169,7 @@ def validate_decklist_text(text: str) -> dict[str, Any]:
             "warnings": warnings,
             "mainboard_size": mainboard_size,
             "sideboard_size": sideboard_size,
+            "support_warnings": support_warnings,
         }
     return {
         "valid": True,
@@ -163,6 +177,7 @@ def validate_decklist_text(text: str) -> dict[str, Any]:
         "warnings": warnings,
         "mainboard_size": mainboard_size,
         "sideboard_size": sideboard_size,
+        "support_warnings": support_warnings,
     }
 
 

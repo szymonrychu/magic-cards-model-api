@@ -80,6 +80,10 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         #: The opponent's list, revealed post-game only; None stands in for
         #: a lobby that never had it (a board built by `POST /api/games`).
         "opponent_decklist": OPPONENT_DECKLIST,
+        #: Flow 6 (W2): `seats[].support_warnings` for "bob" - a test sets
+        #: this before dispatching to prove `seat_support_warnings` reads it
+        #: and the briefing carries it through.
+        "support_warnings": [],
         "agent": "up",
         #: With `agent` "busy", `/v1/messages` answers 409 - the wrapper still
         #: holding a turn - for the first `busy_for` pushes (every push when
@@ -287,11 +291,13 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
                     "player": "bob",
                     "uid": "secret-uid",
                     "decklist": state["decklist"] if own else None,
+                    "support_warnings": state["support_warnings"] if own else [],
                 },
                 {
                     "player": "alice",
                     "uid": "other-uid",
                     "decklist": state["opponent_decklist"] if own and over else None,
+                    "support_warnings": [],
                 },
             ]
         }

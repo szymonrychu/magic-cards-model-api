@@ -147,6 +147,131 @@ def test_lobby_view_model_keeps_only_owned_games_and_names_the_right_opponent() 
     assert rows[0]["myUid"] == "u1"
 
 
+# ---------------------------------------------------------------------------
+# The "May not be fully supported" panel (flow 6, W2) - `renderValidation`
+# tested directly, the same way `lobbyViewModel` is above: a plain object
+# stands in for the DOM element, since the function only ever assigns its
+# `innerHTML`.
+# ---------------------------------------------------------------------------
+
+VALID_RESULT_NO_WARNINGS = {
+    "valid": True,
+    "errors": [],
+    "warnings": [],
+    "mainboard_size": 60,
+    "sideboard_size": 0,
+    "support_warnings": [],
+}
+
+VALID_RESULT_WITH_WARNINGS = {
+    "valid": True,
+    "errors": [],
+    "warnings": [],
+    "mainboard_size": 60,
+    "sideboard_size": 0,
+    "support_warnings": [
+        {
+            "card": "Keen-Eyed Curator",
+            "status": "silent",
+            "clauses": [
+                {
+                    "text": "if it has four or more card types, put it into your hand",
+                    "outcome": "silent",
+                    "reason": "nothing in the engine reads this text",
+                }
+            ],
+        },
+        {"card": "Alhammarret's Archive", "status": "unaudited", "clauses": []},
+    ],
+}
+
+
+def test_render_validation_shows_the_support_warnings_panel() -> None:
+    html = run_module(
+        "render/lobby.js",
+        """
+        (() => {
+          const out = { innerHTML: "" };
+          m.renderValidation(out, result);
+          return out.innerHTML;
+        })()
+        """,
+        result=VALID_RESULT_WITH_WARNINGS,
+    )
+    assert "May not be fully supported" in html
+    assert "Keen-Eyed Curator" in html
+    assert "four or more card types" in html
+    # `unaudited` renders as the softer "not verified" tier in its visible
+    # text - the raw word only survives as a styling hook
+    # (`support-unaudited`, a CSS class), never as something a person reads.
+    assert "not verified" in html
+    assert ">unaudited<" not in html
+
+
+def test_render_validation_hides_the_panel_with_no_support_warnings() -> None:
+    """Empty state shows nothing: not an empty panel, no panel at all."""
+    html = run_module(
+        "render/lobby.js",
+        """
+        (() => {
+          const out = { innerHTML: "" };
+          m.renderValidation(out, result);
+          return out.innerHTML;
+        })()
+        """,
+        result=VALID_RESULT_NO_WARNINGS,
+    )
+    assert "support-warnings" not in html
+    assert "May not be fully supported" not in html
+
+
+def test_validate_and_report_renders_support_warnings_from_the_server() -> None:
+    """End to end through the lobby's own validate button: `POST
+    /api/decks/validate`'s `support_warnings` reaches the panel under
+    `#you-validation`, the same div the legality lines render into.
+
+    `mountLobby` also fires `loadBundledDecks` and `refreshGames` on mount -
+    both hit the same stubbed `fetch` and get back a validation-shaped body
+    they cannot use, but both already swallow their own errors
+    (`.catch(console.error)`), so neither one disturbs the validate button's
+    own click handler this test actually drives.
+    """
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const text = document.createElement("textarea");
+          text.setAttribute("id", "you-text");
+          text.value = "60 Mountain";
+          document.appendChild(text);
+          const out = document.createElement("div");
+          out.setAttribute("id", "you-validation");
+          document.appendChild(out);
+          const btn = document.createElement("button");
+          btn.setAttribute("id", "you-validate");
+          document.appendChild(btn);
+
+          globalThis.fetch = async () => ({
+            ok: true,
+            status: 200,
+            json: async () => result,
+          });
+
+          m.mountLobby(document, { get: () => ({}), set: () => {}, subscribe: () => () => {} }, {
+            startGame: () => {},
+          });
+          btn.listeners.click();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return out.innerHTML;
+        })()
+        """,
+        result=VALID_RESULT_WITH_WARNINGS,
+    )
+    assert "May not be fully supported" in result
+    assert "Keen-Eyed Curator" in result
+
+
 def test_mount_lobby_populates_both_bundled_deck_selects() -> None:
     result = run_module(
         "render/lobby.js",

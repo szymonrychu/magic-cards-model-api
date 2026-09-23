@@ -40,9 +40,9 @@ from pydantic import BaseModel, Field
 from . import ai_pregame, ai_seat, audit, game_access, lobby, oidc
 from .agent_settings import AgentSettings
 from .api_client import ApiClient, InProcessApiClient
-from .decks import load_deck_into_game
+from .decks import deck_support_warnings, load_deck_into_game, parse_decklist
 from .repository import RECENT_RECORDS_WINDOW, Advisor, GameUnloadable
-from .schemas import RequestModel, Username
+from .schemas import DeckSupportWarning, RequestModel, Username
 from .store import known_players, new_seat_uids, player_for_advisor_uid, store
 
 router = APIRouter(prefix="/api/lobby", tags=["lobby"], route_class=game_access.GameAccessRoute)
@@ -108,6 +108,13 @@ class NewUiGameResponse(BaseModel):
     `response_model_exclude_unset=True` - for a game with no buddy, so a
     browser written before buddies existed reads exactly what it always
     read."""
+    support_warnings: dict[str, list[DeckSupportWarning]] = {}
+    """Flow 6 (W2): each player's `support_warnings`
+    (`schemas.DeckSupportWarning`), carried straight through from the
+    `api_client.validate_decklist` call this route already makes per player
+    before booting - no second pass over the deck. Never a gate: a player
+    with cards the engine does not fully support still boots, same as
+    before this field existed."""
 
 
 @router.post("/games", response_model=NewUiGameResponse, response_model_exclude_unset=True)
@@ -129,10 +136,16 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
     """
     user = oidc.current_user(request)
     problems: dict[str, Any] = {}
+    # Flow 6 (W2): the same `validate_decklist` call this route already made
+    # per player, before booting anything, already answers `support_warnings`
+    # too now - carried straight into the response below rather than
+    # recomputed a second time.
+    support_warnings: dict[str, Any] = {}
     for player in req.players:
         result = api_client.validate_decklist(player.decklist_text)
         if not result["valid"]:
             problems[player.username] = result["errors"]
+        support_warnings[player.username] = result.get("support_warnings", [])
     if problems:
         raise ValueError(f"decklist(s) failed validation: {problems}")
 
@@ -273,6 +286,7 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
         "admin_key": store.admin_key(game_id),
         "ai_players": [player.username for player in req.players if player.ai],
         "agents": {name: settings.model_dump() for name, settings in agents.items()},
+        "support_warnings": support_warnings,
     }
     if advisors:
         # Set only when there is one, so `response_model_exclude_unset=True`
@@ -543,6 +557,12 @@ class SeatDetail(BaseModel):
     "own block only" rule `visibility._redact_player` enforced when this
     field still lived on the game server's state view. Never present with
     no `uid`, or one that opens no seat of this game."""
+    support_warnings: list[DeckSupportWarning] = []
+    """Flow 6 (W2): `decklist`'s own `support_warnings` - every card the
+    engine does not fully support, computed from this same text once it is
+    readable. Scoped exactly like `decklist` itself (own seat only, both
+    revealed post-game the same way): a caller with no claim on this row
+    gets `[]`, never a computed answer for a deck it cannot read."""
 
 
 class GameSeatsResponse(BaseModel):
@@ -619,6 +639,23 @@ def _advisor_row_status(status: dict[str, Any], uid: str) -> dict[str, Any]:
         # marker between every character of every value.
         return kept
     return {key: _scrub(value, uid) for key, value in kept.items()}
+
+
+def _support_warnings_for_decklist(text: str | None) -> list[dict[str, Any]]:
+    """`decks.deck_support_warnings` for a seat row's own decklist text -
+    `[]` for `None` (this caller has no claim on the row, or the game
+    carries no decklist at all) without even parsing, and `[]` again on an
+    unparsable list rather than raising: a game that already booted through
+    `load_deck_into_game` proves its decklist parses, but this route reads
+    it back from storage on every poll and must never break the seats
+    listing over a card it cannot classify."""
+    if not text:
+        return []
+    try:
+        mainboard, sideboard = parse_decklist(text)
+    except ValueError:
+        return []
+    return deck_support_warnings(name for _, name in [*mainboard, *sideboard])
 
 
 @router.get(
@@ -735,7 +772,15 @@ def game_seats(game_id: str, uid: str | None = None) -> dict[str, Any]:
                 # game has ended: every row's `decklist`, including the
                 # admin's, for any caller this route already trusted with
                 # its own block.
-                "decklist": (decklists.get(player) if reveal_all or player == own_block else None),
+                "decklist": (
+                    own_decklist := (
+                        decklists.get(player) if reveal_all or player == own_block else None
+                    )
+                ),
+                # Flow 6 (W2): scoped exactly like `decklist` above, since it
+                # is computed from that same text - a caller with no claim
+                # on this row never triggers the computation at all.
+                "support_warnings": _support_warnings_for_decklist(own_decklist),
             }
         )
     # The buddies, after the seats and WITHOUT their uids - see

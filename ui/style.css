@@ -195,6 +195,51 @@ h3 { font-size: 14px; }
 .deck-picker label { display: block; margin: 8px 0; font-size: 12px; color: var(--ink-dim); }
 .deck-picker label input[type="text"], .deck-picker label select { width: 100%; margin-top: 3px; }
 .validation { margin-top: 8px; min-height: 18px; }
+
+/* Flow 6 (W2): "May not be fully supported" - a clearly separated panel
+   under a submitted/loaded decklist, never blended into the legality lines
+   above it (`.validation`'s own `ok`/`card-error`/`card-warning` rows). A
+   left accent bar and its own sunken background do that separating; the
+   panel is absent from the DOM entirely with no warnings, so there is
+   nothing here to hide with `display: none`. */
+.support-warnings {
+  margin-top: 10px;
+  padding: 8px 10px 6px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: 6px;
+  background: var(--bg-sunken);
+}
+.support-warnings h4 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warn);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.support-warnings ul { margin: 0; padding-left: 18px; }
+.support-warnings li { font-size: 12px; color: var(--ink-dim); margin: 0 0 4px; }
+.support-tier {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line-bright);
+  margin-right: 4px;
+}
+/* `silent` and `notice` are a definite verdict (nothing runs / the engine
+   refuses on purpose), so both keep the sharper warning/bad hues.
+   `unaudited` - rendered as the softer "not verified" label - gets the
+   dimmest, least alarming tint: a static line nobody has checked either
+   way is not the same claim as one known to do nothing. */
+.support-tier.support-silent { color: var(--bad); border-color: var(--bad); }
+.support-tier.support-notice { color: var(--warn); border-color: var(--warn); }
+.support-tier.support-unaudited { color: var(--ink-faint); border-color: var(--line-bright); }
+
 .lobby-footer { display: flex; align-items: flex-end; gap: 16px; }
 .seed { font-size: 12px; color: var(--ink-dim); }
 

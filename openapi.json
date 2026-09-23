@@ -5535,6 +5535,62 @@
         "title": "DeckProblem",
         "type": "object"
       },
+      "DeckSupportClause": {
+        "description": "One clause of a `DeckSupportWarning`'s card - `magic_cards_model.\nsupport.SupportClause`'s own `text`/`outcome`/`reason`, carried verbatim\nrather than the whole clause (`kind`/`status`/`source` are the engine's\nown bookkeeping, not something a decklist owner needs to see). Only a\nclause that is not itself `handled` is ever included here - see\n`decks._support_warning_for`.",
+        "properties": {
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "outcome",
+          "reason"
+        ],
+        "title": "DeckSupportClause",
+        "type": "object"
+      },
+      "DeckSupportWarning": {
+        "description": "One card the engine does not fully support, as flow 6 (W2) surfaces\nit on every decklist submit/validate/load: `magic_cards_model.support.\ncard_support`'s own verdict for the card, sourced never hard-coded, with\n`unaudited` the softer of the two non-`notice` tiers (`docs/\nengine-coverage.md`'s own four-tier ladder) - a static ability nothing\nhas checked either way, as opposed to `silent` (nothing reads the clause\nat all) or `notice` (read, but fails closed on purpose). A fully\n`handled` card never appears; `decks.deck_support_warnings` is what\nbuilds this list.",
+        "properties": {
+          "card": {
+            "title": "Card",
+            "type": "string"
+          },
+          "clauses": {
+            "items": {
+              "$ref": "#/components/schemas/DeckSupportClause"
+            },
+            "title": "Clauses",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "silent",
+              "notice",
+              "unaudited"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "card",
+          "status",
+          "clauses"
+        ],
+        "title": "DeckSupportWarning",
+        "type": "object"
+      },
       "DeckValidation": {
         "properties": {
           "errors": {
@@ -5565,6 +5621,14 @@
               }
             ],
             "title": "Sideboard Size"
+          },
+          "support_warnings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DeckSupportWarning"
+            },
+            "title": "Support Warnings",
+            "type": "array"
           },
           "valid": {
             "title": "Valid",
@@ -8381,6 +8445,17 @@
               "type": "string"
             },
             "title": "Seat Uids",
+            "type": "object"
+          },
+          "support_warnings": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/DeckSupportWarning"
+              },
+              "type": "array"
+            },
+            "default": {},
+            "title": "Support Warnings",
             "type": "object"
           }
         },
@@ -12573,6 +12648,14 @@
             ],
             "title": "Role",
             "type": "string"
+          },
+          "support_warnings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DeckSupportWarning"
+            },
+            "title": "Support Warnings",
+            "type": "array"
           },
           "uid": {
             "anyOf": [

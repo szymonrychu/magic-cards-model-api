@@ -91,6 +91,35 @@ class RequestModel(BaseModel):
 Username = Annotated[str, StringConstraints(min_length=1, pattern=r"\A[^\x00-\x1f\x7f]+\z")]
 
 
+class DeckSupportClause(BaseModel):
+    """One clause of a `DeckSupportWarning`'s card - `magic_cards_model.
+    support.SupportClause`'s own `text`/`outcome`/`reason`, carried verbatim
+    rather than the whole clause (`kind`/`status`/`source` are the engine's
+    own bookkeeping, not something a decklist owner needs to see). Only a
+    clause that is not itself `handled` is ever included here - see
+    `decks._support_warning_for`."""
+
+    text: str
+    outcome: str
+    reason: str
+
+
+class DeckSupportWarning(BaseModel):
+    """One card the engine does not fully support, as flow 6 (W2) surfaces
+    it on every decklist submit/validate/load: `magic_cards_model.support.
+    card_support`'s own verdict for the card, sourced never hard-coded, with
+    `unaudited` the softer of the two non-`notice` tiers (`docs/
+    engine-coverage.md`'s own four-tier ladder) - a static ability nothing
+    has checked either way, as opposed to `silent` (nothing reads the clause
+    at all) or `notice` (read, but fails closed on purpose). A fully
+    `handled` card never appears; `decks.deck_support_warnings` is what
+    builds this list."""
+
+    card: str
+    status: Literal["silent", "notice", "unaudited"]
+    clauses: list[DeckSupportClause]
+
+
 class NewPlayer(RequestModel):
     username: Username
     life: int = 20

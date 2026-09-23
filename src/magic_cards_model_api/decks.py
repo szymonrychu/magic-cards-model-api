@@ -28,9 +28,11 @@ from __future__ import annotations
 
 import re
 import secrets
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 from magic_cards_model.models import Card, Deck, Match, Player
+from magic_cards_model.support import ENGINE_VERSION, card_support
 
 from . import scryfall
 
@@ -206,4 +208,97 @@ def load_deck_into_game(
     return match
 
 
-__all__ = ["load_deck_into_game", "parse_decklist"]
+#: Worst first - the same severity order `magic_cards_model.support`'s own
+#: `_STATUS_SEVERITY` keeps, minus `handled`, which never produces a warning
+#: at all (see `_support_warning_for`).
+_STATUS_SEVERITY: dict[str, int] = {"silent": 0, "unaudited": 1, "notice": 2}
+
+#: `(card name, engine version) -> support_warnings entry or None`, filled by
+#: `_support_warning_for`. Separate from `magic_cards_model.support.
+#: card_support`'s own memo (keyed by the full printed card, so it can answer
+#: "did this printing change") - this one answers the cheaper question this
+#: module actually asks over and over: "have we already built the
+#: decklist-facing {card, status, clauses} shape for this name, under this
+#: engine build", so the same card across many decklists, and the same
+#: decklist submitted/validated/loaded more than once, costs one build.
+_support_cache: dict[tuple[str, str], dict[str, Any] | None] = {}
+
+
+def clear_deck_support_cache() -> None:
+    """Forget every memoized `support_warnings` entry - tests, or a process
+    that hot-swaps the engine package."""
+    _support_cache.clear()
+
+
+def _support_warning_for(name: str, printing: Card) -> dict[str, Any] | None:
+    """`support.card_support(printing)`'s verdict, as one `support_warnings`
+    entry - `None` when the card is fully `handled`, since a handled card
+    needs no warning at all.
+
+    `clauses` carries only the clauses that are not themselves `handled`: a
+    mixed card (the worst clause decides the card's own status) would
+    otherwise bury the one dead clause a person or an agent actually needs to
+    read under every clause that is fine.
+    """
+    key = (name, ENGINE_VERSION)
+    if key in _support_cache:
+        return _support_cache[key]
+    verdict = card_support(printing)
+    if verdict.status == "handled":
+        result: dict[str, Any] | None = None
+    else:
+        result = {
+            "card": verdict.name,
+            "status": verdict.status,
+            "clauses": [
+                {"text": clause.text, "outcome": clause.outcome, "reason": clause.reason}
+                for clause in verdict.clauses
+                if clause.status != "handled"
+            ],
+        }
+    _support_cache[key] = result
+    return result
+
+
+def deck_support_warnings_from_cards(cards: dict[str, Card]) -> list[dict[str, Any]]:
+    """`support_warnings` for every distinct card in `cards` (name ->
+    resolved printing) the engine does not fully support - worst status
+    first (silent, then unaudited, then notice; never handled, which needs
+    no warning). The shape `schemas.DeckSupportWarning` validates.
+    """
+    warnings = [
+        warning
+        for name, printing in cards.items()
+        if (warning := _support_warning_for(name, printing)) is not None
+    ]
+    warnings.sort(key=lambda warning: _STATUS_SEVERITY[warning["status"]])
+    return warnings
+
+
+def deck_support_warnings(names: Iterable[str]) -> list[dict[str, Any]]:
+    """Same as `deck_support_warnings_from_cards`, resolving each distinct
+    name in `names` through the same Scryfall path `load_deck_into_game`
+    uses (`_resolve_card`).
+
+    A name that fails to resolve is silently skipped: legality
+    (`api_decks.validate_decklist_text`) is what reports a bad card name,
+    and warnings must never duplicate - or block on - that refusal.
+    """
+    resolved: dict[str, Card] = {}
+    for name in names:
+        if name in resolved:
+            continue
+        try:
+            resolved[name] = _resolve_card(name)
+        except Exception:  # noqa: BLE001 - a bad name is legality's to report
+            continue
+    return deck_support_warnings_from_cards(resolved)
+
+
+__all__ = [
+    "clear_deck_support_cache",
+    "deck_support_warnings",
+    "deck_support_warnings_from_cards",
+    "load_deck_into_game",
+    "parse_decklist",
+]

@@ -129,7 +129,45 @@ async function validateAndReport(root, prefix) {
   }
 }
 
-function renderValidation(out, result) {
+/** The softer label `unaudited` renders as everywhere a person reads it -
+ * "not verified" rather than the engine's own internal tier name, since
+ * `unaudited` means "nobody has checked either way" (never "known broken"),
+ * and reads harsher than that to someone who is not the engine's own
+ * maintainer. `silent` and `notice` keep their own words - both are a
+ * definite verdict, not a shrug. */
+function supportTierLabel(status) {
+  return status === "unaudited" ? "not verified" : status;
+}
+
+/** Flow 6 (W2): "May not be fully supported" - the panel that goes under a
+ * submitted/loaded decklist, listing each card `support_warnings` flagged
+ * with its own unsupported clause excerpt(s), sourced entirely from
+ * `warnings` (never hard-coded here). Empty state shows nothing: `warnings`
+ * empty or absent renders the empty string, not an empty panel. */
+function renderSupportWarnings(warnings) {
+  if (!warnings || !warnings.length) return "";
+  const items = warnings
+    .map((w) => {
+      const tier = supportTierLabel(w.status);
+      const excerpts = (w.clauses || [])
+        .map((c) => escapeHtml(c.text))
+        .join("; ");
+      const excerptHtml = excerpts ? `: ${excerpts}` : "";
+      return (
+        `<li><span class="support-tier support-${escapeHtml(w.status)}">${escapeHtml(tier)}</span> ` +
+        `<strong>${escapeHtml(w.card)}</strong>${excerptHtml}</li>`
+      );
+    })
+    .join("");
+  return (
+    '<div class="support-warnings">' +
+    "<h4>May not be fully supported</h4>" +
+    `<ul>${items}</ul>` +
+    "</div>"
+  );
+}
+
+export function renderValidation(out, result) {
   const lines = [];
   if (result.valid) {
     lines.push(
@@ -145,7 +183,7 @@ function renderValidation(out, result) {
   for (const w of result.warnings || []) {
     lines.push(`<div class="card-warning">${escapeHtml(w.message)}</div>`);
   }
-  out.innerHTML = lines.join("");
+  out.innerHTML = lines.join("") + renderSupportWarnings(result.support_warnings);
 }
 
 async function startGame(root, handlers) {

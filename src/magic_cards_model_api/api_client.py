@@ -35,7 +35,9 @@ class ApiClient(Protocol):
     def validate_decklist(self, text: str) -> dict[str, Any]:
         """Same shape `POST /api/decks/validate` returns: `valid`, `errors`,
         `warnings`, and - only once parsing got far enough to count cards -
-        `mainboard_size`/`sideboard_size`."""
+        `mainboard_size`/`sideboard_size`/`support_warnings` (flow 6's W2:
+        the engine's `card_support` verdict per card, never a legality
+        gate)."""
         ...
 
     def game_summaries(self, game_ids: list[str]) -> dict[str, dict[str, Any]]:

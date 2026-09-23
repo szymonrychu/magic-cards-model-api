@@ -89,6 +89,7 @@ def identified(guide: DeckGuide | None, confidence: str = CONFIDENT, **kwargs) -
 
 def assignment(guide: DeckGuide | None, confidence: str = CONFIDENT, **kwargs) -> Assignment:
     identification = kwargs.pop("identification", None)
+    support_warnings = kwargs.pop("support_warnings", ())
     if identification is None:
         identification = identified(guide, NONE if guide is None else confidence, **kwargs)
     return Assignment(
@@ -99,6 +100,7 @@ def assignment(guide: DeckGuide | None, confidence: str = CONFIDENT, **kwargs) -
         api_base="http://game:8000",
         decklist=parse_decklist(DECKLIST),
         identification=identification,
+        support_warnings=support_warnings,
     )
 
 
@@ -109,6 +111,41 @@ def test_current_game_states_the_seat_and_the_deck(tmp_path, guide):
     assert "bob" in text
     assert "dimir-frog" in text
     assert "4 Psychic Frog" in text
+
+
+def test_current_game_says_nothing_when_the_deck_is_fully_supported(tmp_path, guide):
+    """Empty state shows nothing (the same rule the UI panel follows) -
+    `Assignment.support_warnings` defaults empty, and every existing
+    briefing test above builds one with no cards named, so a regression
+    here would also be a regression there."""
+    text = render_current_game(assignment(guide), tmp_path / "memory")
+    assert "may not fully support" not in text.lower()
+
+
+def test_current_game_names_cards_the_engine_may_not_fully_support(tmp_path, guide):
+    """Flow 6 (W2): the agent's own deck brief carries the same
+    `support_warnings` the api hands the UI - sourced from `card_support`,
+    never hard-coded here, so the fixture below stands in for a real
+    `schemas.DeckSupportWarning` the api would have sent."""
+    warnings = (
+        {
+            "card": "Keen-Eyed Curator",
+            "status": "silent",
+            "clauses": [
+                {
+                    "text": "reveal the top card... if it has four or more card types...",
+                    "outcome": "silent",
+                    "reason": "nothing in the engine reads this text",
+                }
+            ],
+        },
+        {"card": "Alhammarret's Archive", "status": "unaudited", "clauses": []},
+    )
+    text = render_current_game(assignment(guide, support_warnings=warnings), tmp_path / "memory")
+    assert "cards the engine may not fully support" in text.lower()
+    assert "Keen-Eyed Curator (silent)" in text
+    assert "Alhammarret's Archive (unaudited)" in text
+    assert "four or more card types" in text
 
 
 def test_current_game_lists_the_guide_paths_not_their_contents(tmp_path, guide):

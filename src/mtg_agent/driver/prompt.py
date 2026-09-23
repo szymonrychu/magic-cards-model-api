@@ -13,9 +13,10 @@ the seat command line.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from magic_cards_model_api.playscripts.gitwork import PRIORITY_STEP_LIMIT
 from magic_cards_model_api.playscripts.lint import (
@@ -123,6 +124,15 @@ class Assignment:
     stub_decks: tuple[str, ...] = ()
     """The corpus's stub decks (`GuideLibrary.stub_decks`), listed with the
     opponent so a seat facing an unguided deck reuses its stub."""
+
+    support_warnings: tuple[Mapping[str, Any], ...] = ()
+    """Flow 6 (W2): this seat's own `support_warnings` - every card
+    `magic_cards_model.support.card_support` does not call fully `handled`,
+    the same `{card, status, clauses}` shape `schemas.DeckSupportWarning`
+    validates. Read off the game server's `GET .../seats` answer at dispatch
+    (`seat_support_warnings`), never recomputed here: the driver runs in its
+    own container and has no engine dependency of its own to compute it
+    with. Empty for a fully supported deck, or when the read failed."""
 
     @property
     def guide(self) -> DeckGuide | None:
@@ -303,6 +313,33 @@ def _clip(text: str, limit: int = PLAYS_NAME_CHARS) -> str:
     return flat if len(flat) <= limit else flat[: limit - 3].rstrip() + "..."
 
 
+def _support_warnings_lines(warnings: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Flow 6 (W2): "cards the engine may not fully support: ..." - the
+    agent's own copy of the same `support_warnings` the UI shows a human,
+    sourced entirely from `warnings` (never hard-coded here), so the agent
+    plans around a card that will not do what its text says rather than
+    discovering that live. Empty when `warnings` is empty - the same "empty
+    state shows nothing" rule the UI panel follows.
+    """
+    if not warnings:
+        return []
+    names = ", ".join(f"{warning['card']} ({warning['status']})" for warning in warnings)
+    lines = [
+        f"Cards the engine may not fully support: {names}. Do not rely on any clause "
+        "named below to happen on its own; play around it.",
+        "",
+    ]
+    for warning in warnings:
+        clauses = warning.get("clauses") or []
+        if not clauses:
+            continue
+        excerpt = _clip(clauses[0].get("text", ""))
+        lines.append(f"- {warning['card']}: {excerpt}")
+    if len(lines) > 2:
+        lines.append("")
+    return lines
+
+
 def _script_row(script: dict) -> str:
     keys = [f"{key}" for key in script.get("opposing_archetypes") or []]
     shown = ", ".join(keys[:PLAYS_ARCHETYPE_KEYS])
@@ -423,6 +460,7 @@ def render_current_game(
             "```",
             "",
         ]
+    lines += _support_warnings_lines(assignment.support_warnings)
 
     offered = identification.guides
     for guide in offered:

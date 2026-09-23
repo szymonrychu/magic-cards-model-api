@@ -1470,6 +1470,18 @@ def build_app(
                 return seat.get("decklist") or ""
         return ""
 
+    def seat_support_warnings(game_id: str, uid: str, player: str) -> list[dict]:
+        """This seat's own `support_warnings` (flow 6, W2) - `[]` best
+        effort, the same rule `seat_decklist` follows: an unreachable lobby
+        route or a game with no decklists at all answers empty rather than
+        aborting the dispatch, and the briefing simply names no cards
+        (`prompt._support_warnings_lines`). The driver never computes this
+        itself; it only relays what `GET .../seats` already answered."""
+        for seat in lobby_seats(game_id, uid):
+            if seat.get("player") == player:
+                return [w for w in (seat.get("support_warnings") or []) if isinstance(w, dict)]
+        return []
+
     def lobby_seats(game_id: str, uid: str) -> list[dict]:
         """`GET /api/lobby/games/{id}/seats` as `uid` sees it; empty when the
         route cannot be read."""
@@ -1653,6 +1665,7 @@ def build_app(
             agent=body.agent,
             scripts=scripts,
             role=body.role,
+            support_warnings=tuple(seat_support_warnings(body.game_id, body.uid, body.player)),
         )
 
         settings.workspace.mkdir(parents=True, exist_ok=True)
