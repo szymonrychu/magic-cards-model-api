@@ -603,6 +603,13 @@ def _replay_copy(game: Game) -> Game:
 #: over `Game`'s own fields for every `list[<...Notice>]` and fails, by name,
 #: the moment a new one is added here without a matching entry - the exact
 #: gap that let these four sit unwired.
+#:
+#: `player_subject_split_notices` (Veil of Summer's T12 bump,
+#: `PlayerSubjectSplitNotice`) records the player half of a "You and
+#: `<group>` gain `<keyword(s)>` until end of turn" compound subject that is
+#: read but deliberately not yet granted - the same unread-is-not-silently-
+#: dropped record every other list here keeps, and the drift guard's own
+#: regression case for this bump.
 _NOTICE_LIST_NAMES: tuple[str, ...] = (
     "targeting_notices",
     "intervening_if_notices",
@@ -627,6 +634,7 @@ _NOTICE_LIST_NAMES: tuple[str, ...] = (
     "unmodeled_trigger_effect_notices",
     "control_replacement_notices",
     "opening_hand_notices",
+    "player_subject_split_notices",
 )
 
 #: The key `_new_notices` files a `continuous_effects.layer_notices` entry
@@ -636,7 +644,7 @@ _LAYER_NOTICE_KIND = "layer_notices"
 
 
 def _notice_snapshot(game: Game) -> dict[str, int]:
-    """How many entries each of `game`'s 24 notice lists holds right now -
+    """How many entries each of `game`'s 25 notice lists holds right now -
     `run_command`'s "before" half of the diff `_new_notices` takes after a
     command finishes."""
     snapshot = {name: len(getattr(game, name)) for name in _NOTICE_LIST_NAMES}
@@ -669,7 +677,7 @@ def _notice_source(game: Game, source_id: UUID | None) -> tuple[str | None, str 
 
 
 def _new_notices(game: Game, before: dict[str, int]) -> list[dict[str, Any]]:
-    """Every notice appended to any of `game`'s 24 lists since `before` was
+    """Every notice appended to any of `game`'s 25 lists since `before` was
     taken, as `{"kind": <the engine's own list name>, **notice.model_dump
     (mode="json"), "zone": ..., "controller": ...}` - the engine's own record
     passed straight through, plus the two bookkeeping keys `_notice_source`
@@ -677,7 +685,7 @@ def _new_notices(game: Game, before: dict[str, int]) -> list[dict[str, Any]]:
     sentence is authored here - what a notice *means* belongs in the MCP
     tool docstring and `driver/prompt.py`, not in this data.
 
-    Generic across all 24 lists and every command kind: this never has to
+    Generic across all 25 lists and every command kind: this never has to
     change when a 25th notice list is added, and carries no per-handler
     knowledge of what any single notice type means.
     """
