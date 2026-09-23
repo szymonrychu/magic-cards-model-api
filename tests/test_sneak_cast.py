@@ -85,24 +85,18 @@ def attack_and_leave_unblocked(
     drives whatever `POST .../actions/cast` (or a plain `GET .../affordances`
     or `GET .../legal-actions`) it wants from exactly this position.
 
-    **Engine bug worked around here, out of this worktree's scope to fix**:
-    `Game.declare_blockers_step` (magic_cards_model/models/game.py, ~line
-    4213) only calls `self.declare_blockers(blocks)` `if blocks:` - so a
-    defending player who legally declares *no* blockers at all (the single
-    most common case an entirely unblocked attacker sees) never has
-    `Combat.blockers_declared` set `True`. `why_not_unblocked` (CR 509.1h)
-    and `_why_not_return_to_hand`/`KeywordCastOption.why_not` all read that
-    flag, so every all-clear declaration leaves both Sneak and ninjutsu
-    refused with "blockers have not been declared yet" forever - proven by
-    reaching into the live engine object here and printing
-    `store.get(game).combat.blockers_declared` right after a real `blocks:
-    []` POST to `.../actions/declare-blockers` returned `allowed: True`: it
-    read `False`. `machines/legal_actions.py:1539` reads the same flag, so
-    this is not Sneak-specific - it is reported to the orchestrator to route
-    to the engine repo, and worked around here (the same "reach past the
-    API into the live engine object" idiom `conftest.force_turn_position`
-    already uses for test setup) so this file can still prove the api layer
-    itself end to end.
+    Used to need a workaround: `Game.declare_blockers_step`
+    (magic_cards_model/models/game.py) only called
+    `self.declare_blockers(blocks)` `if blocks:`, so a defending player who
+    legally declares *no* blockers at all (the single most common case an
+    entirely unblocked attacker sees) never had `Combat.blockers_declared`
+    set `True` - a `POST .../actions/declare-blockers` with `blocks: []`
+    resumes the same paused `declare_blockers_step` the engine's own
+    turn-based action runs, so the api hit this every time. Fixed engine-side
+    (`declare_blockers_step` now calls `declare_blockers(blocks)`
+    unconditionally, CR 509.1's turn-based action running whether or not
+    anyone blocks); this helper no longer reaches into the live engine
+    object to patch the flag by hand.
     """
     client.patch(f"/api/games/{game}/cards/{attacker_id}", json={"summoning_sick": False})
     uids = seats_for(game)
@@ -134,7 +128,10 @@ def attack_and_leave_unblocked(
     assert state(client, game)["step"] == "declare_blockers"
     live = store.get(game)
     assert live is not None and live.combat is not None
-    live.combat.blockers_declared = True
+    assert live.combat.blockers_declared, (
+        "the declare-blockers turn-based action must set this even on an "
+        "all-clear declaration (CR 509.1) - see this function's docstring"
+    )
 
 
 # -- discovery: cast_options on the hand card ---------------------------------
@@ -227,10 +224,7 @@ def test_a_blocked_attacker_is_never_offered_as_a_sneak_candidate(client, game):
     client.post(
         f"/api/games/{game}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
     )
-    # Blocking bears alone leaves elves unblocked, and a non-empty `blocks`
-    # list makes the engine set `Combat.blockers_declared` correctly on its
-    # own (see `attack_and_leave_unblocked`'s own docstring for the case
-    # where it does not).
+    # Blocking bears alone leaves elves unblocked.
     blocked = client.post(
         f"/api/games/{game}/actions/declare-blockers",
         params={"uid": uids["bob"]},
