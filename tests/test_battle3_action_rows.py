@@ -36,6 +36,10 @@ session that wrote this file. Every card is a real Scryfall printing.
 from __future__ import annotations
 
 from conftest import add_card, find, state
+from magic_cards_model.machines.effects import parse_mode_effect
+from magic_cards_model.machines.modes import modal_profile
+from magic_cards_model.models import Card
+from synthetic_cards_testkit import UNREADABLE_CHARM_RAW, UNREADABLE_MODE, UNREADABLE_MODE_TEXT
 from test_legal_actions_endpoint import legal_actions
 
 from magic_cards_model_api.seatkit import untapped_mana_sources
@@ -499,58 +503,65 @@ def test_an_equip_row_is_what_the_equip_charges(client, game):
 # -- B3-05: a mode the engine cannot read --------------------------------------
 
 
-def charm_board(client, game) -> dict:
-    add_card(client, game, "Plains", "alice", "battlefield")
-    add_card(client, game, "Plains", "alice", "battlefield")
-    add_card(client, game, "Thraben Charm", "alice", "hand")
+def test_the_unreadable_charm_is_still_unreadable():
+    """The premise of every test below, asserted explicitly: the synthetic
+    charm's modes 1 and 2 are read, its made-up mode 3 is not. If this ever
+    fails, give mode 3 a new made-up sentence - never a real card, which the
+    engine will eventually learn to read (Thraben Charm and Cryptic Command
+    both did)."""
+    profile = modal_profile(Card.model_validate(UNREADABLE_CHARM_RAW))
+    assert profile is not None and profile.understood, profile
+    unread = [mode.number for mode in profile.modes if parse_mode_effect(mode, 0) is None]
+    assert unread == [UNREADABLE_MODE], unread
+
+
+def charm_board(client, game, charm: str) -> dict:
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, charm, "alice", "hand")
     add_card(client, game, "Grizzly Bears", "bob", "battlefield")
     add_card(client, game, "Goblin Bombardment", "bob", "battlefield")
     board = state(client, game)
     return {
-        "charm": find(board["hands"]["alice"], "Thraben Charm")["id"],
-        "plains": [card["id"] for card in board["battlefield"] if card["name"] == "Plains"],
+        "charm": find(board["hands"]["alice"], charm)["id"],
+        "mountains": [card["id"] for card in board["battlefield"] if card["name"] == "Mountain"],
         "bears": find(board["battlefield"], "Grizzly Bears")["id"],
         "bombardment": find(board["battlefield"], "Goblin Bombardment")["id"],
     }
 
 
-def test_the_row_names_each_mode_the_engine_cannot_read(client, game):
-    rig = charm_board(client, game)
+def test_the_row_names_each_mode_the_engine_cannot_read(client, game, unreadable_charm):
+    rig = charm_board(client, game, unreadable_charm)
 
     (row,) = rows_for(legal_actions(client, game, "alice"), rig["charm"])
     unreadable = {entry["mode_number"]: entry for entry in row["unreadable_modes"]}
-    # The Reality Fracture number sweep taught the engine to read mode 1's
-    # dynamic damage amount ("equal to twice the number of creatures you
-    # control") - mode 3's "any number of target players' graveyards" is the
-    # one this pool still cannot read, so it is the case this test now proves.
-    assert 1 not in unreadable, row
-    assert 3 in unreadable, row
-    assert unreadable[3]["text"].startswith("Exile any number of target players"), unreadable
-    assert "CR 700.2a" in unreadable[3]["notice"], unreadable
+    assert set(unreadable) == {UNREADABLE_MODE}, row
+    assert unreadable[UNREADABLE_MODE]["text"] == UNREADABLE_MODE_TEXT, unreadable
+    assert "CR 700.2a" in unreadable[UNREADABLE_MODE]["notice"], unreadable
 
 
-def test_casting_an_unreadable_mode_is_refused_and_keeps_the_card(client, game):
-    rig = charm_board(client, game)
+def test_casting_an_unreadable_mode_is_refused_and_keeps_the_card(client, game, unreadable_charm):
+    rig = charm_board(client, game, unreadable_charm)
 
     answer = client.post(
         f"/api/games/{game}/actions/cast",
         json={
             "player": "alice",
             "card_id": rig["charm"],
-            "modes": [3],
-            "targets": ["bob"],
-            "mana_sources": rig["plains"],
+            "modes": [UNREADABLE_MODE],
+            "targets": [],
+            "mana_sources": rig["mountains"],
         },
     ).json()
     assert answer["allowed"] is False, answer
-    assert "mode 3" in answer["reason"], answer
+    assert f"mode {UNREADABLE_MODE}" in answer["reason"], answer
     after = state(client, game)
-    assert find(after["hands"]["alice"], "Thraben Charm")["id"] == rig["charm"]
-    assert not any(card["tapped"] for card in after["battlefield"] if card["name"] == "Plains")
+    assert find(after["hands"]["alice"], unreadable_charm)["id"] == rig["charm"]
+    assert not any(card["tapped"] for card in after["battlefield"] if card["name"] == "Mountain")
 
 
-def test_a_readable_mode_still_casts(client, game):
-    rig = charm_board(client, game)
+def test_a_readable_mode_still_casts(client, game, unreadable_charm):
+    rig = charm_board(client, game, unreadable_charm)
 
     answer = client.post(
         f"/api/games/{game}/actions/cast",
@@ -559,7 +570,7 @@ def test_a_readable_mode_still_casts(client, game):
             "card_id": rig["charm"],
             "modes": [2],
             "targets": [rig["bombardment"]],
-            "mana_sources": rig["plains"],
+            "mana_sources": rig["mountains"],
         },
     ).json()
     assert answer["allowed"] is True, answer

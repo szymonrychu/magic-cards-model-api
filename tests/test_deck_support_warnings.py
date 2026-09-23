@@ -5,9 +5,12 @@ Card data is the recorded fixture cache (`tests/fixtures/scryfall`, tier 1)
 plus the engine's own bundled printing corpus (tier 2,
 `magic_cards_model/data/printings`), so every real card here resolves
 offline - `Mountain` and `Lightning Bolt` are real, fully `handled`
-printings, and `Final Showdown`/`Alhammarret's Archive` are the engine's own
-fixture pool example of a `notice` and an `unaudited` card
-(`magic-cards-model/tests/test_card_support.py`). Both repos read the exact
+printings, and the `notice` and `unaudited` examples are chosen, not named
+(`_out_of_format_example`): the first out-of-format printing in the engine's
+pool the engine currently classifies that way. Final Showdown stood in as the
+`notice` card until the engine read all three of its Spree modes; under the
+owner rule every Modern, Pioneer and Standard card is only waiting its turn,
+so only an out-of-format card is a stable example. Both repos read the exact
 same `card_support(card)` - this is the "at least one real-engine test" the
 task asks for, run four times over, not stubbed once.
 
@@ -37,12 +40,14 @@ is additive, never a gate.
 
 from __future__ import annotations
 
+from functools import cache
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from magic_cards_model.data.printing_pool import printing_pool
 from magic_cards_model.models import Card
-from magic_cards_model.support import card_support
+from magic_cards_model.support import card_support, in_target_formats
 
 from magic_cards_model_api import decks, scryfall
 from magic_cards_model_api.api_client import InProcessApiClient
@@ -75,12 +80,25 @@ SILENT_CARD_RAW: dict[str, Any] = {
 }
 
 
+@cache
+def _out_of_format_example(status: str) -> str:
+    """The first (by name) printing in the engine's pool outside Modern,
+    Pioneer and Standard that `card_support` classifies `status` - chosen,
+    not named, so the engine reading one more card never breaks this file."""
+    pool = printing_pool()
+    for name in sorted({card.name for card in pool.values()}):
+        card = pool[name]
+        if not in_target_formats(card) and card_support(card).status == status:
+            return name
+    pytest.fail(f"no out-of-format printing in the engine pool is still {status!r}")
+
+
 @pytest.fixture(autouse=True)
 def _inject_silent_test_fixture_card(monkeypatch: pytest.MonkeyPatch) -> None:
     """Makes `SILENT_CARD_NAME` resolve to `SILENT_CARD_RAW` through the
     same `scryfall.fetch_card` seam a real decklist name resolves through -
-    every other name in this file (Mountain, Lightning Bolt, Final Showdown,
-    Alhammarret's Archive) still reaches the real tier-1/tier-2/network
+    every other name in this file (Mountain, Lightning Bolt, the chosen
+    `notice`/`unaudited` examples) still reaches the real tier-1/tier-2/network
     lookup unchanged. `card_support` is never patched: this only stands the
     synthetic card in for a Scryfall answer, so it is classified by the
     real, live `card_support`, exactly like every real card in this file is.
@@ -103,16 +121,6 @@ HANDLED_ONLY_DECK = "56 Mountain\n4 Lightning Bolt"
 # own synthetic `silent` fixture card - its made-up trigger condition fires
 # nowhere) = 60, legal.
 SILENT_DECK = f"52 Mountain\n4 Lightning Bolt\n4 {SILENT_CARD_NAME}"
-
-# Every one of the four support tiers in one legal sixty: Mountain (no rules
-# text), Lightning Bolt (handled), Inscrutable Husk (silent, synthetic),
-# Final Showdown (notice: two of its three Spree modes fail closed), and
-# Alhammarret's Archive (unaudited: a static life-doubling line no support
-# check audits).
-MIXED_DECK = (
-    f"44 Mountain\n4 Lightning Bolt\n4 {SILENT_CARD_NAME}\n4 Final Showdown\n"
-    "4 Alhammarret's Archive"
-)
 
 # Only twelve cards: fails CR 100.2a's sixty-card minimum, same as
 # `test_decks_api.py`'s `TOO_FEW_CARDS` - but with the silent fixture card in
@@ -178,21 +186,13 @@ def test_a_silent_card_is_reported_with_its_dead_clause():
 
 
 def test_warnings_are_sorted_silent_first():
-    names = [
-        "Mountain",
-        "Lightning Bolt",
-        "Final Showdown",
-        "Alhammarret's Archive",
-        SILENT_CARD_NAME,
-    ]
+    notice = _out_of_format_example("notice")
+    unaudited = _out_of_format_example("unaudited")
+    names = ["Mountain", "Lightning Bolt", notice, unaudited, SILENT_CARD_NAME]
     warnings = decks.deck_support_warnings(names)
     statuses = [w["status"] for w in warnings]
     assert statuses == ["silent", "unaudited", "notice"]
-    assert {w["card"] for w in warnings} == {
-        SILENT_CARD_NAME,
-        "Alhammarret's Archive",
-        "Final Showdown",
-    }
+    assert {w["card"] for w in warnings} == {SILENT_CARD_NAME, unaudited, notice}
 
 
 def test_a_duplicate_name_is_reported_once():

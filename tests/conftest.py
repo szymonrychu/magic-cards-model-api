@@ -158,6 +158,26 @@ def _no_real_claude_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture
+def unreadable_charm(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Makes `synthetic_cards_testkit.UNREADABLE_CHARM_NAME` resolve through
+    `scryfall.fetch_card`, the seam `add_card` reaches; every other name
+    still takes the real lookup. Returns the card's name."""
+    from synthetic_cards_testkit import UNREADABLE_CHARM_NAME, UNREADABLE_CHARM_RAW
+
+    from magic_cards_model_api import scryfall
+
+    real_fetch_card = scryfall.fetch_card
+
+    def fetch_card_or_unreadable_charm(name: str) -> dict:
+        if name == UNREADABLE_CHARM_NAME:
+            return UNREADABLE_CHARM_RAW
+        return real_fetch_card(name)
+
+    monkeypatch.setattr(scryfall, "fetch_card", fetch_card_or_unreadable_charm)
+    return UNREADABLE_CHARM_NAME
+
+
 def add_card(client: TestClient, game_id: str, name: str, player: str, zone: str, **kwargs):
     response = client.post(
         f"/api/games/{game_id}/cards",

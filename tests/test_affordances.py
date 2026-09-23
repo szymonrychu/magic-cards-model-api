@@ -19,6 +19,7 @@ from typing import Any
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
 from magic_cards_model.models import Zone
+from synthetic_cards_testkit import UNREADABLE_MODE
 
 from magic_cards_model_api import affordances as affordances_module
 from magic_cards_model_api.store import store
@@ -549,22 +550,21 @@ def test_a_card_paying_with_no_objects_carries_no_object_costs_key(client, game)
     assert "object_costs" not in bolt["cast"]
 
 
-def test_a_mode_the_engine_cannot_read_is_marked_on_the_card_view(client, game):
+def test_a_mode_the_engine_cannot_read_is_marked_on_the_card_view(client, game, unreadable_charm):
     """`engine_api.unreadable_modes` is what refuses the cast after the
     targets have been chosen (`engine_api` raises `unreadable_mode_notice`).
     Published here, it can be shown on the chip *before* the choice instead -
     the same `understood: false` treatment a cost this engine cannot charge
-    already gets."""
-    add_card(client, game, "Thraben Charm", "alice", "hand")
-    charm = find(state(client, game)["hands"]["alice"], "Thraben Charm")
+    already gets. The card is `synthetic_cards_testkit`'s, whose mode 3 no
+    parser reads."""
+    add_card(client, game, unreadable_charm, "alice", "hand")
+    charm = find(state(client, game)["hands"]["alice"], unreadable_charm)
 
     modes = {mode["number"]: mode for mode in charm["cast"]["modes"]["options"]}
     assert modes[2]["understood"] is True
     assert modes[2]["notice"] is None
-    # "Exile any number of target players' graveyards" - named by the
-    # engine's own `docs/engine-coverage.md` as one it cannot read.
-    assert modes[3]["understood"] is False
-    assert "cannot be read by this engine" in modes[3]["notice"]
+    assert modes[UNREADABLE_MODE]["understood"] is False
+    assert "cannot be read by this engine" in modes[UNREADABLE_MODE]["notice"]
 
 
 def test_every_mode_of_a_readable_modal_card_is_understood(client, game):

@@ -41,6 +41,7 @@ from magic_cards_model.machines.replacement import UnreadableCopyExceptionNotice
 from magic_cards_model.machines.triggers import TargetingNotice, TargetingNoticeKind
 from magic_cards_model.models import Card, Game, Zone
 from magic_cards_model.support import card_support, in_target_formats
+from synthetic_cards_testkit import UNREADABLE_MODE
 
 from magic_cards_model_api import commands, engine_api, visibility
 from magic_cards_model_api.commands import Command, RunStatus, run_command
@@ -160,64 +161,46 @@ def _cast_unread_spell_as_alice(client, game) -> str:
 
 
 def test_a_mode_this_wave_cannot_read_reaches_the_seats_own_result_and_the_log(
-    client, game, monkeypatch
+    client, game, monkeypatch, unreadable_charm
 ):
-    """Cryptic Command modes [1, 3] (`test_modal_spells.py`'s own fixture in
-    the engine repo): mode 1 ("Counter target spell.") is a shape
-    `resolve_modal_spell` reads; mode 3 ("Tap all creatures your opponents
-    control.") is not, since it names no target at all, and is recorded as a
-    `ModeNotice` (`Game.mode_notices`) instead of silently doing nothing.
+    """`synthetic_cards_testkit`'s charm, modes [1, 3]: mode 1 ("deals 2
+    damage to any target") is a shape `resolve_modal_spell` reads; mode 3 is
+    a made-up sentence no parser reads, and is recorded as a `ModeNotice`
+    (`Game.mode_notices`) instead of silently doing nothing. (Cryptic
+    Command's "Tap all creatures your opponents control." stood here until
+    the engine learned to read it.)
 
-    Battle 3, B3-05: the cast route now refuses a cast choosing such a mode,
+    Battle 3, B3-05: the cast route refuses a cast choosing such a mode,
     with that notice's own words, before anything is paid - so the card is not
     spent for nothing (`engine_api.unreadable_modes`). That refusal is the
     first half here. The second half is the resolution the notice pipeline
     still carries for any spell the cast guard does not stop, driven with the
-    guard switched off: Cryptic Command still counters the bolt (mode 1 ran),
-    and nothing about the response says mode 3 was skipped unless `notices`
-    says so.
+    guard switched off: the charm still deals its 2 damage (mode 1 ran), and
+    nothing about the response says mode 3 was skipped unless `notices` says
+    so.
     """
-    add_card(client, game, "Island", "alice", "battlefield")
-    add_card(client, game, "Island", "alice", "battlefield")
-    add_card(client, game, "Island", "alice", "battlefield")
-    add_card(client, game, "Island", "alice", "battlefield")
     add_card(client, game, "Mountain", "alice", "battlefield")
-    add_card(client, game, "Lightning Bolt", "alice", "hand")
-    add_card(client, game, "Cryptic Command", "alice", "hand")
-
-    live = store.get(game)
-    bolt = client.post(
-        f"/api/games/{game}/actions/cast",
-        json={
-            "player": "alice",
-            "card": "Lightning Bolt",
-            "targets": ["bob"],
-            "mana_sources": [str(i) for i in _ids(live, "Mountain")],
-        },
-    )
-    assert bolt.status_code == 200, bolt.text
-    bolt_body = bolt.json()
-    assert bolt_body["allowed"] is True
-    assert bolt_body.get("notices", []) == [], "a plain Bolt cast reads its own text cleanly"
-    bolt_spell_id = bolt_body["spell_id"]
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, unreadable_charm, "alice", "hand")
+    cast = {
+        "player": "alice",
+        "card": unreadable_charm,
+        "modes": [1, UNREADABLE_MODE],
+        "targets": ["bob"],
+    }
 
     live = store.get(game)
     refused = client.post(
         f"/api/games/{game}/actions/cast",
-        json={
-            "player": "alice",
-            "card": "Cryptic Command",
-            "modes": [1, 3],
-            "targets": [bolt_spell_id],
-            "mana_sources": [str(i) for i in _ids(live, "Island")],
-        },
+        json={**cast, "mana_sources": [str(i) for i in _ids(live, "Mountain")]},
     ).json()
     assert refused["allowed"] is False, refused
-    assert "mode 3" in refused["reason"] and "CR 700.2a" in refused["reason"], refused
+    assert f"mode {UNREADABLE_MODE}" in refused["reason"], refused
+    assert "CR 700.2a" in refused["reason"], refused
     live = store.get(game)
-    assert _hand_card(live, "Cryptic Command").zone is Zone.HAND
+    assert _hand_card(live, unreadable_charm).zone is Zone.HAND
     assert not any(
-        state.tapped for state in live.shared_zones[Zone.BATTLEFIELD] if state.name == "Island"
+        state.tapped for state in live.shared_zones[Zone.BATTLEFIELD] if state.name == "Mountain"
     ), "nothing was paid for the refused cast"
     cast_rows = [
         row for row in client.get(f"/api/games/{game}/log").json()["log"] if row["action"] == "cast"
@@ -226,46 +209,39 @@ def test_a_mode_this_wave_cannot_read_reaches_the_seats_own_result_and_the_log(
 
     monkeypatch.setattr(engine_api, "unreadable_modes", lambda card: [])
     live = store.get(game)
-    cryptic = client.post(
+    charm = client.post(
         f"/api/games/{game}/actions/cast",
-        json={
-            "player": "alice",
-            "card": "Cryptic Command",
-            "modes": [1, 3],
-            "targets": [bolt_spell_id],
-            "mana_sources": [str(i) for i in _ids(live, "Island")],
-        },
+        json={**cast, "mana_sources": [str(i) for i in _ids(live, "Mountain")]},
     )
-    assert cryptic.status_code == 200, cryptic.text
-    cryptic_body = cryptic.json()
-    assert cryptic_body["allowed"] is True
-    assert cryptic_body.get("notices", []) == [], (
+    assert charm.status_code == 200, charm.text
+    charm_body = charm.json()
+    assert charm_body["allowed"] is True, charm_body
+    assert charm_body.get("notices", []) == [], (
         "nothing has resolved yet - the cast itself is clean"
     )
 
     resolved = client.post(f"/api/games/{game}/resolve-top", json={"player": "alice"})
     assert resolved.status_code == 200, resolved.text
     resolved_body = resolved.json()
-    assert resolved_body["resolved"] == "Cryptic Command"
+    assert resolved_body["resolved"] == unreadable_charm
 
     (notice,) = resolved_body["notices"]
     assert notice["kind"] == "mode_notices"
-    assert notice["mode_number"] == 3
-    assert notice["source_name"] == "Cryptic Command"
-    # Cryptic Command is an instant: CR 608.2m sends it to its owner's
-    # graveyard the instant it finishes resolving - a public zone, so this
-    # notice is not blanked for anyone.
+    assert notice["mode_number"] == UNREADABLE_MODE
+    assert notice["source_name"] == unreadable_charm
+    # An instant: CR 608.2n puts it into its owner's graveyard as the final
+    # part of its resolution - a public zone, so this notice is not blanked
+    # for anyone.
     assert notice["zone"] == "graveyard"
 
-    # The bolt was in fact countered - mode 1 ran even though mode 3 did not.
-    live = store.get(game)
-    assert live.find_by_id(UUID(bolt_spell_id)).zone.value == "graveyard"
+    # Mode 1 in fact ran even though mode 3 did not.
+    assert store.get(game).player("bob").life == 18
 
     log = client.get(f"/api/games/{game}/log").json()["log"]
     resolve_row = next(row for row in log if row["action"] == "resolve_top")
     (logged_notice,) = resolve_row["detail"]["notices"]
-    assert logged_notice["mode_number"] == 3
-    assert logged_notice["source_name"] == "Cryptic Command"
+    assert logged_notice["mode_number"] == UNREADABLE_MODE
+    assert logged_notice["source_name"] == unreadable_charm
 
 
 def test_an_unread_spells_notice_reaches_the_casters_own_log_after_the_opponents_pass(client, game):

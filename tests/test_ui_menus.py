@@ -35,6 +35,7 @@ import re
 from pathlib import Path
 
 from conftest import add_card, find, state
+from synthetic_cards_testkit import UNREADABLE_MODE
 from ui_node import requires_node, run_module
 
 from magic_cards_model_api.store import store
@@ -949,27 +950,29 @@ def test_a_permission_on_a_split_card_offers_its_halves_too():
     ]
 
 
-def test_a_real_unreadable_mode_is_named_on_the_menu_before_the_cast_begins(client, game):
-    """Thraben Charm, two Plains, a real board. The engine cannot read mode
-    3 ("Exile any number of target players' graveyards."), and casting it
-    is refused - but only after the modes and the targets have been chosen
+def test_a_real_unreadable_mode_is_named_on_the_menu_before_the_cast_begins(
+    client, game, unreadable_charm
+):
+    """A real board and the real engine, with `synthetic_cards_testkit`'s
+    charm: the engine cannot read its mode 3, and casting it is refused -
+    but only after the modes and the targets have been chosen
     (`tests/test_battle3_action_rows.py`'s
     `test_casting_an_unreadable_mode_is_refused_and_keeps_the_card`). The
     menu the click opens says so first, out of the row's own
     `unreadable_modes`, and still offers the cast: modes 1 and 2 are
     readable."""
-    add_card(client, game, "Plains", "alice", "battlefield")
-    add_card(client, game, "Plains", "alice", "battlefield")
-    add_card(client, game, "Thraben Charm", "alice", "hand")
-    charm = find(state(client, game)["hands"]["alice"], "Thraben Charm")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, unreadable_charm, "alice", "hand")
+    charm = find(state(client, game)["hands"]["alice"], unreadable_charm)
     rows = _legal_actions(client, game)
 
     (cast_row,) = [r for r in rows if r["kind"] == "cast" and r["card_id"] == charm["id"]]
     numbers = [mode["mode_number"] for mode in cast_row["unreadable_modes"]]
-    assert numbers == [3], cast_row["unreadable_modes"]
+    assert numbers == [UNREADABLE_MODE], cast_row["unreadable_modes"]
 
     (item,) = _cast_menu(charm, rows)
     assert "disabled" not in item, item
-    assert item["sublabel"] == "mode 3 cannot be read by this engine"
+    assert item["sublabel"] == f"mode {UNREADABLE_MODE} cannot be read by this engine"
     assert item["title"] == cast_row["unreadable_modes"][0]["notice"]
     assert "CR 700.2a" in item["title"], item["title"]
