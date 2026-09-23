@@ -161,7 +161,7 @@ def test_main_does_not_exit_when_api_unreachable_at_boot(monkeypatch, capsys) ->
         def run(self, transport: str) -> None:
             started["transport"] = transport
 
-    monkeypatch.setattr(mcp_module, "build_server", lambda seats: FakeServer())
+    monkeypatch.setattr(mcp_module, "build_server", lambda seats, **_: FakeServer())
 
     mcp_module.main()  # must not raise SystemExit
 

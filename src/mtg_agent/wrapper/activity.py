@@ -256,7 +256,10 @@ def events(line: dict) -> Iterator[tuple[str, str]]:
 #   and `state_for` maps that to a fixed word; there is no channel here for
 #   text to travel down, by construction rather than by filtering.
 
-#: `mcp__mtg__wait_for_priority` - parked, waiting for its moment to act.
+#: `mcp__mtg__wait_for_priority`/`pass_until` - parked, waiting for its
+#: moment to act. `pass_until` passes priority too, but it re-issues its own
+#: capped wait under one call while the opponent thinks (L2,
+#: `mcp.IDLE_REISSUE_SECONDS`), so for most of the call it is waiting.
 WAITING = "waiting"
 #: `battlefield_state`/`game_log` - reading the board it is allowed to see.
 READING_BOARD = "reading_board"
@@ -289,6 +292,7 @@ _SPELLSLINGER_PREFIX = "mcp__spellslinger__"
 #: changes the game, so `ACTING` is its default - see `state_for`.
 _MTG_STATES = {
     "wait_for_priority": WAITING,
+    "pass_until": WAITING,
     "battlefield_state": READING_BOARD,
     "game_log": READING_BOARD,
     "decide": DECIDING,

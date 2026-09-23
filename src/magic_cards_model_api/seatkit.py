@@ -3095,6 +3095,38 @@ ARMED_RESULT_FIELDS = (
 )
 
 
+def _reissue_while_idle(
+    attempt: Callable[[float, dict[str, Any] | None], dict[str, Any]],
+    idle: Callable[[dict[str, Any]], bool],
+    max_seconds: float,
+    reissue_seconds: float,
+    should_stop: Callable[[], bool] | None,
+) -> dict[str, Any]:
+    """L2: re-issue a capped wait that came back idle, below the model.
+
+    Prod, game 9cec3866 (2026-09-23): every model reply costs 27-100s of
+    inference, so a wait that hands back "nothing new yet" at its
+    `MAX_WAIT_SECONDS` cap costs a whole inference just to decide to call
+    again - and the opponent's move sits unseen for that long. Here the call
+    is made again with the same arguments (`attempt(seconds, previous)`: the
+    previous idle answer, whose own `resume` a `pass_until` carries forward)
+    until `idle` is false or `reissue_seconds` from entry have gone by. Each
+    attempt keeps its own `MAX_WAIT_SECONDS` cap and returns on its own; the
+    outer bound is what the transport's client allows a single tool call
+    (`mcp.IDLE_REISSUE_SECONDS`). A zero `max_seconds` is a poll, never
+    re-issued; an interrupt (`should_stop`) ends it."""
+    started = time.monotonic()
+    result = attempt(max_seconds, None)
+    if max_seconds <= 0:
+        return result
+    while idle(result):
+        remaining = started + reissue_seconds - time.monotonic()
+        if remaining <= 0 or (should_stop is not None and should_stop()):
+            break
+        result = attempt(min(max_seconds, remaining), result)
+    return result
+
+
 def wait_and_arm(
     seat: Seat,
     before: dict[str, Any] | None,
@@ -3108,6 +3140,7 @@ def wait_and_arm(
     inputs: dict[str, Any] | None = None,
     wake_to_draft: bool = False,
     draft_staged: bool = False,
+    reissue_seconds: float = 0.0,
 ) -> dict[str, Any]:
     """`block_until_wake`, then judge this seat's armed scripts
     (`playscripts.arming.arm`, API-7 - never runs anything) once the wait
@@ -3125,7 +3158,12 @@ def wait_and_arm(
     `wake_to_draft`/`draft_staged` (S2 A6) are threaded straight through to
     `block_until_wake` and nowhere else in here - a draft-time wake is not one
     of the "judge the armed scripts" reasons above, only `wake_reason` gains a
-    new possible value (`compute_wake_reason`'s own docstring)."""
+    new possible value (`compute_wake_reason`'s own docstring).
+
+    L2: `reissue_seconds` re-issues a `NOTHING_NEW_YET` wait below the model
+    (`_reissue_while_idle`) until a real wake or `reissue_seconds` from entry,
+    so arming still judges only the one real wake. 0.0 (the default) never
+    re-issues."""
     if arm:
         from .playscripts import arming as playscript_arming
 
@@ -3148,13 +3186,19 @@ def wait_and_arm(
             )
             woken["armed_refusal"] = problem
             return woken
-    woken = block_until_wake(
-        seat,
-        before=before,
-        max_seconds=max_seconds,
-        should_stop=should_stop,
-        wake_to_draft=wake_to_draft,
-        draft_staged=draft_staged,
+    woken = _reissue_while_idle(
+        lambda seconds, previous: block_until_wake(
+            seat,
+            before=before,
+            max_seconds=seconds,
+            should_stop=should_stop,
+            wake_to_draft=wake_to_draft,
+            draft_staged=draft_staged,
+        ),
+        lambda answer: answer["wake_reason"] == NOTHING_NEW_YET,
+        max_seconds,
+        reissue_seconds,
+        should_stop,
     )
     if woken["wake_reason"] in (NOTHING_NEW_YET, GAME_GONE, WAIT_INTERRUPTED):
         return woken
@@ -5032,6 +5076,7 @@ def pass_until(
     arm_reasoning: str = "",
     opposing_archetype: str = "*",
     inputs: dict[str, Any] | None = None,
+    reissue_seconds: float = 0.0,
 ) -> dict[str, Any]:
     """`_pass_until_once` (below), optionally ridden out across a bounded wait
     rather than handed straight back the first time it would otherwise have
@@ -5100,6 +5145,12 @@ def pass_until(
     that never had to wait (`max_seconds=0.0`, the default, or a hand-back
     this loop never got the chance to retry) keeps the original wording,
     which is still true for it.
+
+    L2: `reissue_seconds` re-issues an idle answer - still waiting on the
+    opponent, or still waiting for this seat's own priority at an armed
+    destination - below the model, with that answer's own `resume`, until a
+    real stop or `reissue_seconds` from entry (`_reissue_while_idle`). Left at
+    0.0 (the default) nothing is re-issued.
     """
     if seat.advise:
         # Refused up front, before a single priority is passed: see
@@ -5140,9 +5191,80 @@ def pass_until(
                 refused_arm["available_actions"] = available_actions(seat, state)
             refused_arm["recent_log"] = seat.recent_log()
             return refused_arm
-    max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
     call_started = time.monotonic()
-    deadline = call_started + max_seconds
+
+    def attempt(seconds: float, previous: dict[str, Any] | None) -> dict[str, Any]:
+        return _pass_until_bounded(
+            seat,
+            until_step=until_step,
+            whose_turn=whose_turn,
+            stop_on_stack=stop_on_stack,
+            stop_when_attacked=stop_when_attacked,
+            stop_when_you_can_attack=stop_when_you_can_attack,
+            resume=resume if previous is None else previous.get("resume"),
+            reasoning=reasoning,
+            max_seconds=seconds,
+            include_actions=include_actions,
+            should_stop=should_stop,
+            corpora=corpora,
+            arm=arm,
+            arm_reasoning=arm_reasoning,
+            opposing_archetype=opposing_archetype,
+            inputs=inputs,
+            call_started=call_started,
+            passes_before=0 if previous is None else previous["passes"],
+            reissued=previous is not None,
+        )
+
+    result = _reissue_while_idle(
+        attempt,
+        lambda answer: bool(answer.get("_idle")),
+        max_seconds,
+        reissue_seconds,
+        should_stop,
+    )
+    result.pop("_idle", None)
+    # T1: the one fetch this whole call pays for `available_actions`/
+    # `recent_log` with - every internal retry and re-issue skipped it
+    # (`include_extras=False`). Before this point `result` carries neither
+    # key unless `_pass_until_once` built the answer directly (a stubbed
+    # `_pass_until_once` in a test, say), which `_fill_answer_extras` leaves
+    # alone.
+    _fill_answer_extras(result, seat, include_actions)
+    return result
+
+
+def _pass_until_bounded(
+    seat: Seat,
+    *,
+    until_step: str,
+    whose_turn: str,
+    stop_on_stack: bool,
+    stop_when_attacked: bool,
+    stop_when_you_can_attack: bool,
+    resume: dict[str, Any] | None,
+    reasoning: str | None,
+    max_seconds: float,
+    include_actions: bool,
+    should_stop: Callable[[], bool] | None,
+    corpora: dict[tuple[str, str], dict[str, Any]] | None,
+    arm: list[str] | None,
+    arm_reasoning: str,
+    opposing_archetype: str,
+    inputs: dict[str, Any] | None,
+    call_started: float,
+    passes_before: int,
+    reissued: bool,
+) -> dict[str, Any]:
+    """One bounded `pass_until` attempt (see `pass_until`): at most
+    `max_seconds` of retrying a hand-back that waits on the opponent, then
+    the armed-destination wait and arming. `call_started`/`passes_before`
+    are the whole `pass_until` call's own, so a re-issued attempt reports
+    how long the call has waited and every priority it passed in total.
+    Marks its answer `_idle` (popped by `pass_until`) when it is still only
+    waiting - the one answer `_reissue_while_idle` re-issues."""
+    max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
+    deadline = time.monotonic() + max_seconds
     kwargs: dict[str, Any] = {
         "until_step": until_step,
         "whose_turn": whose_turn,
@@ -5163,8 +5285,8 @@ def pass_until(
         "include_extras": False,
     }
     result = _pass_until_once(seat, resume=resume, **kwargs)
-    total_passes = result["passes"]
-    retried = False
+    total_passes = passes_before + result["passes"]
+    retried = reissued
     while not result["finished"] and result.get("retryable", False) and time.monotonic() < deadline:
         if should_stop is not None and should_stop():
             result["stopped_because"] = WAIT_INTERRUPTED
@@ -5180,13 +5302,6 @@ def pass_until(
     # own `answer` closure) - popped here unconditionally so it never leaks
     # to a caller, whether or not the branch below actually needs it.
     reached_run = result.pop("_reached_run", None)
-    # T1: the one fetch this whole run pays for `available_actions`/
-    # `recent_log` with - every internal retry above skipped it
-    # (`include_extras=False`). Before this point `result` carries neither
-    # key unless `_pass_until_once` built the answer directly (a stubbed
-    # `_pass_until_once` in a test, say), which `_fill_answer_extras` leaves
-    # alone.
-    _fill_answer_extras(result, seat, include_actions)
     # T3: `passes` on a run that actually retried is not this last call's own
     # count - `_pass_until_once` resets that counter on every call - it is
     # every internal call's count added together, and the hand-back text (if
@@ -5220,6 +5335,13 @@ def pass_until(
             reached_run,
             stop_on_stack,
         )
+    # L2: still only waiting - on the opponent (a retryable hand-back this
+    # attempt's own bound ran out on), or on this seat's own priority at an
+    # armed destination. Both carry the `resume` that keeps the same window.
+    result["_idle"] = not result["finished"] and (
+        (retryable and result["stopped_because"] != WAIT_INTERRUPTED)
+        or result["stopped_because"] == _own_priority_wait_note(until_step)
+    )
     if (
         arm
         and not retryable

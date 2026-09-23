@@ -43,7 +43,7 @@ def test_main_stdio_transport_still_calls_server_run_stdio(
         def run(self, transport: str) -> None:
             started["transport"] = transport
 
-    monkeypatch.setattr(mcp_module, "build_server", lambda seats: FakeServer())
+    monkeypatch.setattr(mcp_module, "build_server", lambda seats, **_: FakeServer())
 
     mcp_module.main()
 
@@ -61,7 +61,7 @@ def test_main_default_transport_serves_the_streamable_http_asgi_app(
         pass
 
     fake_server = FakeServer()
-    monkeypatch.setattr(mcp_module, "build_server", lambda seats: fake_server)
+    monkeypatch.setattr(mcp_module, "build_server", lambda seats, **_: fake_server)
 
     def fake_serve_http(server: Any, host: str, port: int) -> None:
         served["server"] = server
@@ -89,7 +89,7 @@ def test_main_resolves_by_uid_only_when_http_and_no_game_pinned(
             super().__init__(api, game_id, resolve_by_uid=resolve_by_uid)
 
     monkeypatch.setattr(mcp_module, "Seats", RecordingSeats)
-    monkeypatch.setattr(mcp_module, "build_server", lambda seats: _NullServer())
+    monkeypatch.setattr(mcp_module, "build_server", lambda seats, **_: _NullServer())
     monkeypatch.setattr(mcp_module, "_serve_http", lambda server, host, port: None)
 
     monkeypatch.setattr(sys, "argv", ["mcp", "--api", "http://127.0.0.1:1"])

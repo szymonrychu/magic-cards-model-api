@@ -672,7 +672,22 @@ def _action_answer(payload: dict[str, Any]) -> dict[str, Any]:
     return answer
 
 
-def build_server(seats: Seats) -> MCPServer:
+#: L2: how long one `wait_for_priority`/`pass_until` call keeps re-issuing
+#: its own capped wait while nothing is new (`seatkit._reissue_while_idle`),
+#: per transport, so the model spends no inference on an idle answer.
+#: Claude Code (code.claude.com/docs/en/mcp): a stdio server has no
+#: per-request timer, only a 30-minute idle window and a ~28h wall clock; an
+#: HTTP server has a per-request timer of at least 60s through to the first
+#: response byte, and a long-held stream is the SEP-2577 hazard
+#: `seatkit.MAX_WAIT_SECONDS` documents. stdio (the seat Job's in-container
+#: server today) rides out a two-minute quiet opponent; http stays well
+#: under its 60s timer.
+IDLE_REISSUE_SECONDS = {"stdio": 120.0, "http": 45.0}
+
+
+def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServer:
+    """`idle_reissue_seconds` is `IDLE_REISSUE_SECONDS[transport]` from
+    `main()`; left at 0.0 a capped wait hands back idle as it always did."""
     server = MCPServer(name="mtg")
 
     def resolve(player_uid: str) -> Seat | None:
@@ -898,9 +913,15 @@ def build_server(seats: Seats) -> MCPServer:
                 extra tool call and turn spent on exactly what this one parameter
                 already does for you.
 
-                When nothing is new (whether you asked for `max_seconds` or not),
-                the state's own `wake_reason` says so plainly (`nothing new yet -
-                call again to check`). Every other action tool already checks the
+                **Nothing new is not handed back after one bound.** With a
+                positive `max_seconds`, while nothing is new the server
+                re-issues this same wait itself, bound after bound, for up to
+                about two minutes on the seat's own server (less over HTTP),
+                so a quiet opponent costs you one call rather than one per
+                bound. Only after that does the state's own `wake_reason` say
+                so plainly (`nothing new yet - call again to check`) - a long
+                quiet stretch, not a failure: call again the same way. With
+                `max_seconds` at 0 it says so at once. Every other action tool already checks the
                 same way right after it runs, so you normally do not need this
                 separately - it exists for "I have done nothing yet, is it my
                 turn", and for the wait itself when the answer is "not yet".
@@ -974,6 +995,7 @@ def build_server(seats: Seats) -> MCPServer:
             inputs=inputs,
             wake_to_draft=wake_to_draft and seat.advise,
             draft_staged=draft_staged,
+            reissue_seconds=idle_reissue_seconds,
         )
         woken["state"]["wake_reason"] = woken["wake_reason"]
         woken["state"]["recent_log"] = woken["recent_log"]
@@ -2454,7 +2476,10 @@ def build_server(seats: Seats) -> MCPServer:
         own, never past the bound (the same SEP-2577 reasoning
         `wait_for_priority`'s own `max_seconds` explains - MCP 2026-07-28
         removed resumability, so nothing here holds a connection open
-        indefinitely).
+        indefinitely). While the run is still only waiting - on the opponent,
+        or on your own priority at an armed destination - the server re-issues
+        it itself with the same `resume`, bound after bound, for up to about
+        two minutes (less over HTTP), so a quiet opponent costs you one call.
 
         `finished` says which kind of answer you got:
 
@@ -2631,6 +2656,7 @@ def build_server(seats: Seats) -> MCPServer:
                 arm_reasoning=arm_reasoning,
                 opposing_archetype=opposing_archetype,
                 inputs=inputs,
+                reissue_seconds=idle_reissue_seconds,
             ),
             ctx.protocol_version if ctx is not None else None,
         )
@@ -3031,7 +3057,7 @@ def main() -> None:
     trouble = seatkit.api_trouble(seats.http, seats.api)
     if trouble:
         print(f"mcp: starting anyway - {trouble}", file=sys.stderr)
-    server = build_server(seats)
+    server = build_server(seats, idle_reissue_seconds=IDLE_REISSUE_SECONDS[args.transport])
     if args.transport == "stdio":
         server.run("stdio")
     else:

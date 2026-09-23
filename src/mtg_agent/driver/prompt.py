@@ -783,9 +783,11 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   (`input_required`) rather than buried in ordinary text, on any call,
   bounded wait or not - answer it with `decide` before doing anything else.
 
-  If `wake_reason` still says "nothing new yet" after the bound, that is
-  not a failure - your opponent is still deciding - call it again, with
-  `max_seconds` again. Leave `max_seconds` at 0 (its default) only when you
+  While nothing is new the server re-issues that wait itself, bound after
+  bound, so a quiet opponent costs you one call, not one per bound. If
+  `wake_reason` still says "nothing new yet", about two minutes of nothing
+  have gone by: that is not a failure - your opponent is still deciding -
+  call it again, with `max_seconds` again. Leave `max_seconds` at 0 (its default) only when you
   specifically want the immediate poll-and-return, right after your own
   action, when something has plausibly already changed.
 
@@ -1110,7 +1112,10 @@ Read `finished`:
   refused pass, the game ending.
 - `finished: false` - it got as far as it could within `max_seconds` and
   handed the board back because your opponent holds priority or the game is
-  frozen on a question only they can answer. **Call again with `max_seconds`
+  frozen on a question only they can answer. The server already re-issued the
+  wait itself, with the same `resume`, for about two minutes before handing
+  it back, so this is a long quiet stretch, not one bound. **Call again with
+  `max_seconds`
   again, passing the answer's `resume` object back verbatim as `resume`:**
 
       pass_until(player_uid=..., step="upkeep", max_seconds=20, resume=<the resume object>)

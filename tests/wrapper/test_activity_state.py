@@ -73,7 +73,7 @@ def thinking(signature: str = "sig") -> dict:
         ("mcp__mtg__play_land", activity.ACTING),
         ("mcp__mtg__activate", activity.ACTING),
         ("mcp__mtg__pass", activity.ACTING),
-        ("mcp__mtg__pass_until", activity.ACTING),
+        ("mcp__mtg__pass_until", activity.WAITING),
         ("mcp__mtg__declare_attackers", activity.ACTING),
         ("mcp__mtg__declare_blockers", activity.ACTING),
         ("mcp__mtg__cycle", activity.ACTING),
@@ -127,6 +127,29 @@ def test_the_script_tools_are_mapped_by_name_not_by_the_default():
     `list_scripts` only reads, the same state as the other reads."""
     assert activity._MTG_STATES["run_script"] == activity.ACTING
     assert activity._MTG_STATES["list_scripts"] == activity._MTG_STATES["battlefield_state"]
+
+
+def test_a_long_pass_until_reads_as_waiting_for_its_whole_wait():
+    """L2: `pass_until` re-issues its own capped wait under one tool call while
+    the opponent thinks (up to `mcp.IDLE_REISSUE_SECONDS`), so for most of
+    its duration the seat is waiting on the opponent, not playing. The pill
+    must say so for the whole call - only the one observation, however long
+    the call runs - rather than "acting" for minutes."""
+    now = [epoch("2026-09-23T10:00:00Z")]
+    current = activity.CurrentActivity(now=lambda: now[0])
+    current.feed(
+        [
+            assistant(
+                tool("mcp__mtg__pass_until", {"step": "upkeep"}), timestamp="2026-09-23T10:00:00Z"
+            )
+        ]
+    )
+    now[0] += 110.0
+
+    snapshot = current.snapshot()
+
+    assert snapshot["state"] == activity.WAITING
+    assert snapshot["seq"] == 1
 
 
 def test_a_thinking_block_is_reported_as_thinking():
