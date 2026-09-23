@@ -737,11 +737,19 @@ command only on what the answer in front of you does not already say.
 
 ## Declare your plan before you act
 
-Plan ahead: run `plan --for-turn next ...` during your opponent's turn, once
-you know how you mean to play your own next turn, rather than waiting until
-your own upkeep to write one - your opponent is not waiting on you while you
-do this. Leaving `--for-turn` at its default `current` still works for the
-turn already in front of you, if you did not plan ahead for it:
+Pass first, plan second. If you hold priority and there is nothing you want
+to do about the board in front of you, run `pass` (or `pass-until` to cross
+the rest of the stretch) before anything else - CR 117.4 will not resolve
+their spell, and their turn does not move, for as long as you sit there
+holding priority, so composing a plan while you hold it is exactly the stall
+this loop exists to avoid. Run `plan --for-turn next ...` for how you mean
+to play your own next turn only once a wait has come back because your
+opponent is the one still deciding - that is, once you do NOT hold priority,
+never while you do. The one thing that is not "nothing to do" is a response
+you are actually weighing: hold priority for that, decide it, then act or
+pass, before you turn to next turn's plan. Leaving `--for-turn` at its
+default `current` still works for the turn already in front of you, if you
+did not plan ahead for it:
 
     ... plan --board-read "..." --my-role "..." --plan "..." \
         --expecting "..." --because "..." --confidence medium --for-turn next

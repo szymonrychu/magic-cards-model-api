@@ -1321,9 +1321,10 @@ def build_parser() -> argparse.ArgumentParser:
         default="current",
         help=(
             "which turn this declares for - 'current' (default) is the turn "
-            "already under way; 'next', called on the opponent's turn, plans "
-            "ahead for your own next turn instead of waiting until your "
-            "upkeep to write one there"
+            "already under way; 'next' plans ahead for your own next turn - "
+            "use it once a wait has come back because the opponent is still "
+            "deciding, not while you hold priority with nothing to do "
+            "(pass instead)"
         ),
     )
 

@@ -1273,6 +1273,95 @@ def test_seat_loop_plan_ahead_leadin_no_longer_repeats_the_full_rationale(tmp_pa
     assert '`declare_plan(player_uid=..., for_turn="next", ...)`' in section
 
 
+# V2 task: prod game 048e1879 (2026-09-23) showed a seat HOLDING PRIORITY in
+# the human's upkeep for 106s of Opus thinking - the pill stuck on
+# "deciding" with no elapsed time, the stall banner unable to fire. Root
+# cause: this section told the agent to plan during the opponent's turn
+# because "your opponent is not waiting on you while you do this" - false
+# whenever the agent holds priority; CR 117.4 will not resolve their spell,
+# and the turn does not move, for as long as the agent sits on it. The
+# corrected rule: pass first when holding priority with nothing to do
+# (`pass`/`pass_until`), and write `declare_plan(for_turn="next")` only once
+# a wait returns because the OPPONENT is the one still deciding - i.e. while
+# the agent does NOT hold priority. Deciding an actual response to something
+# on the stack is the one case that is not "nothing to do".
+
+FALSE_NOT_WAITING_CLAIM = "not waiting on you"
+MCP_SOURCE = Path(__file__).resolve().parents[2] / "src" / "magic_cards_model_api" / "mcp.py"
+
+
+def _mcp_declare_plan_docstring() -> str:
+    text = MCP_SOURCE.read_text()
+    start = text.index("def declare_plan(")
+    doc_start = text.index('"""', start)
+    doc_end = text.index('"""', doc_start + 3) + 3
+    return text[doc_start:doc_end]
+
+
+def test_seat_prompt_plan_section_drops_the_false_not_waiting_claim(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## Declare your plan before you act")).lower()
+    assert FALSE_NOT_WAITING_CLAIM not in section
+    assert "pass first" in section
+    assert "do not hold priority" in section
+    assert "you hold priority" in section
+    assert "before you do anything else" in section or "before anything else" in section
+
+
+def test_seat_prompt_plan_section_keeps_the_response_exception(tmp_path, guide):
+    """Holding priority to actually decide a response is not "nothing to
+    do" - the rewrite must not ban that, only unplanned idle holding."""
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## Declare your plan before you act")).lower()
+    assert "response you are" in section
+    assert "decide it, then act or pass" in section
+
+
+def test_seat_brief_plan_section_drops_the_false_not_waiting_claim():
+    text = (BRIEFS / "ai_seat_brief.md").read_text()
+    section = _flat(_section(text, "## Declare your plan before you act")).lower()
+    assert FALSE_NOT_WAITING_CLAIM not in section
+    assert "pass first" in section
+    assert "do not hold priority" in section
+    assert "you hold priority" in section
+
+
+def test_mcp_declare_plan_docstring_drops_the_false_not_waiting_claim():
+    doc = _flat(_mcp_declare_plan_docstring()).lower()
+    assert FALSE_NOT_WAITING_CLAIM not in doc
+    assert "pass first" in doc
+    assert "do not hold priority" in doc
+    assert "you hold priority" in doc
+
+
+def _seat_cli_for_turn_help() -> str:
+    """The actual rendered `--for-turn` help text, off the real parser - not
+    a raw-source scan, since argparse's implicit adjacent-string-literal
+    concatenation means the source text and the rendered help text are not
+    the same string."""
+    from magic_cards_model_api.seat_cli import build_parser
+
+    parser = build_parser()
+    plan_parser = parser._subparsers._group_actions[0].choices["plan"]  # type: ignore[union-attr]
+    for action in plan_parser._actions:
+        if "--for-turn" in action.option_strings:
+            return action.help or ""
+    raise AssertionError("no --for-turn action found on the plan subparser")
+
+
+def test_seat_cli_for_turn_help_no_longer_could_encourage_planning_while_holding_priority():
+    """The `--for-turn` argparse help never carried the false claim outright,
+    but it also never said "next" is for the window where the opponent is
+    deciding rather than any moment on the opponent's turn - which is the
+    same gap that let the false claim stand unnoticed in the other docs.
+    Pin the corrected framing here too, so a CLI-driven seat reads the same
+    rule an MCP-driven one does."""
+    help_text = _seat_cli_for_turn_help().lower()
+    assert "not waiting on you" not in help_text
+    assert "opponent is still deciding" in help_text
+    assert "hold priority" in help_text
+
+
 def test_seat_brief_names_plan_for_turn_next():
     flat = _flat((BRIEFS / "ai_seat_brief.md").read_text())
     assert "plan --for-turn next" in flat or "--for-turn next" in flat

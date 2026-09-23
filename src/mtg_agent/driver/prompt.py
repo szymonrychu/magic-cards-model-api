@@ -1249,12 +1249,19 @@ game you will be asked to finish this same file.
 
 ## Declare your plan before you act
 
-Plan ahead: call `declare_plan(player_uid=..., for_turn="next", ...)` during
-your opponent's turn, once you know how you mean to play your own next turn,
-rather than waiting until your own upkeep and holding priority there to write
-one - your opponent is not waiting on you while you do this. Leaving
-`for_turn` at its default `"current"` still works for the turn already in
-front of you, if you did not plan ahead for it:
+Pass first, plan second. If you hold priority and there is nothing you want
+to do about the board in front of you, `pass` (or `pass_until` to cross the
+rest of the stretch) before you do anything else - CR 117.4 will not resolve
+their spell, and their turn does not move, for as long as you sit there
+holding priority, so composing a plan while you hold it is exactly the stall
+this loop exists to avoid. Write `declare_plan(for_turn="next")` for how you
+mean to play your own next turn only once a wait has come back because your
+opponent is the one still deciding - that is, once you do NOT hold priority,
+never while you do. The one thing that is not "nothing to do" is a response
+you are actually weighing: hold priority for that, decide it, then act or
+pass, before you turn to next turn's plan. Leaving `for_turn` at its default
+`"current"` still works for the turn already in front of you, if you did not
+plan ahead for it:
 
   declare_plan(player_uid=..., board_read="...", my_role="...", plan="...",
     expecting="...", because="...", confidence="medium", for_turn="next")

@@ -2906,15 +2906,19 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         your opponent to do in response, and the read that supports it - the
         part that makes this evidence rather than commentary.
 
-        `for_turn` (`"current"`, the default, or `"next"`): plan ahead.
-        Call this with `for_turn="next"` during your OPPONENT's turn to
-        declare for your own next turn, rather than waiting until your
-        upkeep and holding priority there to write one - your opponent is
-        not waiting on you while you do this, and should not have to. Called
-        with `for_turn="next"` while your own turn is already under way,
-        this is refused (409, `own_turn_in_progress`): declare once per
-        turn, and use the default `"current"` for the turn already in front
-        of you.
+        `for_turn` (`"current"`, the default, or `"next"`): plan ahead, but
+        pass first. If you hold priority and have nothing you want to do,
+        pass (or `pass_until`) before reaching for this - holding priority
+        to compose a plan costs your opponent real time, same as any other
+        idle hold. Call this with `for_turn="next"` only once a wait has
+        come back because your OPPONENT is the one still deciding, that is,
+        once you do NOT hold priority, to declare for your own next turn.
+        The one thing that is not "nothing to do" is a response you are
+        actually weighing: decide that first, then act or pass, before you
+        plan next turn. Called with `for_turn="next"` while your own turn is
+        already under way, this is refused (409, `own_turn_in_progress`):
+        declare once per turn, and use the default `"current"` for the turn
+        already in front of you.
 
         This is written to an append-only ledger before your opponent's next
         move, and cannot be edited afterward to fit whatever they actually
