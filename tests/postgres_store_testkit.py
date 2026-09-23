@@ -35,7 +35,7 @@ def postgres_store(monkeypatch: pytest.MonkeyPatch) -> Iterator[PostgresReposito
     url = require_postgres_database_url(TEST_DATABASE_URL_ENV)
     engine = make_engine(url)
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE TABLE records, games RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE TABLE record_states, records, games RESTART IDENTITY CASCADE"))
     repo = PostgresRepository(url, engine=engine)
     original = store_module.store
     for module in list(sys.modules.values()):

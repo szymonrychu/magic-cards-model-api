@@ -96,17 +96,20 @@ from magic_cards_model.machines.decisions import Answer, Decision, PendingDecisi
 from magic_cards_model.models import Game
 from pydantic import BaseModel
 from sqlalchemy import func, insert, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
 from .agent_settings import AgentSettings
 from .commands import Command
-from .db import games, make_engine, records
+from .db import games, make_engine, record_states, records
 from .repository import (
     DEFAULT_RESERVATION_TTL_SECONDS,
     Advisor,
     ArchivedGame,
     GameUnloadable,
     _ReservationLedger,
+    decode_record_state,
+    encode_record_state,
 )
 
 __all__ = ["PostgresRepository", "VersionConflict"]
@@ -796,6 +799,46 @@ class PostgresRepository:
                 )
             ).scalar_one()
         return int(current)
+
+    def put_record_state(self, game_id: str, seq: int, game: Game) -> None:
+        """Upsert via `INSERT ... ON CONFLICT (game_id, seq) DO UPDATE` on
+        `pk_record_states` - one round trip whether this is the first write
+        at this `(game_id, seq)` or a replacement, and no existence check
+        first (the same no-existence-check leniency `append_record` gives
+        for `game_id`, since `record_states.game_id` carries no
+        `ForeignKey` either - see `db.py`)."""
+        blob = encode_record_state(game)
+        now = datetime.now(UTC)
+        stmt = pg_insert(record_states).values(game_id=game_id, seq=seq, state=blob, created_at=now)
+        stmt = stmt.on_conflict_do_update(
+            constraint="pk_record_states",
+            set_={"state": stmt.excluded.state, "created_at": stmt.excluded.created_at},
+        )
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+
+    def record_state_seqs(self, game_id: str) -> list[int]:
+        """`SELECT seq FROM record_states WHERE game_id = :id ORDER BY seq` -
+        the `state` column is never named in this query, so no blob is ever
+        read to answer it, matching this method's own protocol docstring."""
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(record_states.c.seq)
+                .where(record_states.c.game_id == game_id)
+                .order_by(record_states.c.seq.asc())
+            ).all()
+        return [int(row[0]) for row in rows]
+
+    def record_state(self, game_id: str, seq: int) -> Game | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                select(record_states.c.state).where(
+                    record_states.c.game_id == game_id, record_states.c.seq == seq
+                )
+            ).first()
+        if row is None:
+            return None
+        return decode_record_state(game_id, bytes(row[0]))
 
     def delete(self, game_id: str) -> bool:
         """The soft delete: stamp `archived_at` rather than issue a

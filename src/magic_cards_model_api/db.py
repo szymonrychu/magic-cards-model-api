@@ -3,14 +3,17 @@
 these tables and the code that reads/writes them can never drift apart -
 there is exactly one place the columns are named.
 
-Two tables. `games` is the CAS-versioned row `PostgresRepository` reads and
+Three tables. `games` is the CAS-versioned row `PostgresRepository` reads and
 writes: `state` is `Game.model_dump(mode="json")`; `command`/`tape`/`pending`
 are the paused-command bookkeeping `store_paused_command`/`paused_command`/
 `clear_paused_command` need, `None` when nothing is paused; `version` is the
 optimistic-concurrency counter `replace()` compares-and-swaps on. `records`
 is the append-only audit trail (T9 built the table, T10 fills in its
 payload and every write path that is not tied to a `games` commit -
-`append_record`/`fill_record`).
+`append_record`/`fill_record`). `record_states` (R1) is the exact engine
+state beside one `records` row: `repository.encode_record_state`/
+`decode_record_state` and `put_record_state`/`record_state_seqs`/
+`record_state`.
 
 **`records.game_id` carries no `ForeignKey`, deliberately (T10).** T9's
 original schema had one, `ON DELETE CASCADE` - reasonable while every row's
@@ -59,7 +62,9 @@ from sqlalchemy import (
     Column,
     DateTime,
     Integer,
+    LargeBinary,
     MetaData,
+    PrimaryKeyConstraint,
     String,
     Table,
     UniqueConstraint,
@@ -147,6 +152,39 @@ records = Table(
     Column("payload", JSONB, nullable=False, server_default="{}"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     UniqueConstraint("game_id", "seq", name="uq_records_game_id_seq"),
+)
+
+record_states = Table(
+    "record_states",
+    metadata,
+    # No `ForeignKey`, deliberately - the same independent-ledger reasoning
+    # as `records` (this module's own docstring): a row here is keyed to a
+    # `records` row by `(game_id, seq)` matching, by convention only, and it
+    # must outlive the game it describes for the same reason - a post-game
+    # replay reads a soft-deleted game's exact states exactly as it reads
+    # its `records` rows, and a `CASCADE` on the game's own deletion would
+    # silently erase the very rows that replay exists to read.
+    Column("game_id", String, nullable=False),
+    Column("seq", Integer, nullable=False),
+    # `repository.encode_record_state`/`decode_record_state`:
+    # `zlib.compress` over `Game.model_dump(mode="json")`, JSON-encoded with
+    # no incidental whitespace. `LargeBinary`, not `JSONB`: measured on a
+    # real two-deck game, one row's raw JSON dump is ~232 kB and its
+    # zlib-compressed form is ~11.7 kB, and nothing ever queries a field out
+    # of this column - a replay reads the whole blob or none of it - so
+    # paying postgres to parse and index a document as JSONB buys nothing
+    # here, only ~20x the storage and every VACUUM/backup this table's rows
+    # (one per recorded decision point, for the life of a replayable game)
+    # ever ask of it.
+    Column("state", LargeBinary, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    # A separate table rather than a column on `records`: no reader of the
+    # ledger (`records`/`records_since`/`recent_records` - the hot action
+    # path, the plan gate, every poll of `GET .../log`) can leak this blob
+    # by construction, and none of them pays to load or transmit it, because
+    # they never join against this table at all. `record_state`/
+    # `record_state_seqs` are the only two reads that ever touch it.
+    PrimaryKeyConstraint("game_id", "seq", name="pk_record_states"),
 )
 
 

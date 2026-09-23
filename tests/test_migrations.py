@@ -56,6 +56,11 @@ ADVISORS_PREDECESSOR = "a2f6d9c31b57"
 #: The revision that was head before `games.scripts` was added.
 SCRIPTS_PREDECESSOR = "b8d24f6c1a07"
 
+#: The revision that was head before `record_states` was added - the
+#: previous head, `d5b2e8f4a913`, per `alembic/versions/
+#: 0a049fede5b1_add_record_states.py`'s own `down_revision`.
+RECORD_STATES_PREDECESSOR = "d5b2e8f4a913"
+
 
 @contextmanager
 def _scratch_database() -> Iterator[str]:
@@ -103,6 +108,25 @@ def _alembic_to(url: str, revision: str) -> None:
     os.environ["DATABASE_URL"] = url
     try:
         command.upgrade(config, revision)
+    finally:
+        if previous is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous
+
+
+def _alembic_downgrade_to(url: str, revision: str) -> None:
+    """Run `alembic downgrade <revision>` against `url` - `_alembic_to`'s
+    own inverse. `command.upgrade` never runs a revision's `downgrade()`,
+    even when the target named is behind the database's current stamp, so a
+    test proving a `downgrade()` actually drops what its `upgrade()` added
+    must call this, not `_alembic_to`."""
+    config = Config(str(_REPO_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(_REPO_ROOT / "alembic"))
+    previous = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = url
+    try:
+        command.downgrade(config, revision)
     finally:
         if previous is None:
             os.environ.pop("DATABASE_URL", None)
@@ -413,6 +437,62 @@ def test_upgrade_head_adds_scripts_to_an_already_migrated_database() -> None:
                     text("SELECT scripts FROM games WHERE id = 'old'")
                 ).scalar_one()
             assert value == {}, "a row that predates the column must start with no scripts"
+        finally:
+            engine.dispose()
+
+
+def test_upgrade_head_adds_record_states_to_an_already_migrated_database() -> None:
+    """`record_states` (R1) arrives on a database migrated before it existed
+    - same reasoning as `test_upgrade_head_adds_scripts_...` above, just for
+    a whole new table rather than a column: a database already stamped at
+    the previous head must gain the table on `upgrade head`, and a row
+    written to it afterward must actually persist."""
+    with _scratch_database() as url:
+        _alembic_to(url, RECORD_STATES_PREDECESSOR)
+        engine = create_engine(url, future=True)
+        try:
+            before = set(inspect(engine).get_table_names())
+            assert "record_states" not in before
+        finally:
+            engine.dispose()
+
+        _alembic_to(url, "head")
+        engine = create_engine(url, future=True)
+        try:
+            after = set(inspect(engine).get_table_names())
+            assert "record_states" in after
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO games (id, state, version, created_at, admin_key) "
+                        "VALUES ('old', '{}'::jsonb, 0, now(), 'k')"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO record_states (game_id, seq, state, created_at) "
+                        "VALUES ('old', 1, :state, now())"
+                    ),
+                    {"state": b"\x00\x01"},
+                )
+            with engine.connect() as conn:
+                value = conn.execute(
+                    text("SELECT state FROM record_states WHERE game_id = 'old' AND seq = 1")
+                ).scalar_one()
+            assert bytes(value) == b"\x00\x01"
+        finally:
+            engine.dispose()
+
+
+def test_downgrade_from_head_drops_record_states() -> None:
+    """`downgrade` is the inverse: from `head`, stepping back to
+    `RECORD_STATES_PREDECESSOR` removes the table it added."""
+    with _scratch_database() as url:
+        _alembic_to(url, "head")
+        _alembic_downgrade_to(url, RECORD_STATES_PREDECESSOR)
+        engine = create_engine(url, future=True)
+        try:
+            assert "record_states" not in set(inspect(engine).get_table_names())
         finally:
             engine.dispose()
 

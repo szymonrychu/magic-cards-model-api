@@ -34,7 +34,12 @@ from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.commands import Command
 from magic_cards_model_api.db import make_engine
 from magic_cards_model_api.decks import load_deck_into_game
-from magic_cards_model_api.repository import Advisor, GameRepository, InMemoryRepository
+from magic_cards_model_api.repository import (
+    Advisor,
+    GameRepository,
+    GameUnloadable,
+    InMemoryRepository,
+)
 from magic_cards_model_api.repository_postgres import PostgresRepository
 
 #: Set by `mise run test:pg` (or by hand) to a postgres DSN whose schema is
@@ -65,7 +70,7 @@ def _postgres_repository_factory() -> PostgresRepository:
         # Every test gets a clean pair of tables - `ids()`, `test_ids_lists_
         # exactly_the_created_games` and friends assume nothing but what this
         # test itself created is in there.
-        conn.execute(text("TRUNCATE TABLE records, games RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE TABLE record_states, records, games RESTART IDENTITY CASCADE"))
     return PostgresRepository(url, engine=_pg_engine)
 
 
@@ -957,6 +962,132 @@ def test_records_survive_the_games_own_deletion(repo: GameRepository) -> None:
     assert repo.delete(game_id) is True
     rows = repo.records(game_id)
     assert [row["payload"]["action"] for row in rows] == ["game_reset"]
+
+
+# ---------------------------------------------------------------------------
+# record_states (R1) - the exact engine state beside one `records` row,
+# keyed the same way: `(game_id, seq)`. This is what a post-game replay
+# reads to reconstruct the board byte-exactly, rather than parsing it back
+# out of `records.payload`'s human-readable snapshot string.
+# ---------------------------------------------------------------------------
+
+
+def test_put_record_state_round_trips_with_model_dump_equality(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    game = _real_game()
+    repo.put_record_state(game_id, 1, game)
+    loaded = repo.record_state(game_id, 1)
+    assert loaded is not None
+    assert loaded.model_dump(mode="json") == game.model_dump(mode="json")
+
+
+def test_put_record_state_upserts_replacing_the_previous_value(repo: GameRepository) -> None:
+    """A second `put_record_state` at the same `(game_id, seq)` replaces the
+    first outright - never a second row, never a conflict raised to the
+    caller."""
+    game_id = repo.create(_real_game())
+    first = _real_game()
+    second = _real_game()
+    repo.put_record_state(game_id, 1, first)
+    repo.put_record_state(game_id, 1, second)
+    loaded = repo.record_state(game_id, 1)
+    assert loaded is not None
+    assert loaded.model_dump(mode="json") == second.model_dump(mode="json")
+    assert repo.record_state_seqs(game_id) == [1]
+
+
+def test_record_state_seqs_are_ascending_and_unique(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    for seq in (3, 1, 2, 2):
+        repo.put_record_state(game_id, seq, _real_game())
+    assert repo.record_state_seqs(game_id) == [1, 2, 3]
+
+
+def test_record_state_seqs_is_empty_for_an_unknown_game(repo: GameRepository) -> None:
+    assert repo.record_state_seqs("no-such-game-at-all") == []
+
+
+def test_record_state_is_none_for_an_unknown_game_or_seq(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.put_record_state(game_id, 1, _real_game())
+    assert repo.record_state("no-such-game-at-all", 1) is None
+    assert repo.record_state(game_id, 99) is None
+
+
+def test_put_record_state_never_raises_for_an_unknown_game(repo: GameRepository) -> None:
+    """The same leniency `append_record` promises - a state recorded for a
+    game that is no longer in the store (or was never in it) must not raise,
+    since the caller writing it is racing exactly the same reset/dispatch
+    paths `append_record`'s own docstring describes."""
+    repo.put_record_state("no-such-game-at-all", 1, _real_game())
+    assert repo.record_state_seqs("no-such-game-at-all") == [1]
+
+
+def test_record_states_survive_the_games_own_deletion(repo: GameRepository) -> None:
+    """The exact states outlive the game they describe, exactly like
+    `records` (`test_records_survive_the_games_own_deletion` above) and for
+    the same reason: a post-game replay is read after `delete()`, not
+    before it."""
+    game_id = repo.create(_real_game())
+    game = _real_game()
+    repo.put_record_state(game_id, 1, game)
+    assert repo.delete(game_id) is True
+    loaded = repo.record_state(game_id, 1)
+    assert loaded is not None
+    assert loaded.model_dump(mode="json") == game.model_dump(mode="json")
+    assert repo.record_state_seqs(game_id) == [1]
+
+
+def test_record_state_of_a_corrupted_blob_raises_game_unloadable(repo: GameRepository) -> None:
+    """A blob that will not decompress, will not parse as JSON, or will not
+    validate as a `Game` raises `GameUnloadable` naming the decoder's own
+    reason - never a bare exception, and never a silently wrong `Game`.
+
+    Postgres: corrupted via a direct `UPDATE` on the stored `bytea`, the
+    same technique `test_unloadable_games._stale_row` uses for
+    `games.state`. In-memory: `InMemoryRepository` never stores a blob it
+    did not itself produce with `encode_record_state` (`put_record_state`
+    is its only write path), so there is no public-surface way to get a
+    corrupt blob into it short of touching the private `_record_states`
+    dict directly - skipped here for that reason, exactly as R1's own
+    acceptance criteria allows.
+    """
+    if not isinstance(repo, PostgresRepository):
+        pytest.skip(
+            "InMemoryRepository has no public-surface way to store a corrupt "
+            "record_states blob - see this test's own docstring"
+        )
+    game_id = repo.create(_real_game())
+    repo.put_record_state(game_id, 1, _real_game())
+    with repo._engine.begin() as conn:  # noqa: SLF001 - test corruption, not a call site
+        conn.execute(
+            text("UPDATE record_states SET state = :bad WHERE game_id = :gid AND seq = 1"),
+            {"bad": b"not a valid compressed blob", "gid": game_id},
+        )
+    with pytest.raises(GameUnloadable) as caught:
+        repo.record_state(game_id, 1)
+    assert caught.value.game_id == game_id
+    assert caught.value.reason
+
+
+def test_record_state_seqs_never_decodes_a_corrupted_blob(repo: GameRepository) -> None:
+    """`record_state_seqs` answers from the `seq` column alone - a row whose
+    `state` this build cannot decode must not stop it working, since which
+    decision points have an exact state recorded never depends on being
+    able to read that state."""
+    if not isinstance(repo, PostgresRepository):
+        pytest.skip(
+            "InMemoryRepository has no public-surface way to store a corrupt "
+            "record_states blob - see this test's own docstring"
+        )
+    game_id = repo.create(_real_game())
+    repo.put_record_state(game_id, 1, _real_game())
+    with repo._engine.begin() as conn:  # noqa: SLF001 - test corruption, not a call site
+        conn.execute(
+            text("UPDATE record_states SET state = :bad WHERE game_id = :gid AND seq = 1"),
+            {"bad": b"not a valid compressed blob", "gid": game_id},
+        )
+    assert repo.record_state_seqs(game_id) == [1]
 
 
 # ---------------------------------------------------------------------------

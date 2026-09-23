@@ -58,8 +58,10 @@ now an alias for it so every existing import keeps working.
 from __future__ import annotations
 
 import copy
+import json
 import threading
 import time
+import zlib
 from bisect import bisect_right
 from collections.abc import Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
@@ -278,6 +280,42 @@ class GameUnloadable(Exception):
         super().__init__(f"game {game_id} cannot be loaded: {reason}")
         self.game_id = game_id
         self.reason = reason
+
+
+def encode_record_state(game: Game) -> bytes:
+    """The wire encoding `put_record_state` stores and `record_state`
+    decodes (R1): `zlib.compress` over `game.model_dump(mode="json")`,
+    JSON-encoded with no incidental whitespace (`separators=(",", ":")`).
+
+    Bytes, not JSONB (`db.py`'s `record_states` table): measured on a real
+    two-deck game, one row's raw JSON dump is ~232 kB and its
+    zlib-compressed form is ~11.7 kB, a ~20x difference that repeats every
+    recorded decision point of a replayable game, and nothing ever queries
+    a field out of this column - `record_state`'s only read is the whole
+    blob or none of it - so paying postgres to parse and index it as JSONB
+    buys nothing here.
+    """
+    payload = json.dumps(game.model_dump(mode="json"), separators=(",", ":")).encode()
+    return zlib.compress(payload)
+
+
+def decode_record_state(game_id: str, blob: bytes) -> Game:
+    """The inverse of `encode_record_state`. Raises `GameUnloadable(game_id,
+    <reason>)` - never a bare `zlib.error`/`json.JSONDecodeError`/pydantic
+    `ValidationError` escaping raw - for a blob that will not decompress,
+    will not parse as JSON, or will not validate as a `Game`, with `reason`
+    the decoder's own message verbatim, exactly as `GameUnloadable`'s own
+    docstring promises for `get()`'s decode point. This is the one decode
+    point both `InMemoryRepository.record_state` and
+    `PostgresRepository.record_state` route through, so a corrupted or
+    unreadable row is refused identically by either implementation.
+    """
+    try:
+        payload = zlib.decompress(blob)
+        data = json.loads(payload)
+        return Game.model_validate(data)
+    except Exception as exc:
+        raise GameUnloadable(game_id, str(exc)) from exc
 
 
 @runtime_checkable
@@ -509,6 +547,61 @@ class GameRepository(Protocol):
         Deliberately not a cache: the api may run more than one replica, and
         an in-process memo of "who has declared a plan" would answer
         differently depending on which pod took the request.
+        """
+        ...
+
+    def put_record_state(self, game_id: str, seq: int, game: Game) -> None:
+        """Store the exact engine state for this game's `records` row `seq`
+        (R1), so a post-game replay can reconstruct the board byte-exactly
+        rather than parsing it back out of `records.payload`'s
+        human-readable snapshot string. Encoded with
+        `encode_record_state` - see that function's own docstring for why
+        this is a compressed blob and not a JSONB column.
+
+        Upserts: a second `put_record_state` for the same `(game_id, seq)`
+        replaces the first outright, never raising and never leaving two
+        rows behind - the same shape a caller re-recording a step (a
+        retried write, a corrected replay build) needs.
+
+        **Never raises for an unknown `game_id`**, the same leniency
+        `append_record`'s own docstring describes and for the same reason:
+        this is not paired with any `games` row existing, and a caller
+        racing a reset or dispatching before a game exists must not have
+        this call blow up under it.
+
+        A separate table from `records` entirely (`db.py`'s `record_states`,
+        no `ForeignKey`, same independent-ledger reasoning as `records`
+        itself) rather than a column on it: no reader of the ledger -
+        `records`/`records_since`/`recent_records`, the hot action path and
+        every poll of `GET .../log` - can leak this blob or pay to load it,
+        because none of them ever join against this table.
+        """
+        ...
+
+    def record_state_seqs(self, game_id: str) -> list[int]:
+        """Every `seq` this game has an exact state recorded for, ascending,
+        unique - empty for an unknown game or one with none.
+
+        Answered from the `seq` column alone: **no implementation may read
+        the `state` blob to answer this**, since which decision points have
+        an exact state recorded never depends on being able to read that
+        state, and a replay's step list is built from this list before any
+        single frame is decoded.
+        """
+        ...
+
+    def record_state(self, game_id: str, seq: int) -> Game | None:
+        """The exact engine state recorded for `(game_id, seq)`, or `None`
+        when there is no such row (unknown game, unknown seq, or one nothing
+        ever called `put_record_state` for).
+
+        Raises `GameUnloadable(game_id, <reason>)` - the decoder's own
+        message verbatim, via `decode_record_state` - for a row whose blob
+        will not decompress, will not parse, or will not validate as a
+        `Game`. Same vocabulary as `get()`'s own decode point, and the same
+        reason: a caller reading one named `(game_id, seq)` needs to
+        distinguish "nothing was ever recorded here" from "something was
+        recorded and this build cannot read it back".
         """
         ...
 
@@ -840,6 +933,11 @@ class InMemoryRepository:
         # satisfies exactly the same `GameRepository` surface postgres does -
         # see `replace`/`append_record`/`fill_record`/`records`.
         self._records: dict[str, list[dict[str, Any]]] = {}
+        # game_id -> seq -> the `encode_record_state`-encoded blob (R1).
+        # Deliberately NOT popped by `delete()`, matching `_records` above
+        # and for the same reason: a post-game replay reads these after the
+        # game is gone, not before it.
+        self._record_states: dict[str, dict[int, bytes]] = {}
         # game_id -> what `delete()` kept when it ended that game. The
         # postgres implementation keeps the whole row and flags it with
         # `archived_at`; here, `delete` still pops every live collection
@@ -1283,6 +1381,22 @@ class InMemoryRepository:
         with self._lock:
             log = self._records.get(game_id, [])
             return int(log[-1]["seq"]) if log else 0
+
+    def put_record_state(self, game_id: str, seq: int, game: Game) -> None:
+        blob = encode_record_state(game)
+        with self._lock:
+            self._record_states.setdefault(game_id, {})[seq] = blob
+
+    def record_state_seqs(self, game_id: str) -> list[int]:
+        with self._lock:
+            return sorted(self._record_states.get(game_id, {}))
+
+    def record_state(self, game_id: str, seq: int) -> Game | None:
+        with self._lock:
+            blob = self._record_states.get(game_id, {}).get(seq)
+        if blob is None:
+            return None
+        return decode_record_state(game_id, blob)
 
     def ids(self) -> list[str]:
         with self._lock:
