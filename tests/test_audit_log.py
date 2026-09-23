@@ -705,3 +705,106 @@ def test_dry_run_cast_is_not_audited(client, game):
     log = client.get(f"/api/games/{game}/log").json()["log"]
     casts = [entry for entry in log if entry["action"] == "cast"]
     assert casts == [], "a dry-run cast must never be written to the audit log"
+
+
+# -- T9: the audit log's own name for CR 510.4's first-strike damage step ----
+#
+# `audit.record`'s `step` field goes through `serialize.step_position_of`
+# (audit.py, "CR 510.4/506.1" comment), not the raw `Step` value, so a row
+# written while the game sits in the *first* of the two combat damage steps
+# reads `"first_strike_damage"`, and a row written in the second reads the
+# engine's own `"combat_damage"` - the same distinction `state_view`'s
+# `first_strike_damage_step` flag makes, proven end to end here through the
+# real engine (`tests/test_first_strike_step_label.py` is the same boot).
+
+
+def _boot_first_strike_combat_to_declared(client: TestClient, game: str) -> dict[str, str]:
+    """Alice's Precinct Captain (2/2 first strike) attacking, blocked by
+    Bob's Grizzly Bears (2/2, no keywords): a real CR 510.4 combat with
+    exactly one blocker, so no `assign_combat_damage` question interrupts
+    it. Returns with blockers declared, right before the first combat
+    damage step - the same boot `test_first_strike_step_label.py` uses."""
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+    captain = add_card(client, game, "Precinct Captain", "alice", "battlefield")["added"]["card_id"]
+    client.patch(f"/api/games/{game}/cards/{captain}", json={"summoning_sick": False})
+    bears = add_card(client, game, "Grizzly Bears", "bob", "battlefield")["added"]["card_id"]
+
+    client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
+    client.post(
+        f"/api/games/{game}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
+    )
+    attack = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": uids["alice"]},
+        json={"attackers": [{"card_id": captain, "defender": "bob"}]},
+    )
+    assert attack.json()["allowed"] is True, attack.json()
+    client.post(
+        f"/api/games/{game}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
+    )
+    blocks = client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "blocks": [{"blocker": bears, "blocked": captain}]},
+    )
+    assert blocks.json().get("allowed", blocks.json().get("accepted")) is True, blocks.json()
+    return {"captain": captain, "bears": bears}
+
+
+def test_audit_log_names_the_first_combat_damage_step_first_strike_damage(client, game):
+    """A row written while the board is in CR 510.4's first combat damage
+    step - `first_strike_damage_step: True` on `state_view` - is logged
+    `"step": "first_strike_damage"`, never the raw `"combat_damage"` the
+    engine's own `Step` carries for both occurrences."""
+    _boot_first_strike_combat_to_declared(client, game)
+    first = client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    assert first.json()["allowed"] is True, first.json()
+    board = state(client, game)
+    assert board["step"] == "combat_damage" and board["first_strike_damage_step"] is True, board
+
+    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    assert passed.json()["allowed"] is True, passed.json()
+
+    entry = entry_of(log_of(client, game), "pass_priority")
+    assert entry["step"] == "first_strike_damage", entry
+
+
+def test_audit_log_names_the_second_combat_damage_step_combat_damage(client, game):
+    """The same row shape, one occurrence later: `first_strike_damage_step`
+    is now `False`, and the logged `step` reads the engine's own
+    `"combat_damage"` again."""
+    _boot_first_strike_combat_to_declared(client, game)
+    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    # Empty stack, nothing further to assign: `advance` moves straight into
+    # the second occurrence, the same idiom `test_first_strike_step_label.py`
+    # uses (Precinct Captain's damage went to a blocking creature, not a
+    # player, so its own trigger never put anything on the stack).
+    assert state(client, game)["stack"] == []
+    second = client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    assert second.json()["allowed"] is True, second.json()
+    board = state(client, game)
+    assert board["step"] == "combat_damage" and board["first_strike_damage_step"] is False, board
+
+    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    assert passed.json()["allowed"] is True, passed.json()
+
+    entry = entry_of(log_of(client, game), "pass_priority")
+    assert entry["step"] == "combat_damage", entry
+
+
+def test_advance_into_the_first_strike_step_is_named_in_response_and_audit_detail(client, game):
+    """`POST .../advance`'s own `advanced_to`, and the `advance` audit row's
+    `detail["to"]` (`app.py`'s `step_value = result.outcome["advanced_to"]`
+    fed straight into the same `audit.record` call), both name the step
+    `"first_strike_damage"` - not `"combat_damage"` - the moment the board
+    lands there. The row's `detail["from"]` still reads the raw step the
+    advance was made *from* (`declare_blockers`, which has no first-strike
+    ambiguity of its own)."""
+    _boot_first_strike_combat_to_declared(client, game)
+    response = client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    assert response.json()["allowed"] is True, response.json()
+    assert response.json()["advanced_to"] == "first_strike_damage", response.json()
+
+    entry = entry_of(log_of(client, game), "advance")
+    assert entry["detail"]["from"] == "declare_blockers", entry
+    assert entry["detail"]["to"] == "first_strike_damage", entry

@@ -165,3 +165,72 @@ def test_a_step_with_something_genuinely_waiting_is_left_alone(client, game) -> 
     before = real_game.turn.step
     assert engine_api.settle_priorityless_steps(real_game) == []
     assert real_game.turn.step is before, "a waiting stack must not be stepped over"
+
+
+def test_settled_through_never_names_the_first_strike_damage_step(client: TestClient, game) -> None:
+    """CR 500.3's two priorityless steps are the untap step and certain
+    cleanup steps - CR 510.4's second combat damage step is neither, and
+    CR 510.3 grants the active player priority there same as the first. So
+    `settle_priorityless_steps` never crosses it (`game.turn.step not in
+    (Step.UNTAP, Step.CLEANUP)` guards it, `engine_api.py`), and a
+    `pass-priority` response's `settled_through` - fed straight from that
+    same helper (`commands._run_pass_priority`) - never reads
+    `"first_strike_damage"`, even though the game genuinely moves from the
+    first occurrence into the second, unasked, the moment both players
+    pass on the empty stack (CR 117.4, 405.5)."""
+    captain = add_card(client, game, "Precinct Captain", "alice", "battlefield")["added"]["card_id"]
+    client.patch(f"/api/games/{game}/cards/{captain}", json={"summoning_sick": False})
+    bears = add_card(client, game, "Grizzly Bears", "bob", "battlefield")["added"]["card_id"]
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+
+    client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
+    client.post(
+        f"/api/games/{game}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
+    )
+    attack = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": uids["alice"]},
+        json={"attackers": [{"card_id": captain, "defender": "bob"}]},
+    )
+    assert attack.json()["allowed"] is True, attack.json()
+    client.post(
+        f"/api/games/{game}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
+    )
+    blocks = client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "blocks": [{"blocker": bears, "blocked": captain}]},
+    )
+    assert blocks.json().get("allowed", blocks.json().get("accepted")) is True, blocks.json()
+
+    entered = client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    assert entered.json()["allowed"] is True, entered.json()
+    board = state(client, game)
+    assert board["step"] == "combat_damage" and board["first_strike_damage_step"] is True, board
+
+    # The guard directly, the same shape the test above proves for a main
+    # phase: the first occurrence grants priority, so there is nothing to
+    # settle past.
+    real_game = store.get(game)
+    assert engine_api.settle_priorityless_steps(real_game) == []
+
+    # Both players pass on the empty stack: CR 117.4/405.5 end the step, and
+    # the engine's own turn structure carries the game straight into the
+    # granting-priority second occurrence - never through `settle_
+    # priorityless_steps`, so `settled_through` stays empty even though the
+    # step genuinely changed underneath it.
+    first_pass = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    assert first_pass.json()["allowed"] is True, first_pass.json()
+    assert first_pass.json()["settled_through"] == []
+
+    last_pass = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert last_pass.json()["allowed"] is True, last_pass.json()
+    assert last_pass.json()["settled_through"] == [], (
+        "the second occurrence grants priority same as the first - nothing to settle"
+    )
+
+    board = state(client, game)
+    assert board["step"] == "combat_damage" and board["first_strike_damage_step"] is False, (
+        "the step genuinely moved on, settled_through's emptiness just says nothing was crossed"
+        " *unasked* - board confirms the second occurrence was reached"
+    )
