@@ -44,6 +44,7 @@ import { h, clear } from "../dom.js";
 import { cardNode, updateCardNode } from "../cards.js";
 import { boardLayout, seatRows } from "../board_layout.js";
 import { patchStacks } from "./board.js";
+import { loadCatalogue } from "../catalogue.js";
 import {
   reviewTurns,
   frameState,
@@ -54,12 +55,6 @@ import {
   collapseRoutine,
   adviceOf,
 } from "../review_model.js";
-
-/** How many printings to look up at once. The lookups are one HTTP call per
- * distinct card name (`GET /api/cards/{name}`, Scryfall behind a cache), and
- * a game touches a few dozen names at most - this only keeps a cold cache
- * from opening fifty sockets at once. */
-const LOOKUP_BATCH = 6;
 
 function text(node) {
   return node === null || node === undefined ? "" : String(node);
@@ -696,36 +691,6 @@ function aiReviewNode(aiReview) {
     h("blockquote", { class: "reflection-text" }, aiReview.text),
     aiReview.player ? h("div", { class: "reflection-who" }, `- reviewing ${aiReview.player}`) : null
   );
-}
-
-// ---------------------------------------------------------------- printings
-
-/** The printings the snapshots' bare card names need, by name. One call per
- * distinct name, a few at a time; a name the server cannot answer for is
- * simply absent, and `cards.js` draws that card as its text fallback. */
-async function loadCatalogue(names) {
-  const catalogue = {};
-  for (let index = 0; index < names.length; index += LOOKUP_BATCH) {
-    const batch = names.slice(index, index + LOOKUP_BATCH);
-    const answers = await Promise.all(
-      batch.map((name) =>
-        api("GET", `${apiBase()}/cards/${encodeURIComponent(name)}`).catch(() => null)
-      )
-    );
-    for (const answer of answers) {
-      if (!answer || !answer.requested) continue;
-      const card = answer.card || {};
-      const images = answer.images || {};
-      catalogue[answer.requested] = {
-        type_line: card.type_line || "",
-        oracle_text: card.oracle_text || "",
-        mana_cost: card.mana_cost || "",
-        image: images.normal || images.small || null,
-        small_image: images.small || images.normal || null,
-      };
-    }
-  }
-  return catalogue;
 }
 
 // ------------------------------------------------------------------ mount --
