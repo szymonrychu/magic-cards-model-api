@@ -501,3 +501,104 @@ def test_the_mcp_server_default_leaves_a_capped_wait_as_it_was(client, game, mon
     answer = json.loads(result.content[0].text)
     assert answer["wake_reason"] == NOTHING_NEW_YET
     assert time.monotonic() - started < 2.0
+
+
+# -- the `mcp-seat` CLI (the one-shot `claude --print` seat's transport) -------
+
+#: Claude Code's Bash tool kills a command after 120s by default
+#: (`BASH_DEFAULT_TIMEOUT_MS`), and the one-shot seat runs `mcp-seat` through it.
+BASH_TOOL_DEFAULT_TIMEOUT_SECONDS = 120.0
+
+
+def test_the_cli_outer_bound_fits_under_the_bash_tool_timeout():
+    from magic_cards_model_api import seat_cli
+
+    bound = seat_cli.CLI_IDLE_REISSUE_SECONDS
+    # The last attempt may start just before the bound and run a full cap.
+    assert bound > seatkit.MAX_WAIT_SECONDS
+    assert bound + seatkit.MAX_WAIT_SECONDS <= BASH_TOOL_DEFAULT_TIMEOUT_SECONDS
+
+
+def test_the_cli_wait_rides_out_an_idle_opponent_in_one_command(client, game, monkeypatch, capsys):
+    """`mcp-seat wait --max-seconds N`: bob thinks past one capped wait, then
+    passes. The one command prints the real wake, not `nothing new yet`."""
+    from conftest import add_card, find, state
+
+    from magic_cards_model_api import seat_cli
+
+    monkeypatch.setattr(seatkit, "MAX_WAIT_SECONDS", 0.2)
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    monkeypatch.setattr(seat_cli, "CLI_IDLE_REISSUE_SECONDS", 10.0)
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    from magic_cards_model_api.store import store
+
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+    seats = Seats(api="http://testserver", game_id=game)
+    alice = seats.seat_for(uids["alice"])
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    board = state(client, game)
+    mountain = find(board["battlefield"], "Mountain")["id"]
+    bolt = board["hands"]["alice"][0]["id"]
+    run_action(
+        alice,
+        lambda: alice.call_json(
+            "POST",
+            f"/api/games/{game}/actions/cast",
+            {"player": "alice", "card_id": bolt, "targets": ["bob"], "mana_sources": [mountain]},
+        ),
+    )
+
+    waits: list[str] = []
+    real_block = seatkit.block_until_wake
+
+    def counting_block(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        woken = real_block(*args, **kwargs)
+        waits.append(woken["wake_reason"])
+        return woken
+
+    monkeypatch.setattr(seatkit, "block_until_wake", counting_block)
+
+    def bob_passes_later() -> None:
+        time.sleep(1.0)
+        TestClient(app).post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+
+    capsys.readouterr()
+    thinker = threading.Thread(target=bob_passes_later)
+    thinker.start()
+    try:
+        exit_code = seat_cli.run(
+            ["--uid", uids["alice"], "--game", game, "wait", "--max-seconds", "5"]
+        )
+    finally:
+        thinker.join()
+
+    printed = capsys.readouterr().out
+    assert exit_code == 0
+    assert "you have priority" in printed, printed
+    assert len(waits) >= 2, "the capped wait should have been re-issued under the command"
+    assert waits[:-1] == [NOTHING_NEW_YET] * (len(waits) - 1)
+
+
+def test_the_cli_pass_until_is_reissued_under_the_cli_bound(client, game, monkeypatch, capsys):
+    """`mcp-seat pass-until --max-seconds N` hands `pass_until` the CLI's own
+    outer bound, so the same same-resume re-issue runs under the command."""
+    from test_action_flow import wired_seats
+
+    from magic_cards_model_api import seat_cli
+
+    real = seat_cli.pass_until
+    seen: list[float] = []
+
+    def spy(seat: Any, *, reissue_seconds: float = 0.0, **kwargs: Any) -> Any:
+        seen.append(reissue_seconds)
+        return real(seat, **{**kwargs, "max_seconds": 0.0})
+
+    monkeypatch.setattr(seat_cli, "pass_until", spy)
+    _seats, uids = wired_seats(monkeypatch, game)
+
+    seat_cli.run(
+        ["--uid", uids["bob"], "--game", game, "pass-until", "end_step", "--max-seconds", "7.5"]
+    )
+    capsys.readouterr()
+    assert seen == [seat_cli.CLI_IDLE_REISSUE_SECONDS]

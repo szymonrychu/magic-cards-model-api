@@ -659,9 +659,11 @@ calling again by hand. Read `finished` in the JSON it prints:
   addressed to you, it is your own declare-attackers step, you are being
   attacked in your own declare-blockers step, a pass was refused, the game
   ended.
-- `finished: false` - it got as far as it could within `--max-seconds` and
-  handed the board back, because your opponent holds priority or the game is
-  frozen on a question only they can answer. **Run it again with
+- `finished: false` - it got as far as it could and handed the board back,
+  because your opponent holds priority or the game is frozen on a question
+  only they can answer. The command already re-issued the wait itself, with
+  the same `resume`, for about 90 seconds before handing it back, so this is
+  a long quiet stretch, not one bound. **Run it again with
   `--max-seconds` again, and the answer's `resume` object handed back
   verbatim:**
 
@@ -793,9 +795,11 @@ than a hedge.
   can run moves the game for them.
 - `wait` and `pass-until` take `--max-seconds` (0 by default, capped at 25):
   pass it and the command checks now, and - if nothing has changed yet -
-  keeps checking on the server for up to that bound before giving up and
-  telling you so. It always returns on its own within the bound, never holds
-  the connection open past it. **Use it instead of a bare `wait`/`pass-until`
+  keeps checking on the server for up to that bound, and re-issues that
+  wait itself while nothing is new, so a quiet opponent costs you one command,
+  not one per bound. If it still says "nothing new yet", about 90 seconds of
+  nothing have gone by: your opponent is still deciding - run it again. It
+  always returns on its own, well inside your command timeout. **Use it instead of a bare `wait`/`pass-until`
   plus `sleep`:**
 
       <seat_cli ...> wait --max-seconds 20

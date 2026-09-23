@@ -125,6 +125,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: dir`'s own docstring for why this exists at all.
 CLI_DRAFTS_DIR_ENV = "MCM_CLI_DRAFTS_DIR"
 
+#: L2: how long `wait`/`pass-until --max-seconds` re-issue an idle capped wait
+#: below the model (`seatkit._reissue_while_idle`), the CLI twin of
+#: `mcp.IDLE_REISSUE_SECONDS`. The one-shot seat runs this CLI through Claude
+#: Code's Bash tool, which kills a command at 120s by default; the last attempt
+#: may start just under this bound and run a full `MAX_WAIT_SECONDS` (25s).
+CLI_IDLE_REISSUE_SECONDS = 90.0
+
 
 def _cli_drafts_dir() -> Path:
     """Where a staged advisor draft is persisted between CLI invocations.
@@ -525,9 +532,10 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SECONDS",
         help=(
             "if nothing has changed yet, keep checking on the server for up "
-            "to this many seconds (capped at seatkit.MAX_WAIT_SECONDS) before "
-            "giving up and printing 'nothing new yet' anyway - the command "
-            "still always returns on its own, never past the bound. Use this "
+            "to this many seconds (capped at seatkit.MAX_WAIT_SECONDS), and "
+            "re-issue that wait itself while nothing is new, for up to about "
+            "90s in all, before printing 'nothing new yet' anyway - the "
+            "command still always returns on its own, never past that. Use this "
             "instead of `sleep N && ... wait`: it is the one call that used "
             "to take two. Left at 0 (the default), this is the plain "
             "check-and-return it has always been"
@@ -1196,7 +1204,9 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "if this call would otherwise have to hand the board back waiting "
             "for the opponent, keep trying for up to this many seconds "
-            "(capped at seatkit.MAX_WAIT_SECONDS) before giving up - use this "
+            "(capped at seatkit.MAX_WAIT_SECONDS), re-issued with the same "
+            "resume while still waiting, for up to about 90s in all, before "
+            "handing it back - use this "
             "instead of `sleep N && ... pass-until ... --resume ...`. Left at "
             "0 (the default), this returns the moment it would have to wait, "
             "exactly as it always has"
@@ -1850,6 +1860,7 @@ def run(argv: list[str] | None = None) -> int:
                 inputs=arm_inputs,
                 wake_to_draft=args.wake_to_draft and seat.advise,
                 draft_staged=draft_staged,
+                reissue_seconds=CLI_IDLE_REISSUE_SECONDS,
             )
             woken["state"]["wake_reason"] = woken["wake_reason"]
             for field_name in seatkit.ARMED_RESULT_FIELDS:
@@ -2046,6 +2057,7 @@ def run(argv: list[str] | None = None) -> int:
                 arm_reasoning=args.arm_reasoning,
                 opposing_archetype=args.opposing_archetype,
                 inputs=arm_inputs,
+                reissue_seconds=CLI_IDLE_REISSUE_SECONDS,
             )
             # `pass_until` above already did every bit of waiting this
             # command will do, fully unlocked (and refuses outright for an
