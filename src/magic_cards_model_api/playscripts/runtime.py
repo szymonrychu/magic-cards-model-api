@@ -59,6 +59,7 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
+from ..audit import UNRECORDED_ACTION
 from ..decisions import TOOL_FIELD_FOR_KIND
 from ..seatkit import (
     AUTOPASS_STEPS,
@@ -367,6 +368,10 @@ class _Context:
 
     def elapsed_ms(self) -> int:
         return int((time.monotonic() - self.call_started) * 1000)
+
+
+#: `_foreign`'s answer when the log holds a row still being written: look again.
+MID_WRITE: Literal["mid_write"] = "mid_write"
 
 
 class _Unfinished(Exception):
@@ -827,6 +832,11 @@ def _settle(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None
     while True:
         state = seat.fetch_state()
         foreign = _foreign(ctx, run, state)
+        if foreign == MID_WRITE:
+            if ctx.time_up():
+                raise _Unfinished
+            time.sleep(ctx.poll_seconds)
+            continue
         if foreign is not None:
             return foreign
         controlled = controlled_notice(state, ctx.me)
@@ -918,7 +928,9 @@ def _answer(
     )
 
 
-def _foreign(ctx: _Context, run: _Run, state: dict[str, Any]) -> ScriptExit | None:
+def _foreign(
+    ctx: _Context, run: _Run, state: dict[str, Any]
+) -> ScriptExit | Literal["mid_write"] | None:
     """`interrupted` when another player did something other than pass since
     the run's watermark, posted a pass that neither went through nor merely
     paused on this run's own decision while this run was mid-resolution, or
@@ -939,7 +951,12 @@ def _foreign(ctx: _Context, run: _Run, state: dict[str, Any]) -> ScriptExit | No
       nothing on the board moved.
 
     A pass that is instead refused, or paused on someone else's decision,
-    still interrupts."""
+    still interrupts.
+
+    `MID_WRITE` when a row is still the placeholder `store.replace` wrote
+    (its route fills it only after releasing the game's lock): the
+    watermark stays below it and the caller reads again, since the board it
+    committed may already be visible while the row cannot yet say who acted."""
     seat = ctx.seat
     read = seat.call_json("GET", f"/api/games/{seat.game_id()}/log?since={run.last_seq}")
     if not isinstance(read, dict) or not isinstance(read.get("log"), list):
@@ -951,6 +968,8 @@ def _foreign(ctx: _Context, run: _Run, state: dict[str, Any]) -> ScriptExit | No
     for entry in read["log"]:
         if not isinstance(entry, dict) or int(entry.get("seq") or 0) <= run.last_seq:
             continue
+        if entry.get("action") == UNRECORDED_ACTION:
+            return MID_WRITE
         detail = entry.get("detail") or {}
         player = detail.get("player")
         if not player or player == ctx.me:

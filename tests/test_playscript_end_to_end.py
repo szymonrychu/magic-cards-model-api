@@ -809,6 +809,52 @@ def test_bob_responding_to_the_fetch_interrupts_the_run_and_nothing_more_is_sent
     ] == [], "the run issued nothing after the response"
 
 
+def test_a_log_row_still_being_written_is_read_again_not_skipped(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`store.replace` commits the Bolt and writes its `records` row with an
+    empty payload under the game's lock; the route fills that row in only
+    after the lock is released. A run reading `GET .../log` in that window
+    gets an `(unrecorded)` row with no player: it must not step its
+    watermark past it, or the cast is never seen and the run blames the
+    stack object instead of the action. Held open here until the run has
+    read the placeholder, so the window the full suite hit by chance is
+    always hit."""
+    alice = seat_uid(game, ME)
+    play = play_of("boros-aggro", "fetch-untapped-shock")
+    register_corpus(client, game, alice, "boros-aggro")
+    fetch_shock_board(client, game)
+    add_card(client, game, "Mountain", OPPONENT, "battlefield")
+    add_card(client, game, "Lightning Bolt", OPPONENT, "hand")
+    server = mcp_server(client, monkeypatch, game)
+    placeholder_read = threading.Event()
+    real_entries_since = audit.entries_since
+    real_fill = store.fill_record
+
+    def entries_since(game_id: str, since: int) -> list[dict[str, Any]]:
+        rows = real_entries_since(game_id, since)
+        if any(row["action"] == audit.UNRECORDED_ACTION for row in rows):
+            placeholder_read.set()
+        return rows
+
+    def fill_record(game_id: str, seq: int, payload: dict[str, Any]) -> None:
+        if payload["action"] == "cast" and payload["detail"].get("player") == OPPONENT:
+            placeholder_read.wait(10)
+        real_fill(game_id, seq, payload)
+
+    monkeypatch.setattr(audit, "entries_since", entries_since)
+    monkeypatch.setattr(store, "fill_record", fill_record)
+
+    with opponent_responds_with_bolt(game) as casts:
+        out = run(server, alice, play["id"])["script_exit"]
+
+    assert placeholder_read.is_set(), "the run never read the half-written row"
+    assert [cast["status"] for cast in casts] == [200], casts
+    assert out["exit"] == "interrupted", out
+    assert out["stop_reason"].startswith(f"{OPPONENT} acted (cast"), out
+    assert [obj["controller"] for obj in state(client, game)["stack"]] == [OPPONENT, ME]
+
+
 def test_a_second_run_of_the_seed_in_the_same_turn_and_step_is_already_ran(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

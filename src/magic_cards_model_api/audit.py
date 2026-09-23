@@ -474,9 +474,14 @@ def record(
 #: them. `_run_command`/`_resume`/`pregame_settle` always fill every row
 #: they create (see `repository.py`'s `replace` docstring), so this is a
 #: defensive fallback for an unrecorded row, never the normal case.
+#: The `action` a row reads as while its payload is still the placeholder
+#: `store.replace` wrote - `_run_command` fills it only after releasing the
+#: game's lock, so a concurrent reader can see one mid-write.
+UNRECORDED_ACTION = "(unrecorded)"
+
 _UNRECORDED_DEFAULTS: dict[str, Any] = {
     "ts": None,
-    "action": "(unrecorded)",
+    "action": UNRECORDED_ACTION,
     "detail": {},
     "turn": None,
     "step": None,
