@@ -556,7 +556,9 @@ def test_first_strike_damage_is_not_reached_by_a_combat_with_no_first_striker() 
 
 def test_the_phase_track_marks_first_strike_damage_current_between_block_and_damage() -> None:
     order = run_module("priority.js", "m.STEPS")
-    assert order.index("declare_blockers") < order.index("first_strike_damage") < order.index(
-        "combat_damage"
+    assert (
+        order.index("declare_blockers")
+        < order.index("first_strike_damage")
+        < order.index("combat_damage")
     )
     assert run_module("priority.js", "m.PHASE_OF['first_strike_damage']") == "combat"

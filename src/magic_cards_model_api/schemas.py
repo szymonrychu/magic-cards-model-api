@@ -1137,8 +1137,10 @@ class OptionalCostChoice(RequestModel):
     charged for every mode beyond the first whether or not it is named; name
     it to hand over the objects a non-mana escalate cost takes) and
     `Harmonize` (CR 702.180a/b, `Casting.pay_harmonize` - the creature a
-    `keyword: Harmonize` cast taps to reduce its cost) - every optional cost
-    choice the engine charges."""
+    `keyword: Harmonize` cast taps to reduce its cost) and `Pay life`
+    (CR 601.2b, the life half of a "pay N life or pay {M}" additional cost,
+    `Casting.paying_life_for_additional_cost`) - every optional cost choice
+    the engine charges."""
 
     keyword: str
     times: int = 1

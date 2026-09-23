@@ -608,3 +608,82 @@ def test_a_repeatable_cost_is_paid_the_named_number_of_times(client, game):
     # {U} plus three replicate {1}s - times=1 would read {1}{U}, which is
     # what a boolean anywhere in the chain would have produced.
     assert body["cost"] == "{3}{U}"
+
+
+# -- "pay N life or pay {M}" ----------------------------------------------------
+#
+# CR 601.2b: "If the spell has alternative or additional costs that will be
+# paid as it's being cast ..., the player announces their intentions to pay
+# any or all of those costs." Redirect Lightning's "pay 5 life or pay {2}" is
+# one such choice: the life half has no object to name, so it is announced by
+# keyword - the engine's own `Pay life` handle - or the mana half is paid.
+
+
+def bolt_bob_then_hold_redirect(client, game: str) -> tuple[list[str], str, str]:
+    """Alice bolts Bob with Redirect Lightning in hand and one Mountain left:
+    enough for Redirect's {R}, not for its {2}."""
+    sources = mountains(client, game, 2)
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    add_card(client, game, "Redirect Lightning", "alice", "hand")
+    bolt = hand_card(client, game, "Lightning Bolt")["id"]
+    body = cast(client, game, bolt, targets=["bob"], mana_sources=sources[:1])
+    assert body["allowed"] is True, body
+    redirect = hand_card(client, game, "Redirect Lightning")["id"]
+    return sources[1:], redirect, bolt
+
+
+def test_redirect_lightnings_row_offers_the_life_half_by_name(client, game):
+    bolt_bob_then_hold_redirect(client, game)
+    row = cast_row(client, game, "Redirect Lightning")
+    life = offer(row, "Pay life")
+    assert life["cost"] == "pay 5 life or pay {2}"
+    assert life["rule"] == "CR 601.2b"
+    assert life["understood"] is True
+
+
+def test_announcing_the_life_half_pays_five_life_instead_of_two_mana(client, game):
+    sources, redirect, bolt = bolt_bob_then_hold_redirect(client, game)
+
+    body = cast(
+        client,
+        game,
+        redirect,
+        targets=[bolt],
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Pay life"}],
+    )
+
+    assert body["allowed"] is True, body
+    board = state(client, game)
+    assert [card["name"] for card in board["stack"]] == ["Redirect Lightning", "Lightning Bolt"]
+    assert life_of(board, "alice") == 15
+
+
+def test_unannounced_the_mana_half_is_charged(client, game):
+    sources, redirect, bolt = bolt_bob_then_hold_redirect(client, game)
+
+    body = cast(client, game, redirect, targets=[bolt], mana_sources=sources, dry_run=True)
+
+    assert body["allowed"] is False, body
+    assert "{2}{R}" in body["reason"]
+
+
+def test_the_life_half_named_on_a_card_without_one_is_refused(client, game):
+    sources = mountains(client, game, 1)
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    bolt = hand_card(client, game, "Lightning Bolt")["id"]
+
+    body = cast(
+        client,
+        game,
+        bolt,
+        targets=["bob"],
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Pay life"}],
+        dry_run=True,
+    )
+
+    assert body["allowed"] is False
+    assert body["reason"] == (
+        "Lightning Bolt has no 'pay N life or pay {M}' additional cost to pay with life (CR 601.2b)"
+    )

@@ -16,9 +16,11 @@ from uuid import UUID, uuid4
 
 from magic_cards_model.machines import Casting, Step
 from magic_cards_model.machines.casting import (
+    PAY_LIFE_KEYWORD,
     MarkedExile,
     PlayAction,
     adventure_face,
+    life_or_mana_additional_costs,
     play_permissions_on,
 )
 from magic_cards_model.machines.cost import additional_cost_phrases
@@ -934,7 +936,9 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
     offspring (CR 702.175a), blight (CR 701.68a), gift (CR 702.174a) and
     harmonize's "tapping up to one untapped creature you control"
     (CR 702.180a/b, `pay_harmonize`, which refuses unless the cast was
-    announced with `keyword: Harmonize`). `times` is passed to the two that
+    announced with `keyword: Harmonize`), and `Pay life` - the life half of a
+    "pay N life or pay {M}" additional cost (CR 601.2b), which has no object
+    to name and is otherwise charged as its mana half. `times` is passed to the two that
     take a count and repeats the call for the rest, whose own second-payment
     refusal then speaks.
 
@@ -985,11 +989,20 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
                 "(CR 702.120a) - choose the modes, not a count",
             )
             mode_costs.escalate = chosen
+        elif keyword == PAY_LIFE_KEYWORD:
+            _paid_once(choice, "one half of 'pay N life or pay {M}' is paid (CR 601.2b)")
+            life_halves = life_or_mana_additional_costs(casting.spell.card)
+            if not life_halves:
+                raise ValueError(
+                    f"{casting.spell.name} has no 'pay N life or pay {{M}}' additional cost "
+                    "to pay with life (CR 601.2b)"
+                )
+            casting.paying_life_for_additional_cost = frozenset(index for index, _ in life_halves)
         else:
             raise ValueError(
                 f"{choice.keyword} is not an optional cost this engine pays (CR 601.2b): "
                 "name one of Kicker, Multikicker, Replicate, Offspring, Blight, Gift, "
-                "Entwine, Escalate or Harmonize"
+                "Entwine, Escalate, Harmonize or Pay life"
             )
     return mode_costs
 

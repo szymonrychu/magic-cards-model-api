@@ -1338,7 +1338,9 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
                   `"Escalate:<card id>"` names what a non-mana escalate cost
                   discards; a `keyword="Harmonize"` cast taps the creature
                   named by `"Harmonize:<creature id>"` to cut its cost by that
-                  creature's power (CR 702.180a). Leave it empty to pay none.
+                  creature's power (CR 702.180a). `"Pay life"` pays the life
+                  half of a "pay N life or pay {M}" additional cost instead of
+                  its mana (CR 601.2b). Leave it empty to pay none.
                   A row entry reading `understood: false` is a cost the card
                   prints and this engine cannot charge - it is listed rather
                   than hidden, and naming it is refused, so plan without it.
