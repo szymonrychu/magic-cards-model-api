@@ -116,6 +116,7 @@ from magic_cards_model.machines.targeting import (
 from magic_cards_model.models import CardState, Game, Player, Zone
 from magic_cards_model.models.action import TargetSlot
 
+from .alternative_cost_names import canonical_value
 from .board_scope import on_one_board
 from .engine_api import dry_run_copy, unreadable_mode_notice, unreadable_modes
 
@@ -786,6 +787,7 @@ def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[st
             "source_name": option.source_name,
             "keyword": option.keyword,
             "description": option.description,
+            "alternative_cost": canonical_value(option),
             "cost": str(option.cost) if option.cost is not None else None,
             "requires": option.requires,
             "candidates": _alternative_cost_candidates(probe, option, caster),

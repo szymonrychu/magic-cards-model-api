@@ -2641,6 +2641,10 @@
       "AlternativeCostView": {
         "description": "One CR 118.9 alternative cost this card could be cast under\n(`affordances.alternative_costs`), available or not.",
         "properties": {
+          "alternative_cost": {
+            "title": "Alternative Cost",
+            "type": "string"
+          },
           "available": {
             "title": "Available",
             "type": "boolean"
@@ -2716,6 +2720,7 @@
           "rule",
           "source_name",
           "description",
+          "alternative_cost",
           "requires",
           "available"
         ],
@@ -3913,6 +3918,17 @@
       "CastOptionView": {
         "description": "One CR 601.2b keyword a hand, graveyard or exile card can be cast with\nright now (`serialize._cast_option_view`).\n\nFrom a graveyard or exile it is a CR 601.3 permission to cast the card\nfrom where it sits at all - flashback, mayhem, plot, foretell, madness,\nairbend, a printed CR 604.6 zone permission, or a keyword granted by\nanother permanent's static ability. From the hand it is a bare CR 118.9\nalternative cost that replaces the printed mana cost, which is evoke,\ndash, morph, megamorph, disguise, bestow and warp's hand half.\n\n`usable_now` is the option's own answer (`KeywordCastOption.why_not`:\nzone, marker owner and turn, \"discarded this turn\", a keyword's own \"as a\nsorcery\" clause) and never CR 117.1a's timing rule for the card itself -\n`GET .../legal-actions` is what answers \"could I do this right now\".",
         "properties": {
+          "alternative_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alternative Cost"
+          },
           "cost": {
             "anyOf": [
               {
@@ -3936,8 +3952,15 @@
             "title": "Granted By"
           },
           "keyword": {
-            "title": "Keyword",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword"
           },
           "pays_mana_cost": {
             "title": "Pays Mana Cost",

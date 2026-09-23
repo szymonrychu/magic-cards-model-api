@@ -21,11 +21,13 @@ from magic_cards_model.machines.casting import (
     adventure_face,
     play_permissions_on,
 )
+from magic_cards_model.machines.cost import additional_cost_phrases
 from magic_cards_model.machines.targeting import profile_for_text, targeting_profile
 from magic_cards_model.models import CardState, Color, Game, Layout, Zone
 from magic_cards_model.models.card_state import Counter, ExileMarker, counter_state_based_actions
 from pydantic import ValidationError
 
+from . import alternative_cost_names
 from .board_scope import STALE_BOARD, announced_edit, read_on_one_board
 from .decisions import player_or_card
 from .schemas import (
@@ -900,6 +902,26 @@ def _announce_printed_additional_costs(game: Game, req: CastRequest, casting: Ca
             setattr(casting, name, [find_card(game, card_id) for card_id in ids])
 
 
+def _alternative_cost_objects(
+    game: Game, req: CastRequest, casting: Casting
+) -> list[CardState] | None:
+    """The objects an alternative cost is paid with - `choosing`, or, for a
+    card that prints no additional cost (so `sacrificing`/`discarding`/
+    `exiling`/`tapping` have nothing else they could mean), whatever the
+    caller named there instead. A live seat pitched Force of Negation's blue
+    card as `exiling` and was silently charged the mana cost."""
+    if req.choosing:
+        return [find_card(game, card_id) for card_id in req.choosing]
+    if additional_cost_phrases(casting.spell.card):
+        return None
+    named = [
+        card_id
+        for field_name in _PRINTED_ADDITIONAL_COST_FIELDS
+        for card_id in getattr(req, field_name) or []
+    ]
+    return [find_card(game, card_id) for card_id in named] or None
+
+
 def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> _ModeCosts:
     """CR 601.2b's announcement of the optional costs this cast pays - "If the
     spell has alternative or additional costs that will be paid as it's being
@@ -1097,7 +1119,7 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
     except (KeyError, ValueError) as exc:
         return refused(exc)
 
-    chosen = [find_card(game, card_id) for card_id in req.choosing] if req.choosing else None
+    chosen = _alternative_cost_objects(game, req, casting)
     try:
         if req.alternative_cost is not None:
             # CR 118.9, announced at CR 601.2b - before targets are chosen at
@@ -1105,8 +1127,14 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
             # below. `use_alternative_cost` is the engine's one front door
             # over all four origins (a printed pitch offer, a keyword, a
             # granted permission, another permanent's static ability), so
-            # this needs no branch per origin.
-            casting.use_alternative_cost(req.alternative_cost, choosing=chosen)
+            # this needs no branch per origin. The value is resolved to an
+            # index first (`alternative_cost_names.resolve`): the engine
+            # matches only keyword/source name, never the printed phrase
+            # `legal_actions` advertises on the row.
+            which = alternative_cost_names.resolve(
+                casting.spell.name, casting.alternative_costs, req.alternative_cost
+            )
+            casting.use_alternative_cost(which, choosing=chosen)
         elif req.keyword:
             # CR 601.2b: plot and foretell are announced this way - the
             # keyword names both the exile pile the card must be in and what
@@ -1123,6 +1151,12 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
             # both tell a caller to announce it, so the one spelling every
             # seat is pointed at was the one spelling that could not work.
             casting.use_keyword(req.keyword, choosing=chosen)
+        elif chosen and not permitted:
+            # Objects named for a cost with no announcement: `choosing` means
+            # nothing but an alternative cost's objects, so this announces the
+            # only available one - and the engine refuses, listing them, when
+            # there is more than one (CR 118.9a).
+            casting.use_alternative_cost(None, choosing=chosen)
         elif permitted:
             # CR 601.3's dynamic half: a live `PlayPermission` covering this
             # exact object, player and action - suspend's own free cast

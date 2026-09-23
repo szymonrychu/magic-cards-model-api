@@ -1010,9 +1010,14 @@ class CastRequest(BoardRead):
     .../affordances/{card_id}` lists the artifacts that qualify, and a cast
     row names a set that pays in its own `improvise`."""
     alternative_cost: int | str | None = None
-    """The CR 118.9 alternative cost this spell is announced under, as either
-    its `index` in `GET .../affordances/{card_id}`'s `alternative_costs` list
-    or the option's keyword/source name. This is how Force of Negation gets
+    """The CR 118.9 alternative cost this spell is announced under. Send the
+    option's `alternative_cost` value - the one its `legal-actions` row, its
+    `cast_options` entry and `GET .../affordances/{card_id}`'s
+    `alternative_costs[i]` all print. Also accepted: its `index`, its keyword
+    or source name, and the card's printed phrase in any case or punctuation,
+    with or without "you may" / "rather than pay this spell's mana cost"
+    ("exile a blue card from your hand"). An unmatched value is refused
+    naming the card and listing every accepted value. This is how Force of Negation gets
     pitched: a seat had no way to *find* an alternative cost before, and so
     could not announce one - see `affordances.alternative_costs`. Announced
     at CR 601.2b, ahead of targets, and mutually exclusive with `keyword`
@@ -1988,9 +1993,16 @@ class CastOptionView(BaseModel):
     sorcery" clause) and never CR 117.1a's timing rule for the card itself -
     `GET .../legal-actions` is what answers "could I do this right now"."""
 
-    keyword: str
+    keyword: str | None
+    """`None` only for a hand card's own printed alternative cost (Force of
+    Negation's pitch), which has no keyword."""
     rule: str
     pays_mana_cost: bool
+    alternative_cost: str | None = None
+    """The one value to send as `POST .../actions/cast`'s `alternative_cost`
+    for this option - `None` when it does not replace the mana cost. The same
+    string the option's `legal-actions` row prints; the printed phrase in any
+    case or punctuation is accepted too."""
     cost: str | None
     usable_now: bool
     why_not: str | None
@@ -3314,6 +3326,12 @@ class AlternativeCostView(BaseModel):
     source_name: str
     keyword: str | None = None
     description: str
+    alternative_cost: str
+    """The one value to send as `POST .../actions/cast`'s `alternative_cost`
+    to announce this option - the same string its `legal-actions` row prints
+    (the keyword, the printed phrase, or the granting card's name). The index,
+    and the printed phrase in any case, punctuation or with its "you may" /
+    "rather than pay this spell's mana cost" framing, are accepted too."""
     cost: str | None = None
     requires: int
     candidates: list[ObjectCostCandidateView] = Field(default_factory=list)

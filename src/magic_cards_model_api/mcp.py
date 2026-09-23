@@ -1279,11 +1279,16 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
                   chosen, 0 given" - never a silent no-op. `GET
                   .../affordances/{card_id}`'s `alternative_costs[i]` says how many
                   (`requires`) and which cards qualify (`candidates`).
-                - `alternative_cost` - the same CR 601.2b announcement named by its
-                  `index` (or source name) out of that same `alternative_costs`
-                  list, for an alternative cost that has no keyword of its own -
-                  Force of Negation's printed "you may exile a blue card from your
-                  hand rather than pay this spell's mana cost". `keyword` and
+                - `alternative_cost` - the same CR 601.2b announcement for an
+                  alternative cost with no keyword of its own. Send the option's
+                  `alternative_cost` value, the one string its legal-actions row,
+                  its `cast_options` entry and `alternative_costs[i]` all print -
+                  for Force of Negation that is "exile a blue card from your hand".
+                  The card's printed phrase is accepted too, in any case or
+                  punctuation and with or without "you may" / "rather than pay
+                  this spell's mana cost", as are the option's `index` and
+                  keyword; anything else is refused listing every accepted value.
+                  The pitched card goes in `choosing`. `keyword` and
                   `alternative_cost` are two spellings of one announcement; only
                   one may ever be paid (CR 118.9a), and `choosing` feeds whichever
                   you used.

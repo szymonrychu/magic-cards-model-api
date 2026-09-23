@@ -417,6 +417,16 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         "the browser picks an alternative cost from `CardView.cast_options` and names the "
         "keyword back in the request body; the row's echo of it is read by nothing",
     ),
+    ("AlternativeCostView", "alternative_cost"): _Reason(
+        "agent-facing",
+        "the one `alternative_cost` string an MCP seat should send for this option; the "
+        "browser's pitch tray announces the option by its `index` instead",
+    ),
+    ("CastOptionView", "alternative_cost"): _Reason(
+        "agent-facing",
+        "the one `alternative_cost` string an MCP seat should send for this option; the "
+        "browser names the option by `keyword` or fetches the affordance for it",
+    ),
     ("Action", "attacker_id"): _Reason(
         "superseded",
         "blocker drafting happens on the board's own combat view in `ui/combat.js`, which "

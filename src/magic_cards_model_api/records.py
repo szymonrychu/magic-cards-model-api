@@ -55,6 +55,7 @@ from magic_cards_model.machines.decisions import PendingDecision
 from magic_cards_model.models import CardState, Game
 
 from .action_rows import legal_action_rows
+from .alternative_cost_names import normalise
 from .audit import (
     PLAN_ACTION,
     SCRIPT_RUN_ACTION,
@@ -1168,10 +1169,19 @@ def _agreement(action: dict[str, Any], body: dict[str, Any]) -> int | None:
         if want is None:
             agreed += 1 if have is None else 0
             continue
-        if have is None or str(have).casefold() != str(want).casefold():
+        if have is None or _spelled(field, have) != _spelled(field, want):
             return None
         agreed += 1
     return agreed
+
+
+def _spelled(field: str, value: Any) -> str:
+    """One field's value compared the way the cast itself reads it: an
+    `alternative_cost` in any case, punctuation or printed framing names the
+    same option (`alternative_cost_names.normalise`)."""
+    if field == "alternative_cost":
+        return normalise(str(value))
+    return str(value).casefold()
 
 
 def _card_reference(body: dict[str, Any]) -> tuple[str, bool] | None:

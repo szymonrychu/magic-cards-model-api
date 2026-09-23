@@ -26,6 +26,7 @@ from magic_cards_model.models.mana import ManaPool
 
 from . import assets, commands, player_control, scryfall
 from .affordances import cast_hints
+from .alternative_cost_names import canonical_value
 from .board_scope import on_one_board, read_on_one_board
 from .commands import paused_game
 from .decisions import PendingDecision
@@ -359,6 +360,7 @@ def _cast_option_view(
         "keyword": option.keyword,
         "rule": option.rule,
         "pays_mana_cost": option.pays_mana_cost,
+        "alternative_cost": None if option.pays_mana_cost else option.keyword,
         "cost": str(option.cost) if option.cost is not None else None,
         "usable_now": reason is None,
         "why_not": reason,
@@ -441,6 +443,36 @@ def _cast_options_of(game: Game, state: CardState) -> list[dict[str, Any]]:
     views = [_cast_option_view(game, state, option, caster) for option in options]
     for granted in granted_cast_options(game, state, caster, state.zone):
         views.append(_cast_option_view(game, state, granted.option, caster, granted.source_name))
+    if state.zone is Zone.HAND:
+        views.extend(_printed_alternative_cost_views(game, state, caster))
+    return views
+
+
+def _printed_alternative_cost_views(
+    game: Game, state: CardState, caster: str
+) -> list[dict[str, Any]]:
+    """The card's own printed CR 118.9 offers - Force of Negation's and Force
+    of Will's pitch, Snuff Out's life payment - as `cast_options` entries.
+    They carry no keyword, so they used to appear nowhere a seat reads a hand
+    card: a live seat went looking in `cast_options` for Force of Negation's
+    spelling and found nothing. `alternative_cost` is the one value to send
+    (`alternative_cost_names.canonical_value`, the same string the
+    `legal-actions` row prints)."""
+    views: list[dict[str, Any]] = []
+    for option in game.alternative_costs_for(state, caster):
+        if str(option.source.value) != "printed":
+            continue
+        views.append(
+            {
+                "keyword": None,
+                "rule": option.rule,
+                "pays_mana_cost": False,
+                "alternative_cost": canonical_value(option),
+                "cost": str(option.cost) if option.cost is not None else None,
+                "usable_now": option.available,
+                "why_not": option.unavailable,
+            }
+        )
     return views
 
 
