@@ -43,7 +43,7 @@ from typing import Any
 import httpx
 from conftest import add_card, find, life_of, state
 from fastapi.testclient import TestClient
-from test_off_zone_activation_endpoint import stock_waker_board
+from test_legal_actions_endpoint import by_kind, legal_actions
 
 from magic_cards_model_api import seat_cli
 from magic_cards_model_api.main import app
@@ -280,29 +280,46 @@ def test_mcp_activate_tool_without_sacrificing_is_refused_not_crashed(client, ga
     assert "sacrifice needs 1 card(s) chosen, 0 given" in answer["outcome"]["reason"]
 
 
-# -- the general shape: exiling is refused cleanly off the battlefield ------
+# -- the general shape: an exile cost is paid off the battlefield too ------
 
 
-def test_exiling_is_refused_not_crashed_for_an_off_battlefield_activation(client, game):
-    """`machines.keywords.off_zone_activation` takes no `exiling=` at all -
-    naming one for an ability that functions off the battlefield (Waker of
-    Waves' own Discard-cost Channel-shaped ability) must be refused in words,
-    not crash the request with a bare `TypeError` on an unexpected keyword."""
-    rig = stock_waker_board(client, game)
+def test_an_off_battlefield_exile_cost_is_paid_end_to_end(client, game):
+    """Scrapheap Scrounger's graveyard ability costs "Exile another creature
+    card from your graveyard" (CR 113.6j, CR 602.2b). The engine offers it as
+    an `activate_off_zone` action and `off_zone_activation` takes `exiling=`,
+    so the route must thread the seat's chosen card through rather than
+    refuse it - otherwise the seat is offered an action it can never pay."""
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Elvish Mystic", "alice", "graveyard")
+    add_card(client, game, "Scrapheap Scrounger", "alice", "graveyard")
+    board = state(client, game)
+    scrounger = find(board["graveyards"]["alice"], "Scrapheap Scrounger")
+    mystic = find(board["graveyards"]["alice"], "Elvish Mystic")
+    swamps = [c["id"] for c in board["battlefield"] if c["name"] == "Swamp"]
 
+    (offer,) = [
+        a
+        for a in by_kind(legal_actions(client, game), "activate_off_zone")
+        if a["card_id"] == scrounger["id"]
+    ]
     response = client.post(
         f"/api/games/{game}/actions/activate",
         json={
             "player": "alice",
-            "card_id": rig["waker_id"],
-            "ability_index": 0,
-            "exiling": [rig["waker_id"]],
-            "mana_sources": rig["islands"],
+            "card_id": scrounger["id"],
+            "ability_index": offer["ability_index"],
+            "exiling": [mystic["id"]],
+            "mana_sources": swamps,
         },
     )
     body = response.json()
-    assert body["allowed"] is False
-    assert "exile" in body["reason"].lower()
+    assert body["allowed"] is True, body
+    after = state(client, game)
+    assert [c["name"] for c in after["exile"]] == ["Elvish Mystic"]
+    # The cost is paid; the return itself waits on the stack (CR 113.7a).
+    assert [c["name"] for c in after["graveyards"]["alice"]] == ["Scrapheap Scrounger"]
+    assert len(after["stack"]) == 1
 
 
 # -- a paused activation completes through /decide, then priority passes ---

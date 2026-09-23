@@ -1657,27 +1657,12 @@ def _activate_off_zone_ability(game: Game, card: CardState, req: ActivateRequest
     def resolve_states(ids: list[UUID] | None) -> list[CardState] | None:
         return [find_card(game, card_id) for card_id in ids] if ids else None
 
-    if req.exiling:
-        # `machines.keywords.off_zone_activation`/`off_battlefield_activation`
-        # take no `exiling=` at all - CR 113.6j/113.6m's own examples in the
-        # pool (Waker of Waves, Boseiju's Channel) never pair with an exile
-        # cost, and the engine has built no shape for one there yet. Refused
-        # here, in words, rather than passed through: `off_zone_activation`
-        # would otherwise raise a bare `TypeError` on the unexpected keyword,
-        # which is a crash a seat cannot read as a refusal.
-        return refused(
-            f"{card.name}'s ability functions off the battlefield (CR 113.6j/113.6m), "
-            "and an off-battlefield activation has no exile-as-cost path yet - only "
-            "sacrificing and discarding are supported there"
-        )
-
     if req.x_value is not None:
         # `off_zone_activation` takes no `x_value=` at all - none of the
         # CR 113.6j/113.6m abilities in the pool carry an `{X}` in a cost
         # that also functions off the battlefield, so the engine has built
-        # no shape for one there yet either. Refused in words, the same
-        # reasoning as the `exiling` guard above, rather than a bare
-        # `TypeError` on the unexpected keyword.
+        # no shape for one there yet either. Refused in words rather than a
+        # bare `TypeError` on the unexpected keyword.
         return refused(
             f"{card.name}'s ability functions off the battlefield (CR 113.6j/113.6m), "
             "and an off-battlefield activation has no X-announcement path yet"
@@ -1697,6 +1682,7 @@ def _activate_off_zone_ability(game: Game, card: CardState, req: ActivateRequest
             targets=targets,
             sacrificing=resolve_states(req.sacrificing),
             discarding=resolve_states(req.discarding),
+            exiling=resolve_states(req.exiling),
         )
     except ValueError as exc:
         return refused(exc)
