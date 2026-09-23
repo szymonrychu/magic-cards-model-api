@@ -339,14 +339,35 @@ def observations(line: dict) -> Iterator[tuple[str, str]]:
     can reach the published state even by accident. `thinking` blocks, which
     `events` skips because they carry no readable text, are exactly what
     this one wants: their presence is the evidence.
+
+    A `user` line carrying a `tool_result` is an observation too, and yields
+    `("thinking", "")` - the same kind a `thinking` block does. This used to
+    be ignored outright, which is exactly what let a real stall through
+    unlabelled (game 048e1879, 2026-09-23): `opening_hand_action` returned at
+    17:28:46, and one Opus call at EFFORT=high then thought for 106s (7000
+    thinking tokens) with nothing else written to the transcript before its
+    next `assistant` block - so the published state sat on stale 'deciding'
+    with no elapsed time for the whole 106s, and the stall banner, which
+    defers to a live activity label, could not fire either. The instant a
+    tool call returns, the model is back to reasoning about what it read,
+    which is real evidence of activity even though this parser is never
+    shown what about - so the state moves to THINKING from that moment, and
+    `CurrentActivity` ages it from this line's own timestamp rather than
+    from whatever tool call preceded it.
     """
-    if line.get("type") != "assistant":
+    kind = line.get("type")
+    if kind not in ("assistant", "user"):
         return
     message = line.get("message")
     if not isinstance(message, dict):
         return
     content = message.get("content")
     if not isinstance(content, list):
+        return
+    if kind == "user":
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                yield "thinking", ""
         return
     for block in content:
         if not isinstance(block, dict):

@@ -133,6 +133,80 @@ def test_stale_activity_does_not_suppress_the_stall_notice():
     assert "claude" in message
 
 
+# ---- activity: stuck 'thinking'/'deciding' is still a stall --------------
+#
+# Prod diagnosis (game 048e1879, 2026-09-23): `opening_hand_action` returned
+# at 17:28:46, then one Opus call at EFFORT=high thought for 106s (7000
+# thinking tokens) while the seat HELD PRIORITY in the human's upkeep. The
+# pill showed 'deciding' with no elapsed time, and the unconditional
+# suppression above meant this banner could never fire no matter how long
+# that ran. `thinking`/`deciding` past the same 45s grace this banner
+# otherwise uses is the one live activity state that must NOT be suppressed.
+
+
+def test_a_seat_stuck_thinking_past_the_grace_is_reported_even_though_activity_is_live():
+    status = {
+        "state": "dispatched",
+        "last_error": None,
+        "activity": {"state": "thinking", "seconds": 90, "seq": 5},
+    }
+    message = notice(board(), status, 5)
+    assert message is not None
+    assert "claude" in message
+    assert "90s" in message
+
+
+def test_a_seat_stuck_deciding_past_the_grace_is_also_reported():
+    status = {
+        "state": "dispatched",
+        "last_error": None,
+        "activity": {"state": "deciding", "seconds": 90, "seq": 5},
+    }
+    message = notice(board(), status, 5)
+    assert message is not None
+    assert "90s" in message
+
+
+def test_a_seat_thinking_under_the_grace_is_left_alone():
+    status = {
+        "state": "dispatched",
+        "last_error": None,
+        "activity": {"state": "thinking", "seconds": 30, "seq": 5},
+    }
+    assert notice(board(), status, 5) is None
+
+
+def test_exactly_the_grace_boundary_is_not_yet_a_stall():
+    """`> 45`, not `>=` - the boundary second itself is still grace."""
+    status = {
+        "state": "dispatched",
+        "last_error": None,
+        "activity": {"state": "thinking", "seconds": 45, "seq": 5},
+    }
+    assert notice(board(), status, 5) is None
+
+
+def test_a_human_holding_priority_is_never_accused_however_long_the_ai_last_thought():
+    status = {
+        "state": "dispatched",
+        "last_error": None,
+        "activity": {"state": "thinking", "seconds": 90, "seq": 5},
+    }
+    assert notice(board(priority_holder="you"), status, 5) is None
+
+
+def test_a_stuck_acting_state_still_suppresses_the_notice_however_long_it_runs():
+    """Only `thinking`/`deciding` get the stall treatment - every other live
+    state is a seat visibly doing something on the board or the stack, and
+    keeps the old unconditional suppression."""
+    status = {
+        "state": "dispatched",
+        "last_error": None,
+        "activity": {"state": "acting", "seconds": 90, "seq": 5},
+    }
+    assert notice(board(), status, 5) is None
+
+
 def test_an_error_beats_live_activity():
     """The server already knows this seat is broken - a transcript line from
     before it broke does not get to override that."""

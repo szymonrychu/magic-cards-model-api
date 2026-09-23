@@ -423,15 +423,61 @@ def test_the_ai_pill_says_what_the_agent_is_actually_doing() -> None:
         """,
     )
     assert result["seen"] == [
-        "AI (claude): waiting for priority",
-        "AI (claude): reading cards",
-        "AI (claude): thinking",
-        "AI (claude): making its play",
-        "AI (claude): making its play",
+        "AI (claude): waiting for priority for 0s",
+        "AI (claude): reading cards for 0s",
+        "AI (claude): thinking for 0s",
+        "AI (claude): making its play for 0s",
+        "AI (claude): making its play for 20s",
     ]
     assert "state-thinking" in result["className"], (
         "the pill's styling stays keyed to the seat's own state, not to the activity"
     )
+
+
+def test_the_pill_shows_the_agent_s_own_elapsed_seconds() -> None:
+    """V1: the production stall (game 048e1879, 2026-09-23) - a 106s Opus
+    call showed as a bare 'deciding' with no way to tell a human watching it
+    that 106s, not 6, had gone by. The pill now carries the wrapper's own
+    `activity.seconds` alongside the label."""
+    result = run_module(
+        "render/panels.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const store = makeStore({
+            state: baseState(),
+            aiStatus: null,
+            aiUid: "ai-uid",
+            connection: "ok",
+          });
+          m.mountTopbar(document, store, {
+            onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+          });
+          const panel = document.querySelector("#ai-panel");
+          store.set({
+            aiStatus: {
+              uid: "ai-uid", player: "claude", mechanism: "kubernetes",
+              state: "thinking", activity: { state: "thinking", seconds: 106, seq: 1 },
+            },
+          });
+          return panel.textContent;
+        })()
+        """,
+    )
+    assert result == "AI (claude): thinking for 106s"
+
+
+def test_elapsed_suffix_switches_to_hh_mm_ss_past_an_hour() -> None:
+    """`elapsedSuffix` on its own: an hour-plus wait is unreachable through
+    the wired pill today (`AI_ACTIVITY_STALE_SECONDS` retires the label
+    itself long before an hour), but the formatting is pinned directly so it
+    is right the day that changes."""
+    assert run_module("render/panels.js", "m.elapsedSuffix(106)") == " for 106s"
+    assert run_module("render/panels.js", "m.elapsedSuffix(3725)") == " since 01:02:05"
+    assert run_module("render/panels.js", "m.elapsedSuffix(3600)") == " since 01:00:00"
+    assert run_module("render/panels.js", "m.elapsedSuffix(-1)") == ""
+    assert run_module("render/panels.js", "m.elapsedSuffix('soon')") == ""
+    assert run_module("render/panels.js", "m.elapsedSuffix(null)") == ""
 
 
 def test_the_ai_pill_falls_back_to_the_seat_state_when_nothing_was_observed() -> None:

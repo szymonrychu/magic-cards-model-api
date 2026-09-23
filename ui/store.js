@@ -263,19 +263,31 @@ export const AI_STALL_SECONDS = 45;
  * waiting 45 seconds to report something the driver reported at second one.
  *
  * A board can sit unchanged for minutes while a hard turn is genuinely being
- * played out - reading cards, thinking, working through a plan - and the
- * same status payload that says "priority hasn't moved" already carries
- * `activity`. Accusing a seat the activity pill is actively showing as
- * working ("AI (claude): making its play") is not merely ugly, it is false,
- * and the data proving it false is already in hand. So: if
- * `aiSeatActivityLabel` would put a live word on the pill right now, that is
- * this seat genuinely being observed to act, and the timer below never even
- * gets to look at `unchangedSeconds` - deliberately the exact same call the
- * pill itself makes, not a second copy of its staleness math, so the two
- * can never say two different things about the same payload. It already
- * reads the payload's own `activity.seconds` rather than a clock of its own
- * (see its own comment for why), so this defers to it rather than
- * re-deriving that.
+ * played out - reading cards, working through a plan - and the same status
+ * payload that says "priority hasn't moved" already carries `activity`.
+ * Accusing a seat the activity pill is actively showing as working
+ * ("AI (claude): making its play") is not merely ugly, it is false, and the
+ * data proving it false is already in hand. So: if `aiSeatActivityLabel`
+ * would put a live word on the pill right now, that is deliberately the
+ * exact same call the pill itself makes, not a second copy of its staleness
+ * math, so the two can never say two different things about the same
+ * payload - and it reads the payload's own `activity.seconds` rather than a
+ * clock of its own (see its own comment for why), so this defers to it
+ * rather than re-deriving that.
+ *
+ * `thinking` and `deciding` are the one exception, and are checked against
+ * `activity.seconds` itself rather than deferred to outright: a seat stuck
+ * "thinking" or "deciding" past the same grace this banner otherwise uses
+ * has not stopped holding priority just because the pill has a fresh word
+ * for it. The production stall this closes (game 048e1879, 2026-09-23): one
+ * Opus call at EFFORT=high thought for 106s (7000 thinking tokens) while
+ * the seat held priority in the human's upkeep, the pill showed 'deciding'
+ * with no elapsed time, and the old unconditional suppression here meant
+ * this banner could never fire no matter how long that ran. Every other
+ * live state - `waiting`, `reading_board`, `reading_cards`, `reading_rules`,
+ * `acting` - is still a seat visibly doing something on the board or the
+ * stack, so it keeps the old behaviour: suppressed outright, however long
+ * it runs.
  *
  * A stale observation does not get this benefit: `aiSeatActivityLabel`
  * stops vouching for one past `AI_ACTIVITY_STALE_SECONDS` (300s), so past
@@ -348,8 +360,29 @@ export function aiStallNotice(state, aiPlayer, aiStatus, unchangedSeconds, grace
   if (aiStatus && aiStatus.state === "unreachable") {
     return `${aiPlayer}'s agent cannot be reached by the game server`;
   }
-  if (aiSeatActivityLabel(state, aiStatus)) return null;
   const limit = grace === undefined ? AI_STALL_SECONDS : grace;
+  if (aiSeatActivityLabel(state, aiStatus)) {
+    // Live activity ordinarily beats the timer below outright - see this
+    // function's own doc comment. But `thinking`/`deciding` past the same
+    // grace is not "genuinely mid-turn", it is a seat that has held
+    // priority doing nothing an opponent can see for as long as the timer
+    // itself allows: the production stall this covers (game 048e1879,
+    // 2026-09-23) held one Opus call thinking for 106s while the pill said
+    // 'deciding', and the old unconditional suppression here meant the
+    // banner could never fire no matter how long that ran. Any other live
+    // state (`waiting`, `reading_board`, `reading_cards`, `reading_rules`,
+    // `acting`) is still a seat visibly doing something and keeps the old
+    // behaviour - suppressed outright, however long it has run.
+    const activity = aiStatus.activity;
+    const activitySeconds = activity ? Number(activity.seconds) : NaN;
+    const stuckThinking =
+      activity &&
+      (activity.state === "thinking" || activity.state === "deciding") &&
+      Number.isFinite(activitySeconds) &&
+      activitySeconds > limit;
+    if (!stuckThinking) return null;
+    return `${aiPlayer} has held priority for ${Math.floor(activitySeconds)}s without acting`;
+  }
   if (!(unchangedSeconds >= limit)) return null;
   return `${aiPlayer} has held priority for ${Math.floor(unchangedSeconds)}s without acting`;
 }

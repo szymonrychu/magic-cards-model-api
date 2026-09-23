@@ -119,6 +119,38 @@ function showFallbackBox(root, promptText) {
   });
 }
 
+// `<label> for <N>s`, or `<label> since HH:MM:SS` once the wait has run an
+// hour or more - the elapsed half of the AI pill, off the activity's own
+// `seconds` (the agent container's clock - see `CurrentActivity` in
+// `mtg_agent/wrapper/activity.py`, not this browser's). Diagnosed against a
+// real stall (game 048e1879, 2026-09-23): one Opus call thought for 106s
+// while the pill showed a bare "deciding" with no way to tell a human
+// watching it that 106s, rather than 6, had gone by. `null`/negative/
+// non-finite ages render nothing, rather than a stray "for NaNs" - the
+// caller only reaches this once it already has a live label to attach it
+// to, but a malformed `seconds` on the wire must never become one.
+//
+// Exported (unlike this file's other render helpers) purely so
+// `tests/test_ui_panels.py` can pin its HH:MM:SS branch directly: reaching
+// it through the wired pill also requires an `activity.seconds` under
+// `AI_ACTIVITY_STALE_SECONDS` (300s, `ui/store.js`), which a hour-plus wait
+// never is - the pill retires that old an observation before this ever
+// gets to format it. The branch stays anyway, defensively, for the day that
+// threshold changes or another caller reuses this off a clock of its own.
+export function elapsedSuffix(seconds) {
+  // `Number(null)` is `0`, which would otherwise read as a real "for 0s"
+  // rather than as the absence this actually is.
+  if (seconds === null || seconds === undefined) return "";
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return "";
+  const whole = Math.floor(value);
+  if (whole < 3600) return ` for ${whole}s`;
+  const hh = String(Math.floor(whole / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((whole % 3600) / 60)).padStart(2, "0");
+  const ss = String(whole % 60).padStart(2, "0");
+  return ` since ${hh}:${mm}:${ss}`;
+}
+
 function renderAiPanel(root, app) {
   const panel = root.querySelector("#ai-panel");
   if (!panel) return;
@@ -143,9 +175,14 @@ function renderAiPanel(root, app) {
   // state, exactly as this pill has always read. The class stays keyed to
   // `status.state` either way - the styling is about the seat's health, not
   // about which of eight things it is doing.
-  const doing = aiSeatActivityLabel(app.state, status) || status.state;
+  const activityLabel = aiSeatActivityLabel(app.state, status);
+  const doing = activityLabel || status.state;
+  // The elapsed suffix only attaches to a live activity label - a plain
+  // seat-state fallback (`status.state`) has no `activity.seconds` of its
+  // own to honestly report against.
+  const suffix = activityLabel ? elapsedSuffix(status.activity && status.activity.seconds) : "";
   panel.appendChild(
-    h("span", { class: `pill ${bad ? "bad " : ""}state-${status.state}` }, `AI (${status.player}): ${doing}`)
+    h("span", { class: `pill ${bad ? "bad " : ""}state-${status.state}` }, `AI (${status.player}): ${doing}${suffix}`)
   );
   if (bad) panel.appendChild(h("button", { class: "ghost", onClick: () => showAiError(root, status) }, "why"));
 }

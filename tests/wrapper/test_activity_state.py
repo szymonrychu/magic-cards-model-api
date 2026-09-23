@@ -152,6 +152,33 @@ def test_a_long_pass_until_reads_as_waiting_for_its_whole_wait():
     assert snapshot["seq"] == 1
 
 
+def test_a_tool_result_after_a_decision_call_is_thinking_aged_from_the_result():
+    """The exact production stall (game 048e1879, 2026-09-23):
+    `opening_hand_action` (DECIDING) returns at 17:28:46, and one Opus call
+    then thinks for 106s with no `assistant` block landing in between. The
+    published state must move to THINKING the moment the tool result
+    arrives, aged from that result's own timestamp - not sit on stale
+    'deciding' with no elapsed time for the whole wait."""
+    now = [epoch("2026-09-23T17:28:46Z")]
+    current = activity.CurrentActivity(now=lambda: now[0])
+    current.feed(
+        [
+            assistant(tool("mcp__mtg__opening_hand_action", {}), timestamp="2026-09-23T17:28:40Z"),
+            {
+                "type": "user",
+                "timestamp": "2026-09-23T17:28:46Z",
+                "message": {"content": [{"type": "tool_result", "content": "ok"}]},
+            },
+        ]
+    )
+    now[0] += 106.0
+
+    snapshot = current.snapshot()
+
+    assert snapshot["state"] == activity.THINKING
+    assert snapshot["seconds"] == pytest.approx(106.0, abs=0.5)
+
+
 def test_a_thinking_block_is_reported_as_thinking():
     assert activity.state_for("thinking", "") == activity.THINKING
 
@@ -210,10 +237,32 @@ def test_observations_yield_the_kind_and_the_tool_name_and_nothing_else():
     ]
 
 
-def test_observations_ignore_a_user_line_entirely():
+def test_observations_yield_thinking_for_a_tool_result_line():
+    """A `tool_result` returning is itself an observation now, not ignored -
+    see `observations`'s own docstring for the production stall (game
+    048e1879, 2026-09-23) this fixes."""
     result = {
         "type": "user",
         "message": {"role": "user", "content": [{"type": "tool_result", "content": "ok"}]},
+    }
+    assert list(activity.observations(result)) == [("thinking", "")]
+
+
+def test_a_failed_tool_result_is_also_a_thinking_observation():
+    result = {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{"type": "tool_result", "content": "x", "is_error": True}],
+        },
+    }
+    assert list(activity.observations(result)) == [("thinking", "")]
+
+
+def test_observations_ignore_a_user_line_with_no_tool_result():
+    result = {
+        "type": "user",
+        "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]},
     }
     assert list(activity.observations(result)) == []
 
@@ -272,19 +321,13 @@ def test_a_clock_that_disagrees_never_publishes_a_negative_age():
 
 
 def test_an_unmapped_event_leaves_the_previous_state_standing():
+    """`redacted_thinking` (or any assistant block type this parser has not
+    met) yields no observation at all - unlike a `tool_result` line, which
+    now IS an observation (see
+    `test_observations_yield_thinking_for_a_tool_result_line`)."""
     current = activity.CurrentActivity(now=lambda: 1000.0)
     current.feed([assistant(tool("mcp__mtg__wait_for_priority"))])
-    current.feed(
-        [
-            {
-                "type": "user",
-                "message": {
-                    "role": "user",
-                    "content": [{"type": "tool_result", "content": "x", "is_error": True}],
-                },
-            }
-        ]
-    )
+    current.feed([assistant({"type": "redacted_thinking", "data": "x"})])
     assert current.snapshot()["state"] == activity.WAITING
 
 
