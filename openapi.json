@@ -5384,6 +5384,97 @@
         "title": "DecideResponse",
         "type": "object"
       },
+      "DecisionAbilityView": {
+        "description": "One `card_details` entry naming an ability rather than a card -\n`decisions.PendingDecision.abilities`' own shape (`ORDER_TRIGGERS`,\nCR 603.3b) and `serialize._stack_view`'s ability entry (a `CHOOSE_TARGETS`\naimed at an ability on the stack, CR 115.2) both validate as this, since\nan ability \"can be an activated or triggered ability on the stack. This\nkind of ability is an object\" (CR 113.1c) with no card of its own behind\nit to name it by.\n\n`source_card_id` is the permanent the trigger came from\n(`machines.decisions.PendingAbility.source_id`) - what lets a client\npoint at that permanent on the board, and tell two copies of one card\napart, which the source name alone cannot. `zone` is `None` for an\n`ORDER_TRIGGERS` entry: CR 603.3b is asked one step *before* CR 603.3's\n\"its controller puts it on the stack\", so at the moment this entry is\npublished the ability is in no zone at all - `\"stack\"` only once\n`serialize._stack_view` is the one publishing it, after it has actually\nbeen placed there.",
+        "properties": {
+          "controller": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Controller"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "ability",
+            "default": "ability",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source_card_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Card Id"
+          },
+          "target_refs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TargetRefView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Refs"
+          },
+          "targets": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targets"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "text"
+        ],
+        "title": "DecisionAbilityView",
+        "type": "object"
+      },
       "DeckProblem": {
         "properties": {
           "card": {
@@ -9284,7 +9375,14 @@
             "anyOf": [
               {
                 "items": {
-                  "$ref": "#/components/schemas/CardView"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/CardView"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DecisionAbilityView"
+                    }
+                  ]
                 },
                 "type": "array"
               },

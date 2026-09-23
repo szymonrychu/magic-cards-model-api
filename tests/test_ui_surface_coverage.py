@@ -590,6 +590,13 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         "the stack row renders `targets`, the display-string list published beside it; "
         "`target_refs` is the id-carrying form for a client that resolves its own names",
     ),
+    ("DecisionAbilityView", "target_refs"): _Reason(
+        "superseded",
+        "the same pair as `StackAbilityView.target_refs` just above - an `ORDER_TRIGGERS` "
+        "entry carries neither (CR 603.3d's targeting happens after ordering), and a "
+        "`CHOOSE_TARGETS`-at-an-ability entry's row renders `targets`, the display-string "
+        "list, the same way the stack row does",
+    ),
     ("TargetRequirementView", "mode_text"): _Reason(
         "cosmetic",
         "a modal requirement's own mode text; `ui/targeting.js` labels the slot "

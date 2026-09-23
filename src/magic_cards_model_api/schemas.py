@@ -25,8 +25,10 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
+    Discriminator,
     Field,
     StringConstraints,
+    Tag,
     WithJsonSchema,
     model_validator,
 )
@@ -2225,6 +2227,60 @@ class PlayPermissionView(BaseModel):
     why_not: str | None = None
 
 
+class DecisionAbilityView(BaseModel):
+    """One `card_details` entry naming an ability rather than a card -
+    `decisions.PendingDecision.abilities`' own shape (`ORDER_TRIGGERS`,
+    CR 603.3b) and `serialize._stack_view`'s ability entry (a `CHOOSE_TARGETS`
+    aimed at an ability on the stack, CR 115.2) both validate as this, since
+    an ability "can be an activated or triggered ability on the stack. This
+    kind of ability is an object" (CR 113.1c) with no card of its own behind
+    it to name it by.
+
+    `source_card_id` is the permanent the trigger came from
+    (`machines.decisions.PendingAbility.source_id`) - what lets a client
+    point at that permanent on the board, and tell two copies of one card
+    apart, which the source name alone cannot. `zone` is `None` for an
+    `ORDER_TRIGGERS` entry: CR 603.3b is asked one step *before* CR 603.3's
+    "its controller puts it on the stack", so at the moment this entry is
+    published the ability is in no zone at all - `"stack"` only once
+    `serialize._stack_view` is the one publishing it, after it has actually
+    been placed there.
+    """
+
+    kind: Literal["ability"] = "ability"
+    id: str
+    name: str
+    controller: str | None = None
+    text: str
+    source_card_id: str | None = None
+    targets: list[str] | None = None
+    target_refs: list[TargetRefView] | None = None
+    zone: str | None = None
+
+
+def _decision_detail_kind(value: Any) -> str:
+    """`PendingDecisionView.card_details`'s own discriminator: `"ability"`
+    for an ability entry (`decisions.PendingDecision.abilities`' own shape,
+    or `serialize._stack_view`'s), `"card"` for everything else - a
+    `CardView` dict never carries a `kind` key at all, so its absence is
+    itself the card branch's own signal, not an omission this function has
+    to special-case."""
+    kind = value.get("kind") if isinstance(value, dict) else getattr(value, "kind", None)
+    return "ability" if kind == "ability" else "card"
+
+
+#: One `card_details` entry: a full `CardView`, or a `DecisionAbilityView`
+#: for an id that names an ability rather than a card. `CardView` carries no
+#: `kind` field of its own (unlike `StackSpellView`/`StackAbilityView`, which
+#: exist to be told apart on the stack), so the discriminator reads the
+#: dict's `kind` key directly rather than a `Field(discriminator=...)` on a
+#: shared attribute - see `_decision_detail_kind`.
+DecisionDetail = Annotated[
+    Annotated[CardView, Tag("card")] | Annotated[DecisionAbilityView, Tag("ability")],
+    Discriminator(_decision_detail_kind),
+]
+
+
 class PendingDecisionView(BaseModel):
     """The question a paused command is waiting on (`decisions.PendingDecision
     .to_view`), or - for any viewer but the deciding player and the admin -
@@ -2276,10 +2332,14 @@ class PendingDecisionView(BaseModel):
     payer may activate while paying (CR 608.2g, CR 605.3a; engine PR #17,
     B6-08) - a subset of these is what `decide`'s own `mana_sources` names
     back. Empty for every other kind."""
-    card_details: list[CardView] | None = None
-    """Only for the deciding player - the full view of exactly the ids
-    `cards` names, resolved from zones `redact_view` otherwise strips
-    entirely (`visibility.redact_pending_decision`)."""
+    card_details: list[DecisionDetail] | None = None
+    """Only for the deciding player - one entry per `cards` id, positionally
+    aligned: the full `CardView` for an id `redact_view` can resolve against
+    a zone (`visibility.redact_pending_decision`), or a `DecisionAbilityView`
+    for one that names an ability instead - `ORDER_TRIGGERS`'s own batch
+    (CR 603.3b), stamped directly by the engine since it sits in no zone a
+    lookup can walk, or a `CHOOSE_TARGETS` aimed at an ability already on the
+    stack (CR 115.2). An id that resolves to neither is skipped."""
     answer_field: str | None = None
     """Which single MCP tool parameter carries this kind's answer
     (`decisions.TOOL_FIELD_FOR_KIND`) - `accept` for a `may`, `card_ids` for

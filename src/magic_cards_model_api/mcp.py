@@ -2183,15 +2183,12 @@ def build_server(seats: Seats) -> MCPServer:
           resolves *first*. Every offered id must appear exactly once;
           dropping or repeating one is refused.
           Do not answer this one off the ids alone. Read each id in
-          `pending_decision.card_details` first, the same way you would for a
-          `scry`: for this kind that block carries the ability's *source*
-          name and the ability's own printed text (CR 113.1c makes an ability
-          on the stack an object, so it has no card of its own to name it
-          by). When an id is missing from `card_details` - CR 603.3b is asked
-          one step before CR 603.3's "its controller puts it on the stack",
-          so a batch of triggers can be in no zone yet - fall back to
-          `pending_decision.prompt`, which numbers each source positionally
-          against `cards`: entry N of the prompt is entry N of `cards`.
+          `pending_decision.card_details` before choosing: for this kind that
+          block always names every offered ability - its source's printed
+          name, the ability's own printed text (CR 113.1c makes an ability on
+          the stack an object, so it has no card of its own to name it by),
+          and `source_card_id`, the permanent it came from, which is what
+          tells two copies of one card apart.
         - `assign_combat_damage` (CR 703.4k, 510.1c, 702.19b: how a blocked
           attacker's combat damage divides among its blockers, and, with
           trample, past them to the player or planeswalker it is attacking) -

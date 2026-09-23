@@ -443,9 +443,16 @@ def _card_lookup(view: dict[str, Any]) -> dict[str, dict[str, Any]]:
     so an id a decision names can be an `AbilityOnStack.id`, which no card
     index can ever match. `CHOOSE_TARGETS` already offers one (CR 115.2 lets a
     spell or ability target an ability on the stack, and `decisions.
-    _target_view` carries it as a `card`-kinded ref for exactly that reason),
-    and `ORDER_TRIGGERS` (CR 603.3b) names nothing else. Without this, every
-    such id resolved to nothing and the deciding seat was shown bare hex.
+    _target_view` carries it as a `card`-kinded ref for exactly that reason).
+    Without this, every such id resolved to nothing and the deciding seat was
+    shown bare hex.
+
+    `ORDER_TRIGGERS` (CR 603.3b) is never found here, and never will be: its
+    batch is asked about one step *before* CR 603.3 puts anything on the
+    stack, so no zone this function walks - the stack included - ever holds
+    it. `_ability_lookup` below, not this function, is what names that kind:
+    the engine stamps its ids' details directly onto the question rather
+    than leaving them for a board lookup to resolve.
 
     Nothing is widened by including it: CR 400.2 lists the stack among the
     public zones - "public zones are zones in which all players can see the
@@ -468,6 +475,21 @@ def _card_lookup(view: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if object_id is not None:
             lookup[object_id] = obj
     return lookup
+
+
+def _ability_lookup(pending: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The pending question's own `card_details`, by id - `decisions.
+    PendingDecision.abilities`' stamped entries, unredacted, as `to_view`
+    already put them on `pending`. `redact_pending_decision` reads this as
+    its fallback for an id `_card_lookup` cannot resolve: CR 603.3b's
+    `ORDER_TRIGGERS` batch is in no zone at all when it is asked (one step
+    before CR 603.3's "its controller puts it on the stack"), so this is the
+    only source that can ever name it, on either api read path."""
+    return {
+        entry["id"]: entry
+        for entry in pending.get("card_details") or ()
+        if isinstance(entry, dict) and entry.get("id") is not None
+    }
 
 
 def _hidden_card_ids(view: dict[str, Any], viewer: Viewer) -> set[str]:
@@ -508,41 +530,58 @@ def redact_pending_decision(
 
     For the deciding player, `cards` stays a bare list of ids (existing
     callers - `decide`'s own `moved`/`card_ids` - answer by id, and changing
-    that shape would break them), but `card_details` is added alongside it:
-    the full view of exactly those ids, resolved from `card_lookup`. Without
-    this, a `scry`/`surveil` decision (CR 701.22a, CR 701.25a - a *look*,
-    shown only to the deciding player, CR 701.20e) or a library-sourced
-    `choose_cards` left the deciding player nothing to read the ids against,
-    because `libraries` is stripped for every non-admin viewer, including
-    that viewer's own. `card_details` is scoped to only the ids this decision
-    actually names - never the rest of the zone they came from - so this
-    grants exactly the visibility the effect itself grants, no more.
+    that shape would break them), but `card_details` is rebuilt alongside it,
+    positionally over `cards`: a `card_lookup` hit first (the full view of
+    that id, resolved from wherever `_card_lookup` walked the *unredacted*
+    board), and, for an id `card_lookup` does not have, the entry already
+    stamped on `pending["card_details"]` by `decisions.PendingDecision
+    .to_view` - `_ability_lookup`'s own fallback, `ORDER_TRIGGERS`'s only
+    source (see `_card_lookup`'s own docstring for why that kind is never in
+    `card_lookup`). An id that resolves to neither is skipped, same as
+    always. Without this, a `scry`/`surveil` decision (CR 701.22a, CR
+    701.25a - a *look*, shown only to the deciding player, CR 701.20e) or a
+    library-sourced `choose_cards` left the deciding player nothing to read
+    the ids against, because `libraries` is stripped for every non-admin
+    viewer, including that viewer's own. `card_details` is scoped to only
+    the ids this decision actually names - never the rest of the zone they
+    came from - so this grants exactly the visibility the effect itself
+    grants, no more. The key is omitted entirely when the result is empty,
+    same as when it was never built at all.
 
     An id that names an object on the *stack* rather than a card resolves
-    here too (see `_card_lookup`), so a decision whose candidates are
-    abilities - `ORDER_TRIGGERS` (CR 603.3b), a `CHOOSE_TARGETS` aimed at an
-    ability (CR 115.2) - is answered against source names and ability text
-    rather than against bare ids. An id that resolves to nothing is left out,
-    which is what an `ORDER_TRIGGERS` batch still looks like today: CR 603.3b
-    is asked *before* CR 603.3's "its controller puts it on the stack" has
-    happened, so those abilities are in no zone yet and nothing here can find
-    them. Clients fall back to the prompt's own numbering, which
-    `machines/decisions.ask_trigger_order` writes positionally against
-    `cards`.
+    through `card_lookup` too (see `_card_lookup`), so a `CHOOSE_TARGETS`
+    aimed at an ability (CR 115.2) is answered against a source name and the
+    ability's own text rather than against a bare id.
 
     `source_card_id` goes only where the rest of the block goes, and even
     the deciding player gets `None` in its place when the asking object is
     in one of `hidden_ids` - a zone that viewer cannot see - so the id never
-    points at a hidden card.
+    points at a hidden card. The same nulling applies per `card_details`
+    entry: an ability entry whose own `source_card_id` sits in `hidden_ids`
+    is handed back with that one field nulled, never the whole entry
+    dropped, so a client still gets the ability's name and text and simply
+    cannot point at its source.
     """
     if viewer == pending.get("player") or pending.get("player") in seen:
         if hidden_ids and pending.get("source_card_id") in hidden_ids:
             pending = {**pending, "source_card_id": None}
         cards = pending.get("cards") or ()
-        if cards and card_lookup is not None:
-            details = [card_lookup[card_id] for card_id in cards if card_id in card_lookup]
-            if details:
-                pending = {**pending, "card_details": details}
+        stamped = _ability_lookup(pending)
+        details: list[dict[str, Any]] = []
+        for card_id in cards:
+            if card_lookup is not None and card_id in card_lookup:
+                entry = card_lookup[card_id]
+            elif card_id in stamped:
+                entry = stamped[card_id]
+            else:
+                continue
+            if hidden_ids and entry.get("source_card_id") in hidden_ids:
+                entry = {**entry, "source_card_id": None}
+            details.append(entry)
+        if details:
+            pending = {**pending, "card_details": details}
+        elif "card_details" in pending:
+            pending = {key: value for key, value in pending.items() if key != "card_details"}
         return pending
     # `{player, kind, prompt}` and nothing else, `generation` included: only
     # the deciding seat can answer, so only the deciding seat has any use
@@ -565,8 +604,16 @@ def redact_paused_pending(
     of the block only for the deciding seat, and `source_card_id` nulled when
     the asking object sits in a zone `viewer` cannot see. `view` is the
     *unredacted* state view of the committed game, the board a state read
-    would redact this same question against. No `card_details` here: these
-    responses never carried it, and the state read is where it lives."""
+    would redact this same question against.
+
+    `card_details` does travel here now, for the question's own ability
+    entries (`ORDER_TRIGGERS`'s `abilities`, stamped by `decisions
+    .PendingDecision.to_view`) - `redact_pending_decision`'s `_ability_lookup`
+    fallback needs no zone lookup, so it works from `pending` alone. Still
+    no zone lookup of any kind happens here: `card_lookup` is left at its
+    default `None`, so an id this route *could* resolve against the
+    committed board (a real card or a stack object) is not - that stays the
+    state read's own job."""
     if viewer is ADMIN:
         return pending
     return redact_pending_decision(

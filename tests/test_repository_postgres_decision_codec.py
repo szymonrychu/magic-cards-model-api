@@ -18,7 +18,12 @@ from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 import pytest
-from magic_cards_model.machines.decisions import Decision, DecisionKind, PendingDecision
+from magic_cards_model.machines.decisions import (
+    Decision,
+    DecisionKind,
+    PendingAbility,
+    PendingDecision,
+)
 from magic_cards_model.models.card_state import TargetKind, TargetRef
 
 from magic_cards_model_api.repository_postgres import (
@@ -47,6 +52,20 @@ def _every_field_set() -> Decision:
     first, second, third = uuid4(), uuid4(), uuid4()
     bears = TargetRef(kind=TargetKind.CARD, card_id=first, zone_change_stamp=uuid4())
     bob = TargetRef(kind=TargetKind.PLAYER, username="bob")
+    delver_one = PendingAbility(
+        id=uuid4(),
+        source_id=str(uuid4()),
+        source_name="Delver of Secrets",
+        text="At the beginning of your upkeep, look at the top card of your library.",
+        controller="alice",
+    )
+    delver_two = PendingAbility(
+        id=uuid4(),
+        source_id=None,
+        source_name="Delver of Secrets",
+        text="At the beginning of your upkeep, look at the top card of your library.",
+        controller="alice",
+    )
     values: dict[str, object] = {
         "kind": DecisionKind.ASSIGN_COMBAT_DAMAGE,
         "player": "alice",
@@ -58,6 +77,7 @@ def _every_field_set() -> Decision:
         "cards": (first, second),
         "players": ("alice", "bob"),
         "card_labels": ("first", "second"),
+        "abilities": (delver_one, delver_two),
         "moved_label": "your hand",
         "kept_label": "bottom of your library",
         "affirmative_is_legal": False,
@@ -116,6 +136,11 @@ def test_round_trip_restores_tuples_uuids_and_target_stamps_exactly() -> None:
     assert [t.zone_change_stamp for t, _ in back.default_damage] == [
         t.zone_change_stamp for t, _ in decision.default_damage
     ]
+    assert type(back.abilities) is tuple and len(back.abilities) == 2
+    assert all(type(ability) is PendingAbility for ability in back.abilities)
+    assert all(type(ability.id) is UUID for ability in back.abilities)
+    assert back.abilities[0].source_id == decision.abilities[0].source_id
+    assert back.abilities[1].source_id is None
 
 
 def test_a_none_default_damage_stays_none() -> None:

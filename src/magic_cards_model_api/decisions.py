@@ -460,10 +460,11 @@ class PendingDecision:
     #: would otherwise have: `redact_view` strips `libraries` from every
     #: non-admin viewer, including that viewer's own. `card_details` covers
     #: that for a viewer whose ids the *server* can resolve
-    #: (`visibility.redact_pending_decision`), but the engine's own labels are
-    #: the only naming for candidates the board cannot find - CR 603.3b's
-    #: `ORDER_TRIGGERS` batch is in no zone at all when it is asked - so both
-    #: travel, and a client reads `card_details` first and falls back here.
+    #: (`visibility.redact_pending_decision`) - which, for `ORDER_TRIGGERS`,
+    #: now includes its own batch too, via `abilities` below rather than a
+    #: zone lookup - but `card_labels` still travels for every kind
+    #: regardless, unchanged, for a client that has not been updated to read
+    #: the structured shape.
     #:
     #: A library search is the case that made this worth carrying: CR 701.23a
     #: has the searcher "look at all cards in that zone (even if it's a hidden
@@ -471,6 +472,19 @@ class PendingDecision:
     #: entitled to see, and a picker that cannot print them is a picker played
     #: blind.
     card_labels: tuple[str, ...] = ()
+    #: `ORDER_TRIGGERS` only: the structured twin of `card_labels` above, one
+    #: dict per `cards` entry, positionally aligned - from the engine's own
+    #: `Decision.abilities` (`machines.decisions.PendingAbility`), stamped
+    #: directly onto the question the same way `card_labels` always was,
+    #: since CR 603.3b is asked one step before CR 603.3's "its controller
+    #: puts it on the stack" and no zone lookup can find these abilities at
+    #: ask time. Each dict is `{"kind": "ability", "id", "name", "controller",
+    #: "text", "source_card_id"}` - `visibility.redact_pending_decision` reads
+    #: this as its fallback for an id `card_lookup` cannot resolve, which is
+    #: what carries it into `card_details` on both api read paths (the state
+    #: read, and a paused `advance`/`decide` response). Empty for every other
+    #: kind.
+    abilities: tuple[dict[str, str | None], ...] = ()
     #: `choose_cards` only: whether `amount` is a count or a ceiling.
     #:
     #: `True` (the default, and every question that existed before searching
@@ -574,6 +588,17 @@ class PendingDecision:
             moved_label=getattr(decision, "moved_label", ""),
             kept_label=getattr(decision, "kept_label", ""),
             card_labels=tuple(getattr(decision, "card_labels", ()) or ()),
+            abilities=tuple(
+                {
+                    "kind": "ability",
+                    "id": str(ref.id),
+                    "name": ref.source_name,
+                    "controller": ref.controller,
+                    "text": ref.text,
+                    "source_card_id": ref.source_id,
+                }
+                for ref in getattr(decision, "abilities", ()) or ()
+            ),
             exact=getattr(decision, "exact", True),
             # `default_cards` is `None` on the engine for "no deviation
             # stamped", and that is not the same as "the empty answer" - which
@@ -767,7 +792,7 @@ class PendingDecision:
         return f"{tool}({call})"
 
     def to_view(self) -> dict[str, Any]:
-        return {
+        view = {
             "generation": self.generation,
             "player": self.player,
             "kind": self.kind,
@@ -790,14 +815,25 @@ class PendingDecision:
             "lethal_damage": list(self.lethal_damage),
             "trample": self.trample,
             "mana_sources": list(self.mana_sources),
-            # The two fields that make this block answerable in one call
-            # rather than in one call plus a docstring read - see
-            # `answer_with` and `TOOL_FIELD_FOR_KIND`. Last in the dict on
-            # purpose: everything above is what the question *is*, and these
-            # two are what to do about it.
-            "answer_field": TOOL_FIELD_FOR_KIND[DecisionKind(self.kind)],
-            "answer_with": self.answer_with(),
         }
+        # `ORDER_TRIGGERS` only - see `abilities`' own docstring. Every other
+        # kind's payload stays byte-identical: this key is absent, not empty,
+        # when there is nothing to add, so nothing already reading `to_view`
+        # sees a new key it did not ask for.
+        if self.abilities:
+            view["card_details"] = [dict(entry) for entry in self.abilities]
+        view.update(
+            {
+                # The two fields that make this block answerable in one call
+                # rather than in one call plus a docstring read - see
+                # `answer_with` and `TOOL_FIELD_FOR_KIND`. Last in the dict on
+                # purpose: everything above is what the question *is*, and
+                # these two are what to do about it.
+                "answer_field": TOOL_FIELD_FOR_KIND[DecisionKind(self.kind)],
+                "answer_with": self.answer_with(),
+            }
+        )
+        return view
 
 
 def bool_answer(accept: bool | None) -> bool:

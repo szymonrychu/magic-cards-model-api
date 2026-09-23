@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from conftest import add_card, state
 
+from magic_cards_model_api import visibility
+
 
 def seats_for(client, game_id: str) -> dict[str, str]:
     """The real per-seat uids for `game_id` - as if captured at dispatch."""
@@ -458,3 +460,64 @@ def test_no_uid_and_a_foreign_uid_never_read_a_decklist_even_post_game(client):
             assert all(not seat.get("decklist") for seat in seats.values()), seats
     finally:
         client.delete(f"/api/games/{game_id}")
+
+
+# -- CR 603.3b's structured ability refs in `card_details` -------------------
+#
+# Unit-level, on hand-built dicts (fakes, not a real board) - these pin
+# `visibility.py`'s own contract for the new field, so the redaction rule is
+# checked in isolation from anything the engine or the rest of the api does.
+
+
+def _order_triggers_pending(*, source_card_id: str) -> dict:
+    return {
+        "player": "alice",
+        "kind": "order_triggers",
+        "prompt": "order your triggered abilities on the stack",
+        "cards": ["ability-1", "ability-2"],
+        "card_details": [
+            {
+                "kind": "ability",
+                "id": "ability-1",
+                "name": "Delver of Secrets",
+                "controller": "alice",
+                "text": "look at the top card",
+                "source_card_id": source_card_id,
+            },
+            {
+                "kind": "ability",
+                "id": "ability-2",
+                "name": "Delver of Secrets",
+                "controller": "alice",
+                "text": "look at the top card",
+                "source_card_id": "visible-card",
+            },
+        ],
+    }
+
+
+def test_redact_pending_decision_nulls_a_hidden_abilitys_source_card_id():
+    """`card_lookup` empty (nothing on a zone this fake board bothers
+    building) so both entries come from the question's own stamped
+    `card_details` - the ORDER_TRIGGERS fallback - and only the one whose
+    `source_card_id` sits in `hidden_ids` is nulled; its sibling is untouched."""
+    pending = _order_triggers_pending(source_card_id="hidden-card")
+
+    redacted = visibility.redact_pending_decision(
+        pending, "alice", card_lookup={}, hidden_ids={"hidden-card"}
+    )
+
+    entries = {entry["id"]: entry for entry in redacted["card_details"]}
+    assert entries["ability-1"]["source_card_id"] is None
+    assert entries["ability-2"]["source_card_id"] == "visible-card"
+
+
+def test_redact_paused_pending_keeps_card_details_for_the_decider_and_drops_it_for_anyone_else():
+    pending = _order_triggers_pending(source_card_id="card-1")
+    view: dict = {"player_control": {}}
+
+    for_decider = visibility.redact_paused_pending(pending, view, "alice")
+    for_opponent = visibility.redact_paused_pending(pending, view, "bob")
+
+    assert [entry["id"] for entry in for_decider["card_details"]] == ["ability-1", "ability-2"]
+    assert set(for_opponent) == {"player", "kind", "prompt"}

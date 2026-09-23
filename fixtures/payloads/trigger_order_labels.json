@@ -124,6 +124,24 @@
     "amount": 0,
     "answer_field": "order",
     "answer_with": "decide(order=\"<every id in pending_decision.cards, comma-separated, bottom of the stack first>\", generation=1)",
+    "card_details": [
+      {
+        "controller": "alice",
+        "id": "00000000-0000-0000-0000-000000000002",
+        "kind": "ability",
+        "name": "Delver of Secrets",
+        "source_card_id": "00000000-0000-0000-0000-000000000004",
+        "text": "At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature."
+      },
+      {
+        "controller": "alice",
+        "id": "00000000-0000-0000-0000-000000000003",
+        "kind": "ability",
+        "name": "Delver of Secrets",
+        "source_card_id": "00000000-0000-0000-0000-000000000005",
+        "text": "At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature."
+      }
+    ],
     "card_labels": [
       "Delver of Secrets - At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature.",
       "Delver of Secrets - At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature."

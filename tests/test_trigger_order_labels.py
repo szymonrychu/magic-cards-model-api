@@ -24,16 +24,19 @@ Two halves are fixed here, and they are separable on purpose:
   falls back to the position in `pending.cards` - never a raw id - for an
   object it cannot find.
 
-The one case still not named by `card_details` is CR 603.3b's own first
-batch, and the reason is the rule's own sequence: the question is asked one
-step *before* CR 603.3's "its controller puts it on the stack" happens, so
-those abilities are on the stack in no sense yet and no zone holds them
-(`visibility.redact_pending_decision`'s own docstring says so, and
-`test_order_triggers_card_details_names_each_ability_source` below is the
-`xfail` with the engine change it needs written out). `PendingDecision.
-card_labels` - the engine's own naming, stamped directly onto the `Decision`
-rather than resolved against a zone - is what actually carries the names for
-this kind today, and is what every test below reads.
+CR 603.3b's own first batch - abilities that have triggered but are not yet
+put on the stack - used to be the one case `card_details` could not name: the
+question is asked one step *before* CR 603.3's "its controller puts it on the
+stack" happens, so those abilities are on the stack in no sense yet and no
+zone holds them. The engine closes that (`machines.decisions.PendingAbility`,
+`Decision.abilities`, schema 36): each `cards` entry for this kind now
+carries its own structured ref - source name, the ability's own printed
+text, its controller, and `source_id`, the permanent it came from - stamped
+directly onto the `Decision` the same way `card_labels` always was, and
+`decisions.PendingDecision.from_engine`/`to_view` carry it into `card_details`
+on both api read paths (the state read and a paused `advance`/`decide`
+response). `PendingDecision.card_labels` still travels too, unchanged, for a
+client that has not been updated to read the structured shape.
 """
 
 from __future__ import annotations
@@ -43,12 +46,11 @@ import json
 from typing import Any
 
 import httpx
-import pytest
 from conftest import add_card, state
 from fastapi.testclient import TestClient
 from ui_node import requires_node, run_module
 
-from magic_cards_model_api import seat_cli
+from magic_cards_model_api import schemas, seat_cli
 from magic_cards_model_api.main import app
 from magic_cards_model_api.mcp import build_server
 from magic_cards_model_api.seatkit import Seats
@@ -61,6 +63,32 @@ UPKEEP_LOOK = "At the beginning of your upkeep, look at the top card of your lib
 
 def seats_for(client: TestClient, game_id: str) -> dict[str, str]:
     return {name: uid for uid, name in store.seat_uids(game_id).items()}
+
+
+def delver_ids_on_battlefield(client: TestClient, game_id: str) -> set[str]:
+    """The two Delver of Secrets permanents' own battlefield ids, from the
+    admin's unredacted state read - what each ability entry's
+    `source_card_id` must equal one of."""
+    battlefield = state(client, game_id)["battlefield"]
+    return {card["id"] for card in battlefield if card.get("name") == "Delver of Secrets"}
+
+
+def assert_ability_details(
+    entries: list[dict[str, Any]], pending: dict[str, Any], source_ids: set[str]
+) -> None:
+    """Every assertion a `card_details` entry for this question must satisfy,
+    shared by the state-read, `advance`, MCP and CLI paths so the four cannot
+    quietly drift from each other."""
+    assert len(entries) == 2, entries
+    assert [entry["id"] for entry in entries] == pending["cards"], entries
+    for entry in entries:
+        assert entry["kind"] == "ability", entry
+        assert entry["name"] == "Delver of Secrets", entry
+        assert UPKEEP_LOOK in entry["text"], entry
+        assert entry["controller"] == "alice", entry
+    source_card_ids = {entry["source_card_id"] for entry in entries}
+    assert len(source_card_ids) == 2, "the two triggers must name distinct sources"
+    assert source_card_ids == source_ids, (source_card_ids, source_ids)
 
 
 # -- a real CR 603.3b question, from a real board ----------------------------
@@ -95,19 +123,17 @@ def stage_order_triggers_decision(client: TestClient, game_id: str, uid: str) ->
 
 
 def test_the_payload_names_an_ability_the_decision_is_about(client, game):
-    """The API half. `card_details` never resolves CR 603.3b's own first
-    batch (see this module's own docstring, and the `xfail` at the bottom) -
-    but `Decision.card_labels`, the engine's own naming stamped directly onto
-    the `Decision` rather than resolved against a zone, does: one label per
-    `pending.cards` entry, positionally aligned, naming the source and the
-    ability's own text - so no client has to know what a hex string means."""
+    """The API half. `card_details` now names CR 603.3b's own first batch too
+    (`machines.decisions.PendingAbility`, `Decision.abilities`, schema 36) -
+    and `Decision.card_labels`, the engine's older naming stamped the same
+    way, still travels alongside it: one label per `pending.cards` entry,
+    positionally aligned, naming the source and the ability's own text - so
+    no client has to know what a hex string means, whichever field it reads."""
     uids = seats_for(client, game)
     pending = stage_order_triggers_decision(client, game, uids["alice"])
+    source_ids = delver_ids_on_battlefield(client, game)
 
-    assert "card_details" not in pending, (
-        "these abilities are in no zone yet (see this module's own docstring) "
-        "- card_labels, not card_details, is what actually names them today"
-    )
+    assert_ability_details(pending["card_details"], pending, source_ids)
     assert len(pending["cards"]) == 2
     assert len(pending["card_labels"]) == 2
     for label in pending["card_labels"]:
@@ -130,6 +156,20 @@ def test_the_opponent_is_told_nothing_the_decision_names(client, game):
     assert "card_labels" not in pending
 
 
+def test_the_state_read_names_the_same_abilities_as_advance(client, game):
+    """`redact_view` -> `redact_pending_decision` carries the same
+    `card_details` a state read gets straight from `advance`'s own paused
+    response - proving the `redact_view` path, and that `GameStateView`
+    response validation does not 500 on an ability entry that is in no zone
+    (the widened `PendingDecisionView.card_details` union, schemas.py)."""
+    uids = seats_for(client, game)
+    pending = stage_order_triggers_decision(client, game, uids["alice"])
+    source_ids = delver_ids_on_battlefield(client, game)
+
+    read_back = state(client, game, uid=uids["alice"])["pending_decision"]
+    assert_ability_details(read_back["card_details"], pending, source_ids)
+
+
 # -- what an agent reads through MCP and the CLI ----------------------------
 
 
@@ -140,9 +180,10 @@ def wired_seats(monkeypatch, game_id: str) -> Seats:
 
 def test_an_agent_sees_the_source_named_through_mcp(client, game, monkeypatch):
     """`mcp.battlefield_state` prints the seat's whole filtered state view, so the same
-    `card_labels` the browser reads is what an agent seat reads."""
+    `card_details`/`card_labels` the browser reads is what an agent seat reads."""
     uids = seats_for(client, game)
     pending = stage_order_triggers_decision(client, game, uids["alice"])
+    source_ids = delver_ids_on_battlefield(client, game)
 
     server = build_server(wired_seats(monkeypatch, game))
     result = asyncio.run(server.call_tool("battlefield_state", {"player_uid": uids["alice"]}))
@@ -150,18 +191,21 @@ def test_an_agent_sees_the_source_named_through_mcp(client, game, monkeypatch):
     assert seen["cards"] == pending["cards"]
     assert len(seen["card_labels"]) == 2
     assert all(label.startswith("Delver of Secrets") for label in seen["card_labels"])
+    assert_ability_details(seen["card_details"], pending, source_ids)
 
 
 def test_an_agent_sees_the_source_named_through_the_seat_cli(client, game, monkeypatch, capsys):
     """`seat_cli state` prints the same view verbatim."""
     uids = seats_for(client, game)
-    stage_order_triggers_decision(client, game, uids["alice"])
+    pending = stage_order_triggers_decision(client, game, uids["alice"])
+    source_ids = delver_ids_on_battlefield(client, game)
 
     wired_seats(monkeypatch, game)
     seat_cli.run(["--uid", uids["alice"], "--game", game, "state"])
     printed = json.loads(capsys.readouterr().out)["pending_decision"]
     assert len(printed["card_labels"]) == 2
     assert all(label.startswith("Delver of Secrets") for label in printed["card_labels"])
+    assert_ability_details(printed["card_details"], pending, source_ids)
 
 
 # -- what a human sees in the browser ---------------------------------------
@@ -281,30 +325,75 @@ def test_the_ui_still_sends_bottom_of_the_stack_first():
 # -- the engine's own ask, end to end ---------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "needs an engine change to `card_details` specifically, not to naming "
-        "in general - `Decision.card_labels` (`PendingDecision.card_labels`) "
-        "already carries the (source name, ability text) pairs "
-        "`machines/decisions.ask_trigger_order` builds them from, and every "
-        "test above this one reads that field. `card_details` is a different "
-        "mechanism (`visibility._card_lookup`, resolved against a zone) and "
-        "stays genuinely empty for this kind: CR 603.3b is asked one step "
-        "before CR 603.3's 'its controller puts it on the stack', so the "
-        "abilities it names are in no zone the API can read at ask time - "
-        "`Game._put_pending_triggers_on_stack` holds them in a local list "
-        "until then. Until `_card_lookup` (or some other source) can resolve "
-        "an id that is not yet in any zone, `card_details` cannot carry them."
-    ),
-)
 def test_order_triggers_card_details_names_each_ability_source(client, game):
     """The board CR 603.3b's premise needs - two real Delver of Secrets, one
     controller - advanced untap to upkeep so the engine raises the question of
     its own accord. `card_details` specifically must be told what they are -
-    `card_labels` already is (see every test above)."""
+    `card_labels` already is (see every test above) - and each entry's
+    `source_card_id` must point at a distinct one of the two Delver
+    permanents actually on alice's battlefield."""
     uids = seats_for(client, game)
     pending = stage_order_triggers_decision(client, game, uids["alice"])
+    source_ids = delver_ids_on_battlefield(client, game)
+
     assert pending["kind"] == "order_triggers"
-    named = [entry["name"] for entry in pending.get("card_details", [])]
-    assert named == ["Delver of Secrets", "Delver of Secrets"]
+    assert_ability_details(pending["card_details"], pending, source_ids)
+
+
+# -- the widened `card_details` schema ---------------------------------------
+
+
+def test_pending_decision_view_accepts_every_card_details_shape():
+    """`PendingDecisionView.card_details` (schemas.py) has to validate three
+    shapes at once, since a real board can put any of them in the same list
+    across different decisions: a `CardView` card dict (no `kind` key at
+    all), a pending-trigger ability entry from this feature (`kind`, `id`,
+    `name`, `controller`, `text`, `source_card_id`), and a
+    `serialize._stack_view` stack-ability entry (`kind: "ability"` plus
+    `targets`, `target_refs`, `zone: "stack"`, no `source_card_id`). The
+    stack-ability case is the latent `choose_targets`-at-an-ability 500:
+    before the union widened, `CardView` required `zone`/`tapped`/`face_up`,
+    which a stack ability view never carries."""
+    card = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "name": "Delver of Secrets",
+        "zone": "battlefield",
+        "tapped": False,
+        "face_up": True,
+    }
+    pending_trigger = {
+        "kind": "ability",
+        "id": "22222222-2222-2222-2222-222222222222",
+        "name": "Delver of Secrets",
+        "controller": "alice",
+        "text": UPKEEP_LOOK,
+        "source_card_id": "33333333-3333-3333-3333-333333333333",
+    }
+    stack_ability = {
+        "kind": "ability",
+        "id": "44444444-4444-4444-4444-444444444444",
+        "name": "Lightning Bolt",
+        "controller": "alice",
+        "text": "Lightning Bolt deals 3 damage to any target.",
+        "targets": ["bob"],
+        "target_refs": [{"kind": "player", "id": "bob", "name": "bob"}],
+        "zone": "stack",
+    }
+
+    view = schemas.PendingDecisionView.model_validate(
+        {
+            "player": "alice",
+            "kind": "order_triggers",
+            "prompt": "order your triggered abilities on the stack",
+            "card_details": [card, pending_trigger, stack_ability],
+        }
+    )
+
+    assert view.card_details is not None and len(view.card_details) == 3
+    resolved_card, resolved_trigger, resolved_stack = view.card_details
+    assert isinstance(resolved_card, schemas.CardView)
+    assert isinstance(resolved_trigger, schemas.DecisionAbilityView)
+    assert resolved_trigger.source_card_id == "33333333-3333-3333-3333-333333333333"
+    assert isinstance(resolved_stack, schemas.DecisionAbilityView)
+    assert resolved_stack.zone == "stack"
+    assert resolved_stack.source_card_id is None

@@ -44,11 +44,13 @@ from magic_cards_model.machines.decisions import (
     Decision,
     DecisionKind,
     DeclaredPair,
+    PendingAbility,
     ScriptedAnswer,
     ask_attackers,
     ask_blockers,
     ask_mulligan,
     ask_trigger_order,
+    source_id_of,
 )
 from magic_cards_model.models import Game
 from magic_cards_model.models.card_state import TargetRef
@@ -149,15 +151,25 @@ def _engine_ask(engine_game: Game, decision: Decision) -> object:
         # CR 603.3b's ordering is the second kind that never reaches
         # `Game.ask`: `ask_trigger_order` puts it and validates the answer
         # itself, so that is the other side of the mailbox for this kind. It
-        # is called with the same `(id, source_name)` pairs the board fixture
-        # read straight off the real triggers now on the stack, and with its
-        # own default prompt - the one the real advance already used, which
-        # the fixture read back off the `Decision` that advance built and put
-        # on the case below, so both sides refuse in identical words. Passing
-        # `decision.prompt` here instead would re-run `ask_trigger_order`'s
-        # own prompt rewrite over an already-rewritten prompt and name every
-        # source twice.
-        abilities = tuple((ability.id, ability.source_name) for ability in engine_game.stack)
+        # is called with one `PendingAbility` per real trigger now on the
+        # stack, built the same way `Game._order_triggers_by_controller`
+        # builds them (`source_id_of`, `ability.ability.text`,
+        # `ability.controller`), and with its own default prompt - the one
+        # the real advance already used, which the fixture read back off the
+        # `Decision` that advance built and put on the case below, so both
+        # sides refuse in identical words. Passing `decision.prompt` here
+        # instead would re-run `ask_trigger_order`'s own prompt rewrite over
+        # an already-rewritten prompt and name every source twice.
+        abilities = tuple(
+            PendingAbility(
+                id=ability.id,
+                source_id=source_id_of(ability),
+                source_name=ability.source_name,
+                text=ability.ability.text,
+                controller=ability.controller,
+            )
+            for ability in engine_game.stack
+        )
         return ask_trigger_order(engine_game.decisions, decision.player, abilities)
     if decision.kind is DecisionKind.DECLARE_ATTACKERS:
         # CR 508.1's declaration: the third kind whose engine-side authority
