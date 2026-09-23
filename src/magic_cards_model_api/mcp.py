@@ -1765,10 +1765,9 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         ("Sacrifice two creatures") takes as many as it asks for. Leaving one
         out when the cost needs it is refused with the engine's own count -
         "sacrifice needs N card(s) chosen, 0 given" - never a crash and never
-        a silent no-op. `exiling` only works for an ability on the
-        battlefield: an ability that functions off the battlefield (Waker of
-        Waves, Boseiju's Channel) has no exile-as-cost path yet and refuses it
-        by name.
+        a silent no-op. `exiling` works the same for an ability that
+        functions off the battlefield (Scrapheap Scrounger's, from the
+        graveyard).
 
         `x_value` is CR 107.3a's X, for an activation cost that carries one -
         Fiend Artisan's own "{X}{B/G}, {T}, Sacrifice another creature: Search

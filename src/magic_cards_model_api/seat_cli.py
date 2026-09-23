@@ -912,9 +912,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "comma-separated card ids, for an activation cost's own 'Exile "
             "[quality] ... and pay its mana cost' piece (Back from the Brink's "
-            "own shape). Only a battlefield ability can take this - an ability "
-            "that functions off the battlefield has no exile-as-cost path yet "
-            "and refuses it"
+            "own shape, or Scrapheap Scrounger's from the graveyard)"
         ),
     )
     activate.add_argument(

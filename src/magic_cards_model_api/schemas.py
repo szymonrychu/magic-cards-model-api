@@ -1318,10 +1318,9 @@ class ActivateRequest(BoardRead):
     """Same shape again, for an activation cost's own `Exile ...` piece -
     Back from the Brink's "Exile a creature card from your graveyard and pay
     its mana cost" is the engine's own example (`Game.activation_cost`'s
-    docstring). Only a *battlefield* activation reaches this: the
-    off-battlefield path (`machines.keywords.off_zone_activation`) has no
-    exile-as-cost shape yet, and naming this for one is refused rather than
-    silently dropped (`engine_api._activate_off_zone_ability`)."""
+    docstring). The off-battlefield path (`machines.keywords.
+    off_zone_activation`) takes it too - Scrapheap Scrounger's graveyard
+    ability exiles another creature card as its cost."""
     color: str | None = None
     """Color letter ("W", "U", "B", "R", "G", "C") chosen for a mana ability
     that offers one - an "any color" source or a dual land. Ignored by any
