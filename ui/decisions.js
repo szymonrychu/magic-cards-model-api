@@ -42,9 +42,15 @@ export function chooseCardsOptions(pending) {
 const TRIGGER_TEXT_CHARS = 80;
 
 /**
- * The options a CR 603.3b question offers, as `{id, label}` in the order they
- * triggered. Pure, and exported, so `tests/test_trigger_order_labels.py` can
- * hold the real shipped labelling to the rule rather than re-describing it.
+ * The options a CR 603.3b question offers, as `{id, label, sourceId}` in the
+ * order they triggered. Pure, and exported, so `tests/test_trigger_order_labels.py`
+ * can hold the real shipped labelling to the rule rather than re-describing
+ * it. `sourceId` is the matching `card_details` entry's `source_card_id` -
+ * the battlefield permanent (or other object) that raised the trigger, so a
+ * client can point at it - or `null` when there is no entry for the id, or
+ * the entry carries no `source_card_id` of its own (CR 603.3b's own first
+ * batch, before those abilities are on the stack in any zone the API can
+ * name - see that module's docstring).
  */
 export function triggerOrderOptions(pending) {
   const ids = (pending && pending.cards) || [];
@@ -55,7 +61,8 @@ export function triggerOrderOptions(pending) {
   return ids.map((id, index) => {
     const obj = details[id];
     const position = `#${index + 1}`;
-    if (!obj) return { id: id, label: `trigger ${position}` };
+    const sourceId = (obj && obj.source_card_id) || null;
+    if (!obj) return { id: id, label: `trigger ${position}`, sourceId };
     const name = obj.name || `trigger ${position}`;
     const text = (obj.text || "").replace(/\s+/g, " ").trim();
     const clipped =
@@ -67,6 +74,7 @@ export function triggerOrderOptions(pending) {
     return {
       id: id,
       label: clipped ? `${position} ${name} - ${clipped}` : `${position} ${name}`,
+      sourceId,
     };
   });
 }

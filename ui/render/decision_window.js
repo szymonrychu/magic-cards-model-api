@@ -37,10 +37,12 @@ import {
   placeInSplit,
   shownTriggerOrder,
   toggleChoice,
+  triggerOrderOptions,
   usesDecisionWindow,
   viewModel,
 } from "../decisions.js";
 import { withSymbols } from "../symbols.js";
+import { findRenderedCard, SOURCE_CLASS } from "./decision_popover.js";
 
 /** Where this viewer last left the window, as `{left, top}` JSON. */
 export const WINDOW_POSITION_KEY = "mcm.decisionWindow.v1";
@@ -465,9 +467,18 @@ function chooseMode(ctx) {
 
 /** `order_triggers`: one lane, leftmost resolves first. The shown order is
  * always a full order, so confirming without touching anything posts the
- * offered order. */
+ * offered order.
+ *
+ * Each slot also points at the permanent that raised its trigger
+ * (`triggerOrderOptions`' `sourceId`, from `card_details.source_card_id`):
+ * pointer-entering or keyboard-focusing a slot wears `SOURCE_CLASS`
+ * (`render/decision_popover.js` - the same class the popover itself uses for
+ * the asking card) on `findRenderedCard(ctx.root, sourceId)`, leaving or
+ * blurring it removes it, and at most one permanent is lit at a time. A
+ * `null` `sourceId` (CR 603.3b's own unnameable first batch) or a source not
+ * rendered on the page is a no-op - never a throw. */
 function orderMode(ctx) {
-  const { pending, handlers, store } = ctx;
+  const { pending, handlers, store, root } = ctx;
   const f = frame(ctx.body, ctx.app.symbols, pending.prompt);
   const lane = laneNode("order", "Resolves first, left to right");
   f.content.appendChild(h("div", { class: "dw-lanes" }, lane.node));
@@ -477,6 +488,23 @@ function orderMode(ctx) {
   const cards = cardsById(pending);
   const confirmLabel = viewModel(pending, {}).submit.label;
   const shown = (app) => shownTriggerOrder(pending, app.decisionDraft || {});
+  const sourceById = {};
+  for (const option of triggerOrderOptions(pending)) sourceById[option.id] = option.sourceId;
+
+  let litAnchor = null;
+  const clearSource = () => {
+    if (litAnchor) litAnchor.classList.remove(SOURCE_CLASS);
+    litAnchor = null;
+  };
+  const litSource = (id) => {
+    const sourceId = sourceById[id];
+    if (sourceId === null || sourceId === undefined) return;
+    const anchor = findRenderedCard(root, sourceId);
+    if (!anchor) return;
+    clearSource();
+    anchor.classList.add(SOURCE_CLASS);
+    litAnchor = anchor;
+  };
 
   const drop = (id, laneName, index) => {
     if (laneName !== "order") return;
@@ -491,19 +519,34 @@ function orderMode(ctx) {
     const buttons = { up: commandButton(), down: commandButton() };
     const slot = laneSlot(cards[item.id], [buttons.up, buttons.down]);
     slot.__buttons = buttons;
+    slot.addEventListener("pointerenter", () => litSource(item.id));
+    slot.addEventListener("pointerleave", clearSource);
+    // `focusin`/`focusout` bubble from the up/down buttons a keyboard user
+    // actually lands on - the slot itself is never a tab stop of its own.
+    slot.addEventListener("focusin", () => litSource(item.id));
+    slot.addEventListener("focusout", clearSource);
     return slot;
   };
   const updateSlot = (slot, item) => {
     const card = cards[item.id];
     updateCardNode(slot.__card, card, {});
-    const name = card.text || card.name || item.id;
-    aim(slot.__buttons.up, "up", item.index > 0, () => step(item.id, -1), `${name}: resolve one place earlier`);
-    aim(slot.__buttons.down, "down", item.index < item.count - 1, () => step(item.id, 1), `${name}: resolve one place later`);
+    const sourceName = card.name || item.id;
+    const abilityText = card.text || sourceName;
+    aim(slot.__buttons.up, "up", item.index > 0, () => step(item.id, -1), `${abilityText}: resolve one place earlier`);
+    aim(
+      slot.__buttons.down,
+      "down",
+      item.index < item.count - 1,
+      () => step(item.id, 1),
+      `${abilityText}: resolve one place later`
+    );
+    slot.title = `${abilityText}, from ${sourceName}`;
   };
 
   return {
     lanes: { order: lane },
     drop,
+    dispose: clearSource,
     update(app) {
       const ids = shown(app);
       patchChildren(
@@ -515,6 +558,7 @@ function orderMode(ctx) {
       );
       setText(f.status, "Drag to order, or use the buttons. The leftmost ability resolves first.");
       aim(confirm, confirmLabel, true, () => {
+        clearSource();
         const draft = store.get().decisionDraft || {};
         handlers.onDecide(answerFor(pending, { ...draft, order: shownTriggerOrder(pending, draft) }));
       });
@@ -817,6 +861,7 @@ export function mountDecisionWindow(root, store, handlers, opts) {
     const subject = windowSubject(app);
     if (!subject) {
       if (current) {
+        if (typeof current.view.dispose === "function") current.view.dispose();
         current = null;
         clear(els.body);
       }
@@ -826,10 +871,12 @@ export function mountDecisionWindow(root, store, handlers, opts) {
     let fresh = false;
     if (!current || current.key !== subject.key) {
       fresh = true;
+      if (current && typeof current.view.dispose === "function") current.view.dispose();
       clear(els.body);
       current = {
         key: subject.key,
         view: MODES[subject.mode]({
+          root,
           body: els.body,
           pending: subject.pending,
           app,

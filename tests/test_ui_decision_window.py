@@ -155,6 +155,12 @@ function walkAll(node, pred, out) {
   return out;
 }
 
+// `findRenderedCard` (`render/decision_popover.js`) needs this - the same
+// addition `test_ui_decision_popover.py` makes to this same fake DOM.
+El.prototype.querySelectorAll = function (sel) {
+  return walkAll(this, (n) => n !== this && typeof n.matches === "function" && n.matches(sel));
+};
+
 const hasClass = (cls) => (n) => Boolean(n.classList && n.classList.contains(cls));
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
@@ -239,6 +245,18 @@ const MINIMIZE = boxed("button", "decision-window-minimize", HANDLE);
 MINIMIZE.setAttribute("type", "button");
 MINIMIZE.textContent = "Minimize";
 const BODY = boxed("div", "decision-window-body", WIN);
+
+// A rendered battlefield permanent (`findRenderedCard`'s `.card[data-card-id]`
+// anchor), laid out (non-zero rect) so `findRenderedCard` accepts it.
+function boardCard(id) {
+  const el = document.createElement("div");
+  el.className = "card card-md";
+  el.dataset.key = id;
+  el.dataset.cardId = id;
+  el.rect = { left: 0, top: 0, right: 100, bottom: 140, width: 100, height: 140 };
+  document.querySelector("#mtg-board").appendChild(el);
+  return el;
+}
 
 function memoryStorage(seed) {
   const data = { ...(seed || {}) };
@@ -333,6 +351,22 @@ function pos() {
 }
 function ptr(el, type, x, y, pointerType, pointerId) {
   return fire(el, type, { clientX: x, clientY: y, pointerId, pointerType, button: 0 });
+}
+function hoverEnter(el) {
+  fire(el, "pointerenter", {});
+}
+function hoverLeave(el) {
+  fire(el, "pointerleave", {});
+}
+function focusSlot(el) {
+  el.focus();
+  fire(el, "focusin", {});
+}
+function blurSlot(el) {
+  fire(el, "focusout", {});
+}
+function sourceClassed() {
+  return walkAll(document, hasClass("decision-source"));
 }
 
 function laneOf(lane) {
@@ -476,6 +510,42 @@ TRIGGERS = {
         "Delver of Secrets - At the beginning of your upkeep, look at the top card.",
         "Delver of Secrets - At the beginning of your upkeep, look at the top card.",
         "Bob - At the beginning of your upkeep, reveal the top card.",
+    ],
+}
+# CR 603.3b named by source (T2's `card_details` shape): `t1` and `t2` are two
+# different permanents' triggers with distinct `source_card_id`s (T3's own
+# board-highlight needs two rendered permanents to tell apart), `t3` is a
+# trigger `card_details` names but with no `source_card_id` of its own (the
+# unnameable-first-batch case, still possible once other kinds' abilities are
+# mixed in a batch) - hovering or focusing it must be a no-op.
+TRIGGERS_SOURCED = {
+    **TRIGGERS,
+    "cards": ["t1", "t2", "t3"],
+    "card_details": [
+        {
+            "id": "t1",
+            "kind": "ability",
+            "name": "Delver of Secrets",
+            "text": "At the beginning of your upkeep, look at the top card of your library.",
+            "controller": "alice",
+            "source_card_id": "perm1",
+        },
+        {
+            "id": "t2",
+            "kind": "ability",
+            "name": "Mind Stone",
+            "text": "{1}, {T}, Sacrifice this artifact: Draw a card.",
+            "controller": "alice",
+            "source_card_id": "perm2",
+        },
+        {
+            "id": "t3",
+            "kind": "ability",
+            "name": "Bob's Delver of Secrets",
+            "text": "At the beginning of your upkeep, reveal the top card.",
+            "controller": "bob",
+            "source_card_id": None,
+        },
     ],
 }
 HAND = [
@@ -869,6 +939,239 @@ def test_ordering_triggers_with_the_buttons_and_confirming_the_shown_order() -> 
     )
     assert result["enabledUntouched"] is True
     assert result["posted"] == [{"order": ["t3", "t2", "t1"]}, {"order": ["t3", "t1", "t2"]}]
+
+
+# -- highlighting each trigger's source permanent while ordering (T3) -------
+#
+# `card_details`' `source_card_id` (`TRIGGERS_SOURCED`) names the permanent
+# that asked each trigger; `orderMode` points at it with `SOURCE_CLASS`
+# (`render/decision_popover.js`, the same class the popover itself wears)
+# while a player hovers or keyboard-focuses that ability's lane slot - so a
+# player ordering CR 603.3b's batch can see which permanent asked what,
+# without opening a card preview for each one.
+
+
+def test_hovering_a_slot_outlines_only_its_own_source_permanent() -> None:
+    result = _run(
+        """
+        (() => {
+          const log = [];
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          const perm1 = boardCard("perm1");
+          const perm2 = boardCard("perm2");
+          mount(store, log);
+          store.set({});
+          hoverEnter(slotOf("t1"));
+          return {
+            perm1: perm1.classList.contains("decision-source"),
+            perm2: perm2.classList.contains("decision-source"),
+            total: sourceClassed().length,
+          };
+        })()
+        """,
+        P=TRIGGERS_SOURCED,
+    )
+    assert result == {"perm1": True, "perm2": False, "total": 1}
+
+
+def test_hovering_a_second_slot_moves_the_outline_to_its_source() -> None:
+    result = _run(
+        """
+        (() => {
+          const log = [];
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          const perm1 = boardCard("perm1");
+          const perm2 = boardCard("perm2");
+          mount(store, log);
+          store.set({});
+          hoverEnter(slotOf("t1"));
+          // A fast pointer move to an adjacent slot, exactly like the drag
+          // tests' own `dragTo`: never more than one source lit at a time,
+          // even without an intervening `pointerleave` reaching slot 1 first.
+          hoverEnter(slotOf("t2"));
+          return {
+            perm1: perm1.classList.contains("decision-source"),
+            perm2: perm2.classList.contains("decision-source"),
+            total: sourceClassed().length,
+          };
+        })()
+        """,
+        P=TRIGGERS_SOURCED,
+    )
+    assert result == {"perm1": False, "perm2": True, "total": 1}
+
+
+def test_leaving_a_slot_clears_its_source_outline() -> None:
+    result = _run(
+        """
+        (() => {
+          const log = [];
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          const perm1 = boardCard("perm1");
+          mount(store, log);
+          store.set({});
+          hoverEnter(slotOf("t1"));
+          const duringHover = perm1.classList.contains("decision-source");
+          hoverLeave(slotOf("t1"));
+          return { duringHover, afterLeave: perm1.classList.contains("decision-source") };
+        })()
+        """,
+        P=TRIGGERS_SOURCED,
+    )
+    assert result == {"duringHover": True, "afterLeave": False}
+
+
+def test_a_null_source_card_id_is_a_no_op() -> None:
+    """`t3`'s ability entry carries no `source_card_id` (the unnameable-batch
+    case) - hovering it never throws and lights nothing, whether or not a
+    real source was lit and cleared just before it."""
+    result = _run(
+        """
+        (() => {
+          const log = [];
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          const perm1 = boardCard("perm1");
+          mount(store, log);
+          store.set({});
+          hoverEnter(slotOf("t1"));
+          hoverLeave(slotOf("t1"));
+          hoverEnter(slotOf("t3"));
+          return {
+            perm1: perm1.classList.contains("decision-source"),
+            total: sourceClassed().length,
+          };
+        })()
+        """,
+        P=TRIGGERS_SOURCED,
+    )
+    assert result == {"perm1": False, "total": 0}
+
+
+def test_a_source_that_is_not_rendered_is_a_no_op() -> None:
+    """`perm1` is not on the page at all here - `findRenderedCard` finds
+    nothing, and hovering the slot must still never throw."""
+    result = _run(
+        """
+        (() => {
+          const log = [];
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          mount(store, log);
+          store.set({});
+          hoverEnter(slotOf("t1"));
+          return { total: sourceClassed().length };
+        })()
+        """,
+        P=TRIGGERS_SOURCED,
+    )
+    assert result == {"total": 0}
+
+
+def test_focusing_a_slot_outlines_its_source_and_blurring_clears_it() -> None:
+    """Keyboard and screen-reader users get the same pointer as a mouse
+    hover: focus (which bubbles from an up/down button inside the slot, in a
+    real browser) lights the source, and losing focus clears it."""
+    result = _run(
+        """
+        (() => {
+          const log = [];
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          const perm2 = boardCard("perm2");
+          mount(store, log);
+          store.set({});
+          const downBtn = buttonNamed(slotOf("t2"), "down");
+          downBtn.focus();
+          fire(downBtn, "focusin", {});
+          const duringFocus = perm2.classList.contains("decision-source");
+          fire(downBtn, "focusout", {});
+          return { duringFocus, afterBlur: perm2.classList.contains("decision-source") };
+        })()
+        """,
+        P=TRIGGERS_SOURCED,
+    )
+    assert result == {"duringFocus": True, "afterBlur": False}
+
+
+def test_the_slots_title_names_the_source() -> None:
+    result = _run(
+        """
+        (() => {
+          const log = [];
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          mount(store, log);
+          store.set({});
+          return slotOf("t1").title;
+        })()
+        """,
+        P=TRIGGERS_SOURCED,
+    )
+    assert "Delver of Secrets" in result
+    assert "look at the top card" in result
+
+
+def test_replacing_the_decision_clears_the_source_outline() -> None:
+    """A fresh `order_triggers` decision (a new key - different `cards`)
+    replaces the window's content; nothing from the old one should stay lit."""
+    result = _run(
+        """
+        (() => {
+          const log = [];
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          const perm1 = boardCard("perm1");
+          mount(store, log);
+          store.set({});
+          hoverEnter(slotOf("t1"));
+          const duringHover = perm1.classList.contains("decision-source");
+          const next = { ...P, cards: ["u1", "u2"], card_details: [] };
+          store.set({ state: baseState({ pending_decision: next }) });
+          return { duringHover, afterReplace: perm1.classList.contains("decision-source") };
+        })()
+        """,
+        P=TRIGGERS_SOURCED,
+    )
+    assert result == {"duringHover": True, "afterReplace": False}
+
+
+def test_hiding_the_window_clears_the_source_outline() -> None:
+    """The decision resolving (no `pending_decision` left) hides the window;
+    a highlighted permanent must not stay lit once the window is gone."""
+    result = _run(
+        """
+        (() => {
+          const log = [];
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          const perm1 = boardCard("perm1");
+          mount(store, log);
+          store.set({});
+          hoverEnter(slotOf("t1"));
+          store.set({ state: baseState({ pending_decision: null }) });
+          return perm1.classList.contains("decision-source");
+        })()
+        """,
+        P=TRIGGERS_SOURCED,
+    )
+    assert result is False
+
+
+def test_answering_the_decision_clears_the_source_outline_immediately() -> None:
+    """Confirming the order posts the answer right away - the highlight must
+    not wait for the next poll to disappear."""
+    result = _run(
+        """
+        (() => {
+          const log = [];
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          const perm1 = boardCard("perm1");
+          mount(store, log);
+          store.set({});
+          hoverEnter(slotOf("t1"));
+          click(buttonNamed(WIN, "Put on the stack"));
+          return { outlined: perm1.classList.contains("decision-source"), posted: decided(log) };
+        })()
+        """,
+        P=TRIGGERS_SOURCED,
+    )
+    assert result["outlined"] is False
+    assert result["posted"] == [{"order": ["t3", "t2", "t1"]}]
 
 
 # ---------------------------------------------------------------- mulligan ---

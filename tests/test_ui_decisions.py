@@ -191,6 +191,50 @@ def test_a_card_moved_and_kept_again_returns_to_the_order() -> None:
     assert after_keep == ["a", "b"]
 
 
+def test_trigger_order_options_carries_each_abilitys_source_card_id() -> None:
+    """`orderMode` (`ui/render/decision_window.js`) highlights the permanent
+    that asked each trigger while a player orders CR 603.3b's batch - it needs
+    each option's source id to point at. `card_details`' `source_card_id` is
+    what names it, positionally aligned with `cards` like the rest of this
+    view already reads; `null` when the id has no `card_details` entry at all
+    (`t3`) or an entry that itself carries no `source_card_id` (`t4`, the
+    unnameable-first-batch case this module's own docstring above talks
+    about). Labels are unaffected - `test_trigger_order_labels.py` pins those
+    unchanged."""
+    pending = {
+        **MAY,
+        "kind": "order_triggers",
+        "cards": ["t1", "t2", "t3", "t4"],
+        "card_details": [
+            {
+                "id": "t1",
+                "kind": "ability",
+                "name": "Delver of Secrets",
+                "text": "look at the top card",
+                "source_card_id": "perm1",
+            },
+            {
+                "id": "t2",
+                "kind": "ability",
+                "name": "Mind Stone",
+                "text": "draw a card",
+                "source_card_id": "perm2",
+            },
+            {
+                "id": "t4",
+                "kind": "ability",
+                "name": "Hidden trigger",
+                "text": "reveal the top card",
+            },
+        ],
+    }
+    options = run_module("decisions.js", "m.triggerOrderOptions(p)", p=pending)
+    assert options[0]["sourceId"] == "perm1"
+    assert options[1]["sourceId"] == "perm2"
+    assert options[2]["sourceId"] is None  # t3: no card_details entry at all
+    assert options[3]["sourceId"] is None  # t4: entry present, no source_card_id
+
+
 # -- the decision window's own draft arithmetic --------------------------------
 
 TRIGGERS = {**MAY, "kind": "order_triggers", "cards": ["t1", "t2", "t3"], "amount": 0}
