@@ -62,7 +62,14 @@ BOARDS_PER_READ = 4
 #: per event raised, per state trigger sweep, per state-based action round),
 #: the resolution fingerprints around it, and the audit snapshot and response
 #: after it.
-BOARDS_PER_ACTION = 12
+#:
+#: 13, not 12, since engine 0031790: a land drop now also raises a "played a
+#: card" event after the land enters (CR 601.1a, for Voltaic Visionary's "when
+#: you play a card exiled with this creature"), and that event's trigger scan
+#: and state trigger sweep each compute a board inside the command, where the
+#: engine keeps no snapshot. The work is the command's own and is the same on
+#: any battlefield size; nothing the api reads around the command can share it.
+BOARDS_PER_ACTION = 13
 
 READS = (
     "get_state",
