@@ -200,10 +200,13 @@ def test_the_seat_cli_passes_a_generation_through_and_a_stale_one_is_refused(
             assert rc == 0
             accepted = json.loads(capsys.readouterr().out)
             # A search answered from the CLI hands this seat the shockland's
-            # own `pay_life` straight back, which `seat_cli` reports as the
-            # self-decision wake rather than as an outcome - so the proof the
-            # answer landed is the question that followed it.
-            assert accepted.get("outcome") is None, accepted
+            # own `pay_life` straight back (X1 follow-up, 2026-09-23):
+            # decide()'s own commit is a definite, completed result - the
+            # generation match above accepted it - even though the same
+            # commit immediately re-pauses on `pay_life`, so `outcome`
+            # carries that real result rather than `None`.
+            assert accepted.get("outcome") is not None, accepted
+            assert accepted["outcome"].get("accepted") is True, accepted["outcome"]
             assert "pay 2 life" in accepted["wake_reason"], accepted
             assert store.paused_command(game_id) is not None, "the shockland still has to ask"
             assert pending_of(http, game_id, uids["alice"])["kind"] == "pay_life"
