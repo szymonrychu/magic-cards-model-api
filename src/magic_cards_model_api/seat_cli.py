@@ -1170,7 +1170,10 @@ def build_parser() -> argparse.ArgumentParser:
             "through, and CR 117.4 resolves that spell the moment everyone has "
             "passed in succession - so switching it off means you will not get "
             "the chance. Only where you have decided you are responding to "
-            "nothing"
+            "nothing. Even left on, an opponent's object you could only pass "
+            "over (nothing but pass, concede or a mana ability legal for you, "
+            "no armed play applying) is passed for you and listed in the "
+            "answer's auto_passed; your own objects always stop the run"
         ),
     )
     until.add_argument(

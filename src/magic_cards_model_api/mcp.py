@@ -2461,7 +2461,7 @@ def build_server(seats: Seats) -> MCPServer:
         - `finished: true` - a real stop condition fired, and `stopped_because`
           says which: the destination is reached; a decision is addressed to
           you (CR 608.2d), which arrives shaped `input_required`; something new
-          landed on the stack; it is your own declare-attackers step; you are
+          landed on the stack that you could answer; it is your own declare-attackers step; you are
           being attacked and it is your declare-blockers step; a pass was
           refused; the game ended; the game is gone (released or deleted -
           `stopped_because` starts `the game is gone`, and there is nothing
@@ -2509,6 +2509,14 @@ def build_server(seats: Seats) -> MCPServer:
           the spell still on the stack and priority still yours. Switch it off
           only for a stretch where you have decided you are responding to
           nothing - no instant, no activated ability, nothing worth holding up.
+          It only stops for an opponent's object when you could actually
+          respond: once you hold priority over it, your legal actions are read
+          and, if nothing but pass, concede or a mana ability is open (an
+          unaffordable card is not a response), the run passes it for you and
+          carries on - unless an armed play applies. Your own objects always
+          stop it. Every answer then lists what was passed over as
+          `auto_passed` (the whole run's list, across `resume` calls), so read
+          it before planning: those objects have resolved or are resolving.
         - `stop_when_attacked` and `stop_when_you_can_attack` are **off by
           default** - the other way around. A run through combat with nothing
           on the board that could block or attack does not need to be stopped

@@ -1104,9 +1104,10 @@ you spending a `Bash: sleep` and a whole separate call on the same thing.
 Read `finished`:
 
 - `finished: true` - a real stop, and `stopped_because` names it: the
-  destination, something new on the stack, a decision addressed to you (that
-  answer arrives as `input_required`), your own declare-attackers step, being
-  attacked in your own declare-blockers step, a refused pass, the game ending.
+  destination, something new on the stack you could answer, a decision
+  addressed to you (that answer arrives as `input_required`), your own
+  declare-attackers step, being attacked in your own declare-blockers step, a
+  refused pass, the game ending.
 - `finished: false` - it got as far as it could within `max_seconds` and
   handed the board back because your opponent holds priority or the game is
   frozen on a question only they can answer. **Call again with `max_seconds`
@@ -1135,7 +1136,12 @@ combine with it. They do not all default the same way (T2):
   and CR 117.4 resolves that spell the moment all players have passed in
   succession, so the pass you have not yet made is the whole of your chance.
   Left on (the default - the only one of the three that is), the run hands the
-  board back with their spell still on the stack and priority still yours.
+  board back with their spell still on the stack and priority still yours -
+  but only when you could answer it. If nothing but pass, concede or a mana
+  ability is legal for you over their spell or ability (and no armed play
+  applies), the run passes it for you and keeps going; your own objects
+  always stop it. Whatever it passed over is listed in `auto_passed` on the
+  answer - read it first, those objects have resolved or are resolving.
 - `stop_when_attacked=True` (off by default - opt in) stops the run at your
   own declare-blockers step. Without it you will block nothing and take the
   whole attack: declaring blockers is a turn-based action that "doesn't use

@@ -4580,6 +4580,8 @@ def autopass_stop_reason(
     5. this seat is the defending player in a declare-blockers step with
        attackers declared, when `stop_when_attacked` is on;
     6. something new is on the stack, unless `stop_on_stack` is off.
+       `_pass_until_once` checks this one itself (L1): it also asks whether
+       the seat could do anything about the object (`stack_stop_needs_you`).
 
     T2: conditions 4 and 5 are opt-in, off by default - the reverse of
     `stop_on_stack`, which stays opt-out. The owner's own run kept getting
@@ -4736,16 +4738,75 @@ def autopass_stop_reason(
             )
 
     if stop_on_stack:
-        arrived = [
-            obj
-            for obj in (state.get("stack") or [])
-            if obj.get("id") not in run.get("known_stack_ids", set())
-        ]
+        arrived = new_stack_objects(state, run)
         if arrived:
-            return (
-                f"something new went on the stack: {arrived[0].get('name') or arrived[0].get('id')}"
-            )
+            return stack_stop_reason(arrived)
     return None
+
+
+def new_stack_objects(state: dict[str, Any], run: dict[str, Any]) -> list[dict[str, Any]]:
+    """The stack objects that arrived after `run` last looked (`known_stack_ids`)."""
+    known = run.get("known_stack_ids") or ()
+    return [obj for obj in (state.get("stack") or []) if obj.get("id") not in known]
+
+
+def stack_stop_reason(arrived: list[dict[str, Any]]) -> str:
+    """`autopass_stop_reason`'s condition 6 text, for the first new object."""
+    return f"something new went on the stack: {arrived[0].get('name') or arrived[0].get('id')}"
+
+
+#: Legal-action kinds that never answer a stack object on their own: passing
+#: and conceding (always legal), and a mana ability (CR 605.1a) - mana with
+#: nothing of this seat's own to spend it on does nothing for a stack of the
+#: opponent's objects.
+_NOT_A_RESPONSE_KINDS = frozenset({"pass_priority", "concede", "activate_mana"})
+
+
+def stack_stop_needs_you(
+    arrived: list[dict[str, Any]],
+    actions_view: dict[str, Any],
+    state: dict[str, Any],
+    player: str,
+) -> bool:
+    """L1: whether condition 6 (something new on the stack) is worth handing
+    the board back for, given this seat's own `available_actions` read while
+    it holds priority over `arrived`.
+
+    Not a rule of its own - the engine's legal-actions enumeration already
+    said what is open; this only reads it. Stops (True) when any arrival is
+    this seat's own (or a controlled player's, `decides_for`), when the read
+    failed (`actions_error` is never "nothing is legal"), or when any row is a
+    move other than pass/concede/a mana ability that is not reported
+    `affordable: "no"` - an unaffordable cast cannot be taken, and `unknown`
+    (a modal or X cost) is given the benefit of the doubt. False means the
+    seat's only real move is to pass, so `pass_until` passes it unasked."""
+    if any(_is_own(obj, state, player) for obj in arrived):
+        return True
+    if actions_view.get("actions_error"):
+        return True
+    for row in actions_view.get("actions") or []:
+        if not isinstance(row, dict):
+            return True
+        if row.get("kind") in _NOT_A_RESPONSE_KINDS:
+            continue
+        if row.get("affordable") == "no":
+            continue
+        return True
+    return False
+
+
+def _is_own(obj: dict[str, Any], state: dict[str, Any], player: str) -> bool:
+    """Whether a stack object is this seat's own, or a player's it decides for."""
+    return obj.get("controller") in (decides_for(state, player) | {player})
+
+
+def auto_passed_entry(obj: dict[str, Any], state: dict[str, Any]) -> str:
+    """One `auto_passed` line: what was passed over, whose, and where."""
+    step = (state.get("step") or "").replace("_", " ")
+    return (
+        f"{obj.get('name') or obj.get('id')} ({obj.get('controller')}'s "
+        f"{obj.get('kind') or 'object'}, turn {state.get('turn_number')} {step})"
+    )
 
 
 #: How many priorities one `pass_until` call will give up before handing the
@@ -4946,16 +5007,9 @@ def _wait_for_own_priority_at_destination(
         if _arming_moment(state, seat.player):
             _restate(result, seat, state, include_actions)
             if stop_on_stack:
-                arrived = [
-                    obj
-                    for obj in (state.get("stack") or [])
-                    if obj.get("id") not in run.get("known_stack_ids", ())
-                ]
+                arrived = new_stack_objects(state, run)
                 if arrived:
-                    result["stopped_because"] = (
-                        f"something new went on the stack: "
-                        f"{arrived[0].get('name') or arrived[0].get('id')}"
-                    )
+                    result["stopped_because"] = stack_stop_reason(arrived)
             return result
     return give_up(_own_priority_wait_note(until_step))
 
@@ -5296,7 +5350,11 @@ def _pass_until_once(
     handed the board back), `passes` (how many priorities this call actually
     gave up), `finished` (`True` only when a real stop condition fired -
     `False` means "call again, with `resume`"), the state it stopped on, and
-    this seat's `available_actions` in it.
+    this seat's `available_actions` in it, plus `auto_passed` once the run
+    has passed over any opponent's stack object unasked (L1: judged while
+    this seat holds priority over it, from its own legal actions - see
+    `stack_stop_needs_you`; the list rides in `resume`, so it covers the
+    whole run).
 
     A pass refused mid-run stops the run and reports the refusal rather than
     hammering the same refused call again.
@@ -5320,7 +5378,12 @@ def _pass_until_once(
     passes = 0
 
     def answer(
-        state: dict[str, Any], reason: str, finished: bool = True, *, arm_eligible: bool = True
+        state: dict[str, Any],
+        reason: str,
+        finished: bool = True,
+        *,
+        arm_eligible: bool = True,
+        actions: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         result = {
             "stopped_because": reason,
@@ -5329,6 +5392,14 @@ def _pass_until_once(
             "until": {"step": until_step, "whose_turn": whose_turn},
             "state": state,
         }
+        if run.get("auto_passed"):
+            # L1: every stack object this run passed over unasked, across
+            # every call of it (the list rides in `resume`).
+            result["auto_passed"] = list(run["auto_passed"])
+        if include_actions and actions is not None:
+            # Already read for this very board (the L1 stack judgement) -
+            # `_fill_answer_extras` leaves a present key alone.
+            result["available_actions"] = actions
         if not arm_eligible:
             # S2 review finding 6: an ambiguous or refused attempt is not
             # this seat's moment even when the board still looks like one -
@@ -5338,7 +5409,7 @@ def _pass_until_once(
             # explicit signal for exactly those two cases. Popped there
             # before the answer ever reaches a caller.
             result["_arm_eligible"] = False
-        if include_actions and include_extras:
+        if include_actions and include_extras and "available_actions" not in result:
             result["available_actions"] = available_actions(seat, state)
         if include_extras:
             result |= {
@@ -5388,18 +5459,45 @@ def _pass_until_once(
         state = seat.fetch_state()
         if game_gone(seat):
             return answer(state, GAME_GONE)
+        # Condition 6 (the stack) is judged here rather than inside
+        # `autopass_stop_reason`: it is the one stop that also asks what this
+        # seat could do about it (L1).
         reason = autopass_stop_reason(
             state,
             run,
             seat.player,
-            stop_on_stack=stop_on_stack,
+            stop_on_stack=False,
             stop_when_attacked=stop_when_attacked,
             stop_when_you_can_attack=stop_when_you_can_attack,
         )
         if reason is not None:
             return answer(state, reason)
 
-        run["known_stack_ids"] = [obj.get("id") for obj in (state.get("stack") or [])]
+        # L1: a new stack object only hands the board back when this seat
+        # could do something about it. That is judged while this seat holds
+        # priority over it - CR 117.3c gives the caster priority first, and
+        # this seat's legal actions mean nothing before its own priority -
+        # so an arrival seen earlier stays "new" (out of `known_stack_ids`)
+        # until then. Its own objects stop the run straight away, as before.
+        arrived = new_stack_objects(state, run) if stop_on_stack else []
+        undecided: set[Any] = set()
+        passing_over: list[str] = []
+        if arrived:
+            if any(_is_own(obj, state, seat.player) for obj in arrived):
+                return answer(state, stack_stop_reason(arrived))
+            if not holds_priority(state, seat.player) or state.get("pending_decision"):
+                # A frozen game's `priority_holder` is stale (see the pending
+                # branch below), so a pending decision defers the judgement too.
+                undecided = {obj.get("id") for obj in arrived}
+            else:
+                view = available_actions(seat, state)
+                if stack_stop_needs_you(arrived, view, state, seat.player):
+                    return answer(state, stack_stop_reason(arrived), actions=view)
+                passing_over = [auto_passed_entry(obj, state) for obj in arrived]
+
+        run["known_stack_ids"] = [
+            obj.get("id") for obj in (state.get("stack") or []) if obj.get("id") not in undecided
+        ]
         forget_starting_occurrence(run, state)
 
         pending = state.get("pending_decision")
@@ -5636,6 +5734,8 @@ def _pass_until_once(
                     arm_eligible=False,
                 )
             passes += 1
+            if passing_over:
+                run["auto_passed"] = [*run.get("auto_passed", []), *passing_over]
             continue
 
         return handed_back(

@@ -371,9 +371,14 @@ def test_whose_turn_any_takes_whichever_comes_first(client, game, monkeypatch):
 
 def test_a_spell_landing_on_the_stack_stops_the_run(client, game, monkeypatch):
     """The user's "ability to react to anything on the stack". bob casts a real
-    Lightning Bolt while alice is auto-passing toward her end step; her run must
+    Lightning Bolt while alice is auto-passing toward her end step, and alice
+    holds a real answer (her own Mountain and Lightning Bolt); her run must
     hand her back the board with the bolt still on the stack, not resolve it by
-    passing through."""
+    passing through.
+
+    L1: the stop is judged once alice holds priority over the bolt (CR 117.3c
+    gives bob priority first, right after he casts it), so bob passes after
+    casting here - a bob who never passed would leave alice nothing to judge."""
     seats, uids = wired(monkeypatch, game)
     alice = seats.seat_for(uids["alice"])
     add_card(client, game, "Mountain", "bob", "battlefield")
@@ -381,6 +386,8 @@ def test_a_spell_landing_on_the_stack_stops_the_run(client, game, monkeypatch):
     board = state(client, game)
     mountain = find(board["battlefield"], "Mountain")["id"]
     bolt = board["hands"]["bob"][0]["id"]
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
     set_step(client, game, "precombat_main")
 
     cast = threading.Event()
@@ -398,6 +405,7 @@ def test_a_spell_landing_on_the_stack_stops_the_run(client, game, monkeypatch):
                         "mana_sources": [mountain],
                     },
                 )
+                bob_client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
                 cast.set()
                 return
             time.sleep(FAST_POLL)
@@ -413,6 +421,8 @@ def test_a_spell_landing_on_the_stack_stops_the_run(client, game, monkeypatch):
     assert result["stopped_because"] == "something new went on the stack: Lightning Bolt"
     assert [obj["name"] for obj in result["state"]["stack"]] == ["Lightning Bolt"]
     assert result["state"]["step"] != "end_step", "the run should have stopped short"
+    assert result["state"]["priority_holder"] == "alice", "the stop hands alice her response"
+    assert not result.get("auto_passed"), "nothing was passed over on alice's behalf"
 
 
 def test_a_run_told_not_to_stop_on_the_stack_runs_through_it(client, game, monkeypatch):
@@ -1831,3 +1841,233 @@ def test_a_run_never_passes_at_a_game_frozen_on_another_seats_decision(client, m
         assert answered.status_code == 200, answered.text
     finally:
         client.delete(f"/api/games/{game_id}")
+
+
+# -- L1: an opponent's stack object this seat can only pass over --------------
+#
+# Prod game 9cec3866 (2026-09-23): the opponent's Karn and Bridge casts each
+# stopped the seat's run and cost a full model inference (27-82s) although the
+# seat's only legal moves were pass and concede. A stack stop now asks the
+# seat's own legal-actions source (`available_actions`, the engine's
+# enumeration) first, and passes on when nothing but pass/concede/a mana
+# ability (CR 605.1a - it does nothing for a stack of the opponent's objects)
+# is open to it. What it passed over is reported as `auto_passed`.
+
+
+def bob_acts_then_passes(game: str, act: Any) -> tuple[threading.Thread, threading.Event]:
+    """bob takes `act(bob_client)` once, the first time he holds priority,
+    then passes every priority after it - the opponent the L1 runs need, who
+    puts one object on the stack and then lets the game move on."""
+    done = threading.Event()
+
+    def loop() -> None:
+        bob_client = TestClient(app)
+        for _ in range(4000):
+            board = bob_client.get(f"/api/games/{game}").json()
+            if board.get("winner") or board.get("drawn"):
+                return
+            if board.get("priority_holder") != "bob":
+                time.sleep(FAST_POLL)
+                continue
+            if not done.is_set():
+                outcome = act(bob_client)
+                assert outcome.get("allowed") is True, outcome
+                done.set()
+                continue
+            bob_client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    return thread, done
+
+
+def bob_bolts_alice(client: TestClient, game: str) -> Any:
+    """A real Mountain and Lightning Bolt for bob; returns the cast to run."""
+    add_card(client, game, "Mountain", "bob", "battlefield")
+    add_card(client, game, "Lightning Bolt", "bob", "hand")
+    board = state(client, game)
+    mountain = next(c["id"] for c in board["battlefield"] if c["controller"] == "bob")
+    bolt = board["hands"]["bob"][0]["id"]
+
+    def cast(bob_client: TestClient) -> Any:
+        return bob_client.post(
+            f"/api/games/{game}/actions/cast",
+            json={
+                "player": "bob",
+                "card_id": bolt,
+                "targets": ["alice"],
+                "mana_sources": [mountain],
+            },
+        ).json()
+
+    return cast
+
+
+def test_an_opponents_spell_you_can_only_pass_over_is_auto_passed(client, game, monkeypatch):
+    """alice holds a Forest (a mana ability only) and a Lightning Bolt she has
+    no red mana for: nothing she could do answers bob's bolt, so her run
+    passes over it and reaches its destination - and says what it passed."""
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    cast = bob_bolts_alice(client, game)
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    set_step(client, game, "precombat_main")
+
+    thread, done = bob_acts_then_passes(game, cast)
+    try:
+        result = run_to_stop(
+            alice, until_step="end_step", whose_turn="mine", stop_when_you_can_attack=False
+        )
+    finally:
+        thread.join(timeout=1)
+
+    assert done.is_set(), "bob never cast, so nothing was tested"
+    assert result["stopped_because"] == "reached your end step", result["stopped_because"]
+    alice_life = next(p for p in result["state"]["players"] if p["username"] == "alice")["life"]
+    assert alice_life == 17, "the bolt resolved on the way past"
+    passed = result.get("auto_passed") or []
+    assert len(passed) == 1 and "Lightning Bolt" in passed[0], passed
+    assert "bob" in passed[0], "an auto-passed entry names whose object it was"
+
+
+def test_an_opponents_ability_you_can_only_pass_over_is_auto_passed(client, game, monkeypatch):
+    """The same for an activated ability: bob cracks a real Sunbaked Canyon
+    to draw, alice has nothing to answer with, and the run carries on."""
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    add_card(client, game, "Mountain", "bob", "battlefield")
+    add_card(client, game, "Sunbaked Canyon", "bob", "battlefield")
+    board = state(client, game)
+    mountain = find(board["battlefield"], "Mountain")["id"]
+    canyon = find(board["battlefield"], "Sunbaked Canyon")["id"]
+    set_step(client, game, "precombat_main")
+
+    def crack(bob_client: TestClient) -> Any:
+        return bob_client.post(
+            f"/api/games/{game}/actions/activate",
+            json={
+                "player": "bob",
+                "card_id": canyon,
+                "ability_index": 1,
+                "mana_sources": [mountain],
+            },
+        ).json()
+
+    thread, done = bob_acts_then_passes(game, crack)
+    try:
+        result = run_to_stop(
+            alice, until_step="end_step", whose_turn="mine", stop_when_you_can_attack=False
+        )
+    finally:
+        thread.join(timeout=1)
+
+    assert done.is_set(), "bob never activated, so nothing was tested"
+    assert result["stopped_because"] == "reached your end step", result["stopped_because"]
+    passed = result.get("auto_passed") or []
+    assert len(passed) == 1 and "Sunbaked Canyon" in passed[0], passed
+
+
+def test_an_activatable_ability_that_spends_mana_still_stops_the_run(client, game, monkeypatch):
+    """alice's own Sunbaked Canyon and Mountain: `{1}, {T}, Sacrifice: Draw a
+    card` is a real instant-speed move, paid for with mana, so bob's bolt
+    stops her run exactly as a castable instant would."""
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    cast = bob_bolts_alice(client, game)
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Sunbaked Canyon", "alice", "battlefield")
+    set_step(client, game, "precombat_main")
+
+    thread, done = bob_acts_then_passes(game, cast)
+    try:
+        result = run_to_stop(alice, until_step="end_step", whose_turn="mine")
+    finally:
+        thread.join(timeout=1)
+
+    assert done.is_set(), "bob never cast, so nothing was tested"
+    assert result["stopped_because"] == "something new went on the stack: Lightning Bolt"
+    assert result["state"]["priority_holder"] == "alice"
+    assert not result.get("auto_passed")
+
+
+def test_an_armed_script_that_applies_still_stops_the_run(client, game, monkeypatch):
+    """Nothing but pass is open to alice, but an armed play applies with the
+    bolt on the stack: arming is judged before any auto-pass, as before."""
+    from magic_cards_model_api.playscripts import arming
+
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    cast = bob_bolts_alice(client, game)
+    set_step(client, game, "precombat_main")
+
+    def judged(seat: Any, *_: Any, **__: Any) -> dict[str, Any]:
+        board = seat.fetch_state()
+        return {"applying": ["dsl:respond"] if board.get("stack") else [], "state": board}
+
+    monkeypatch.setattr(arming, "validate_arm_request", lambda *a, **k: None)
+    monkeypatch.setattr(arming, "arm", judged)
+
+    thread, done = bob_acts_then_passes(game, cast)
+    try:
+        result = run_to_stop(
+            alice,
+            until_step="end_step",
+            whose_turn="mine",
+            arm=["dsl:respond"],
+            arm_reasoning="respond to the bolt",
+        )
+    finally:
+        thread.join(timeout=1)
+
+    assert done.is_set(), "bob never cast, so nothing was tested"
+    assert result["stopped_because"].startswith("an armed play now applies: dsl:respond")
+    assert [obj["name"] for obj in result["state"]["stack"]] == ["Lightning Bolt"]
+
+
+def _view(*actions: dict[str, Any], error: str | None = None) -> dict[str, Any]:
+    view: dict[str, Any] = {"actions": list(actions)}
+    if error is not None:
+        view["actions_error"] = error
+    return view
+
+
+PASS_ROW = {"kind": "pass_priority"}
+CONCEDE_ROW = {"kind": "concede"}
+THEIRS = [{"id": "s1", "name": "Karn, the Great Creator", "controller": "bob"}]
+BOARD = {"priority_holder": "alice"}
+
+
+def test_only_pass_concede_and_mana_abilities_let_the_stack_stop_pass():
+    view = _view(PASS_ROW, CONCEDE_ROW, {"kind": "activate_mana", "affordable": "yes"})
+    assert seatkit.stack_stop_needs_you(THEIRS, view, BOARD, "alice") is False
+    assert seatkit.stack_stop_needs_you(THEIRS, _view(), BOARD, "alice") is False
+
+
+def test_an_unaffordable_cast_is_not_a_response():
+    view = _view(PASS_ROW, {"kind": "cast", "affordable": "no"})
+    assert seatkit.stack_stop_needs_you(THEIRS, view, BOARD, "alice") is False
+
+
+def test_any_other_open_move_stops_for_the_stack():
+    for row in (
+        {"kind": "cast", "affordable": "yes"},
+        {"kind": "cast", "affordable": "unknown"},
+        {"kind": "activate", "affordable": "yes"},
+        {"kind": "activate_off_zone", "affordable": "yes"},
+        {"kind": "answer_decision"},
+    ):
+        view = _view(PASS_ROW, CONCEDE_ROW, row)
+        assert seatkit.stack_stop_needs_you(THEIRS, view, BOARD, "alice") is True, row
+
+
+def test_a_failed_legal_actions_read_stops_for_the_stack():
+    view = _view(error="the legal-actions call timed out")
+    assert seatkit.stack_stop_needs_you(THEIRS, view, BOARD, "alice") is True
+
+
+def test_the_seats_own_stack_object_always_stops():
+    mine = [{"id": "s2", "name": "Lightning Bolt", "controller": "alice"}]
+    assert seatkit.stack_stop_needs_you(mine, _view(PASS_ROW), BOARD, "alice") is True
