@@ -2438,6 +2438,16 @@ def test_decide_does_not_echo_the_decision_it_is_answering(client, game, monkeyp
         f"decide(accept=true) echoed the very decision it was answering back "
         f"as newly raised: {wake1!r}"
     )
+    # The reported race: this decide's own commit is what raises the next
+    # decision (choose_cards, N+1) before the HTTP response returns, so the
+    # watcher must not abandon `perform` and report the outcome as unknown -
+    # nobody else could have resolved `may_generation`, so a differing
+    # generation appearing proves this very call's accept already committed.
+    assert r1.get("outcome") is not None, (
+        f"decide(accept=true) genuinely succeeded (a follow-up decision "
+        f"exists), but its own outcome was reported unknown: {r1!r}"
+    )
+    assert r1["outcome"].get("accepted") is True, r1["outcome"]
     p1 = r1["state"].get("pending_decision") or {}
     assert p1.get("kind") == "choose_cards", r1
     assert p1.get("generation") == may_generation + 1, r1

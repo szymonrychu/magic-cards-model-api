@@ -3384,6 +3384,32 @@ def _paused(outcome: Any) -> bool:
     return isinstance(outcome, dict) and outcome.get("paused") is True
 
 
+def _paused_action_completed(outcome: Any) -> bool:
+    """Whether a `_paused(outcome)` already carries its own action's
+    definite, completed result alongside the pause, rather than genuinely
+    having none yet (X1 follow-up, 2026-09-23 review).
+
+    `app.py`'s generic `_respond` (most actions - `play_land`, `cast`, ...)
+    reports `PAUSED` with `allowed: None`: the command never reached
+    `store.replace`, so the action itself has not finished and there is
+    nothing to report - `_paused`'s `outcome=None` is the honest answer for
+    that shape.
+
+    `/decide` and the declare-attackers/declare-blockers aliases
+    (`_answer_declaration`) are different: both *resume* a tape already
+    paused on a standing decision, and can immediately re-pause on the very
+    next question that answer's own commit raises - Malevolent Rumble's
+    `may`, accepted, immediately asks `choose_cards`. That commit is
+    unambiguously complete (`accepted`/`allowed` is `True`, not `None`), so
+    there is a real outcome to hand back even though another decision
+    follows it - discarding it would report a `decide(accept=true)` that
+    plainly succeeded as if its result were still unknown.
+    """
+    return isinstance(outcome, dict) and (
+        outcome.get("allowed") is True or outcome.get("accepted") is True
+    )
+
+
 def _addressed_to(pending: Any, player: str, state: dict[str, Any]) -> bool:
     """Whether a paused answer's `pending_decision` is this seat's to answer
     - the `player` it names, or one this seat is deciding for (CR 723.5,
@@ -3490,7 +3516,14 @@ def _call_watching_for_self_decision(
     ignore by accident. A *different* decision landing on this same seat
     mid-flight - an ETB trigger this call's own resolution raises, or the
     very next question in a chain once `perform` genuinely commits - carries
-    a different generation and is reported exactly as before.
+    a different generation, but when `ignore` is set that chain case is
+    `perform`'s own doing (nobody else can resolve a decision addressed to
+    this seat), so rather than abandoning it this waits `perform` out and
+    hands back its real outcome alongside the new decision. Only when
+    `ignore` is `None` - nothing of this seat's own was standing to begin
+    with, so a decision showing up is unambiguously independent of
+    `perform` - is it still reported as `SELF_DECISION_IN_FLIGHT`, exactly
+    as before.
     """
     done = threading.Event()
     box: dict[str, Any] = {}
@@ -3519,6 +3552,15 @@ def _call_watching_for_self_decision(
             and decision_is_mine(pending, state, seat.player)
             and not _is_the_ignored_decision(pending)
         ):
+            if ignore is not None:
+                # `ignore`'s own decision is gone - only `perform` could have
+                # resolved it - so this is the chain case above, not a
+                # concurrent race: wait out the real outcome instead of
+                # abandoning it.
+                done.wait()
+                if "exception" in box:
+                    raise box["exception"]
+                return box["outcome"], pending
             return SELF_DECISION_IN_FLIGHT, pending
     if "exception" in box:
         raise box["exception"]
@@ -3669,6 +3711,15 @@ def run_action(
         outcome, self_decision = _call_watching_for_self_decision(
             seat, perform, ignore=before.get("pending_decision")
         )
+    # X1 follow-up (2026-09-23 review): whether `outcome` is already
+    # `perform`'s own definite, completed result even though a *further*
+    # decision is also being reported alongside it - see
+    # `_paused_action_completed`'s docstring for the two ways that happens
+    # (the poll-detected chain case below, or `decide`/the declare-attackers-
+    # or-blockers aliases immediately re-pausing on their own commit).
+    # Computed at each point `self_decision` can be set, before the next one
+    # gets a chance to overwrite it and blur the two origins together.
+    known_outcome = self_decision is not None and outcome is not SELF_DECISION_IN_FLIGHT
     if self_decision is None and _paused(outcome):
         # `perform()` itself paused (`commands.py`) rather than a decision
         # surfacing mid-flight through the polling race above - see
@@ -3676,6 +3727,7 @@ def run_action(
         paused_on = outcome.get("pending_decision")
         if _addressed_to(paused_on, seat.player, before):
             self_decision = paused_on
+            known_outcome = _paused_action_completed(outcome)
         else:
             # B3-10: a decision is asked of whoever the resolving object
             # names - bob's pass resolving alice's Galvanic Discharge asks
@@ -3690,15 +3742,38 @@ def run_action(
 
     if self_decision is not None:
         state = seat.fetch_state()
+        if not known_outcome:
+            # `perform()`'s own result genuinely is not known yet: either it
+            # paused mid-resolution before reaching its own outcome
+            # (`_respond`'s `allowed: None` - the action itself never
+            # finished), or it was abandoned mid-flight because a decision
+            # addressed to this seat showed up with nothing of this seat's
+            # own standing beforehand to attribute it to (X1:
+            # `before['pending_decision']` was `None` - see
+            # `_call_watching_for_self_decision`'s docstring).
+            return answered(
+                state,
+                outcome=None,
+                held_priority=None,
+                wake_reason=(
+                    "a decision is waiting for you, raised by this very call: "
+                    f"{self_decision.get('prompt')} - answer it with decide() now; "
+                    "that unblocks the action you just took, whose own outcome you "
+                    "will only see afterward, from `recent_log` below or from state"
+                ),
+                in_flight_action=True,
+            )
+        # X1 follow-up (2026-09-23 review): `perform` itself already carries
+        # a definite, completed result - it is not an echo of anything, so
+        # the caller does not have to wait for `recent_log` to learn it.
         return answered(
             state,
-            outcome=None,
+            outcome=outcome,
             held_priority=None,
             wake_reason=(
-                "a decision is waiting for you, raised by this very call: "
-                f"{self_decision.get('prompt')} - answer it with decide() now; "
-                "that unblocks the action you just took, whose own outcome you "
-                "will only see afterward, from `recent_log` below or from state"
+                "the action you just took succeeded, and its own resolution "
+                f"raised a further decision only you can answer: "
+                f"{self_decision.get('prompt')} - answer it with decide() now"
             ),
             in_flight_action=True,
         )
