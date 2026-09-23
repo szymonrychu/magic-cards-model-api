@@ -30,6 +30,7 @@ all.
 from __future__ import annotations
 
 import ast
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,7 @@ from typing import Any
 import pytest
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
+from magic_cards_model.models import Zone
 from test_review import (
     PLAN,
     _advised_run_then_the_real_move,
@@ -125,6 +127,62 @@ def test_recorded_state_matches_what_store_get_returned_right_after_the_action(
 def test_a_row_for_a_game_that_does_not_exist_gets_no_recorded_state() -> None:
     audit.record("no-such-game-r2-frames", "harness_probe")
     assert store.record_state_seqs("no-such-game-r2-frames") == []
+
+
+def test_put_record_state_failure_logs_one_warning_and_leaves_row_and_response_alone(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`store.put_record_state` raising must never surface past `audit.
+    record`: the action's own response and the ledger row it already wrote
+    are unaffected, and the failure shows up as exactly one WARNING naming
+    the `game_id` and `seq` it failed for - not an exception that would take
+    the whole request down with it."""
+    info = _agent_game(client, active="bob")
+    game_id = info["game_id"]
+    try:
+        assert _declare(client, info).status_code == 200
+        client.post(
+            f"/api/games/{game_id}/cards",
+            json={"card": "Mountain", "player": "bob", "zone": "hand"},
+        )
+
+        def _raise(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("put_record_state boom")
+
+        monkeypatch.setattr(store, "put_record_state", _raise)
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="mcm.audit"):
+            played = client.post(
+                f"/api/games/{game_id}/actions/play-land",
+                json={"player": "bob", "card": "Mountain", "reasoning": "land"},
+            )
+        assert played.status_code == 200, played.text
+        seq = played.json()["log_seq"]
+        assert isinstance(seq, int)
+
+        # The row itself: written before `put_record_state` is ever called,
+        # so a raise there must not have touched it.
+        entries = audit.entries(game_id)
+        row = next(entry for entry in entries if entry["seq"] == seq)
+        assert row["action"] == "play_land"
+        assert row["snapshot"] is not None
+
+        # Exactly one WARNING, naming this game and this seq - not a stack
+        # trace, and not zero (the failure must not be swallowed silently).
+        warnings = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.WARNING and record.name == "mcm.audit"
+        ]
+        assert len(warnings) == 1, [record.getMessage() for record in warnings]
+        message = warnings[0].getMessage()
+        assert game_id in message
+        assert str(seq) in message
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +443,15 @@ def test_a_seat_and_the_admin_key_both_read_a_frame_of_a_conceded_game(
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
+def _ids_and_names(cards: list) -> dict[str, str]:
+    """`{str(id): name}` for a list of `CardState`s off the live `Game`
+    object - the same two fields a frame's card view carries (`id`, `name`),
+    read straight off the model rather than re-derived, so the comparison
+    below is against the decoded stored `Game` itself, not another view of
+    it."""
+    return {str(card.id): card.name for card in cards}
+
+
 def test_frame_battlefield_hands_and_exile_match_the_stored_game(
     client: TestClient, game: str, admin_key: str
 ) -> None:
@@ -392,7 +459,11 @@ def test_frame_battlefield_hands_and_exile_match_the_stored_game(
     (an Aura played through the real cast/resolve/decide sequence, exactly
     like `test_serialize_attachments.py`'s own case), and an exile card's
     `owner` present (never bare, the way the human-readable `snapshot`
-    string leaves it)."""
+    string leaves it). The frame's battlefield, both hands, and exile are
+    checked against `store.record_state(game, seq)` - the decoded stored
+    `Game` itself - never against a live state view, which is a different
+    read path and would let the frame route drift from what was actually
+    recorded without either test noticing."""
     add_card(client, game, "Forest", "alice", "battlefield")
     add_card(client, game, "Forest", "alice", "battlefield")
     add_card(client, game, "Utopia Sprawl", "alice", "hand")
@@ -444,7 +515,19 @@ def test_frame_battlefield_hands_and_exile_match_the_stored_game(
     bolt_view = find(frame_body["exile"], "Lightning Bolt")
     assert bolt_view["owner"] == "alice"
 
-    assert len(frame_body["battlefield"]) == len(state(client, game)["battlefield"])
+    stored = store.record_state(game, seq)
+    assert stored is not None
+
+    frame_battlefield = {c["id"]: c["name"] for c in frame_body["battlefield"]}
+    assert frame_battlefield == _ids_and_names(stored.shared_zones[Zone.BATTLEFIELD])
+
+    assert set(frame_body["hands"]) == {player.username for player in stored.players}
+    for player in stored.players:
+        frame_hand = {c["id"]: c["name"] for c in frame_body["hands"][player.username]}
+        assert frame_hand == _ids_and_names(player.zones[Zone.HAND])
+
+    frame_exile = {c["id"]: c["name"] for c in frame_body["exile"]}
+    assert frame_exile == _ids_and_names(stored.shared_zones[Zone.EXILE])
 
 
 def test_a_live_games_frame_route_is_refused_to_every_credential(client: TestClient) -> None:
