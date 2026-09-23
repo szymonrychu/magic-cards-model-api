@@ -327,7 +327,7 @@ def record(
         offered_action,
     )
     from .repository import GameUnloadable  # lazy, with `store` below
-    from .serialize import snapshot  # lazy: keep module import light
+    from .serialize import snapshot, step_position_of  # lazy: keep module import light
     from .store import store  # lazy: audit imports nothing of the app at load
 
     detail = _with_offered(_with_stale(detail, named_a_current_board()), offered_action())
@@ -344,6 +344,7 @@ def record(
     turn = game.turn if game is not None else None
     turn_number = turn.turn_number if turn is not None else None
     step = turn.step if turn is not None else None
+    first_strike_damage_step = game.is_first_strike_damage_step if game is not None else False
     # S2 A7: whose turn this row was written in, who held priority the
     # moment after it landed, and how many turns had actually begun - all
     # three read off the live `game` at write time, exactly like `turn_
@@ -395,13 +396,17 @@ def record(
     # moved on to since (`records.note_action_board`, battle 3 B3-11).
     noted = action_board(game_id)
     if noted is not None:
-        turn_number, step = noted
+        turn_number, step, first_strike_damage_step = noted
     payload = {
         "ts": datetime.now(UTC).isoformat(),
         "action": action,
         "detail": dict(detail),
         "turn": turn_number,
-        "step": step.value if step is not None else None,
+        # CR 510.4/506.1: `step_position_of` names the row `"first_strike_
+        # damage"`, not `"combat_damage"`, when it was logged in CR 510.4's
+        # first combat damage step - the engine keeps one `Step.COMBAT_
+        # DAMAGE` for both occurrences, so `step` alone could never say which.
+        "step": step_position_of(step, first_strike_damage_step),
         # `.get`, not `[...]`: CR 500.1 makes a phase - and so every step in
         # one - part of *a turn*, and the engine's two pregame steps
         # (`Step.MULLIGAN`, `Step.PREGAME_ACTIONS`) happen before CR 103.8's

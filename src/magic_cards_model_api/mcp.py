@@ -2460,12 +2460,22 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         declarations with nobody, exactly as it does your own. Legal steps, in turn order:
 
             upkeep, draw, precombat_main, beginning_of_combat,
-            declare_attackers, declare_blockers, combat_damage,
-            end_of_combat, postcombat_main, end_step
+            declare_attackers, declare_blockers, first_strike_damage,
+            combat_damage, end_of_combat, postcombat_main, end_step
 
         (`untap` and `cleanup` are not offered: no player receives priority in
         either, CR 502.4 and CR 514.3, so a run could never stop there. The
         game crosses both on its own - CR 500.3.)
+
+        Combat has two damage steps, not one, whenever a first or double
+        striker is in it (CR 510.4/506.1) - the engine keeps one
+        `Step.COMBAT_DAMAGE` for both, so `state.step` reads `"combat_damage"`
+        in each. `first_strike_damage` names the first one; `state
+        .first_strike_damage_step` (`true`/`false`) is how you tell which one
+        you are actually standing in once you get there. A combat with
+        nothing that first- or double-strikes never has a first-strike step
+        at all - naming it as a destination there is simply passed through
+        like any other step this combat never reaches.
 
         Naming the step you are standing in right now means its NEXT
         occurrence, never this one: `step="upkeep"` asked during your upkeep
@@ -2919,11 +2929,14 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
 
         `step`/`whose_turn` mean exactly what they mean for `pass_until`: one
         of `upkeep, draw, precombat_main, beginning_of_combat,
-        declare_attackers, declare_blockers, combat_damage, end_of_combat,
-        postcombat_main, end_step`, and `"mine"` (default), `"opponent"`, or
-        `"any"`. Naming the step your human is standing in right now means its
-        NEXT occurrence, never this one - the same next-occurrence rule
-        `pass_until` follows.
+        declare_attackers, declare_blockers, first_strike_damage,
+        combat_damage, end_of_combat, postcombat_main, end_step`, and
+        `"mine"` (default), `"opponent"`, or `"any"`. Naming the step your
+        human is standing in right now means its NEXT occurrence, never this
+        one - the same next-occurrence rule `pass_until` follows.
+        `first_strike_damage` is CR 510.4's first of combat's two damage
+        steps - see `pass_until`'s own docstring for why combat has two at
+        all whenever a first or double striker is in it.
 
         The very next committing call you make (`cast`, `activate`, `pass`,
         ...) after this is what gets captured - probed exactly as an ordinary

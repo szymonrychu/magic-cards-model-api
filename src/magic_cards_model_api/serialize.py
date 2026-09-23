@@ -35,6 +35,41 @@ from .store import store
 
 StackObject = CardState | AbilityOnStack
 
+#: The api's own name for CR 510.4's first-strike combat damage step. The
+#: engine deliberately keeps one `Step.COMBAT_DAMAGE` for both occurrences
+#: (`Game.is_first_strike_damage_step`'s own docstring explains why - there is
+#: no separate `Step` member for it), so every api reader that compares,
+#: ranks, stamps or records "the current step" needs a second name to tell the
+#: two occurrences apart, and this is it. `step_position`/`step_position_of`
+#: below are the one place that name is minted from a `Game`; `seatkit.
+#: FIRST_STRIKE_DAMAGE`/`seatkit.step_position` are a deliberate duplicate for
+#: a state *dict* rather than an import - `seatkit.py`'s own header explains
+#: why that module never imports the rest of this package.
+FIRST_STRIKE_DAMAGE = "first_strike_damage"
+
+
+def step_position_of(step: Step | None, first_strike_damage_step: bool) -> str | None:
+    """`step_position`'s answer from an already-read `(step, first_strike_
+    damage_step)` pair, for a caller that stamped the two off a `Game` earlier
+    and no longer holds the game itself (`records.action_board`, read back by
+    `audit.record`). `None` exactly when `step` is `None`."""
+    if step is None:
+        return None
+    if first_strike_damage_step:
+        return FIRST_STRIKE_DAMAGE
+    return step.value
+
+
+def step_position(game: Game) -> str | None:
+    """The step name the api reports for `game`'s current position: `game
+    .turn.step`'s own value normally, or `FIRST_STRIKE_DAMAGE` while `game
+    .is_first_strike_damage_step` (CR 510.4/506.1) is true. `None` exactly
+    when `game.turn` is `None` (before CR 103.8's first turn)."""
+    turn = game.turn
+    return step_position_of(
+        turn.step if turn is not None else None, game.is_first_strike_damage_step
+    )
+
 
 def _type_line(
     supertypes: tuple[Supertype, ...], types: tuple[Type, ...], subtypes: tuple[str, ...]
@@ -1186,6 +1221,11 @@ def _paused_overlay(game_id: str, game: Game, paused: Any) -> dict[str, Any]:
                 "turn_number": turn.turn_number if turn is not None else None,
                 "turns_taken": turn.turns_taken if turn is not None else None,
                 "step": turn.step if turn is not None else None,
+                # The paused replay board's own read of CR 510.4/506.1 - the
+                # question stands in the first-strike step exactly when that
+                # board does, regardless of what the committed board (still
+                # sitting before the paused command) would answer.
+                "first_strike_damage_step": board.is_first_strike_damage_step,
                 "active_player": turn.players[turn.active_index] if turn is not None else None,
                 "priority_holder": board.priority.holder if board.priority is not None else None,
             }
@@ -1284,12 +1324,18 @@ def _state_view_on(
     turns_taken = turn.turns_taken if turn is not None else None
     active_player = turn.players[turn.active_index] if turn is not None else None
     priority_holder = game.priority.holder if game.priority is not None else None
+    # CR 510.4/506.1: the engine keeps one `Step.COMBAT_DAMAGE` for both
+    # occurrences of the combat damage step - `Game.is_first_strike_damage_
+    # step`'s own docstring - so this flag, not `step` itself, is what tells a
+    # viewer which one `game` is sitting in.
+    first_strike_damage_step = game.is_first_strike_damage_step
     if overlay:
         step = overlay["step"] or step
         turn_number = overlay["turn_number"]
         turns_taken = overlay["turns_taken"]
         active_player = overlay["active_player"]
         priority_holder = overlay["priority_holder"]
+        first_strike_damage_step = overlay.get("first_strike_damage_step", False)
     # The pending decision a paused command is waiting to resume, if any -
     # read from the repository's own paused-command slot (`commands.py`,
     # `repository.store_paused_command`) rather than a live mailbox: a
@@ -1329,6 +1375,7 @@ def _state_view_on(
         # _record_run`/`applicable_hint`) must read this instead.
         "turns_taken": turns_taken,
         "step": step.value,
+        "first_strike_damage_step": first_strike_damage_step,
         "phase": phase.value if phase is not None else None,
         # What CR 103.5/CR 103.6 are waiting for, or `None` once the game has
         # reached its first turn - see `opening.pregame_view`.

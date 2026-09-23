@@ -793,7 +793,9 @@ def test_the_phase_track_sits_in_the_top_row_and_not_in_the_topbar(
     track, bar = m["phaseTrack"], m["toolbar"]
     assert track["display"] != "none", m["size"]
     assert track["inToolbar"] is True and track["inTopbar"] is False, m["size"]
-    assert len(track["items"]) == 12, track["items"]
+    # T9: CR 510.4's first-strike combat damage step joined `priority.js`'s
+    # `STEPS`, so this is 13 now, not 12.
+    assert len(track["items"]) == 13, track["items"]
     assert track["box"]["width"] > 0, (track["box"], m["size"])
     assert track["box"]["left"] >= bar["left"] - 0.5 and track["box"]["right"] <= bar["right"] + 0.5
     assert track["box"]["top"] >= bar["top"] - 0.5 and track["box"]["bottom"] <= bar["bottom"] + 0.5

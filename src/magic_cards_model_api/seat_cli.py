@@ -1143,7 +1143,12 @@ def build_parser() -> argparse.ArgumentParser:
             "occurrence, never this one - 'pass-until upkeep' asked in your "
             "upkeep passes a whole turn round. untap and cleanup are not "
             "offered: nobody receives priority in either (CR 502.4, CR 514.3), "
-            "and the game crosses both on its own (CR 500.3)"
+            "and the game crosses both on its own (CR 500.3). Combat has two "
+            "damage steps, not one, whenever a first or double striker is in "
+            "it (CR 510.4/506.1) - first_strike_damage names the first; "
+            "'state.step' reads 'combat_damage' for both, so "
+            "'state.first_strike_damage_step' is what tells them apart once "
+            "you are there"
         ),
     )
     until.add_argument(

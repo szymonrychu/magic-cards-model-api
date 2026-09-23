@@ -1852,6 +1852,11 @@
             "title": "Exile Pile",
             "type": "array"
           },
+          "first_strike_damage_step": {
+            "default": false,
+            "title": "First Strike Damage Step",
+            "type": "boolean"
+          },
           "game_id": {
             "title": "Game Id",
             "type": "string"
@@ -6194,6 +6199,11 @@
             "title": "Exile Pile",
             "type": "array"
           },
+          "first_strike_damage_step": {
+            "default": false,
+            "title": "First Strike Damage Step",
+            "type": "boolean"
+          },
           "game_id": {
             "title": "Game Id",
             "type": "string"
@@ -7442,6 +7452,11 @@
             "title": "Exile Pile",
             "type": "array"
           },
+          "first_strike_damage_step": {
+            "default": false,
+            "title": "First Strike Damage Step",
+            "type": "boolean"
+          },
           "game_id": {
             "title": "Game Id",
             "type": "string"
@@ -7934,6 +7949,11 @@
             },
             "title": "Exile Pile",
             "type": "array"
+          },
+          "first_strike_damage_step": {
+            "default": false,
+            "title": "First Strike Damage Step",
+            "type": "boolean"
           },
           "game_id": {
             "title": "Game Id",
@@ -9018,6 +9038,11 @@
             },
             "title": "Exile Pile",
             "type": "array"
+          },
+          "first_strike_damage_step": {
+            "default": false,
+            "title": "First Strike Damage Step",
+            "type": "boolean"
           },
           "game_id": {
             "title": "Game Id",
@@ -10246,6 +10271,11 @@
             "title": "Exile Pile",
             "type": "array"
           },
+          "first_strike_damage_step": {
+            "default": false,
+            "title": "First Strike Damage Step",
+            "type": "boolean"
+          },
           "game_id": {
             "title": "Game Id",
             "type": "string"
@@ -10776,6 +10806,11 @@
             "title": "Exile Pile",
             "type": "array"
           },
+          "first_strike_damage_step": {
+            "default": false,
+            "title": "First Strike Damage Step",
+            "type": "boolean"
+          },
           "game_id": {
             "title": "Game Id",
             "type": "string"
@@ -11270,6 +11305,11 @@
             },
             "title": "Exile Pile",
             "type": "array"
+          },
+          "first_strike_damage_step": {
+            "default": false,
+            "title": "First Strike Damage Step",
+            "type": "boolean"
           },
           "game_id": {
             "title": "Game Id",
@@ -12622,6 +12662,11 @@
             "title": "Exile Pile",
             "type": "array"
           },
+          "first_strike_damage_step": {
+            "default": false,
+            "title": "First Strike Damage Step",
+            "type": "boolean"
+          },
           "game_id": {
             "title": "Game Id",
             "type": "string"
@@ -13743,6 +13788,11 @@
             },
             "title": "Exile Pile",
             "type": "array"
+          },
+          "first_strike_damage_step": {
+            "default": false,
+            "title": "First Strike Damage Step",
+            "type": "boolean"
           },
           "game_id": {
             "title": "Game Id",

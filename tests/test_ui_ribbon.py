@@ -2442,3 +2442,27 @@ def test_a_kicker_with_no_row_to_price_it_is_offered_exactly_as_before() -> None
     )
     assert "Kicker" in strip
     assert "cannot pay" not in strip
+
+
+def test_the_stops_grid_offers_a_first_strike_damage_tick() -> None:
+    """T9/CR 510.4: `renderStopsBox`'s step grid derives from `priority.js`'s
+    own `STEPS` (minus `untap`/`cleanup`), which now names the first-strike
+    combat damage step between `declare_blockers` and `combat_damage` -
+    offered as a pass-until target on both sides, the same as any other
+    step."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const store = makeStore(baseApp(baseState(), { stops: { mine: [], theirs: [] } }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          const box = document.querySelector("#stops-box");
+          return box.textContent;
+        })()
+        """,
+    )
+    assert "first strike damage" in result
+    assert "block" in result
+    assert "damage" in result

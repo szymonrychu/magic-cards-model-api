@@ -225,7 +225,7 @@ def _judge_round(
         if isinstance(run, list) and len(run) == 3
     }
     if recent:
-        position = (script_tools._turn_position(state), state.get("step"))
+        position = (script_tools._turn_position(state), script_tools.step_position(state))
         for script_id, entry in judged.items():
             if entry.get("applies") and (script_id, *position) in recent:
                 entry["applies"] = False

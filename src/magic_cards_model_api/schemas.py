@@ -2422,6 +2422,17 @@ class GameStateView(BaseModel):
     `turn_number`, which counts rounds of the table and does not move for an
     extra turn. The play-script already-ran filter keys on this instead."""
     step: str
+    first_strike_damage_step: bool = False
+    """Whether `step == "combat_damage"` names CR 510.4's first-strike
+    occurrence rather than the second (or only) one - `Game.
+    is_first_strike_damage_step`'s own read (CR 510.4/506.1: "a second combat
+    damage step" is still `Step.COMBAT_DAMAGE`, never a step of its own, so
+    this flag is what tells the two occurrences apart). `False` in every
+    other step, and in a combat with no first or double striker. The api's
+    own `serialize.step_position`/`seatkit.step_position` name this
+    occurrence `"first_strike_damage"` wherever it compares, ranks, stamps or
+    records the current step - `PUT .../step` refuses that name outright,
+    since it is an occurrence of `combat_damage`, not a step to move to."""
     phase: str | None = None
     pregame: PregameView | None = None
     active_player: str | None = None

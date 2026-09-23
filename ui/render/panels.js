@@ -28,7 +28,7 @@
 // `PlayPermission`, `machines/casting.py`).
 
 import { h, clear } from "../dom.js";
-import { STEPS, PHASE_OF } from "../priority.js";
+import { PHASE_OF, STEPS, stepPosition } from "../priority.js";
 import { aiStallNotice, aiSeatLoadingNotice, aiSeatActivityLabel, playerControlNotice } from "../store.js";
 
 const STEP_LABELS = {
@@ -39,6 +39,10 @@ const STEP_LABELS = {
   beginning_of_combat: "combat",
   declare_attackers: "attack",
   declare_blockers: "block",
+  // CR 510.4/506.1: the first of the two combat damage steps, distinct from
+  // (and drawn before) plain "damage" below - `state.first_strike_damage_
+  // step` is what tells the phase track which cell to mark current.
+  first_strike_damage: "1st strike",
   combat_damage: "damage",
   end_of_combat: "end cbt",
   postcombat_main: "main 2",
@@ -262,7 +266,7 @@ function renderTurnInfo(el, state) {
 function renderPhaseTrack(el, state) {
   if (!el) return;
   clear(el);
-  const currentIndex = STEPS.indexOf(state.step);
+  const currentIndex = STEPS.indexOf(stepPosition(state));
   let current = null;
   STEPS.forEach((step, index) => {
     const classes = [];

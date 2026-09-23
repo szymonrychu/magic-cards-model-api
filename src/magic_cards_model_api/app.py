@@ -148,7 +148,7 @@ from .schemas import (
     TapCardResponse,
     TargetRequest,
 )
-from .serialize import state_view
+from .serialize import FIRST_STRIKE_DAMAGE, state_view, step_position
 from .store import known_players, new_seat_uids, player_for_advisor_uid, store
 
 logger = logging.getLogger(__name__)
@@ -1274,6 +1274,16 @@ def health() -> dict[str, Any]:
 
 @app.post("/api/games", response_model=NewGameResponse, response_model_exclude_unset=True)
 def create_game(req: NewGame, request: Request) -> dict[str, Any]:
+    if req.step == FIRST_STRIKE_DAMAGE:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"'{FIRST_STRIKE_DAMAGE}' is not a step a game can start in - it is an "
+                "occurrence of 'combat_damage' (CR 510.4/506.1: the engine keeps one "
+                "Step.COMBAT_DAMAGE for both the first-strike and the regular combat damage "
+                "step), never a step of its own. Start in 'combat_damage' instead"
+            ),
+        )
     user = oidc.current_user(request)
     names = [player.username for player in req.players]
     if len(set(names)) != len(names):
@@ -1451,7 +1461,7 @@ async def list_games(request: Request) -> dict[str, Any]:
             {
                 "game_id": game_id,
                 "players": [player.username for player in game.players],
-                "step": game.turn.step.value if game.turn else None,
+                "step": step_position(game),
             }
         )
     return {"games": games}
@@ -2061,13 +2071,25 @@ def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str,
     beginning-of-step turn-based actions or triggers - CR 702.62a's suspend
     countdown among them, the same as a draw or a combat declaration.
     """
+    if req.step == FIRST_STRIKE_DAMAGE:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"'{FIRST_STRIKE_DAMAGE}' is not a step to move to - it is an occurrence of "
+                "'combat_damage' (CR 510.4/506.1: the engine keeps one Step.COMBAT_DAMAGE for "
+                "both the first-strike and the regular combat damage step). Move to "
+                "'combat_damage' instead; whether that lands you in the first-strike occurrence "
+                "is CR 510.4's own doing, not this route's, and the state view's "
+                "'first_strike_damage_step' flag says which one you are in"
+            ),
+        )
     records.require_current_board(
         game_id, "step", req.expected_seq, player=req.player, reasoning=req.reasoning
     )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     with store.locked(game_id) as game:
-        before = game.turn.step.value if game.turn is not None else None
+        before = step_position(game)
         # Read before the marker moves, like every other route's own
         # `legal_actions_before` - see `records.py`'s module docstring.
         legal_before = records.legal_actions_before(
@@ -3383,7 +3405,7 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
             legal_actions_before=legal_before,
         )
         return {"allowed": False, "reason": str(exc), "log_seq": seq}
-    before = committed.turn.step.value if committed.turn is not None else None
+    before = step_position(committed)
     viewer = visibility.resolve_viewer(game_id, uid)
     if result.status is commands.RunStatus.PAUSED:
         seq = audit.record(
@@ -4551,7 +4573,7 @@ def _settled(game: Game, result: dict[str, Any]) -> dict[str, Any]:
     client is allowed to make. See `engine_api.settle_priorityless_steps`."""
     crossed = engine_api.settle_priorityless_steps(game)
     if crossed and game.turn is not None:
-        result = {**result, "step": game.turn.step.value, "settled_through": crossed}
+        result = {**result, "step": step_position(game), "settled_through": crossed}
     return result
 
 

@@ -419,9 +419,11 @@ def _run_advance(game: Game, payload: dict[str, Any]) -> Any:
     with everything else that triggers "at the beginning of" the step just
     entered - nothing further is needed here for it.
     """
+    from .serialize import step_position  # lazy: serialize imports this module
+
     req = AdvanceRequest.model_validate(payload)
-    step = game.advance(req.player)
-    return {"advanced_to": step.value}
+    game.advance(req.player)
+    return {"advanced_to": step_position(game)}
 
 
 def _run_state_based_actions(game: Game, payload: dict[str, Any]) -> Any:
@@ -450,10 +452,12 @@ def _run_pregame_settle(game: Game, payload: dict[str, Any]) -> Any:
     `POST .../decide` calls later, well after `app.py`'s own route function
     returned.
     """
+    from .serialize import step_position  # lazy: serialize imports this module
+
     step = game.settle_pregame()
     settled_through = engine_api.settle_priorityless_steps(game)
     if settled_through and game.turn is not None:
-        step = game.turn.step
+        return {"step": step_position(game), "settled_through": settled_through}
     return {"step": step.value, "settled_through": settled_through}
 
 

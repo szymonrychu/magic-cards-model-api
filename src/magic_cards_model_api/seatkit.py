@@ -2130,7 +2130,7 @@ class Seat:
         # bumps the former and not the latter (`seatkit-20`'s own `turns_
         # taken` note), and the "after" check has to tell an extra turn apart
         # from the turn it extended.
-        window["stamped_step"] = state.get("step")
+        window["stamped_step"] = step_position(state)
         window["stamped_turns_taken"] = state.get("turns_taken")
         # `resolve_advice_draft`'s own second, independent staleness bound
         # (`MAX_DRAFT_WINDOW_SEQ_DRIFT`) - the ledger position this window
@@ -3973,12 +3973,42 @@ def run_action(
 # opponent is watching is part of the game (see `docs/ai_seat_brief.md`), and
 # nothing here takes that away.
 
+#: The api's own name for CR 510.4's first-strike combat damage step. The
+#: engine keeps one `Step.COMBAT_DAMAGE` for both occurrences of it (the
+#: `Game.is_first_strike_damage_step` docstring in `magic_cards_model.models
+#: .game` explains why - CR 506.1/510.4 both call the second one "a second
+#: combat damage step", never a step of its own), so a state dict's own
+#: `"step"` field reads `"combat_damage"` in both. `step_position` below is
+#: what tells them apart, and this is the name it gives the first one -
+#: `serialize.FIRST_STRIKE_DAMAGE` in the server's own engine-side module is
+#: the identical string, duplicated rather than imported for the same reason
+#: `SCRIPTS_ENABLED_ENV` above is: this module is moving to its own repo,
+#: where `magic_cards_model_api.serialize` will not exist to import.
+FIRST_STRIKE_DAMAGE = "first_strike_damage"
+
+
+def step_position(state: dict[str, Any]) -> str | None:
+    """The step name this module compares, ranks, stamps and records against:
+    `state["step"]` normally, or `FIRST_STRIKE_DAMAGE` while `state
+    ["first_strike_damage_step"]` is true. `None` when `state` carries no
+    `"step"` at all (a state read before the first turn)."""
+    step = state.get("step")
+    if step is None:
+        return None
+    if state.get("first_strike_damage_step"):
+        return FIRST_STRIKE_DAMAGE
+    return step
+
+
 #: The steps a run may be told to stop at, in turn order (CR 500.1's phases and
-#: their steps). `untap` and `cleanup` are deliberately absent: no player
-#: receives priority in either (CR 502.4, CR 514.3), so a run that passed its
-#: way toward one would be naming a point it can never be given priority in.
-#: The same list, and the same two omissions, as `ui/app.js`'s `STEPS` feeding
-#: `autopilotTargets`.
+#: their steps), `FIRST_STRIKE_DAMAGE` included between `declare_blockers` and
+#: `combat_damage` - CR 510.4's own place for it, between blockers being
+#: declared and the (possibly only) combat damage step. `untap` and `cleanup`
+#: are deliberately absent: no player receives priority in either (CR 502.4,
+#: CR 514.3), so a run that passed its way toward one would be naming a point
+#: it can never be given priority in. The same list, and the same two
+#: omissions, as `ui/priority.js`'s `STEPS` feeding `autopilotTargets`
+#: (`FIRST_STRIKE_DAMAGE` included there too).
 AUTOPASS_STEPS = (
     "upkeep",
     "draw",
@@ -3986,6 +4016,7 @@ AUTOPASS_STEPS = (
     "beginning_of_combat",
     "declare_attackers",
     "declare_blockers",
+    FIRST_STRIKE_DAMAGE,
     "combat_damage",
     "end_of_combat",
     "postcombat_main",
@@ -4057,7 +4088,7 @@ def start_autopass(state: dict[str, Any], until_step: str, whose_turn: str) -> d
         "step": until_step,
         "whose_turn": whose_turn,
         "started_turn": state.get("turn_number"),
-        "started_step": state.get("step"),
+        "started_step": step_position(state),
         "started_pending_kind": pending.get("kind") if pending is not None else None,
         "known_stack_ids": [obj.get("id") for obj in (state.get("stack") or [])],
     }
@@ -4101,7 +4132,8 @@ def forget_starting_occurrence(run: dict[str, Any], state: dict[str, Any]) -> di
     if run.get("started_step") is None:
         return run
     still_there = (
-        state.get("step") == run["started_step"] and state.get("turn_number") == run["started_turn"]
+        step_position(state) == run["started_step"]
+        and state.get("turn_number") == run["started_turn"]
     )
     if not still_there:
         run["started_step"] = None
@@ -4134,6 +4166,7 @@ _FULL_STEP_ORDER = (
     "beginning_of_combat",
     "declare_attackers",
     "declare_blockers",
+    FIRST_STRIKE_DAMAGE,
     "combat_damage",
     "end_of_combat",
     "postcombat_main",
@@ -4227,6 +4260,11 @@ def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: s
     """
     wanted = window.get("step")
     whose = window.get("whose_turn") or "mine"
+    # CR 510.4/506.1: `state["step"]` alone cannot tell the first-strike
+    # combat damage step apart from the regular (or only) one - both read
+    # `"combat_damage"` - so every comparison against `wanted` below reads
+    # this position instead.
+    current_position = step_position(state)
     is_yours = state.get("active_player") == player
     whose_matches_now = whose == "any" or (whose == "mine") == is_yours
     # Review fix 4 (2026-09-14): `turns_taken` is `None` throughout CR 103's
@@ -4245,7 +4283,7 @@ def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: s
     current_turns_taken = state.get("turns_taken")
     current_turns_taken = 0 if current_turns_taken is None else current_turns_taken
     same_occurrence_started_in = (
-        state.get("step") == window.get("stamped_step")
+        current_position == window.get("stamped_step")
         and current_turns_taken == stamped_turns_taken
     )
     # The step/whose_turn match alone is not "reached": that same step
@@ -4263,7 +4301,7 @@ def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: s
     within_drift_bound = turns_taken_drift <= MAX_DRAFT_WINDOW_TURNS_TAKEN_DRIFT
     if (
         wanted
-        and state.get("step") == wanted
+        and current_position == wanted
         and whose_matches_now
         and not same_occurrence_started_in
         and within_drift_bound
@@ -4271,10 +4309,10 @@ def draft_window_status(window: dict[str, Any], state: dict[str, Any], player: s
         return "reached"
     if same_occurrence_started_in:
         return "before"
-    if wanted and state.get("step") == wanted and whose_matches_now and not within_drift_bound:
+    if wanted and current_position == wanted and whose_matches_now and not within_drift_bound:
         return "after"
     target_rank = _step_rank(wanted)
-    current_rank = _step_rank(state.get("step"))
+    current_rank = _step_rank(current_position)
     stamped_rank = _step_rank(window.get("stamped_step"))
     if whose_matches_now and target_rank is not None and current_rank is not None:
         later_turn_past_target = (
@@ -4731,7 +4769,7 @@ def autopass_stop_reason(
     # for the same reason.
     same_occurrence_this_run_started_in = (
         run.get("started_step") is not None
-        and state.get("step") == run["started_step"]
+        and step_position(state) == run["started_step"]
         and state.get("turn_number") == run["started_turn"]
     )
     # Conditions 4 and 5 cannot reuse that value on its own: the paused
@@ -4748,7 +4786,7 @@ def autopass_stop_reason(
 
     wanted = run.get("step")
     whose = run.get("whose_turn") or "mine"
-    if wanted and state.get("step") == wanted:
+    if wanted and step_position(state) == wanted:
         is_yours = state.get("active_player") == player
         whose_matches = whose == "any" or (whose == "mine") == is_yours
         if whose_matches and not same_occurrence_this_run_started_in:
@@ -5044,7 +5082,7 @@ def _wait_for_own_priority_at_destination(
             _restate(result, seat, state, include_actions)
             result["stopped_because"] = GAME_GONE
             return result
-        if state.get("winner") or state.get("drawn") or state.get("step") != until_step:
+        if state.get("winner") or state.get("drawn") or step_position(state) != until_step:
             _restate(result, seat, state, include_actions)
             result["stopped_because"] = _window_passed_note(result["stopped_because"])
             return result

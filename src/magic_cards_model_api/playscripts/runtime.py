@@ -74,6 +74,7 @@ from ..seatkit import (
     is_stale,
     pass_until,
     run_action,
+    step_position,
 )
 from . import conditions
 from .inputs import BUILTIN_INPUT, input_catalog
@@ -324,7 +325,7 @@ class _HypotheticalCache:
 
     def get(self, seat: Seat, state: dict[str, Any], *, horizon: bool = False) -> dict[str, Any]:
         digest = hashlib.sha256(json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()
-        fingerprint = (state.get("turn_number"), state.get("step"), digest, horizon)
+        fingerprint = (state.get("turn_number"), step_position(state), digest, horizon)
         if fingerprint != self._fingerprint:
             fetched = seat.hypothetical_facts(horizon="next_turn" if horizon else None)
             self._facts = dict(fetched.get("cards") or {}) if isinstance(fetched, dict) else {}
@@ -507,11 +508,11 @@ def _resume(ctx: _Context, script_id: str, token: dict[str, Any]) -> RunResult:
         # `records.py`'s own module docstring names as the rule for a
         # per-turn identity check: `turn_number` would let this resume
         # think the board had not moved across a same-round turn change.
-        if (state.get("turns_taken"), state.get("step")) != (run.turn, run.step):
+        if (state.get("turns_taken"), step_position(state)) != (run.turn, run.step):
             moved = _runner_refusal(
                 run.script_id,
                 f"cannot resume: the run was at turn {run.turn}, {run.step} and the game is "
-                f"now at turn {state.get('turns_taken')}, {state.get('step')}",
+                f"now at turn {state.get('turns_taken')}, {step_position(state)}",
             )
             return _end(ctx, run, play, moved)
     return _guarded(ctx, run, play, wait=True)
@@ -523,7 +524,7 @@ def _guarded(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> R
     except _Unfinished:
         state = ctx.seat.fetch_state()
         if not run.started:
-            run.turn, run.step = state.get("turns_taken"), state.get("step")
+            run.turn, run.step = state.get("turns_taken"), step_position(state)
         return RunResult(False, None, resume=run.token(ctx.elapsed_ms()), state=state)
     except HypotheticalFactsUnavailable as exc:
         # D2: wherever inside `_drive` a hypothetical-facts fetch failed
@@ -614,7 +615,7 @@ def _wait(
     keeps distinct."""
     when = play["when"]
     in_position = _in_when(state, when, ctx.me)
-    at_step = state.get("step") in when["steps"] and _whose_matches(state, when, ctx.me)
+    at_step = step_position(state) in when["steps"] and _whose_matches(state, when, ctx.me)
     if ctx.seat.advise or not wait or (at_step and not in_position):
         return ScriptExit(
             Exit.NOT_APPLICABLE,
@@ -1593,7 +1594,7 @@ def _whose_matches(state: dict[str, Any], when: dict[str, Any], me: str) -> bool
 
 def _in_when(state: dict[str, Any], when: dict[str, Any], me: str) -> bool:
     return (
-        state.get("step") in when["steps"]
+        step_position(state) in when["steps"]
         and _whose_matches(state, when, me)
         and (when["stack"] == "any" or not state.get("stack"))
     )
@@ -1603,7 +1604,7 @@ def _next_step(state: dict[str, Any], when: dict[str, Any], me: str) -> str:
     """The first of `when.steps` still to come: later this turn when the turn
     is already the right one, else the earliest of them next time round."""
     wanted = [step for step in AUTOPASS_STEPS if step in when["steps"]]
-    current = state.get("step")
+    current = step_position(state)
     if _whose_matches(state, when, me) and current in AUTOPASS_STEPS:
         here = AUTOPASS_STEPS.index(current)
         later = [step for step in wanted if AUTOPASS_STEPS.index(step) > here]
@@ -1615,7 +1616,7 @@ def _next_step(state: dict[str, Any], when: dict[str, Any], me: str) -> str:
 def _position(state: dict[str, Any]) -> dict[str, Any]:
     return {
         "turn": state.get("turn_number"),
-        "step": state.get("step"),
+        "step": step_position(state),
         "active_player": state.get("active_player"),
         "stack": len(state.get("stack") or []),
     }
@@ -1724,7 +1725,7 @@ def _start(
     # the once-per-turn-and-step ledger slot (`records._SCRIPT_RUN_KEY`) -
     # see that module's own docstring for the identical rule already
     # applied to `require_plan`.
-    run.turn, run.step = state.get("turns_taken"), state.get("step")
+    run.turn, run.step = state.get("turns_taken"), step_position(state)
     answer = _post_run(ctx, {**_run_fields(ctx, run, play), "phase": "start"})
     if isinstance(answer, dict) and answer.get("recorded") is True:
         run.started = True

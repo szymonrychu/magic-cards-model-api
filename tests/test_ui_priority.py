@@ -12,6 +12,7 @@ def board(**over):
         "active_player": "alice",
         "turn_number": 3,
         "step": "precombat_main",
+        "first_strike_damage_step": False,
         "stack": [],
         "pending_decision": None,
         "combat": {"attacks": []},
@@ -21,6 +22,16 @@ def board(**over):
         "drawn": None,
     }
     state.update(over)
+    # CR 510.4/506.1: a real board never carries `step: "first_strike_
+    # damage"` - the engine keeps one `Step.COMBAT_DAMAGE` for both
+    # occurrences, so the api names the first one with `step: "combat_
+    # damage"` plus `first_strike_damage_step: True` instead. A caller that
+    # asks for `step="first_strike_damage"` (the position, `m.STEPS`'s own
+    # vocabulary) gets that real shape rather than a step value that never
+    # actually occurs.
+    if state["step"] == "first_strike_damage":
+        state["step"] = "combat_damage"
+        state["first_strike_damage_step"] = True
     return state
 
 
@@ -275,7 +286,9 @@ def test_pass_until_stops_at_every_step_tick_on_the_right_side() -> None:
     on and only that side. `untap` and `cleanup` are not in the panel: no
     player receives priority in either (CR 502.4, CR 514.3)."""
     steps = [s for s in run_module("priority.js", "m.STEPS") if s not in ("untap", "cleanup")]
-    assert len(steps) == 10, steps
+    # T9: CR 510.4's first-strike combat damage step joined the panel between
+    # declare_blockers and combat_damage, so this is 11 now, not 10.
+    assert len(steps) == 11, steps
     expr = "m.stopReason(later, m.startRun('pass_until', start), stops)"
     for step in steps:
         elsewhere = "upkeep" if step != "upkeep" else "draw"
@@ -472,3 +485,78 @@ def test_a_first_click_on_concede_only_arms_it() -> None:
     it, and Concede sat exactly where "Pass" had been a tick earlier."""
     assert run_module("priority.js", "m.concedeIntent(false)") == "arm"
     assert run_module("priority.js", "m.concedeIntent(true)") == "concede"
+
+
+# ---------------------------------------------------------------------------
+# T9: CR 510.4's first-strike combat damage step
+# ---------------------------------------------------------------------------
+
+
+def test_step_position_names_the_first_strike_occurrence() -> None:
+    """`stepPosition` - not `state.step`, which reads `"combat_damage"` in
+    both occurrences - is what the rest of this module compares, ranks,
+    stamps and records against."""
+    assert (
+        run_module("priority.js", "m.stepPosition(s)", s=board(step="combat_damage"))
+        == "combat_damage"
+    )
+    assert (
+        run_module(
+            "priority.js",
+            "m.stepPosition(s)",
+            s=board(step="combat_damage", first_strike_damage_step=True),
+        )
+        == "first_strike_damage"
+    )
+
+
+def test_a_run_started_in_the_first_strike_step_counts_the_regular_step_as_a_new_step() -> None:
+    """`forgetStartingStep`'s own `(turn, step)` comparison uses the position:
+    a run that began in the first-strike occurrence must not still read
+    `stillAtStart` once the board has moved on to the regular occurrence,
+    even though `state.step` is `"combat_damage"` both times."""
+    run = run_module(
+        "priority.js",
+        "m.startRun('pass_until', s)",
+        s=board(step="combat_damage", first_strike_damage_step=True),
+    )
+    assert run["startedStep"] == "first_strike_damage"
+
+    still_the_first_strike_step = run_module(
+        "priority.js",
+        "m.forgetStartingStep(run, s)",
+        run=run,
+        s=board(step="combat_damage", first_strike_damage_step=True),
+    )
+    assert still_the_first_strike_step["stillAtStart"] is True
+
+    the_regular_step = run_module(
+        "priority.js",
+        "m.forgetStartingStep(run, s)",
+        run=run,
+        s=board(step="combat_damage", first_strike_damage_step=False),
+    )
+    assert the_regular_step["stillAtStart"] is False
+
+
+def test_first_strike_damage_is_not_reached_by_a_combat_with_no_first_striker() -> None:
+    """Asking to stop at `first_strike_damage` in a combat that never has
+    one is passed through like any other destination that never occurs - no
+    false "reached" against the regular `combat_damage` step, which shares
+    `state.step`'s raw value."""
+    reason = run_module(
+        "priority.js",
+        "m.stopReason(later, m.startRun('pass_until', start), stops)",
+        start=board(step="declare_blockers"),
+        later=board(step="combat_damage", first_strike_damage_step=False),
+        stops={"mine": ["first_strike_damage"], "theirs": [], "onStack": False},
+    )
+    assert reason is None
+
+
+def test_the_phase_track_marks_first_strike_damage_current_between_block_and_damage() -> None:
+    order = run_module("priority.js", "m.STEPS")
+    assert order.index("declare_blockers") < order.index("first_strike_damage") < order.index(
+        "combat_damage"
+    )
+    assert run_module("priority.js", "m.PHASE_OF['first_strike_damage']") == "combat"

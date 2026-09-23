@@ -27,7 +27,15 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   not declare_attackers/declare_blockers], stack: empty|any}` (a repeated step
   is `duplicate-step`), `true` (0-8 conditions), `false` (0-8 conditions, each
   must NOT hold), `moves` (0-4 - empty or absent is advice-only, see
-  "Advice-only plays" below), `next` (0-3 ids).
+  "Advice-only plays" below), `next` (0-3 ids). The autopass steps run
+  `upkeep, draw, precombat_main, beginning_of_combat, first_strike_damage,
+  combat_damage, end_of_combat, postcombat_main, end_step` - CR 510.4/506.1's
+  first-strike combat damage step is `first_strike_damage`, distinct from
+  `combat_damage` itself (the engine's own turn-based action, and the state
+  view's `step` field, name both occurrences `combat_damage`; a script naming
+  `first_strike_damage` fires only in the first one, one naming
+  `combat_damage` only in the second - or the only one, in a combat with no
+  first or double striker).
 - Changing `priority` after a game goes through `mcp-seat plays priority`,
   and `plays admit` records each change as a `Script-Priority` trailer.
   Change a script's priority only for scripts that actually ran this game,

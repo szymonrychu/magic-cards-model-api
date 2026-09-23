@@ -11,6 +11,7 @@
   "drawn": false,
   "exile": [],
   "exile_pile": [],
+  "first_strike_damage_step": false,
   "game_id": "00000000000000000000000000000001",
   "graveyards": {
     "alice": [

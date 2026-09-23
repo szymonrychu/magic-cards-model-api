@@ -36,6 +36,7 @@ from ..seatkit import (
     Seat,
     decision_is_mine,
     scripts_enabled_here,
+    step_position,
 )
 from ..seatkit import holds_priority as seat_holds_priority
 from . import conditions, lint, runtime
@@ -761,7 +762,7 @@ def _record_run(
         if moves_done > 0:
             ran_ids.append(scripts_run[-1])
     recent = list(corpus.get(_RECENT_RUNS_KEY) or [])
-    position = (_turn_position(state), state.get("step"))
+    position = (_turn_position(state), step_position(state))
     for ran_id in ran_ids:
         entry = [ran_id, position[0], position[1]]
         if entry not in recent:
@@ -858,7 +859,7 @@ def _post_offer(
     it already was: still in the answer, its own `why`/`call` untouched,
     simply without `offer_seq`. Never dropped."""
     script_id = str(entry.get("id"))
-    position = (_turn_position(state), state.get("step"))
+    position = (_turn_position(state), step_position(state))
     turn = position[0] if isinstance(position[0], int) else 0
     step = str(position[1]) if position[1] else "unknown"
     offered = corpus.get(_OFFERED_KEY)
@@ -1145,7 +1146,7 @@ def applicable_hint(
             for run in corpus.get(_RECENT_RUNS_KEY) or []
             if isinstance(run, list) and len(run) == 3
         }
-        position = (_turn_position(state), state.get("step"))
+        position = (_turn_position(state), step_position(state))
         not_recently_run = [
             entry
             for entry in entries
@@ -1327,7 +1328,7 @@ def _when_recurs_before_next_own_turn_ends(
         # (opponent's) turn - only for `theirs`/`either`, and only if one of
         # its steps has not already gone by - or it can happen at all during
         # this seat's own following turn, which `mine`/`either` always does.
-        if whose in ("theirs", "either") and _has_step_strictly_after(steps, state.get("step")):
+        if whose in ("theirs", "either") and _has_step_strictly_after(steps, step_position(state)):
             return True
         return whose in ("mine", "either")
     # Already in this seat's own upkeep/draw: the window is the rest of THIS
@@ -1335,7 +1336,7 @@ def _when_recurs_before_next_own_turn_ends(
     # would cross into the opponent's next turn.
     if whose not in ("mine", "either"):
         return False
-    return _has_step_strictly_after(steps, state.get("step"))
+    return _has_step_strictly_after(steps, step_position(state))
 
 
 def _earliest_step(steps: list[str]) -> str:
@@ -1404,7 +1405,7 @@ def _next_occurrence(
         # turn order (that turn has not started yet, so nothing is "already
         # behind" in it).
         if whose in ("theirs", "either"):
-            step = _next_step_strictly_after(steps, state.get("step"))
+            step = _next_step_strictly_after(steps, step_position(state))
             if step is not None:
                 return 0, step, target
         if whose in ("mine", "either"):
@@ -1415,7 +1416,7 @@ def _next_occurrence(
     # `_when_recurs_before_next_own_turn_ends`), so this is always phase 0.
     if whose not in ("mine", "either"):
         return None
-    step = _next_step_strictly_after(steps, state.get("step"))
+    step = _next_step_strictly_after(steps, step_position(state))
     return (0, step, target) if step is not None else None
 
 

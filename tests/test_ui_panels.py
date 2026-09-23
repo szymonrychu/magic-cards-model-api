@@ -508,3 +508,60 @@ def test_a_stalled_seat_reads_as_a_problem_not_as_loading_or_idle() -> None:
     assert result["text"].startswith("AI (claude): stalled")
     assert "bad" in result["className"].split()
     assert result["banner"] is True
+
+
+# ---------------------------------------------------------------------------
+# T9: the phase track's `first_strike_damage` cell (CR 510.4/506.1)
+# ---------------------------------------------------------------------------
+
+
+def _phase_track_cells(step: str, first_strike_damage_step: bool):
+    return run_module(
+        "render/panels.js",
+        FAKE_DOM
+        + """
+        (() => {
+          boxed("turn-info");
+          const track = boxed("phase-track");
+          const store = makeStore({
+            state: baseState({ step, first_strike_damage_step }),
+            aiStatus: null, aiUid: null, connection: "ok",
+          });
+          m.mountTopbar(document, store, {
+            onLeaveGame: NOOP, onReportProblem: NOOP, onPassForAiSeat: NOOP,
+          });
+          store.set({});
+          return track.children.map((c) => ({
+            text: c.textContent, current: (c.className || "").split(" ").includes("current"),
+          }));
+        })()
+        """,
+        step=step,
+        first_strike_damage_step=first_strike_damage_step,
+    )
+
+
+def test_the_phase_track_has_a_first_strike_damage_cell_between_block_and_damage() -> None:
+    """CR 510.4/506.1's own place for it: after blockers are declared, before
+    the (possibly only) combat damage step - `'1st strike'`, distinct from
+    plain `'damage'`."""
+    cells = _phase_track_cells("combat_damage", False)
+    labels = [c["text"] for c in cells]
+    assert "1st strike" in labels
+    assert labels.index("block") < labels.index("1st strike") < labels.index("damage")
+
+
+def test_first_strike_damage_is_current_only_when_the_flag_is_true() -> None:
+    """`renderPhaseTrack` reads `first_strike_damage_step`, never `step`
+    alone - both occurrences share `step == "combat_damage"`."""
+    first_step = _phase_track_cells("combat_damage", True)
+    current = [c["text"] for c in first_step if c["current"]]
+    assert current == ["1st strike"], first_step
+
+
+def test_damage_is_current_in_the_regular_combat_damage_step() -> None:
+    """The second (or only) occurrence: the flag is false, and `'damage'` -
+    not `'1st strike'` - is the cell marked current."""
+    regular_step = _phase_track_cells("combat_damage", False)
+    current = [c["text"] for c in regular_step if c["current"]]
+    assert current == ["damage"], regular_step

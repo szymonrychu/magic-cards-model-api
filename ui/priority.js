@@ -56,18 +56,38 @@
 
 import { decidesFor, decisionIsMine, holdsPriority } from "./control.js";
 
+// CR 510.4/506.1: the engine keeps one `Step.COMBAT_DAMAGE` for both
+// occurrences of the combat damage step (`serialize.step_position`'s own
+// docstring on the server explains why - there is no separate `Step` of its
+// own), so `state.step` alone reads `"combat_damage"` in both. This module's
+// own name for the first occurrence, and the flag the server sends alongside
+// `state.step` to say which one a board is sitting in.
+export const FIRST_STRIKE_DAMAGE = "first_strike_damage";
+
+/** `state`'s own step *position* - `FIRST_STRIKE_DAMAGE` while
+ * `state.first_strike_damage_step` is true, `state.step` otherwise. Every
+ * comparison, rank, stamp or record of "the current step" in this module
+ * reads this, never `state.step` directly, so the two occurrences of CR
+ * 510.4's combat damage step are never read as the same position. */
+export function stepPosition(state) {
+  return state.first_strike_damage_step ? FIRST_STRIKE_DAMAGE : state.step;
+}
+
 export const STEPS = [
   "untap", "upkeep", "draw", "precombat_main", "beginning_of_combat",
-  "declare_attackers", "declare_blockers", "combat_damage", "end_of_combat",
-  "postcombat_main", "end_step", "cleanup",
+  "declare_attackers", "declare_blockers", FIRST_STRIKE_DAMAGE, "combat_damage",
+  "end_of_combat", "postcombat_main", "end_step", "cleanup",
 ];
 
 // Mirrors the engine's own `Phase` (machines/turn.py) exactly, string for
 // string - `precombat_main`/`postcombat_main` included, not display labels.
+// `FIRST_STRIKE_DAMAGE` is in the combat phase, the same as `combat_damage`
+// itself - it is the same phase's own first occurrence of that step.
 export const PHASE_OF = {
   untap: "beginning", upkeep: "beginning", draw: "beginning",
   precombat_main: "precombat_main", beginning_of_combat: "combat",
-  declare_attackers: "combat", declare_blockers: "combat", combat_damage: "combat",
+  declare_attackers: "combat", declare_blockers: "combat",
+  [FIRST_STRIKE_DAMAGE]: "combat", combat_damage: "combat",
   end_of_combat: "combat", postcombat_main: "postcombat_main", end_step: "ending",
   cleanup: "ending",
 };
@@ -181,7 +201,7 @@ export function startRun(verb, state) {
   return {
     verb,
     startedTurn: state.turn_number,
-    startedStep: state.step,
+    startedStep: stepPosition(state),
     startedActive: state.active_player,
     knownStackIds: (state.stack || []).map((o) => o.id),
     passes: 0,
@@ -211,7 +231,7 @@ export function startRun(verb, state) {
 // `tickAutopilot` called `forgetStartingStep(game.autopilot, state)` once
 // per poll tick).
 export function forgetStartingStep(run, state) {
-  const stillThere = state.step === run.startedStep && state.turn_number === run.startedTurn;
+  const stillThere = stepPosition(state) === run.startedStep && state.turn_number === run.startedTurn;
   if (stillThere) return run;
   return { ...run, stillAtStart: false };
 }
@@ -265,7 +285,7 @@ function attackedNow(state) {
 function sameOccurrence(state, run) {
   return (
     run.stillAtStart &&
-    state.step === run.startedStep &&
+    stepPosition(state) === run.startedStep &&
     state.turn_number === run.startedTurn &&
     state.active_player === run.startedActive
   );
@@ -339,8 +359,9 @@ export function stopReason(state, run, stops) {
     default:
       return `unknown verb ${run.verb}`;
   }
-  if (side.includes(state.step) && !sameOccurrence(state, run)) {
-    return `stop at ${mine ? "your" : "their"} ${state.step.replace(/_/g, " ")}`;
+  const position = stepPosition(state);
+  if (side.includes(position) && !sameOccurrence(state, run)) {
+    return `stop at ${mine ? "your" : "their"} ${position.replace(/_/g, " ")}`;
   }
   return null;
 }

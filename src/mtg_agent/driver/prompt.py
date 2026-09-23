@@ -1099,6 +1099,15 @@ Naming the step you are standing in means its NEXT occurrence, never this one -
 `step="upkeep"` asked during your upkeep is a whole turn of passing, which is
 what "until my upkeep" means when you say it out loud.
 
+Combat has two damage steps, not one, whenever a first or double striker is in
+it (CR 510.4/506.1): the engine keeps one internal step for both, so
+`state.step` reads `"combat_damage"` in each - `step="first_strike_damage"`
+names the first one as a `pass_until` destination, and once you are there,
+`state.first_strike_damage_step` (`true`/`false`) is what tells the two
+occurrences apart. A combat with nothing that first- or double-strikes never
+reaches it at all - naming it as a destination there is simply passed through
+like any other step that combat never has.
+
 This can take several calls for a long run, but it does not block your turn
 budget doing it: pass `max_seconds` the same way you would to
 `wait_for_priority`, and it waits out its own bound on the server rather than

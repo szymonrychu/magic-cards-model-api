@@ -57,6 +57,7 @@ from magic_cards_model.models import Game, Match
 
 from .decks import load_deck_into_game
 from .main import app
+from .serialize import step_position
 from .store import new_seat_uids, store
 
 
@@ -98,7 +99,7 @@ class Boot:
         assert game.turn is not None
         lines.append(
             f"  first player: {game.turn.active_player} "
-            f"(turn {game.turn.turn_number}, {game.turn.step.value} step)"
+            f"(turn {game.turn.turn_number}, {step_position(game)} step)"
         )
         if self.admin_key:
             lines.append(f"  admin key (operator only - mints seats): {self.admin_key}")

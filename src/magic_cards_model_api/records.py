@@ -439,8 +439,9 @@ _NO_ANNOUNCEMENT_KINDS = frozenset({"equip"})
 _GIVEN_FIELDS = ("from_zone", "ability_index")
 
 
-#: The board an action was taken on - `(game_id, turn number, step)` - for the
-#: row this request records (`audit.record`'s `turn`/`step`/`phase`).
+#: The board an action was taken on - `(game_id, turn number, step, first-
+#: strike damage step)` - for the row this request records (`audit.record`'s
+#: `turn`/`step`/`phase`).
 #:
 #: A ContextVar for the reason `_OFFERED` is one. `audit.record` used to read
 #: the store *after* the action had committed, so a pass that ended the
@@ -448,7 +449,14 @@ _GIVEN_FIELDS = ("from_zone", "ability_index")
 #: again was labelled with the step before it (battle 3, B3-11). The label is
 #: the step the action was taken in: the committed board a fresh command ran
 #: against, or the paused board the answered question was asked on.
-_ACTION_BOARD: ContextVar[tuple[str, int | None, Step | None] | None] = ContextVar(
+#:
+#: The fourth element is `Game.is_first_strike_damage_step` at that same
+#: moment (CR 510.4/506.1): the engine keeps one `Step.COMBAT_DAMAGE` for both
+#: occurrences of the combat damage step, so `step` alone cannot tell an audit
+#: row logged during the first one apart from the second - `audit.record`
+#: reads this back through `serialize.step_position_of` to name the row
+#: `"first_strike_damage"` when it belongs to the first.
+_ACTION_BOARD: ContextVar[tuple[str, int | None, Step | None, bool] | None] = ContextVar(
     "action_board", default=None
 )
 
@@ -456,16 +464,24 @@ _ACTION_BOARD: ContextVar[tuple[str, int | None, Step | None] | None] = ContextV
 def note_action_board(game_id: str, game: Game) -> None:
     """Remember `game` as the board this request's action is taken on."""
     turn = game.turn
-    _ACTION_BOARD.set((game_id, turn.turn_number if turn else None, turn.step if turn else None))
+    _ACTION_BOARD.set(
+        (
+            game_id,
+            turn.turn_number if turn else None,
+            turn.step if turn else None,
+            game.is_first_strike_damage_step,
+        )
+    )
 
 
-def action_board(game_id: str) -> tuple[int | None, Step | None] | None:
-    """`(turn number, step)` of the board `note_action_board` named for this
-    game in this request, or `None` when nothing was noted."""
+def action_board(game_id: str) -> tuple[int | None, Step | None, bool] | None:
+    """`(turn number, step, first-strike damage step)` of the board `note_
+    action_board` named for this game in this request, or `None` when nothing
+    was noted."""
     noted = _ACTION_BOARD.get()
     if noted is None or noted[0] != game_id:
         return None
-    return noted[1], noted[2]
+    return noted[1], noted[2], noted[3]
 
 
 def note_offered_action(kind: str, payload: Any, legal_before: LegalActionsBefore | None) -> None:

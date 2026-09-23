@@ -1067,6 +1067,7 @@
               "draw",
               "precombat_main",
               "beginning_of_combat",
+              "first_strike_damage",
               "combat_damage",
               "end_of_combat",
               "postcombat_main",
