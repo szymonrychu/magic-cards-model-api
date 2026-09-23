@@ -619,9 +619,16 @@ The engine is an editable path dependency pointing at
 
 ```sh
 mise run test    # pytest; card data comes from recorded Scryfall fixtures, no network
+mise run test:pg # the same suite against real postgres (docker compose)
 mise run lint    # ruff
 mise run fmt     # ruff format + fix
 ```
+
+`main` holds only stable, fully tested, green code, and only that is
+deployed. Before any merge to `main`, `lint`, `test` and `test:pg` must be
+green on the rebased branch, against the engine revision it will ship with
+(`../magic-cards-model` at its own green `main`, whose `test:full` must be
+green too).
 
 ## How it works
 
