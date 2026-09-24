@@ -66,13 +66,23 @@ NUDGE_AFTER_SECONDS = 1380.0
 HANDOVER_BUDGET_SECONDS = 1680.0
 
 #: The driver container's preStop wait (`deploy/seat-job.yaml`), the default
-#: for `--wait`.
-PRESTOP_WAIT_SECONDS = 1740.0
+#: for `--wait`. DR3: raised from 1680s + 60s margin (1740s) to comfortably
+#: outlast `driver.app.RETIRE_REVIEW_JOIN_TIMEOUT` (3730s) as well -
+#: `run_handover` writes the marker (bounded by `HANDOVER_BUDGET_SECONDS`)
+#: and only then calls `retire`, which joins the AI review thread for up to
+#: that long before giving up, all inside the SAME Job termination the
+#: preStop is part of. `deploy/seat-job.yaml`'s own preStop wait, the
+#: agent's `wrapper.handover_wait.DEFAULT_WAIT_SECONDS`, and the Job's
+#: `terminationGracePeriodSeconds` all moved with it so a review that
+#: genuinely needs the whole of `REVIEW_HTTP_TIMEOUT` is not cut short by
+#: the kubelet. `tests/wrapper/test_oneshot.py` pins the ordering.
+PRESTOP_WAIT_SECONDS = 5460.0
 
 #: How long the handover turn's push is retried while the agent answers 409
 #: (its interrupted turn not ended yet) before the handover fails and writes
 #: the marker. The wrapper ends an interrupted turn `INTERRUPT_SETTLE_SECONDS`
-#: (20 s) after the interrupt, so this is several settles, and far inside 1740 s.
+#: (20 s) after the interrupt, so this is several settles, and far inside
+#: `HANDOVER_BUDGET_SECONDS`.
 HANDOVER_PUSH_BUDGET_SECONDS = 120.0
 
 #: The first wait after a 409, doubled after each further one up to the max.

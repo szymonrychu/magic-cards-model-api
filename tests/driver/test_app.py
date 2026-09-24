@@ -363,6 +363,51 @@ def test_the_completed_reflection_turn_also_generates_and_posts_an_ai_review(wor
         assert f"- {line}: " in posted["text"], posted["text"]
 
 
+def test_the_ai_review_posts_the_parsed_turning_points_as_structured_data(world):
+    """DR3 owner addon 2: the reviewer's own `turning_points: {...}` closing
+    line (`review._turning_points_ask`) must reach `POST .../ai-review` as
+    the `turning_points` field - stored on the review record as data, not
+    only argued in the review's own prose."""
+    client = world.client
+    state = world.state
+    state["review_text"] = (
+        "a solid game overall, but the turn 6 attack was a misread.\n\n"
+        'turning_points: {"bob": [{"turn": 6, "action": "attacked into open mana", '
+        '"why": "walked into the sweeper"}], "alice": [{"turn": 4, "action": "held '
+        'removal", "why": "kept the answer back"}]}'
+    )
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+
+    posted = world.ai_review_posts[0]
+    assert posted["turning_points"] == {
+        "bob": [
+            {
+                "turn": 6,
+                "action": "attacked into open mana",
+                "why": "walked into the sweeper",
+            }
+        ],
+        "alice": [
+            {"turn": 4, "action": "held removal", "why": "kept the answer back"}
+        ],
+    }
+    # The raw line still reaches the filed text too - shown in the review,
+    # not only stored as data.
+    assert "turning_points:" in posted["text"]
+
+
+def test_the_ai_review_posts_no_turning_points_when_the_reviewer_wrote_none(world):
+    """Best-effort: a reviewer that skipped the closing line still files,
+    with an empty `turning_points` rather than a failure."""
+    client = world.client
+    state = world.state
+    state["review_text"] = "a review with no machine-readable closing line at all"
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+    assert world.ai_review_posts[0]["turning_points"] == {}
+
+
 def test_the_ai_review_statistics_fold_in_this_reviews_own_journal_admits(world):
     """DR3 (3): `post_ai_review` reads this game's `role="reviewer"` results
     journal AFTER the review one-shot returns, and the admits it finds there

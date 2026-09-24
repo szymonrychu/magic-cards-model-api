@@ -6,6 +6,7 @@ from mtg_agent.driver.review import (
     MAX_DECLARATIONS,
     MAX_LEDGER_CHARS,
     MAX_LEDGER_ROWS,
+    parse_turning_points,
     review_prompt,
 )
 
@@ -1334,3 +1335,40 @@ def test_the_ask_names_turning_points_for_each_seat() -> None:
     assert "bob and alice" in text
     assert "turning_points:" in text
     assert '"turn": <int>' in text
+
+
+# -- review-finding fix: turning points are parsed and stored, not only asked
+# -- for in prose (owner addon 2: "stored on the review record") -----------
+
+
+def test_parse_turning_points_reads_the_closing_line_the_ask_requires() -> None:
+    text = (
+        "the review's own prose about the game.\n\n"
+        'turning_points: {"bob": [{"turn": 6, "action": "attacked into open mana", '
+        '"why": "walked into the sweeper"}], "alice": [{"turn": 4, "action": "held '
+        'removal", "why": "kept the answer for the real threat"}]}\n\n'
+        "one more closing sentence."
+    )
+    parsed = parse_turning_points(text)
+    assert parsed == {
+        "bob": [
+            {
+                "turn": 6,
+                "action": "attacked into open mana",
+                "why": "walked into the sweeper",
+            }
+        ],
+        "alice": [
+            {
+                "turn": 4,
+                "action": "held removal",
+                "why": "kept the answer for the real threat",
+            }
+        ],
+    }
+
+
+def test_parse_turning_points_is_best_effort_on_a_missing_or_malformed_line() -> None:
+    assert parse_turning_points("no turning points line at all here") == {}
+    assert parse_turning_points("turning_points: {not valid json}") == {}
+    assert parse_turning_points('turning_points: ["not", "a", "dict"]') == {}

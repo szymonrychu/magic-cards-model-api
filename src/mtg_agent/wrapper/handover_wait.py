@@ -27,9 +27,9 @@ log = logging.getLogger("wrapper.handover")
 MARKER_PATH = Path("/driver-workspace") / MARKER_NAME
 
 #: The agent preStop's wait in the seat Job, and the cap on how long a SIGTERM
-#: keeps the PTY open: past the driver preStop's 1740 s, inside the Job's
-#: 1800 s grace.
-DEFAULT_WAIT_SECONDS = 1760.0
+#: keeps the PTY open: past the driver preStop's `PRESTOP_WAIT_SECONDS`
+#: (5460 s, DR3), inside the Job's `terminationGracePeriodSeconds` (5520 s).
+DEFAULT_WAIT_SECONDS = 5480.0
 
 
 def hold_until_handover(

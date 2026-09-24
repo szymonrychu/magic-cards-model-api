@@ -169,9 +169,9 @@ def test_both_seats_default_to_opus_at_low_effort(compose):
         assert env["EFFORT"] == "${CLAUDE_EFFORT:-low}"
 
 
-def test_both_agents_and_both_drivers_have_a_thirty_minute_stop_grace_period(compose):
+def test_both_agents_and_both_drivers_have_a_ninety_two_minute_stop_grace_period(compose):
     for name in ("agent-p1", "agent-p2", "driver-p1", "driver-p2"):
-        assert compose["services"][name]["stop_grace_period"] == "30m", name
+        assert compose["services"][name]["stop_grace_period"] == "92m", name
 
 
 def test_both_agents_get_the_shared_memory_bind_mount(compose):

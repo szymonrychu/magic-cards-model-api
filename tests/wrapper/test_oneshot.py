@@ -449,6 +449,7 @@ def test_the_drivers_client_timeout_outlasts_the_wrappers_own_bound() -> None:
     an unreachable wrapper, and a review still running must never be
     abandoned by `retire` before the wrapper itself would have killed it."""
     from mtg_agent.driver.app import RETIRE_REVIEW_JOIN_TIMEOUT, REVIEW_HTTP_TIMEOUT
+    from mtg_agent.driver.handover import PRESTOP_WAIT_SECONDS
 
     bound = Settings.from_env({}).review_timeout
     assert bound < REVIEW_HTTP_TIMEOUT
@@ -456,16 +457,16 @@ def test_the_drivers_client_timeout_outlasts_the_wrappers_own_bound() -> None:
     # DR3: `review_timeout` (and the two bounds stacked over it) tripled
     # (1200 -> 3600) so a review can run several `mcp-seat` rounds per game
     # rather than one. The driver container's own preStop wait
-    # (`handover.PRESTOP_WAIT_SECONDS`, 1740s, mirrored at
-    # `deploy/seat-job.yaml`) has NOT moved with it - raising it is out of
-    # this task's own file scope (`handover.py` is imported, never edited)
-    # - so this bound no longer fits inside that wait, and
-    # `RETIRE_REVIEW_JOIN_TIMEOUT.__doc__` says so. This assertion is the
-    # documented ordering invariant DR3 was asked to keep under test: the
-    # driver outlasts the wrapper, nothing more.
-    assert RETIRE_REVIEW_JOIN_TIMEOUT > 1740.0, (
-        "if this ever goes back under 1740s, the preStop-wait comment on "
-        "RETIRE_REVIEW_JOIN_TIMEOUT is stale and should be restored"
+    # (`handover.PRESTOP_WAIT_SECONDS`, mirrored at `deploy/seat-job.yaml`,
+    # and its Job's `terminationGracePeriodSeconds` over that) moved with
+    # it, restoring - not flipping - the documented ordering invariant DR3
+    # was asked to keep under test: the driver outlasts the wrapper. A
+    # kubelet that kills the driver container at the OLD 1740s preStop wait
+    # would cut a review that genuinely needs the new, longer
+    # `REVIEW_HTTP_TIMEOUT` short before `retire`'s own join gives up on it.
+    assert RETIRE_REVIEW_JOIN_TIMEOUT < PRESTOP_WAIT_SECONDS, (
+        "the driver's preStop wait must still outlast retire's review-join "
+        "bound, or a real review is killed by the kubelet before it can finish"
     )
 
 

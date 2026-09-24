@@ -742,6 +742,37 @@ def _turning_points_ask(player: str, opponent: str) -> str:
     )
 
 
+#: The line `_turning_points_ask` asks Opus to close its own section with -
+#: `parse_turning_points` pulls the JSON object out of it.
+_TURNING_POINTS_LINE = re.compile(r"^turning_points:\s*(\{.*\})\s*$", re.MULTILINE)
+
+
+def parse_turning_points(review_text: str) -> dict[str, list[dict[str, Any]]]:
+    """DR3 owner addon 2: pull the `turning_points: {...}` line
+    `_turning_points_ask` requires out of the reviewer's own free-text
+    answer, so the game's turning points reach `app.post_ai_review` as data
+    (`{<seat>: [{"turn": ..., "action": ..., "why": ...}, ...]}`) and not
+    only as prose inside the filed review text.
+
+    Best-effort, like every other post-processing step in this pipeline: a
+    reviewer that skipped the line, or wrote it malformed, yields `{}`
+    rather than failing the whole review over one line of its answer."""
+    match = _TURNING_POINTS_LINE.search(review_text)
+    if not match:
+        return {}
+    try:
+        parsed = json.loads(match.group(1))
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    result: dict[str, list[dict[str, Any]]] = {}
+    for seat, points in parsed.items():
+        if isinstance(seat, str) and isinstance(points, list):
+            result[seat] = [point for point in points if isinstance(point, dict)]
+    return result
+
+
 #: `_ask`'s own length, less the player/opponent names it interpolates - the
 #: part of the prompt still to come when the ledger's remaining budget is
 #: measured.

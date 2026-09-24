@@ -424,10 +424,17 @@ class AiReviewIn(RequestModel):
     seat's own reflection plus the game's review record
     (`mtg_agent.driver.review`), never a seat's own account of what it did.
 
-    Shaped exactly like `ReflectionIn` and gated the same way (post-game
+    Shaped mostly like `ReflectionIn` and gated the same way (post-game
     only, `uid` must open `player`'s own seat) - see that class's docstring
-    for why this is deliberately just one seat's credential and one block of
-    text, nothing structured."""
+    for why the review itself stays one block of text, nothing structured.
+
+    **`turning_points`, DR3 owner addon 2, is the one deliberately
+    structured field.** `mtg_agent.driver.review.parse_turning_points` pulls
+    it out of the reviewer's own `turning_points: {...}` line so the game's
+    turning points are stored on the review record as data
+    (`{<seat>: [{"turn": ..., "action": ..., "why": ...}, ...]}`), not only
+    argued in `text`'s own prose. Defaulted to `{}` rather than required: a
+    review whose text carried no parseable line still files."""
 
     player: Stated
     uid: Stated
@@ -435,6 +442,11 @@ class AiReviewIn(RequestModel):
     nobody may write one into another seat's name."""
     text: Stated
     """The review itself, in Opus's own words."""
+    turning_points: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    """Each seat's own turning points, `{<seat>: [{"turn", "action", "why"},
+    ...]}` - the reviewer's own opinion, keyed by seat, never validated
+    beyond being JSON-shaped: this is a critique's parsed opinion, not a
+    fact `visibility.redact_log_entry` or anything else needs to check."""
 
 
 class AiReviewResponse(BaseModel):

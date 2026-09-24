@@ -102,15 +102,16 @@ def test_the_secret_appears_only_in_guides_init_and_agent(compose):
     assert compose["secrets"]["mtg_decks_gh_pat"]["environment"] == "MTG_DECKS_GH_PAT"
 
 
-def test_the_agent_and_driver_have_a_thirty_minute_stop_grace_period(compose):
-    """Mirrors k8s `terminationGracePeriodSeconds: 1800` (deploy/seat-job.yaml)
+def test_the_agent_and_driver_have_a_ninety_two_minute_stop_grace_period(compose):
+    """Mirrors k8s `terminationGracePeriodSeconds: 5520` (deploy/seat-job.yaml)
     - room for the driver's and the agent's handover waits at game end or
-    `/release`, subagent development included, before compose sends SIGKILL.
-    A plain `docker compose stop` runs no handover of its own; this only
-    bounds how long compose waits before killing whatever handover the
+    `/release`, subagent development included, AND for `retire`'s join on
+    the post-game AI review thread right after (DR3), before compose sends
+    SIGKILL. A plain `docker compose stop` runs no handover of its own; this
+    only bounds how long compose waits before killing whatever handover the
     process itself starts."""
-    assert compose["services"]["agent"]["stop_grace_period"] == "30m"
-    assert compose["services"]["driver"]["stop_grace_period"] == "30m"
+    assert compose["services"]["agent"]["stop_grace_period"] == "92m"
+    assert compose["services"]["driver"]["stop_grace_period"] == "92m"
 
 
 def test_the_agent_gets_mtg_role_and_mtg_game_id_env(compose):

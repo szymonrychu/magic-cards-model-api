@@ -281,11 +281,12 @@ points where the agent stops playing: when a game ends, and when the driver's
 `POST /release` is called (a human taking the seat back, or a buddy standing
 down). A plain `docker compose stop` or `docker compose down` does **not**
 run a handover - it just stops the containers, mid-match state and all;
-`agent`/`driver` are given a 30-minute `stop_grace_period` (mirroring the k8s
-Job's 1800 s `terminationGracePeriodSeconds`; the driver's handover itself
-gives up at 28 minutes, after a push-now nudge at 23) purely so an *in-flight* handover from
-one of those two triggers has room to finish before compose sends SIGKILL,
-not to start one on its own.
+`agent`/`driver` are given a 92-minute `stop_grace_period` (mirroring the k8s
+Job's 5520 s `terminationGracePeriodSeconds`; the driver's handover itself
+gives up at 28 minutes, after a push-now nudge at 23, and `retire` then joins
+the post-game AI review's own thread for up to another 62 minutes) purely so
+an *in-flight* handover or review from one of those two triggers has room to
+finish before compose sends SIGKILL, not to start one on its own.
 
 ### What `docker compose logs` shows
 

@@ -3973,6 +3973,7 @@ def declare_ai_review(game_id: str, req: AiReviewIn) -> dict[str, Any]:
         audit.AI_REVIEW_ACTION,
         player=req.player,
         text=req.text,
+        turning_points=req.turning_points,
     )
     return {"recorded": True, "log_seq": seq, "player": req.player}
 

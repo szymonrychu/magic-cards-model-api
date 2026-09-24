@@ -300,6 +300,36 @@ def test_a_released_game_that_never_reflected_files_a_review_the_page_can_read(t
     assert "(the seat left no reflection)" in run.reviewed[0]["prompt"]
 
 
+def test_a_reviews_turning_points_are_stored_on_the_real_review_record(tmp_path):
+    """DR3 owner addon 2, end to end through the real production schema
+    (`AiReviewIn`, `extra="forbid"`, `declare_ai_review`): the reviewer's own
+    `turning_points: {...}` closing line lands as structured data on the
+    `ai_review` row's own `detail`, not only inside `detail["text"]`'s
+    prose."""
+    text_with_turning_points = (
+        REVIEW_TEXT + "\n\n"
+        'turning_points: {"bob": [{"turn": 6, "action": "attacked into open mana", '
+        '"why": "walked into the sweeper"}]}'
+    )
+    def runner(settings, prompt, model, effort):
+        return text_with_turning_points
+
+    run = released_without_a_reflection(tmp_path, review_runner=runner)
+
+    entry = _rows(run.review, audit.AI_REVIEW_ACTION)[0]
+    assert entry["detail"]["turning_points"] == {
+        "bob": [
+            {
+                "turn": 6,
+                "action": "attacked into open mana",
+                "why": "walked into the sweeper",
+            }
+        ]
+    }
+    # Still shown in the filed review's own prose too, not replaced by it.
+    assert "turning_points:" in entry["detail"]["text"]
+
+
 @requires_node
 def test_the_review_page_reads_that_filed_review_out_of_the_real_body(tmp_path):
     """The join, under Node: `ui/review_model.js`'s own `aiReviewsOf` - the

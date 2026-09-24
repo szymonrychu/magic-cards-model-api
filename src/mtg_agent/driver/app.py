@@ -127,7 +127,7 @@ from .prompt import (
     render_current_game,
     turn_zero,
 )
-from .review import play_statistics_block, review_prompt
+from .review import parse_turning_points, play_statistics_block, review_prompt
 from .revision import guides_revision
 
 log = logging.getLogger("driver")
@@ -162,17 +162,12 @@ REVIEW_HTTP_TIMEOUT = 3660.0
 #:
 #: Derived, so it follows `REVIEW_HTTP_TIMEOUT` up without a second edit.
 #:
-#: **DR3: this now exceeds the driver container's own preStop wait**
-#: (`handover.PRESTOP_WAIT_SECONDS`, 1740s, mirrored at
-#: `deploy/seat-job.yaml`) - past that the kubelet cuts the join short
-#: anyway and the bound stops meaning anything for a review still running
-#: that late. Raising `handover.py`'s `PRESTOP_WAIT_SECONDS` and the
-#: deploy manifest's own preStop wait to match is out of this task's own
-#: file scope (`handover.py` is imported here, never edited - see this
-#: module's own docstring); until that follow-up lands, a review that
-#: genuinely needs the whole of the new, longer `REVIEW_HTTP_TIMEOUT` can
-#: still be cut short by the kubelet before `retire`'s own join here would
-#: have given up on it.
+#: **DR3: `handover.PRESTOP_WAIT_SECONDS` (5460s), the deploy manifest's own
+#: preStop waits, and the Job's `terminationGracePeriodSeconds` all moved up
+#: with this** so the driver container's own termination window still
+#: outlasts this join - a kubelet that killed the container before this
+#: bound gave up on it would make the bound meaningless for a review still
+#: running that late. `tests/wrapper/test_oneshot.py` pins the ordering.
 RETIRE_REVIEW_JOIN_TIMEOUT = REVIEW_HTTP_TIMEOUT + 70.0
 
 #: The auto-continue loop guard. One wrapper turn is meant to cover a whole
@@ -868,6 +863,14 @@ def build_app(
             )
             return
 
+        # DR3 owner addon 2: pulled from the reviewer's own text (the
+        # `turning_points:` line `review._turning_points_ask` requires)
+        # BEFORE the statistics block is appended below, so a stray JSON
+        # object in the stats block can never be mistaken for it. Best
+        # effort - `{}` when the line is missing or malformed - never blocks
+        # filing the review text itself.
+        turning_points = parse_turning_points(review_text)
+
         # DR3 (3): appended once the review one-shot has returned, never
         # blocking the filing itself. `role="reviewer"` - the review shares
         # the `/guides` checkout with the handover but writes its own
@@ -897,6 +900,7 @@ def build_app(
                         "player": assignment.player,
                         "uid": assignment.uid,
                         "text": review_text,
+                        "turning_points": turning_points,
                     },
                 )
             if response.status_code >= 400:

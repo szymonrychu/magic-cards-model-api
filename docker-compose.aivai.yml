@@ -177,7 +177,7 @@ services:
       - agent-guides-p1:/guides
       - ./memory:/workspace/memory
     restart: unless-stopped
-    stop_grace_period: 30m
+    stop_grace_period: 92m
 
   agent-p2:
     platform: ${DOCKER_PLATFORM:-linux/amd64}
@@ -225,7 +225,7 @@ services:
       - agent-guides-p2:/guides
       - ./memory:/workspace/memory
     restart: unless-stopped
-    stop_grace_period: 30m
+    stop_grace_period: 92m
 
   driver-p1:
     platform: ${DOCKER_PLATFORM:-linux/amd64}
@@ -255,7 +255,7 @@ services:
       # agent-p2's.
       - agent-guides-p1:/guides:ro
       - ./memory:/workspace/memory
-    stop_grace_period: 30m
+    stop_grace_period: 92m
 
   driver-p2:
     platform: ${DOCKER_PLATFORM:-linux/amd64}
@@ -281,7 +281,7 @@ services:
     volumes:
       - agent-guides-p2:/guides:ro
       - ./memory:/workspace/memory
-    stop_grace_period: 30m
+    stop_grace_period: 92m
 
 secrets:
   # Sourced from the MTG_DECKS_GH_PAT environment variable, same as
