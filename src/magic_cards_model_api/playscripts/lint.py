@@ -82,7 +82,11 @@ play are exclusive), `input` (same input, value sets that
 cannot both hold), `true_false` (one normalized condition in one play's
 `true` and the other's `false` - `compare` and `all_of` (FB2) are
 canonicalised as single literals here too, never decomposed into their
-operands or members), `numeric_range` (count, zone_size, life,
+operands or members for that direct match, so one bare member of an
+all_of never matches the all_of itself; `all_of` is refused outside
+`false` by schema, so its only expressible complement is the other
+play's `true` independently holding every one of its members - proven
+only once all of them do, never a subset), `numeric_range` (count, zone_size, life,
 untapped_mana, turn or int-input ranges on one key that cannot overlap -
 `compare` and `all_of` never register here at all: `_constraint` returns no
 numeric range for either kind). A `false`
@@ -412,6 +416,37 @@ def _literals(doc: dict[str, Any]) -> set[tuple[bool, str]]:
     return {_literal(c, polarity) for polarity in (True, False) for c in _conditions(doc, polarity)}
 
 
+def _all_of_complement_literals(doc: dict[str, Any]) -> list[frozenset[tuple[bool, str]]]:
+    """Each of this play's false `all_of`s, as the set of `true` literals its
+    own members would be if each were placed alone (schema: `all_of` is
+    refused outside `false`, so it can never itself appear as a `true`
+    literal to match against - this is the only way its complement can ever
+    be expressed). Empty when a play has none."""
+    return [
+        frozenset(_literal(member, True) for member in condition["conditions"])
+        for condition in _conditions(doc, False)
+        if condition.get("kind") == "all_of"
+        and isinstance(condition.get("conditions"), list)
+        and condition["conditions"]
+    ]
+
+
+def _all_of_complement(
+    literals_a: set[tuple[bool, str]],
+    literals_b: set[tuple[bool, str]],
+    all_of_a: list[frozenset[tuple[bool, str]]],
+    all_of_b: list[frozenset[tuple[bool, str]]],
+) -> bool:
+    """True when one play's false `all_of` has every member proven by the
+    other play's own `true` literals - "not (A and B ...)" is false, so that
+    play excludes itself, whenever the other applies. Proven only when every
+    member matches, never a subset: one member alone stays the partial,
+    never-decomposed case (`true_false`'s ordinary literal check)."""
+    return any(members <= literals_b for members in all_of_a) or any(
+        members <= literals_a for members in all_of_b
+    )
+
+
 def _placed(doc: dict[str, Any]):
     """(where, polarity, condition) for every object condition, true then false."""
     for polarity in (True, False):
@@ -679,8 +714,10 @@ def exclusivity(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -
         proven.append("pending_decision")
     if any(na == nb and _values_disjoint(x, y) for na, x in inputs_a for nb, y in inputs_b):
         proven.append("input")
-    literals_b = _literals(b)
-    if any((not holds, text) in literals_b for holds, text in _literals(a)):
+    literals_a, literals_b = _literals(a), _literals(b)
+    if any((not holds, text) in literals_b for holds, text in literals_a) or _all_of_complement(
+        literals_a, literals_b, _all_of_complement_literals(a), _all_of_complement_literals(b)
+    ):
         proven.append("true_false")
     if any(ka == kb and _ints_disjoint(x, y) for ka, x in numeric_a for kb, y in numeric_b):
         proven.append("numeric_range")

@@ -987,25 +987,35 @@ def test_all_of_is_one_literal_never_decomposed_into_its_members_for_true_false(
 
 
 def test_a_play_conflict_warning_disappears_once_the_complement_condition_is_added(root):
-    # An all_of-false play (a) still gets ordinary exclusivity: its all_of
-    # never interferes with the true_false proof over an unrelated
-    # condition on another play (b) - the warning disappears once b's
-    # complement condition (the negation of a's flag) is added.
-    allof = {
-        "kind": "all_of",
-        "conditions": [
-            {"kind": "life", "side": "me", "op": ">=", "n": 8},
-            {"kind": "life", "side": "opponent", "op": "<=", "n": 5},
-        ],
-    }
-    flag = {"kind": "land_drop_available", "value": True}
-    put(root, play(id="a", true=[flag], false=[allof]))
-    put(root, play(id="b", true=[], false=[]))
+    # An all_of-false play (a) excludes itself whenever every one of its
+    # members holds. `all_of` is refused outside `false` (schema), so its
+    # complement can only ever be expressed as the other play's own `true`
+    # requiring every one of those same members - proven only once ALL of
+    # them are present, never from one member alone (that stays the
+    # never-decomposed partial-match case covered by
+    # test_all_of_is_one_literal_never_decomposed_into_its_members_for_true_false
+    # above, so no false exclusivity is ever claimed from a partial match).
+    x = {"kind": "life", "side": "me", "op": ">=", "n": 8}
+    y = {"kind": "life", "side": "opponent", "op": "<=", "n": 5}
+    allof = {"kind": "all_of", "conditions": [x, y]}
+    a = play(id="a", true=[], false=[allof])
+    b_empty = play(id="b", true=[], false=[])
+    put(root, a)
+    put(root, b_empty)
     (warning,) = warnings_of(root)
     assert warning["code"] == "play-conflict"
+    assert exclusivity(a, b_empty, {}) == []
 
-    put(root, play(id="b", true=[], false=[flag]))
+    b_one_member = play(id="b", true=[x], false=[])
+    put(root, b_one_member)
+    (warning,) = warnings_of(root)
+    assert warning["code"] == "play-conflict"
+    assert exclusivity(a, b_one_member, {}) == []
+
+    b_both_members = play(id="b", true=[x, y], false=[])
+    put(root, b_both_members)
     assert check_report(root) == ([], [])
+    assert exclusivity(a, b_both_members, {}) == ["true_false"]
 
 
 def life(side: str, op: str, n: int) -> dict[str, Any]:
