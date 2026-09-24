@@ -537,36 +537,36 @@
           "type_error": null
         },
         {
-          "default": null,
-          "has_default": false,
+          "default": "",
+          "has_default": true,
           "name": "board_read",
           "type": "str",
           "type_error": null
         },
         {
-          "default": null,
-          "has_default": false,
+          "default": "",
+          "has_default": true,
           "name": "my_role",
           "type": "str",
           "type_error": null
         },
         {
-          "default": null,
-          "has_default": false,
+          "default": "",
+          "has_default": true,
           "name": "plan",
           "type": "str",
           "type_error": null
         },
         {
-          "default": null,
-          "has_default": false,
+          "default": "",
+          "has_default": true,
           "name": "expecting",
           "type": "str",
           "type_error": null
         },
         {
-          "default": null,
-          "has_default": false,
+          "default": "",
+          "has_default": true,
           "name": "because",
           "type": "str",
           "type_error": null
@@ -582,6 +582,20 @@
           "default": "current",
           "has_default": true,
           "name": "for_turn",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "reuse_previous",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "still_because",
           "type": "str",
           "type_error": null
         }
