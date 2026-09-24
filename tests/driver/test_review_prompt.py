@@ -908,11 +908,6 @@ def test_the_review_prompt_states_the_plays_admit_scope() -> None:
 
 def test_the_review_prompt_states_the_caps_read_from_the_code() -> None:
     from magic_cards_model_api.playscripts.gitwork import PRIORITY_STEP_LIMIT
-    from magic_cards_model_api.playscripts.lint import (
-        MAX_ACTIVE_PER_ARCHETYPE,
-        MAX_ADVICE,
-        MAX_PLAYS,
-    )
     from magic_cards_model_api.playscripts.schema import (
         MAX_CONDITIONS,
         MAX_MOVES,
@@ -921,9 +916,10 @@ def test_the_review_prompt_states_the_caps_read_from_the_code() -> None:
     )
 
     text = _flat(review_prompt(_assignment(), "r", _record()))
-    assert f"{MAX_PLAYS} move-bearing plays" in text
-    assert f"{MAX_ADVICE} advice-only plays" in text
-    assert f"{MAX_ACTIVE_PER_ARCHETYPE} plays" in text and "live together" in text
+    # DR5 removed the play-count caps outright (owner, 2026-09-24).
+    assert "move-bearing plays per deck" not in text
+    assert "advice-only plays per deck" not in text
+    assert "live together" not in text
     assert f"{MAX_PREFER} `prefer` selectors" in text
     assert f"{MAX_CONDITIONS} conditions" in text
     assert f"{MAX_MOVES} moves" in text
@@ -1105,14 +1101,11 @@ def test_a_review_without_evidence_says_none_was_read() -> None:
     assert "no cross-game evidence was read for this review" in text
 
 
-def test_the_review_prompt_retires_by_deletion_at_the_play_cap() -> None:
-    from magic_cards_model_api.playscripts.lint import MAX_PLAYS
-
+def test_the_review_prompt_states_no_play_count_cap() -> None:
+    # DR5 removed the play-count caps outright (owner, 2026-09-24).
     text = _flat(review_prompt(_assignment(), "r", _record()))
-    assert MAX_PLAYS == 16
-    assert "retire-by-deletion" in text
-    assert f"at the cap of {MAX_PLAYS} move-bearing plays" in text
-    assert "in the same `plays admit` that adds the new one" in text
+    assert "retire-by-deletion" not in text
+    assert "at the cap of" not in text
 
 
 def test_a_worst_case_prompt_with_full_evidence_still_stays_under_the_ceiling() -> None:

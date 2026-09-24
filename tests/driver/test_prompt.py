@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from magic_cards_model_api.playscripts.lint import MAX_PLAYS
 from magic_cards_model_api.playscripts.report import DevelopmentCandidates
 from mtg_agent.driver.guides import (
     CONFIDENT,
@@ -1635,13 +1634,12 @@ def test_no_candidates_says_so(guide):
     assert "none: no play was declined or passed over" in section
 
 
-def test_the_handover_retires_by_deletion_at_the_play_cap(guide):
+def test_the_handover_states_no_play_count_cap(guide):
+    # DR5 removed the play-count caps outright (owner, 2026-09-24).
     steps = _flat(_section(_handover(guide, "seat"), "## What to do"))
-    assert MAX_PLAYS == 16
-    assert f"At the cap of {MAX_PLAYS} move-bearing plays" in steps
-    assert "retire the weakest play by deleting its file" in steps
-    assert "`git rm decks/dimir-frog/plays/<play-id>.json`" in steps
-    assert "in the same admit that adds the new one" in steps
+    assert "At the cap" not in steps
+    assert "move-bearing plays per deck" not in steps
+    assert "retire the weakest play" not in steps
 
 
 def test_the_handover_says_the_evidence_file_rides_the_admit(guide):
@@ -1671,7 +1669,7 @@ def test_the_re_push_names_what_is_missing_and_how_to_close_it(guide):
     assert "7 minutes" in flat
     assert "mcp-seat plays admit --deck dimir-frog --game-id g-1" in flat
     assert "mcp-seat plays no-change --deck dimir-frog --game-id g-1" in flat
-    assert f"At the cap of {MAX_PLAYS} move-bearing plays" in flat
+    assert "At the cap" not in flat
     assert "optional" not in flat.lower()
 
 

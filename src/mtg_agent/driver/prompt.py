@@ -19,11 +19,6 @@ from pathlib import Path
 from typing import Any
 
 from magic_cards_model_api.playscripts.gitwork import PRIORITY_STEP_LIMIT
-from magic_cards_model_api.playscripts.lint import (
-    MAX_ACTIVE_PER_ARCHETYPE,
-    MAX_ADVICE,
-    MAX_PLAYS,
-)
 from magic_cards_model_api.playscripts.report import DevelopmentCandidates
 from magic_cards_model_api.playscripts.schema import (
     MAX_CONDITIONS,
@@ -2089,11 +2084,8 @@ WRITE_BARS_HEADING = "What clears the bar to write a play-script change, and wha
 #: make a play that still fires in the wrong spot get offered *sooner*.
 #: Bar (a) is written as a CONDITION for exactly this reason.
 #:
-#: **At most one new play, bar (b) only.** A deck's own `too-many-plays` /
-#: `too-many-advice` / `too-many-active-for-archetype` caps
-#: (`playscripts.lint`) exist because a corpus that grows without limit is
-#: unreviewable by the next reviewer that opens it; one move-bearing play
-#: per review keeps growth slow enough that the next reviewer reading the
+#: **At most one new play, bar (b) only.** One move-bearing play per review
+#: keeps growth slow enough that the next reviewer reading the
 #: resulting commits on mtg-decks main is reading one change, not a batch.
 #:
 #: **No autofire bar, and this says so rather than leaving a reviewer to
@@ -2236,16 +2228,9 @@ at most {PRIORITY_STEP_LIMIT} per call and {PRIORITY_STEP_LIMIT} per game -
 the same bound the seat's own handover turn is held to, and a report of what
 a script that already ran did, never a way around either bar above.
 
-The caps every corpus is checked against, so what you write can actually
-land: at most {MAX_PLAYS} move-bearing plays and {MAX_ADVICE} advice-only
-plays per deck, at most {MAX_ACTIVE_PER_ARCHETYPE} plays with priority > 0
-live together per (deck, archetype) - counted over move-bearing plays only,
-an advice-only play never enters it - at most {MAX_PREFER} `prefer`
-selectors, {MAX_CONDITIONS} conditions per `true`/`false` list,
-{MAX_MOVES} moves and {MAX_STEPS} steps per play. A deck already at the cap
-of {MAX_PLAYS} move-bearing plays takes a new one only by retire-by-deletion:
-delete its weakest play's file in the same `plays admit` that adds the new
-one, never in a separate admit and never by editing the retired play instead.
+The limits every play is checked against, so what you write can actually
+land: at most {MAX_PREFER} `prefer` selectors, {MAX_CONDITIONS} conditions
+per `true`/`false` list, {MAX_MOVES} moves and {MAX_STEPS} steps per play.
 
 Do not invent a rule you cannot ground in the ledger above - every condition
 you tighten or play you write has to trace to a decline this prompt actually
@@ -2282,18 +2267,6 @@ def no_change_command(assignment: Assignment, *, play: str = "", line: str = "")
     return (
         f"mcp-seat plays no-change --deck {assignment.deck_slug} --game-id "
         f"{assignment.game_id} {target} --reason {NO_CHANGE_REASON}"
-    )
-
-
-def retire_by_deletion(assignment: Assignment) -> str:
-    """The play-cap rule, with this deck's own path: a new play at the cap
-    lands only by deleting the weakest one in the same admit. A seat whose
-    own list has no guide has no corpus of its own, so the path is generic."""
-    deck = assignment.deck_slug if assignment.guide is not None else "<deck>"
-    return (
-        f"At the cap of {MAX_PLAYS} move-bearing plays per deck, retire the weakest play by "
-        f"deleting its file (`git rm decks/{deck}/plays/<play-id>.json`) in "
-        "the same admit that adds the new one."
     )
 
 
@@ -2384,7 +2357,6 @@ scripts through subagents, along with guides.
    conflict warning below needs its conditions extended so that at most one
    play applies; priority alone never resolves a conflict. Each subagent checks
    its files with `mcp-seat plays check --root /guides --deck {slug}`.
-   {retire_by_deletion(assignment)}
 5. Land scripts with `mcp-seat plays admit --deck {slug} --game-id {game}`, and
    the three guide updates with `{guides_propose_command(assignment)}`.
    Both push straight to mtg-decks main the moment their gates pass, and
@@ -2469,7 +2441,7 @@ advice-only change with `mcp-seat plays admit --deck {slug} --game-id {game}`,
 or run `mcp-seat plays no-change --deck {slug} --game-id {game} --play <play-id>
 --reason "<why>"` (or `--line "<line>"` for a hand-played line) once for each
 play and line above. A priority change alone does not count.
-{retire_by_deletion(assignment)} The "Development candidates" section of the
+The "Development candidates" section of the
 handover turn has each candidate's exact command. End the turn once every item
 is closed, or each command said why it could not.
 """
@@ -2566,7 +2538,7 @@ not play and do not open the game: everything you need is below or in
    change is right. A priority change alone does not count. Check your files
    with `mcp-seat plays check --root /guides --deck {slug}` first: every
    conflict it reports needs its conditions extended so that at most one play
-   applies. {retire_by_deletion(assignment)}
+   applies.
 5. Read each command's `result`: `admitted` is live on main; `conflict` leaves
    both sides between conflict markers - resolve them keeping both sides'
    intent and run the same command again; `error` with `retryable: true` - run
