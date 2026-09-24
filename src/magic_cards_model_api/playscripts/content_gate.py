@@ -83,7 +83,17 @@ class Undecidable(Exception):
 #: because the bare word is ordinary Magic vocabulary and matching it would
 #: refuse real play prose: `stack` is CR 405, `pod` and `deploy` are printed
 #: on cards, `engine` is what a deck's card advantage runs on, and "with the
-#: exception of" is just English.
+#: exception of" is just English. `deployment` and `exception` are narrowed
+#: further still: "deployment constraint" and "the exception worth the
+#: exposure" are ordinary Magic sentences, so each is flagged only alongside
+#: its own system-sense qualifier (a cluster/pod/k8s word for deployment; a
+#: raised/thrown/unhandled word for exception), not on the bare word alone.
+#: Words that turn "deployment"/"exception" from ordinary Magic English into
+#: the system sense. Kept as named constants because both rows below build a
+#: pattern out of them and a comment next to a literal regex would drift.
+_DEPLOY_QUALIFIERS = r"cluster|pod|container|k8s|kubernetes|helm|rollout|redeploy|failed|prod"
+_EXCEPTION_QUALIFIERS = r"raised|threw|thrown|unhandled|uncaught"
+
 _TERMS: tuple[tuple[str, str], ...] = (
     (r"\bapis?\b", "names the api"),
     (r"\bendpoints?\b", "names an http endpoint"),
@@ -99,11 +109,21 @@ _TERMS: tuple[tuple[str, str], ...] = (
     (r"\btimed out\b", "names a timeout"),
     (r"\bcontainers?\b", "names a container"),
     (r"\bkubernetes\b|\bk8s\b", "names the cluster"),
-    (r"\bdeployments?\b|\bredeploy(?:ed|s)?\b|\b(?:a|the) deploy\b", "names a deployment"),
+    (
+        rf"\b(?:{_DEPLOY_QUALIFIERS})\b[^\n]*\bdeployments?\b"
+        rf"|\bdeployments?\b[^\n]*\b(?:{_DEPLOY_QUALIFIERS})\b"
+        r"|\bredeploy(?:ed|s)?\b|\b(?:a|the) deploy\b",
+        "names a deployment",
+    ),
     (r"\bin-pod\b|\bpods\b|\bthe pod\b|\bpod (?:logs?|restart|crash)", "names the pod"),
     (r"\bstack trace\b|\btracebacks?\b", "names a stack trace"),
     (r"\bstderr\b|\bstdout\b", "names a process stream"),
-    (r"\bexception\b(?!\s+(?:of|to)\b)", "names a raised exception"),
+    (
+        rf"\b(?:{_EXCEPTION_QUALIFIERS})\b[^\n]*\bexceptions?\b"
+        rf"|\bexceptions?\b[^\n]*\b(?:raised|thrown|threw)\b"
+        r"|\ban exception in\b|\bexceptions? was\b",
+        "names a raised exception",
+    ),
     (r"\bengine bugs?\b|\bapi bugs?\b|\ba bug in\b", "names a bug in this system"),
     (r"\brules gaps?\b|\bcoverage gaps?\b", "names a gap in the rules engine"),
     (r"\brules engine\b|\bthe engine (?:returned|refused|said|answered)\b", "names the engine"),
@@ -121,7 +141,11 @@ _TERMS: tuple[tuple[str, str], ...] = (
 _SHAPES: tuple[tuple[str, str], ...] = (
     (r"(?<![\w-])--[a-z][a-z0-9-]*\b", "names a command-line flag"),
     (
-        r"\b[a-z_][a-z0-9_]*\s*=\s*(?:true|false|none|null|\d|\"|'|`)",
+        # A single-letter x/y/z (Magic's own X-spell notation, case either
+        # way: "X=1", "x = 2") followed by `=` and a digit is excluded - that
+        # is how a deck's guide writes an X value, not a parameter. Every
+        # multi-character identifier is still caught, single letter or not.
+        r"\b(?!(?:x|y|z)\s*=\s*\d)[a-z_][a-z0-9_]*\s*=\s*(?:true|false|none|null|\d|\"|'|`)",
         "names a parameter and the value to set it to",
     ),
     (r"`[^`\n]*[_/(){}\[\]=:.$*\-][^`\n]*`", "quotes a code identifier in backticks"),

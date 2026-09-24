@@ -887,6 +887,65 @@ def test_a_forbidden_plan_key_carrying_system_text_is_still_the_file_path_refusa
     assert branches(bare) == {"main"}
 
 
+# ======================================================================
+# FB2: three patterns over-matched ordinary Magic English and refused real
+# play content from loop game 1 - `deployments?`, the bare `exception`
+# lookahead, and the `identifier=value` shape catching Magic's own `X=1`
+# notation. Each is tightened to its system-domain sense only. Pass cases are
+# the three live sentences plus generalisations; refused cases must keep
+# refusing, each with the reason text it actually gets.
+# ======================================================================
+
+MAGIC_WORDING_PASSES = [
+    # The three live false-positive sentences, verbatim.
+    "deployment constraint",
+    "At X=1",
+    "the exception worth the exposure",
+    # Generalisations of "deployment".
+    "deploy threats one at a time",
+    "deployment of the second creature",
+    # Generalisations of "X=".
+    "cast it with X=2",
+    "X = 3 kills the blocker",
+    "X=0 is legal",
+    # Generalisations of "exception".
+    "the only exception is a flashed-in blocker",
+    "an exception to the curve",
+]
+
+
+@pytest.mark.parametrize("passage", MAGIC_WORDING_PASSES)
+def test_ordinary_magic_wording_is_not_judged_a_system_problem(passage):
+    assert content_gate.system_problem_reasons([passage]) == [], passage
+
+
+#: Each refused case with the reason category (the rule's "why" text) it
+#: still gets after the tightening, so the assertion pins WHICH rule fired
+#: and not merely that some rule did.
+STILL_REFUSED = [
+    ("the deployment failed after the redeploy", "names a deployment"),
+    ("kubernetes deployment", "names the cluster"),
+    ("deployment to the cluster", "names a deployment"),
+    ("the pod was redeployed", "names a deployment"),
+    ("raised an exception", "names a raised exception"),
+    ("the exception was thrown", "names a raised exception"),
+    ("an unhandled exception", "names a raised exception"),
+    ("exception traceback", "names a stack trace"),
+    ("set hold_priority=true", "names a parameter and the value to set it to"),
+    ("timeout = 30", "names a timeout"),
+    ("retries=3", "names a parameter and the value to set it to"),
+    ("foo_bar = none", "names a parameter and the value to set it to"),
+    ("`x = 1`", "quotes a code identifier in backticks"),
+]
+
+
+@pytest.mark.parametrize(("passage", "why"), STILL_REFUSED, ids=[p for p, _ in STILL_REFUSED])
+def test_the_system_sense_cases_still_refuse_with_their_reason(passage, why):
+    reasons = content_gate.system_problem_reasons([passage])
+    assert reasons, passage
+    assert why in reasons[0], reasons
+
+
 def test_the_file_path_refusal_is_reached_before_the_content_gate_runs(
     capsys, monkeypatch, root, bare, isolated, render_log
 ):
