@@ -300,10 +300,13 @@ def card(
     mana_value: float = 0.0,
 ) -> dict[str, Any]:
     built = []
-    for entry in abilities:
-        built.append(
-            ability(*entry[:1], mana=entry[1]) if isinstance(entry, tuple) else ability(entry)
-        )
+    for position, entry in enumerate(abilities):
+        one = ability(*entry[:1], mana=entry[1]) if isinstance(entry, tuple) else ability(entry)
+        # FB2 M4: a card with more than one ability needs each its own real
+        # position, the way a live view does - `ability_index` (`_move_
+        # request`'s new branch) is picked by this list's own index.
+        one["index"] = position
+        built.append(one)
     return {
         "id": f"00000000-0000-4000-8000-{next(_ids):012d}",
         "name": name,
@@ -384,6 +387,10 @@ def state_view(
     land_allowance: dict[str, int] | None = None,
     turn_number: int | None = 3,
     own_turns_taken: dict[str, int] | None = None,
+    pending_decision: dict[str, Any] | None = None,
+    combat_attacks: list[dict[str, Any]] | None = None,
+    step: str = "precombat_main",
+    priority_holder: str | None = None,
 ) -> dict[str, Any]:
     """A redacted `GameStateView` as `viewer` receives it."""
     names = (viewer, opponent)
@@ -404,12 +411,12 @@ def state_view(
     taken = per(own_turns_taken, turn_number if turn_number is not None else 0)
     view: dict[str, Any] = {
         "game_id": "g",
-        "pending_decision": None,
+        "pending_decision": pending_decision,
         "turn_number": turn_number,
-        "step": "precombat_main",
-        "phase": "precombat_main",
+        "step": step,
+        "phase": step,
         "active_player": active,
-        "priority_holder": active,
+        "priority_holder": priority_holder if priority_holder is not None else active,
         "players": [
             {
                 "username": name,
@@ -445,7 +452,7 @@ def state_view(
         "drawn": False,
         "losers": [],
         "conceded": [],
-        "combat": {"attacks": []},
+        "combat": {"attacks": list(combat_attacks or [])},
         "you": viewer,
     }
     if library_contents is not None:
@@ -453,3 +460,102 @@ def state_view(
     if sideboard_contents is not None:
         view["sideboard_contents"] = {viewer: sideboard_contents}
     return view
+
+
+# -- FB2 (B4) builders: pass / declare_attackers / declare_blockers, the new --
+# -- answer shapes, and a couple of card conveniences the new moves need -----
+
+
+def creature(
+    name: str = "Bear", *, power: int = 2, toughness: int = 2, **kw: Any
+) -> dict[str, Any]:
+    """A vanilla creature card view - untapped, on the battlefield, by
+    default: the FB2 combat-move tests' usual attacker/blocker."""
+    kw.setdefault("type_line", "Creature")
+    return card(name, power=power, toughness=toughness, **kw)
+
+
+def planeswalker(name: str = "Walker", **kw: Any) -> dict[str, Any]:
+    """A planeswalker permanent view - `DeclareAttackersMove`'s own
+    `DefenderCard` alternative to the opponent player (FB2 M2)."""
+    kw.setdefault("type_line", "Legendary Planeswalker")
+    return card(name, **kw)
+
+
+def attacking(attacker: dict[str, Any], defender: str = "bob") -> dict[str, Any]:
+    """One `combat.attacks` entry naming `attacker` as attacking `defender`,
+    with no blockers yet - `Block.attacker`'s own candidate pool (FB2 M3)."""
+    return {"attacker": attacker["id"], "defender": defender, "blockers": []}
+
+
+def pass_move() -> dict[str, Any]:
+    """FB2 M1: release priority once."""
+    return {"kind": "pass"}
+
+
+def attack_group(select: dict[str, Any] | None = None, **over: Any) -> dict[str, Any]:
+    """One `AttackGroup` (FB2 M2): `select`/`count`/`prefer`/`ties`/`defender`."""
+    group: dict[str, Any] = {"select": select if select is not None else {}}
+    group.update(over)
+    return group
+
+
+def declare_attackers_move(attackers: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """FB2 M2: `attackers: []` (the default) declares no attackers."""
+    return {"kind": "declare_attackers", "attackers": list(attackers or [])}
+
+
+def block(
+    blocker_select: dict[str, Any] | None = None,
+    attacker_select: dict[str, Any] | None = None,
+    *,
+    blocker: dict[str, Any] | None = None,
+    attacker: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One `Block` (FB2 M3): `blocker_select`/`attacker_select` build the
+    plain shapes; pass a whole `blocker`/`attacker` dict instead for
+    `count`/`prefer`/`ties` on either half."""
+    return {
+        "blocker": blocker if blocker is not None else {"select": blocker_select or {}},
+        "attacker": attacker if attacker is not None else {"select": attacker_select or {}},
+    }
+
+
+def declare_blockers_move(blocks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """FB2 M3: `blocks: []` (the default) declares no blocks."""
+    return {"kind": "declare_blockers", "blocks": list(blocks or [])}
+
+
+def top_order_answer(decision: str, tiers: list[dict[str, Any]], **over: Any) -> dict[str, Any]:
+    """A scry/surveil answer ordering what stays on top (FB2 A1)."""
+    item = {"decision": decision, "top_order": list(tiers)}
+    item.update(over)
+    return item
+
+
+def position_answer(position: str, **over: Any) -> dict[str, Any]:
+    """A `put_on_top_or_bottom` answer naming `top`/`bottom` directly (FB2 A1)."""
+    item = {"decision": "put_on_top_or_bottom", "position": position}
+    item.update(over)
+    return item
+
+
+def player_target(player: str = "opponent") -> dict[str, Any]:
+    return {"player": player}
+
+
+def card_target(
+    select: dict[str, Any] | None = None, side: str = "opponent", **over: Any
+) -> dict[str, Any]:
+    """A `CardTarget` (FB2 T1): `select`/`side`, plus `prefer`/`ties`/`zone`."""
+    target = {"select": select if select is not None else {}, "side": side}
+    target.update(over)
+    return target
+
+
+def targets_answer(targets: list[dict[str, Any]], **over: Any) -> dict[str, Any]:
+    """A `choose_targets` answer naming `targets` directly (FB2 A2), each
+    entry a `card_target(...)` or a `player_target(...)`."""
+    item = {"decision": "choose_targets", "targets": list(targets)}
+    item.update(over)
+    return item

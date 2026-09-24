@@ -2195,3 +2195,161 @@ def test_a_cast_play_may_be_scheduled_during_a_combat_declaration_step(
         },
     )
     assert response.status_code == 200, response.text
+
+
+# -- FB2 B4: pass / declare_attackers / declare_blockers, end to end via MCP -------
+
+
+def register_one(client: TestClient, game_id: str, uid: str, play: dict[str, Any]) -> None:
+    response = client.put(
+        f"/api/games/{game_id}/seats/{uid}/scripts",
+        params={"uid": uid},
+        json={
+            "deck_slug": "boros-aggro",
+            "guides_revision": GUIDES_REVISION,
+            "scripts": [play],
+            "inputs": [],
+        },
+    )
+    assert response.status_code == 200, response.text
+
+
+def ready_to_attack(client: TestClient, game_id: str, added: dict[str, Any]) -> str:
+    """Clears CR 302.6 summoning sickness off a freshly `add_card`ed
+    creature (test setup only - the same debug route `test_assign_combat_
+    damage.py` and this file's sibling `test_playscript_runtime_fb2.py`
+    already use for it)."""
+    card_id = added["added"]["card_id"]
+    response = client.patch(f"/api/games/{game_id}/cards/{card_id}", json={"summoning_sick": False})
+    assert response.status_code == 200, response.text
+    return card_id
+
+
+def test_pass_move_releases_priority_end_to_end_through_run_script(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FB2 M1, through the real MCP `run_script` tool this time (`test_
+    playscript_runtime_fb2.py` already proves it against `run_script`
+    directly) - the seat calls the tool, the run releases priority once, and
+    finishes `chain_complete`."""
+    alice = seat_uid(game, ME)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, ME)
+    play = {
+        "schema_version": 1,
+        "id": "e2e-pass",
+        "name": "Pass",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [{"kind": "pass"}],
+        "next": [],
+    }
+    register_one(client, game, alice, play)
+    server = mcp_server(client, monkeypatch, game)
+
+    with opponent_passes(game):
+        payload = run(server, alice, play["id"])
+
+    assert payload["script_exit"]["exit"] == "chain_complete", payload["script_exit"]
+    assert payload["script_exit"]["moves_done"] == 1
+
+
+def test_declare_attackers_end_to_end_through_run_script(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FB2 M2, through the real MCP `run_script` tool: a real untapped
+    creature, a real paused `declare_attackers` decision (reached by
+    advancing the real engine into combat), a real `POST .../actions/attack`
+    the run itself sends."""
+    alice = seat_uid(game, ME)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, ME)
+    bear = ready_to_attack(client, game, add_card(client, game, "Grizzly Bears", ME, "battlefield"))
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+    client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
+    advanced = client.post(
+        f"/api/games/{game}/advance", params={"uid": uids[ME]}, json={"player": ME}
+    )
+    assert advanced.json()["pending_decision"]["kind"] == "declare_attackers", advanced.json()
+    play = {
+        "schema_version": 1,
+        "id": "e2e-attack",
+        "name": "Attack",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "mine", "steps": ["declare_attackers"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [
+            {"kind": "declare_attackers", "attackers": [{"select": {"subtypes_any": ["Bear"]}}]}
+        ],
+        "next": [],
+    }
+    register_one(client, game, alice, play)
+    server = mcp_server(client, monkeypatch, game)
+
+    payload = run(server, alice, play["id"])
+
+    assert payload["script_exit"]["exit"] == "chain_complete", payload["script_exit"]
+    assert payload["script_exit"]["moves_done"] == 1
+    after = state(client, game)
+    attacks = (after.get("combat") or {}).get("attacks") or []
+    assert any(attack["attacker"] == bear for attack in attacks), attacks
+
+
+def test_declare_blockers_end_to_end_through_run_script(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FB2 M3, through the real MCP `run_script` tool: bob's own
+    `declare_blockers` decision is pending, and bob is not the active
+    player, so this proves FB2 items 3's own priority-gate relaxation
+    (`priority_holder` stays on alice throughout) as well as the move
+    itself."""
+    bob_uid = seat_uid(game, OPPONENT)
+    force_turn_position(game, Step.PRECOMBAT_MAIN, ME)
+    attacker = ready_to_attack(
+        client, game, add_card(client, game, "Grizzly Bears", ME, "battlefield")
+    )
+    blocker = add_card(client, game, "Elvish Mystic", OPPONENT, "battlefield")["added"]["card_id"]
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+    client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
+    client.post(f"/api/games/{game}/advance", params={"uid": uids[ME]}, json={"player": ME})
+    attacked = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": uids[ME]},
+        json={"attackers": [{"card_id": attacker, "defender": OPPONENT}]},
+    )
+    assert attacked.json().get("allowed") is True, attacked.json()
+    advanced = client.post(
+        f"/api/games/{game}/advance", params={"uid": uids[ME]}, json={"player": ME}
+    )
+    assert advanced.json()["pending_decision"]["kind"] == "declare_blockers", advanced.json()
+    play = {
+        "schema_version": 1,
+        "id": "e2e-block",
+        "name": "Block",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "theirs", "steps": ["declare_blockers"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [
+            {
+                "kind": "declare_blockers",
+                "blocks": [{"blocker": {"select": {}}, "attacker": {"select": {}}}],
+            }
+        ],
+        "next": [],
+    }
+    register_one(client, game, bob_uid, play)
+    server = mcp_server(client, monkeypatch, game)
+
+    payload = run(server, bob_uid, play["id"])
+
+    assert payload["script_exit"]["exit"] == "chain_complete", payload["script_exit"]
+    assert payload["script_exit"]["moves_done"] == 1
+    after = state(client, game)
+    attacks = (after.get("combat") or {}).get("attacks") or []
+    [attack] = [a for a in attacks if a["attacker"] == attacker]
+    assert attack["blockers"] == [blocker], attack

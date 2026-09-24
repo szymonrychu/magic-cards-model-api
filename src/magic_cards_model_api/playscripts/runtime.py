@@ -90,6 +90,10 @@ SACRIFICE_NUMBER = re.compile(r"\bsacrifice (an?|another|one|two|three|four|five
 DISCARD_NUMBER = re.compile(r"\bdiscard (an?|another|one|two|three|four|five|\d+)\b", re.I)
 NUMBER_WORDS = {"a": 1, "an": 1, "another": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
+#: FB2 M2/M3: the two move kinds a pending combat decision may be answered
+#: by, as the play's own first move - see `_pending_ready`.
+COMBAT_MOVE_KINDS = ("declare_attackers", "declare_blockers")
+
 MAX_SCRIPTS_PER_RUN = 3
 MAX_MOVES_PER_RUN = 6
 #: The longest one call runs before it hands back a resume token - the same
@@ -580,7 +584,14 @@ def _drive(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> Run
         # a move sent while the other seat holds priority is refused in the
         # engine's own words. Route through `_wait` whenever either is off.
         # A priority this seat decides for (CR 723.5, `holds_priority`) is its own.
-        if not _in_when(state, play["when"], ctx.me) or not holds_priority(state, ctx.me):
+        # FB2 items 2/3/7: unless this play's first move already answers a
+        # decision genuinely pending for this seat right now (`_pending_ready`)
+        # - a declare_attackers/declare_blockers decision does not move
+        # `priority_holder`, so a defending seat's own declare-blockers play
+        # would otherwise wait forever behind a priority it is never handed.
+        if not _pending_ready(play, state, ctx.me) and (
+            not _in_when(state, play["when"], ctx.me) or not holds_priority(state, ctx.me)
+        ):
             waited = _wait(ctx, run, play, state, wait=wait)
             if isinstance(waited, ScriptExit):
                 return _end(ctx, run, play, waited)
@@ -602,6 +613,50 @@ def _drive(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> Run
     if stopped is not None:
         return _end(ctx, run, play, stopped)
     return _next(ctx, run, play)
+
+
+def _standalone_pending_kinds(play: dict[str, Any]) -> frozenset[str]:
+    """The decision kinds this play's own `true` list names with a
+    `pending_decision` condition, when the play's one and only move is
+    `answer` (FB2 D2/item 7) - empty for every other shape."""
+    moves = play.get("moves") or []
+    if len(moves) != 1 or moves[0]["kind"] != "answer":
+        return frozenset()
+    return frozenset(
+        condition["decision"]
+        for condition in play.get("true") or []
+        if condition.get("kind") == "pending_decision"
+    )
+
+
+def _pending_ready(play: dict[str, Any], state: dict[str, Any], me: str) -> bool:
+    """FB2 items 2/3/7: is this play's first move already answerable, right
+    now, without this seat holding priority in the ordinary CR 117 sense?
+
+    True in two shapes, both gated on a decision of the right kind actually
+    being pending for this seat (`decision_is_mine`) - a `declare_attackers`/
+    `declare_blockers` decision does not move `priority_holder` off the
+    active player even when it is the *defending* seat's own decision to
+    answer, so `holds_priority` alone would wrongly gate a blocking seat's
+    own declare-blockers play behind a wait that never resolves:
+
+    - the play's own first move is `declare_attackers`/`declare_blockers`
+      and a decision of that exact kind is pending for this seat (items 2/3);
+    - the play's one move is `answer` and its `true` names a
+      `pending_decision` of the kind actually pending (item 7, the
+      standalone pending-decision answer).
+
+    When true, `_drive` skips `_wait` (and so `_wait_for_own_priority`'s own
+    UNFORESEEN-on-pending exit) entirely for this play's first move - there
+    is nothing to wait for, the decision is already on the table."""
+    pending = state.get("pending_decision")
+    if not isinstance(pending, dict) or not decision_is_mine(pending, state, me):
+        return False
+    kind = pending.get("kind")
+    moves = play.get("moves") or []
+    if moves and moves[0]["kind"] in COMBAT_MOVE_KINDS:
+        return moves[0]["kind"] == kind
+    return kind in _standalone_pending_kinds(play)
 
 
 def _wait(
@@ -700,9 +755,20 @@ def _wait_for_own_priority(
         state = ctx.seat.fetch_state()
 
 
+def _needs_settle(move: dict[str, Any]) -> bool:
+    """FB2 M1: a `pass` move releases priority once and is done the moment
+    the engine accepts it - there is nothing of this run's own to resolve
+    (no decision it paused on, no object of its own on the stack), and
+    walking `_settle`'s foreign-activity check for it would read whatever the
+    seat this run just handed priority to does next as an interruption of a
+    run that has already, deliberately, finished handing it off. Every other
+    move kind still settles as before."""
+    return move["kind"] != "pass"
+
+
 def _moves(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None:
     total = len(play["moves"])
-    if run.move_index > 0:
+    if run.move_index > 0 and _needs_settle(play["moves"][run.move_index - 1]):
         stopped = _settle(ctx, run, play)
         if stopped is not None:
             return stopped
@@ -710,6 +776,7 @@ def _moves(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None:
     while run.move_index < total:
         if ctx.time_up():
             raise _Unfinished
+        move = play["moves"][run.move_index]
         stopped = _send_move(ctx, run, play)
         # B7-14: the engine accepting the move (paid, resolved or paused) is
         # what "done" means, so `moves_done` counts it the moment `move_index`
@@ -719,9 +786,10 @@ def _moves(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None:
             run.moves_done = run.move_index
         else:
             return stopped
-        stopped = _settle(ctx, run, play)
-        if stopped is not None:
-            return stopped
+        if _needs_settle(move):
+            stopped = _settle(ctx, run, play)
+            if stopped is not None:
+                return stopped
         run.moves_done = run.move_index
     return None
 
@@ -796,6 +864,29 @@ def _send_move(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | N
                 Exit.UNFORESEEN,
                 stop_reason=f"move {index + 1} answers a decision, and none is pending for you",
             )
+        run.move_index, run.answer_index = index + 1, 0
+        return None
+    if move["kind"] == "pass":
+        # FB2 M1: the same shape the seat's own bare `pass` tool sends
+        # (`mcp.pass_once`) - `hold_priority=False, release=False`, since the
+        # action itself already is releasing priority (CR 117.3d); a second,
+        # `run_action`-issued pass on top of it would just be refused,
+        # harmlessly, but there is no reason to send it.
+        answer = run_action(
+            seat,
+            lambda: seat.call_json(
+                "POST",
+                f"/api/games/{seat.game_id()}/actions/pass-priority",
+                {"player": ctx.me, "reasoning": reasoning},
+            ),
+            hold_priority=False,
+            release=False,
+            include_actions=False,
+            reasoning=reasoning,
+        )
+        stopped = _outcome_exit(answer)
+        if stopped is not None:
+            return stopped
         run.move_index, run.answer_index = index + 1, 0
         return None
     hypo = (
@@ -1062,6 +1153,10 @@ def _move_request(
     if kind == "cast":
         body = cast_body(move, state, me, reasoning, hypo=hypo, mana=mana)
         return body if isinstance(body, ScriptExit) else ("actions/cast", body)
+    if kind == "declare_attackers":
+        return _attack_request(move, state, me, reasoning, hypo=hypo, mana=mana)
+    if kind == "declare_blockers":
+        return _block_request(move, state, me, reasoning, hypo=hypo, mana=mana)
     chosen = _pick(
         _zone_cards(state, "hand", me),
         move["card"]["select"],
@@ -1086,13 +1181,20 @@ def _activate_request(
     hypo: Hypo | None = None,
     mana: int | None = None,
 ) -> tuple[str, dict[str, Any]] | ScriptExit:
-    phrase = move["ability_text_has"]
-    candidates = [
-        card
-        for card in _zone_cards(state, move["source"]["zone"], me)
-        if _ability(card, phrase) is not None
-    ]
+    # FB2 M4: `ability_text_has`/`ability_index` name the ability exactly one
+    # of two ways - the schema already refuses both or neither
+    # (`activate-ability-ref`), so exactly one of these is set here.
+    phrase = move.get("ability_text_has")
+    index_ref = move.get("ability_index")
     present = conditions.presence(state, me)
+    if phrase is not None:
+        candidates = [
+            card
+            for card in _zone_cards(state, move["source"]["zone"], me)
+            if _ability(card, phrase) is not None
+        ]
+    else:
+        candidates = list(_zone_cards(state, move["source"]["zone"], me))
     chosen = _pick(
         candidates,
         move["source"]["select"],
@@ -1106,11 +1208,23 @@ def _activate_request(
     if isinstance(chosen, ScriptExit):
         return chosen
     source = chosen[0]
-    ability = _ability(source, phrase) or {}
+    if phrase is not None:
+        ability = _ability(source, phrase) or {}
+    else:
+        abilities = source.get("abilities") or []
+        if index_ref >= len(abilities):
+            return ScriptExit(
+                Exit.UNFORESEEN,
+                stop_reason=(
+                    f"{source.get('name') or source['id']} has no ability at index "
+                    f"{index_ref} ({len(abilities)} on it)"
+                ),
+            )
+        ability = abilities[index_ref]
     body: dict[str, Any] = {
         "player": me,
         "card_id": source["id"],
-        "ability_index": ability.get("index"),
+        "ability_index": ability.get("index", index_ref),
         "reasoning": reasoning,
     }
     targets = _targets(move, state, me, hypo=hypo, mana=mana)
@@ -1182,6 +1296,192 @@ def _activate_request(
     return "actions/activate", body
 
 
+def _opponent_name(state: dict[str, Any], me: str) -> str | None:
+    """The other player's username - a `Defender`/`PlayerTarget` naming
+    `opponent` resolves to this (2-player games only, the same assumption
+    `_on_side` already makes throughout this module)."""
+    return next(
+        (
+            str(player.get("username"))
+            for player in state.get("players") or []
+            if player.get("username") != me
+        ),
+        None,
+    )
+
+
+def _pick_many(
+    cards: list[dict[str, Any]],
+    picker: dict[str, Any],
+    what: str,
+    *,
+    present: Present | None = None,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> list[dict[str, Any]] | ScriptExit:
+    """`count` (or, for an `AttackGroup`, `all`) cards matching `picker`'s
+    own `select`, narrowed by `prefer`, from `cards` (FB2 M2/M3) - `_pick`'s
+    own rules for everything except `count == "all"`, which takes every
+    remaining candidate after `prefer` narrows them (there is no ambiguity to
+    raise: nothing is left unchosen for `all` to be tied over)."""
+    select = picker.get("select") or {}
+    prefer = picker.get("prefer")
+    count = picker.get("count", 1)
+    if count != "all":
+        return _pick(
+            cards,
+            select,
+            what,
+            prefer,
+            int(count),
+            present=present,
+            ties=picker.get("ties"),
+            hypo=hypo,
+            mana=mana,
+        )
+    found = [
+        card for card in cards if matches(select, card, present, untapped_mana=mana, hypo=hypo)
+    ]
+    if not found:
+        return ScriptExit(Exit.UNFORESEEN, stop_reason=f"nothing matched {what}")
+    for preference in prefer or []:
+        narrowed = [
+            card
+            for card in found
+            if matches(preference, card, present, untapped_mana=mana, hypo=hypo)
+        ]
+        if narrowed:
+            found = narrowed
+    return sorted(found, key=lambda card: str(card.get("name") or card.get("card_name")))
+
+
+def _resolve_defender(
+    defender: dict[str, Any] | None,
+    state: dict[str, Any],
+    me: str,
+    *,
+    present: Present | None = None,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> str | ScriptExit:
+    """An `AttackGroup`'s own `defender` (FB2 M2): left out, or naming
+    `player: opponent`, is the opponent's username; a `select`/`side` names a
+    permanent of theirs (a planeswalker or battle) by the same pick rule
+    every other selector-driven choice uses."""
+    if defender is None or "player" in defender:
+        opponent = _opponent_name(state, me)
+        if opponent is None:
+            return ScriptExit(Exit.UNFORESEEN, stop_reason="no opponent to declare as a defender")
+        return opponent
+    pool = [
+        card
+        for card in state.get("battlefield") or []
+        if _on_side(card.get("controller"), "opponent", me)
+    ]
+    chosen = _pick(pool, defender["select"], "the defender", present=present, hypo=hypo, mana=mana)
+    if isinstance(chosen, ScriptExit):
+        return chosen
+    return str(chosen[0]["id"])
+
+
+def _attack_request(
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> tuple[str, dict[str, Any]] | ScriptExit:
+    """`POST .../actions/attack`'s body for a `declare_attackers` move (FB2
+    M2, CR 508.1) - the same route the seat's own `declare_attackers` tool
+    and `BaselineSeat.attack_declaration` send to. Each `AttackGroup` is
+    resolved over this seat's own untapped battlefield permanents in turn, so
+    two groups never declare the same creature twice."""
+    present = conditions.presence(state, me)
+    pool = [card for card in _zone_cards(state, "battlefield", me) if not card.get("tapped")]
+    used: set[str] = set()
+    pairs: list[dict[str, str]] = []
+    for index, group in enumerate(move.get("attackers") or []):
+        available = [card for card in pool if str(card["id"]) not in used]
+        chosen = _pick_many(
+            available, group, f"attack group {index + 1}", present=present, hypo=hypo, mana=mana
+        )
+        if isinstance(chosen, ScriptExit):
+            return chosen
+        defender = _resolve_defender(
+            group.get("defender"), state, me, present=present, hypo=hypo, mana=mana
+        )
+        if isinstance(defender, ScriptExit):
+            return defender
+        for card in chosen:
+            used.add(str(card["id"]))
+            pairs.append({"card_id": card["id"], "defender": defender})
+    return "actions/attack", {"attackers": pairs, "reasoning": reasoning}
+
+
+def _attacking_cards(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every battlefield permanent this turn's `combat.attacks` names as an
+    attacker, as card views (FB2 M3's `Block.attacker` own candidate pool)."""
+    by_id = {str(card.get("id")): card for card in state.get("battlefield") or []}
+    ids = [
+        str(attack.get("attacker")) for attack in (state.get("combat") or {}).get("attacks") or []
+    ]
+    return [by_id[card_id] for card_id in ids if card_id in by_id]
+
+
+def _block_request(
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> tuple[str, dict[str, Any]] | ScriptExit:
+    """`POST .../actions/declare-blockers`'s body for a `declare_blockers`
+    move (FB2 M3, CR 509.1) - the same route the seat's own
+    `declare_blockers` tool and `BaselineSeat.block_declaration` send to.
+    Each `Block`'s blocker(s) come from this seat's own untapped battlefield
+    permanents, one attacker at a time, so two blocks never reuse a blocker."""
+    present = conditions.presence(state, me)
+    blocker_pool = [
+        card for card in _zone_cards(state, "battlefield", me) if not card.get("tapped")
+    ]
+    attacker_pool = _attacking_cards(state)
+    used: set[str] = set()
+    pairs: list[dict[str, str]] = []
+    for index, block in enumerate(move.get("blocks") or []):
+        attacker_pick = block["attacker"]
+        attacker = _pick(
+            attacker_pool,
+            attacker_pick["select"],
+            f"block {index + 1}'s attacker",
+            attacker_pick.get("prefer"),
+            present=present,
+            ties=attacker_pick.get("ties"),
+            hypo=hypo,
+            mana=mana,
+        )
+        if isinstance(attacker, ScriptExit):
+            return attacker
+        available = [card for card in blocker_pool if str(card["id"]) not in used]
+        blockers = _pick_many(
+            available,
+            block["blocker"],
+            f"block {index + 1}'s blocker",
+            present=present,
+            hypo=hypo,
+            mana=mana,
+        )
+        if isinstance(blockers, ScriptExit):
+            return blockers
+        for card in blockers:
+            used.add(str(card["id"]))
+            pairs.append({"blocker": card["id"], "blocked": attacker[0]["id"]})
+    return "actions/declare-blockers", {"player": me, "blocks": pairs, "reasoning": reasoning}
+
+
 def sacrifice_count(ability: dict[str, Any]) -> int:
     """How many permanents the ability's cost sacrifices: the number its
     "Sacrifice <n> ..." piece names, one for `a`/`another` or no such piece."""
@@ -1203,6 +1503,47 @@ def discard_count(ability: dict[str, Any]) -> int:
     return int(word) if word.isdigit() else NUMBER_WORDS[word]
 
 
+#: `CardTarget.zone` left out defaults to battlefield+stack (FB2 T1) -
+#: today's behaviour, before `zone` existed at all.
+DEFAULT_TARGET_ZONES = ("battlefield", "stack")
+
+
+def _zone_pool(state: dict[str, Any], zone: str, side: str, me: str) -> list[dict[str, Any]]:
+    """Every card in `zone` on `side`, for a `CardTarget`'s own candidate
+    pool (FB2 T1) - the same zones `CardTarget.zone`'s closed vocabulary
+    names (battlefield, stack, graveyard, exile), read the way `_on_side`
+    already reads a controller/owner for every other selector-driven pick."""
+    if zone in ("battlefield", "stack"):
+        return [
+            card for card in state.get(zone) or [] if _on_side(card.get("controller"), side, me)
+        ]
+    if zone == "graveyard":
+        return [
+            card
+            for owner, cards in (state.get("graveyards") or {}).items()
+            for card in cards or []
+            if _on_side(owner, side, me)
+        ]
+    if zone == "exile":
+        return [
+            card
+            for card in state.get("exile") or []
+            if _on_side(card.get("owner") or card.get("controller"), side, me)
+        ]
+    return []
+
+
+def _target_pool(
+    state: dict[str, Any], side: str, me: str, zones: list[str] | None
+) -> list[dict[str, Any]]:
+    """A `CardTarget`'s own candidate pool, across every zone it names (FB2
+    T1) - `zone` left out reads `DEFAULT_TARGET_ZONES`, today's behaviour."""
+    pool: list[dict[str, Any]] = []
+    for zone in zones or DEFAULT_TARGET_ZONES:
+        pool.extend(_zone_pool(state, zone, side, me))
+    return pool
+
+
 def _targets(
     move: dict[str, Any],
     state: dict[str, Any],
@@ -1212,8 +1553,9 @@ def _targets(
     mana: int | None = None,
 ) -> list[str] | ScriptExit:
     """The route's `targets` for a move, in order: a card target is the id
-    its selector picks on its side of the battlefield and stack, a player
-    target that player's name. Both use `_pick`'s rules."""
+    its selector picks on its side, in its own zone(s) (FB2 T1 - left out,
+    battlefield and stack), a player target that player's name. Both use
+    `_pick`'s rules, `prefer`/`ties` (FB2 T1) included."""
     chosen = []
     for index, target in enumerate(move.get("targets") or []):
         if "player" in target:
@@ -1222,24 +1564,81 @@ def _targets(
                 {"id": name, "name": name} for name in names if _on_side(name, target["player"], me)
             ]
             select: dict[str, Any] = {}
+            prefer, ties = None, None
         else:
-            pool = [
-                card
-                for card in [*(state.get("battlefield") or []), *(state.get("stack") or [])]
-                if _on_side(card.get("controller"), target["side"], me)
-            ]
+            zone = target.get("zone")
+            pool = _target_pool(state, target["side"], me, [zone] if zone else None)
             select = target["select"]
+            prefer, ties = target.get("prefer"), target.get("ties")
         picked = _pick(
             pool,
             select,
             f"target {index + 1}",
+            prefer,
             present=conditions.presence(state, me),
+            ties=ties,
             hypo=hypo,
             mana=mana,
         )
         if isinstance(picked, ScriptExit):
             return picked
         chosen.append(picked[0]["id"])
+    return chosen
+
+
+def _decision_targets_answer(
+    targets: list[dict[str, Any]],
+    pending: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> list[str] | ScriptExit:
+    """A `choose_targets` answer's own `targets` (FB2 A2): each entry is a
+    `CardTarget` (its own `select`/`prefer`/`ties`/`zone`, FB2 T1) or a
+    `PlayerTarget`, resolved the same way `_targets` resolves a cast/
+    activate move's own targets - but narrowed to what the decision actually
+    offers (`pending.targets`, `_target_view`'s `{kind, id}` refs), since
+    this decision's candidates are a fixed set the engine already chose, not
+    the whole board."""
+    offered = pending.get("targets") or []
+    offered_players = {str(ref.get("id")) for ref in offered if ref.get("kind") == "player"}
+    offered_cards = {str(ref.get("id")) for ref in offered if ref.get("kind") != "player"}
+    present = conditions.presence(state, me)
+    chosen: list[str] = []
+    for index, target in enumerate(targets):
+        what = f"target {index + 1}"
+        if "player" in target:
+            names = [str(player.get("username")) for player in state.get("players") or []]
+            pool = [
+                name
+                for name in names
+                if name in offered_players and _on_side(name, target["player"], me)
+            ]
+            if not pool:
+                return ScriptExit(Exit.UNFORESEEN, stop_reason=f"nothing matched {what}")
+            chosen.append(pool[0])
+            continue
+        zone = target.get("zone")
+        pool = [
+            card
+            for card in _target_pool(state, target["side"], me, [zone] if zone else None)
+            if str(card.get("id")) in offered_cards
+        ]
+        picked = _pick(
+            pool,
+            target["select"],
+            what,
+            target.get("prefer"),
+            present=present,
+            ties=target.get("ties"),
+            hypo=hypo,
+            mana=mana,
+        )
+        if isinstance(picked, ScriptExit):
+            return picked
+        chosen.append(str(picked[0]["id"]))
     return chosen
 
 
@@ -1325,6 +1724,17 @@ def decide_body(
         return body
     cards = _decision_cards(pending, state, me)
     present = conditions.presence(state, me)
+    if kind == "choose_targets" and item.get("targets") is not None:
+        # FB2 A2: `targets` is `choose_targets`'s own alternative to `pick` -
+        # the one that can also name a player, the same `CardTarget`/
+        # `PlayerTarget` shapes a cast/activate move's own `targets` use.
+        chosen_ids = _decision_targets_answer(
+            item["targets"], pending, state, me, hypo=hypo, mana=mana
+        )
+        if isinstance(chosen_ids, ScriptExit):
+            return chosen_ids
+        body["targets"] = chosen_ids
+        return body
     pick = item.get("pick")
     if pick is not None:
         if kind == "choose_targets":
@@ -1377,7 +1787,7 @@ def decide_body(
         # A bare answer (no `to_graveyard`/`to_bottom` selector) is schema-valid
         # and means "keep everything on top": `moved` is empty, not absent -
         # B7-07, the shape `fetch-surveil-land-keep` uses.
-        body["moved"] = (
+        moved_ids = (
             [
                 card["id"]
                 for card in cards
@@ -1386,7 +1796,34 @@ def decide_body(
             if moving is not None
             else []
         )
-        body["top_order"] = None
+        body["moved"] = moved_ids
+        tiers = item.get("top_order")
+        if tiers:
+            # FB2 A1: tiers ordering the cards that stay on top, first tier
+            # on top - the same fan-out `prefer` gets, applied over what is
+            # left once `moved` is set aside, with the rest after them in
+            # looked-at order.
+            moved_set = {str(card_id) for card_id in moved_ids}
+            remaining = [card for card in cards if str(card["id"]) not in moved_set]
+            ordered: list[dict[str, Any]] = []
+            for tier in tiers:
+                matched = [
+                    card
+                    for card in remaining
+                    if matches(tier, card, present, untapped_mana=mana, hypo=hypo)
+                ]
+                ordered.extend(matched)
+                remaining = [card for card in remaining if card not in matched]
+            ordered.extend(remaining)
+            body["top_order"] = [card["id"] for card in ordered]
+        else:
+            body["top_order"] = None
+        return body
+    if kind == "put_on_top_or_bottom" and item.get("position") is not None:
+        # FB2 A1: `position` names top/bottom directly, an alternative to
+        # `to_bottom` for the one card this decision ever offers - the
+        # schema already refuses both together (`answer-shape-mismatch`).
+        body["top"] = item["position"] == "top"
         return body
     if kind == "put_on_top_or_bottom" and item.get("to_bottom") is not None and cards:
         body["top"] = not matches(
