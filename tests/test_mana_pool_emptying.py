@@ -46,4 +46,6 @@ def test_the_advance_endpoint_empties_the_pool_too(client, game):
 
     board = state(client, game)
     assert board["players"][0]["mana_pool"]["floating"] == {}
-    assert board["step"] == "draw"
+    # CR 103.8a: the starting player skips the draw step of their first turn,
+    # so advancing out of turn 1's upkeep lands in the precombat main.
+    assert board["step"] == "precombat_main"

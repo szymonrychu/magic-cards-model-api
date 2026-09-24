@@ -69,7 +69,13 @@ BOARDS_PER_READ = 4
 #: and state trigger sweep each compute a board inside the command, where the
 #: engine keeps no snapshot. The work is the command's own and is the same on
 #: any battlefield size; nothing the api reads around the command can share it.
-BOARDS_PER_ACTION = 13
+#:
+#: 14, not 13, since engine round 4 (S29, day and night): every permanent
+#: entering while it is neither day nor night reads its computed abilities for
+#: "if it's neither day nor night, it becomes day as this creature enters"
+#: (CR 614.12, CR 731.1) - one more in-command board, again the same on any
+#: battlefield size.
+BOARDS_PER_ACTION = 14
 
 READS = (
     "get_state",
