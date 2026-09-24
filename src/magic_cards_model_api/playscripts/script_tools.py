@@ -416,11 +416,16 @@ def _first_move_allowed(play: dict[str, Any], state: dict[str, Any], me: str) ->
       priority right now (CR 117.3d) - `pass` releases priority, so a seat
       that does not hold it has nothing to release, whether or not some
       unrelated decision happens to be pending elsewhere.
-    - Anything else (an `answer`, most commonly a standalone play whose
-      `true` holds a `pending_decision` condition - schema D2): the
-      original rule - allowed with no pending decision at all, and with one
-      pending, only an `answer` first move addressed to this seat and naming
-      that exact decision kind among its `answers`."""
+    - `answer` as the first move (most commonly a standalone play whose
+      `true` holds a `pending_decision` condition - schema D2): allowed only
+      while some decision is pending, addressed to this seat, and named
+      among the move's own `answers` - never while nothing is pending, since
+      there is then nothing on the table to answer (review finding on FC1
+      part 5).
+    - Any other first move kind (an ordinary play with no pending-decision
+      condition of its own): allowed with no pending decision at all, and
+      refused whenever one is pending, since only an `answer` addressed to
+      it may run then (CR 608.2d)."""
     moves = play.get("moves") or []
     first = moves[0] if moves else None
     first_kind = first.get("kind") if isinstance(first, dict) else None
@@ -432,11 +437,9 @@ def _first_move_allowed(play: dict[str, Any], state: dict[str, Any], me: str) ->
         return pending_mine and pending_kind == first_kind
     if first_kind == "pass":
         return seat_holds_priority(state, me)
-    if pending is None:
-        return True
     if not isinstance(first, dict) or first_kind != "answer":
-        return False
-    if not pending_mine:
+        return pending is None
+    if pending is None or not pending_mine:
         return False
     answers = first.get("answers") or []
     return any(

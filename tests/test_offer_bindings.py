@@ -684,3 +684,12 @@ def test_pending_decision_standalone_answer_refused_when_pending_for_someone_els
     )
     state = _state(pending={"kind": "pay_life", "player": "bob"})
     assert _first_move_allowed(play, state, _ME) is False
+
+
+def test_pending_decision_standalone_answer_refused_when_nothing_is_pending() -> None:
+    play = _play(
+        {"kind": "answer", "answers": [{"decision": "pay_life", "accept": True}]},
+        true=[{"kind": "pending_decision", "decision": "pay_life"}],
+    )
+    state = _state(pending=None)
+    assert _first_move_allowed(play, state, _ME) is False
