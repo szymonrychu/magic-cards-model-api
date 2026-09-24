@@ -1005,7 +1005,7 @@
       ]
     },
     {
-      "docstring_first_line": "Report a problem with the engine straight into the game log: write",
+      "docstring_first_line": "Report a problem straight into the game log: write what you did,",
       "name": "report_problem",
       "parameters": [
         {
@@ -1019,6 +1019,13 @@
           "default": null,
           "has_default": false,
           "name": "text",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "engine",
+          "has_default": true,
+          "name": "category",
           "type": "str",
           "type_error": null
         }

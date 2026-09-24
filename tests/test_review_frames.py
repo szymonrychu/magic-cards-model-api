@@ -30,6 +30,7 @@ all.
 from __future__ import annotations
 
 import ast
+import json
 import logging
 import time
 from pathlib import Path
@@ -309,6 +310,15 @@ def test_record_state_seqs_is_called_only_from_app_or_review_py() -> None:
         "src/magic_cards_model_api/review.py",
     }, hits
     assert hits, "record_state_seqs must be called from somewhere"
+
+
+def test_record_states_for_seqs_is_called_only_from_app_py() -> None:
+    """DR2's batched sibling to `record_state` - deliberately not named
+    `record_states` (see its own protocol docstring): that identifier is
+    reserved for the table, pinned below."""
+    hits = _call_sites("record_states_for_seqs")
+    assert set(hits) == {"src/magic_cards_model_api/app.py"}, hits
+    assert hits["src/magic_cards_model_api/app.py"] == ["_review_frame_views"], hits
 
 
 def test_record_states_table_is_referenced_only_in_db_repository_postgres_and_alembic() -> None:
@@ -632,5 +642,171 @@ def test_exact_frames_is_non_empty_for_a_new_game_and_each_seq_is_fetchable(
         for seq in body["exact_frames"]:
             response = _frame(client, game_id, seq, uid=info["seat_uids"]["bob"])
             assert response.status_code == 200, (seq, response.text)
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+# ---------------------------------------------------------------------------
+# DR2: decisions/play_stats read record states in one batched call
+# ---------------------------------------------------------------------------
+
+
+def test_the_review_route_batches_record_state_reads_into_one_call(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`GET .../review` must read every decision's board with **one**
+    `store.record_states_for_seqs` call, never one `store.record_state` per
+    decision - the whole point of DR2's batched sibling."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        calls: list[int] = []
+        original = store.record_states_for_seqs
+
+        def counted(gid: str, seqs: Any) -> Any:
+            calls.append(1)
+            return original(gid, seqs)
+
+        monkeypatch.setattr(store, "record_states_for_seqs", counted)
+
+        def refuse_single(*_: Any, **__: Any) -> Any:
+            raise AssertionError(
+                "the review route read one record_state at a time instead of batching"
+            )
+
+        monkeypatch.setattr(store, "record_state", refuse_single)
+
+        response = _review(client, game_id, key=info["admin_key"])
+        assert response.status_code == 200, response.text
+        assert len(calls) == 1, "record_states_for_seqs must be called exactly once per review"
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+# ---------------------------------------------------------------------------
+# DR2 owner addon: board_by_perspective - two redacted boards per decision
+# ---------------------------------------------------------------------------
+
+
+def _card_in_hand(game_id: str, name: str, owner: str) -> Any:
+    game = store.get(game_id)
+    assert game is not None
+    player = game.player(owner)
+    return next(card for card in player.cards_in(Zone.HAND) if card.name == name)
+
+
+def _perspective_fixture(client: TestClient) -> dict[str, Any]:
+    """A finished game where alice holds two cards nobody else starts out
+    knowing about - one of them (`Lightning Bolt`) revealed to bob mid-game
+    (CR 701.20a), the other (`Giant Growth`) never shown to anyone - and
+    bob then plays a land, so a decision row with a recorded state exists
+    strictly after the reveal."""
+    info = _agent_game(client, active="bob")
+    game_id = info["game_id"]
+    assert _declare(client, info).status_code == 200
+    add_card(client, game_id, "Lightning Bolt", "alice", "hand")
+    add_card(client, game_id, "Giant Growth", "alice", "hand")
+    with store.locked(game_id) as live:
+        bolt = _card_in_hand(game_id, "Lightning Bolt", "alice")
+        live.reveal(bolt)
+    client.post(
+        f"/api/games/{game_id}/cards", json={"card": "Mountain", "player": "bob", "zone": "hand"}
+    )
+    played = client.post(
+        f"/api/games/{game_id}/actions/play-land",
+        json={"player": "bob", "card": "Mountain", "reasoning": "after the reveal"},
+    )
+    assert played.status_code == 200, played.text
+    conceded = client.post(
+        f"/api/games/{game_id}/actions/concede",
+        json={"player": "alice", "reasoning": "the race is lost"},
+    )
+    assert conceded.status_code == 200, conceded.text
+    return info
+
+
+def _bobs_land_decision(body: dict[str, Any]) -> dict[str, Any]:
+    rows = [row for row in body["decisions"]["bob"] if row["action"] == "play_land"]
+    assert rows, "bob's play-land decision should be in the review"
+    row = rows[-1]
+    assert row["board_by_perspective"] is not None, "the fixture's land row has a recorded state"
+    return row
+
+
+def test_board_by_perspective_carries_both_players_own_view(client: TestClient) -> None:
+    info = _perspective_fixture(client)
+    game_id = info["game_id"]
+    try:
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        row = _bobs_land_decision(body)
+        assert set(row["board_by_perspective"]) == {"alice", "bob"}
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_players_own_perspective_shows_their_own_full_hand(client: TestClient) -> None:
+    info = _perspective_fixture(client)
+    game_id = info["game_id"]
+    try:
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        row = _bobs_land_decision(body)
+        alices_view = row["board_by_perspective"]["alice"]
+        assert "Lightning Bolt" in alices_view.get("hand", [])
+        assert "Giant Growth" in alices_view.get("hand", [])
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_revealed_card_shows_only_in_the_shown_players_known_opponent_hand(
+    client: TestClient,
+) -> None:
+    """CR 701.20a: a reveal is shown to every player, so bob - who was shown
+    `Lightning Bolt` - knows it is in alice's hand; nothing here invents that
+    knowledge for a third party, since there is none in a two-player game,
+    but the field is bob's own perspective and nobody else's."""
+    info = _perspective_fixture(client)
+    game_id = info["game_id"]
+    try:
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        row = _bobs_land_decision(body)
+        bobs_view = row["board_by_perspective"]["bob"]
+        assert bobs_view.get("known_opponent_hand") == ["Lightning Bolt"]
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_no_hidden_card_of_the_opponent_leaks_into_a_perspective(client: TestClient) -> None:
+    """`Giant Growth` is never revealed or looked at by bob - it must never
+    appear anywhere in bob's own perspective board, own hand included,
+    across every one of bob's decisions in the whole review."""
+    info = _perspective_fixture(client)
+    game_id = info["game_id"]
+    try:
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        for seat, rows in body["decisions"].items():
+            for row in rows:
+                perspective = row.get("board_by_perspective") or {}
+                bobs_view = perspective.get("bob")
+                if bobs_view is None:
+                    continue
+                assert "Giant Growth" not in json.dumps(bobs_view), (seat, row["seq"], bobs_view)
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_missing_recorded_state_gives_a_null_board_and_perspective(
+    client: TestClient,
+) -> None:
+    """A decision row this build never recorded an exact state for - here,
+    simulated by wiping `exact_frames` from the batch the route reads - gets
+    `board`/`board_by_perspective: None`, never a board borrowed from
+    another `seq`."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        seat = next(seat for seat, rows in body["decisions"].items() if rows)
+        for row in body["decisions"][seat]:
+            assert (row["board"] is None) == (row["board_by_perspective"] is None), row
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})

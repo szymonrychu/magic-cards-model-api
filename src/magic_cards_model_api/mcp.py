@@ -2994,15 +2994,28 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
 
     @server.tool()
     @_guarded(seats)
-    def report_problem(player_uid: str, text: str) -> str:
-        """Report a problem with the engine straight into the game log: write
-        what you did, what the rules say should have happened, and what
-        happened instead. Use it the moment something looks wrong, then carry
-        on - also write the same problem to your problems.md."""
+    def report_problem(player_uid: str, text: str, category: str = "engine") -> str:
+        """Report a problem straight into the game log: write what you did,
+        what the rules say should have happened, and what happened instead.
+        Use it the moment something looks wrong, then carry on - also write
+        the same problem to your problems.md.
+
+        `category` is one of three:
+        - `engine` (default): a rules/engine/api bug - the game itself got
+          something wrong.
+        - `dsl`: a play the play-script DSL could not express, or a DSL
+          feature that is missing - name the specific missing condition or
+          move kind, not just "the DSL couldn't do it".
+        - `ux`: friction with these MCP tools themselves - an overcomplicated
+          call, a confusing answer, workflow steps that could be merged into
+          one. Not a rules bug and not a DSL gap - this tool surface itself
+          being awkward to use.
+
+        Any other value is refused."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        body = {"player": seat.player, "text": text}
+        body = {"player": seat.player, "text": text, "category": category}
         return seat.call("POST", f"/api/games/{seat.game_id()}/report", body)
 
     @server.tool()

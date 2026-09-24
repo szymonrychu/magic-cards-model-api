@@ -6088,6 +6088,16 @@
             ],
             "title": "Created At"
           },
+          "decisions": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/ReviewDecision"
+              },
+              "type": "array"
+            },
+            "title": "Decisions",
+            "type": "object"
+          },
           "declarations": {
             "items": {
               "$ref": "#/components/schemas/ReviewDeclaration"
@@ -6157,6 +6167,13 @@
               }
             ],
             "title": "Is Over"
+          },
+          "play_stats": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReviewPlayStats"
+            },
+            "title": "Play Stats",
+            "type": "object"
           },
           "players": {
             "items": {
@@ -10021,16 +10038,43 @@
       },
       "PlaysOutcomeAdmitted": {
         "additionalProperties": false,
-        "description": "One `plays admit` of the handover that landed: its commit on\nmtg-decks main and whether it was a DSL change (a play added, deleted,\nor changed beyond its `priority`), as the results journal recorded it.",
+        "description": "One `plays admit` of the handover that landed: its commit on\nmtg-decks main and whether it was a DSL change (a play added, deleted,\nor changed beyond its `priority`), as the results journal recorded it.\n\n`added`/`updated`/`reprioritized` (DR2) are the same three play-id lists\n`admit._Landing` already classifies one admit's own git diff into - a\nplay file added, one changed beyond its `priority` (or deleted, which\n`_Landing` also files under `updated`), or one whose only change was its\n`priority`. Optional and empty by default, so a body posted before this\nfield existed still validates; `playscripts.stats.game_play_stats` is\nwhat turns them, across every `plays_outcome` row of a game, into a\nseat's own `play_stats`.",
         "properties": {
+          "added": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Added",
+            "type": "array"
+          },
           "dsl_change": {
             "title": "Dsl Change",
             "type": "boolean"
+          },
+          "reprioritized": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Reprioritized",
+            "type": "array"
           },
           "sha": {
             "minLength": 1,
             "title": "Sha",
             "type": "string"
+          },
+          "updated": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Updated",
+            "type": "array"
           }
         },
         "required": [
@@ -11300,6 +11344,16 @@
       "ReportProblemRequest": {
         "additionalProperties": false,
         "properties": {
+          "category": {
+            "default": "engine",
+            "enum": [
+              "engine",
+              "dsl",
+              "ux"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -11974,6 +12028,108 @@
         "title": "ReviewAdvice",
         "type": "object"
       },
+      "ReviewDecision": {
+        "description": "One committing row of one seat's own ledger, converted to the\nplay-script DSL (DR2, `playscripts.decision_dsl.decision_rows`) - a cast,\nan activation, a land play, an answer to a pending decision, a combat\ndeclaration, a mulligan, an opening-hand action, a priority pass, or a\nscript run it started.\n\n`dsl` is that decision written as a schema-valid `Play`, or `None` when\nthe DSL vocabulary cannot say it at all - `unexpressible` then names why,\nand exactly one of the two fields is ever `None`. `board` is the compact,\ncard-name-free board (`decision_dsl.compact_board`) built from this\nrow's own recorded exact state (`GET .../review/frames/{seq}`'s own\nshape) - `None` for a row with no state recorded, never a board from\nanother `seq`. `board_by_perspective` (the 2026-09-24 owner addon) is\ntwo such boards, one per player, each independently redacted through\n`visibility.redact_view` to what that player could actually see at this\nexact moment: `hand` is that player's own hand card names, and\n`known_opponent_hand` is whatever of the opponent's hand this player was\nspecifically shown or looked at by then (`known_cards`) - never the\nopponent's hidden cards otherwise, and never a library's contents or\norder for anyone, including its own owner. `None` for the same rows\n`board` is `None` for.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "board": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Board"
+          },
+          "board_by_perspective": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Board By Perspective"
+          },
+          "dsl": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dsl"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn"
+          },
+          "unexpressible": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unexpressible"
+          }
+        },
+        "required": [
+          "seq",
+          "action"
+        ],
+        "title": "ReviewDecision",
+        "type": "object"
+      },
       "ReviewDeclaration": {
         "description": "One `plan_declared` row, paired with what happened next.\n\nNothing on this model grades the prediction - no score, no hit flag, no\nverdict. See `review.py` for why the raw pairing is the thing a sceptic\ncannot argue with.",
         "properties": {
@@ -12199,6 +12355,77 @@
           "action"
         ],
         "title": "ReviewEntry",
+        "type": "object"
+      },
+      "ReviewPlayStats": {
+        "description": "One seat's per-game play-script statistics (DR2,\n`playscripts.stats.game_play_stats`): its registered corpus size, split\nmove-bearing/advice-only; how many script offers it saw and what became\nof them (`used`/`denied`/`passed_over`, out of `offered`); and, across\nevery `plays_outcome` row of this game, the distinct play ids its\nhandovers admitted as `added`/`updated`/`reprioritized`.",
+        "properties": {
+          "added": {
+            "default": 0,
+            "title": "Added",
+            "type": "integer"
+          },
+          "added_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Added Ids",
+            "type": "array"
+          },
+          "denied": {
+            "default": 0,
+            "title": "Denied",
+            "type": "integer"
+          },
+          "offered": {
+            "default": 0,
+            "title": "Offered",
+            "type": "integer"
+          },
+          "passed_over": {
+            "default": 0,
+            "title": "Passed Over",
+            "type": "integer"
+          },
+          "plays_advice": {
+            "default": 0,
+            "title": "Plays Advice",
+            "type": "integer"
+          },
+          "plays_move_bearing": {
+            "default": 0,
+            "title": "Plays Move Bearing",
+            "type": "integer"
+          },
+          "plays_total": {
+            "default": 0,
+            "title": "Plays Total",
+            "type": "integer"
+          },
+          "reprioritized": {
+            "default": 0,
+            "title": "Reprioritized",
+            "type": "integer"
+          },
+          "updated": {
+            "default": 0,
+            "title": "Updated",
+            "type": "integer"
+          },
+          "updated_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Updated Ids",
+            "type": "array"
+          },
+          "used": {
+            "default": 0,
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "title": "ReviewPlayStats",
         "type": "object"
       },
       "ScriptRunIn": {
@@ -17674,7 +17901,7 @@
     },
     "/api/games/{game_id}/report": {
       "post": {
-        "description": "A player files a problem report straight into the game log.\n\n**Attributed to the credential, never to `req.player`.** This is one of\nthe two POSTs an advisor uid may make (`game_access.\nADVISOR_POST_SUFFIXES`), and a row keyed on a plain request field let\nany caller write into the log in another seat's name - an advisor of\nalice filing \"bob is cheating, signed bob\" and the ledger agreeing. A\nseat uid resolves to its own seat; an advisor uid resolves to the human\nit watches, which is the one seat it is entitled to speak about.\n\n`req.player` is still honoured for the admin key, which opens no seat\nand so resolves to nobody: that is the operator filing on a seat's\nbehalf, and the only caller the field was ever really for.",
+        "description": "A player files a problem report straight into the game log.\n\n**Attributed to the credential, never to `req.player`.** This is one of\nthe two POSTs an advisor uid may make (`game_access.\nADVISOR_POST_SUFFIXES`), and a row keyed on a plain request field let\nany caller write into the log in another seat's name - an advisor of\nalice filing \"bob is cheating, signed bob\" and the ledger agreeing. A\nseat uid resolves to its own seat; an advisor uid resolves to the human\nit watches, which is the one seat it is entitled to speak about.\n\n`req.player` is still honoured for the admin key, which opens no seat\nand so resolves to nobody: that is the operator filing on a seat's\nbehalf, and the only caller the field was ever really for.\n\n**`category`** (DR2, `schemas.ReportProblemCategory`) sorts the report\ninto one of three kinds - `engine` (default): a rules/engine/api bug;\n`dsl`: a play the play-script DSL could not express, or a DSL feature\nthat is missing; `ux`: friction with the MCP tools themselves. Any other\nvalue is refused with a 422 before this route ever runs (pydantic's own\n`Literal` validation on `req`). Recorded in the row alongside `player`/\n`text`; a row written before this field existed carries no `category`\nkey at all and reads back as `engine` (`audit.problem_category`).",
         "operationId": "report_problem_api_games__game_id__report_post",
         "parameters": [
           {

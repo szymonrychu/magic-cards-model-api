@@ -84,7 +84,7 @@ import functools
 import json
 import logging
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from enum import Enum
@@ -839,6 +839,28 @@ class PostgresRepository:
         if row is None:
             return None
         return decode_record_state(game_id, bytes(row[0]))
+
+    def record_states_for_seqs(self, game_id: str, seqs: Iterable[int]) -> dict[int, Game]:
+        """One `SELECT ... WHERE game_id = :id AND seq IN (...)` for every
+        wanted `seq` - the batched sibling `record_state`'s own protocol
+        docstring describes. A row whose blob will not decode is skipped
+        rather than raised, same as the in-memory implementation."""
+        wanted = sorted(set(seqs))
+        if not wanted:
+            return {}
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(record_states.c.seq, record_states.c.state).where(
+                    record_states.c.game_id == game_id, record_states.c.seq.in_(wanted)
+                )
+            ).all()
+        out: dict[int, Game] = {}
+        for seq, blob in rows:
+            try:
+                out[int(seq)] = decode_record_state(game_id, bytes(blob))
+            except GameUnloadable:
+                continue
+        return out
 
     def delete(self, game_id: str) -> bool:
         """The soft delete: stamp `archived_at` rather than issue a

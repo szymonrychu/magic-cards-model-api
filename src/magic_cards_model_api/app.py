@@ -1867,12 +1867,50 @@ def game_review(game_id: str, uid: str | None = None, key: str | None = None) ->
     if archived.game is not None:
         ledger_seqs = {entry["seq"] for entry in ledger}
         exact_frames = sorted(seq for seq in store.record_state_seqs(game_id) if seq in ledger_seqs)
+    frame_views = _review_frame_views(game_id, exact_frames)
+    corpora = _review_corpora(game_id, archived, list(archived.seat_uids.values()))
     return review.build_review(
         archived,
         ledger,
         exact_frames=exact_frames,
         viewer=viewer if isinstance(viewer, str) else None,
+        frame_views=frame_views,
+        corpora=corpora,
     )
+
+
+def _review_frame_views(game_id: str, exact_frames: list[int]) -> dict[int, dict[str, Any]]:
+    """DR2: every `seq` in `exact_frames`, decoded and turned into the
+    omniscient board `GET .../review/frames/{seq}` itself serves
+    (`serialize.frame_view`) - **one** batched store read
+    (`store.record_states_for_seqs`), never one `store.record_state` per
+    `seq`, so a long game's review costs this route one round trip rather
+    than one per decision. Skips whatever that batched read itself skips (an
+    unrecorded or undecodable `seq` - see its own docstring); the review
+    still renders, with `board`/`board_by_perspective: None` for those rows
+    only."""
+    if not exact_frames:
+        return {}
+    games_by_seq = store.record_states_for_seqs(game_id, exact_frames)
+    return {
+        seq: serialize.frame_view(game, game_id, you=None) for seq, game in games_by_seq.items()
+    }
+
+
+def _review_corpora(
+    game_id: str, archived: ArchivedGame, players: list[str]
+) -> dict[str, dict[str, Any]]:
+    """DR2: `seat -> its own registered play id -> play doc mapping`, for
+    every player named in this review's head - the seat's own uid corpus
+    (`store.scripts`), never an advisor's, and `{}` for a seat that never
+    registered one (a human seat, or one this build predates `SCRIPTS_
+    ENABLED` for)."""
+    corpora: dict[str, dict[str, Any]] = {}
+    for player in players:
+        uid = next((u for u, name in archived.seat_uids.items() if name == player), None)
+        registered = store.scripts(game_id, uid) if uid is not None else None
+        corpora[player] = (registered or {}).get("scripts") or {}
+    return corpora
 
 
 @app.get(
@@ -3563,6 +3601,15 @@ def report_problem(
     `req.player` is still honoured for the admin key, which opens no seat
     and so resolves to nobody: that is the operator filing on a seat's
     behalf, and the only caller the field was ever really for.
+
+    **`category`** (DR2, `schemas.ReportProblemCategory`) sorts the report
+    into one of three kinds - `engine` (default): a rules/engine/api bug;
+    `dsl`: a play the play-script DSL could not express, or a DSL feature
+    that is missing; `ux`: friction with the MCP tools themselves. Any other
+    value is refused with a 422 before this route ever runs (pydantic's own
+    `Literal` validation on `req`). Recorded in the row alongside `player`/
+    `text`; a row written before this field existed carries no `category`
+    key at all and reads back as `engine` (`audit.problem_category`).
     """
     game = game_or_404(game_id)
     player = (
@@ -3571,7 +3618,7 @@ def report_problem(
         or req.player
     )
     game.player(player)  # 400 for a player who is not in this game at all
-    audit.record(game_id, "report_problem", player=player, text=req.text)
+    audit.record(game_id, "report_problem", player=player, text=req.text, category=req.category)
     return {"recorded": True}
 
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,23 @@ if TYPE_CHECKING:  # keep this module importable without the app's own wiring
 #: The audited action a seat's `report_problem` MCP call turns into. Named
 #: here because this module treats it specially - see `record`.
 PROBLEM_ACTION = "report_problem"
+
+#: `PROBLEM_ACTION`'s own default category (DR2, `schemas.
+#: ReportProblemCategory`) - the one every report carried before `category`
+#: existed at all, and what `problem_category` falls back to for a row that
+#: still carries none.
+DEFAULT_PROBLEM_CATEGORY = "engine"
+
+
+def problem_category(detail: Mapping[str, Any]) -> str:
+    """A `report_problem` row's own category (`engine`, `dsl`, or `ux`),
+    reading `detail["category"]` and falling back to `DEFAULT_PROBLEM_
+    CATEGORY` for a row written before that field existed (`detail.get`
+    returning `None` for a missing key, exactly as an explicit `category:
+    null` would) - never `None` itself, so every caller reading a report's
+    category, however old the row, gets one of the three real values."""
+    return detail.get("category") or DEFAULT_PROBLEM_CATEGORY
+
 
 #: A seat's own pregame move refused because something had already made it for
 #: that seat (`opening.PregameOverruled`). Treated like a problem report: it

@@ -63,7 +63,7 @@ import threading
 import time
 import zlib
 from bisect import bisect_right
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -602,6 +602,33 @@ class GameRepository(Protocol):
         reason: a caller reading one named `(game_id, seq)` needs to
         distinguish "nothing was ever recorded here" from "something was
         recorded and this build cannot read it back".
+        """
+        ...
+
+    def record_states_for_seqs(self, game_id: str, seqs: Iterable[int]) -> dict[int, Game]:
+        """Every recorded state for `game_id` at one of `seqs`, decoded, in
+        one round trip - `record_state`'s own batched sibling (DR2): a
+        post-game review builds a board for every decision a seat made, and
+        reading one `seq` at a time would cost it one round trip per
+        decision rather than one for the whole game.
+
+        Deliberately not named `record_states` - that identifier is the
+        table's own (`db.py`), and `tests/test_review_frames.py`'s
+        structural guard pins it to `db.py`/`repository_postgres.py`/
+        `alembic/` alone; a caller outside those needs its own name to call
+        through, which this is.
+
+        `seqs` with no `state` row for `game_id` are silently missing from
+        the answer - the same "unknown seq" case `record_state` answers
+        `None` for, just folded into one dict rather than raised or
+        defaulted per key. **A blob this build cannot decode
+        (`GameUnloadable`) is skipped, never raised**: unlike `record_state`,
+        whose single-frame route can 409 with the decoder's own reason, a
+        batched read backs a whole review, and one corrupted row must not
+        take down every other decision's board with it - the caller sees
+        that `seq` simply absent, the same as one nothing was ever recorded
+        for. An empty `seqs` costs nothing - every implementation answers it
+        without touching the store at all.
         """
         ...
 
@@ -1397,6 +1424,24 @@ class InMemoryRepository:
         if blob is None:
             return None
         return decode_record_state(game_id, blob)
+
+    def record_states_for_seqs(self, game_id: str, seqs: Iterable[int]) -> dict[int, Game]:
+        wanted = set(seqs)
+        if not wanted:
+            return {}
+        with self._lock:
+            blobs = {
+                seq: blob
+                for seq, blob in self._record_states.get(game_id, {}).items()
+                if seq in wanted
+            }
+        out: dict[int, Game] = {}
+        for seq, blob in blobs.items():
+            try:
+                out[seq] = decode_record_state(game_id, blob)
+            except GameUnloadable:
+                continue
+        return out
 
     def ids(self) -> list[str]:
         with self._lock:

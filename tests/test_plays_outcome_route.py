@@ -56,6 +56,54 @@ def test_the_action_is_named_plays_outcome() -> None:
     assert audit.PLAYS_OUTCOME_ACTION == "plays_outcome"
 
 
+def test_an_admitted_entry_carries_its_added_updated_reprioritized_ids(
+    client: TestClient,
+) -> None:
+    """DR2: `PlaysOutcomeAdmitted` gains three optional play-id lists - the
+    same shape `admit._Landing` already classifies one admit's own git diff
+    into."""
+    info = _played_out(client)
+    try:
+        body = _body(
+            info,
+            admitted=[
+                {
+                    "sha": "a" * 40,
+                    "dsl_change": True,
+                    "added": ["new-play"],
+                    "updated": ["changed-play"],
+                    "reprioritized": ["bumped-play"],
+                }
+            ],
+        )
+        response = _post(client, info["game_id"], body)
+        assert response.status_code == 200, response.text
+        [row] = _outcomes(client, info)
+        [admitted] = row["detail"]["admitted"]
+        assert admitted["added"] == ["new-play"]
+        assert admitted["updated"] == ["changed-play"]
+        assert admitted["reprioritized"] == ["bumped-play"]
+    finally:
+        _end(client, info)
+
+
+def test_a_legacy_admitted_body_with_no_id_lists_still_validates(client: TestClient) -> None:
+    """A body posted before this field existed - `admitted` entries carrying
+    only `sha`/`dsl_change` - still validates, and reads back with the three
+    lists present and empty rather than missing."""
+    info = _played_out(client)
+    try:
+        response = _post(client, info["game_id"], _body(info))
+        assert response.status_code == 200, response.text
+        [row] = _outcomes(client, info)
+        [admitted] = row["detail"]["admitted"]
+        assert admitted["added"] == []
+        assert admitted["updated"] == []
+        assert admitted["reprioritized"] == []
+    finally:
+        _end(client, info)
+
+
 def test_an_ai_seats_outcome_is_recorded(client: TestClient) -> None:
     info = _played_out(client)
     try:
@@ -70,7 +118,15 @@ def test_an_ai_seats_outcome_is_recorded(client: TestClient) -> None:
         assert detail["player"] == "bob"
         assert detail["role"] == "seat"
         assert detail["state"] == "complete"
-        assert detail["admitted"] == [{"sha": "a" * 40, "dsl_change": True}]
+        assert detail["admitted"] == [
+            {
+                "sha": "a" * 40,
+                "dsl_change": True,
+                "added": [],
+                "updated": [],
+                "reprioritized": [],
+            }
+        ]
         assert detail["proposed"] == [
             {"sha": "b" * 40, "result": None},
             {"sha": None, "result": "conflict"},

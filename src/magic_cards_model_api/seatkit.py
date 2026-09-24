@@ -191,7 +191,41 @@ def scripts_enabled_here(env: Mapping[str, str] | None = None) -> bool:
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-22"
+PROTOCOL_VERSION = "seatkit-23"
+#: `seatkit-23` (DR2): the post-game review gains a DSL-shaped record of
+#: every decision a seat made. `GET .../review` now carries `decisions`,
+#: keyed by seat - each row `{seq, turn, step, action, dsl, reasoning,
+#: board, board_by_perspective, unexpressible}`
+#: (`playscripts.decision_dsl.decision_rows`) - and `play_stats`, one per
+#: seat (`playscripts.stats.game_play_stats`): `plays_total`,
+#: `plays_move_bearing`, `plays_advice`, `offered`, `used`, `denied`,
+#: `passed_over`, `added`, `updated`, `reprioritized`, `added_ids`,
+#: `updated_ids`. `board` is the omniscient post-game frame, unchanged from
+#: `GET .../review/frames/{seq}`; `board_by_perspective` is new - one
+#: redacted battlefield JSON per player (`visibility.redact_view`, the
+#: engine's own rules, never re-derived), a `hand` list of that player's own
+#: card names and a `known_opponent_hand` list of whatever it was revealed
+#: or has looked at (`known_cards`) - nothing else of a hidden zone, and
+#: never a library's order, ever crosses into either. The opponent's own
+#: `decisions`/`play_stats` are dropped for a seat-uid viewer exactly as its
+#: script-run rows already are; the admin key sees both.
+#:
+#: `POST .../plays-outcome`'s `admitted` entries gain optional `added`,
+#: `updated` and `reprioritized` (play ids, bounded), the same three lists
+#: `plays admit` already classifies a corpus change into; an old body
+#: without them still validates and reads back as three empty lists.
+#:
+#: `report_problem(player_uid, text, category="engine")` gains its third
+#: argument: `engine` (a rules/engine/api bug), `dsl` (a play the DSL could
+#: not express, or a missing DSL feature) or `ux` (MCP tool friction).
+#: `POST .../report` refuses any other value with a 422; a row written
+#: before this bump carries no `category` at all and reads as `engine`
+#: everywhere it is read back.
+#:
+#: A process built before this bump reads none of the three additions above
+#: and is unaffected by any of them - no existing key moved or changed
+#: shape.
+#:
 #: `seatkit-22`: one player controlling another's turn (CR 723 - Emrakul,
 #: the Promised End; live game 0cf08288 froze on it). The state gains a
 #: per-player `decisions_made_by` (who is making that player's choices, or
@@ -490,8 +524,9 @@ PROTOCOL_VERSION = "seatkit-22"
 #: Also this follow-up, naming four things the opening-plays DSL paragraph
 #: above left implicit rather than moving any shape: the live-together
 #: active cap `too-many-active-for-archetype` (O8, `lint.py`) caps at
-#: `MAX_ACTIVE_PER_ARCHETYPE` (6) how many `priority > 0` plays can be live
-#: together per (deck, archetype key) - the largest subset of that key's own
+#: `MAX_ACTIVE_PER_ARCHETYPE`, `lint.py`'s own constant, how many
+#: `priority > 0` plays can be live together per (deck, archetype key) -
+#: the largest subset of that key's own
 #: applying plays no two of which are provably exclusive by `whose_turn`,
 #: `steps` or turn range, never the plain count of plays that apply. A
 #: card's `enters` fact is one of exactly three `EntersState` values:

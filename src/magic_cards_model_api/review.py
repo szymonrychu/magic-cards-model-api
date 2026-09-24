@@ -18,6 +18,16 @@ or it does not, and the reader decides. Auto-grading would also have to
 decide what "alice takes the damage rather than chump-blocking" means
 against a sequence of records, which is a judgement, dressed as arithmetic.
 
+**DR2: the DSL-shaped decision record.** `decisions`/`play_stats` (per seat)
+are built here from three things the caller hands in rather than looked up:
+`frame_views` (every relevant `seq` decoded and redaction-ready, one exact
+board each - see `build_review`'s own docstring for why this module still
+makes no store call of its own to get them) and `corpora` (each seat's
+registered play-script corpus). `playscripts.decision_dsl.decision_rows` and
+`playscripts.stats.game_play_stats` are DR1's; this module is only their
+caller, over its own already-filtered `entries` and the frames the route
+batched for it.
+
 **No replay, and no state reconstruction.** `audit.record` writes
 `serialize.snapshot(game)` into *every* row - life totals, floating mana,
 the battlefield with tapped/summoning-sick/power-toughness/damage/counters,
@@ -50,16 +60,20 @@ a game with no such row is reported as an outcome nobody recorded, never as
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
+from . import visibility
 from .audit import (
     ADVICE_ACTION,
     ADVICE_APPROVED_ACTION,
     AI_REVIEW_FAILED_ACTION,
     GAME_OVER_ACTION,
     PLAN_ACTION,
+    PLAYS_OUTCOME_ACTION,
     SCRIPT_RUN_ACTIONS,
 )
+from .playscripts import decision_dsl, stats
 from .repository import ArchivedGame
 
 #: The keys a paired entry carries inside a declaration. Deliberately not
@@ -90,6 +104,8 @@ def build_review(
     *,
     exact_frames: list[int] | None = None,
     viewer: str | None = None,
+    frame_views: Mapping[int, Mapping[str, Any]] | None = None,
+    corpora: Mapping[str, Mapping[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     """The review of one finished (or ended) game.
 
@@ -107,6 +123,21 @@ def build_review(
     in rather than looked up. `exact_frames` defaults to `[]` (every review
     built before R2 - and every direct call in `tests/test_review.py`, which
     stays green unchanged - has none); `viewer` defaults to `None`.
+
+    `frame_views`/`corpora` are DR2's: `frame_views` is `seq -> serialize.
+    frame_view(...)`'s own dict shape, for every `seq` this review wants a
+    decision's board from - which for `app.game_review` is `exact_frames`,
+    read back with **one** `store.record_states_for_seqs(game_id,
+    exact_frames)` call (never one `store.record_state` per `seq` - see that
+    method's own docstring for why a batch exists at all) - and `corpora` is
+    `seat -> store.scripts(game_id, uid)["scripts"] or None`, that seat's
+    own registered play id -> play doc mapping (never the wrapper `scripts()`
+    itself returns - `deck_slug`/`guides_revision`/`registered_at` play no
+    part in `play_stats`). Both default to `{}`/`None` (every review
+    built before DR2 has neither), in which case every seat's `decisions`
+    carries `board`/`board_by_perspective: None` throughout and `play_stats`
+    counts a corpus of zero - this module still makes no store call of its
+    own to get either.
     """
     game = archived.game
     ending = ending_of(entries)
@@ -128,6 +159,14 @@ def build_review(
         }
     else:
         head = _from_the_ledger(archived, entries, ending)
+    decisions, play_stats = _decisions_and_play_stats(
+        archived.game_id,
+        entries,
+        players=head["players"],
+        viewer=viewer,
+        frame_views=frame_views or {},
+        corpora=corpora or {},
+    )
     return {
         "game_id": archived.game_id,
         "created_at": archived.created_at,
@@ -140,7 +179,119 @@ def build_review(
         "entries": entries,
         "exact_frames": list(exact_frames) if exact_frames else [],
         "viewer": viewer,
+        "decisions": decisions,
+        "play_stats": play_stats,
     }
+
+
+# -- DR2: decisions / play_stats / board_by_perspective --------------------
+
+
+def _entries_with_frame_views(
+    entries: list[dict[str, Any]], frame_views: Mapping[int, Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """`entries`, each row that has a `frame_views` entry carrying it under
+    its own `state_view` key - the attachment `decision_dsl.decision_rows`
+    asks its caller to make (see that module's own docstring). Built as new
+    dicts, never mutating `entries` in place: those are the exact objects
+    this function's own caller also returns verbatim as `entries` in the
+    payload, and `state_view` embedding a whole board a second time onto
+    every row is exactly what `_PAIRED_KEYS` above already declines to do
+    for a declaration's pairing, for the same reason."""
+    if not frame_views:
+        return entries
+    out = []
+    for entry in entries:
+        state_view = frame_views.get(entry["seq"])
+        out.append({**entry, "state_view": state_view} if state_view is not None else entry)
+    return out
+
+
+def _board_by_perspective(
+    state_view: Mapping[str, Any], players: list[str]
+) -> dict[str, dict[str, Any]]:
+    """One decision's board, once per player in `players`, each redacted to
+    what that player could actually see at that exact moment
+    (`visibility.redact_view` - the engine's own visibility rules, never
+    re-derived here) and then reduced the same way `board` is
+    (`decision_dsl.compact_board`, imported, never edited - DR1's own).
+
+    Two fields ride on top of what `compact_board` already carries, both
+    read off the *redacted* view so neither can ever name a card this player
+    was not entitled to: `hand`, that player's own hand card names (a real
+    list - `redact_view` never empties a viewer's own hand, only every other
+    seat's), and `known_opponent_hand`, whatever of another player's hand
+    this player was specifically shown or has looked at by now
+    (`known_cards[player]["hand"]` - CR 701.20a/e's reveal/look, the same
+    record `visibility._redact_known_cards` already scopes to this player
+    alone). Both are left off the board entirely when empty, matching
+    `compact_board`'s own "only the facts a board actually has" style.
+    Library contents/order are never in either field for anyone, own seat
+    included - `compact_board` never reads `libraries` to begin with."""
+    boards: dict[str, dict[str, Any]] = {}
+    for player in players:
+        redacted = visibility.redact_view(state_view, player)
+        board = decision_dsl.compact_board(redacted)
+        hand = redacted.get("hands", {}).get(player) or ()
+        hand_names = sorted(
+            card.get("name") for card in hand if isinstance(card, Mapping) and card.get("name")
+        )
+        if hand_names:
+            board["hand"] = hand_names
+        known = (redacted.get("known_cards") or {}).get(player) or {}
+        known_names = sorted(
+            card.get("name")
+            for card in known.get("hand", ())
+            if isinstance(card, Mapping) and card.get("name")
+        )
+        if known_names:
+            board["known_opponent_hand"] = known_names
+        boards[player] = board
+    return boards
+
+
+def _decisions_and_play_stats(
+    game_id: str,
+    entries: list[dict[str, Any]],
+    *,
+    players: list[str],
+    viewer: str | None,
+    frame_views: Mapping[int, Mapping[str, Any]],
+    corpora: Mapping[str, Mapping[str, Any] | None],
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
+    """`decisions`/`play_stats`, one entry per seat in `players` that
+    `viewer` may see - `None` (the admin key, by the time this module ever
+    sees it - see `app._review_access`) sees every seat, a seat name sees
+    only its own, the identical rule `visibility.hides_script_run` already
+    applies to that seat's own script-run rows."""
+    if not players:
+        return {}, {}
+    entries_with_state = _entries_with_frame_views(entries, frame_views)
+    admitted_by_seat: dict[str, list[dict[str, Any]]] = {player: [] for player in players}
+    for entry in entries:
+        if entry["action"] != PLAYS_OUTCOME_ACTION:
+            continue
+        detail = entry.get("detail") or {}
+        player = detail.get("player")
+        if player in admitted_by_seat:
+            admitted_by_seat[player].append(detail.get("admitted") or [])
+    decisions: dict[str, list[dict[str, Any]]] = {}
+    play_stats: dict[str, dict[str, Any]] = {}
+    for seat in players:
+        if viewer is not None and viewer != seat:
+            continue
+        rows = decision_dsl.decision_rows(entries_with_state, seat)
+        for row in rows:
+            state_view = frame_views.get(row["seq"])
+            row["board_by_perspective"] = (
+                _board_by_perspective(state_view, players) if state_view is not None else None
+            )
+        decisions[seat] = rows
+        admitted = [entry for batch in admitted_by_seat[seat] for entry in batch]
+        play_stats[seat] = stats.game_play_stats(
+            entries, game_id, seat, corpora.get(seat) or {}, admitted
+        )
+    return decisions, play_stats
 
 
 def _ai_review_failures(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:

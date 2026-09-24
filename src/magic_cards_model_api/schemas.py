@@ -500,13 +500,31 @@ class AiReviewFailureResponse(BaseModel):
     player: str
 
 
+#: The bound on each of `PlaysOutcomeAdmitted`'s three id lists - generous
+#: enough for any one handover's own corpus (DR5 removed the play-count caps
+#: outright) while still refusing an unbounded body.
+MAX_ADMITTED_PLAY_IDS = 500
+
+
 class PlaysOutcomeAdmitted(RequestModel):
     """One `plays admit` of the handover that landed: its commit on
     mtg-decks main and whether it was a DSL change (a play added, deleted,
-    or changed beyond its `priority`), as the results journal recorded it."""
+    or changed beyond its `priority`), as the results journal recorded it.
+
+    `added`/`updated`/`reprioritized` (DR2) are the same three play-id lists
+    `admit._Landing` already classifies one admit's own git diff into - a
+    play file added, one changed beyond its `priority` (or deleted, which
+    `_Landing` also files under `updated`), or one whose only change was its
+    `priority`. Optional and empty by default, so a body posted before this
+    field existed still validates; `playscripts.stats.game_play_stats` is
+    what turns them, across every `plays_outcome` row of a game, into a
+    seat's own `play_stats`."""
 
     sha: Stated
     dsl_change: bool
+    added: list[Stated] = Field(default_factory=list, max_length=MAX_ADMITTED_PLAY_IDS)
+    updated: list[Stated] = Field(default_factory=list, max_length=MAX_ADMITTED_PLAY_IDS)
+    reprioritized: list[Stated] = Field(default_factory=list, max_length=MAX_ADMITTED_PLAY_IDS)
 
 
 class PlaysOutcomeProposed(RequestModel):
@@ -870,10 +888,24 @@ class ScriptRunResponse(BaseModel):
     """The ledger row this report became."""
 
 
+#: `ReportProblemRequest.category` (DR2) - the three kinds a `report_problem`
+#: MCP call sorts a report into: `engine` (a rules/engine/api bug - the game
+#: itself got something wrong), `dsl` (a play the play-script DSL could not
+#: express, or a DSL feature that is missing - the report should name the
+#: missing condition or move kind), `ux` (friction with the MCP tools
+#: themselves - an overcomplicated call, a confusing answer, workflow steps
+#: that could be merged). Defaults to `engine`, the category every report
+#: carried before this field existed, so an old body still validates and a
+#: row written before this bump reads back as `engine` (`audit.
+#: problem_category`) exactly as one filed under it explicitly would.
+ReportProblemCategory = Literal["engine", "dsl", "ux"]
+
+
 class ReportProblemRequest(RequestModel):
     player: str
     text: str = Field(min_length=1)
     """What the player thinks is wrong, written by the player."""
+    category: ReportProblemCategory = "engine"
 
 
 class ManaSource(RequestModel):
@@ -2875,6 +2907,62 @@ class AiReviewFailure(BaseModel):
     invoked: bool | None = None
 
 
+class ReviewDecision(BaseModel):
+    """One committing row of one seat's own ledger, converted to the
+    play-script DSL (DR2, `playscripts.decision_dsl.decision_rows`) - a cast,
+    an activation, a land play, an answer to a pending decision, a combat
+    declaration, a mulligan, an opening-hand action, a priority pass, or a
+    script run it started.
+
+    `dsl` is that decision written as a schema-valid `Play`, or `None` when
+    the DSL vocabulary cannot say it at all - `unexpressible` then names why,
+    and exactly one of the two fields is ever `None`. `board` is the compact,
+    card-name-free board (`decision_dsl.compact_board`) built from this
+    row's own recorded exact state (`GET .../review/frames/{seq}`'s own
+    shape) - `None` for a row with no state recorded, never a board from
+    another `seq`. `board_by_perspective` (the 2026-09-24 owner addon) is
+    two such boards, one per player, each independently redacted through
+    `visibility.redact_view` to what that player could actually see at this
+    exact moment: `hand` is that player's own hand card names, and
+    `known_opponent_hand` is whatever of the opponent's hand this player was
+    specifically shown or looked at by then (`known_cards`) - never the
+    opponent's hidden cards otherwise, and never a library's contents or
+    order for anyone, including its own owner. `None` for the same rows
+    `board` is `None` for."""
+
+    seq: int
+    turn: int | None = None
+    step: str | None = None
+    action: str
+    dsl: dict[str, Any] | None = None
+    reasoning: str | None = None
+    board: dict[str, Any] | None = None
+    board_by_perspective: dict[str, dict[str, Any]] | None = None
+    unexpressible: str | None = None
+
+
+class ReviewPlayStats(BaseModel):
+    """One seat's per-game play-script statistics (DR2,
+    `playscripts.stats.game_play_stats`): its registered corpus size, split
+    move-bearing/advice-only; how many script offers it saw and what became
+    of them (`used`/`denied`/`passed_over`, out of `offered`); and, across
+    every `plays_outcome` row of this game, the distinct play ids its
+    handovers admitted as `added`/`updated`/`reprioritized`."""
+
+    plays_total: int = 0
+    plays_move_bearing: int = 0
+    plays_advice: int = 0
+    offered: int = 0
+    used: int = 0
+    denied: int = 0
+    passed_over: int = 0
+    added: int = 0
+    updated: int = 0
+    reprioritized: int = 0
+    added_ids: list[str] = Field(default_factory=list)
+    updated_ids: list[str] = Field(default_factory=list)
+
+
 class GameReviewResponse(BaseModel):
     """`GET /api/games/{game_id}/review` - post-game only, and never open."""
 
@@ -2936,6 +3024,15 @@ class GameReviewResponse(BaseModel):
     `visibility.redact_view`'s own `you` field draws on a live board, handed
     back here so a client can tell which seat's perspective a frame's `you`
     should read as."""
+    decisions: dict[str, list[ReviewDecision]] = Field(default_factory=dict)
+    """DR2: every seat's own committing rows, DSL-converted, keyed by seat -
+    present only for a seat `viewer` may see: both for the admin key,
+    `viewer`'s own only for a seat uid, the same rule `visibility.
+    hides_script_run` already applies to that seat's script-run rows."""
+    play_stats: dict[str, ReviewPlayStats] = Field(default_factory=dict)
+    """DR2: one `ReviewPlayStats` per seat named in `decisions` - the same
+    per-seat visibility rule, computed whether or not that seat's
+    `decisions` list happens to be empty."""
 
 
 class DeleteGameResponse(BaseModel):

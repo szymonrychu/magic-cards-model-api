@@ -356,10 +356,30 @@ def test_seatkit_21_names_the_pre_bump_behaviour() -> None:
         assert term in paragraph, f"the seatkit-21 paragraph does not name {term}"
 
 
-def test_seatkit_22_is_the_current_version() -> None:
-    """One player controlling another's turn (CR 723, live game 0cf08288)
-    moved the state and legal-action shapes every tool answers with."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-22"
+def test_seatkit_23_is_the_current_version() -> None:
+    """DR2's review DSL, play stats, plays-outcome admit classification and
+    report_problem category moved three answer shapes at once."""
+    assert protocol.PROTOCOL_VERSION == "seatkit-23"
+
+
+def test_seatkit_23_names_the_review_dsl_admit_and_category_additions() -> None:
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-23`", 1)[1].split("`seatkit-22`", 1)[0]
+    for term in (
+        "decisions",
+        "play_stats",
+        "board_by_perspective",
+        "known_opponent_hand",
+        "added",
+        "updated",
+        "reprioritized",
+        'category="engine"',
+        "dsl",
+        "ux",
+        "422",
+    ):
+        assert term in paragraph, f"the seatkit-23 paragraph does not name {term}"
 
 
 def test_seatkit_22_names_the_player_control_fields() -> None:

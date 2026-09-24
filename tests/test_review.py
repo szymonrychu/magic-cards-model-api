@@ -260,6 +260,165 @@ def test_a_seat_may_read_the_finished_games_review(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
+# DR2: decisions (the DSL-converted ledger) and play_stats
+# ---------------------------------------------------------------------------
+
+
+def test_the_review_returns_decisions_and_play_stats_for_a_played_game(
+    client: TestClient,
+) -> None:
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        body = _review(client, game_id, key=info["admin_key"]).json()
+
+        assert set(body["decisions"]) == {"alice", "bob"}
+        assert set(body["play_stats"]) == {"alice", "bob"}
+
+        bobs_rows = body["decisions"]["bob"]
+        land_rows = [row for row in bobs_rows if row["action"] == "play_land"]
+        assert land_rows, bobs_rows
+        land = land_rows[-1]
+        assert land["dsl"] is not None and land["unexpressible"] is None
+        assert land["dsl"]["moves"][0]["kind"] == "play_land"
+        assert land["reasoning"] == "land first, then the attack"
+        assert land["board"] is not None
+        assert set(land["board_by_perspective"]) == {"alice", "bob"}
+
+        alices_rows = body["decisions"]["alice"]
+        concede_rows = [row for row in alices_rows if row["action"] == "concede"]
+        assert concede_rows, alices_rows
+        assert concede_rows[-1]["dsl"] is None
+        assert concede_rows[-1]["unexpressible"] == "concede"
+
+        for seat in ("alice", "bob"):
+            stats = body["play_stats"][seat]
+            for field in (
+                "plays_total",
+                "plays_move_bearing",
+                "plays_advice",
+                "offered",
+                "used",
+                "denied",
+                "passed_over",
+                "added",
+                "updated",
+                "reprioritized",
+            ):
+                assert isinstance(stats[field], int), (seat, field)
+            assert stats["added_ids"] == []
+            assert stats["updated_ids"] == []
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_decisions_and_play_stats_are_redacted_for_a_seat_viewer(client: TestClient) -> None:
+    """The same rule `visibility.hides_script_run` already applies to a
+    seat's own script-run rows: a seat-uid viewer sees only its own key in
+    `decisions`/`play_stats`, never the opponent's - the admin key sees
+    both."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        as_bob = _review(client, game_id, uid=info["seat_uids"]["bob"]).json()
+        assert set(as_bob["decisions"]) == {"bob"}
+        assert set(as_bob["play_stats"]) == {"bob"}
+        assert "alice" not in as_bob["decisions"]
+        assert "alice" not in as_bob["play_stats"]
+
+        as_alice = _review(client, game_id, uid=info["seat_uids"]["alice"]).json()
+        assert set(as_alice["decisions"]) == {"alice"}
+        assert set(as_alice["play_stats"]) == {"alice"}
+
+        as_admin = _review(client, game_id, key=info["admin_key"]).json()
+        assert set(as_admin["decisions"]) == {"alice", "bob"}
+        assert set(as_admin["play_stats"]) == {"alice", "bob"}
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_row_with_no_recorded_state_gets_a_null_board(client: TestClient) -> None:
+    """A row `decision_rows` converts but whose exact state this build never
+    recorded (or no longer has) gets `board`/`board_by_perspective: None` -
+    never a board borrowed from a different `seq`."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        before = _review(client, game_id, key=info["admin_key"]).json()
+        land = next(row for row in before["decisions"]["bob"] if row["action"] == "play_land")
+        assert land["board"] is not None, "the fixture's land row starts with a recorded state"
+        seq = land["seq"]
+
+        store._record_states[game_id].pop(seq)  # noqa: SLF001 - simulate an unrecorded row
+
+        after = _review(client, game_id, key=info["admin_key"]).json()
+        redone = next(row for row in after["decisions"]["bob"] if row["seq"] == seq)
+        assert redone["board"] is None
+        assert redone["board_by_perspective"] is None
+        # A different row's own board is unaffected by this one seq missing.
+        others = [row for row in after["decisions"]["bob"] if row["seq"] != seq and row["dsl"]]
+        assert any(row["board"] is not None for row in others) or not others
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_play_stats_counts_admitted_ids_across_two_plays_outcome_rows(
+    client: TestClient,
+) -> None:
+    from test_plays_outcome_route import _body, _post
+
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        first = _post(
+            client,
+            game_id,
+            _body(info, admitted=[{"sha": "a" * 40, "dsl_change": True, "added": ["play-a"]}]),
+        )
+        assert first.status_code == 200, first.text
+        second = _post(
+            client,
+            game_id,
+            _body(info, admitted=[{"sha": "b" * 40, "dsl_change": True, "updated": ["play-b"]}]),
+        )
+        assert second.status_code == 200, second.text
+
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        stats = body["play_stats"]["bob"]
+        assert stats["added"] == 1
+        assert stats["added_ids"] == ["play-a"]
+        assert stats["updated"] == 1
+        assert stats["updated_ids"] == ["play-b"]
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_play_stats_counts_a_legacy_plays_outcome_body_without_crashing(
+    client: TestClient,
+) -> None:
+    """An `admitted` entry posted before `added`/`updated`/`reprioritized`
+    existed - `sha`/`dsl_change` only - contributes nothing to those three
+    counts, but must not raise building `play_stats`."""
+    from test_plays_outcome_route import _body, _post
+
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        response = _post(client, game_id, _body(info))
+        assert response.status_code == 200, response.text
+
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        stats = body["play_stats"]["bob"]
+        assert stats["added"] == 0
+        assert stats["updated"] == 0
+        assert stats["reprioritized"] == 0
+        assert stats["added_ids"] == []
+        assert stats["updated_ids"] == []
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+# ---------------------------------------------------------------------------
 # a plan-ahead row is attributed to its TARGET turn, not the turn it was
 # written in (live game 2026-09-14: a 3-player game landed bob's plan-ahead
 # declaration on carol's turn instead of his own)

@@ -1070,6 +1070,62 @@ def test_record_state_of_a_corrupted_blob_raises_game_unloadable(repo: GameRepos
     assert caught.value.reason
 
 
+def test_record_states_for_seqs_reads_every_wanted_seq_in_one_batch(
+    repo: GameRepository,
+) -> None:
+    """DR2's batched sibling to `record_state`: every wanted `seq`, decoded,
+    keyed by `seq` - not merely one at a time under a loop."""
+    game_id = repo.create(_real_game())
+    first, second, third = _real_game(), _real_game(), _real_game()
+    repo.put_record_state(game_id, 1, first)
+    repo.put_record_state(game_id, 2, second)
+    repo.put_record_state(game_id, 3, third)
+    loaded = repo.record_states_for_seqs(game_id, [1, 3])
+    assert set(loaded) == {1, 3}
+    assert loaded[1].model_dump(mode="json") == first.model_dump(mode="json")
+    assert loaded[3].model_dump(mode="json") == third.model_dump(mode="json")
+
+
+def test_record_states_for_seqs_omits_unknown_seqs_and_games(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    game = _real_game()
+    repo.put_record_state(game_id, 1, game)
+    loaded = repo.record_states_for_seqs(game_id, [1, 99])
+    assert set(loaded) == {1}
+    assert loaded[1].model_dump(mode="json") == game.model_dump(mode="json")
+    assert repo.record_states_for_seqs("no-such-game-at-all", [1]) == {}
+
+
+def test_record_states_for_seqs_of_an_empty_request_touches_nothing(
+    repo: GameRepository,
+) -> None:
+    assert repo.record_states_for_seqs("no-such-game-at-all", []) == {}
+
+
+def test_record_states_for_seqs_skips_a_corrupted_blob_rather_than_raising(
+    repo: GameRepository,
+) -> None:
+    """Unlike `record_state`'s single-frame read, a batched read backs a
+    whole review - one corrupted row must not take every other decision's
+    board down with it."""
+    if not isinstance(repo, PostgresRepository):
+        pytest.skip(
+            "InMemoryRepository has no public-surface way to store a corrupt "
+            "record_states blob - see test_record_state_of_a_corrupted_blob_"
+            "raises_game_unloadable's own docstring"
+        )
+    game_id = repo.create(_real_game())
+    repo.put_record_state(game_id, 1, _real_game())
+    repo.put_record_state(game_id, 2, _real_game())
+    with repo._engine.begin() as conn:  # noqa: SLF001 - test corruption, not a call site
+        conn.execute(
+            text("UPDATE record_states SET state = :bad WHERE game_id = :gid AND seq = 1"),
+            {"bad": b"not a valid compressed blob", "gid": game_id},
+        )
+    loaded = repo.record_states_for_seqs(game_id, [1, 2])
+    assert set(loaded) == {2}
+
+
 def test_record_state_seqs_never_decodes_a_corrupted_blob(repo: GameRepository) -> None:
     """`record_state_seqs` answers from the `seq` column alone - a row whose
     `state` this build cannot decode must not stop it working, since which
