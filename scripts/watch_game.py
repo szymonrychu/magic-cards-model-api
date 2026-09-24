@@ -1,19 +1,37 @@
 """Watch one live game and return the moment it needs the operator's attention.
 
-The autonomous playtest loop needs an edge trigger, not a status poll: the run
-stops on the *first* problem report, not when the players happen to finish. This
-blocks until exactly one of those edges fires and prints it as JSON:
+The autonomous playtest/DSL loop needs an edge trigger, not a status poll: the
+run stops on the *first engine problem report*, not on every problem report -
+a `dsl` or `ux` one is development signal for the DSL/UX loop (missing moves,
+clunky MCP call sequences), never a reason to interrupt a live game. This
+blocks until exactly one of six edges fires and prints it as JSON:
 
-    {"edge": "report", "reports": [...]}   a player filed a problem report
-    {"edge": "game_over", "winner": ...}   the game ended
-    {"edge": "stalled", ...}               no log entry for --stall-seconds
-    {"edge": "timeout"}                    --max-seconds elapsed, game still live
+    {"edge": "report", "reports": [...], "findings": [...]}
+        a player filed an ENGINE problem report - a `report_problem` row
+        whose `detail.category` is `"engine"`, or a legacy row written
+        before `category` existed at all, which counts as `engine` too
+        (`audit.problem_category`'s own fallback). This is the only
+        category that stops the watch.
+    {"edge": "game_over", "winner": ..., "findings": [...],
+     "play_stats": {...} | null, "play_stats_reason": null | "..."}
+        the game ended (CR 104.1). `play_stats` is this game's per-seat
+        play statistics from `GET .../review` (DR2) when `--review-key`
+        (an admin key or a seat uid) made that reachable; otherwise it is
+        `null` and `play_stats_reason` says why.
+    {"edge": "stalled", ..., "findings": [...]}   no log entry for --stall-seconds
+    {"edge": "timeout", "findings": [...]}        --max-seconds elapsed, game still live
     {"edge": "game_gone", "status": ..., "body": ...}     the game 404s mid-watch
     {"edge": "watcher_error", "status": ..., "body": ...} any other surprise
 
+`findings` is every `dsl`/`ux` `report_problem` row seen since `--since`, as
+`{"seq", "player", "category", "text"}` - collected, never a stop condition,
+and carried on whichever of `report`/`game_over`/`stalled`/`timeout` ends the
+watch. `game_gone`/`watcher_error` carry no `findings`: both abort before (or
+while) reading the log, so there is nothing yet collected to hand back.
+
 Usage:
 
-    uv run python scripts/watch_game.py [--since N] [--max-seconds 1800]
+    uv run python scripts/watch_game.py [--since N] [--max-seconds 1800] [--review-key KEY]
 """
 
 from __future__ import annotations
@@ -68,6 +86,7 @@ def _get_json(
     *,
     key: str | None = None,
     expect: type | tuple[type, ...] | None = None,
+    params: dict[str, Any] | None = None,
 ) -> Any:
     """GET `url` and return its body (or `body[key]` when `key` is given),
     or raise `WatchFailure` naming exactly what was wrong - never a bare
@@ -78,8 +97,12 @@ def _get_json(
     `entries[since:]` to raise the `TypeError` this docstring says cannot
     happen. Pass it wherever the caller is about to index or iterate what
     comes back.
+
+    `params` is query-string arguments - only `_review_play_stats` uses it,
+    to carry `--review-key` (an admin key or a seat uid) onto `GET .../review`
+    without every other caller having to pass `params=None`.
     """
-    response = client.get(url)
+    response = client.get(url, params=params or {})
     try:
         body: Any = response.json()
     except ValueError:
@@ -131,6 +154,81 @@ def _log_entries(client: httpx.Client, game_id: str) -> list[dict[str, Any]]:
     return entries
 
 
+#: The only category that stops the watch - `audit.problem_category`'s own
+#: fallback for a `report_problem` row with no `detail.category` key at all
+#: (a row written before DR2 added the field). Mirrored here, not imported:
+#: this script runs against a bare server URL, never the app's own modules.
+_ENGINE_CATEGORY = "engine"
+
+
+def _report_category(entry: dict[str, Any]) -> str:
+    """A `report_problem` row's own category - `"engine"` for an explicit
+    `engine` row, for a legacy row with no `category` key, or for any row
+    whose `detail` is not even a mapping (the pre-DR2 fake shape this
+    module's own regression tests still use); `detail["category"]` verbatim
+    otherwise. Never raises on a malformed row - the same promise `_get_json`
+    makes for a malformed response."""
+    detail = entry.get("detail")
+    if isinstance(detail, dict):
+        category = detail.get("category")
+        if isinstance(category, str) and category:
+            return category
+    return _ENGINE_CATEGORY
+
+
+def _split_reports(
+    fresh: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """`fresh`'s `report_problem` rows, split into the ones that stop the
+    watch (`engine`, `reports`) and the ones that only get collected
+    (`dsl`/`ux`, `findings`) - see the module docstring's edge table."""
+    reports: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+    for entry in fresh:
+        if entry.get("action") != "report_problem":
+            continue
+        category = _report_category(entry)
+        if category == _ENGINE_CATEGORY:
+            reports.append(entry)
+            continue
+        detail = entry.get("detail")
+        detail = detail if isinstance(detail, dict) else {}
+        findings.append(
+            {
+                "seq": entry.get("seq"),
+                "player": detail.get("player"),
+                "category": category,
+                "text": detail.get("text"),
+            }
+        )
+    return reports, findings
+
+
+def _review_play_stats(
+    client: httpx.Client, game_id: str, review_key: str | None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """The `game_over` edge's per-seat `play_stats`, read from `GET
+    .../review` (DR2) now that the watch already knows the game is over -
+    or `(None, reason)` when that read cannot be made. `GET .../review`
+    requires an admin key or a seat uid (`app.game_review`'s own docstring);
+    with none given, or with the review 40x-ing (the game vanished, or this
+    key is not one of its credentials), a `game_over` result must still come
+    back clean, never crash the watch that already has its real answer."""
+    if not review_key:
+        return None, "no --review-key given, so GET /review was never attempted"
+    try:
+        stats = _get_json(
+            client,
+            f"/api/games/{game_id}/review",
+            key="play_stats",
+            expect=dict,
+            params={"key": review_key},
+        )
+    except WatchFailure as exc:
+        return None, f"GET /review returned {exc.edge} (HTTP {exc.status}): {exc.body!r}"
+    return stats, None
+
+
 def watch(
     api: str,
     game: str | None,
@@ -139,6 +237,7 @@ def watch(
     stall_seconds: float,
     poll: float,
     transport: httpx.BaseTransport | None = None,
+    review_key: str | None = None,
 ) -> dict[str, Any]:
     with httpx.Client(base_url=api, timeout=30.0, transport=transport) as client:
         try:
@@ -153,13 +252,24 @@ def watch(
             try:
                 entries = _log_entries(client, gid)
                 fresh = entries[since:]
-                reports = [e for e in fresh if e.get("action") == "report_problem"]
+                # DR8: only an `engine`-category (or legacy, no-category)
+                # report_problem row stops the watch; `dsl`/`ux` rows are
+                # collected into `findings` instead - see the module
+                # docstring's edge table.
+                reports, findings = _split_reports(fresh)
                 if reports:
-                    return {"edge": "report", "game": gid, "seq": len(entries), "reports": reports}
+                    return {
+                        "edge": "report",
+                        "game": gid,
+                        "seq": len(entries),
+                        "reports": reports,
+                        "findings": findings,
+                    }
                 state = _get_json(client, f"/api/games/{gid}")
             except WatchFailure as exc:
                 return {"edge": exc.edge, "game": gid, "status": exc.status, "body": exc.body}
             if state.get("winner") or state.get("drawn"):
+                play_stats, play_stats_reason = _review_play_stats(client, gid, review_key)
                 return {
                     "edge": "game_over",
                     "game": gid,
@@ -167,6 +277,9 @@ def watch(
                     "winner": state.get("winner"),
                     "drawn": state.get("drawn"),
                     "turn": state.get("turn"),
+                    "findings": findings,
+                    "play_stats": play_stats,
+                    "play_stats_reason": play_stats_reason,
                 }
             now = time.monotonic()
             if len(entries) != last_len:
@@ -181,9 +294,10 @@ def watch(
                     "turn": state.get("turn"),
                     "step": state.get("step"),
                     "priority_holder": state.get("priority_holder"),
+                    "findings": findings,
                 }
             if now >= deadline:
-                return {"edge": "timeout", "game": gid, "seq": len(entries)}
+                return {"edge": "timeout", "game": gid, "seq": len(entries), "findings": findings}
             time.sleep(poll)
 
 
@@ -195,8 +309,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-seconds", type=float, default=1800.0)
     parser.add_argument("--stall-seconds", type=float, default=600.0)
     parser.add_argument("--poll", type=float, default=3.0)
+    parser.add_argument(
+        "--review-key",
+        default=None,
+        help=(
+            "admin key or seat uid for this game's GET /review, used only to fill in the "
+            "game_over edge's play_stats (DR2); omit it and play_stats comes back null with "
+            "a play_stats_reason instead of failing the watch"
+        ),
+    )
     args = parser.parse_args(argv)
-    result = watch(args.api, args.game, args.since, args.max_seconds, args.stall_seconds, args.poll)
+    result = watch(
+        args.api,
+        args.game,
+        args.since,
+        args.max_seconds,
+        args.stall_seconds,
+        args.poll,
+        review_key=args.review_key,
+    )
     print(json.dumps(result, indent=1, sort_keys=True))
     return 0
 

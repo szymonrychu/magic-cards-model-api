@@ -11,6 +11,17 @@ entirely and was called outside the loop's `try`), a `log` whose value is not
 a list, a log row that is not an entry, and a dict row with no `action`. Each
 has its own test below.
 
+**DR8**: the `report` edge fires only for a `report_problem` row whose
+`detail.category` is `engine` - or a legacy row with no `category` at all,
+which counts as `engine` too. A `dsl` or `ux` row never stops the watch; it
+is collected into `findings` (`{"seq", "player", "category", "text"}`)
+instead, and `findings` rides along on whichever edge ends the watch
+(`report`, `game_over`, `stalled`, `timeout`) - never on `game_gone`/
+`watcher_error`, which abort before the log is read at all. `game_over` also
+carries this game's per-seat `play_stats` (DR2's `GET .../review`) when
+`--review-key` makes that reachable, or `None` with a `play_stats_reason`
+when it is not.
+
 Every test drives `watch_game.watch` against an `httpx.MockTransport` rather
 than a real server, so the whole edge set - old and new - runs in-process and
 fast.
@@ -279,6 +290,245 @@ def test_a_log_row_that_is_not_an_entry_is_a_named_edge_not_a_keyerror() -> None
     assert result["edge"] == "watcher_error"
     assert result["status"] == 200
     assert result["body"] == {"log": ["not an entry at all"]}
+
+
+def test_dr8_a_dsl_report_problem_does_not_stop_the_watch_and_appears_in_findings() -> None:
+    """A `dsl` category is development signal for the DSL/UX loop, not an
+    engine problem - it must never fire the `report` edge, only ride along
+    as a `findings` row on whatever edge the watch actually ends on."""
+    entries = [
+        {
+            "seq": 1,
+            "action": "report_problem",
+            "detail": {"player": "bob", "text": "no move exists for foretell", "category": "dsl"},
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/log"):
+            return _log(entries)
+        return _state(turn=1)
+
+    result = watch_game.watch(
+        "http://game",
+        GAME,
+        0,
+        max_seconds=0.05,
+        stall_seconds=5,
+        poll=0.01,
+        transport=transport(handler),
+    )
+    assert result["edge"] == "timeout"
+    assert result["findings"] == [
+        {"seq": 1, "player": "bob", "category": "dsl", "text": "no move exists for foretell"}
+    ]
+
+
+def test_dr8_a_ux_report_problem_does_not_stop_the_watch_and_appears_in_findings() -> None:
+    entries = [
+        {
+            "seq": 2,
+            "action": "report_problem",
+            "detail": {"player": "alice", "text": "run_script needed four calls", "category": "ux"},
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/log"):
+            return _log(entries)
+        return _state(turn=1)
+
+    result = watch_game.watch(
+        "http://game",
+        GAME,
+        0,
+        max_seconds=0.05,
+        stall_seconds=5,
+        poll=0.01,
+        transport=transport(handler),
+    )
+    assert result["edge"] == "timeout"
+    assert result["findings"] == [
+        {"seq": 2, "player": "alice", "category": "ux", "text": "run_script needed four calls"}
+    ]
+
+
+def test_dr8_an_engine_category_report_stops_the_watch_and_carries_no_findings() -> None:
+    entries = [
+        {
+            "seq": 3,
+            "action": "report_problem",
+            "detail": {"player": "bob", "text": "trample math is wrong", "category": "engine"},
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/log"):
+            return _log(entries)
+        return _state(turn=1)
+
+    result = watch_game.watch(
+        "http://game",
+        GAME,
+        0,
+        max_seconds=5,
+        stall_seconds=5,
+        poll=0.01,
+        transport=transport(handler),
+    )
+    assert result["edge"] == "report"
+    assert result["reports"] == entries
+    assert result["findings"] == []
+
+
+def test_dr8_a_legacy_report_row_with_no_category_key_still_stops_the_watch() -> None:
+    """A row written before `category` existed carries no `detail.category`
+    key at all - `audit.problem_category`'s own fallback treats that as
+    `engine`, and this watcher must match it exactly, not merely default a
+    missing top-level key the way the pre-DR8 code accidentally did."""
+    entries = [
+        {
+            "seq": 4,
+            "action": "report_problem",
+            "detail": {"player": "bob", "text": "a bug from before categories existed"},
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/log"):
+            return _log(entries)
+        return _state(turn=1)
+
+    result = watch_game.watch(
+        "http://game",
+        GAME,
+        0,
+        max_seconds=5,
+        stall_seconds=5,
+        poll=0.01,
+        transport=transport(handler),
+    )
+    assert result["edge"] == "report"
+    assert result["reports"] == entries
+    assert result["findings"] == []
+
+
+def test_dr8_game_over_carries_findings_and_play_stats_from_review_when_reachable() -> None:
+    entries = [
+        {
+            "seq": 1,
+            "action": "report_problem",
+            "detail": {
+                "player": "bob",
+                "text": "DSL is missing a mulligan move",
+                "category": "dsl",
+            },
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/log"):
+            return _log(entries)
+        if request.url.path.endswith("/review"):
+            assert request.url.params.get("key") == "admin-secret"
+            return httpx.Response(
+                200,
+                json={"play_stats": {"alice": {"plays_total": 3}, "bob": {"plays_total": 1}}},
+            )
+        return _state(winner="alice", drawn=False, turn=8)
+
+    result = watch_game.watch(
+        "http://game",
+        GAME,
+        0,
+        max_seconds=5,
+        stall_seconds=5,
+        poll=0.01,
+        transport=transport(handler),
+        review_key="admin-secret",
+    )
+    assert result["edge"] == "game_over"
+    assert result["findings"] == [
+        {"seq": 1, "player": "bob", "category": "dsl", "text": "DSL is missing a mulligan move"}
+    ]
+    assert result["play_stats"] == {"alice": {"plays_total": 3}, "bob": {"plays_total": 1}}
+    assert result["play_stats_reason"] is None
+
+
+def test_dr8_game_over_play_stats_is_null_with_a_reason_when_no_review_key_is_given() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/log"):
+            return _log([])
+        if request.url.path.endswith("/review"):
+            raise AssertionError("GET /review must never be called with no --review-key")
+        return _state(winner="alice", drawn=False, turn=8)
+
+    result = watch_game.watch(
+        "http://game",
+        GAME,
+        0,
+        max_seconds=5,
+        stall_seconds=5,
+        poll=0.01,
+        transport=transport(handler),
+    )
+    assert result["edge"] == "game_over"
+    assert result["findings"] == []
+    assert result["play_stats"] is None
+    assert result["play_stats_reason"]
+
+
+def test_dr8_game_over_play_stats_is_null_with_a_reason_when_review_is_unreachable() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/log"):
+            return _log([])
+        if request.url.path.endswith("/review"):
+            return httpx.Response(404, json={"detail": "game not found"})
+        return _state(winner="alice", drawn=False, turn=8)
+
+    result = watch_game.watch(
+        "http://game",
+        GAME,
+        0,
+        max_seconds=5,
+        stall_seconds=5,
+        poll=0.01,
+        transport=transport(handler),
+        review_key="admin-secret",
+    )
+    assert result["edge"] == "game_over"
+    assert result["play_stats"] is None
+    assert result["play_stats_reason"]
+
+
+def test_dr8_stalled_edge_also_carries_findings() -> None:
+    entries = [
+        {
+            "seq": 1,
+            "action": "report_problem",
+            "detail": {"player": "bob", "text": "guide push conflicted twice", "category": "ux"},
+        },
+        {"action": "pass"},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/log"):
+            return _log(entries)
+        return _state(turn=2, step="main1", priority_holder="bob")
+
+    result = watch_game.watch(
+        "http://game",
+        GAME,
+        0,
+        max_seconds=5,
+        stall_seconds=0.05,
+        poll=0.01,
+        transport=transport(handler),
+    )
+    assert result["edge"] == "stalled"
+    assert result["findings"] == [
+        {"seq": 1, "player": "bob", "category": "ux", "text": "guide push conflicted twice"}
+    ]
 
 
 def test_a_log_row_with_no_action_still_watches_rather_than_crashing() -> None:
