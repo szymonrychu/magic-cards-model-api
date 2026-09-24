@@ -371,6 +371,7 @@ def test_seatkit_23_names_the_review_dsl_admit_and_category_additions() -> None:
         "play_stats",
         "board_by_perspective",
         "known_opponent_hand",
+        "known_library",
         "added",
         "updated",
         "reprioritized",
@@ -380,6 +381,10 @@ def test_seatkit_23_names_the_review_dsl_admit_and_category_additions() -> None:
         "422",
     ):
         assert term in paragraph, f"the seatkit-23 paragraph does not name {term}"
+    assert "never a library's order" not in paragraph, (
+        "the seatkit-23 paragraph still claims no library order ever crosses into "
+        "board_by_perspective, but known_library carries one in top-down order"
+    )
 
 
 def test_seatkit_22_names_the_player_control_fields() -> None:

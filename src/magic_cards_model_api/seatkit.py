@@ -204,9 +204,12 @@ PROTOCOL_VERSION = "seatkit-23"
 #: `GET .../review/frames/{seq}`; `board_by_perspective` is new - one
 #: redacted battlefield JSON per player (`visibility.redact_view`, the
 #: engine's own rules, never re-derived), a `hand` list of that player's own
-#: card names and a `known_opponent_hand` list of whatever it was revealed
-#: or has looked at (`known_cards`) - nothing else of a hidden zone, and
-#: never a library's order, ever crosses into either. The opponent's own
+#: card names, a `known_opponent_hand` list of whatever of another player's
+#: hand it was revealed or has looked at, and a `known_library` list of this
+#: player's own live knowledge of any library's top cards, in the order they
+#: sit (all three from `known_cards`) - nothing else of a hidden zone
+#: crosses into any of them, and library *contents* (as opposed to a
+#: specific known card) never do, for anyone. The opponent's own
 #: `decisions`/`play_stats` are dropped for a seat-uid viewer exactly as its
 #: script-run rows already are; the admin key sees both.
 #:
