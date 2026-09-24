@@ -69,8 +69,13 @@ def play_doc(play_id: str, *, moves: bool = True) -> dict[str, Any]:
     return {"id": play_id, "moves": [{"kind": "cast"}] if moves else []}
 
 
-def admitted_row(play_id: str, change: str, *, game_id: str = GAME) -> dict[str, Any]:
-    return {"game_id": game_id, "play_id": play_id, "change": change}
+def admit_result(*plays: tuple[str, str]) -> dict[str, Any]:
+    """One `playscripts.admit.admit()` `"admitted"` result, in exactly the
+    shape `_landing` builds it - `plays` a list of `{id, change}` - so these
+    tests exercise `_admitted_counts` against the real producer's own shape
+    rather than a label invented for the test (see `test_real_admit_...`
+    below for the same claim proven against a real git checkout)."""
+    return {"plays": [{"id": play_id, "change": change} for play_id, change in plays]}
 
 
 ZERO_STATS = {
@@ -175,10 +180,8 @@ def test_offer_outcomes_reuse_report_offer_outcomes_not_a_reimplementation():
 
 def test_added_updated_reprioritized_counts_and_ids():
     admitted = [
-        admitted_row("play-a", "added"),
-        admitted_row("play-b", "updated"),
-        admitted_row("play-c", "reprioritized"),
-        admitted_row("play-d", "deleted"),
+        admit_result(("play-a", "added"), ("play-b", "updated")),
+        admit_result(("play-c", "reprioritized"), ("play-d", "deleted")),
     ]
     result = stats.game_play_stats([], GAME, SEAT, corpus=[], admitted=admitted)
     assert result["added"] == 1
@@ -190,10 +193,9 @@ def test_added_updated_reprioritized_counts_and_ids():
 
 def test_admitted_ids_are_deduped_across_several_admits_of_one_game():
     admitted = [
-        admitted_row("play-a", "added"),
-        admitted_row("play-a", "updated"),
-        admitted_row("play-b", "updated"),
-        admitted_row("play-b", "updated"),
+        admit_result(("play-a", "added")),
+        admit_result(("play-a", "updated"), ("play-b", "updated")),
+        admit_result(("play-b", "updated")),
     ]
     result = stats.game_play_stats([], GAME, SEAT, corpus=[], admitted=admitted)
     assert result["added"] == 0
@@ -202,14 +204,73 @@ def test_admitted_ids_are_deduped_across_several_admits_of_one_game():
     assert result["updated_ids"] == ("play-a", "play-b")
 
 
-def test_admitted_entries_for_other_games_are_ignored():
-    admitted = [
-        admitted_row("play-a", "added", game_id="another-game"),
-        admitted_row("play-b", "added"),
-    ]
+def test_an_admit_entry_with_no_plays_is_evidence_only_and_counts_nothing():
+    # `admit()` admits evidence-only handovers too (see `admit.py`'s own
+    # docstring): a `plays` field that is empty, not one this function
+    # invents a fallback for.
+    admitted = [{"sha": "abc", "dsl_change": False, "files": ["evidence.json"], "plays": []}]
     result = stats.game_play_stats([], GAME, SEAT, corpus=[], admitted=admitted)
+    assert result["added"] == 0
+    assert result["updated"] == 0
+    assert result["reprioritized"] == 0
+
+
+def test_real_admit_result_added_updated_and_reprioritized_are_classified_by_admit_py(
+    tmp_path, monkeypatch
+):
+    """The finding this reproduces: `_admitted_counts` used to trust a
+    caller-supplied `change` label that nothing in the codebase produced.
+    This drives `playscripts.admit.admit()` against a real git checkout -
+    the one place the add/update/reprioritize rule is actually evaluated -
+    and feeds its own, unmodified result straight into `game_play_stats`."""
+    import copy
+    import json
+
+    import guides_git_testkit as gitkit
+
+    from magic_cards_model_api.playscripts import admit as admit_mod
+
+    gitkit.isolate_git(tmp_path, monkeypatch)
+    monkeypatch.delenv("MTG_EVIDENCE_DIR", raising=False)
+    bare = gitkit.seed_guides(tmp_path)
+    root = gitkit.clone(bare, tmp_path / "guides")
+    slug = gitkit.SLUG
+
+    def write(rel: str, doc: dict[str, Any]) -> None:
+        (root / rel).write_text(gitkit.dump(doc), encoding="utf-8")
+
+    def read(rel: str) -> dict[str, Any]:
+        return json.loads((root / rel).read_text(encoding="utf-8"))
+
+    # A brand-new play file: "added".
+    new_play = copy.deepcopy(gitkit.FETCH_SURVEIL) | {
+        "id": "fetch-late",
+        "when": {"whose_turn": "theirs", "steps": ["upkeep"], "stack": "empty"},
+    }
+    write(f"decks/{slug}/plays/fetch-late.json", new_play)
+    first = admit_mod.admit(root, slug, "game-1")
+    assert first["result"] == "admitted", first
+
+    # A real content change (beyond priority) on an existing play: "updated".
+    doc = read(f"decks/{slug}/plays/fetch-untapped-shock.json")
+    doc["intent"] = "Changed for this test."
+    write(f"decks/{slug}/plays/fetch-untapped-shock.json", doc)
+    second = admit_mod.admit(root, slug, "game-2")
+    assert second["result"] == "admitted", second
+
+    # A priority-only move on the surveil play: "reprioritized".
+    doc = read(f"decks/{slug}/plays/fetch-surveil-land.json")
+    doc["priority"] = doc["priority"] + 1
+    write(f"decks/{slug}/plays/fetch-surveil-land.json", doc)
+    third = admit_mod.admit(root, slug, "game-3")
+    assert third["result"] == "admitted", third
+
+    result = stats.game_play_stats([], GAME, SEAT, corpus=[], admitted=[first, second, third])
+    assert result["added_ids"] == ("fetch-late",)
+    assert result["updated_ids"] == ("fetch-untapped-shock",)
+    assert result["reprioritized"] == 1
     assert result["added"] == 1
-    assert result["added_ids"] == ("play-b",)
+    assert result["updated"] == 1
 
 
 # -- everything together ---------------------------------------------------------
@@ -227,7 +288,7 @@ def test_a_full_game_adds_up():
         offered(3, "frog-attack", "run-c"),
         move(4, "cast", card="Fatal Push"),
     ]
-    admitted = [admitted_row("frog-attack", "updated"), admitted_row("new-play", "added")]
+    admitted = [admit_result(("frog-attack", "updated")), admit_result(("new-play", "added"))]
     result = stats.game_play_stats(records, GAME, SEAT, corpus=corpus, admitted=admitted)
     assert result == {
         "plays_total": 3,

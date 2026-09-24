@@ -130,6 +130,17 @@ def test_pass_is_unexpressible_pass():
     assert record["unexpressible"] == "pass"
 
 
+def test_concede_is_unexpressible_concede():
+    # `app.action_concede` records `"concede"` with `allowed=True` and the
+    # seat's own reasoning (CR 104.3a: concede at any time) - the vocabulary
+    # has no move for it, same as attack/block/mulligan/pass.
+    record = only(decision_rows([row(1, "concede", reasoning="the board is lost")], SEAT))
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "concede"
+    assert record["action"] == "concede"
+    assert record["reasoning"] == "the board is lost"
+
+
 def test_pass_until_rows_are_pass_priority_rows_each_unexpressible():
     # `seatkit.pass_until` threads one reason onto every `pass_priority` row
     # it drives - there is no separate ledger action for it (see the
@@ -162,11 +173,12 @@ def test_every_unexpressible_kind_this_module_can_produce():
         row(1, "attack"),
         row(2, "declare_blockers"),
         row(3, "mulligan_declared"),
-        row(4, "pass_priority"),
-        row(5, "opening_hand_action", step="pregame_actions"),
+        row(4, "concede"),
+        row(5, "pass_priority"),
+        row(6, "opening_hand_action", step="pregame_actions"),
     ]
     kinds = {r["unexpressible"] for r in decision_rows(entries, SEAT)}
-    assert kinds == {"attack", "block", "mulligan", "pass", "pregame"}
+    assert kinds == {"attack", "block", "mulligan", "concede", "pass", "pregame"}
 
 
 # -- run_script ----------------------------------------------------------------
@@ -433,6 +445,18 @@ def test_compact_board_stays_at_or_under_the_char_cap():
     size = len(json.dumps(board, sort_keys=True))
     assert size <= decision_dsl.COMPACT_BOARD_CHARS
     # life is never trimmed away even under heavy pressure
+    assert board["players"][SEAT]["life"] == 20
+
+
+def test_compact_board_stays_at_or_under_the_char_cap_with_a_long_stack():
+    # The battlefield is empty - the loop used to stop as soon as every
+    # battlefield list was empty, even though the stack alone still pushed
+    # the board over the cap.
+    stack = [kit.card(f"Stack Spell {i}", type_line="Instant", zone="stack") for i in range(20)]
+    view = kit.state_view(SEAT, opponent=OPPONENT, stack=stack)
+    board = compact_board(view)
+    size = len(json.dumps(board, sort_keys=True))
+    assert size <= decision_dsl.COMPACT_BOARD_CHARS
     assert board["players"][SEAT]["life"] == 20
 
 

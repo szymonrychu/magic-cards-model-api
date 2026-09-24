@@ -45,17 +45,20 @@ required and has no honest empty value - see `_cast_or_play_land`/
 
 **Not in the vocabulary** (spec `docs/superpowers/specs/2026-09-13-play-
 script-format-design.md`, "Not in the vocabulary": attack, block, mulligan,
-concede, pass, and any iteration field). This module reaches four of those
-five off the rows it is asked to convert - `attack` (the `declare_attackers`
+concede, pass, and any iteration field). This module reaches all five of
+those off the rows it is asked to convert - `attack` (the `declare_attackers`
 tool's own ledger action, `"attack"`), `block` (`declare_blockers`),
-`mulligan`, `pass` (`pass_priority` - `pass` and `pass_until` are the same
-ledger action; `pass_until` only *threads one reason across several of
-them*, see `seatkit.pass_until`, so there is nothing here for it to convert
-differently) - plus a fifth of this module's own, `pregame`: a CR 103.6
-`opening_hand_action` row carries no `turn`/`step` at all (`opening.py`'s own
-`audit.record` call - pregame has no turn yet), so no `when` block can be
-built without inventing one out of nothing, which `never a fabricated move`
-forbids exactly as much as inventing the move itself would.
+`mulligan`, `concede` (`app.action_concede`'s own ledger action, `"concede"`
+- CR 104.3a lets a player concede at any time, and the vocabulary has no move
+for it any more than it has one for a pass), `pass` (`pass_priority` - `pass`
+and `pass_until` are the same ledger action; `pass_until` only *threads one
+reason across several of them*, see `seatkit.pass_until`, so there is
+nothing here for it to convert differently) - plus a sixth of this module's
+own, `pregame`: a CR 103.6 `opening_hand_action` row carries no `turn`/`step`
+at all (`opening.py`'s own `audit.record` call - pregame has no turn yet), so
+no `when` block can be built without inventing one out of nothing, which
+`never a fabricated move` forbids exactly as much as inventing the move
+itself would.
 
 A `decide` row can also miss the vocabulary at a *finer* grain than the five
 above, one `DecisionKind` at a time - a real answer schema `Answer` has no
@@ -108,12 +111,13 @@ COMPACT_BOARD_CHARS = 600
 #: docstring.
 _PASS_ACTION = "pass_priority"
 
-#: `unexpressible` labels for the five vocabulary gaps this module reaches
+#: `unexpressible` labels for the six vocabulary gaps this module reaches
 #: directly off a row's own action (`"pregame"` is this module's own name for
-#: the CR 103.6 gap; the other four are the spec's own words).
+#: the CR 103.6 gap; the other five are the spec's own words).
 _ATTACK = "attack"
 _BLOCK = "block"
 _MULLIGAN = "mulligan"
+_CONCEDE = "concede"
 _PASS = "pass"
 _PREGAME = "pregame"
 
@@ -129,6 +133,7 @@ _ACTION_KIND: dict[str, str] = {
     "declare_blockers": "declare_blockers",
     "mulligan_declared": "mulligan",
     "opening_hand_action": "opening_hand_action",
+    "concede": "concede",
     _PASS_ACTION: "pass",
     SCRIPT_RUN_STARTED_ACTION: "run_script",
 }
@@ -428,6 +433,8 @@ def _dsl_for(
         return None, _BLOCK
     if kind == "mulligan":
         return None, _MULLIGAN
+    if kind == "concede":
+        return None, _CONCEDE
     if kind == "pass":
         return None, _PASS
     if kind == "opening_hand_action":
@@ -559,9 +566,13 @@ def compact_board(state_view: Mapping[str, Any]) -> dict[str, Any]:
     1. every player's `graveyard`/`exile` counts, dropped whole;
     2. every battlefield permanent's `pt`/`counters`, down to bare
        `{name, tapped}`;
-    3. the lowest-controlled-count player's battlefield permanents, most
-       repeated-name-suffix first, one at a time, until the board fits or
-       every list is empty.
+    3. the fullest player's (most battlefield permanents) own battlefield
+       list, alphabetically-last name first, one permanent at a time, until
+       that player's own list is empty - then the next-fullest, and so on
+       until every player's battlefield list is empty;
+    4. the stack's own names, bottom of stack (oldest, least likely to be
+       what this decision is about) first, one at a time, until it fits or
+       the stack is empty too.
 
     Life and the lands untapped/total summary are never cut at any stage -
     a board that has lost everything else still says how much life and how
@@ -578,15 +589,24 @@ def compact_board(state_view: Mapping[str, Any]) -> dict[str, Any]:
         if _size(board) <= COMPACT_BOARD_CHARS:
             return _sorted(board)
     assert board is not None
-    # Stage 3: trim battlefield lists, largest first, one permanent at a
-    # time, until the board fits or every list is empty.
+    # Stage 3: trim battlefield lists, fullest player first, one permanent
+    # at a time, until every player's battlefield list is empty. Stage 4:
+    # once there is nothing left to trim there, the stack's own names,
+    # oldest (bottom of stack) first - see the docstring's own numbered
+    # order. `board["stack"]` alone can push a board over the cap (a long
+    # stack with an empty battlefield), so this loop cannot stop at an empty
+    # battlefield the way it used to.
     while _size(board) > COMPACT_BOARD_CHARS:
         fullest = max(
             board["players"].values(),
             key=lambda entry: len(entry["battlefield"]),
             default=None,
         )
-        if fullest is None or not fullest["battlefield"]:
-            break
-        fullest["battlefield"].pop()
+        if fullest is not None and fullest["battlefield"]:
+            fullest["battlefield"].pop()
+            continue
+        if board["stack"]:
+            board["stack"].pop(0)
+            continue
+        break
     return _sorted(board)

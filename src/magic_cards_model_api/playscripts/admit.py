@@ -37,8 +37,12 @@ and not a play (`_play_file` takes `decks/<deck>/plays/<id>.json` only), so
 it is never linted or reprioritised. An admit carrying nothing but evidence
 is `admitted` with `dsl_change: false`.
 
-`admitted` also says what landed: `files`, and `dsl_change` - true when a
-play file was added or deleted, or changed beyond its top-level `priority`.
+`admitted` also says what landed: `files`, `dsl_change` - true when a play
+file was added or deleted, or changed beyond its top-level `priority` - and
+`plays`, the same verdict broken out per play file touched (`_landing`),
+which is what lets a per-game reader (`playscripts.stats.game_play_stats`)
+count adds/updates/reprioritizations by play id rather than only know that
+*something* in the admit was or wasn't a DSL change.
 
 `no-change` changes nothing: it records, for one post-game candidate (a play
 by `--play`, or a hand-played line by `--line`), why it needs no DSL change.
@@ -317,30 +321,53 @@ def _without_priority(text: str | None) -> Any:
     return doc
 
 
-def _landing(git: Git) -> tuple[list[str], bool]:
-    """Every path HEAD carries over origin main, and whether any of them is
-    a DSL change: a play file added or deleted, or changed beyond its
-    top-level priority."""
+def _landing(git: Git) -> tuple[list[str], bool, list[dict[str, Any]]]:
+    """Every path HEAD carries over origin main, whether any of them is a
+    DSL change (a play file added or deleted, or changed beyond its
+    top-level priority), and, per play file touched, which of the four ways
+    it changed: `plays`, one `{"id": <play id>, "change": ...}` per play
+    file, `change` one of `"added"` (status `A`), `"deleted"` (status `D` -
+    still a DSL change; a caller counting play ids treats it as `"updated"`,
+    same as `stats.game_play_stats` does), `"updated"` (status `M`, and the
+    file differs from upstream beyond its top-level `priority`), or
+    `"reprioritized"` (status `M`, `priority` the only difference). Unlike
+    the old aggregate-only `dsl_change`, this is computed for every play
+    file touched, not just up to the first one that set `dsl_change` true -
+    a caller that wants to know *which* play changed *how* (`stats.
+    game_play_stats`'s `added`/`updated`/`reprioritized`) needs all of them,
+    not only whichever justified the boolean."""
     raw = git.out("diff", "--no-renames", "--name-status", "-z", UPSTREAM, "HEAD").split("\0")
     files: list[str] = []
+    plays: list[dict[str, Any]] = []
     dsl_change = False
     for status, path in zip(raw[0::2], raw[1::2], strict=False):
         if not path:
             continue
         files.append(path)
-        if not _play_file(path) or dsl_change:
+        if not _play_file(path):
             continue
-        if status in ("A", "D"):
+        play_id = Path(path).stem
+        if status == "A":
+            plays.append({"id": play_id, "change": "added"})
+            dsl_change = True
+            continue
+        if status == "D":
+            plays.append({"id": play_id, "change": "deleted"})
             dsl_change = True
             continue
         try:
             before = _without_priority(git.show(f"{UPSTREAM}:{path}"))
             after = _without_priority(git.show(f"HEAD:{path}"))
         except ValueError:
+            plays.append({"id": play_id, "change": "updated"})
             dsl_change = True
             continue
-        dsl_change = before != after
-    return sorted(files), dsl_change
+        if before != after:
+            plays.append({"id": play_id, "change": "updated"})
+            dsl_change = True
+        else:
+            plays.append({"id": play_id, "change": "reprioritized"})
+    return sorted(files), dsl_change, plays
 
 
 def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
@@ -396,7 +423,7 @@ def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
                 # the agent to fix and admit again as one commit.
                 git.out("reset", "-q", "--soft", "HEAD~1")
             raise
-        files, dsl_change = _landing(git)
+        files, dsl_change, plays = _landing(git)
         if git.push(f"HEAD:refs/heads/{MAIN}"):
             _save_deltas(git, {})
             return result(
@@ -405,6 +432,7 @@ def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
                 sha=git.head(),
                 files=files,
                 dsl_change=dsl_change,
+                plays=plays,
                 **picked,
             )
 
