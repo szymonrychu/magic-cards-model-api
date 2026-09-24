@@ -24,16 +24,21 @@
     },
     {
       "letter": "e",
+      "name": "pending_decision",
+      "rule": "an explicit pending_decision true condition, or a declare_attackers/declare_blockers first move (the runtime's other priority-gate relaxation), names a decision kind a play can only run in answer to; two plays naming disjoint, nonempty sets of those kinds cannot both apply"
+    },
+    {
+      "letter": "f",
       "name": "input",
       "rule": "an input condition in each play on the same name whose value sets cannot both hold; a false-list condition is negated first"
     },
     {
-      "letter": "f",
+      "letter": "g",
       "name": "true_false",
       "rule": "a normalized condition is in one play's true and the other's false"
     },
     {
-      "letter": "g",
+      "letter": "h",
       "name": "numeric_range",
       "rule": "count, zone_size, life, untapped_mana or int-input conditions on the same key whose ranges cannot overlap; a false-list condition is negated first"
     }
@@ -114,7 +119,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "either is never disjoint from anything",
       "a": {
@@ -193,7 +199,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "precombat_main is in both",
       "a": {
@@ -271,7 +278,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "a * play applies against every key",
       "a": {
@@ -311,7 +319,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "living-end is in both",
       "a": {
@@ -400,7 +409,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "stack any allows a top object",
       "a": {
@@ -451,7 +461,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "a stack_top in false does not require a stack object",
       "a": {
@@ -554,6 +565,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "input"
       ],
       "note": "aggro satisfies both",
@@ -667,6 +679,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "input"
       ],
       "note": "* satisfies both",
@@ -825,6 +838,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "input"
       ],
       "note": "false satisfies both",
@@ -987,6 +1001,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "input",
         "numeric_range"
       ],
@@ -1097,6 +1112,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "input",
         "numeric_range"
       ],
@@ -1209,7 +1225,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "different inputs never contradict",
       "a": {
@@ -1323,7 +1340,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "different conditions",
       "a": {
@@ -1386,6 +1404,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "true_false"
       ],
       "note": "the same condition in both true lists",
@@ -1547,6 +1566,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "numeric_range"
       ],
       "note": "8 and 9 satisfy both",
@@ -1601,7 +1621,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "different keys never contradict",
       "a": {
@@ -1872,7 +1893,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "lands and creatures are different keys",
       "a": {
@@ -1988,6 +2010,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "numeric_range"
       ],
       "note": "life can be negative, so -1 satisfies both",
@@ -2043,6 +2066,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "true_false",
         "numeric_range"
       ],
@@ -2141,7 +2165,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "a list and the built-in input are one dimension: dimir-frog cannot be living-end",
       "a": {
@@ -2191,7 +2216,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "false: eq dimir-frog leaves * and living-end, which miss the list",
       "a": {
@@ -2241,7 +2267,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "a's list narrowed by its own ne living-end is dimir-frog alone",
       "a": {
@@ -2290,7 +2317,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "the input asserts the one archetype the list names",
       "a": {
@@ -2341,7 +2369,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "a pattern-invalid key is unknown-archetype-key alone, and the errored play raises no conflict",
       "a": {
@@ -2385,7 +2414,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "an empty stack has no top: b can never apply",
       "a": {
@@ -2435,7 +2465,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "one normalized condition must both hold and not hold: b can never apply",
       "a": {
@@ -2490,6 +2521,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "numeric_range"
       ],
       "note": "b needs life >= 10 and, its false condition negated, life <= 5: those ranges cannot overlap, so b can never apply",
@@ -2601,6 +2633,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "numeric_range"
       ],
       "note": "turn 2 satisfies both",
@@ -2657,6 +2690,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "numeric_range"
       ],
       "note": "one selector with missing_from is one key: at least one missing piece and none cannot both hold",
@@ -2753,6 +2787,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "numeric_range"
       ],
       "note": "missing_from zones are a set, so reordered zones are the same key",
@@ -2851,6 +2886,7 @@
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "numeric_range"
       ],
       "note": "the same missing_from count in one play's true and the other's false",
@@ -2944,7 +2980,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "a library Tower beside a battlefield Tower: no piece is missing, yet the library holds one, so both apply; selectors differing only in missing_from are different keys",
       "a": {
@@ -3029,7 +3066,8 @@
         "whose_turn",
         "steps",
         "opposing_archetypes",
-        "stack"
+        "stack",
+        "pending_decision"
       ],
       "note": "missing from the battlefield and hand, and yet present in the graveyard: different zones are different keys",
       "a": {
@@ -3112,6 +3150,370 @@
           }
         ],
         "false": []
+      }
+    },
+    {
+      "name": "pending-decision-different-kinds",
+      "verdict": "exclusive",
+      "dimension": "pending_decision",
+      "proven_by": [
+        "pending_decision"
+      ],
+      "note": "a seat holds at most one pending decision at once",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "pending_decision",
+            "decision": "scry"
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "pending_decision",
+            "decision": "surveil"
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "pending-decision-same-kind-is-not-exclusive",
+      "verdict": "conflicting",
+      "dimension": "pending_decision",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "pending_decision",
+        "true_false"
+      ],
+      "note": "the same pending kind on both sides proves nothing",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "pending_decision",
+            "decision": "scry"
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "pending_decision",
+            "decision": "scry"
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "pending-decision-declare-attackers-vs-declare-blockers",
+      "verdict": "exclusive",
+      "dimension": "pending_decision",
+      "proven_by": [
+        "pending_decision"
+      ],
+      "note": "combat moves: a declare_attackers play and a declare_blockers play are exclusive by decision, the same proof as two differing pending_decision conditions",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "declare_attackers",
+            "attackers": []
+          }
+        ]
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "declare_blockers",
+            "blocks": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "compare-true-vs-identical-false-is-exclusive",
+      "verdict": "exclusive",
+      "dimension": "true_false",
+      "proven_by": [
+        "true_false"
+      ],
+      "note": "compare is canonicalised as one literal, the same as any other condition",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "compare",
+            "left": {
+              "of": "count",
+              "select": {
+                "types_any": [
+                  "Creature"
+                ]
+              },
+              "side": "me"
+            },
+            "op": ">=",
+            "right": {
+              "of": "n",
+              "n": 3
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [
+          {
+            "kind": "compare",
+            "left": {
+              "of": "count",
+              "select": {
+                "types_any": [
+                  "Creature"
+                ]
+              },
+              "side": "me"
+            },
+            "op": ">=",
+            "right": {
+              "of": "n",
+              "n": 3
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "compare-different-conditions-do-not-falsely-claim-numeric-range",
+      "verdict": "conflicting",
+      "dimension": "numeric_range",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "pending_decision"
+      ],
+      "note": "compare's own op/n never register as a NUMERIC_KINDS condition; no false numeric_range",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "compare",
+            "left": {
+              "of": "power_sum",
+              "select": {
+                "types_any": [
+                  "Creature"
+                ]
+              },
+              "side": "me"
+            },
+            "op": ">=",
+            "right": {
+              "of": "life",
+              "side": "opponent"
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "compare",
+            "left": {
+              "of": "count",
+              "select": {
+                "types_any": [
+                  "Land"
+                ]
+              },
+              "side": "me"
+            },
+            "op": ">=",
+            "right": {
+              "of": "n",
+              "n": 4
+            }
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "all-of-is-one-literal-not-decomposed-for-true-false",
+      "verdict": "conflicting",
+      "dimension": "true_false",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "pending_decision"
+      ],
+      "note": "a bare member of an all_of never matches the all_of itself",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": ">=",
+            "n": 8
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [
+          {
+            "kind": "all_of",
+            "conditions": [
+              {
+                "kind": "life",
+                "side": "me",
+                "op": ">=",
+                "n": 8
+              },
+              {
+                "kind": "life",
+                "side": "opponent",
+                "op": "<=",
+                "n": 5
+              }
+            ]
+          }
+        ]
       }
     }
   ]

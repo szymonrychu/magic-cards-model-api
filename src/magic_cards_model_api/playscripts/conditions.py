@@ -25,6 +25,19 @@ information by construction:
   Every supplied input is first checked against the catalog: a name it does
   not hold, or a value outside the input's enum, bool or int range, makes the
   script unevaluable (`invalid_input`) rather than silently not holding.
+- `pending_decision` (FB2 C1) holds when the view's own `pending_decision` is
+  that kind and is this viewer's to answer (`seatkit.decision_is_mine`).
+- `compare` (FB2 C2) reads two `Operand`s and applies `op`: `count`/
+  `zone_size`/`life`/`untapped_mana` read exactly what the same-named
+  conditions read (summed by side for `life`/`untapped_mana`, since an
+  operand's side is a single name in the 1v1 games this DSL targets today);
+  `power_sum`/`toughness_sum` add the current power/toughness of a side's
+  matching battlefield permanents (`selectors.sum_matching`); `n` is a bare
+  literal.
+- `all_of` (FB2 C3, `false` list only) holds - and so excludes the play -
+  only when every member condition holds; one that does not is enough to
+  make the whole `all_of` not hold, regardless of any other member's own
+  input needs.
 
 Side `opponent` is every player but the viewer; `any` is every player. A
 count or size sums over them; `life` holds when any of them satisfies it.
@@ -45,9 +58,9 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ..seatkit import untapped_mana_sources
+from ..seatkit import decision_is_mine, untapped_mana_sources
 from .inputs import input_catalog, supplied_input_problem
-from .selectors import Hypo, Present, compare, matches
+from .selectors import Hypo, Present, compare, matches, sum_matching
 
 HIDDEN_CONTENTS = {"library": "library_contents", "sideboard": "sideboard_contents"}
 
@@ -127,22 +140,44 @@ def _selector_fields(node: Any):
             yield from _selector_fields(value)
 
 
+def _count_objects(node: Any):
+    """Every count-reading object in a play, a move or an answer: a `count`
+    condition (`kind == "count"`, possibly nested inside an `all_of` member,
+    FB2 C3) or `compare`'s `count` operand (`of == "count"`, FB2 C2, nested
+    inside a `compare` condition wherever one appears) - not what is built
+    later from a fresh fetch (a play's `moves` or a move's `answers`), the
+    same exclusion `_missing_froms`/`_selector_fields` make. A `CountOperand`
+    carries no `known_only` of its own (unlike `CountCondition`), so
+    `needs_contents` below reads that as "always needs contents" for one
+    naming a hidden zone on `me` - there is no opt-out to read."""
+    if isinstance(node, dict):
+        if node.get("kind") == "count" or node.get("of") == "count":
+            yield node
+        for key, value in node.items():
+            if key not in ("moves", "answers"):
+                yield from _count_objects(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _count_objects(value)
+
+
 def needs_contents(script: BaseModel | dict[str, Any]) -> bool:
     """Must the caller fetch the view with `include=contents` to evaluate
     this play's conditions (or build this move, or this answer)? A count over
-    the viewer's own library or sideboard, a `missing_from` reading either on
-    side `me`, or a selector naming `unlocks_by_search` or
+    the viewer's own library or sideboard - a `count` condition or `compare`
+    `count` operand alike, `_count_objects` walking into `all_of` members and
+    `compare` operands the same as a top-level condition - a `missing_from`
+    reading either on side `me`, or a selector naming `unlocks_by_search` or
     `unlocks_by_basic_search` (O7 - the library lands it could unlock are
     read off the same viewer library the rest of a play's own reasoning
     about that zone expects to have in hand), needs it."""
     doc = _as_dict(script)
     return (
         any(
-            condition.get("kind") == "count"
-            and condition.get("zone") in HIDDEN_CONTENTS
-            and condition.get("side") in ("me", "any")
-            and not condition.get("known_only")
-            for _, _, condition in _conditions(doc)
+            obj.get("zone") in HIDDEN_CONTENTS
+            and obj.get("side") in ("me", "any")
+            and not obj.get("known_only")
+            for obj in _count_objects(doc)
         )
         or any(
             missing.get("side") == "me" and set(missing.get("zones") or []) & set(HIDDEN_CONTENTS)
@@ -375,6 +410,58 @@ def _player(view: dict[str, Any], name: str) -> dict[str, Any]:
     return next((p for p in view.get("players") or [] if p["username"] == name), {})
 
 
+def _side_sum(view: dict[str, Any], viewer: str, side: str, read: Any) -> int | float | None:
+    """`read(name)` summed over every player `side` resolves to (`_names`) -
+    always one player in the 1v1 games this DSL targets today, so this
+    degenerates to `read(that one player)` exactly, never a dict."""
+    values = [value for name in _names(view, viewer, side) if (value := read(name)) is not None]
+    return sum(values) if values else None
+
+
+def _operand_value(
+    operand: dict[str, Any],
+    view: dict[str, Any],
+    viewer: str,
+    *,
+    hypo: Hypo | None = None,
+    untapped: int | None = None,
+) -> int | float | None:
+    """The number `compare`'s `left`/`right` operand reads (FB2 C2):
+    `count`/`zone_size` are `_count`/`_zone_size` themselves - the exact
+    functions the same-named conditions call; `life`/`untapped_mana` sum the
+    same per-player reads those conditions make, over every player `side`
+    resolves to (`_side_sum`); `power_sum`/`toughness_sum` add the current
+    power/toughness of `side`'s matching battlefield permanents
+    (`selectors.sum_matching`, the same selector matching every other
+    condition uses); `n` is a bare literal."""
+    of = operand["of"]
+    if of == "count":
+        return _count(operand, view, viewer, hypo=hypo, untapped=untapped)
+    if of == "zone_size":
+        return _zone_size(operand, view, viewer)
+    if of == "life":
+        return _side_sum(
+            view, viewer, operand["side"], lambda name: _player(view, name).get("life")
+        )
+    if of == "untapped_mana":
+        return _side_sum(view, viewer, operand["side"], lambda name: untapped_mana(view, name))
+    if of in ("power_sum", "toughness_sum"):
+        field = "power" if of == "power_sum" else "toughness"
+        names = _names(view, viewer, operand["side"])
+        cards = [card for card in view.get("battlefield") or [] if card.get("controller") in names]
+        return sum_matching(
+            cards,
+            operand.get("select") or {},
+            field,
+            presence(view, viewer),
+            untapped_mana=untapped,
+            hypo=hypo,
+        )
+    if of == "n":
+        return operand["n"]
+    raise ValueError(f"operand of {of!r} is not in the closed vocabulary")
+
+
 def _input_equal(a: Any, b: Any) -> bool:
     if isinstance(a, bool) or isinstance(b, bool):
         return isinstance(a, bool) and isinstance(b, bool) and a is b
@@ -455,6 +542,27 @@ def _check(
             return False, None, name if spec.get("required") is True else None
         actual = inputs[name]
         return _input_holds(condition["op"], condition["value"], actual), actual, None
+    if kind == "pending_decision":
+        pending = view.get("pending_decision")
+        seen = pending.get("kind") if isinstance(pending, dict) else None
+        holds = seen == condition["decision"] and decision_is_mine(pending, view, viewer)
+        return holds, seen, None
+    if kind == "compare":
+        left = _operand_value(condition["left"], view, viewer, hypo=hypo, untapped=untapped)
+        right = _operand_value(condition["right"], view, viewer, hypo=hypo, untapped=untapped)
+        return compare(left, condition["op"], right), {"left": left, "right": right}, None
+    if kind == "all_of":
+        needs_input: str | None = None
+        for member in condition["conditions"]:
+            member_holds, _, member_needs_input = _check(
+                member, view, viewer, inputs, catalog, hypo=hypo, untapped=untapped
+            )
+            if member_needs_input is None and not member_holds:
+                return False, False, None
+            needs_input = needs_input or member_needs_input
+        if needs_input is not None:
+            return False, None, needs_input
+        return True, True, None
     raise ValueError(f"condition kind {kind!r} is not in the closed vocabulary")
 
 

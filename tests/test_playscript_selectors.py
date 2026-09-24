@@ -136,6 +136,47 @@ def test_power_and_toughness_compare_and_a_non_creature_never_matches():
     assert not matches({"power": {"op": ">=", "n": 0}}, bolt())
 
 
+def test_compare_guards_both_sides_a_non_number_on_either_side_never_compares():
+    """`compare` is `value op n` for two real numbers (FB2 C2: `compare`'s
+    operand reads can land a non-number - a `life` operand over a player
+    the view has no life for, `None` - on either side, not only the left."""
+    from magic_cards_model_api.playscripts.selectors import compare
+
+    assert compare(5, ">=", 3) is True
+    assert compare(5, ">=", None) is False
+    assert compare(None, ">=", 5) is False
+    assert compare(5, ">=", True) is False, "a bool is never a real number here either"
+
+
+def test_sum_matching_adds_the_field_of_every_matching_card():
+    """FB2 C2's `power_sum`/`toughness_sum` operands: the summed `power` (or
+    `toughness`) of every card `selector` matches, 0 for one that does not
+    match or does not carry that characteristic (a land has no power)."""
+    from magic_cards_model_api.playscripts.selectors import sum_matching
+
+    cards = [
+        card("Bear1", type_line="Creature — Bear", power=2, toughness=2),
+        card("Bear2", type_line="Creature — Bear", power=3, toughness=1),
+        card("Wall", type_line="Creature — Wall", power=0, toughness=6),
+        card("Land", type_line="Land"),
+    ]
+    assert sum_matching(cards, {"types_any": ["Creature"]}, "power") == 5
+    assert sum_matching(cards, {"types_any": ["Creature"]}, "toughness") == 9
+    assert sum_matching(cards, {}, "power") == 5, "the land contributes 0, not an error"
+    assert sum_matching([], {}, "power") == 0
+
+
+def test_sum_matching_reads_the_same_selector_matching_every_other_condition_uses():
+    cards = [
+        card("Bear", type_line="Creature — Bear", power=2, toughness=2, tapped=True),
+        card("Elf", type_line="Creature — Elf", power=1, toughness=1, tapped=False),
+    ]
+    from magic_cards_model_api.playscripts.selectors import sum_matching
+
+    assert sum_matching(cards, {"tapped": True}, "power") == 2
+    assert sum_matching(cards, {"tapped": False}, "power") == 1
+
+
 def test_keywords_any_is_case_insensitive():
     sewers = card("Sewers", type_line="Land — Island Swamp", keywords=("Surveil",))
     assert matches({"keywords_any": ["surveil"]}, sewers)

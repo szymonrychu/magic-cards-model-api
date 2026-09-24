@@ -45,7 +45,10 @@ Corpus rules (a deck's plays together), by code:
   built-in.
 - `never-applicable`: a play's own fields do not contradict. `when.stack` is
   `empty` while a `true` condition is a `stack_top` (named: the first such
-  `true[i]`), or one normalized condition must both hold and not hold (named:
+  `true[i]`), or two `true` `pending_decision` conditions name different
+  decision kinds (a seat holds at most one pending decision at once, named:
+  the first two places), or one normalized condition must both hold and not
+  hold (named:
   the first two places, `true[i]`/`false[j]` or two indexes of one list after
   the `land_drop_available` flip), or two numeric conditions on one key (the
   `numeric_range` key: count, zone_size, life, untapped_mana or turn with the same
@@ -70,10 +73,19 @@ at least one dimension holds: `whose_turn` (mine vs theirs), `steps`
 (disjoint), `opposing_archetypes` (the archetype sets do not intersect: a
 play's set is its list, every archetype when it holds `*`, narrowed by each of
 its conditions on the built-in `opposing_archetype`), `stack` (one empty, the
-other needs a `stack_top` in `true`), `input` (same input, value sets that
+other needs a `stack_top` in `true`), `pending_decision` (FB2: the decision
+kinds a play can only run in answer to - an explicit `pending_decision`
+condition, or a `declare_attackers`/`declare_blockers` first move - are
+disjoint and both nonempty; a seat holds at most one pending decision at
+once, so this is also why a declare_attackers play and a declare_blockers
+play are exclusive), `input` (same input, value sets that
 cannot both hold), `true_false` (one normalized condition in one play's
-`true` and the other's `false`), `numeric_range` (count, zone_size, life,
-untapped_mana, turn or int-input ranges on one key that cannot overlap). A `false`
+`true` and the other's `false` - `compare` and `all_of` (FB2) are
+canonicalised as single literals here too, never decomposed into their
+operands or members), `numeric_range` (count, zone_size, life,
+untapped_mana, turn or int-input ranges on one key that cannot overlap -
+`compare` and `all_of` never register here at all: `_constraint` returns no
+numeric range for either kind). A `false`
 condition is negated before the input and numeric checks. A selector's `missing_from` is
 never a dimension of its own: it is part of the normalized condition, its
 `zones` a set like every scalar list, so selectors that differ only in it are
@@ -101,7 +113,7 @@ from .inputs import (
     newest_matchup_keys,
 )
 from .schema import CODES as SCHEMA_CODES
-from .schema import OPS, WILDCARD, PlaysError, play_errors
+from .schema import COMBAT_DECISION_KINDS, OPS, WILDCARD, PlaysError, play_errors
 
 __all__ = [
     "CODES",
@@ -128,6 +140,7 @@ EXCLUSIVITY_DIMENSIONS = (
     "steps",
     "opposing_archetypes",
     "stack",
+    "pending_decision",
     "input",
     "true_false",
     "numeric_range",
@@ -424,6 +437,27 @@ def _never_applicable(doc: dict[str, Any], rel: str, catalog: dict[str, Any]) ->
                     )
                 )
                 break
+    pending_seen: str | None = None
+    pending_where: str = ""
+    for where, polarity, condition in placed:
+        if not polarity or condition.get("kind") != "pending_decision":
+            continue
+        decision = condition.get("decision")
+        if not isinstance(decision, str):
+            continue
+        if pending_seen is None:
+            pending_seen, pending_where = decision, where
+        elif decision != pending_seen:
+            errors.append(
+                CorpusError(
+                    "never-applicable",
+                    rel,
+                    f"{pending_where} needs pending decision {pending_seen!r} and {where} "
+                    f"needs {decision!r}; only one decision can be pending for a seat at "
+                    "once, so the play can never apply",
+                )
+            )
+            break
     first: dict[tuple[bool, str], str] = {}
     reported: set[str] = set()
     for where, polarity, condition in placed:
@@ -577,6 +611,38 @@ def _needs_stack_top(doc: dict[str, Any]) -> bool:
     return any(c.get("kind") == "stack_top" for c in _conditions(doc, True))
 
 
+def _pending_decision_kinds(doc: dict[str, Any]) -> frozenset[str]:
+    """The decision kinds this play can only run in answer to (FB2): an
+    explicit `pending_decision` `true` condition, or - the runtime's other
+    priority-gate relaxation (FC5) - a `declare_attackers`/`declare_blockers`
+    first move, which the runtime also only runs straight off that seat's
+    own pending decision. Empty for an ordinary priority-window play: the
+    runtime's gate (`_drive`'s holds_priority check, `_wait_for_own_
+    priority`'s UNFORESEEN-on-pending) blocks every other first-move kind
+    unless the seat currently holds priority, i.e. no decision is pending
+    for it at all - the exact complement of what a nonempty result here
+    names. A seat holds at most one pending decision at once, so two plays
+    naming disjoint, nonempty sets here can never both apply at the same
+    decision point - the "Combat moves" case (a declare_attackers play and a
+    declare_blockers play) falls out of the same proof, not a rule of its
+    own."""
+    kinds = {
+        condition["decision"]
+        for condition in _conditions(doc, True)
+        if condition.get("kind") == "pending_decision"
+        and isinstance(condition.get("decision"), str)
+    }
+    moves = doc.get("moves")
+    if (
+        isinstance(moves, list)
+        and moves
+        and isinstance(moves[0], dict)
+        and moves[0].get("kind") in COMBAT_DECISION_KINDS
+    ):
+        kinds.add(moves[0]["kind"])
+    return frozenset(kinds)
+
+
 def _archetypes(doc: dict[str, Any], inputs: list[Any]) -> frozenset[str] | None:
     """The archetypes a play can apply against, None for every one: its
     `opposing_archetypes` (every one when it holds `*`) narrowed by each of its
@@ -608,6 +674,9 @@ def exclusivity(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -
         _when(b).get("stack") == "empty" and _needs_stack_top(a)
     ):
         proven.append("stack")
+    pending_a, pending_b = _pending_decision_kinds(a), _pending_decision_kinds(b)
+    if pending_a and pending_b and not pending_a & pending_b:
+        proven.append("pending_decision")
     if any(na == nb and _values_disjoint(x, y) for na, x in inputs_a for nb, y in inputs_b):
         proven.append("input")
     literals_b = _literals(b)
@@ -620,7 +689,7 @@ def exclusivity(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -
 
 def conflict_dimensions(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -> list[str]:
     """The dimensions two conflicting plays overlap on, for the warning."""
-    dimensions = ["whose_turn", "steps", "opposing_archetypes", "stack"]
+    dimensions = ["whose_turn", "steps", "opposing_archetypes", "stack", "pending_decision"]
     inputs_a, numeric_a = _constraints(a, catalog)
     inputs_b, numeric_b = _constraints(b, catalog)
     if {name for name, _ in inputs_a} & {name for name, _ in inputs_b}:
