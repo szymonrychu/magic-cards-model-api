@@ -297,7 +297,7 @@ def _arm_release_timer(game_id: str, delay: float | None = None) -> None:
 
 
 def _release_timer_fired(game_id: str) -> None:
-    deadline = _followup_deadline(_followup_rows(game_id))
+    deadline = _followup_deadline(game_id, _followup_rows(game_id))
     if deadline is not None and deadline > clock():
         # A follow-up was scheduled after this timer was armed: its own
         # window is still open, so wait that out instead.
@@ -382,11 +382,20 @@ def _followup_running(game_id: str, rows: FollowupRows) -> bool:
     return False
 
 
-def _followup_deadline(rows: FollowupRows) -> float | None:
+def _followup_deadline(game_id: str, rows: FollowupRows) -> float | None:
     """When the newest scheduled follow-up's window closes, or `None` when
-    none was scheduled (or its stamp does not parse)."""
+    none was scheduled (or its stamp does not parse). A follow-up only ever
+    extends the post-game bound, never shortens it: the driver's own review
+    join can outlast the follow-up's window (DR3), so the answer is never
+    earlier than `game_over` + `POSTGAME_RELEASE_SECONDS`."""
     stamps = [stamp for stamp in rows[0].values() if stamp is not None]
-    return max(stamps) + FOLLOWUP_RELEASE_SECONDS if stamps else None
+    if not stamps:
+        return None
+    deadline = max(stamps) + FOLLOWUP_RELEASE_SECONDS
+    ended_at = _ended_at(game_id)
+    if ended_at is not None:
+        deadline = max(deadline, ended_at + POSTGAME_RELEASE_SECONDS)
+    return deadline
 
 
 def schedule_followup(
@@ -412,7 +421,8 @@ def schedule_followup(
     live set, so reconcile would only delete the Job again - End game is
     the hard stop), nor once `release_overdue` has already let this game's
     runners go: the post-game window is spent (`skipped`). A scheduled
-    follow-up re-arms the release timer for `FOLLOWUP_RELEASE_SECONDS`.
+    follow-up re-arms the release timer for its window, or for what is left
+    of the post-game bound when that is longer.
     """
     for entry in audit.entries(game_id):
         detail = entry.get("detail") or {}
@@ -457,7 +467,10 @@ def schedule_followup(
     )
     audit.record(game_id, FOLLOWUP_ACTION, note=note, **detail)
     if state == "scheduled":
-        _arm_release_timer(game_id, FOLLOWUP_RELEASE_SECONDS)
+        deadline = _followup_deadline(game_id, _followup_rows(game_id))
+        _arm_release_timer(
+            game_id, FOLLOWUP_RELEASE_SECONDS if deadline is None else deadline - clock()
+        )
     return status["state"] if status["state"] == "exists" else state
 
 
@@ -543,7 +556,7 @@ def post_game_work(game_id: str) -> bool:
         ai_seat.registry.finishing(uid) for uid, _, _ in _runner_uids(game_id)
     ):
         return False
-    deadline = _followup_deadline(rows)
+    deadline = _followup_deadline(game_id, rows)
     if deadline is not None:
         if clock() > deadline:
             return release_overdue(game_id)

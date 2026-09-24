@@ -372,12 +372,17 @@ def test_the_followup_extends_the_post_game_bound_and_then_is_released(
     outcome(client, booted)
     [name] = followup_jobs(cluster.batch)
     real = time.time()
+    shorter = min(lobby.POSTGAME_RELEASE_SECONDS, lobby.FOLLOWUP_RELEASE_SECONDS)
+    longer = max(lobby.POSTGAME_RELEASE_SECONDS, lobby.FOLLOWUP_RELEASE_SECONDS)
 
-    monkeypatch.setattr(lobby, "clock", lambda: real + lobby.POSTGAME_RELEASE_SECONDS + 5)
-    assert lobby.post_game_work(game_id) is True, "inside the follow-up's own window"
+    monkeypatch.setattr(lobby, "clock", lambda: real + shorter + 5)
+    assert lobby.post_game_work(game_id) is True, "inside the longer of the two windows"
     assert name in cluster.batch.jobs
 
-    monkeypatch.setattr(lobby, "clock", lambda: real + lobby.FOLLOWUP_RELEASE_SECONDS + 5)
+    monkeypatch.setattr(lobby, "clock", lambda: real + longer - 5)
+    assert lobby.post_game_work(game_id) is True, "a follow-up never shortens the post-game bound"
+
+    monkeypatch.setattr(lobby, "clock", lambda: real + longer + 5)
     assert lobby.post_game_work(game_id) is False
     assert name not in cluster.batch.jobs
     overran = [
@@ -400,7 +405,8 @@ def test_scheduling_rearms_the_release_timer_for_the_followup_window(
     booted = boot(client)
     outcome(client, booted)
     timer = lobby._release_timers[booted["game_id"]]
-    assert timer.interval == lobby.FOLLOWUP_RELEASE_SECONDS
+    longer = max(lobby.POSTGAME_RELEASE_SECONDS, lobby.FOLLOWUP_RELEASE_SECONDS)
+    assert longer - 60 < timer.interval <= longer
 
 
 # ---------------------------------------------------------------------------
@@ -450,7 +456,7 @@ def test_the_handovers_timer_waits_out_an_open_followup_window(
     lobby._release_timer_fired(game_id)
 
     timer = lobby._release_timers[game_id]
-    assert 0 < timer.interval <= lobby.FOLLOWUP_RELEASE_SECONDS
+    assert 0 < timer.interval <= max(lobby.POSTGAME_RELEASE_SECONDS, lobby.FOLLOWUP_RELEASE_SECONDS)
     assert name in cluster.batch.jobs
     assert not [
         e
