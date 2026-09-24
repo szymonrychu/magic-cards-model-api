@@ -2166,17 +2166,23 @@ def test_the_same_play_does_not_fire_on_the_seats_own_turn(
 
 
 @pytest.mark.parametrize("step", ["declare_attackers", "declare_blockers"])
-def test_a_combat_declaration_step_is_refused_by_the_schema(
+def test_a_cast_play_may_be_scheduled_during_a_combat_declaration_step(
     client: TestClient, game: str, step: str
 ) -> None:
-    """Clause (d): the limit of this capability is discoverable from a test.
-    A script never attacks or blocks, and the schema hard-refuses the two
-    declaration steps rather than accepting a play that could never run."""
+    """Clause (d) is now narrower than it was: FB2's B4 made `when.steps`
+    accept the two combat declaration steps (schema.py's `STEPS =
+    AUTOPASS_STEPS`, which already carried them) so a flash-speed `cast` play
+    can hold for the declare-attackers/declare-blockers window - the same
+    "latest legal window" flash timing this play already exercises for
+    `end_step`. Declaring attacks/blocks itself is still a closed capability,
+    but through the new `declare_attackers`/`declare_blockers` move kinds
+    (`test_playscript_schema_fb2.py`'s M2/M3), not through refusing the step
+    name outright."""
     from magic_cards_model_api.playscripts.schema import play_errors
 
     alice = seat_uid(game, ME)
     play = flash_permanent_play("theirs-combat", steps=(step,))
-    assert "forbidden-kind" in {error.code for error in play_errors(play)}
+    assert play_errors(play) == []
 
     response = client.put(
         f"/api/games/{game}/seats/{alice}/scripts",
@@ -2188,4 +2194,4 @@ def test_a_combat_declaration_step_is_refused_by_the_schema(
             "inputs": [],
         },
     )
-    assert response.status_code == 422, response.text
+    assert response.status_code == 200, response.text

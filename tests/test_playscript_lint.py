@@ -78,8 +78,16 @@ def test_codes_and_warning_codes_are_the_shared_contract():
         "wildcard-with-keys",
         "answer-shape-mismatch",
     )
-    assert CODES[24:] == ("never-applicable",)
-    assert len(CODES) == 25
+    assert CODES[24:30] == (
+        "pass-not-last",
+        "combat-move-not-first",
+        "activate-ability-ref",
+        "all-of-outside-false",
+        "use-combat-move",
+        "answer-decision-mismatch",
+    )
+    assert CODES[30:] == ("never-applicable",)
+    assert len(CODES) == 31
     assert WARNING_CODES == ("play-conflict", "next-conflict")
     assert EXCLUSIVITY_DIMENSIONS == (
         "whose_turn",

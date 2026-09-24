@@ -387,9 +387,16 @@ def test_decide_put_on_top_or_bottom_is_unexpressible():
     assert record["unexpressible"] == "decide:put_on_top_or_bottom"
 
 
-def test_decide_declare_attackers_reuses_the_attack_label():
+def test_decide_declare_attackers_is_a_decide_kind_gap():
+    """FB2's B4 (magic-cards-model-api schema.py) narrowed
+    FORBIDDEN_DECISION_KINDS to assign_combat_damage/mulligan only:
+    declare_attackers/declare_blockers now get their own move kinds instead
+    of being refused outright, so a `decide`-shaped declare_attackers row is
+    no longer one of the five closed "not in the vocabulary" labels - it
+    falls to the generic decide-kind gap label like any other DecisionKind
+    this module does not yet convert."""
     record = only(decision_rows([_decide(1, "declare_attackers", pairs=[])], SEAT))
-    assert record["unexpressible"] == "attack"
+    assert record["unexpressible"] == "decide:declare_attackers"
 
 
 def test_decide_mulligan_reuses_the_mulligan_label():

@@ -67,6 +67,19 @@ SPELL_PARAMS = [
     pytest.param(*row, id=name) for row, name in zip(TARGETLESS_X_SPELLS, IDS, strict=True)
 ]
 
+#: The refusal text differs by ability shape, keyed by card name: an
+#: activated ability's own targets are chosen when it is later activated off
+#: the battlefield, still worded as the "too many targets ... at most 0"
+#: reason FC3 left untouched; a cast/ETB trigger's targets are chosen when
+#: that trigger is put on the stack (CR 603.3d, 115.1d), and FC3 (magic-
+#: cards-model, `machines.targeting.targeting_trigger_text`) names that real
+#: reason instead of the generic "too many targets" one.
+REASON_SUBSTRING = {
+    "Walking Ballista": "at most 0",
+    "Chamber Sentry": "at most 0",
+    "Ajani's Anguish": "whose targets are chosen when that ability is put on the stack",
+}
+
 
 def affordances(
     client: TestClient, game: str, card_id: str, player: str = "alice", **params: Any
@@ -199,4 +212,4 @@ def test_a_target_sent_anyway_is_refused_in_the_engines_own_words(
     assert response.status_code == 200, response.text
     outcome = response.json()
     assert outcome["allowed"] is False, outcome
-    assert "at most 0" in (outcome["reason"] or ""), outcome
+    assert REASON_SUBSTRING[name] in (outcome["reason"] or ""), outcome
