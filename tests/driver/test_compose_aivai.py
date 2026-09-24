@@ -163,10 +163,78 @@ def test_the_secret_appears_only_in_the_two_guides_inits_and_the_two_agents(comp
 
 
 def test_both_seats_default_to_opus_at_low_effort(compose):
+    """Sourced from the dedicated CLAUDE_AIVAI_MODEL/CLAUDE_AIVAI_EFFORT -
+    not the shared CLAUDE_MODEL/CLAUDE_EFFORT docker-compose.yml's single
+    seat reads - so a .env with the single-seat file's own non-blank
+    defaults set can never silently override this file's Opus-low seats
+    (bring-up fix, 2026-09-24)."""
     for name in ("agent-p1", "agent-p2"):
         env = _env(compose["services"][name])
-        assert env["MODEL"] == "${CLAUDE_MODEL:-claude-opus-5}"
-        assert env["EFFORT"] == "${CLAUDE_EFFORT:-low}"
+        assert env["MODEL"] == "${CLAUDE_AIVAI_MODEL:-claude-opus-5}"
+        assert env["EFFORT"] == "${CLAUDE_AIVAI_EFFORT:-low}"
+
+
+def test_the_game_seeds_its_own_agent_default_model_and_effort_from_the_aivai_vars(compose):
+    """`game`, not agent-p1/agent-p2's own env, is what
+    `agent_settings.AgentSettings.default` reads for a lobby-booted game
+    (model/effort are no longer a per-request field) - so `game` needs its
+    own AGENT_DEFAULT_MODEL/AGENT_DEFAULT_EFFORT, sourced from the same
+    dedicated CLAUDE_AIVAI_MODEL/CLAUDE_AIVAI_EFFORT vars as the two
+    wrapper containers, with the same claude-opus-5/low defaults."""
+    env = _env(compose["services"]["game"])
+    assert env["AGENT_DEFAULT_MODEL"] == "${CLAUDE_AIVAI_MODEL:-claude-opus-5}"
+    assert env["AGENT_DEFAULT_EFFORT"] == "${CLAUDE_AIVAI_EFFORT:-low}"
+
+
+def test_a_dotenv_carrying_the_shared_claude_model_does_not_change_the_aivai_seats() -> None:
+    """CLAUDE_MODEL/CLAUDE_EFFORT ship non-blank in .env.example for the
+    single-seat file - a literal `cp .env.example .env` leaves them set for
+    every compose file that reads the same .env, including this one.
+    Interpolate the real file the way `docker compose` would with those two
+    set (as they always are, straight out of the example) and
+    CLAUDE_AIVAI_MODEL/CLAUDE_AIVAI_EFFORT left unset, and confirm every
+    aivai seat - the two wrapper containers and `game`'s own
+    AGENT_DEFAULT_MODEL/AGENT_DEFAULT_EFFORT - still resolves to
+    claude-opus-5/low, never the shared sonnet/high."""
+    import json
+    import os
+    import shutil
+    import subprocess
+
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not installed in this environment")
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "MTG_DECKS": "/tmp",
+        "POSTGRES_PASSWORD": "test-only-password",
+        "CLAUDE_MODEL": "sonnet",
+        "CLAUDE_EFFORT": "high",
+    }
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(ROOT / "docker-compose.aivai.yml"),
+            "config",
+            "--format",
+            "json",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    resolved_services = json.loads(result.stdout)["services"]
+    for name in ("agent-p1", "agent-p2"):
+        resolved_env = resolved_services[name]["environment"]
+        assert resolved_env["MODEL"] == "claude-opus-5", (name, resolved_env["MODEL"])
+        assert resolved_env["EFFORT"] == "low", (name, resolved_env["EFFORT"])
+    game_env = resolved_services["game"]["environment"]
+    assert game_env["AGENT_DEFAULT_MODEL"] == "claude-opus-5"
+    assert game_env["AGENT_DEFAULT_EFFORT"] == "low"
 
 
 def test_both_agents_and_both_drivers_have_a_ninety_two_minute_stop_grace_period(compose):

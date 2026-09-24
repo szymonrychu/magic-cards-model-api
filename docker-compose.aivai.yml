@@ -64,6 +64,26 @@ services:
       # leaving both would suggest a fallback ordering that does not exist.
       - DRIVER_URLS=http://driver-p1:8090,http://driver-p2:8090
       - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
+      # Opus-vs-Opus at low effort (bring-up fix, 2026-09-24): since
+      # `agent_settings.AgentSettings.default` became the sole source of a
+      # lobby game's seat model/effort (2026-09-19, `NewUiPlayer` can no
+      # longer name one per request), `game` - not `agent-p1`/`agent-p2` -
+      # is what actually decides it; those two containers' own MODEL/EFFORT
+      # env only seed the wrapper's boot default, which the driver's
+      # `sync_agent_settings` overwrites with whatever `game` computed
+      # before turn 0. Without this, `game` fell through to
+      # `AgentSettings.DEFAULT_MODEL`/`DEFAULT_EFFORT` (claude-sonnet-5/high,
+      # the docker-compose.yml single-seat default) despite agent-p1/p2's
+      # env claiming Opus-low - silently running the wrong seats.
+      # `CLAUDE_AIVAI_MODEL`/`CLAUDE_AIVAI_EFFORT`, not
+      # `CLAUDE_MODEL`/`CLAUDE_EFFORT` - both compose files read the same
+      # `.env`, and `.env.example` ships `CLAUDE_MODEL=sonnet`/
+      # `CLAUDE_EFFORT=high` as non-blank defaults for the single-seat file,
+      # so this file's own fallback below never triggered for anyone who
+      # followed the literal `cp .env.example .env` bring-up step - it
+      # silently inherited sonnet/high. Dedicated vars close that collision.
+      - AGENT_DEFAULT_MODEL=${CLAUDE_AIVAI_MODEL:-claude-opus-5}
+      - AGENT_DEFAULT_EFFORT=${CLAUDE_AIVAI_EFFORT:-low}
     volumes:
       - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro
       - scryfall-cache:/app/.scryfall-cache
@@ -150,8 +170,8 @@ services:
       # Opus-high `agent_settings.review_default()` regardless - see
       # `agent_settings.py`'s module docstring for the documented `low`
       # stop risk and where the loop watches for it (DR8).
-      - MODEL=${CLAUDE_MODEL:-claude-opus-5}
-      - EFFORT=${CLAUDE_EFFORT:-low}
+      - MODEL=${CLAUDE_AIVAI_MODEL:-claude-opus-5}
+      - EFFORT=${CLAUDE_AIVAI_EFFORT:-low}
       - MAX_THINKING_TOKENS=${CLAUDE_MAX_THINKING_TOKENS:-}
       - HTTP_ADDR=:8080
       - INTERNAL_ADDR=127.0.0.1:8090
@@ -200,8 +220,8 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
-      - MODEL=${CLAUDE_MODEL:-claude-opus-5}
-      - EFFORT=${CLAUDE_EFFORT:-low}
+      - MODEL=${CLAUDE_AIVAI_MODEL:-claude-opus-5}
+      - EFFORT=${CLAUDE_AIVAI_EFFORT:-low}
       - MAX_THINKING_TOKENS=${CLAUDE_MAX_THINKING_TOKENS:-}
       - HTTP_ADDR=:8080
       - INTERNAL_ADDR=127.0.0.1:8090
