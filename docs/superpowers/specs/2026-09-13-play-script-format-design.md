@@ -508,7 +508,7 @@ offers no impending cast yet. A cost the card has no live cast option for is
 refused by the engine at run time, like any other illegal move; a value
 outside the set is `unknown-cast-cost` at check time.
 
-- Cast costs: `normal`, `adventure`, `airbend`, `bestow`, `dash`, `disguise`, `escape`, `evoke`, `flashback`, `foretell`, `harmonize`, `impending`, `madness`, `mayhem`, `megamorph`, `morph`, `plot`, `printed`, `prowl`, `sneak`, `warp`
+- Cast costs: `normal`, `adventure`, `airbend`, `bestow`, `dash`, `disguise`, `escape`, `evoke`, `flashback`, `foretell`, `harmonize`, `impending`, `madness`, `mayhem`, `megamorph`, `morph`, `plot`, `printed`, `prowl`, `sneak`, `spectacle`, `warp`
 
 `tests/test_playscript_schema.py` reads the engine's casting source, so a cast
 option the engine learns fails that test until it is added to `CAST_COSTS`,

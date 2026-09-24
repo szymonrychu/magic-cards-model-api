@@ -1370,6 +1370,29 @@ def second_legend(board: Board, zone: str, view: dict[str, Any]) -> bool:
     )
 
 
+def asks_an_unplanned_target(play: dict[str, Any], view: dict[str, Any]) -> int:
+    """1 for a card whose own "When ... enters" trigger chooses a target the
+    play's moves hold no `choose_targets` answer for, else 0. A counted
+    permanent is staged only to make a condition true, and a blink play
+    re-triggers it (CR 603.6a) - Boggart Trawler's "exile target player's
+    graveyard" then asks a question the play never planned, so such a card is
+    the stager's last choice, not its first."""
+    if any(
+        item.get("decision") == "choose_targets"
+        for move in play["moves"]
+        for item in move.get("answers") or []
+    ):
+        return 0
+    oracle = view.get("oracle_text", "").casefold()
+    return int(
+        any(
+            "enters" in sentence and "target" in sentence
+            for sentence in oracle.split("\n")
+            if sentence.startswith("when")
+        )
+    )
+
+
 def add_chosen(
     board: Board,
     play: dict[str, Any],
@@ -1377,7 +1400,7 @@ def add_chosen(
     zone: str,
     wanted: Callable[[dict[str, Any]], bool],
     what: str,
-    rank: Callable[[dict[str, Any]], int] | None = None,
+    rank: Callable[[dict[str, Any]], Any] | None = None,
 ) -> None:
     """Put into `zone` the deck's card that is `wanted`, breaks no false
     condition, ranks best, and matches the fewest other selectors the play
@@ -1759,7 +1782,7 @@ def stage(client: TestClient, play: dict[str, Any], pool: list[dict[str, Any]]) 
                 condition["zone"],
                 lambda view, c=condition: loose_matches(c["select"], view, present),
                 f"counted by {condition}",
-                finds_every_pick,
+                lambda view: (finds_every_pick(view), asks_an_unplanned_target(play, view)),
             )
 
     for move in play["moves"]:
