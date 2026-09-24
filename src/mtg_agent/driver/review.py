@@ -88,6 +88,7 @@ reviewer thought AND, per its own write-back clause, what it changed."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 from collections import Counter
@@ -96,6 +97,7 @@ from typing import Any
 from magic_cards_model_api.playscripts import stats as play_stats
 from magic_cards_model_api.playscripts.report import DevelopmentCandidates, offer_table
 
+from .config import DriverSettings
 from .handover import assess as journal_assess
 from .prompt import (
     NOTES_ROUTING,
@@ -215,6 +217,7 @@ GUIDE_UPDATES_HEADING = "The guide updates this game owes, as the seat was given
 #: here measures against the prompt's own budget.
 DECISIONS_HEADING = "Decisions:"
 
+
 #: DR3, owner addon 1: the rule that sits directly under `DECISIONS_HEADING`,
 #: stated in the prompt itself rather than left for the reviewer to infer.
 #: Every board in the section below is `board_by_perspective[<seat>]`
@@ -236,6 +239,7 @@ def _decisions_perspective_note(player: str) -> str:
         f"this board shows: a play runs live, during a real game, where {player} sees no more "
         "than this."
     )
+
 
 #: The routing block's own rendered size - the heading, a blank line, the
 #: shared `NOTES_ROUTING` text, the reviewer's own `NOTES_ROUTING_AFTER_GAME`
@@ -290,12 +294,29 @@ def _record_markers() -> tuple[str, str]:
     )
 
 
+def _default_guides_dir() -> str:
+    """FC2: the driver's own guides checkout path, read the same way
+    `DriverSettings.from_env` reads it (`GUIDES_ROOT`, default `/guides`) -
+    used only as `review_prompt`'s own default when no caller passes
+    `guides_dir` explicitly, so the `mcp-seat ... --root` invocations this
+    module writes into the prompt name the REAL checkout path rather than a
+    literal baked into this module.
+
+    `app.py`'s own call to `review_prompt` (`post_ai_review`) already has
+    `settings.guides_root` in scope - it would be a cleaner fix for that
+    call to pass `guides_dir=settings.guides_root` explicitly, but `app.py`
+    is an fb1-seat-ux file and out of this task's scope to edit; this
+    function is what makes the value correct anyway, without that edit."""
+    return str(DriverSettings.from_env(os.environ).guides_root)
+
+
 def review_prompt(
     assignment: Assignment,
     reflection_text: str,
     review_record: dict[str, Any],
     *,
     evidence: str | None = None,
+    guides_dir: str | None = None,
 ) -> str:
     """The text asked of Opus: `assignment.player`'s own reflection, then the
     game's declarations (plan vs. what actually happened), the game's whole
@@ -349,7 +370,18 @@ def review_prompt(
     `MAX_LEDGER_CHARS` keep the newest rows and declare in the prompt how
     many earlier ones were dropped, so the reviewer never mistakes a window
     for the whole game and `wrapper.oneshot._capped`'s silent 200_000
-    character guillotine is never reached."""
+    character guillotine is never reached.
+
+    **FC2: `guides_dir` names the exact `mcp-seat ... --root` the reviewer
+    must run.** Defaults to `_default_guides_dir()` (the driver's own real
+    checkout path) when not given. Before this, the ask told the reviewer to
+    run a bare `mcp-seat plays check` with no `--root`, whose own default is
+    `.` - which is `/workspace` under this process's own `cwd`, not the
+    checkout at all - so the reviewer found no corpus there and reached for
+    `cd /guides &&`, an absolute path, an env-var prefix, and `git`/
+    `python3`/`find`: every one of those shapes `wrapper.oneshot`'s
+    allowlist refuses (see that module's own docstring)."""
+    guides_dir = guides_dir or _default_guides_dir()
     # `players`/`winner` are usernames off the game record - the api's own
     # `Username` field (`schemas.py`) rejects a control character or a
     # newline at creation time now, but this text still reaches the model
@@ -445,6 +477,16 @@ def review_prompt(
     # unaccounted-for text appended on top of it later.
     write_bars_block = _write_bars_block(assignment, review_record, evidence)
     updates_block = f"{GUIDE_UPDATES_HEADING}\n\n{guide_updates(assignment)}"
+    # FC2: computed here, ahead of the ledger's own budget, rather than
+    # approximated through a fixed `_ASK_SIZE` baseline plus the
+    # player/opponent lengths the way it used to be - the ask now also
+    # interpolates `assignment.deck_slug`, `assignment.game_id` and
+    # `guides_dir`, each a variable number of times, and measuring the
+    # REAL rendered block is simpler and exact where the old formula was
+    # already an approximation.
+    ask_block = _ask(
+        assignment.player, assignment.opponent, assignment.deck_slug, assignment.game_id, guides_dir
+    )
     tail_size = (
         len(record_end)
         + _ROUTING_SIZE
@@ -453,9 +495,7 @@ def review_prompt(
         + 2
         + len(updates_block)
         + 2
-        + _ASK_SIZE
-        + 2 * len(assignment.player)
-        + len(assignment.opponent)
+        + len(ask_block)
     )
     remaining = PROMPT_BUDGET_CHARS - sum(len(line) + 1 for line in lines) - tail_size
     ledger = _ledger_lines(
@@ -518,7 +558,7 @@ def review_prompt(
     lines.append(updates_block)
     lines.append("")
 
-    lines.append(_ask(assignment.player, assignment.opponent))
+    lines.append(ask_block)
     return "\n".join(lines)
 
 
@@ -573,7 +613,7 @@ def _write_bars_block(
     )
 
 
-def _ask(player: str, opponent: str = "") -> str:
+def _ask(player: str, opponent: str, deck_slug: str, game_id: str, guides_dir: str) -> str:
     """The instruction after the record: what Opus is being asked for.
 
     **A named taxonomy, checked every turn, rather than "spot something".**
@@ -612,10 +652,13 @@ def _ask(player: str, opponent: str = "") -> str:
     alone.
 
     DR3: `player` is interpolated twice now (once here, once inside
-    `_turning_points_ask`) and `opponent` once (`_turning_points_ask` only)
-    - `_ASK_SIZE` measures `_ask("", "")` and `review_prompt`'s own
-    `tail_size` adds `2 * len(player) + len(opponent)` back for exactly that
-    reason."""
+    `_turning_points_ask`) and `opponent` once (`_turning_points_ask` only).
+    FC2: `deck_slug`, `game_id` and `guides_dir` are threaded through to
+    `_dsl_submission_ask`, which names the exact `mcp-seat` invocation for
+    `plays check`/`plays admit`/`guides propose`. `review_prompt` measures
+    this function's REAL rendered length for its own `tail_size` rather than
+    approximating it - see that function's own comment - so none of these
+    additions needed a matching size adjustment here."""
     return (
         "Walk the ledger turn by turn - every turn it carries, " + player + "'s "
         "own turns and the opponent's alike. The opponent's turns are where a "
@@ -665,7 +708,7 @@ def _ask(player: str, opponent: str = "") -> str:
         "sentences on what the declared plans and their outcomes show about "
         "this seat's reads on the board.\n"
         "\n"
-        + _dsl_submission_ask()
+        + _dsl_submission_ask(deck_slug, game_id, guides_dir)
         + "\n\n"
         + _turning_points_ask(player, opponent)
         + "\n\n"
@@ -675,12 +718,48 @@ def _ask(player: str, opponent: str = "") -> str:
     )
 
 
-def _dsl_submission_ask() -> str:
+def _mcp_seat_invocation_note() -> str:
+    """FC2: the sentence the ask needed and never had. Live evidence (loop
+    game 2's p2 review, ledger seq 299) shows a reviewer that was never told
+    the exact command shape reaching for `cd /guides &&`, an absolute path,
+    an env-var prefix (`MTG_GAME_ID=... mcp-seat ...`), and `git`/`python3`/
+    `find` - and every one of those refused by `wrapper.oneshot`'s
+    allowlist, which only ever named a bare `mcp-seat <subcommand>`
+    invocation (plus, after FC2, the same subcommand by absolute path - see
+    that module's own docstring). This states the rule the allowlist
+    actually enforces, so the reviewer stops discovering it by trial and
+    error."""
+    return (
+        "Run each `mcp-seat` command above exactly as shown, as one bare invocation: no "
+        "`cd` first, no environment-variable prefix (for example `MTG_GAME_ID=... "
+        "mcp-seat ...`), and no `&&` chain - the permission layer refuses all three shapes "
+        "and only the bare form is allowed to run. `git`, `python3` and `find` are not "
+        "available to you either; use Glob, Grep and Read to look around the guides clone "
+        "instead."
+    )
+
+
+def _dsl_submission_ask(deck_slug: str, game_id: str, guides_dir: str) -> str:
     """DR3, requirement (2): what the review must do with this game's own
     `Decisions` section, in the exact order the requirement names - (a)-(e)
     below, spelled out as a numbered list rather than lettered so it cannot
     be mistaken for `prompt.WRITE_BARS`'s own (a)/(b) lettering, which this
-    restates and orders rather than replaces."""
+    restates and orders rather than replaces.
+
+    FC2: every `mcp-seat` invocation below is now the exact command to run -
+    `--root guides_dir` on all three, `--deck`/`--game-id` on the two that
+    take them - rather than a bare subcommand name whose own `--root`
+    default (`.`) is `/workspace` under this process's own `cwd`, never the
+    checkout. `_mcp_seat_invocation_note` closes the rest of the gap: the
+    permission layer refuses `cd`, an env-var prefix and an `&&` chain
+    regardless of what command shape they wrap, so the ask states that
+    plainly rather than leaving the reviewer to discover it by trial and
+    error against a headless process with nobody to explain the refusal."""
+    check_cmd = f"mcp-seat plays check --root {guides_dir}"
+    admit_cmd = f"mcp-seat plays admit --deck {deck_slug} --game-id {game_id} --root {guides_dir}"
+    propose_cmd = (
+        f"mcp-seat guides propose --deck {deck_slug} --game-id {game_id} --root {guides_dir}"
+    )
     return (
         "Beyond the misplay review above, submit DSL for every decision this seat made "
         "this game, using the Decisions section you were given earlier, in this order:\n"
@@ -688,9 +767,9 @@ def _dsl_submission_ask() -> str:
         "1. SUBMIT ONE GENERALIZED PLAY PER DECISION: for every decision in the Decisions "
         "section, refine a play it already matches, or draft one it does not, merged and "
         "deduplicated into the deck's existing corpus rather than filed beside it. Run "
-        "`mcp-seat plays check` before you write anything and again after, so what you land "
+        f"`{check_cmd}` before you write anything and again after, so what you land "
         "is checked against the corpus both before your own change and after it, then land "
-        "the result with `mcp-seat plays admit`. Where a decision's own move cannot be "
+        f"the result with `{admit_cmd}`. Where a decision's own move cannot be "
         "expressed in the DSL at all, write an advice-only play instead - one with no "
         "`moves` - so the line still surfaces a note at the right moment even though it "
         "cannot make the deck's own move on its own. Every distinct `unexpressible` kind "
@@ -701,7 +780,7 @@ def _dsl_submission_ask() -> str:
         "itself, and write the refined-or-new play that covers the corner case the decline "
         "named - state why in that play's own `note` field AND in this critique's own text, "
         "and adjust BOTH plays' conditions so neither fires where the other should. "
-        "`mcp-seat plays check` must show no `play-conflict` warning between the pair before "
+        f"`{check_cmd}` must show no `play-conflict` warning between the pair before "
         "you admit either one: that check is the proof the two no longer overlap, the same "
         "exclusivity proof this deck's whole corpus is already held to.\n"
         "3. The corner-case rule, unchanged from what this seat was told during the game: an "
@@ -710,7 +789,7 @@ def _dsl_submission_ask() -> str:
         "case as a precise condition that splits the play into two, never as a reason the "
         "seat should have declined it.\n"
         "4. Every decision you properly generalize into a play also goes into the deck's "
-        "guide through `mcp-seat guides propose` - the play and the guide sentence "
+        f"guide through `{propose_cmd}` - the play and the guide sentence "
         "describing it land together, never one without the other. If a guide write is "
         "refused by a content-gate bound, merge the sentence into an existing NOTES.md line "
         "or matchup note instead of dropping it, and say in this critique's own text that "
@@ -718,7 +797,8 @@ def _dsl_submission_ask() -> str:
         "5. Nothing from this section goes into a play or a guide sentence itself: a missing "
         "DSL feature is `report_problem` category `dsl`, MCP tool friction you hit doing "
         "this work is category `ux`, and an engine or rules fault you hit is category "
-        "`engine` - the same three categories named above."
+        "`engine` - the same three categories named above.\n"
+        "\n" + _mcp_seat_invocation_note()
     )
 
 
@@ -771,12 +851,6 @@ def parse_turning_points(review_text: str) -> dict[str, list[dict[str, Any]]]:
         if isinstance(seat, str) and isinstance(points, list):
             result[seat] = [point for point in points if isinstance(point, dict)]
     return result
-
-
-#: `_ask`'s own length, less the player/opponent names it interpolates - the
-#: part of the prompt still to come when the ledger's remaining budget is
-#: measured.
-_ASK_SIZE = len(_ask("", ""))
 
 
 def _scalar(value: Any) -> str:
@@ -935,9 +1009,7 @@ def _decision_block(decision: dict[str, Any], seat: str, *, include_board: bool)
     else:
         lines.append(f"    unexpressible: {_sanitize(str(unexpressible))}")
     reasoning = decision.get("reasoning")
-    lines.append(
-        f"    reasoning: {_sanitize(str(reasoning)) if reasoning else '(none given)'}"
-    )
+    lines.append(f"    reasoning: {_sanitize(str(reasoning)) if reasoning else '(none given)'}")
     if include_board:
         perspectives = decision.get("board_by_perspective")
         board = perspectives.get(seat) if isinstance(perspectives, dict) else None

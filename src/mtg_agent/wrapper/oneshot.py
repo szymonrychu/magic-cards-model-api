@@ -59,7 +59,7 @@ What that costs, and what pays for it:
 **A tool allowlist, not "no tools" and not "all tools".** The review reads a
 finished game's record and reflection - which can contain opponent-written
 or AI-generated text - and then writes play content back into the deck's
-guide. `REVIEW_TOOLS` is the built-in set it gets, `REVIEW_ALLOWED_TOOLS` is
+guide. `REVIEW_TOOLS` is the built-in set it gets, `review_allowed_tools()` is
 what may run without a prompt, `bootstrap.DENY_TOOLS` stays denied, and
 `--permission-prompts none` means anything outside that is refused rather
 than stalling a headless process for ever. `--strict-mcp-config` stays, now
@@ -69,7 +69,7 @@ exactly what loads and nothing from any other source can.
 **Both halves of the routing rule are reachable from here.**
 `NOTES_ROUTING` (the rule `driver/review.py` interpolates into the prompt)
 has two destinations: play content to the deck's guide, and system problems
-to the `report_problem` tool. The guide half is what `REVIEW_BASH_RULES`
+to the `report_problem` tool. The guide half is what `review_bash_rules`
 below is for. The problem half is `REVIEW_MCP_TOOLS`: `report_problem` is
 an MCP tool of the `mtg` server and takes a `player_uid`, which this
 process has none of by itself - so `prompt.NOTES_ROUTING_AFTER_GAME` names
@@ -84,7 +84,9 @@ something impossible, which is how it stood before T13-r1.2.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from .bootstrap import DENY_TOOLS
@@ -131,8 +133,9 @@ MAX_PROMPT_CHARS = 230_000
 #:   time. Without it the reviewer would need a shell just to look.
 #: - `Grep` - finding the matchup entry to change inside a plan that carries
 #:   every matchup.
-#: - `Bash` - the only way to run `mcp-seat`. Scoped to four subcommands by
-#:   `REVIEW_BASH_RULES` below; nothing else may run through it.
+#: - `Bash` - the only way to run `mcp-seat`. Scoped to four subcommands,
+#:   each reachable bare and by absolute path, by `review_bash_rules` below;
+#:   nothing else may run through it.
 #:
 #: Everything absent is absent on purpose. `WebFetch`/`WebSearch` would let
 #: text from the game record - which is untrusted, and marked as such in the
@@ -140,8 +143,9 @@ MAX_PROMPT_CHARS = 230_000
 #: one-shot process. `NotebookEdit` has nothing here to edit.
 REVIEW_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep", "Bash")
 
-#: The `mcp-seat` subcommands the review may run, as `Bash(<prefix>:*)`
-#: permission rules.
+#: The `mcp-seat` subcommands the review may run, each named as `mcp-seat
+#: <subcommand>` (the prefix `review_bash_rules` turns into a `Bash(...:*)`
+#: rule, bare and by absolute path alike - see that function).
 #:
 #: **These four, and no `git`.** T14's `playscripts.gitwork.checkout_lock`
 #: is taken INSIDE `plays admit` and `guides propose`, so it serializes the
@@ -151,7 +155,12 @@ REVIEW_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep", "Bash")
 #: commit, rebase or push with the lock held by somebody else - which does
 #: not lose a race, it corrupts the other writer's fetch-rebase-push
 #: sequence, since the index, HEAD and the working tree are shared state
-#: that neither sequence re-reads between its steps.
+#: that neither sequence re-reads between its steps. `mcp-seat` itself
+#: shells out to `git`/`python3` as its own subprocess to do this work -
+#: Claude's permission rules do not govern what a permitted command spawns,
+#: so those two are not needed here for `mcp-seat` to work, only kept off
+#: the allowlist directly. `find` is not needed either: `Glob`/`Grep`/`Read`
+#: (on `REVIEW_TOOLS`) already cover looking around the checkout.
 #:
 #: - `mcp-seat plays check` - the read-only listing: it lints the checkout's
 #:   play scripts offline and reports the corpus and its conflicts. It is
@@ -164,12 +173,85 @@ REVIEW_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep", "Bash")
 #:   main, gate included.
 #: - `mcp-seat guides propose` - the matchup-plan and NOTES.md edit, pushed
 #:   straight to mtg-decks main after its gates.
-REVIEW_BASH_RULES = (
-    "Bash(mcp-seat plays check:*)",
-    "Bash(mcp-seat plays priority:*)",
-    "Bash(mcp-seat plays admit:*)",
-    "Bash(mcp-seat guides propose:*)",
+#:
+#: **FC2: each of the four also gets an absolute-path rule, not only the
+#: bare one above.** Live evidence (loop game 2's p2 review, ledger seq 299)
+#: showed every `mcp-seat` call refused - bare AND by the absolute path
+#: `/app/.venv/bin/mcp-seat` alike - while `python3`/`git`/`find` were
+#: refused too and p1's review in the SAME game admitted plays fine. The
+#: planner's probe of the real CLI (`scripts/probe_review_permissions.sh`)
+#: narrowed this to command shape, not a missing subcommand: a bare
+#: `fakeseat plays check ...` runs under `Bash(fakeseat plays check:*)`, but
+#: an absolute-path invocation, an env-var-prefixed one, or a `cd ... &&`
+#: chain is refused even though the subcommand named is identical - Claude's
+#: Bash permission match is on the LITERAL prefix of the command as typed,
+#: not on which binary it resolves to. So a reviewer that reaches for the
+#: absolute path (as the live evidence shows it does, likely because the
+#: prompt never named the checkout's own `--root` and it went looking) needs
+#: a rule that names that exact shape too - `cd`, an env-var prefix and an
+#: `&&` chain are still refused on purpose (see `driver.review`'s prompt
+#: sentence about it) and get no rule here.
+#:
+#: **Prod parity.** `deploy/seat-job.yaml` and `Dockerfile.agent` run this
+#: exact wrapper code with `/guides` mounted the same way - the agent
+#: image's own venv puts `mcp-seat` on `PATH` at `/app/.venv/bin/mcp-seat`
+#: (`Dockerfile.agent`: `ENV PATH="/app/.venv/bin:${PATH}"`), which is
+#: exactly what `mcp_seat_entrypoint`'s `shutil.which` resolves to there -
+#: so the same gap existed in prod and the same fix covers it, with no
+#: change needed to either file: neither overrides `PATH` or `GUIDES_ROOT`
+#: in a way this fix depends on (the agent container's `GUIDES_ROOT` is
+#: already unset, defaulting to `/guides`, which is the container's own
+#: mount path).
+_REVIEW_BASH_SUBCOMMANDS = (
+    "mcp-seat plays check",
+    "mcp-seat plays priority",
+    "mcp-seat plays admit",
+    "mcp-seat guides propose",
 )
+
+
+def mcp_seat_entrypoint() -> str:
+    """The absolute path this process's own `PATH` resolves `mcp-seat` to,
+    used only to build the absolute-path half of `review_bash_rules`.
+
+    **Never hardcoded, and resolved fresh on every call** (not cached at
+    import time), so a test that changes `PATH` sees the change and a
+    future rename of the venv directory needs no edit here. `shutil.which`
+    is the primary path - it is exactly what a shell would resolve `PATH`
+    to, and it is what the agent image's own `PATH`
+    (`Dockerfile.agent`: `/app/.venv/bin` prepended) resolves to in prod.
+
+    Falls back to the sibling of the running interpreter's own venv
+    (`sys.executable`'s directory) when `PATH` resolution fails - `uv sync`
+    installs `mcp-seat` and the interpreter running this code into the same
+    venv, so that sibling path is a real, derived answer, never a guess and
+    never `/app` typed into source."""
+    resolved = shutil.which("mcp-seat")
+    if resolved:
+        return resolved
+    return str(Path(sys.executable).parent / "mcp-seat")
+
+
+def review_bash_rules(entrypoint: str | None = None) -> tuple[str, ...]:
+    """`Bash(<prefix>:*)` rules for `_REVIEW_BASH_SUBCOMMANDS`, each named
+    twice - once bare (`Bash(mcp-seat plays check:*)`), once by the absolute
+    entrypoint path (`Bash(/app/.venv/bin/mcp-seat plays check:*)`) - eight
+    rules in total. See this module's docstring and the block comment above
+    `_REVIEW_BASH_SUBCOMMANDS` for why both shapes are needed and why
+    nothing else (`git`, `python3`, `find`, `cd`, a bare `Bash`, or
+    `mcp-seat` with no subcommand) is ever added.
+
+    `entrypoint` is resolved through `mcp_seat_entrypoint()` when not given
+    - a parameter only so a caller (or a test) can pin an exact path rather
+    than depending on this process's own `PATH`."""
+    entrypoint = entrypoint or mcp_seat_entrypoint()
+    rules: list[str] = []
+    for prefix in _REVIEW_BASH_SUBCOMMANDS:
+        subcommand = prefix.removeprefix("mcp-seat ")
+        rules.append(f"Bash({prefix}:*)")
+        rules.append(f"Bash({entrypoint} {subcommand}:*)")
+    return tuple(rules)
+
 
 #: The MCP tools the review may call, and the reason there is exactly one.
 #:
@@ -196,23 +278,32 @@ REVIEW_BASH_RULES = (
 #: lookup, the same reason `WebFetch`/`WebSearch` are off `REVIEW_TOOLS`.
 REVIEW_MCP_TOOLS = ("mcp__mtg__report_problem",)
 
-#: What may run without asking (`--allowedTools`): the file tools above,
-#: Bash only through `REVIEW_BASH_RULES`, and the MCP tools in
-#: `REVIEW_MCP_TOOLS`. Bare `"Bash"` is deliberately NOT here - an unscoped
-#: Bash rule would make the scoping above decoration - and neither is a
-#: server-wide `mcp__mtg` or `mcp__mtg__*`, for the same reason. Paired with
-#: `--permission-prompts none`, anything outside this list is denied
-#: automatically rather than prompting a process with nobody at the terminal
-#: to answer.
-REVIEW_ALLOWED_TOOLS = (
-    "Read",
-    "Edit",
-    "Write",
-    "Glob",
-    "Grep",
-    *REVIEW_BASH_RULES,
-    *REVIEW_MCP_TOOLS,
-)
+
+def review_allowed_tools(entrypoint: str | None = None) -> tuple[str, ...]:
+    """What may run without asking (`--allowedTools`): the file tools, Bash
+    only through `review_bash_rules(entrypoint)`, and the MCP tools in
+    `REVIEW_MCP_TOOLS`. Bare `"Bash"` is deliberately NOT here - an unscoped
+    Bash rule would make the scoping above decoration - and neither is a
+    server-wide `mcp__mtg` or `mcp__mtg__*`, for the same reason. Paired
+    with `--permission-prompts none`, anything outside this list is denied
+    automatically rather than prompting a process with nobody at the
+    terminal to answer.
+
+    A function, not a module constant, for the same reason
+    `review_bash_rules` is: the absolute-path rules it carries have to
+    reflect `mcp_seat_entrypoint()` as resolved AT ARGV-BUILD TIME
+    (`_argv` calls this with no `entrypoint`), never a value frozen at
+    import time before this process's own `PATH` was necessarily final."""
+    return (
+        "Read",
+        "Edit",
+        "Write",
+        "Glob",
+        "Grep",
+        *review_bash_rules(entrypoint),
+        *REVIEW_MCP_TOOLS,
+    )
+
 
 #: Where a Stop hook that fires in this process anyway is sent instead of
 #: the wrapper's own internal listener - see the module docstring. Port 1 on
@@ -344,7 +435,9 @@ def _argv(settings: Settings, model: str, effort: str, mcp_config: Path) -> list
         "--tools",
         ",".join(REVIEW_TOOLS),
         "--allowedTools",
-        ",".join(REVIEW_ALLOWED_TOOLS),
+        # Resolved fresh on every call - see `review_allowed_tools`'s own
+        # docstring for why this is a function and not a module constant.
+        ",".join(review_allowed_tools()),
         "--disallowed-tools",
         ",".join(DENY_TOOLS),
         "--permission-prompts",

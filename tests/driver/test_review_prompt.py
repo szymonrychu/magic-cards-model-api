@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from mtg_agent.driver.guides import NONE, Identification, parse_decklist
 from mtg_agent.driver.prompt import Assignment
 from mtg_agent.driver.review import (
@@ -738,11 +740,11 @@ def test_the_tool_the_prompt_names_is_the_tool_the_reviewer_may_call() -> None:
     """The gap this closes, asserted across the two modules that had it: the
     driver's prompt names a destination, and the wrapper process that runs
     the prompt is allowed to reach it."""
-    from mtg_agent.wrapper.oneshot import REVIEW_ALLOWED_TOOLS
+    from mtg_agent.wrapper.oneshot import review_allowed_tools
 
     text = review_prompt(_assignment(), "r", _record())
     assert "report_problem" in text
-    assert "mcp__mtg__report_problem" in REVIEW_ALLOWED_TOOLS
+    assert "mcp__mtg__report_problem" in review_allowed_tools()
 
 
 def test_a_worst_case_long_game_stays_under_the_ceiling_with_the_clause() -> None:
@@ -1371,4 +1373,69 @@ def test_parse_turning_points_reads_the_closing_line_the_ask_requires() -> None:
 def test_parse_turning_points_is_best_effort_on_a_missing_or_malformed_line() -> None:
     assert parse_turning_points("no turning points line at all here") == {}
     assert parse_turning_points("turning_points: {not valid json}") == {}
+
+
+# ---------------------------------------------------------------------------
+# FC2: the ask names the exact `mcp-seat` invocation for each command, with
+# --root <guides_dir> (the real path, never a literal baked into the prompt),
+# and states the permission layer's command-shape rule - live evidence (loop
+# game 2's p2 review, ledger seq 299) shows a reviewer that is not told the
+# exact shape reaches for `cd`, an absolute path, an env-var prefix, and
+# git/python3/find, all of which the wrapper's allowlist refuses.
+# ---------------------------------------------------------------------------
+
+
+def test_the_dsl_submission_ask_names_root_for_plays_check() -> None:
+    text = review_prompt(_assignment(), "r", _record(), guides_dir="/some/guides")
+    assert "mcp-seat plays check --root /some/guides" in text
+
+
+def test_the_dsl_submission_ask_names_root_deck_and_game_id_for_plays_admit() -> None:
+    assignment = _assignment(game_id="g-42")
+    text = review_prompt(assignment, "r", _record(), guides_dir="/some/guides")
+    assert (
+        f"mcp-seat plays admit --deck {assignment.deck_slug} --game-id g-42 --root /some/guides"
+    ) in text
+
+
+def test_the_dsl_submission_ask_names_root_deck_and_game_id_for_guides_propose() -> None:
+    assignment = _assignment(game_id="g-42")
+    text = review_prompt(assignment, "r", _record(), guides_dir="/some/guides")
+    assert (
+        f"mcp-seat guides propose --deck {assignment.deck_slug} --game-id g-42 --root /some/guides"
+    ) in text
+
+
+def test_the_dsl_submission_ask_forbids_cd_env_prefix_and_ampersand_chains() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "no `cd`" in text
+    assert "no environment-variable prefix" in text
+    assert "no `&&` chain" in text
+    assert "permission layer refuses" in text
+
+
+def test_the_dsl_submission_ask_says_git_python_and_find_are_unavailable() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "`git`, `python3` and `find` are not available" in text
+    assert "Glob, Grep and Read" in text
+
+
+def test_review_prompt_derives_guides_dir_from_settings_when_not_passed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`app.py` (fb1-seat-ux's file, not edited here) does not yet pass
+    `guides_dir` explicitly - `review_prompt` derives it the same way
+    `DriverSettings.from_env` does, so the prompt still names the REAL
+    checkout path rather than a literal baked into this module."""
+    monkeypatch.setenv("GUIDES_ROOT", "/env-guides")
+    text = review_prompt(_assignment(), "r", _record())
+    assert "mcp-seat plays check --root /env-guides" in text
+
+
+def test_review_prompt_guides_dir_defaults_to_the_real_default_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GUIDES_ROOT", raising=False)
+    text = review_prompt(_assignment(), "r", _record())
+    assert "mcp-seat plays check --root /guides" in text
     assert parse_turning_points('turning_points: ["not", "a", "dict"]') == {}

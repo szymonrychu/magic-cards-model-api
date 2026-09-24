@@ -129,25 +129,119 @@ def test_the_allowlist_reaches_the_guides_checkout_only_through_mcp_seat(
     handover turn while every write goes through one of those commands. A
     bare `git` (or anything else that commits, pushes or rewrites the
     checkout) would walk straight past the lock, so no such rule is on the
-    allowlist: every Bash rule names an `mcp-seat` subcommand."""
+    allowlist: every Bash rule names an `mcp-seat` subcommand, either by its
+    bare name or by the absolute path the image installs it at (FC2: live
+    evidence - loop game 2's p2 review, ledger seq 299 - showed the reviewer
+    reaching for the absolute path too, and being refused because only the
+    bare form was ever on the allowlist)."""
     argv = _captured(monkeypatch, tmp_path)["argv"]
     allowed = _flag(argv, "--allowedTools").split(",")
+    entrypoint = oneshot.mcp_seat_entrypoint()
 
     bash_rules = [rule for rule in allowed if rule.startswith("Bash(")]
     assert bash_rules, "the review cannot run mcp-seat at all without a Bash rule"
     for rule in bash_rules:
-        assert rule.startswith("Bash(mcp-seat "), (
+        assert rule.startswith("Bash(mcp-seat ") or rule.startswith(f"Bash({entrypoint} "), (
             f"{rule} lets the reviewer work the checkout outside gitwork.checkout_lock - see T14"
         )
     assert "Bash" not in allowed, "an unscoped Bash is not an allowlist"
 
     # The commands the feature actually needs: the two write channels, the
-    # matchup-plan proposal, and the read-only corpus listing.
+    # matchup-plan proposal, and the read-only corpus listing - each
+    # reachable both bare and by the absolute entrypoint path.
     joined = " ".join(bash_rules)
-    assert "mcp-seat plays priority" in joined
-    assert "mcp-seat plays admit" in joined
-    assert "mcp-seat guides propose" in joined
-    assert "mcp-seat plays check" in joined
+    for subcommand in ("plays priority", "plays admit", "guides propose", "plays check"):
+        assert f"mcp-seat {subcommand}" in joined
+        assert f"{entrypoint} {subcommand}" in joined
+
+
+def test_review_bash_rules_cover_four_subcommands_bare_and_by_absolute_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Live evidence (loop game 2, p2 review, ledger seq 299): every
+    `mcp-seat` call was refused, bare AND by absolute path
+    (`/app/.venv/bin/mcp-seat`) alike. The planner's probe of the real CLI
+    (`scripts/probe_review_permissions.sh`) showed the gap is command shape,
+    not a missing subcommand: `Bash(mcp-seat plays check:*)` permits a bare
+    invocation, never an absolute-path one, so a reviewer that reaches for
+    the absolute path is refused by a rule that never named that shape. The
+    fix names the same four subcommands twice: once bare, once by the
+    resolved entrypoint path - exactly eight Bash rules, never more."""
+    argv = _captured(monkeypatch, tmp_path)["argv"]
+    allowed = _flag(argv, "--allowedTools").split(",")
+    bash_rules = [rule for rule in allowed if rule.startswith("Bash(")]
+
+    entrypoint = oneshot.mcp_seat_entrypoint()
+    for subcommand in ("plays check", "plays priority", "plays admit", "guides propose"):
+        assert f"Bash(mcp-seat {subcommand}:*)" in bash_rules
+        assert f"Bash({entrypoint} {subcommand}:*)" in bash_rules
+    assert len(bash_rules) == 8, f"expected exactly 8 Bash rules, got {bash_rules}"
+
+
+def test_no_bash_rule_ever_allows_git_python_find_or_cd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """T14's checkout_lock is taken INSIDE `plays admit`/`guides propose`
+    only - see the module docstring - so nothing that could shell past it (a
+    raw `git`, `python3`, `find` or a `cd` into the checkout) may ever be
+    added, absolute-path rules included. `mcp-seat` itself shells out to
+    git/python3 as a subprocess, which these rules do not govern and do not
+    need to: Glob/Grep/Read already cover what a bare `find` would."""
+    argv = _captured(monkeypatch, tmp_path)["argv"]
+    allowed = _flag(argv, "--allowedTools").split(",")
+    bash_rules = [rule for rule in allowed if rule.startswith("Bash(")]
+
+    for rule in bash_rules:
+        assert not rule.startswith("Bash(git"), rule
+        assert not rule.startswith("Bash(python"), rule
+        assert not rule.startswith("Bash(find"), rule
+        assert not rule.startswith("Bash(cd"), rule
+    assert "Bash" not in allowed
+    assert "Bash(mcp-seat:*)" not in allowed, "no bare subcommand-less mcp-seat rule"
+
+
+def test_review_bash_rules_absolute_form_uses_the_resolved_entrypoint_not_a_hardcoded_app_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """'Derive it from the settings, or from shutil.which('mcp-seat') at
+    argv build time; do not hardcode /app.' A PATH with no `mcp-seat` on it
+    at all must still resolve to SOME absolute path - the sibling of the
+    running interpreter's own venv, since `uv sync` installs both into the
+    same one - never silently fall back to the bare name (which would make
+    the 'absolute' rule identical to the bare one)."""
+    monkeypatch.setenv("PATH", "/nonexistent-bin-dir")
+    entrypoint = oneshot.mcp_seat_entrypoint()
+    assert entrypoint != "mcp-seat"
+    assert Path(entrypoint).is_absolute()
+    assert entrypoint.endswith("/mcp-seat")
+    assert "/app" not in entrypoint, "must never hardcode the image's own install path"
+
+
+def test_the_handover_session_is_not_the_reviews_denied_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The reviewer runs `--permission-prompts none` behind a narrow
+    `--allowedTools`: anything outside `REVIEW_ALLOWED_TOOLS` is refused
+    outright. The handover/follow-up turns are a different process
+    entirely - the supervised PTY session `bootstrap.write_settings_json`
+    renders `settings.json` for, whose `permissions.defaultMode` is
+    `Settings.permission_mode` (`bypassPermissions` by default), never the
+    review's own deny-by-default shape. Conflating the two would mean a
+    permission fix here silently does nothing for the session it was
+    actually written for: T14's live evidence (loop game 2 seq 299) was the
+    REVIEW itself being refused, while p1's handover in the same game
+    admitted plays just fine under the other session's rules."""
+    seen = _captured(monkeypatch, tmp_path)
+    argv = seen["argv"]
+    settings = seen["settings"]
+
+    assert _flag(argv, "--permission-prompts") == "none"
+
+    settings_json = json.loads((settings.home_dir / ".claude" / "settings.json").read_text())
+    assert settings_json["permissions"]["defaultMode"] == "bypassPermissions", (
+        "the handover session runs bypassPermissions, never the review's own "
+        "--permission-prompts none allowlist"
+    )
 
 
 def test_the_reviewer_can_still_file_a_system_problem_report(
@@ -298,15 +392,24 @@ def test_no_throwaway_home_is_made_or_removed(
 ) -> None:
     """The per-call `tempfile.mkdtemp` HOME and its `shutil.rmtree` are
     gone, not merely unused: a temp HOME that is still created is a temp
-    HOME a later edit can quietly start passing again."""
+    HOME a later edit can quietly start passing again.
 
-    def refuse(*args, **kwargs):
+    FC2 brought `shutil` back into this module (`shutil.which`, resolving
+    the `mcp-seat` entrypoint for the absolute-path Bash rules) - a
+    different job from the retired temp-HOME cleanup, so this only pins that
+    `rmtree` specifically is never called, not that the whole module stays
+    free of the `shutil` import."""
+
+    def refuse_mkdtemp(*args, **kwargs):
         raise AssertionError("run_review must not create a temporary HOME any more")
 
-    monkeypatch.setattr(tempfile, "mkdtemp", refuse)
+    def refuse_rmtree(*args, **kwargs):
+        raise AssertionError("run_review must not remove a temporary HOME any more")
+
+    monkeypatch.setattr(tempfile, "mkdtemp", refuse_mkdtemp)
+    monkeypatch.setattr(oneshot.shutil, "rmtree", refuse_rmtree)
     _captured(monkeypatch, tmp_path)
     assert not hasattr(oneshot, "tempfile"), "the throwaway HOME's import is gone too"
-    assert not hasattr(oneshot, "shutil"), "and so is the rmtree that removed it"
 
 
 def test_the_child_env_is_named_variable_by_variable_never_inherited(
