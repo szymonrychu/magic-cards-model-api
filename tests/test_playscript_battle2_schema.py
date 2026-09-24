@@ -132,7 +132,7 @@ def test_the_battle_report_shape_is_refused_by_the_lint_gate_too():
 
 
 def test_the_new_code_is_appended_to_the_shared_contract():
-    assert CODES[-1] == "answer-shape-mismatch"
+    assert "answer-shape-mismatch" in CODES
 
 
 # -- activation targets -----------------------------------------------------------

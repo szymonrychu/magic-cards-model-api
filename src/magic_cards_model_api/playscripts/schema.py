@@ -2,25 +2,55 @@
 
 `decks/<slug>/plays/<id>.json` is a declarative chain a seat runs through the
 seatkit runner. `Play` is its model: every object forbids unknown keys, every
-union is discriminated on `kind`, every list is bounded (`maxItems` in the
-exported JSON Schema, an explicit bound on every list field below), and no
-field or kind can iterate, attack, block, mulligan, concede or pass. The
-vocabulary is closed at eight condition kinds and four move kinds; a `cast`
-names its cost from `CAST_COSTS` (the engine's own cast option kinds), and an
-answer names its decision from `DECISION_KINDS` (the api's pending decision
-kinds, less the combat declarations and the mulligan a script never makes).
-`when.steps` names each step once, and `opposing_archetypes` is either `["*"]`
-or named keys, never both. An answer's fields fit its decision kind: a
-pay-amount decision (`AMOUNT_DECISION_KINDS`) is answered with `amount` alone,
-and no other kind takes one (`answer-shape-mismatch`). A `cast` or `activate`
-target is a card by selector and side, or a player; an `activate` sacrifices
-its source, nothing, or permanents chosen by selector, and independently
-discards nothing or hand cards chosen by selector (never the source itself -
-that is `sacrifice`'s own "source" value; CR 701.9's discard always reads
-from hand, never the battlefield). A selector's optional
-`missing_from` names zones (`MISSING_FROM_ZONES`, at least one), a side
-(`MISSING_FROM_SIDES`) and what it compares (`MISSING_FROM_BY`); a word outside
-those is `malformed-play` and no zones `bounds-exceeded`, so it adds no code.
+union is discriminated on `kind` (or, for a `compare` operand, `of`), every
+list is bounded (`maxItems` in the exported JSON Schema, an explicit bound on
+every list field below), and no field or kind can iterate, mulligan, concede
+or assign combat damage. The vocabulary is closed at eleven condition kinds
+and seven move kinds; a `cast` names its cost from `CAST_COSTS` (the engine's
+own cast option kinds), and an answer names its decision from `DECISION_KINDS`
+(the api's pending decision kinds, less the mulligan and combat-damage
+assignment a script never makes - the two combat declarations moved to their
+own move kinds, `declare_attackers`/`declare_blockers`, in FB2's B4).
+`when.steps` names each step once, including the two combat declaration steps
+(FB2 W1), and `opposing_archetypes` is either `["*"]` or named keys, never
+both. An answer's fields fit its decision kind: a pay-amount decision
+(`AMOUNT_DECISION_KINDS`) is answered with `amount` alone, `top_order` fits
+only `scry`/`surveil`, `position` only `put_on_top_or_bottom`, `targets` only
+`choose_targets`, and no other kind takes one (`answer-shape-mismatch`). A
+`cast` or `activate` target is a card by selector and side (optionally
+narrowed by `zone` and ranked by `prefer`/`ties`), or a player; an `activate`
+sacrifices its source, nothing, or permanents chosen by selector, and
+independently discards nothing or hand cards chosen by selector (never the
+source itself - that is `sacrifice`'s own "source" value; CR 701.9's discard
+always reads from hand, never the battlefield); it names its ability by
+`ability_text_has` or `ability_index`, exactly one (`activate-ability-ref`). A
+selector's optional `missing_from` names zones (`MISSING_FROM_ZONES`, at
+least one), a side (`MISSING_FROM_SIDES`) and what it compares
+(`MISSING_FROM_BY`); a word outside those is `malformed-play` and no zones
+`bounds-exceeded`, so it adds no code.
+
+FB2's B4 additions (2026-09-24), all additive over the shipped v1 vocabulary:
+`pass` (CR 117.3d, must be the play's last move - `pass-not-last`),
+`declare_attackers`/`declare_blockers` (CR 508.1/509.1, must be the play's
+first move, at most one per play - `combat-move-not-first`), `ability_index`
+on `activate`, `top_order`/`position` on an answer item, `targets` on a
+`choose_targets` answer (so a player target is expressible there too),
+`prefer`/`ties`/`zone` on a `CardTarget`, and three condition kinds:
+`pending_decision` (a decision of that kind is pending for the viewer),
+`compare` (two board- or literal-read `Operand`s against each other, so
+"their board's power beats my life" is expressible without a bespoke
+condition), and `all_of` (allowed only inside `false`, meaning "not (A and
+B ...)"; a member may not itself be `all_of` - nesting is refused). Every one
+of these is a new optional field or a new discriminated `kind`/`of` value, so
+every play already committed - the 94 in the mtg-decks corpus at the time of
+writing - stays valid unchanged, and `schema_version` stays 1: a strict union
+already refuses an unrecognized `kind` loudly in a reader built before this
+change, rather than silently misreading it, so the only real consequence is
+deploy ordering - this api (which can now READ a script naming one of these
+new kinds) has to reach main and a live deploy before any deck's plays
+actually use one, or an older reader (or the mtg-decks stdlib mirror,
+`check_plays.py`, before its own FB2 update lands) would refuse a perfectly
+valid v1 file it does not yet recognize.
 
 `play_errors` is the same judgement as coded errors - one `PlaysError` per
 refused shape - using the codes shared verbatim with mtg-decks'
@@ -86,11 +116,26 @@ MAX_INPUT_VALUES = 32
 #: `note`'s own bound: short enough for an agent to read mid-game, long
 #: enough for one sentence of reasoning.
 MAX_NOTE_LENGTH = 240
+#: `top_order`'s own fan-out (FB2 A1): tiers ordering the cards kept on top
+#: after a scry/surveil, first tier on top - the same fan-out `prefer` gets.
+MAX_TOP_ORDER = 4
+#: `ActivateMove.ability_index` (FB2 M4): 0-15, the same footing a card
+#: view's own `abilities` list is indexed on - a card with more activated
+#: abilities than that is named by `ability_text_has` instead.
+MAX_ABILITY_INDEX = 15
+#: `DeclareAttackersMove.attackers` (FB2 M2): one entry per group of
+#: creatures sharing a defender, the same fan-out `blocks` gets.
+MAX_ATTACK_GROUPS = 6
+#: `DeclareBlockersMove.blocks` (FB2 M3): one entry per blocker-to-attacker
+#: assignment.
+MAX_BLOCKS = 6
+#: `AllOfCondition.conditions` (FB2 C3): 2-4 leaf conditions - fewer than two
+#: is not a conjunction at all, and the fan-out tops out with the rest of the
+#: schema's small lists.
+MIN_ALL_OF_CONDITIONS = 2
+MAX_ALL_OF_CONDITIONS = 4
 
-COMBAT_DECLARATION_STEPS = ("declare_attackers", "declare_blockers")
-#: The steps a script may name: the autopass steps, minus the two combat
-#: declarations, because scripts never attack or block.
-STEPS = tuple(step for step in AUTOPASS_STEPS if step not in COMBAT_DECLARATION_STEPS)
+STEPS = AUTOPASS_STEPS
 CONDITION_KINDS = (
     "count",
     "zone_size",
@@ -100,8 +145,29 @@ CONDITION_KINDS = (
     "untapped_mana",
     "turn",
     "input",
+    "pending_decision",
+    "compare",
+    "all_of",
 )
-MOVE_KINDS = ("activate", "cast", "play_land", "answer")
+MOVE_KINDS = (
+    "activate",
+    "cast",
+    "play_land",
+    "answer",
+    "pass",
+    "declare_attackers",
+    "declare_blockers",
+)
+#: `compare`'s own `Operand.of` vocabulary (FB2 C2) - purely descriptive here,
+#: the way `CONDITION_KINDS`/`MOVE_KINDS` are: each operand class carries its
+#: own `Literal["..."]` `of` value, this tuple is what the doc and drift
+#: tests pin against.
+OPERAND_KINDS = ("count", "zone_size", "life", "untapped_mana", "power_sum", "toughness_sum", "n")
+#: The two decision kinds FB2 moved out of `answers[]` into their own move
+#: kinds (`declare_attackers`/`declare_blockers`, M2/M3). An answer item still
+#: naming one is refused with `use-combat-move`, not `forbidden-kind` -
+#: `FORBIDDEN_DECISION_KINDS` below no longer includes them.
+COMBAT_DECISION_KINDS = ("declare_attackers", "declare_blockers")
 COUNT_ZONES = ("battlefield", "graveyard", "exile", "hand", "stack", "library", "sideboard")
 SIZE_ZONES = ("hand", "library", "graveyard", "exile", "sideboard")
 HIDDEN_ZONES = ("hand", "library", "sideboard")
@@ -111,6 +177,10 @@ SIDES = ("me", "opponent", "any")
 MISSING_FROM_ZONES = COUNT_ZONES
 MISSING_FROM_SIDES = ("me", "opponent")
 MISSING_FROM_BY = ("subtype", "name")
+#: `CardTarget.zone` (FB2 T1): the zones a target may be narrowed to. Left
+#: out, a target still resolves over battlefield and stack, today's
+#: behaviour.
+TARGET_ZONES = ("battlefield", "stack", "graveyard", "exile")
 OPS = (">=", "<=", "==", "!=", ">", "<")
 INPUT_OPS = ("eq", "ne", "in", "not_in", "<", "<=", ">", ">=")
 #: The cost a `cast` move is announced under. `normal` is the printed mana
@@ -152,13 +222,13 @@ CAST_COSTS = (
 #: The decision kinds an answer may name: every `DecisionKind` the api can
 #: pend (`decisions.ANSWERABLE_KINDS`), by value.
 DECISION_KINDS = tuple(sorted(kind.value for kind in ANSWERABLE_KINDS))
-#: Pending decision kinds a script never answers: scripts do not attack, block,
-#: assign combat damage or mulligan, the same reason the combat declaration
-#: steps are forbidden.
+#: Pending decision kinds a script never answers: scripts never mulligan or
+#: assign combat damage. `declare_attackers`/`declare_blockers` used to be
+#: here too; FB2's B4 gives them their own move kinds instead
+#: (`COMBAT_DECISION_KINDS` above), answered with `use-combat-move`, not
+#: `forbidden-kind`.
 FORBIDDEN_DECISION_KINDS = (
     "assign_combat_damage",
-    "declare_attackers",
-    "declare_blockers",
     "mulligan",
 )
 #: The decision kinds answered with a number rather than yes/no or cards: the
@@ -171,6 +241,23 @@ AMOUNT_DECISION_KINDS = tuple(
 )
 #: `amount: "max"` pays the most the decision allows (its own `amount`).
 AMOUNT_POLICIES = ("max",)
+#: The decision kinds answered by naming a string from an offered (or, for
+#: `choose_a_quality`, sometimes open) list: the kinds the api's
+#: `decisions.TOOL_FIELD_FOR_KIND` answers on `choice` (Cavern of Souls' and
+#: Utopia Sprawl's "as this enters, choose a ..." CR 614.12a, and CR 700.2a's
+#: "choose ... mode" abilities). O6.
+CHOICE_DECISION_KINDS = tuple(
+    sorted(kind.value for kind, field in TOOL_FIELD_FOR_KIND.items() if field == "choice")
+)
+#: `top_order` (FB2 A1) fits only a scry/surveil answer - the same tiers
+#: shape orders what stays on top after either.
+TOP_ORDER_DECISION_KINDS = ("scry", "surveil")
+#: `position` (FB2 A1) fits only `put_on_top_or_bottom` - an alternative to
+#: `to_bottom` for that one decision.
+POSITION_DECISION_KINDS = ("put_on_top_or_bottom",)
+#: `targets` (FB2 A2) fits only `choose_targets` - the alternative to `pick`
+#: that can also name a player target.
+TARGETS_DECISION_KINDS = ("choose_targets",)
 #: The answer fields an amount decision never takes.
 NON_AMOUNT_ANSWER_FIELDS = (
     "pick",
@@ -180,14 +267,9 @@ NON_AMOUNT_ANSWER_FIELDS = (
     "choice",
     "pile_one",
     "players",
-)
-#: The decision kinds answered by naming a string from an offered (or, for
-#: `choose_a_quality`, sometimes open) list: the kinds the api's
-#: `decisions.TOOL_FIELD_FOR_KIND` answers on `choice` (Cavern of Souls' and
-#: Utopia Sprawl's "as this enters, choose a ..." CR 614.12a, and CR 700.2a's
-#: "choose ... mode" abilities). O6.
-CHOICE_DECISION_KINDS = tuple(
-    sorted(kind.value for kind, field in TOOL_FIELD_FOR_KIND.items() if field == "choice")
+    "top_order",
+    "position",
+    "targets",
 )
 
 CODES = (
@@ -215,6 +297,12 @@ CODES = (
     "duplicate-step",
     "wildcard-with-keys",
     "answer-shape-mismatch",
+    "pass-not-last",
+    "combat-move-not-first",
+    "activate-ability-ref",
+    "all-of-outside-false",
+    "use-combat-move",
+    "answer-decision-mismatch",
 )
 
 
@@ -245,6 +333,10 @@ Side = Literal[SIDES]
 StepName = Literal[STEPS]
 DecisionKind = Literal[DECISION_KINDS]
 CastCost = Literal[CAST_COSTS]
+#: `ActivateMove.ability_index` (FB2 M4): the card's own ability list index.
+AbilityIndex = Annotated[int, Field(ge=0, le=MAX_ABILITY_INDEX)]
+#: `CardTarget.zone` (FB2 T1).
+TargetZone = Literal[TARGET_ZONES]
 SelectorWords = Annotated[list[NonBlank], Field(max_length=MAX_SELECTOR_WORDS)]
 Ties = Literal[TIES]
 #: `searches_for_any` (O3): the five basic land types alone, so a word
@@ -303,8 +395,8 @@ class CounterComparison(_Strict):
 class MissingFrom(_Strict):
     """`{zones, side, by}`: the candidate matches only when no card on `side`
     in `zones` shares what `by` compares with it - its subtypes (those the
-    selector's own `subtypes_any` lists, when it lists any) or its name. A
-    comparison between objects, never a name written in the script."""
+    selector's own `subtypes_any` also lists, when it lists any) or its name.
+    A comparison between objects, never a name written in the script."""
 
     zones: list[Literal[MISSING_FROM_ZONES]] = Field(
         min_length=1, max_length=len(MISSING_FROM_ZONES)
@@ -480,6 +572,148 @@ class InputCondition(_Strict):
         return value
 
 
+class PendingDecisionCondition(_Strict):
+    """Holds when a decision of this kind is pending for the viewer (FB2
+    C1). The one condition kind a standalone `answer` play's `true` names to
+    say "this play only runs as a direct answer to a decision already on the
+    table" - see `Play._standalone_pending_answer_names_the_pending_decision`
+    below, which requires the play's one `answer` move to name the same
+    `decision`, or `answer-decision-mismatch`."""
+
+    kind: Literal["pending_decision"]
+    decision: DecisionKind
+
+
+class CountOperand(_Strict):
+    """How many cards matching `select` are in `zone` (default battlefield),
+    by side - the same reading `CountCondition`'s own `count` gives, and the
+    same hidden-zone side rule: a hidden `zone` must name `me` or `opponent`,
+    never `any`."""
+
+    of: Literal["count"]
+    select: Selector
+    zone: Literal[COUNT_ZONES] = "battlefield"
+    side: Side
+
+    @model_validator(mode="after")
+    def _hidden_zone_names_a_side(self) -> CountOperand:
+        if self.zone in HIDDEN_ZONES and self.side == "any":
+            raise PydanticCustomError(
+                "hidden_zone_side_any",
+                "a count over the {zone} must name side me or opponent, not any",
+                {"zone": self.zone},
+            )
+        return self
+
+
+class ZoneSizeOperand(_Strict):
+    """A zone's public card count, by side - the same reading
+    `ZoneSizeCondition` gives, `side` always named (never `any`)."""
+
+    of: Literal["zone_size"]
+    zone: Literal[SIZE_ZONES]
+    side: Literal["me", "opponent"]
+
+
+class LifeOperand(_Strict):
+    of: Literal["life"]
+    side: Literal["me", "opponent"]
+
+
+class UntappedManaOperand(_Strict):
+    of: Literal["untapped_mana"]
+    side: Literal["me", "opponent"]
+
+
+class PowerSumOperand(_Strict):
+    """The summed power of `side`'s battlefield permanents matching `select`
+    - covers "their board's power beats my life" without a bespoke condition
+    kind of its own."""
+
+    of: Literal["power_sum"]
+    select: Selector
+    side: Side
+
+
+class ToughnessSumOperand(_Strict):
+    """The summed toughness of `side`'s battlefield permanents matching
+    `select` - the same reading `power_sum` gives, for toughness."""
+
+    of: Literal["toughness_sum"]
+    select: Selector
+    side: Side
+
+
+class NOperand(_Strict):
+    """A plain literal number - the side of a `compare` that is not read off
+    the board at all."""
+
+    of: Literal["n"]
+    n: int
+
+
+#: `compare`'s own operand (FB2 C2), discriminated on `of` rather than
+#: `kind` - every board-reading half a `count`/`zone_size`/`life`/
+#: `untapped_mana` condition already reads on its own, plus the two sums a
+#: bespoke "board power vs life" condition would otherwise need, plus a
+#: plain literal.
+Operand = Annotated[
+    CountOperand
+    | ZoneSizeOperand
+    | LifeOperand
+    | UntappedManaOperand
+    | PowerSumOperand
+    | ToughnessSumOperand
+    | NOperand,
+    Field(discriminator="of"),
+]
+
+
+class CompareCondition(_Strict):
+    """`left op right`, each side an `Operand` read off the board or a
+    literal `n` (FB2 C2) - `count`/`zone_size`/`life`/`untapped_mana` already
+    compare one board read against a literal `n` on their own; `compare` puts
+    the board on both sides (a deck's own creature count against the
+    opponent's, or - the case that motivates it - the summed power of one
+    side's board against the other's life total)."""
+
+    kind: Literal["compare"]
+    left: Operand
+    op: Op
+    right: Operand
+
+
+#: Every condition kind except `all_of` itself - what `AllOfCondition.conditions`
+#: draws from, so a member naming `all_of` fails as an unrecognized kind for
+#: that list rather than nesting (FB2 C3).
+LeafCondition = Annotated[
+    CountCondition
+    | ZoneSizeCondition
+    | LifeCondition
+    | StackTopCondition
+    | LandDropCondition
+    | UntappedManaCondition
+    | TurnCondition
+    | InputCondition
+    | PendingDecisionCondition
+    | CompareCondition,
+    Field(discriminator="kind"),
+]
+
+
+class AllOfCondition(_Strict):
+    """ "not (A and B ...)": every member must hold for `all_of` itself to
+    hold (FB2 C3). Allowed only inside a play's `false` list -
+    `Play._all_of_only_in_false` below refuses one in `true` with
+    `all-of-outside-false` - and never nested: a member drawn from
+    `LeafCondition` may not itself be `all_of`."""
+
+    kind: Literal["all_of"]
+    conditions: list[LeafCondition] = Field(
+        min_length=MIN_ALL_OF_CONDITIONS, max_length=MAX_ALL_OF_CONDITIONS
+    )
+
+
 Condition = Annotated[
     CountCondition
     | ZoneSizeCondition
@@ -488,16 +722,23 @@ Condition = Annotated[
     | LandDropCondition
     | UntappedManaCondition
     | TurnCondition
-    | InputCondition,
+    | InputCondition
+    | PendingDecisionCondition
+    | CompareCondition
+    | AllOfCondition,
     Field(discriminator="kind"),
 ]
 
 
 # -- moves -------------------------------------------------------------------
 
-#: Ordered tie-breakers, shared by `Pick`, `SacrificeChoice`, `LandCard` and
-#: `ZonedCard`.
+#: Ordered tie-breakers, shared by `Pick`, `SacrificeChoice`, `LandCard`,
+#: `ZonedCard`, `AttackGroup`, `BlockerPick` and `AttackerPick`.
 Prefer = Annotated[list[Selector], Field(max_length=MAX_PREFER)]
+#: `Answer.top_order` (FB2 A1): tiers ordering the cards kept on top after a
+#: scry/surveil, first tier on top; the rest stay on top after them in
+#: looked-at order. The same fan-out `Prefer` gets.
+TopOrder = Annotated[list[Selector], Field(max_length=MAX_TOP_ORDER)]
 
 
 class Pick(_Strict):
@@ -523,15 +764,59 @@ Amount = Annotated[
 ]
 
 
+class ZonedCard(_Strict):
+    zone: Literal[COUNT_ZONES]
+    select: Selector
+    prefer: Prefer = None
+    ties: Ties = None
+
+
+class CardTarget(_Strict):
+    """A card or permanent target: what `select` matches, on `side`. Ranked
+    the same way any other selector-driven pick is (FB2 T1): `prefer`/`ties`
+    narrow and break ties among the legal candidates, and `zone` narrows
+    which zones are searched - left out, a target still resolves over
+    battlefield and stack, today's behaviour."""
+
+    select: Selector
+    side: Side
+    prefer: Prefer = None
+    ties: Ties = None
+    zone: TargetZone = None
+
+
+class PlayerTarget(_Strict):
+    """A player target: the viewer or an opponent."""
+
+    player: Literal["me", "opponent"]
+
+
+def _target_tag(value: Any) -> str:
+    return "player-target" if isinstance(value, dict) and "player" in value else "card-target"
+
+
+#: One target a cast or an activation announces, in order.
+Target = Annotated[
+    Annotated[CardTarget, Tag("card-target")] | Annotated[PlayerTarget, Tag("player-target")],
+    Discriminator(_target_tag),
+]
+
+
 def answer_shape_problem(answer: Any) -> str | None:
     """Why this answer item's fields do not fit its decision kind, or None.
 
     A pay-amount decision (`AMOUNT_DECISION_KINDS`) is answered with `amount`
     and nothing else; no other decision kind takes an `amount`. `choice`
     (O6) is answered only by `CHOICE_DECISION_KINDS`
-    (`choose_a_mode`/`choose_a_quality`); everywhere else it is
-    `answer-shape-mismatch`, the same footing `amount` is on. A decision
-    outside `DECISION_KINDS` is judged by `unknown-decision-kind` instead."""
+    (`choose_a_mode`/`choose_a_quality`); `top_order` (FB2 A1) only by
+    `TOP_ORDER_DECISION_KINDS` (`scry`/`surveil`); `position` (FB2 A1) only
+    by `POSITION_DECISION_KINDS` (`put_on_top_or_bottom`), and never beside
+    `to_bottom` - the two name the same decision two different ways;
+    `targets` (FB2 A2) only by `TARGETS_DECISION_KINDS` (`choose_targets`),
+    and never beside `pick` for the same reason. Everywhere else these are
+    `answer-shape-mismatch`, the same footing `amount` and `choice` are on.
+    A decision outside `DECISION_KINDS` is judged by `unknown-decision-kind`
+    instead."""
     if not isinstance(answer, dict) or answer.get("decision") not in DECISION_KINDS:
         return None
     decision = answer["decision"]
@@ -546,14 +831,28 @@ def answer_shape_problem(answer: Any) -> str | None:
         return f"only {', '.join(AMOUNT_DECISION_KINDS)} take an amount, not '{decision}'"
     if "choice" in answer and decision not in CHOICE_DECISION_KINDS:
         return f"only {', '.join(CHOICE_DECISION_KINDS)} take a choice, not '{decision}'"
+    if "top_order" in answer and decision not in TOP_ORDER_DECISION_KINDS:
+        return f"only {', '.join(TOP_ORDER_DECISION_KINDS)} take a top_order, not '{decision}'"
+    if "position" in answer and decision not in POSITION_DECISION_KINDS:
+        return f"only {', '.join(POSITION_DECISION_KINDS)} take a position, not '{decision}'"
+    if "position" in answer and "to_bottom" in answer:
+        return (
+            "'position' and 'to_bottom' answer the same decision two different ways; use only one"
+        )
+    if "targets" in answer and decision not in TARGETS_DECISION_KINDS:
+        return f"only {', '.join(TARGETS_DECISION_KINDS)} take targets, not '{decision}'"
+    if "targets" in answer and "pick" in answer:
+        return "'targets' and 'pick' answer the same decision two different ways; use only one"
     return None
 
 
 class Answer(_Strict):
     """How to answer one pending decision of kind `decision`. A pay-amount
     decision takes `amount` alone; `choice` (O6) is taken only by
-    `CHOICE_DECISION_KINDS`; every other kind takes `pick`, `accept`,
-    `to_graveyard`, `to_bottom`, `pile_one` or `players`."""
+    `CHOICE_DECISION_KINDS`; `top_order`/`position` (FB2 A1) and `targets`
+    (FB2 A2) are each taken only by their own decision kinds; every other
+    kind takes `pick`, `accept`, `to_graveyard`, `to_bottom`, `pile_one` or
+    `players`."""
 
     decision: DecisionKind
     pick: Pick = None
@@ -574,6 +873,18 @@ class Answer(_Strict):
     #: `PlayerTarget`'s `player` field already is. Not a `Selector`: a player
     #: has no characteristics a selector could match against.
     players: list[Literal["me", "opponent"]] = Field(default=None, max_length=MAX_PLAYERS_ANSWER)
+    #: A scry/surveil's own answer (FB2 A1): tiers ordering the cards kept on
+    #: top, first tier on top - an alternative to leaving everything in
+    #: looked-at order.
+    top_order: TopOrder = None
+    #: `put_on_top_or_bottom`'s own answer (FB2 A1, Subtlety's "its owner
+    #: puts it on the top or bottom of their library") - an alternative to
+    #: `to_bottom`, never both.
+    position: Literal["top", "bottom"] = None
+    #: `choose_targets`'s own answer (FB2 A2) - an alternative to `pick` that
+    #: can also name a player target, the same shapes a `cast`/`activate`
+    #: target already takes.
+    targets: list[Target] = Field(default=None, min_length=1, max_length=MAX_TARGETS)
 
     @model_validator(mode="after")
     def _fields_fit_the_decision(self) -> Answer:
@@ -587,45 +898,20 @@ class Answer(_Strict):
     @field_validator("decision")
     @classmethod
     def _not_a_combat_declaration_or_mulligan(cls, decision: str) -> str:
+        if decision in COMBAT_DECISION_KINDS:
+            raise PydanticCustomError(
+                "use_combat_move",
+                "'{decision}' is answered by the '{decision}' move, not an answer item",
+                {"decision": decision},
+            )
         if decision in FORBIDDEN_DECISION_KINDS:
             raise PydanticCustomError(
                 "forbidden_decision",
                 "'{decision}' is not answered by a script; "
-                "scripts do not attack, block, assign combat damage or mulligan",
+                "scripts do not assign combat damage or mulligan",
                 {"decision": decision},
             )
         return decision
-
-
-class ZonedCard(_Strict):
-    zone: Literal[COUNT_ZONES]
-    select: Selector
-    prefer: Prefer = None
-    ties: Ties = None
-
-
-class CardTarget(_Strict):
-    """A card or permanent target: what `select` matches, on `side`."""
-
-    select: Selector
-    side: Side
-
-
-class PlayerTarget(_Strict):
-    """A player target: the viewer or an opponent."""
-
-    player: Literal["me", "opponent"]
-
-
-def _target_tag(value: Any) -> str:
-    return "player-target" if isinstance(value, dict) and "player" in value else "card-target"
-
-
-#: One target a cast or an activation announces, in order.
-Target = Annotated[
-    Annotated[CardTarget, Tag("card-target")] | Annotated[PlayerTarget, Tag("player-target")],
-    Discriminator(_target_tag),
-]
 
 
 class LandCard(_Strict):
@@ -681,13 +967,28 @@ Discard = Annotated[
 
 
 class ActivateMove(_Strict):
+    """Names its ability by exactly one of `ability_text_has` (a phrase) or
+    `ability_index` (FB2 M4, the card's own ability list index, 0-15) - both
+    or neither is `activate-ability-ref`."""
+
     kind: Literal["activate"]
     source: ZonedCard
-    ability_text_has: NonBlank
+    ability_text_has: NonBlank = None
+    ability_index: AbilityIndex = None
     targets: list[Target] = Field(default_factory=list, max_length=MAX_TARGETS)
     sacrifice: Sacrifice = None
     discard: Discard = None
     answers: list[Answer] = Field(default_factory=list, max_length=MAX_ANSWERS)
+
+    @model_validator(mode="after")
+    def _exactly_one_ability_reference(self) -> ActivateMove:
+        named = (self.ability_text_has is not None) + (self.ability_index is not None)
+        if named != 1:
+            raise PydanticCustomError(
+                "activate_ability_ref",
+                "name exactly one of ability_text_has or ability_index",
+            )
+        return self
 
 
 class CastMove(_Strict):
@@ -712,8 +1013,115 @@ class AnswerMove(_Strict):
     answers: list[Answer] = Field(min_length=1, max_length=MAX_ANSWERS)
 
 
+class PassMove(_Strict):
+    """Release priority once (CR 117.3d, FB2 M1) - no `answers` field, since
+    there is nothing to answer. Must be the play's last move
+    (`Play._pass_last_and_combat_first` below), otherwise `pass-not-last`. A
+    play whose only move is `pass` is a legal "do nothing here" play."""
+
+    kind: Literal["pass"]
+
+
+class DefenderPlayer(_Strict):
+    player: Literal["opponent"]
+
+
+class DefenderCard(_Strict):
+    """A planeswalker or battle the attack group is declared against."""
+
+    select: Selector
+    side: Literal["opponent"]
+
+
+def _defender_tag(value: Any) -> str:
+    return "defender-player" if isinstance(value, dict) and "player" in value else "defender-card"
+
+
+#: An `AttackGroup`'s own defender (FB2 M2): the opponent player (the
+#: default, left out), or a permanent of theirs matched by selector.
+Defender = Annotated[
+    Annotated[DefenderPlayer, Tag("defender-player")]
+    | Annotated[DefenderCard, Tag("defender-card")],
+    Discriminator(_defender_tag),
+]
+
+
+def _attack_count_tag(value: Any) -> str:
+    return (
+        "attack-count-number"
+        if isinstance(value, int) and not isinstance(value, bool)
+        else "attack-count-all"
+    )
+
+
+#: How many of the matching creatures attack: a count from 1, or every one
+#: of them.
+AttackCount = Annotated[
+    Annotated[Annotated[int, Field(ge=1)], Tag("attack-count-number")]
+    | Annotated[Literal["all"], Tag("attack-count-all")],
+    Discriminator(_attack_count_tag),
+]
+
+
+class AttackGroup(_Strict):
+    """One group of the viewer's untapped creatures matching `select`,
+    `count` of them (or `all`), best first by `prefer`, declared against
+    `defender` (left out: the opponent player)."""
+
+    select: Selector
+    count: AttackCount = None
+    prefer: Prefer = None
+    ties: Ties = None
+    defender: Defender = None
+
+
+class DeclareAttackersMove(_Strict):
+    """CR 508.1 (FB2 M2). `attackers: []` declares no attackers - still a
+    legal declare-attackers move. Must be the play's first move
+    (`Play._pass_last_and_combat_first` below), otherwise
+    `combat-move-not-first`."""
+
+    kind: Literal["declare_attackers"]
+    attackers: list[AttackGroup] = Field(default_factory=list, max_length=MAX_ATTACK_GROUPS)
+
+
+class BlockerPick(Pick):
+    """A block's own `blocker` half: the viewer's untapped creatures matching
+    `select`, `count` of them (default 1), best first by `prefer`."""
+
+
+class AttackerPick(_Strict):
+    """A block's own `attacker` half: which attacking creature this block
+    answers, by selector."""
+
+    select: Selector
+    prefer: Prefer = None
+    ties: Ties = None
+
+
+class Block(_Strict):
+    blocker: BlockerPick
+    attacker: AttackerPick
+
+
+class DeclareBlockersMove(_Strict):
+    """CR 509.1 (FB2 M3). `blocks: []` declares no blocks - still a legal
+    declare-blockers move. Must be the play's first move
+    (`Play._pass_last_and_combat_first` below), otherwise
+    `combat-move-not-first`."""
+
+    kind: Literal["declare_blockers"]
+    blocks: list[Block] = Field(default_factory=list, max_length=MAX_BLOCKS)
+
+
 Move = Annotated[
-    ActivateMove | CastMove | PlayLandMove | AnswerMove,
+    ActivateMove
+    | CastMove
+    | PlayLandMove
+    | AnswerMove
+    | PassMove
+    | DeclareAttackersMove
+    | DeclareBlockersMove,
     Field(discriminator="kind"),
 ]
 
@@ -780,6 +1188,49 @@ class Play(_Strict):
             )
         return keys
 
+    @field_validator("true")
+    @classmethod
+    def _all_of_only_in_false(cls, conditions: list[Any]) -> list[Any]:
+        if any(isinstance(condition, AllOfCondition) for condition in conditions):
+            raise PydanticCustomError(
+                "all_of_outside_false",
+                "'all_of' means not (A and B ...); it is allowed only in false, not true",
+            )
+        return conditions
+
+    @model_validator(mode="after")
+    def _pass_last_and_combat_first(self) -> Play:
+        last_index = len(self.moves) - 1
+        for index, move in enumerate(self.moves):
+            if isinstance(move, PassMove) and index != last_index:
+                raise PydanticCustomError("pass_not_last", "'pass' must be the last move of moves")
+            if isinstance(move, DeclareAttackersMove | DeclareBlockersMove) and index != 0:
+                raise PydanticCustomError(
+                    "combat_move_not_first",
+                    "'{kind}' must be the first move of moves",
+                    {"kind": move.kind},
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _standalone_pending_answer_names_the_pending_decision(self) -> Play:
+        if len(self.moves) == 1 and isinstance(self.moves[0], AnswerMove):
+            pending = {
+                condition.decision
+                for condition in self.true
+                if isinstance(condition, PendingDecisionCondition)
+            }
+            if pending:
+                for answer in self.moves[0].answers:
+                    if answer.decision not in pending:
+                        raise PydanticCustomError(
+                            "answer_decision_mismatch",
+                            "this play's pending_decision condition names "
+                            "{pending}, but the answer names '{decision}'",
+                            {"pending": ", ".join(sorted(pending)), "decision": answer.decision},
+                        )
+        return self
+
 
 def json_schema() -> dict[str, Any]:
     """`Play` as JSON Schema, for `contract/playscript.schema.json`."""
@@ -794,11 +1245,15 @@ _ITEM_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "moves": TypeAdapter(Move),
     "true": TypeAdapter(Condition),
     "false": TypeAdapter(Condition),
+    "conditions": TypeAdapter(LeafCondition),
     "answers": TypeAdapter(Answer),
     "next": TypeAdapter(NonBlank),
     "steps": TypeAdapter(StepName),
     "targets": TypeAdapter(Target),
     "prefer": TypeAdapter(Selector),
+    "top_order": TypeAdapter(Selector),
+    "attackers": TypeAdapter(AttackGroup),
+    "blocks": TypeAdapter(Block),
     "opposing_archetypes": TypeAdapter(ArchetypeKey),
     "zones": TypeAdapter(Literal[MISSING_FROM_ZONES]),
     "searches_for_any": TypeAdapter(Literal[BASIC_LAND_TYPES]),
@@ -822,6 +1277,12 @@ _CUSTOM_CODES = {
     "duplicate_step": "duplicate-step",
     "wildcard_with_keys": "wildcard-with-keys",
     "answer_shape_mismatch": "answer-shape-mismatch",
+    "pass_not_last": "pass-not-last",
+    "combat_move_not_first": "combat-move-not-first",
+    "activate_ability_ref": "activate-ability-ref",
+    "all_of_outside_false": "all-of-outside-false",
+    "use_combat_move": "use-combat-move",
+    "answer_decision_mismatch": "answer-decision-mismatch",
 }
 #: A value outside a closed Literal, by the field it is in.
 _LITERAL_CODES = {"decision": "unknown-decision-kind", "cost": "unknown-cast-cost"}
@@ -831,6 +1292,8 @@ _SHAPE_TAGS = frozenset(
     {"amount-count", "amount-policy", "card-target", "player-target"}
     | {"sacrifice-keyword", "sacrifice-choice"}
     | {"discard-keyword", "discard-choice"}
+    | {"defender-player", "defender-card"}
+    | {"attack-count-number", "attack-count-all"}
 )
 _MISSING = object()
 
@@ -839,7 +1302,7 @@ def _walk(doc: Any, loc: tuple[Any, ...]) -> tuple[str, Any]:
     """The dotted location of `loc` in `doc`, and the value found there.
 
     Pydantic puts a discriminated union's tag into the location: after the
-    list index for a `kind` union, after the field for a shape union
+    list index for a `kind`/`of` union, after the field for a shape union
     (`_SHAPE_TAGS`). A tag names no key of the document, so it is skipped."""
     text, node = "", doc
     for part in loc:
@@ -880,23 +1343,20 @@ def _code(error: dict[str, Any], loc: tuple[Any, ...]) -> str:
         return "malformed-play" if _last_field(loc) == "opposing_archetypes" else "bounds-exceeded"
     if kind == "union_tag_invalid":
         value = error.get("input")
-        tag = value.get("kind") if isinstance(value, dict) else None
+        tag = None
+        if isinstance(value, dict):
+            tag = value.get("kind")
+            if tag is None:
+                tag = value.get("of")
         return "forbidden-kind" if isinstance(tag, str) else "malformed-play"
-    if (
-        kind == "literal_error"
-        and len(loc) >= 2
-        and loc[-2] == "steps"
-        and error.get("input") in COMBAT_DECLARATION_STEPS
-    ):
-        return "forbidden-kind"
     return "malformed-play"
 
 
 def _message(error: dict[str, Any], code: str) -> str:
-    if code == "forbidden-kind" and error["type"] == "literal_error":
-        return f"{error['input']!r} is a combat declaration step; scripts do not attack or block"
     if code == "forbidden-kind" and error["type"] == "union_tag_invalid":
-        return f"kind {error['input'].get('kind')!r} is not in the closed vocabulary"
+        value = error.get("input")
+        tag = value.get("kind") or value.get("of") if isinstance(value, dict) else None
+        return f"kind {tag!r} is not in the closed vocabulary"
     if code == "unknown-field":
         return "is not a field of this schema"
     return error["msg"]

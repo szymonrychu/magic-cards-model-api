@@ -53,7 +53,7 @@ def test_both_worked_examples_validate():
         assert model.id == example["id"]
 
 
-def test_the_vocabulary_is_closed_at_eight_conditions_and_four_moves():
+def test_the_vocabulary_is_closed_at_eleven_conditions_and_seven_moves():
     assert CONDITION_KINDS == (
         "count",
         "zone_size",
@@ -63,17 +63,27 @@ def test_the_vocabulary_is_closed_at_eight_conditions_and_four_moves():
         "untapped_mana",
         "turn",
         "input",
+        "pending_decision",
+        "compare",
+        "all_of",
     )
-    assert MOVE_KINDS == ("activate", "cast", "play_land", "answer")
+    assert MOVE_KINDS == (
+        "activate",
+        "cast",
+        "play_land",
+        "answer",
+        "pass",
+        "declare_attackers",
+        "declare_blockers",
+    )
 
 
-def test_steps_are_the_autopass_steps_without_the_combat_declarations():
+def test_steps_are_the_autopass_steps_combat_declarations_included():
+    """FB2 W1: `when.steps` now accepts `declare_attackers`/`declare_blockers`
+    too - `STEPS` is the full `AUTOPASS_STEPS` list, no exclusion."""
     from magic_cards_model_api.seatkit import AUTOPASS_STEPS
 
-    assert (
-        tuple(s for s in AUTOPASS_STEPS if s not in ("declare_attackers", "declare_blockers"))
-        == STEPS
-    )
+    assert STEPS == AUTOPASS_STEPS
 
 
 def test_the_error_codes_are_the_shared_contract_in_order():
@@ -102,6 +112,12 @@ def test_the_error_codes_are_the_shared_contract_in_order():
         "duplicate-step",
         "wildcard-with-keys",
         "answer-shape-mismatch",
+        "pass-not-last",
+        "combat-move-not-first",
+        "activate-ability-ref",
+        "all-of-outside-false",
+        "use-combat-move",
+        "answer-decision-mismatch",
     )
 
 
@@ -255,13 +271,22 @@ def test_autofire_is_rejected_as_an_unknown_field():
 
 
 @pytest.mark.parametrize("step", ["declare_attackers", "declare_blockers"])
-def test_a_combat_declaration_step_is_forbidden(step):
-    assert codes(mutate("when.steps", ["precombat_main", step])) == ["forbidden-kind"]
+def test_a_combat_declaration_step_is_now_accepted(step):
+    """FB2 W1 flips the old `forbidden-kind` refusal: a script may name a
+    combat declaration step in `when.steps` (it still never attacks or
+    blocks from `when` alone - that needs the M2/M3 move kinds)."""
+    assert play_errors(mutate("when.steps", ["precombat_main", step])) == []
 
 
-@pytest.mark.parametrize("kind", ["attack", "block", "mulligan", "concede", "pass", "loop"])
-def test_a_move_outside_the_closed_four_is_forbidden(kind):
+@pytest.mark.parametrize("kind", ["attack", "block", "mulligan", "concede", "loop"])
+def test_a_move_outside_the_closed_seven_is_forbidden(kind):
     assert codes(mutate("moves", [{"kind": kind}])) == ["forbidden-kind"]
+
+
+def test_pass_is_now_a_legal_move_kind():
+    """FB2 M1: `pass` moved out of the forbidden set - `{"kind": "pass"}`
+    alone is a complete, legal move."""
+    assert play_errors(mutate("moves", [{"kind": "pass"}])) == []
 
 
 @pytest.mark.parametrize("kind", ["graveyard_order", "library_top", "turn_number"])
@@ -368,16 +393,19 @@ def _property_names(schema: Any) -> set[str]:
     return names
 
 
-def test_no_field_anywhere_iterates_attacks_blocks_mulligans_concedes_or_passes():
+def test_no_field_anywhere_iterates_mulligans_or_concedes():
+    """FB2 gives `attackers` (M2) and `blocks` (M3) real, legitimate field
+    names - a bounded list declared once per play, never an iteration
+    primitive - so they are dropped from this forbidden set; `attack`,
+    `block`/`blockers`, `mulligan`, `concede` and every `LOOP_LIKE` word stay
+    forbidden as field names anywhere in the schema."""
     names = _property_names(Play.model_json_schema())
     forbidden = set(LOOP_LIKE) | {
         "attack",
-        "attackers",
         "block",
         "blockers",
         "mulligan",
         "concede",
-        "pass",
     }
     assert not names & forbidden, names & forbidden
 
@@ -992,14 +1020,18 @@ def test_the_decision_kinds_are_the_apis_pending_decision_kinds():
     assert set(DECISION_KINDS) == {kind.value for kind in ANSWERABLE_KINDS}
     assert set(FORBIDDEN_DECISION_KINDS) == {
         "assign_combat_damage",
-        "declare_attackers",
-        "declare_blockers",
         "mulligan",
     }
 
 
 @pytest.mark.parametrize(
-    "kind", sorted(set(DECISION_KINDS) - set(FORBIDDEN_DECISION_KINDS) - set(AMOUNT_DECISION_KINDS))
+    "kind",
+    sorted(
+        set(DECISION_KINDS)
+        - set(FORBIDDEN_DECISION_KINDS)
+        - set(AMOUNT_DECISION_KINDS)
+        - {"declare_attackers", "declare_blockers"}
+    ),
 )
 def test_every_answerable_decision_kind_validates(kind):
     assert play_errors(mutate("moves.0.answers.1.decision", kind)) == []
@@ -1026,11 +1058,23 @@ def test_a_decision_kind_typo_past_a_too_long_answers_list_is_still_judged():
     ]
 
 
-@pytest.mark.parametrize(
-    "kind", ["assign_combat_damage", "declare_attackers", "declare_blockers", "mulligan"]
-)
-def test_answering_a_combat_declaration_or_a_mulligan_is_forbidden(kind):
+@pytest.mark.parametrize("kind", ["assign_combat_damage", "mulligan"])
+def test_answering_combat_damage_or_a_mulligan_is_forbidden(kind):
     assert codes(mutate("moves.0.answers.0.decision", kind)) == ["forbidden-kind"]
+
+
+@pytest.mark.parametrize("kind", ["declare_attackers", "declare_blockers"])
+def test_answering_a_combat_declaration_is_use_combat_move_not_forbidden_kind(kind):
+    """FB2 D1: `declare_attackers`/`declare_blockers` moved out of
+    `FORBIDDEN_DECISION_KINDS` into their own move kinds (M2/M3) - an answer
+    item still naming one is refused, but with `use-combat-move`, whose
+    message names the move to use instead."""
+    doc = mutate("moves.0.answers.0.decision", kind)
+    assert codes(doc) == ["use-combat-move"]
+    (error,) = play_errors(doc)
+    assert kind in error.message and "move" in error.message
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
 
 
 # -- D08: every list bounded, no duplicate step, no wildcard beside keys ----------

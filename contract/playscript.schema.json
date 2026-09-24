@@ -2,8 +2,17 @@
   "$defs": {
     "ActivateMove": {
       "additionalProperties": false,
+      "description": "Names its ability by exactly one of `ability_text_has` (a phrase) or\n`ability_index` (FB2 M4, the card's own ability list index, 0-15) - both\nor neither is `activate-ability-ref`.",
       "properties": {
+        "ability_index": {
+          "default": null,
+          "maximum": 15,
+          "minimum": 0,
+          "title": "Ability Index",
+          "type": "integer"
+        },
         "ability_text_has": {
+          "default": null,
           "pattern": "\\S",
           "title": "Ability Text Has",
           "type": "string"
@@ -71,8 +80,7 @@
       },
       "required": [
         "kind",
-        "source",
-        "ability_text_has"
+        "source"
       ],
       "title": "ActivateMove",
       "type": "object"
@@ -93,9 +101,81 @@
       "title": "Affordable",
       "type": "object"
     },
+    "AllOfCondition": {
+      "additionalProperties": false,
+      "description": "\"not (A and B ...)\": every member must hold for `all_of` itself to\nhold (FB2 C3). Allowed only inside a play's `false` list -\n`Play._all_of_only_in_false` below refuses one in `true` with\n`all-of-outside-false` - and never nested: a member drawn from\n`LeafCondition` may not itself be `all_of`.",
+      "properties": {
+        "conditions": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "compare": "#/$defs/CompareCondition",
+                "count": "#/$defs/CountCondition",
+                "input": "#/$defs/InputCondition",
+                "land_drop_available": "#/$defs/LandDropCondition",
+                "life": "#/$defs/LifeCondition",
+                "pending_decision": "#/$defs/PendingDecisionCondition",
+                "stack_top": "#/$defs/StackTopCondition",
+                "turn": "#/$defs/TurnCondition",
+                "untapped_mana": "#/$defs/UntappedManaCondition",
+                "zone_size": "#/$defs/ZoneSizeCondition"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CountCondition"
+              },
+              {
+                "$ref": "#/$defs/ZoneSizeCondition"
+              },
+              {
+                "$ref": "#/$defs/LifeCondition"
+              },
+              {
+                "$ref": "#/$defs/StackTopCondition"
+              },
+              {
+                "$ref": "#/$defs/LandDropCondition"
+              },
+              {
+                "$ref": "#/$defs/UntappedManaCondition"
+              },
+              {
+                "$ref": "#/$defs/TurnCondition"
+              },
+              {
+                "$ref": "#/$defs/InputCondition"
+              },
+              {
+                "$ref": "#/$defs/PendingDecisionCondition"
+              },
+              {
+                "$ref": "#/$defs/CompareCondition"
+              }
+            ]
+          },
+          "maxItems": 4,
+          "minItems": 2,
+          "title": "Conditions",
+          "type": "array"
+        },
+        "kind": {
+          "const": "all_of",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "conditions"
+      ],
+      "title": "AllOfCondition",
+      "type": "object"
+    },
     "Answer": {
       "additionalProperties": false,
-      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; `choice` (O6) is taken only by\n`CHOICE_DECISION_KINDS`; every other kind takes `pick`, `accept`,\n`to_graveyard`, `to_bottom`, `pile_one` or `players`.",
+      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; `choice` (O6) is taken only by\n`CHOICE_DECISION_KINDS`; `top_order`/`position` (FB2 A1) and `targets`\n(FB2 A2) are each taken only by their own decision kinds; every other\nkind takes `pick`, `accept`, `to_graveyard`, `to_bottom`, `pile_one` or\n`players`.",
       "properties": {
         "accept": {
           "default": null,
@@ -171,6 +251,32 @@
           "title": "Players",
           "type": "array"
         },
+        "position": {
+          "default": null,
+          "enum": [
+            "top",
+            "bottom"
+          ],
+          "title": "Position",
+          "type": "string"
+        },
+        "targets": {
+          "default": null,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CardTarget"
+              },
+              {
+                "$ref": "#/$defs/PlayerTarget"
+              }
+            ]
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "title": "Targets",
+          "type": "array"
+        },
         "to_bottom": {
           "$ref": "#/$defs/Selector",
           "default": null
@@ -178,6 +284,15 @@
         "to_graveyard": {
           "$ref": "#/$defs/Selector",
           "default": null
+        },
+        "top_order": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Top Order",
+          "type": "array"
         }
       },
       "required": [
@@ -212,10 +327,155 @@
       "title": "AnswerMove",
       "type": "object"
     },
+    "AttackGroup": {
+      "additionalProperties": false,
+      "description": "One group of the viewer's untapped creatures matching `select`,\n`count` of them (or `all`), best first by `prefer`, declared against\n`defender` (left out: the opponent player).",
+      "properties": {
+        "count": {
+          "default": null,
+          "oneOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "const": "all",
+              "type": "string"
+            }
+          ],
+          "title": "Count"
+        },
+        "defender": {
+          "default": null,
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DefenderPlayer"
+            },
+            {
+              "$ref": "#/$defs/DefenderCard"
+            }
+          ],
+          "title": "Defender"
+        },
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
+        }
+      },
+      "required": [
+        "select"
+      ],
+      "title": "AttackGroup",
+      "type": "object"
+    },
+    "AttackerPick": {
+      "additionalProperties": false,
+      "description": "A block's own `attacker` half: which attacking creature this block\nanswers, by selector.",
+      "properties": {
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
+        }
+      },
+      "required": [
+        "select"
+      ],
+      "title": "AttackerPick",
+      "type": "object"
+    },
+    "Block": {
+      "additionalProperties": false,
+      "properties": {
+        "attacker": {
+          "$ref": "#/$defs/AttackerPick"
+        },
+        "blocker": {
+          "$ref": "#/$defs/BlockerPick"
+        }
+      },
+      "required": [
+        "blocker",
+        "attacker"
+      ],
+      "title": "Block",
+      "type": "object"
+    },
+    "BlockerPick": {
+      "additionalProperties": false,
+      "description": "A block's own `blocker` half: the viewer's untapped creatures matching\n`select`, `count` of them (default 1), best first by `prefer`.",
+      "properties": {
+        "count": {
+          "default": null,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
+        }
+      },
+      "required": [
+        "select"
+      ],
+      "title": "BlockerPick",
+      "type": "object"
+    },
     "CardTarget": {
       "additionalProperties": false,
-      "description": "A card or permanent target: what `select` matches, on `side`.",
+      "description": "A card or permanent target: what `select` matches, on `side`. Ranked\nthe same way any other selector-driven pick is (FB2 T1): `prefer`/`ties`\nnarrow and break ties among the legal candidates, and `zone` narrows\nwhich zones are searched - left out, a target still resolves over\nbattlefield and stack, today's behaviour.",
       "properties": {
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
         "select": {
           "$ref": "#/$defs/Selector"
         },
@@ -226,6 +486,23 @@
             "any"
           ],
           "title": "Side",
+          "type": "string"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
+        },
+        "zone": {
+          "default": null,
+          "enum": [
+            "battlefield",
+            "stack",
+            "graveyard",
+            "exile"
+          ],
+          "title": "Zone",
           "type": "string"
         }
       },
@@ -311,6 +588,113 @@
         "card"
       ],
       "title": "CastMove",
+      "type": "object"
+    },
+    "CompareCondition": {
+      "additionalProperties": false,
+      "description": "`left op right`, each side an `Operand` read off the board or a\nliteral `n` (FB2 C2) - `count`/`zone_size`/`life`/`untapped_mana` already\ncompare one board read against a literal `n` on their own; `compare` puts\nthe board on both sides (a deck's own creature count against the\nopponent's, or - the case that motivates it - the summed power of one\nside's board against the other's life total).",
+      "properties": {
+        "kind": {
+          "const": "compare",
+          "title": "Kind",
+          "type": "string"
+        },
+        "left": {
+          "discriminator": {
+            "mapping": {
+              "count": "#/$defs/CountOperand",
+              "life": "#/$defs/LifeOperand",
+              "n": "#/$defs/NOperand",
+              "power_sum": "#/$defs/PowerSumOperand",
+              "toughness_sum": "#/$defs/ToughnessSumOperand",
+              "untapped_mana": "#/$defs/UntappedManaOperand",
+              "zone_size": "#/$defs/ZoneSizeOperand"
+            },
+            "propertyName": "of"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CountOperand"
+            },
+            {
+              "$ref": "#/$defs/ZoneSizeOperand"
+            },
+            {
+              "$ref": "#/$defs/LifeOperand"
+            },
+            {
+              "$ref": "#/$defs/UntappedManaOperand"
+            },
+            {
+              "$ref": "#/$defs/PowerSumOperand"
+            },
+            {
+              "$ref": "#/$defs/ToughnessSumOperand"
+            },
+            {
+              "$ref": "#/$defs/NOperand"
+            }
+          ],
+          "title": "Left"
+        },
+        "op": {
+          "enum": [
+            ">=",
+            "<=",
+            "==",
+            "!=",
+            ">",
+            "<"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "right": {
+          "discriminator": {
+            "mapping": {
+              "count": "#/$defs/CountOperand",
+              "life": "#/$defs/LifeOperand",
+              "n": "#/$defs/NOperand",
+              "power_sum": "#/$defs/PowerSumOperand",
+              "toughness_sum": "#/$defs/ToughnessSumOperand",
+              "untapped_mana": "#/$defs/UntappedManaOperand",
+              "zone_size": "#/$defs/ZoneSizeOperand"
+            },
+            "propertyName": "of"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CountOperand"
+            },
+            {
+              "$ref": "#/$defs/ZoneSizeOperand"
+            },
+            {
+              "$ref": "#/$defs/LifeOperand"
+            },
+            {
+              "$ref": "#/$defs/UntappedManaOperand"
+            },
+            {
+              "$ref": "#/$defs/PowerSumOperand"
+            },
+            {
+              "$ref": "#/$defs/ToughnessSumOperand"
+            },
+            {
+              "$ref": "#/$defs/NOperand"
+            }
+          ],
+          "title": "Right"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "op",
+        "right"
+      ],
+      "title": "CompareCondition",
       "type": "object"
     },
     "Comparison": {
@@ -410,6 +794,50 @@
       "title": "CountCondition",
       "type": "object"
     },
+    "CountOperand": {
+      "additionalProperties": false,
+      "description": "How many cards matching `select` are in `zone` (default battlefield),\nby side - the same reading `CountCondition`'s own `count` gives, and the\nsame hidden-zone side rule: a hidden `zone` must name `me` or `opponent`,\nnever `any`.",
+      "properties": {
+        "of": {
+          "const": "count",
+          "title": "Of",
+          "type": "string"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent",
+            "any"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "zone": {
+          "default": "battlefield",
+          "enum": [
+            "battlefield",
+            "graveyard",
+            "exile",
+            "hand",
+            "stack",
+            "library",
+            "sideboard"
+          ],
+          "title": "Zone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "of",
+        "select",
+        "side"
+      ],
+      "title": "CountOperand",
+      "type": "object"
+    },
     "CounterComparison": {
       "additionalProperties": false,
       "description": "`{name, op, n}`: how many counters of one kind (not a card name).",
@@ -443,6 +871,89 @@
         "n"
       ],
       "title": "CounterComparison",
+      "type": "object"
+    },
+    "DeclareAttackersMove": {
+      "additionalProperties": false,
+      "description": "CR 508.1 (FB2 M2). `attackers: []` declares no attackers - still a\nlegal declare-attackers move. Must be the play's first move\n(`Play._pass_last_and_combat_first` below), otherwise\n`combat-move-not-first`.",
+      "properties": {
+        "attackers": {
+          "items": {
+            "$ref": "#/$defs/AttackGroup"
+          },
+          "maxItems": 6,
+          "title": "Attackers",
+          "type": "array"
+        },
+        "kind": {
+          "const": "declare_attackers",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "DeclareAttackersMove",
+      "type": "object"
+    },
+    "DeclareBlockersMove": {
+      "additionalProperties": false,
+      "description": "CR 509.1 (FB2 M3). `blocks: []` declares no blocks - still a legal\ndeclare-blockers move. Must be the play's first move\n(`Play._pass_last_and_combat_first` below), otherwise\n`combat-move-not-first`.",
+      "properties": {
+        "blocks": {
+          "items": {
+            "$ref": "#/$defs/Block"
+          },
+          "maxItems": 6,
+          "title": "Blocks",
+          "type": "array"
+        },
+        "kind": {
+          "const": "declare_blockers",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "DeclareBlockersMove",
+      "type": "object"
+    },
+    "DefenderCard": {
+      "additionalProperties": false,
+      "description": "A planeswalker or battle the attack group is declared against.",
+      "properties": {
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "side": {
+          "const": "opponent",
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "select",
+        "side"
+      ],
+      "title": "DefenderCard",
+      "type": "object"
+    },
+    "DefenderPlayer": {
+      "additionalProperties": false,
+      "properties": {
+        "player": {
+          "const": "opponent",
+          "title": "Player",
+          "type": "string"
+        }
+      },
+      "required": [
+        "player"
+      ],
+      "title": "DefenderPlayer",
       "type": "object"
     },
     "DiscardChoice": {
@@ -613,9 +1124,33 @@
       "title": "LifeCondition",
       "type": "object"
     },
+    "LifeOperand": {
+      "additionalProperties": false,
+      "properties": {
+        "of": {
+          "const": "life",
+          "title": "Of",
+          "type": "string"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent"
+          ],
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "of",
+        "side"
+      ],
+      "title": "LifeOperand",
+      "type": "object"
+    },
     "MissingFrom": {
       "additionalProperties": false,
-      "description": "`{zones, side, by}`: the candidate matches only when no card on `side`\nin `zones` shares what `by` compares with it - its subtypes (those the\nselector's own `subtypes_any` lists, when it lists any) or its name. A\ncomparison between objects, never a name written in the script.",
+      "description": "`{zones, side, by}`: the candidate matches only when no card on `side`\nin `zones` shares what `by` compares with it - its subtypes (those the\nselector's own `subtypes_any` also lists, when it lists any) or its name.\nA comparison between objects, never a name written in the script.",
       "properties": {
         "by": {
           "enum": [
@@ -658,6 +1193,87 @@
         "by"
       ],
       "title": "MissingFrom",
+      "type": "object"
+    },
+    "NOperand": {
+      "additionalProperties": false,
+      "description": "A plain literal number - the side of a `compare` that is not read off\nthe board at all.",
+      "properties": {
+        "n": {
+          "title": "N",
+          "type": "integer"
+        },
+        "of": {
+          "const": "n",
+          "title": "Of",
+          "type": "string"
+        }
+      },
+      "required": [
+        "of",
+        "n"
+      ],
+      "title": "NOperand",
+      "type": "object"
+    },
+    "PassMove": {
+      "additionalProperties": false,
+      "description": "Release priority once (CR 117.3d, FB2 M1) - no `answers` field, since\nthere is nothing to answer. Must be the play's last move\n(`Play._pass_last_and_combat_first` below), otherwise `pass-not-last`. A\nplay whose only move is `pass` is a legal \"do nothing here\" play.",
+      "properties": {
+        "kind": {
+          "const": "pass",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "PassMove",
+      "type": "object"
+    },
+    "PendingDecisionCondition": {
+      "additionalProperties": false,
+      "description": "Holds when a decision of this kind is pending for the viewer (FB2\nC1). The one condition kind a standalone `answer` play's `true` names to\nsay \"this play only runs as a direct answer to a decision already on the\ntable\" - see `Play._standalone_pending_answer_names_the_pending_decision`\nbelow, which requires the play's one `answer` move to name the same\n`decision`, or `answer-decision-mismatch`.",
+      "properties": {
+        "decision": {
+          "enum": [
+            "assign_combat_damage",
+            "choose_a_mode",
+            "choose_a_quality",
+            "choose_cards",
+            "choose_pile",
+            "choose_players",
+            "choose_targets",
+            "declare_attackers",
+            "declare_blockers",
+            "may",
+            "mulligan",
+            "opening_hand_action",
+            "order_triggers",
+            "pay_energy",
+            "pay_energy_amount",
+            "pay_life",
+            "pay_life_amount",
+            "pay_mana",
+            "put_on_top_or_bottom",
+            "scry",
+            "surveil"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "kind": {
+          "const": "pending_decision",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "decision"
+      ],
+      "title": "PendingDecisionCondition",
       "type": "object"
     },
     "Pick": {
@@ -738,6 +1354,36 @@
         "player"
       ],
       "title": "PlayerTarget",
+      "type": "object"
+    },
+    "PowerSumOperand": {
+      "additionalProperties": false,
+      "description": "The summed power of `side`'s battlefield permanents matching `select`\n- covers \"their board's power beats my life\" without a bespoke condition\nkind of its own.",
+      "properties": {
+        "of": {
+          "const": "power_sum",
+          "title": "Of",
+          "type": "string"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent",
+            "any"
+          ],
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "of",
+        "select",
+        "side"
+      ],
+      "title": "PowerSumOperand",
       "type": "object"
     },
     "SacrificeChoice": {
@@ -983,6 +1629,36 @@
       "title": "StackTopCondition",
       "type": "object"
     },
+    "ToughnessSumOperand": {
+      "additionalProperties": false,
+      "description": "The summed toughness of `side`'s battlefield permanents matching\n`select` - the same reading `power_sum` gives, for toughness.",
+      "properties": {
+        "of": {
+          "const": "toughness_sum",
+          "title": "Of",
+          "type": "string"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent",
+            "any"
+          ],
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "of",
+        "select",
+        "side"
+      ],
+      "title": "ToughnessSumOperand",
+      "type": "object"
+    },
     "TurnCondition": {
       "additionalProperties": false,
       "description": "The viewer's own `own_turns_taken` op `n`: how many of their own\nturns they have begun (`TurnMachine.own_turns_taken`, CR 500.7 extra\nturns included), so it reads my Nth turn on the play and on the draw\nalike, and an extra turn is its own turn - unlike `turn_number` (rounds\nof the table), it moves for one. 0 before the viewer's first turn,\npregame included - never null.",
@@ -1052,6 +1728,30 @@
       "title": "UntappedManaCondition",
       "type": "object"
     },
+    "UntappedManaOperand": {
+      "additionalProperties": false,
+      "properties": {
+        "of": {
+          "const": "untapped_mana",
+          "title": "Of",
+          "type": "string"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent"
+          ],
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "of",
+        "side"
+      ],
+      "title": "UntappedManaOperand",
+      "type": "object"
+    },
     "When": {
       "additionalProperties": false,
       "properties": {
@@ -1070,6 +1770,8 @@
               "draw",
               "precombat_main",
               "beginning_of_combat",
+              "declare_attackers",
+              "declare_blockers",
               "first_strike_damage",
               "combat_damage",
               "end_of_combat",
@@ -1158,6 +1860,43 @@
       "title": "ZoneSizeCondition",
       "type": "object"
     },
+    "ZoneSizeOperand": {
+      "additionalProperties": false,
+      "description": "A zone's public card count, by side - the same reading\n`ZoneSizeCondition` gives, `side` always named (never `any`).",
+      "properties": {
+        "of": {
+          "const": "zone_size",
+          "title": "Of",
+          "type": "string"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "zone": {
+          "enum": [
+            "hand",
+            "library",
+            "graveyard",
+            "exile",
+            "sideboard"
+          ],
+          "title": "Zone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "of",
+        "zone",
+        "side"
+      ],
+      "title": "ZoneSizeOperand",
+      "type": "object"
+    },
     "ZonedCard": {
       "additionalProperties": false,
       "properties": {
@@ -1209,10 +1948,13 @@
       "items": {
         "discriminator": {
           "mapping": {
+            "all_of": "#/$defs/AllOfCondition",
+            "compare": "#/$defs/CompareCondition",
             "count": "#/$defs/CountCondition",
             "input": "#/$defs/InputCondition",
             "land_drop_available": "#/$defs/LandDropCondition",
             "life": "#/$defs/LifeCondition",
+            "pending_decision": "#/$defs/PendingDecisionCondition",
             "stack_top": "#/$defs/StackTopCondition",
             "turn": "#/$defs/TurnCondition",
             "untapped_mana": "#/$defs/UntappedManaCondition",
@@ -1244,6 +1986,15 @@
           },
           {
             "$ref": "#/$defs/InputCondition"
+          },
+          {
+            "$ref": "#/$defs/PendingDecisionCondition"
+          },
+          {
+            "$ref": "#/$defs/CompareCondition"
+          },
+          {
+            "$ref": "#/$defs/AllOfCondition"
           }
         ]
       },
@@ -1269,6 +2020,9 @@
             "activate": "#/$defs/ActivateMove",
             "answer": "#/$defs/AnswerMove",
             "cast": "#/$defs/CastMove",
+            "declare_attackers": "#/$defs/DeclareAttackersMove",
+            "declare_blockers": "#/$defs/DeclareBlockersMove",
+            "pass": "#/$defs/PassMove",
             "play_land": "#/$defs/PlayLandMove"
           },
           "propertyName": "kind"
@@ -1285,6 +2039,15 @@
           },
           {
             "$ref": "#/$defs/AnswerMove"
+          },
+          {
+            "$ref": "#/$defs/PassMove"
+          },
+          {
+            "$ref": "#/$defs/DeclareAttackersMove"
+          },
+          {
+            "$ref": "#/$defs/DeclareBlockersMove"
           }
         ]
       },
@@ -1338,10 +2101,13 @@
       "items": {
         "discriminator": {
           "mapping": {
+            "all_of": "#/$defs/AllOfCondition",
+            "compare": "#/$defs/CompareCondition",
             "count": "#/$defs/CountCondition",
             "input": "#/$defs/InputCondition",
             "land_drop_available": "#/$defs/LandDropCondition",
             "life": "#/$defs/LifeCondition",
+            "pending_decision": "#/$defs/PendingDecisionCondition",
             "stack_top": "#/$defs/StackTopCondition",
             "turn": "#/$defs/TurnCondition",
             "untapped_mana": "#/$defs/UntappedManaCondition",
@@ -1373,6 +2139,15 @@
           },
           {
             "$ref": "#/$defs/InputCondition"
+          },
+          {
+            "$ref": "#/$defs/PendingDecisionCondition"
+          },
+          {
+            "$ref": "#/$defs/CompareCondition"
+          },
+          {
+            "$ref": "#/$defs/AllOfCondition"
           }
         ]
       },

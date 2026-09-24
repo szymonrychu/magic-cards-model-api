@@ -23,16 +23,19 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   an advice-only play is never counted here - see "Advice-only plays" below),
   `opposing_archetypes` (1-32: `["*"]` alone, or matchup
   label slugs; `*` beside a key is `wildcard-with-keys`),
-  `when {whose_turn: mine|theirs|either, steps: [1-4 distinct autopass steps,
-  not declare_attackers/declare_blockers], stack: empty|any}` (a repeated step
-  is `duplicate-step`), `true` (0-8 conditions), `false` (0-8 conditions, each
-  must NOT hold), `moves` (0-4 - empty or absent is advice-only, see
-  "Advice-only plays" below), `next` (0-3 ids). The autopass steps run
-  `upkeep, draw, precombat_main, beginning_of_combat, first_strike_damage,
-  combat_damage, end_of_combat, postcombat_main, end_step` - CR 510.4/506.1's
-  first-strike combat damage step is `first_strike_damage`, distinct from
-  `combat_damage` itself (the engine's own turn-based action, and the state
-  view's `step` field, name both occurrences `combat_damage`; a script naming
+  `when {whose_turn: mine|theirs|either, steps: [1-4 distinct autopass steps],
+  stack: empty|any}` (a repeated step is `duplicate-step`; FB2 W1 - the two
+  combat declaration steps are now namable here, one board-position
+  precondition among the rest, distinct from actually attacking or blocking,
+  which still needs the M2/M3 move kinds below), `true` (0-8 conditions),
+  `false` (0-8 conditions, each must NOT hold), `moves` (0-4 - empty or
+  absent is advice-only, see "Advice-only plays" below), `next` (0-3 ids).
+  The autopass steps run `upkeep, draw, precombat_main, beginning_of_combat,
+  declare_attackers, declare_blockers, first_strike_damage, combat_damage,
+  end_of_combat, postcombat_main, end_step` - CR 510.4/506.1's first-strike
+  combat damage step is `first_strike_damage`, distinct from `combat_damage`
+  itself (the engine's own turn-based action, and the state view's `step`
+  field, name both occurrences `combat_damage`; a script naming
   `first_strike_damage` fires only in the first one, one naming
   `combat_damage` only in the second - or the only one, in a combat with no
   first or double striker).
@@ -59,8 +62,9 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   matches a card whose color set is empty (CR 105.2c, "A colorless object has
   no color"), a devoid Eldrazi included, and never a colored card.
 - Colors: `white`, `blue`, `black`, `red`, `green`, `colorless`
-- Condition kinds (8): `count`, `zone_size`, `life`, `stack_top`, `land_drop_available`, `untapped_mana`, `turn`, `input`
-  (an `in`/`not_in` value list holds 0-32 values).
+- Condition kinds (11): `count`, `zone_size`, `life`, `stack_top`, `land_drop_available`, `untapped_mana`, `turn`, `input`, `pending_decision`, `compare`, `all_of`
+  (an `in`/`not_in` value list holds 0-32 values; `pending_decision`, `compare`
+  and `all_of` are FB2 additions - see their own subsections below).
 
 ### `note`
 
@@ -130,6 +134,52 @@ into it. `own_turns_taken` is 0 before the viewer's first turn, pregame
 included - never null. It is a `numeric_range` key for never-applicable lint
 and conflict exclusivity, on the same footing as `count`, `zone_size`, `life`
 and `untapped_mana`.
+
+### `pending_decision` (FB2 C1)
+
+`{kind: pending_decision, decision: <DECISION_KINDS value>}` holds when a
+decision of that kind is pending for the viewer right now - the same closed
+`DECISION_KINDS` vocabulary an answer's own `decision` names, `declare_attackers`/
+`declare_blockers`/`assign_combat_damage`/`mulligan` included, since this is
+a read of what is pending, not an answer to it. It is the gate for the
+standalone pending-decision answer (D2 below): a play whose only move is
+`answer` and whose `true` names a `pending_decision` may run the moment that
+decision is on the table, with no priority of its own required - the answer's
+own `decision` must equal the condition's, or `answer-decision-mismatch`.
+
+### `compare` (FB2 C2)
+
+`{kind: compare, left: Operand, op, right: Operand}` compares two board- or
+literal-read values against each other - `count`/`zone_size`/`life`/
+`untapped_mana` each already compare one board read against a literal `n` on
+their own; `compare` puts a board read on both sides, so "my board's summed
+power beats their life total" is expressible without a bespoke condition kind
+of its own. `Operand` is discriminated on `of`:
+
+- `{of: count, select, zone?: <COUNT_ZONES>, side}` - `zone` left out
+  defaults to `battlefield`. The same hidden-zone side rule `count` the
+  condition applies: a hidden `zone` must name `side: me` or `side: opponent`,
+  never `any` (`hidden-zone-side-any`).
+- `{of: zone_size, zone: <SIZE_ZONES>, side: me|opponent}` - `side` is always
+  named here, never `any`.
+- `{of: life, side: me|opponent}`
+- `{of: untapped_mana, side: me|opponent}`
+- `{of: power_sum, select, side}` - the summed power of `side`'s battlefield
+  permanents matching `select`.
+- `{of: toughness_sum, select, side}` - the same reading `power_sum` gives,
+  for toughness.
+- `{of: n, n: <int>}` - a plain literal, read off nothing.
+
+- Operand kinds: `count`, `zone_size`, `life`, `untapped_mana`, `power_sum`, `toughness_sum`, `n`
+
+### `all_of` (FB2 C3)
+
+`{kind: all_of, conditions: [2-4 leaf Condition]}` holds only when every
+member holds - "not (A and B ...)" when it sits in `false`, which is the only
+place it is allowed: `all_of` inside `true` is `all-of-outside-false`. A
+member is drawn from every condition kind except `all_of` itself - nesting is
+refused, since an `all_of` naming `all_of` among its own `conditions` is an
+unrecognized kind for that inner list.
 
 ### `searches_for_any`
 
@@ -453,17 +503,33 @@ four-word vocabulary further.
 
 ## Moves
 
-Move kinds (4), each with `answers: [0-3]` (an `answer` move needs 1-3):
+Move kinds (7), each with `answers: [0-3]` (an `answer` move needs 1-3;
+`pass` has no `answers` field at all):
 
-- `activate {source: {zone, select, prefer?: [0-4 select], ties?: any}, ability_text_has, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, discard?: none|<discard choice>, answers: [0-3]}`
+- `activate {source: {zone, select, prefer?: [0-4 select], ties?: any}, ability_text_has?: string, ability_index?: 0-15, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, discard?: none|<discard choice>, answers: [0-3]}` - names its ability by exactly one of `ability_text_has` (a phrase) or `ability_index` (FB2 M4, the card's own ability list index); both or neither is `activate-ability-ref`.
 - `cast {card: {zone, select, prefer?: [0-4 select], ties?: any}, cost?: <cast cost>, targets: [0-6 <target>], mana?: auto, answers: [0-3]}`
 - `play_land {card: {select, prefer?: [0-4 select], ties?: any}, answers: [0-3]}`
 - `answer {answers: [1-3]}`, for a decision already pending
+- `pass {}` (FB2 M1, CR 117.3d) - release priority once. Must be the last move of `moves`, otherwise `pass-not-last`; a play whose only move is `pass` is a legal "do nothing here" play.
+- `declare_attackers {attackers: [0-6 AttackGroup]}` (FB2 M2, CR 508.1), `AttackGroup {select, count?: >=1|all, prefer?: [0-4 select], ties?: any, defender?: {player: opponent}|{select, side: opponent}}` - `defender` left out means the opponent player; `attackers: []` declares no attackers.
+- `declare_blockers {blocks: [0-6 Block]}` (FB2 M3, CR 509.1), `Block {blocker: {select, count?: >=1, prefer?: [0-4 select], ties?: any}, attacker: {select, prefer?: [0-4 select], ties?: any}}` - `blocks: []` declares no blocks.
 
-A target is `{select, side}` (a card or permanent matching `select`, on that
-side) or `{player: me|opponent}`, one per target the spell or ability
-announces, in order. Anything else is `malformed-play`, and a key beside
-either shape is `unknown-field`.
+`declare_attackers` and `declare_blockers` must each be the first move of the
+play, otherwise `combat-move-not-first`, and a play carries at most one of
+them (a second combat move can never also be first).
+
+- Move kinds: `activate`, `cast`, `play_land`, `answer`, `pass`, `declare_attackers`, `declare_blockers`
+
+A target is `{select, side, prefer?: [0-4 select], ties?: any, zone?:
+battlefield|stack|graveyard|exile}` (a card or permanent matching `select`,
+on that side) or `{player: me|opponent}`, one per target the spell or ability
+announces, in order. `prefer`/`ties` rank the candidates the same way a
+`Pick` or a `ZonedCard` already does (O2, below); `zone` (FB2 T1) narrows
+which zones are searched - left out, a target still resolves over
+battlefield and stack, today's behaviour. Anything else is `malformed-play`,
+and a key beside either shape is `unknown-field`.
+
+- Target zones: `battlefield`, `stack`, `graveyard`, `exile`
 
 A sacrifice choice is `{select, count?: >=1, prefer?: [0-4 select], ties?: any}`: the
 permanents the activating player controls matching `select`, for an
@@ -485,8 +551,10 @@ the underlying component is a sacrifice or a discard.
 ### `prefer` and `ties` (O2)
 
 `play_land.card`, `cast.card`, `activate.source`, `Pick` (an answer's
-`pick`), a sacrifice choice and a discard choice all take `prefer` (0-4 selectors, the same
-fan-out as `moves`) and `ties: "any"`. `prefer` narrows the match through
+`pick`), a sacrifice choice, a discard choice, a `CardTarget` (FB2 T1), an
+`AttackGroup` and a block's `blocker`/`attacker` (FB2 M2/M3) all take
+`prefer` (0-4 selectors, the same fan-out as `moves`) and `ties: "any"`.
+`prefer` narrows the match through
 every selector in the list in turn, each one applied against whatever the
 previous one left - a selector that would leave nothing is skipped rather
 than emptying the match, so the runner never discards a narrower tier for a
@@ -516,16 +584,38 @@ and then this doc's test until it is listed here.
 
 ### `answers[]`
 
-Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select], ties?: any}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max, choice?: string, pile_one?: bool, players?: [0-2 me|opponent]}`.
+Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select], ties?: any}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max, choice?: string, pile_one?: bool, players?: [0-2 me|opponent], top_order?: [0-4 select], position?: top|bottom, targets?: [1-6 <target>]}`.
 
 An answer's fields must fit its decision kind, or it is
 `answer-shape-mismatch`. A pay-amount decision (Galvanic Discharge's
 `pay_energy_amount`, Necrodominance's `pay_life_amount`) is answered with
 `amount` alone: an integer from 0, or `max` for the most the decision allows.
-`accept`, `pick`, `to_graveyard`, `to_bottom`, `choice`, `pile_one` or
-`players` on it, or no `amount`, is `answer-shape-mismatch`, and so is an
-`amount` on any other kind.
+`accept`, `pick`, `to_graveyard`, `to_bottom`, `choice`, `pile_one`,
+`players`, `top_order`, `position` or `targets` on it, or no `amount`, is
+`answer-shape-mismatch`, and so is an `amount` on any other kind.
 A negative `amount` is `bounds-exceeded`; any other value is `malformed-play`.
+
+`top_order` (FB2 A1) fits only a `scry`/`surveil` answer: tiers ordering the
+cards kept on top after either, first tier on top, the rest kept in
+looked-at order after them - naming it on any other kind is
+`answer-shape-mismatch`.
+
+- Top-order decision kinds: `scry`, `surveil`
+
+`position` (FB2 A1) fits only `put_on_top_or_bottom` (Subtlety's "its owner
+puts it on the top or bottom of their library"): `top` or `bottom`, an
+alternative to `to_bottom` for that one decision - naming both on the same
+answer is `answer-shape-mismatch`, and naming `position` on any other kind is
+too.
+
+- Position decision kinds: `put_on_top_or_bottom`
+
+`targets` (FB2 A2) fits only `choose_targets`: 1-6 targets, the same
+`{select, side, prefer?, ties?, zone?}`/`{player: me|opponent}` shapes a
+`cast`/`activate` target already takes (see "Moves" above) - an alternative
+to `pick` that can name a player target, which `pick`'s selector-driven match
+never could. Naming both `targets` and `pick` on the same answer, or naming
+`targets` on any other kind, is `answer-shape-mismatch`.
 
 `pile_one` (CR 700.3's pile primitive - Liliana of the Veil's own `-6`, Do or
 Die) answers a `choose_pile` decision: `true` for pile one
@@ -554,12 +644,26 @@ the engine to judge. A `choice` naming something outside a non-empty
 `decision` is a closed set equal to the api's pending decision kinds: the
 values of `decisions.ANSWERABLE_KINDS`, which are the engine `DecisionKind`s
 the api can pend. A value outside it (a typo such as `choose_cardz`) is
-`unknown-decision-kind`. Four of them are in the set but refused with
-`forbidden-kind`, because scripts never attack, block, assign combat damage or
-mulligan.
+`unknown-decision-kind`. Two of them are in the set but refused with
+`forbidden-kind`, because scripts never assign combat damage or mulligan.
+Two more, `declare_attackers`/`declare_blockers`, are in the set but refused
+with `use-combat-move` (FB2 D1) instead - a script never answers them as a
+decision either, but the refusal names the real fix: use the
+`declare_attackers`/`declare_blockers` move (M2/M3 above), not an answer
+item.
 
 - Decision kinds: `assign_combat_damage`, `choose_a_mode`, `choose_a_quality`, `choose_cards`, `choose_pile`, `choose_players`, `choose_targets`, `declare_attackers`, `declare_blockers`, `may`, `mulligan`, `opening_hand_action`, `order_triggers`, `pay_energy`, `pay_energy_amount`, `pay_life`, `pay_life_amount`, `pay_mana`, `put_on_top_or_bottom`, `scry`, `surveil`
-- Never answered: `assign_combat_damage`, `declare_attackers`, `declare_blockers`, `mulligan`
+- Never answered: `assign_combat_damage`, `mulligan`
+
+### D2: the standalone pending-decision answer
+
+A play whose only move is `answer` and whose `true` names a `pending_decision`
+condition (FB2 C1) is the standalone pending-decision answer: it runs the
+moment that decision is pending for the seat, with no priority of its own
+required - the priority gate every other move needs does not apply, because
+answering a decision already paused mid-resolution is not itself an action
+that needs priority. The answer's own `decision` must equal the condition's,
+otherwise `answer-decision-mismatch`.
 
 ## Advice-only plays
 
@@ -660,9 +764,28 @@ read off the redacted state view:
   the lowercased keyword (`evoke`, `impending`, ...), or for `printed` the
   card's own name, which is how the engine names a printed CR 118.9 cost. A
   cost the card has no live option for is refused in the engine's words.
-- A `{select, side}` target resolves over the battlefield and the stack to one
-  id; a `{player: me|opponent}` target resolves to that player's name. Both go
-  out in the route's `targets`, for `cast` and `activate` alike.
+- A `{select, side, prefer?, ties?, zone?}` target resolves over `zone` (left
+  out, battlefield and stack, today's behaviour) to one id; a
+  `{player: me|opponent}` target resolves to that player's name. Both go out
+  in the route's `targets`, for `cast` and `activate` alike, and the same
+  resolution answers a `choose_targets` answer's own `targets` (FB2 A2).
+- `activate.ability_index` (FB2 M4) picks the source's ability by index off
+  the state view's own `abilities` list, the same list `ability_text_has`
+  already reads a phrase out of; an index the card does not carry is
+  `unforeseen`.
+- `pass` (FB2 M1) sends pass-priority once (the same route the seat's own
+  pass uses, `hold_priority=False`) and releases - it does not itself wait
+  for the turn to come back around, and a move after it is never allowed
+  (`pass-not-last`), so a run ending in `pass` finishes `chain_complete` the
+  moment priority is released.
+- `declare_attackers` (FB2 M2) sends each `AttackGroup` to the attack route
+  (or `/decide` with the decision's own `pairs`, whichever the seat's own
+  tool uses), resolved over the seat's untapped creatures that can attack
+  through the same pick rule as everywhere else; `defender` left out
+  resolves to the opponent player.
+- `declare_blockers` (FB2 M3) sends each `Block` to the declare-blockers
+  route the same way, `blocker` resolved from the seat's untapped creatures
+  and `attacker` from the creatures attacking this seat.
 - `activate.sacrifice` goes out as `ActivateRequest.sacrificing` (or, when the
   ability's own cost text reads "discard" rather than "sacrifice",
   `.discarding` instead - the same `source`/`none`/choice value either way):
@@ -682,7 +805,13 @@ read off the redacted state view:
 - A `surveil` or `scry` answer goes to `/decide` as `moved`: the cards looked
   at that `to_graveyard` (surveil) or `to_bottom` (scry) matches, with the
   rest kept on top in the order they were looked at. An answer naming neither
-  moves nothing, so every card stays on top.
+  moves nothing, so every card stays on top. `top_order` (FB2 A1) orders that
+  "kept on top" half instead of leaving it in looked-at order: the cards
+  matching its first tier go on top, then its second, and so on, with
+  anything no tier matches kept after them in looked-at order.
+- A `put_on_top_or_bottom` answer's `position` (FB2 A1) sends `top: true` for
+  `top`, `top: false` for `bottom` - the same `top` field `to_bottom`'s
+  presence/absence already drove, now named directly instead of inferred.
 - Every selection follows one pick rule: nothing matching is `unforeseen`, and
   different cards still tied after `prefer` are `ambiguous` - unless `ties:
   "any"` (O2), which takes the first `count` of them by sorted name instead.
@@ -820,6 +949,35 @@ There is no probability or frequency field anywhere in the schema
 (`priority` is ordinal, not a weight) for exactly this reason: a corner
 case is named by a condition, never discounted by a likelihood.
 
+## Schema version
+
+`schema_version` stays 1 through FB2's B4 additions (2026-09-24). Every one
+of `pass`/`declare_attackers`/`declare_blockers` (M1-M3), `ability_index`
+(M4), `top_order`/`position`/`targets` on an answer item (A1/A2), `prefer`/
+`ties`/`zone` on a `CardTarget` (T1) and `pending_decision`/`compare`/
+`all_of` (C1-C3) is either a new optional field (left out, a play validates
+exactly as it did before) or a new discriminated `kind`/`of` value (a union
+member the old vocabulary never had), never a change to an existing
+required field or an existing kind's meaning - so every play already
+committed, the 94 in the mtg-decks corpus at the time of writing among them,
+stays valid unchanged. This is what a schema version bump would otherwise be
+for: since nothing about reading an *old* file changes, there is no reader
+to migrate.
+
+There is a real consequence, but it falls on deploy order, not on the
+version number: this api's own `Play` model has to be the one running
+*before* any deck's plays actually use one of these new kinds. Pydantic's
+strict, discriminated unions already refuse an unrecognized `kind`/`of` value
+loudly (`forbidden-kind` or `malformed-play`, never a silent misread) - so an
+older api, or the mtg-decks stdlib mirror (`scripts/check_plays.py`) before
+its own FB2 update lands, would correctly refuse a file naming
+`declare_attackers` as a move kind or `all_of` as a condition kind, the same
+way it refuses any other unrecognized shape today. That refusal is safe, but
+it means FB2's schema change (FC4) has to reach this repo's `main` and a live
+deploy before FB2's mtg-decks mirror (FC8) pushes a play using any of the new
+vocabulary to mtg-decks' own `main` - the ordering note carried in the task
+plan that shipped this change.
+
 ## Migration: `note` becomes required later
 
 `note` lands optional (API-1): every play already committed validates
@@ -837,4 +995,7 @@ requirement; there is no date fixed for that step today.
 
 ## Not in the vocabulary
 
-Attack, block, mulligan, concede, pass, and any iteration field.
+Mulligan, concede, assign combat damage, and any iteration field. (FB2
+2026-09-24: attacking, blocking and passing moved out of this list -
+`pass`/`declare_attackers`/`declare_blockers` are now real move kinds, M1-M3
+above.)

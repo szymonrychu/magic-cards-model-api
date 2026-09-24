@@ -26,7 +26,12 @@ from magic_cards_model_api.playscripts.schema import (
     MISSING_FROM_BY,
     MISSING_FROM_SIDES,
     MISSING_FROM_ZONES,
+    MOVE_KINDS,
+    OPERAND_KINDS,
     PAYABLE_STATES,
+    POSITION_DECISION_KINDS,
+    TARGET_ZONES,
+    TOP_ORDER_DECISION_KINDS,
 )
 from magic_cards_model_api.playscripts.selectors import COLOR_LETTERS
 
@@ -50,6 +55,23 @@ def test_doc_names_every_cast_cost_in_schema_order() -> None:
 
 def test_doc_names_every_condition_kind_in_schema_order() -> None:
     assert _listed("- Condition kinds") == list(CONDITION_KINDS)
+
+
+def test_doc_names_every_move_kind_in_schema_order() -> None:
+    assert _listed("- Move kinds:") == list(MOVE_KINDS)
+
+
+def test_doc_names_every_operand_kind_in_schema_order() -> None:
+    assert _listed("- Operand kinds:") == list(OPERAND_KINDS)
+
+
+def test_doc_names_every_target_zone_in_schema_order() -> None:
+    assert _listed("- Target zones:") == list(TARGET_ZONES)
+
+
+def test_doc_names_the_top_order_and_position_decision_kinds() -> None:
+    assert _listed("- Top-order decision kinds:") == list(TOP_ORDER_DECISION_KINDS)
+    assert _listed("- Position decision kinds:") == list(POSITION_DECISION_KINDS)
 
 
 def test_doc_defines_the_turn_condition() -> None:
@@ -203,16 +225,24 @@ def test_o2_prefer_and_ties_are_on_play_land_activate_source_and_pick() -> None:
 def test_activate_move_line_carries_targets_and_the_sacrifice_and_discard_choices() -> None:
     assert (
         f"`activate {{source: {{zone, select, prefer?: [0-{MAX_PREFER} select], ties?: any}}, "
-        f"ability_text_has, targets: [0-{MAX_TARGETS} <target>], "
+        f"ability_text_has?: string, ability_index?: 0-15, targets: [0-{MAX_TARGETS} <target>], "
         f"sacrifice?: source|none|<sacrifice choice>, discard?: none|<discard choice>, "
         f"answers: [0-{MAX_ANSWERS}]}}`"
     ) in DOC.read_text()
 
 
+def test_activate_ability_index_bound_matches_the_schema() -> None:
+    from magic_cards_model_api.playscripts.schema import MAX_ABILITY_INDEX
+
+    assert MAX_ABILITY_INDEX == 15
+    assert "ability_index?: 0-15" in DOC.read_text()
+
+
 def test_doc_names_the_amount_decision_kinds_and_the_amount_field() -> None:
     assert _listed("- Amount decision kinds:") == list(AMOUNT_DECISION_KINDS)
     assert (
-        "amount?: >=0|max, choice?: string, pile_one?: bool, players?: [0-2 me|opponent]}`"
+        "amount?: >=0|max, choice?: string, pile_one?: bool, players?: [0-2 me|opponent], "
+        "top_order?: [0-4 select], position?: top|bottom, targets?: [1-6 <target>]}`"
     ) in DOC.read_text()
 
 
