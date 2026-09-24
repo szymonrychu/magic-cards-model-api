@@ -211,6 +211,24 @@ def test_followup_turn_review_answered_defaults_to_none():
     assert "--play fetch-surveil-land" in flat
 
 
+def test_the_followup_dispatch_skips_a_review_answered_candidate(world):
+    """DR4 item 5, wired end to end: `assign_followup` must itself read this
+    game's `role: "reviewer"` journal lines and pass
+    `handover.review_answered_plays` through to `followup_turn` - not just
+    the prompt function tested directly above, which always defaulted it to
+    empty and so could never catch app.py failing to wire it through."""
+    journal(
+        world,
+        {"command": "plays admit", "result": "admitted", "added": ["fetch-surveil-land"]},
+        role="reviewer",
+    )
+    dispatch(world)
+    text = the_turn(world)
+    assert "already answered by this game's AI review" in text
+    assert "--play fetch-surveil-land" not in text
+    assert "cast Psychic Frog" in text
+
+
 def test_the_followup_reads_the_evidence_table_off_the_guides_checkout(world):
     evidence = world.settings.guides_root / "decks" / "dimir-frog" / "plays" / "evidence"
     evidence.mkdir(parents=True)

@@ -105,6 +105,7 @@ from .handover import (
     conflict_warnings,
     plays_outcome_body,
     read_journal,
+    review_answered_plays,
     unfinished_reasons,
     write_evidence,
     write_marker,
@@ -1386,6 +1387,9 @@ def build_app(
                 hand_played=tables["hand_played"],
                 evidence=tables["evidence"],
                 candidates=tables["candidates"],
+                review_answered=review_answered_plays(
+                    read_journal(settings.guides_root, assignment.game_id, "reviewer")
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - the background half records it
             prepared = exc
@@ -1967,6 +1971,9 @@ def build_app(
             hand_played=str(payload.get("hand_played") or "no hand-played table was recorded"),
             evidence=evidence_table(settings.guides_root, assignment.deck_slug),
             candidates=candidates,
+            review_answered=review_answered_plays(
+                read_journal(settings.guides_root, assignment.game_id, "reviewer")
+            ),
         )
         followup: dict[str, Any] = {
             "status": {

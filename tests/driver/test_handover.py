@@ -567,12 +567,13 @@ CANDIDATE_LOG = [
 ]
 
 
-def journal(world, *entries: dict) -> None:
-    """Append what D2a's `mcp-seat` commands would have written."""
+def journal(world, *entries: dict, role: str = "seat") -> None:
+    """Append what D2a's `mcp-seat` commands would have written - as `role`,
+    "seat" by default, "reviewer" for a post-game AI review's own admits."""
     world.journal.parent.mkdir(parents=True, exist_ok=True)
     with world.journal.open("a") as handle:
         for entry in entries:
-            handle.write(json.dumps({"ts": "t", "game_id": world.game_id, "role": "seat"} | entry))
+            handle.write(json.dumps({"ts": "t", "game_id": world.game_id, "role": role} | entry))
             handle.write("\n")
 
 
@@ -827,6 +828,24 @@ def test_the_handover_prompt_carries_the_offers_the_hand_lines_the_evidence_and_
     assert "--play frog-attack" in candidates
     assert '--line "cast Fatal Push"' in candidates
     assert world.log_reads == [world.uid]
+
+
+def test_the_handover_skips_a_candidate_the_ai_review_already_admitted(world):
+    """DR4 item 5: `handover.review_answered_plays`, read off this game's
+    `role: "reviewer"` journal lines, must actually reach `handover_turn`
+    from the running `/handover` endpoint - not only from a direct call to
+    the prompt function, which always defaulted `review_answered` to empty
+    and so could never catch app.py failing to wire it through."""
+    world.state["log"] = CANDIDATE_LOG
+    dispatch(world)
+    journal(world, admit(added=("frog-attack",)), role="reviewer")
+    world.client.post("/handover", json={})
+    handover_turn_id(world)
+    text = handover_turns(world)[0]["text"]
+    candidates = section(text, "## Development candidates")
+    assert "--play frog-attack" not in candidates
+    assert "already answered by this game's AI review" in candidates
+    assert '--line "cast Fatal Push"' in candidates
 
 
 def test_an_unanswered_candidate_gets_exactly_one_re_push_then_an_unfinished_outcome(world):
