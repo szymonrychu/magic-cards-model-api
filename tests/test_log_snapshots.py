@@ -71,7 +71,11 @@ def test_a_problem_report_lands_in_the_log(client, game):
 
     entry = log_of(client, game)[-1]
     assert entry["action"] == "report_problem"
-    assert entry["detail"] == {"player": "alice", "text": "the sky is the wrong colour"}
+    assert entry["detail"] == {
+        "player": "alice",
+        "text": "the sky is the wrong colour",
+        "category": "engine",
+    }
     assert entry["snapshot"] is not None, "the report carries the state it complains about"
 
 
