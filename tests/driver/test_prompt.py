@@ -5,6 +5,12 @@ from pathlib import Path
 import pytest
 
 from magic_cards_model_api.playscripts.report import DevelopmentCandidates
+from magic_cards_model_api.playscripts.schema import (
+    MAX_CONDITIONS,
+    MAX_MOVES,
+    MAX_PREFER,
+    MAX_STEPS,
+)
 from mtg_agent.driver.guides import (
     CONFIDENT,
     LOW,
@@ -23,11 +29,15 @@ from mtg_agent.driver.matchup_card import CARD_HARD_CAP_BYTES
 from mtg_agent.driver.prompt import (
     HANDOVER_OPENING,
     NOTES_ROUTING,
+    NOTES_ROUTING_AFTER_GAME,
     NOTES_ROUTING_DURING_GAME,
     REPUSH_OPENING,
+    WRITE_BARS,
+    WRITE_CHANNELS,
     Assignment,
     advisor_turn_zero,
     continue_turn,
+    development_candidates_block,
     handover_nudge,
     handover_repush,
     handover_turn,
@@ -866,6 +876,19 @@ LOOP_HINT_DOCTRINE = (
     "already is this turn's committing call - run it directly, with no `list_scripts` call first."
 )
 
+#: DR4: an offered play whose conditions genuinely hold may not be declined on
+#: corner-case grounds - the owner's verbatim guidance (2026-09-24) was "it
+#: can't turn down a DSL even if it's a cornercase. It must instead describe
+#: the cornercase properly." Pinned word for word in both MCP prompts, the
+#: same way HINT_DOCTRINE is.
+CORNER_CASE_DOCTRINE = (
+    "An offered play whose conditions hold may not be turned down on corner-case grounds.",
+    "Take it, and in its reasoning describe the corner case precisely (the board fact that "
+    "makes this spot different) so the review can split the play.",
+    "Declining stays allowed only when the conditions do not in fact hold, and the reasoning "
+    "must name the board fact.",
+)
+
 #: The universal half of the same caution, for the two CLI briefs
 #: (`ai_seat_brief.md`, `ai_buddy_brief.md`) - a CLI hint field exists too now
 #: (`mcp-seat` action and `wait` answers carry `scripts.applicable`/
@@ -954,6 +977,18 @@ def test_seat_prompt_scripts_section_carries_the_hint_doctrine(tmp_path, guide, 
 
 @pytest.mark.parametrize("sentence", HINT_DOCTRINE)
 def test_buddy_prompt_scripts_section_carries_the_hint_doctrine(tmp_path, guide, sentence):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert sentence in _flat(_section(text, "## Scripts"))
+
+
+@pytest.mark.parametrize("sentence", CORNER_CASE_DOCTRINE)
+def test_seat_prompt_scripts_section_carries_the_corner_case_doctrine(tmp_path, guide, sentence):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert sentence in _flat(_section(text, "## Scripts"))
+
+
+@pytest.mark.parametrize("sentence", CORNER_CASE_DOCTRINE)
+def test_buddy_prompt_scripts_section_carries_the_corner_case_doctrine(tmp_path, guide, sentence):
     text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
     assert sentence in _flat(_section(text, "## Scripts"))
 
@@ -1470,12 +1505,18 @@ def _tables(candidates: DevelopmentCandidates = CANDIDATES) -> dict:
     }
 
 
-def _handover(guide, role: str, candidates: DevelopmentCandidates = CANDIDATES) -> str:
+def _handover(
+    guide,
+    role: str,
+    candidates: DevelopmentCandidates = CANDIDATES,
+    review_answered=(),
+) -> str:
     return handover_turn(
         replace(assignment(guide), role=role),
         "released",
         RUN_TABLE,
         "play-conflict: fetch-x, fetch-y (whose_turn, steps)",
+        review_answered=review_answered,
         **_tables(candidates),
     )
 
@@ -1632,6 +1673,76 @@ def test_no_candidates_says_so(guide):
         _section(_handover(guide, "seat", DevelopmentCandidates()), "## Development candidates")
     )
     assert "none: no play was declined or passed over" in section
+
+
+# -- DR4: candidates the AI review already answered count as answered -------
+#
+# The post-game AI review runs on its own thread and may already have
+# admitted a conditions or advice-only change for one of this game's
+# development candidates (its own journal admits, `handover.review_answered_
+# plays`). The handover must not ask the seat to redo that one.
+
+
+def test_development_candidates_block_skips_a_review_answered_play(guide):
+    candidates = DevelopmentCandidates(plays=("frog-attack",), lines=("cast Fatal Push",))
+    text = _flat(
+        development_candidates_block(
+            assignment(guide), candidates, review_answered=("frog-attack",)
+        )
+    )
+    assert "--play frog-attack" not in text
+    assert "frog-attack" in text
+    assert "already answered by this game's AI review" in text
+    # the untouched candidate still gets its own no-change command
+    assert (
+        "mcp-seat plays no-change --deck dimir-frog --game-id g-1 --line "
+        '"cast Fatal Push" --reason "<why no change is right>"' in text
+    )
+
+
+def test_development_candidates_block_says_so_when_every_candidate_is_answered(guide):
+    candidates = DevelopmentCandidates(plays=("frog-attack",))
+    text = _flat(
+        development_candidates_block(
+            assignment(guide), candidates, review_answered=("frog-attack",)
+        )
+    )
+    assert "already answered by this game's AI review" in text
+
+
+def test_development_candidates_block_review_answered_defaults_to_none(guide):
+    candidates = DevelopmentCandidates(plays=("frog-attack",))
+    text = _flat(development_candidates_block(assignment(guide), candidates))
+    assert "already answered by this game's AI review" not in text
+    assert "--play frog-attack" in text
+
+
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+def test_the_handover_skips_a_review_answered_candidate(guide, role):
+    section = _flat(
+        _section(
+            _handover(guide, role, review_answered=("frog-attack",)),
+            "## Development candidates",
+        )
+    )
+    assert "already answered by this game's AI review" in section
+    assert "--play frog-attack" not in section
+    # the hand-played line candidate, untouched by the review, is unaffected
+    assert "cast Fatal Push" in section
+
+
+def test_the_handover_still_does_priority_deltas_and_guide_updates_as_today(guide):
+    """A review-answered play does not shrink anything else the handover
+    does: priority updates and the three guide updates stay exactly as they
+    were - only the mandatory development step skips what review already
+    answered."""
+    text = _flat(_handover(guide, "seat", review_answered=("frog-attack",)))
+    steps = _flat(
+        _section(_handover(guide, "seat", review_answered=("frog-attack",)), "## What to do")
+    )
+    assert "mcp-seat plays priority" in steps
+    assert "mcp-seat guides propose" in steps or "guides propose" in steps
+    assert "Guide updates" in text
 
 
 def test_the_handover_states_no_play_count_cap(guide):
@@ -1842,6 +1953,132 @@ def test_both_briefs_keep_system_problems_out_of_the_guide(brief):
         f"{brief}'s handover section never states the classification test"
     )
     assert "`report`" in handover, f"{brief}'s handover section never names the report subcommand"
+
+
+# -- DR4: report_problem categories -----------------------------------------
+#
+# The owner's decision (brief section 9, 2026-09-24) splits `report_problem`
+# into three categories, so `watch_game` can stop only on a genuine engine
+# defect rather than every DSL gap and MCP friction report. Named without the
+# literal `category=...` call syntax (`tests/test_prompt_matches_tools.py`
+# checks every such mention against `contract/tools.json`, and DR2 owns that
+# schema change) - bare backtick category names only.
+
+REPORT_PROBLEM_CATEGORIES = (
+    "`engine`",
+    "`dsl`",
+    "`ux`",
+)
+
+
+def test_notes_routing_names_the_report_problem_categories():
+    text = _flat(NOTES_ROUTING)
+    for category in REPORT_PROBLEM_CATEGORIES:
+        assert category in text, f"NOTES_ROUTING never names the {category} category"
+    assert "rules, engine or api bug" in text
+    assert "a decision the play-script DSL could not express" in text
+    assert "missing condition or move kind" in text
+    assert "MCP tool friction" in text
+    assert "overcomplicated" in text
+    assert "confusing answer" in text
+    assert "steps that could merge" in text
+
+
+def test_notes_routing_still_sends_play_content_only_to_the_guide():
+    text = _flat(NOTES_ROUTING)
+    assert "PLAY CONTENT goes to the deck's guide" in text
+
+
+def test_notes_routing_during_game_names_the_categories():
+    text = _flat(NOTES_ROUTING_DURING_GAME)
+    for category in REPORT_PROBLEM_CATEGORIES:
+        assert category in text
+
+
+def test_notes_routing_after_game_names_the_categories():
+    text = _flat(NOTES_ROUTING_AFTER_GAME.format(uid="u-1", game_id="g-1", player="bob"))
+    for category in REPORT_PROBLEM_CATEGORIES:
+        assert category in text
+
+
+# -- DR4: WRITE_BARS rewritten for per-decision submission ------------------
+#
+# One generalized play per seat decision, merged/deduped; a single decline
+# is enough to refine that play, with the reason stated and the two plays'
+# conditions made non-overlapping (the play-conflict exclusivity proof). The
+# old two-decline-across-games threshold and the "<= 1 new move-bearing play
+# per review" cap are gone.
+
+WRITE_BARS_NEW_SENTENCES = (
+    "SUBMIT ONE GENERALIZED PLAY PER DECISION",
+    "merged into the deck's existing corpus rather than filed beside it",
+    "Two decisions that generalize to the same play are ONE write, deduplicated",
+    "A DECLINE REFINES THE DECLINED PLAY ON ITS OWN",
+    "one decline, in this one game, is evidence enough",
+    "no second decline and no second game is owed",
+    "the decline's own `reasoning` must name a board fact a condition can express",
+    "Adjust BOTH the declined play's own conditions and whatever new or refined play now "
+    "covers the board this decline named, so neither fires where the other should",
+    "a play-conflict proof",
+)
+
+#: The old thresholds this rewrite retires - none of this text may survive.
+WRITE_BARS_RETIRED_SENTENCES = (
+    "at least 2 declines of",
+    "1 decline of it in each of 2 distinct games",
+    "declined-into the SAME action twice",
+    "write at most ONE new play per",
+    "a second genuine case waits for the next review",
+)
+
+
+@pytest.mark.parametrize("sentence", WRITE_BARS_NEW_SENTENCES)
+def test_write_bars_states_per_decision_submission(sentence):
+    assert sentence in _flat(WRITE_BARS)
+
+
+@pytest.mark.parametrize("sentence", WRITE_BARS_RETIRED_SENTENCES)
+def test_write_bars_drops_the_old_thresholds(sentence):
+    assert sentence not in _flat(WRITE_BARS)
+
+
+def test_write_bars_still_states_there_is_no_autofire_bar():
+    text = _flat(WRITE_BARS)
+    assert "NO autofire" in text
+    assert "no promotion path from advice-only to move-bearing on accumulated evidence " in text
+
+
+def test_write_bars_still_offers_an_advice_only_play():
+    text = _flat(WRITE_BARS)
+    assert "NEW ADVICE-ONLY PLAY" in text
+    assert "one game is evidence enough" in text
+
+
+# -- DR4: WRITE_CHANNELS drops the stale autofire sentence, caps from DR5 ---
+
+
+def test_write_channels_drops_the_stale_autofire_sentence():
+    assert "A play then runs by itself whenever its conditions hold" not in WRITE_CHANNELS
+
+
+def test_write_channels_says_every_generalized_decision_goes_into_the_guide():
+    text = _flat(WRITE_CHANNELS)
+    assert "Every generalized decision you write also goes into the guide" in text
+    assert "guides propose" in text
+
+
+def test_write_channels_quotes_the_caps_from_the_schema_constants():
+    text = _flat(WRITE_CHANNELS)
+    assert f"{MAX_PREFER} `prefer` selectors" in text
+    assert f"{MAX_CONDITIONS} conditions" in text
+    assert f"{MAX_MOVES} moves" in text
+    assert f"{MAX_STEPS} steps" in text
+
+
+def test_write_channels_states_retire_by_deletion_as_the_at_cap_path():
+    text = _flat(WRITE_CHANNELS)
+    assert "retire-by-deletion" in text
+    assert "delete its weakest existing condition" in text
 
 
 # -- T17: the general timing discipline for any committing action ---------------

@@ -282,7 +282,16 @@ def assess(
             last_write = entry
             if result == "admitted":
                 admitted.append(
-                    {"sha": entry.get("sha"), "dsl_change": bool(entry.get("dsl_change"))}
+                    {
+                        "sha": entry.get("sha"),
+                        "dsl_change": bool(entry.get("dsl_change")),
+                        # DR5's `admit._landing` classification, carried
+                        # through the journal (`gitwork._JOURNALED_KEYS`) -
+                        # empty when a legacy journal line never carried it.
+                        "added": [str(p) for p in entry.get("added") or ()],
+                        "updated": [str(p) for p in entry.get("updated") or ()],
+                        "reprioritized": [str(p) for p in entry.get("reprioritized") or ()],
+                    }
                 )
                 dsl_change = dsl_change or bool(entry.get("dsl_change"))
         elif kind == "propose":
@@ -316,6 +325,29 @@ def assess(
         proposed=tuple(proposed),
         no_change=tuple(no_change),
     )
+
+
+def review_answered_plays(entries: Sequence[Mapping[str, Any]]) -> frozenset[str]:
+    """Every play id this game's post-game AI review already admitted a DSL
+    change for - `added` or `updated` (DR5's `admit._landing` classification,
+    read off `entries`, which the caller reads with `read_journal(guides_root,
+    game_id, "reviewer")`). A priority-only `reprioritized` id never counts,
+    the same rule the handover's own mandatory development step already
+    applies to a plain `plays priority` call. A legacy entry with neither key
+    contributes nothing, never an error.
+
+    The handover's own mandatory development step (`assess` above) must not
+    ask the seat to redo a candidate the review already answered while the
+    handover turn was itself in flight - the review runs on its own
+    background thread, so its admits can land before, during or after the
+    handover turn reads its candidates."""
+    answered: set[str] = set()
+    for entry in entries:
+        if _command(entry) != "admit" or str(entry.get("result") or "") != "admitted":
+            continue
+        answered.update(str(play_id) for play_id in entry.get("added") or ())
+        answered.update(str(play_id) for play_id in entry.get("updated") or ())
+    return frozenset(answered)
 
 
 def unfinished_reasons(
@@ -368,7 +400,10 @@ def plays_outcome_body(
     what keeps the api from ever scheduling a second one. `deck` and
     `opponent` (the revealed opponent's `{slug, archetype, confidence}`) are
     what the api builds a follow-up's assignment from, so they ride in the
-    ledger row; each is left out when not given."""
+    ledger row; each is left out when not given. `admitted` carries each
+    entry's own `added`/`updated`/`reprioritized` play-id lists straight
+    from `verdict.admitted` (DR2's `PlaysOutcomeIn` schema) - this function
+    only forwards what `assess` already built, never derives them itself."""
     body: dict[str, Any] = {
         "uid": uid,
         "player": player,

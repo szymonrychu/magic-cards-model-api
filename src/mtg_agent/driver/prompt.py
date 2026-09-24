@@ -744,6 +744,12 @@ you to write. Two or more entries at once carry `conflict: true` in place of
 `call`: do not pick between them by priority - play that window yourself,
 and extend their conditions after the game so that at most one applies.
 
+**An offered play whose conditions hold may not be turned down on
+corner-case grounds.** Take it, and in its reasoning describe the corner
+case precisely (the board fact that makes this spot different) so the
+review can split the play. Declining stays allowed only when the
+conditions do not in fact hold, and the reasoning must name the board fact.
+
 The same answer's `scripts.armable` and `arm_call` are for arming ahead of
 the window rather than playing it by hand once it arrives - see "Plan ahead,
 and arm your wait" under "The loop" above.
@@ -1842,6 +1848,12 @@ reads. Two or more entries at once carry `conflict: true` in place of `call`:
 do not pick between them by priority - say it is close and propose the line
 you would take.
 
+**An offered play whose conditions hold may not be turned down on
+corner-case grounds.** Take it, and in its reasoning describe the corner
+case precisely (the board fact that makes this spot different) so the
+review can split the play. Declining stays allowed only when the
+conditions do not in fact hold, and the reasoning must name the board fact.
+
 Scripts only run when you start them with `run_script` - arming on a wait
 never runs one, only judges: it marks whichever armed play applies first in
 `scripts.applicable` with its own `call` ready, and a run you did not start
@@ -1987,7 +1999,13 @@ NOTES_ROUTING = """Deck guide content is PLAY REVIEW ONLY.
   an api bug, an engine rules gap, a tool misbehaviour, a timeout, a pod or
   deployment issue, a missing or wrong MCP argument - anything whose remedy
   is a code change. None of it belongs in a deck's notes, a play plan or a
-  matchup note, however much it shaped the game.
+  matchup note, however much it shaped the game. Name which of three
+  categories it is: `engine` for a rules, engine or api bug; `dsl` for a
+  decision the play-script DSL could not express, or a missing condition or
+  move kind - name the condition or move kind it is missing; `ux` for MCP
+  tool friction - an overcomplicated call, a confusing answer, steps that
+  could merge into one. Play content still goes to the guide only, whatever
+  the category - `report_problem` never carries play content.
 
 Classify each sentence before you write it, with this test: would this
 sentence still be true and useful to a human pilot playing this deck with
@@ -2010,10 +2028,11 @@ the remedy is a tool argument. It does not belong in any deck's guide."""
 #: to the guide and a system problem never goes there.
 NOTES_ROUTING_DURING_GAME = (
     "Do not save a system problem for this turn. A problem spotted DURING "
-    "the game is reported with `report_problem` when it is spotted - the "
-    "handover writes to the deck's guide, and a system problem never goes "
-    "there. Anything you already reported this game stays reported; do not "
-    "copy it into the guide now."
+    "the game is reported with `report_problem` when it is spotted, naming "
+    "its category (`engine`, `dsl` or `ux`, the same three `NOTES_ROUTING` "
+    "names) - the handover writes to the deck's guide, and a system problem "
+    "never goes there. Anything you already reported this game stays "
+    "reported; do not copy it into the guide now."
 )
 
 #: The post-game reviewer's own extra clause, and the counterpart of
@@ -2048,10 +2067,12 @@ NOTES_ROUTING_AFTER_GAME = (
     "seat of your own - use the seat's, which stays valid after the game "
     'ends: `report_problem(player_uid="{uid}", text="...")` files the row '
     "in game {game_id}'s own audit ledger, the same row {player} would have "
-    "filed during the game. One call per distinct system problem, made "
-    "BEFORE you write the critique, and say in the critique which ones you "
-    "filed. `report_problem` is the ONLY tool on the `mtg` server you may "
-    "call here - every other one is denied, because this game is over."
+    "filed during the game, with a category named alongside it (`engine`, "
+    "`dsl` or `ux`, the same three `NOTES_ROUTING` names). One call per "
+    "distinct system problem, made BEFORE you write the critique, and say "
+    "in the critique which ones you filed. `report_problem` is the ONLY "
+    "tool on the `mtg` server you may call here - every other one is "
+    "denied, because this game is over."
 )
 
 
@@ -2071,22 +2092,33 @@ def notes_routing_after_game(assignment: Assignment) -> str:
 #: of what a call there measures.
 WRITE_BARS_HEADING = "What clears the bar to write a play-script change, and what does not:"
 
-#: The three bars, and no fourth. Each is a threshold of DECLINE evidence
-#: (never a run count - `script_run_table`'s own runs-and-exits view, and
-#: `handover_turn`'s step 1 `plays priority` delta off it, are a different,
-#: already-existing mechanism for a script that ran and either worked or
-#: did not) plus what the change written for it must be.
+#: Two bars, and no third. Neither is a run count (`script_run_table`'s own
+#: runs-and-exits view, and `handover_turn`'s step 1 `plays priority` delta
+#: off it, are a different, already-existing mechanism for a script that ran
+#: and either worked or did not); both are about what the seat's own
+#: DECISIONS this game earn, and what a decline earns on top of them.
 #:
-#: **Priority is never the answer here.** A pattern of declines says a
-#: play's own `true`/`false` conditions do not yet describe when it should
-#: fire - reordering which play is *tried* first (`plays priority`) does not
-#: touch that at all, and bumping it in response to a decline would only
-#: make a play that still fires in the wrong spot get offered *sooner*.
-#: Bar (a) is written as a CONDITION for exactly this reason.
+#: **Per-decision submission, not run-count thresholds (owner, 2026-09-24).**
+#: The fixed per-deck play-count ceiling this bar used to gate a NEW play
+#: behind is gone (`playscripts.lint`, DR5): a deck may carry any number of
+#: move-bearing, advice-only or archetype-active plays, so a submission
+#: model built to keep growth slow by rationing it no longer fits what
+#: replaced it - one generalized play per decision the seat made this game,
+#: every game, merged and deduplicated into the corpus rather than rationed
+#: into it one at a time.
 #:
-#: **At most one new play, bar (b) only.** One move-bearing play per review
-#: keeps growth slow enough that the next reviewer reading the
-#: resulting commits on mtg-decks main is reading one change, not a batch.
+#: **Priority is never the answer here.** A decline says a play's own
+#: `true`/`false` conditions do not yet describe when it should fire -
+#: reordering which play is *tried* first (`plays priority`) does not touch
+#: that at all, and bumping it in response to a decline would only make a
+#: play that still fires in the wrong spot get offered *sooner*. Refinement
+#: is written as a CONDITION for exactly this reason.
+#:
+#: **One decline is enough, and no second game is owed.** The corner-case
+#: rule above already forbids a decline on corner-case grounds - a play
+#: whose conditions genuinely held was taken, not declined - so a decline
+#: that does reach this review is real evidence the first time it happens,
+#: not merely a pattern once it repeats.
 #:
 #: **No autofire bar, and this says so rather than leaving a reviewer to
 #: infer it.** An owner decision dropped autofire entirely - no field, no
@@ -2094,27 +2126,36 @@ WRITE_BARS_HEADING = "What clears the bar to write a play-script change, and wha
 #: declines and repeats has every incentive to reconstruct "just run it
 #: automatically once the evidence is strong enough" on its own. The
 #: sentence exists so it does not.
-WRITE_BARS = """Three bars, and the evidence each one needs before you write anything to
-this deck's play-script corpus. None of them is a run count: `script_run_table`
-already covers how a script that ran did, and updating a script's `priority` from
-that evidence is `handover_turn`'s own separate step, for a script that ran and
-either worked or did not. These three are about what a seat DECLINED - the offer
-table below - and each names the evidence and the write it earns:
+WRITE_BARS = """Two bars, and the evidence each one needs before you write anything to
+this deck's play-script corpus. Neither is a run count: `script_run_table` already
+covers how a script that ran did, and updating a script's `priority` from that
+evidence is `handover_turn`'s own separate step, for a script that ran and either
+worked or did not. This is about the DSL itself - what every decision this seat
+made this game earns, and what a decline earns on top of it:
 
-(a) TIGHTEN A CONDITION on an existing play - at least 2 declines of that one play
-    in this single game, OR 1 decline of it in each of 2 distinct games, AND the
-    decline's own `reasoning` names a board fact a condition can express (a
-    selector, a count, a life total, mana available - the closed vocabulary the
-    format spec below defines). The change lands as a CONDITION added to the
-    play's own `true`/`false` list, never a priority nudge: a run of declines is
-    evidence the condition that stops this play from firing where it should not
-    is missing, not evidence that some other play should be tried first.
-(b) A NEW MOVE-BEARING PLAY - the seat was declined-into the SAME action twice,
-    across two distinct games, and that action is expressible in the DSL as a
-    play's own `moves` (format spec below) - write at most ONE new play per
-    deck, per review: a second genuine case waits for the next review rather
-    than landing both at once.
-(c) A NEW ADVICE-ONLY PLAY - one game is evidence enough, paired with a
+(a) SUBMIT ONE GENERALIZED PLAY PER DECISION. For every committing decision the
+    seat made this game - a script run, a script offer taken as offered, a line
+    played by hand - write the play that generalizes it: a selector, a condition
+    kind and, for a move-bearing decision, a `moves` entry (format spec below),
+    merged into the deck's existing corpus rather than filed beside it. A
+    decision that already matches a registered play refines that same play in
+    place; one with no matching play drafts a new one. Two decisions that
+    generalize to the same play are ONE write, deduplicated - never two
+    near-identical files.
+
+    A DECLINE REFINES THE DECLINED PLAY ON ITS OWN: one decline, in this one
+    game, is evidence enough - no second decline and no second game is owed.
+    State why in the write: the decline's own `reasoning` must name a board
+    fact a condition can express (a selector, a count, a life total, mana
+    available - the closed vocabulary the format spec below defines), never a
+    corner case turned down instead of taken, which the seat was never allowed
+    to do in the first place. Adjust BOTH the declined play's own conditions
+    and whatever new or refined play now covers the board this decline named,
+    so neither fires where the other should: a play-conflict proof
+    (`exclusivity`/`_conflict_warnings`, `playscripts.lint`), never a priority
+    nudge.
+
+(b) A NEW ADVICE-ONLY PLAY - one game is evidence enough, paired with a
     human-readable NOTES line (`decks/<slug>/NOTES.md`, via `mcp-seat guides
     propose`) saying what the line is for. Cheaper because it commits nothing:
     an advice-only play's `moves` is absent or empty, so it surfaces a note at
@@ -2136,14 +2177,15 @@ reinvented:
   machine-read string equal to a card-data card name, basic land names
   included - select by subtype instead. `phrase-too-narrow` refuses an
   `ability_text_has`/`oracle_has` phrase that is not in the oracle text of at
-  least 3 cached cards. A condition tightened under bar (a), or a play written
-  under (b)/(c), for the one card that exposed the gap must still fire for
+  least 3 cached cards. A condition refined under bar (a), or a play written
+  under (a) or (b), for the one card that exposed the gap must still fire for
   every card that shares the mechanic.
-- A new play under bar (b) or (c) must be expressible in the DSL exactly as
-  docs/superpowers/specs/2026-09-13-play-script-format-design.md defines it - a
-  selector, a condition kind, and, for a move-bearing play, a `moves` entry the
-  schema already has a field for. A line that format cannot say is a NOTES.md
-  sentence, or nothing - never a play written to fit it anyway."""
+- A new or refined play under bar (a) or (b) must be expressible in the DSL
+  exactly as docs/superpowers/specs/2026-09-13-play-script-format-design.md
+  defines it - a selector, a condition kind, and, for a move-bearing play, a
+  `moves` entry the schema already has a field for. A line that format cannot
+  say is a NOTES.md sentence, or nothing - never a play written to fit it
+  anyway."""
 
 
 #: T15: the heading over the reviewer's own two write channels, named apart
@@ -2175,13 +2217,15 @@ WRITE_CHANNELS_HEADING = "The two channels you write through, and how far each o
 #: exist.
 #:
 #: **Prose over a play change, argued without a human reader.** `WRITE_BARS`
-#: above already gates a NEW play behind two distinct-game declines; this
-#: goes further and tells the reviewer which of its two tools to reach for at
-#: all. The case for prose never rested on a human gate: a guide sentence is
-#: read by the next pilot - a seat, from its matchup card and notes - who
-#: weighs it against the board in front of it before acting, and can decide
-#: it does not apply. A play landed by `plays admit` runs by itself the next
-#: time its conditions hold, and nothing weighs it first.
+#: above already asks for a board fact before a play is refined or drafted;
+#: this goes further and tells the reviewer which of its two tools to reach
+#: for at all. The case for prose never rested on a human gate: a guide
+#: sentence is read by the next pilot - a seat, from its matchup card and
+#: notes - who weighs it against the board in front of it before acting, and
+#: can decide it does not apply. A play landed by `plays admit` commits the
+#: moment a seat runs it, with no pilot weighing it first - never on its own,
+#: since autofire does not exist, but with nothing standing between "it
+#: applies" and "it commits" once a seat starts it.
 #:
 #: **Conflict markers, resolved with Edit.** The reviewer holds no git and
 #: no shell beyond `mcp-seat`, but it does hold Edit - which is all a
@@ -2209,17 +2253,20 @@ the same command again. `error` with `retryable: true` means run it again.
 `mcp-seat plays admit` takes play-script changes under `decks/*/plays/**`
 straight to mtg-decks main, after the in-pod gate (`mcp-seat plays check`
 and the clone's own `scripts/check_plays.py`) - nothing sits between that
-push and the next game this deck plays. A play then runs by itself whenever
-its conditions hold, with no pilot weighing it first, so this is the channel
-you use most conservatively of the two.
+push and the next game this deck plays, with no pilot weighing a move-bearing
+play first once a seat runs it, so this is the channel you use most
+conservatively of the two. Every generalized decision you write also goes
+into the guide through `guides propose` - the play a decision generalizes
+into and the guide sentence describing it land together, never one without
+the other.
 
 Prefer prose. When the misplay you found is a judgement call - which line is
 right in this matchup, what a card is for, how to read this board - write it
 up with `guides propose`, not a play change: the next pilot reads a guide
 sentence and weighs it against the board in front of it before acting, and
-can see that it does not apply, while a play fires by itself. Reach for
-`plays admit` only when the misplay is a rule a script's own CONDITIONS can
-express, and even then the fix belongs in the
+can see that it does not apply, while a play commits the moment a seat runs
+it. Reach for `plays admit` only when the misplay is a rule a script's own
+CONDITIONS can express, and even then the fix belongs in the
 play's `true`/`false` list, never its priority: a play's conditions say WHEN
 it should fire, and that is where a rule belongs. Reordering which
 applicable play is tried first with `mcp-seat plays priority` never touches
@@ -2230,7 +2277,11 @@ a script that already ran did, never a way around either bar above.
 
 The limits every play is checked against, so what you write can actually
 land: at most {MAX_PREFER} `prefer` selectors, {MAX_CONDITIONS} conditions
-per `true`/`false` list, {MAX_MOVES} moves and {MAX_STEPS} steps per play.
+per `true`/`false` list, {MAX_MOVES} moves and {MAX_STEPS} steps per play. A
+play already at one of these caps takes a new corner-case condition (or move)
+only by retire-by-deletion: delete its weakest existing condition (or move)
+in the same write that adds the new one, never a separate admit and never by
+skipping the refinement.
 
 Do not invent a rule you cannot ground in the ledger above - every condition
 you tighten or play you write has to trace to a decline this prompt actually
@@ -2270,24 +2321,46 @@ def no_change_command(assignment: Assignment, *, play: str = "", line: str = "")
     )
 
 
-def development_candidates_block(assignment: Assignment, candidates: DevelopmentCandidates) -> str:
+def development_candidates_block(
+    assignment: Assignment,
+    candidates: DevelopmentCandidates,
+    review_answered: Sequence[str] = (),
+) -> str:
     """Every development candidate, each with the one `plays no-change` call
-    that answers it when no change is the right answer."""
+    that answers it when no change is the right answer - except a play this
+    game's post-game AI review already admitted a change for
+    (`review_answered`, `handover.review_answered_plays` off its own journal
+    admits): that one already counts as answered, and the handover does not
+    redo it."""
     if candidates.empty:
         return (
             "none: no play was declined or passed over and no line was played by hand "
             "twice this game. The development step is answered by any conditions or "
             "advice-only change the tables above earn; none is owed."
         )
+    answered = frozenset(review_answered)
+    open_plays = [play for play in candidates.plays if play not in answered]
+    already_answered = [play for play in candidates.plays if play in answered]
     rows = [
+        f"- play `{play}` (declined or passed over): already answered by this game's AI "
+        "review, which already admitted a conditions or advice-only change for it - no "
+        "`plays no-change` owed."
+        for play in already_answered
+    ]
+    rows += [
         f"- play `{play}` (declined or passed over): `{no_change_command(assignment, play=play)}`"
-        for play in candidates.plays
+        for play in open_plays
     ]
     rows += [
         f"- line `{line}` (played by hand more than once): "
         f"`{no_change_command(assignment, line=line)}`"
         for line in candidates.lines
     ]
+    if not rows:
+        return (
+            "every development candidate this game was already answered by this game's AI "
+            "review; nothing further is owed."
+        )
     return "\n".join(rows)
 
 
@@ -2301,6 +2374,7 @@ def handover_turn(
     hand_played: str,
     evidence: str,
     candidates: DevelopmentCandidates,
+    review_answered: Sequence[str] = (),
 ) -> str:
     """The one handover turn, for a seat and a buddy alike: the same deck,
     the same commands and the same limits, so one prose serves both roles.
@@ -2311,7 +2385,11 @@ def handover_turn(
     `report.hand_played_summary`, `evidence` `report.evidence_table` over the
     deck's committed evidence files, and `candidates`
     `report.development_candidates` - what the mandatory development step
-    must answer, one change or one `plays no-change` at a time."""
+    must answer, one change or one `plays no-change` at a time.
+    `review_answered` (DR4, `handover.review_answered_plays`) names the
+    candidates this game's post-game AI review already admitted a change
+    for; the mandatory development step does not redo them, and the
+    priority deltas and the three guide updates below are unaffected."""
     slug = assignment.deck_slug
     game = assignment.game_id
     budget = int(HANDOVER_BUDGET_SECONDS // 60)
@@ -2390,7 +2468,7 @@ or each said why it could not.
 
 ## Development candidates
 
-{development_candidates_block(assignment, candidates)}
+{development_candidates_block(assignment, candidates, review_answered)}
 
 ## Script runs this game
 
@@ -2492,6 +2570,7 @@ def followup_turn(
     hand_played: str,
     evidence: str,
     candidates: DevelopmentCandidates,
+    review_answered: Sequence[str] = (),
 ) -> str:
     """F1's one follow-up turn: a fresh Opus session, in a fresh /guides
     clone, finishing the DSL development an unfinished handover left open.
@@ -2502,7 +2581,9 @@ def followup_turn(
     cross-game `evidence` read off this clone. What already landed is on
     mtg-decks main, so the turn starts by reading that rather than redoing
     it. One turn, no play and no continuation: it ends when the work has
-    landed or each command said why it could not."""
+    landed or each command said why it could not. `review_answered` is the
+    same as `handover_turn`'s own: candidates the AI review already admitted
+    a change for, so this turn does not redo them either."""
     slug = assignment.deck_slug
     game = assignment.game_id
     budget = int(FOLLOWUP_BUDGET_SECONDS // 60)
@@ -2562,7 +2643,7 @@ this turn ends.
 
 ## Development candidates
 
-{development_candidates_block(assignment, candidates)}
+{development_candidates_block(assignment, candidates, review_answered)}
 
 ## Script runs this game
 

@@ -21,12 +21,16 @@ import pytest
 
 from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.k8s_seats import FOLLOWUP_ACTIVE_DEADLINE_SECONDS, driver_seat_state
+from magic_cards_model_api.playscripts.report import DevelopmentCandidates
 from mtg_agent.driver import handover
+from mtg_agent.driver.guides import NONE, Identification, parse_decklist
 from mtg_agent.driver.prompt import (
     FOLLOWUP_BUDGET_SECONDS,
     FOLLOWUP_NUDGE_AFTER_SECONDS,
     FOLLOWUP_OPENING,
     HANDOVER_OPENING,
+    Assignment,
+    followup_turn,
 )
 from tests.driver.world import ADVISOR_UID, DECKLIST, OPPONENT_DECKLIST, build_world
 
@@ -151,6 +155,62 @@ def test_the_followup_turn_carries_the_ledger_tables_and_the_reasons(world):
     assert f"{int(FOLLOWUP_BUDGET_SECONDS // 60)} minutes" in text
 
 
+# -- DR4: candidates the AI review already answered count as answered -------
+#
+# The follow-up is the same audience as the handover for this rule: it reads
+# the game only through what the api scheduled it with, so it takes the
+# review-answered set the same way `followup_turn` takes everything else it
+# was not there to see - as an argument, not something it recomputes.
+
+
+def _followup_assignment() -> Assignment:
+    return Assignment(
+        game_id="g-1",
+        uid="secret-uid",
+        player="bob",
+        opponent="alice",
+        api_base="http://game:8000",
+        decklist=parse_decklist(DECKLIST),
+        identification=Identification(NONE),
+    )
+
+
+def test_followup_turn_skips_a_review_answered_candidate():
+    candidates = DevelopmentCandidates(plays=("fetch-surveil-land",), lines=("cast Psychic Frog",))
+    text = followup_turn(
+        _followup_assignment(),
+        "bob won",
+        REASONS,
+        run_table=FOLLOWUP["run_table"],
+        offers=FOLLOWUP["offers"],
+        hand_played=FOLLOWUP["hand_played"],
+        evidence="none",
+        candidates=candidates,
+        review_answered=("fetch-surveil-land",),
+    )
+    flat = " ".join(text.split())
+    assert "already answered by this game's AI review" in flat
+    assert "--play fetch-surveil-land" not in flat
+    assert "cast Psychic Frog" in flat
+
+
+def test_followup_turn_review_answered_defaults_to_none():
+    candidates = DevelopmentCandidates(plays=("fetch-surveil-land",))
+    text = followup_turn(
+        _followup_assignment(),
+        "bob won",
+        REASONS,
+        run_table=FOLLOWUP["run_table"],
+        offers=FOLLOWUP["offers"],
+        hand_played=FOLLOWUP["hand_played"],
+        evidence="none",
+        candidates=candidates,
+    )
+    flat = " ".join(text.split())
+    assert "already answered by this game's AI review" not in flat
+    assert "--play fetch-surveil-land" in flat
+
+
 def test_the_followup_reads_the_evidence_table_off_the_guides_checkout(world):
     evidence = world.settings.guides_root / "decks" / "dimir-frog" / "plays" / "evidence"
     evidence.mkdir(parents=True)
@@ -224,7 +284,9 @@ def test_a_finished_followup_files_its_outcome_retires_and_never_continues(world
     assert row["followup"] is True
     assert row["state"] == "complete"
     assert row["uid"] == world.uid and row["player"] == "bob" and row["role"] == "seat"
-    assert row["admitted"] == [{"sha": "s1", "dsl_change": True}]
+    assert row["admitted"] == [
+        {"sha": "s1", "dsl_change": True, "added": [], "updated": [], "reprioritized": []}
+    ]
     assert row["repushed"] is False
     assert row["deck"] == "dimir-frog"
     assert len(world.submitted) == 1, "no re-push and no continuation turn"

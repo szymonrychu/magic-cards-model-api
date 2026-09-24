@@ -576,14 +576,33 @@ def journal(world, *entries: dict) -> None:
             handle.write("\n")
 
 
-def admit(result: str = "admitted", dsl_change: bool = True, sha: str = "abc123") -> dict:
-    return {
+def admit(
+    result: str = "admitted",
+    dsl_change: bool = True,
+    sha: str = "abc123",
+    added: tuple[str, ...] | None = (),
+    updated: tuple[str, ...] | None = (),
+    reprioritized: tuple[str, ...] | None = (),
+) -> dict:
+    """A `plays admit` journal line, D2a's shape (`gitwork.journal`) plus
+    DR5's `added`/`updated`/`reprioritized` play-id lists (`admit._landing`).
+    Pass `None` for any of the three to build a LEGACY line - one written
+    before DR5, that never carried the key at all - rather than one that
+    carries it empty."""
+    entry = {
         "command": "plays admit",
         "decks": ["dimir-frog"],
         "result": result,
         "sha": sha,
         "dsl_change": dsl_change,
     }
+    if added is not None:
+        entry["added"] = list(added)
+    if updated is not None:
+        entry["updated"] = list(updated)
+    if reprioritized is not None:
+        entry["reprioritized"] = list(reprioritized)
+    return entry
 
 
 def no_change(reason: str = "the board never allowed it", **candidate) -> dict:
@@ -639,7 +658,101 @@ def test_a_dsl_change_admit_satisfies_the_development_step():
     verdict = handover.assess([admit()], candidates)
     assert verdict.satisfied
     assert verdict.missing == ()
-    assert verdict.admitted == ({"sha": "abc123", "dsl_change": True},)
+    assert verdict.admitted == (
+        {"sha": "abc123", "dsl_change": True, "added": [], "updated": [], "reprioritized": []},
+    )
+
+
+# -- DR4: read_journal/assess expose the admit's own added/updated/reprioritized play ids ----
+
+
+def test_assess_exposes_the_added_updated_and_reprioritized_play_ids_from_the_admit():
+    candidates = DevelopmentCandidates()
+    entry = admit(added=("new-play",), updated=("frog-attack",), reprioritized=("fetch-x",))
+    verdict = handover.assess([entry], candidates)
+    assert verdict.admitted == (
+        {
+            "sha": "abc123",
+            "dsl_change": True,
+            "added": ["new-play"],
+            "updated": ["frog-attack"],
+            "reprioritized": ["fetch-x"],
+        },
+    )
+
+
+def test_a_legacy_admit_line_without_the_new_keys_yields_empty_lists():
+    """A journal line written before DR5's `admit._landing` classification
+    carries no `added`/`updated`/`reprioritized` key at all - `assess` must
+    not raise on it, and must expose empty lists rather than omitting the
+    keys, so a reader never has to branch on which shape it got."""
+    candidates = DevelopmentCandidates()
+    legacy = admit(added=None, updated=None, reprioritized=None)
+    assert "added" not in legacy and "updated" not in legacy and "reprioritized" not in legacy
+    verdict = handover.assess([legacy], candidates)
+    assert verdict.admitted == (
+        {"sha": "abc123", "dsl_change": True, "added": [], "updated": [], "reprioritized": []},
+    )
+
+
+# -- DR4: candidates the AI review already answered count as answered -------
+
+
+def test_review_answered_plays_is_the_union_of_added_and_updated():
+    reviewer_entries = [
+        admit(added=("new-play",), updated=("frog-attack",), reprioritized=("fetch-x",)),
+    ]
+    assert handover.review_answered_plays(reviewer_entries) == frozenset(
+        {"new-play", "frog-attack"}
+    )
+
+
+def test_review_answered_plays_excludes_a_priority_only_reprioritize():
+    """A priority-only change never counts as answering a development
+    candidate - the same rule the handover's own mandatory-development step
+    already applies to a plain `plays priority` call."""
+    reviewer_entries = [admit(added=(), updated=(), reprioritized=("fetch-x",))]
+    assert handover.review_answered_plays(reviewer_entries) == frozenset()
+
+
+def test_review_answered_plays_ignores_a_failed_admit():
+    reviewer_entries = [admit(result="conflict", added=("new-play",))]
+    assert handover.review_answered_plays(reviewer_entries) == frozenset()
+
+
+def test_review_answered_plays_ignores_a_no_change_entry():
+    reviewer_entries = [no_change(play="frog-attack")]
+    assert handover.review_answered_plays(reviewer_entries) == frozenset()
+
+
+def test_review_answered_plays_of_a_legacy_line_is_empty():
+    reviewer_entries = [admit(added=None, updated=None, reprioritized=None)]
+    assert handover.review_answered_plays(reviewer_entries) == frozenset()
+
+
+def test_review_answered_plays_of_no_entries_is_empty():
+    assert handover.review_answered_plays([]) == frozenset()
+
+
+def test_plays_outcome_body_sends_added_updated_reprioritized_on_each_admitted_entry():
+    """DR2's `PlaysOutcomeIn` schema takes these on each admitted entry -
+    `plays_outcome_body` only has to forward what `assess` already built into
+    `verdict.admitted`, never derive them itself."""
+    candidates = DevelopmentCandidates()
+    entry = admit(added=("new-play",), updated=("frog-attack", "fetch-x"), reprioritized=())
+    verdict = handover.assess([entry], candidates)
+    body = handover.plays_outcome_body(
+        uid="u-1", player="bob", role="seat", verdict=verdict, reasons=(), repushed=False
+    )
+    assert body["admitted"] == [
+        {
+            "sha": "abc123",
+            "dsl_change": True,
+            "added": ["new-play"],
+            "updated": ["frog-attack", "fetch-x"],
+            "reprioritized": [],
+        }
+    ]
 
 
 def test_a_priority_only_admit_does_not_satisfy_it_and_names_every_open_candidate():
@@ -756,7 +869,9 @@ def test_a_re_push_that_lands_the_change_is_complete(world):
     row = outcome(world)
     assert row["state"] == "complete"
     assert row["repushed"] is True
-    assert row["admitted"] == [{"sha": "abc123", "dsl_change": True}]
+    assert row["admitted"] == [
+        {"sha": "abc123", "dsl_change": True, "added": [], "updated": [], "reprioritized": []}
+    ]
     assert row["unfinished_reasons"] == []
 
 
@@ -779,7 +894,9 @@ def test_a_handover_that_answered_every_candidate_is_complete_with_no_re_push(wo
         "player": "bob",
         "role": "seat",
         "state": "complete",
-        "admitted": [{"sha": "abc123", "dsl_change": False}],
+        "admitted": [
+            {"sha": "abc123", "dsl_change": False, "added": [], "updated": [], "reprioritized": []}
+        ],
         "proposed": [],
         "no_change": [
             {"candidate": "frog-attack", "reason": "the board never allowed it"},
