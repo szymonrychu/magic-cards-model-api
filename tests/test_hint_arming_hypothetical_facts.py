@@ -41,16 +41,16 @@ def counting_facts(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     calls = {"n": 0}
     real = Seat.hypothetical_facts
 
-    def counting(self: Seat) -> dict[str, Any]:
+    def counting(self: Seat, *, horizon: str | None = None) -> dict[str, Any]:
         calls["n"] += 1
-        return real(self)
+        return real(self, horizon=horizon)
 
     monkeypatch.setattr(Seat, "hypothetical_facts", counting)
     return calls
 
 
 def broken_facts(monkeypatch: pytest.MonkeyPatch) -> None:
-    def refuse(self: Seat) -> dict[str, Any]:
+    def refuse(self: Seat, *, horizon: str | None = None) -> dict[str, Any]:
         raise HypotheticalFactsUnavailable(404)
 
     monkeypatch.setattr(Seat, "hypothetical_facts", refuse)

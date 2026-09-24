@@ -32,7 +32,6 @@ from typing import Any
 
 from ..seatkit import (
     MAX_WAIT_SECONDS,
-    HypotheticalFactsUnavailable,
     Seat,
     decision_is_mine,
     scripts_enabled_here,
@@ -40,6 +39,7 @@ from ..seatkit import (
 )
 from ..seatkit import holds_priority as seat_holds_priority
 from . import conditions, lint, runtime
+from .bindings import Bindings, judge_bindings, references_archetype
 from .inputs import BUILTIN_INPUT, input_catalog
 from .schema import MAX_NOTE_LENGTH, WILDCARD
 
@@ -114,14 +114,19 @@ MAX_HINT_NAME_CHARS = 80
 #: over the flat list of surviving entries, not one per block.
 MAX_HINT_BYTES = 4096
 
-#: Where `run`/`listing` stash the archetype this seat last asserted, onto
-#: the very corpus dict `Seats.script_corpora` caches - never a key the API
-#: itself writes, so it needs no schema entry and nothing else ever reads it
-#: but `applicable_hint`, below.
+#: Where `run`/`listing`/`arm` (B1: `arm` now writes this too, through the
+#: same `_remember_run_inputs` the other two call) stash the archetype this
+#: seat last asserted, onto the very corpus dict `Seats.script_corpora`
+#: caches - never a key the API itself writes, so it needs no schema entry.
+#: Missing (never written) means genuinely never asserted: `applicable_hint`
+#: and `arming._judge_round` read that as `judge_bindings`' own `archetype=
+#: None`, never coerced to the wildcard `'*'` as a stand-in (B1) - a play
+#: that cares which archetype is asserted (`.bindings.references_archetype`)
+#: is not offered until one of the three has actually been called.
 _LAST_ASSERTED_KEY = "_last_asserted_archetype"
 
-#: Where `run` stashes the non-archetype `inputs` a seat last supplied to
-#: `run_script`, next to `_LAST_ASSERTED_KEY` on the same corpus dict -
+#: Where `run`/`listing`/`arm` stash the non-archetype `inputs` a seat last
+#: supplied, next to `_LAST_ASSERTED_KEY` on the same corpus dict -
 #: `applicable_hint` judges with them too, and names them in the offered
 #: `call` when non-empty (S1 review finding 4b).
 _LAST_INPUTS_KEY = "_last_supplied_inputs"
@@ -339,30 +344,20 @@ def listing(
     if isinstance(corpus, runtime.ScriptExit):
         return f"cannot list scripts: {corpus.refusal}"
     asserted = supplied[BUILTIN_INPUT]
-    corpus[_LAST_ASSERTED_KEY] = asserted
+    # `listing` is itself an assertion - the same as `run`'s own
+    # `_remember_run_inputs` call, so a hint answer right after `list_scripts`
+    # judges against exactly what was just listed (B1).
+    _remember_run_inputs(seat, corpora, supplied)
     declared = list(corpus.get("inputs") or [])
-    catalog = input_catalog(declared, [asserted] if isinstance(asserted, str) else ())
     docs = [doc for doc in corpus.get("scripts") or [] if isinstance(doc, dict)]
     plays = _plays(corpus, docs)
     wants_contents = any(
         isinstance(play, dict) and conditions.needs_contents(play) for _, play in plays
     )
     state = seat.fetch_state(include_contents=wants_contents)
-    facts = _FactsOnce(seat)
+    bindings = judge_bindings(seat, corpus, archetype=asserted, supplied=supplied)
     warnings = static_conflicts(docs, declared, str(corpus.get("deck_slug") or ""))
-    entries = [
-        _judged(
-            doc,
-            play,
-            state,
-            seat.player,
-            supplied,
-            catalog,
-            warnings,
-            facts=facts,
-        )
-        for doc, play in plays
-    ]
+    entries = [_judged(doc, play, state, seat.player, bindings, warnings) for doc, play in plays]
     entries.sort(key=lambda entry: (-_priority(entry), str(entry["id"])))
     # API-3 item 3: an advice-only entry never joins `applicable` (nothing
     # about it is runnable) even when its own conditions genuinely `apply`,
@@ -404,64 +399,49 @@ def static_conflicts(
 
 
 def _first_move_allowed(play: dict[str, Any], state: dict[str, Any], me: str) -> bool:
-    """Whether `play`'s own first move could even be attempted right now -
+    """Whether `play`'s own first move could even be attempted right now.
+
     CR 608.2d freezes every action but answering the one pending decision
     until it is answered, so a play whose first move is not an `answer` to
     exactly that decision cannot legally run, whoever it is addressed to
-    (S2 review finding 4). No pending decision at all: always allowed."""
-    pending = state.get("pending_decision")
-    if pending is None:
-        return True
+    (S2 review finding 4) - unless the pending decision is itself one of
+    FC4's combat moves, in which case the matching `declare_attackers`/
+    `declare_blockers` first move IS the way to answer it (FC1 part 5):
+
+    - `declare_attackers`/`declare_blockers` as the first move: allowed only
+      while this seat's own pending decision is that exact kind - never
+      while nothing is pending (there is nothing yet to declare) and never
+      while a decision of any OTHER kind is pending (CR 608.2d).
+    - `pass` as the first move: allowed exactly when this seat holds
+      priority right now (CR 117.3d) - `pass` releases priority, so a seat
+      that does not hold it has nothing to release, whether or not some
+      unrelated decision happens to be pending elsewhere.
+    - Anything else (an `answer`, most commonly a standalone play whose
+      `true` holds a `pending_decision` condition - schema D2): the
+      original rule - allowed with no pending decision at all, and with one
+      pending, only an `answer` first move addressed to this seat and naming
+      that exact decision kind among its `answers`."""
     moves = play.get("moves") or []
     first = moves[0] if moves else None
-    if not isinstance(first, dict) or first.get("kind") != "answer":
+    first_kind = first.get("kind") if isinstance(first, dict) else None
+    pending = state.get("pending_decision")
+    pending_kind = pending.get("kind") if isinstance(pending, dict) else None
+    pending_mine = pending is not None and decision_is_mine(pending, state, me)
+
+    if first_kind in ("declare_attackers", "declare_blockers"):
+        return pending_mine and pending_kind == first_kind
+    if first_kind == "pass":
+        return seat_holds_priority(state, me)
+    if pending is None:
+        return True
+    if not isinstance(first, dict) or first_kind != "answer":
         return False
-    if not decision_is_mine(pending, state, me):
+    if not pending_mine:
         return False
     answers = first.get("answers") or []
     return any(
-        isinstance(answer, dict) and answer.get("decision") == pending.get("kind")
-        for answer in answers
+        isinstance(answer, dict) and answer.get("decision") == pending_kind for answer in answers
     )
-
-
-class _FactsOnce:
-    """This seat's hypothetical facts (`Seat.hypothetical_facts`) for one
-    judgement over one board: fetched at most once, and only when a play
-    that needs them (`conditions.needs_hypothetical`) actually reaches
-    condition evaluation in `_judged` - `listing`, `applicable_hint` and
-    `arming._judge_round` all share this, so a play judged by any of the
-    three reads the facts the same way (O7: one fetch however many plays
-    need them). `armable`'s pass never evaluates a condition, so it never
-    fetches.
-
-    D2: a failed fetch is remembered as `unavailable`, the error's own text,
-    so `_judged` marks only the plays that needed the facts not applicable,
-    with why - never raises out of the answer, and never stands in a bare
-    `{}` (a `count {unlocks: true} == 0` would read that as a real, empty
-    answer). Logged once here, the one place the fetch itself is ever made,
-    rather than once per play `_judged` goes on to mark not applicable for
-    it - `hypothetical_skips` (below) is how `applicable_hint` and
-    `arming._judge_round` read which plays that was, to surface it back to
-    the caller rather than let it read as an ordinary non-applying script."""
-
-    def __init__(self, seat: Seat) -> None:
-        self._seat = seat
-        self._fetched = False
-        self._cards: dict[str, Any] | None = None
-        self._unavailable: str | None = None
-
-    def get(self) -> tuple[dict[str, Any] | None, str | None]:
-        if not self._fetched:
-            self._fetched = True
-            try:
-                self._cards = dict(self._seat.hypothetical_facts().get("cards") or {})
-            except HypotheticalFactsUnavailable as exc:
-                self._unavailable = str(exc)
-                logger.warning(
-                    "hypothetical facts unavailable for %s: %s", self._seat.uid, self._unavailable
-                )
-        return self._cards, self._unavailable
 
 
 def hypothetical_skips(
@@ -469,7 +449,7 @@ def hypothetical_skips(
 ) -> list[dict[str, str]]:
     """The ids among `entries` (an `applicable_hint`-style list of judged
     entries, or an `arming._judge_round`-style id -> entry dict) that
-    `_judged` marked not applicable because the facts fetch `_FactsOnce`
+    `_judged` marked not applicable because the facts fetch `Bindings.facts`
     made for this same round failed (`failing_condition.list ==
     "hypothetical"`), paired with the reason - the HTTP status/reason
     `Seat.hypothetical_facts` raised on (D2). `[]` when nothing was skipped
@@ -496,13 +476,14 @@ def _judged(
     play: dict[str, Any] | runtime.ScriptExit,
     state: dict[str, Any],
     me: str,
-    supplied: dict[str, Any],
-    catalog: dict[str, dict[str, Any]],
+    bindings: Bindings,
     warnings: list[lint.PlaysWarning],
     *,
-    facts: _FactsOnce | None = None,
     evaluate_conditions: bool = True,
 ) -> dict[str, Any]:
+    """`doc`/`play`, judged over `state` against `bindings` (B1: the exact
+    inputs, catalog and asserted archetype `judge_bindings` built for this
+    round - the same one the run this offer invites would itself use)."""
     entry: dict[str, Any] = {
         "id": doc.get("id"),
         "name": doc.get("name"),
@@ -517,16 +498,28 @@ def _judged(
         # `applies`, since there is nothing here a caller could run.
         "advice_only": isinstance(play, dict) and not play.get("moves"),
     }
-    asserted = supplied.get(BUILTIN_INPUT)
     if isinstance(play, runtime.ScriptExit):
         entry["refusal"] = play.refusal
     elif play["priority"] == 0:
         entry["failing_condition"] = {"list": "priority", "index": None, "seen": 0}
-    elif not runtime._archetype_applies(play, asserted):
+    elif bindings.asserted is None and references_archetype(play):
+        # B1: nothing has ever been asserted for this seat (`run`, `list` or
+        # `arm` never called), and this play cares which archetype is - its
+        # own `opposing_archetypes`, or a `true`/`false` condition reading
+        # the built-in `opposing_archetype` input. Never judged against the
+        # old `'*'` stand-in: a `false` condition on it would silently NOT
+        # hold against an unset input, letting the play through as
+        # applicable even though it excludes the seat's real matchup - the
+        # exact bug this module exists to close. Marked not applicable with
+        # `needs_input` naming the built-in input, the same wording a
+        # missing required input already carries.
+        entry["failing_condition"] = {"list": "opposing_archetypes", "index": None, "seen": None}
+        entry["needs_input"] = BUILTIN_INPUT
+    elif not runtime._archetype_applies(play, bindings.asserted):
         entry["failing_condition"] = {
             "list": "opposing_archetypes",
             "index": None,
-            "seen": asserted,
+            "seen": bindings.asserted,
         }
     elif not runtime._in_when(state, play["when"], me):
         entry["failing_condition"] = {
@@ -557,16 +550,20 @@ def _judged(
         # (unknown, not "checked and failed" - `failing_condition` stays
         # `None` rather than naming a list never evaluated).
         pass
-    elif facts is not None and conditions.needs_hypothetical(play) and facts.get()[1] is not None:
-        # D2: this play's own selectors need the facts `facts` could not
-        # read - marked not applicable, with why, rather than
+    elif conditions.needs_hypothetical(play) and bindings.facts(play)[1] is not None:
+        # D2: this play's own selectors need the facts `bindings.facts`
+        # could not read - marked not applicable, with why, rather than
         # `conditions.evaluate` raising `HypotheticalRequired` uncaught.
-        entry["failing_condition"] = {"list": "hypothetical", "index": None, "seen": facts.get()[1]}
+        entry["failing_condition"] = {
+            "list": "hypothetical",
+            "index": None,
+            "seen": bindings.facts(play)[1],
+        }
     else:
-        hypothetical = (
-            facts.get()[0] if facts is not None and conditions.needs_hypothetical(play) else None
+        hypothetical = bindings.facts(play)[0] if conditions.needs_hypothetical(play) else None
+        result = conditions.evaluate(
+            play, state, me, bindings.inputs, bindings.catalog, hypothetical=hypothetical
         )
-        result = conditions.evaluate(play, state, me, supplied, catalog, hypothetical=hypothetical)
         if result["invalid_input"] is not None:
             entry["invalid_input"] = result["invalid_input"]
         elif result["applies"]:
@@ -793,11 +790,9 @@ def _hint_judged(
     play: dict[str, Any] | runtime.ScriptExit,
     state: dict[str, Any],
     me: str,
-    supplied: dict[str, Any],
-    catalog: dict[str, dict[str, Any]],
+    bindings: Bindings,
     warnings: list[lint.PlaysWarning],
     *,
-    facts: _FactsOnce | None = None,
     evaluate_conditions: bool = True,
 ) -> dict[str, Any]:
     """`_judged`, except a play whose conditions still need `include=contents`
@@ -813,10 +808,8 @@ def _hint_judged(
             play,
             state,
             me,
-            supplied,
-            catalog,
+            bindings,
             warnings,
-            facts=facts,
             evaluate_conditions=evaluate_conditions,
         )
     except conditions.ContentsRequired:
@@ -836,6 +829,7 @@ def _post_offer(
     state: dict[str, Any],
     entry: dict[str, Any],
     play: dict[str, Any],
+    asserted: str | None,
 ) -> None:
     """Post one `phase: offer` row for `entry` through `seat`'s existing HTTP
     client (API-6) and fill `entry["offer_seq"]` from the response's own
@@ -843,6 +837,13 @@ def _post_offer(
     was already offered by this process (`_OFFERED_KEY`, F4), in which case
     no second row is posted and `entry` gets that first offer's own
     `offer_seq` instead.
+
+    `asserted` (B1) is the exact archetype `bindings` judged this entry
+    against - `None` when this seat has never asserted one - carried onto
+    the row as `opposing_archetype_asserted`, the same field a `start`/
+    `finish` row already carries (`runtime._run_fields`), so an offer and
+    the run it invites read back as agreeing on what they were judged
+    against.
 
     Either way also (re)fills `_PENDING_OFFER_RUN_ID_KEY[script_id]` with
     this offer's own `run_id` (API-10) - the first offer's, on a cache hit,
@@ -890,6 +891,7 @@ def _post_offer(
                 "advise": seat.advise,
                 "script_id": script_id,
                 "priority": play.get("priority") if isinstance(play, dict) else None,
+                "opposing_archetype_asserted": asserted,
                 "turn": turn,
                 "step": step,
             },
@@ -916,15 +918,17 @@ def _post_offers(
     state: dict[str, Any],
     entries: list[dict[str, Any]],
     plays_by_id: dict[str, tuple[dict[str, Any], dict[str, Any] | runtime.ScriptExit]],
+    asserted: str | None,
 ) -> None:
     """`_post_offer` for every one of `entries` (API-6) - `applicable_hint`'s
     own kept `applicable` and `advice` items, never `armable` (nothing is
     being offered to run there). Bounded to at most `entries`' own length,
     which `_hint_bounded` has already capped at `MAX_HINT_SCRIPTS` by the
     time this runs - so an answer never pays more than that many extra local
-    round trips for this."""
+    round trips for this. `asserted` is `bindings.asserted` - see
+    `_post_offer`."""
     for entry in entries:
-        _post_offer(seat, corpus, state, entry, _play_for(plays_by_id, entry.get("id")))
+        _post_offer(seat, corpus, state, entry, _play_for(plays_by_id, entry.get("id")), asserted)
 
 
 def applicable_hint(
@@ -1072,20 +1076,37 @@ def applicable_hint(
     armable_window = _armable_window(state, seat.player)
     if not holds_priority and not armable_window:
         return None
-    asserted = corpus.get(_LAST_ASSERTED_KEY)
-    asserted = asserted if isinstance(asserted, str) else WILDCARD
+    # B1: `asserted` is exactly what this seat last told `run`, `list` or
+    # `arm` - `None`, genuinely, until one of those has ever been called for
+    # it, never coerced to the wildcard `'*'` as a stand-in (the old bug:
+    # every offer before that first call judged against `'*'`, whether or
+    # not the play cared which archetype was really in play).
+    raw_asserted = corpus.get(_LAST_ASSERTED_KEY)
+    asserted = raw_asserted if isinstance(raw_asserted, str) else None
     remembered_raw = corpus.get(_LAST_INPUTS_KEY)
     remembered = dict(remembered_raw) if isinstance(remembered_raw, dict) else {}
-    supplied = merged_inputs(asserted, remembered)
-    if isinstance(supplied, str):
-        return None
-    declared = list(corpus.get("inputs") or [])
-    catalog = input_catalog(declared, [asserted])
+    if asserted is not None:
+        supplied = merged_inputs(asserted, remembered)
+        if isinstance(supplied, str):
+            return None
+    else:
+        # Nothing has ever been asserted: `supplied` carries whatever
+        # non-archetype inputs this seat still remembers, with no
+        # `opposing_archetype` key at all - `_judged` (via `references_
+        # archetype`) is what keeps an archetype-dependent play from being
+        # offered here, not a stand-in value smuggled into `inputs`.
+        supplied = dict(remembered)
+    bindings = judge_bindings(seat, corpus, archetype=asserted, supplied=supplied)
+    # A call template always names a real, usable `opposing_archetype` value
+    # - never a stale `'*'` standing in for a real assertion (B1 item 3), but
+    # also never a bare `null`: an archetype-free play can still be offered
+    # before any assertion, and its own template falls back to the wildcard
+    # exactly because that play does not care which archetype is in play.
+    template_archetype = asserted if asserted is not None else WILDCARD
     plays = _plays(corpus, docs)
     plays_by_id = {doc["id"]: (doc, play) for doc, play in plays if isinstance(doc.get("id"), str)}
     entries: list[dict[str, Any]] = []
     deferred: list[tuple[dict[str, Any], dict[str, Any] | runtime.ScriptExit]] = []
-    facts = _FactsOnce(seat)
     for doc, play in plays:
         try:
             entries.append(
@@ -1094,10 +1115,8 @@ def applicable_hint(
                     play,
                     state,
                     seat.player,
-                    supplied,
-                    catalog,
+                    bindings,
                     [],
-                    facts=facts,
                     evaluate_conditions=holds_priority,
                 )
             )
@@ -1120,10 +1139,8 @@ def applicable_hint(
                 play,
                 contents_state,
                 seat.player,
-                supplied,
-                catalog,
+                bindings,
                 [],
-                facts=facts,
                 evaluate_conditions=holds_priority,
             )
             for doc, play in deferred
@@ -1194,7 +1211,9 @@ def applicable_hint(
             if entry_conflict:
                 item["conflict"] = True
             else:
-                item["call"] = _call_template(seat, str(entry["id"]), asserted, remembered, cli=cli)
+                item["call"] = _call_template(
+                    seat, str(entry["id"]), template_archetype, remembered, cli=cli
+                )
             applicable_items.append(item)
 
         for entry in not_recently_run:
@@ -1249,7 +1268,7 @@ def applicable_hint(
     # (never `armable` - nothing there is being offered to run), before this
     # answer is handed back. `_post_offer`'s own failure discipline means
     # this never costs the caller its answer even when every post fails.
-    _post_offers(seat, corpus, state, kept_applicable + kept_advice, plays_by_id)
+    _post_offers(seat, corpus, state, kept_applicable + kept_advice, plays_by_id, bindings.asserted)
     result: dict[str, Any] = {}
     if kept_applicable:
         result["applicable"] = kept_applicable
@@ -1258,7 +1277,7 @@ def applicable_hint(
     if kept_armable:
         result["armable"] = kept_armable
         result["arm_call"] = _arm_call_template(
-            seat, kept_armable, occurrences, asserted, remembered, cli=cli
+            seat, kept_armable, occurrences, template_archetype, remembered, cli=cli
         )
     if hyp_skips:
         result["note"] = hypothetical_skip_note(hyp_skips)

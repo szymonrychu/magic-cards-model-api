@@ -41,7 +41,7 @@ from typing import Any
 
 from ..seatkit import Seat
 from . import conditions, script_tools
-from .inputs import BUILTIN_INPUT, input_catalog
+from .inputs import BUILTIN_INPUT
 from .runtime import REASONING_PLACEHOLDER, ScriptExit, _corpus
 
 EMPTY_ARM_REASONING = (
@@ -123,6 +123,11 @@ def arm(
     supplied = script_tools.merged_inputs(opposing_archetype, inputs)
     if isinstance(supplied, str):
         return supplied
+    # B1: `arm` is itself an assertion, exactly like `run`/`list_scripts` -
+    # `applicable_hint`/a later `_judge_round` must judge against what THIS
+    # call asserted, not silently keep judging against a stale earlier one
+    # (or, before any of the three was ever called, the old `'*'` stand-in).
+    script_tools._remember_run_inputs(seat, corpora, supplied)
 
     ids = list(dict.fromkeys(arm))
     judged, state = _judge_round(seat, corpora, ids, supplied)
@@ -174,9 +179,8 @@ def _judge_round(
     if isinstance(corpus, ScriptExit):
         state = seat.fetch_state()
         return {}, state
-    declared = list(corpus.get("inputs") or [])
     asserted = supplied.get(BUILTIN_INPUT)
-    catalog = input_catalog(declared, [asserted] if isinstance(asserted, str) else ())
+    bindings = script_tools.judge_bindings(seat, corpus, archetype=asserted, supplied=supplied)
     docs = [doc for doc in corpus.get("scripts") or [] if isinstance(doc, dict)]
     plays = {
         doc["id"]: (doc, play)
@@ -184,7 +188,6 @@ def _judge_round(
         if isinstance(doc.get("id"), str)
     }
     state = seat.fetch_state()
-    facts = script_tools._FactsOnce(seat)
     judged: dict[str, dict[str, Any]] = {}
     deferred: list[str] = []
     for script_id in ids:
@@ -199,9 +202,7 @@ def _judge_round(
             continue
         doc, play = entry
         try:
-            judged[script_id] = script_tools._judged(
-                doc, play, state, seat.player, supplied, catalog, [], facts=facts
-            )
+            judged[script_id] = script_tools._judged(doc, play, state, seat.player, bindings, [])
         except conditions.ContentsRequired:
             deferred.append(script_id)
     if deferred:
@@ -209,7 +210,7 @@ def _judge_round(
         for script_id in deferred:
             doc, play = plays[script_id]
             judged[script_id] = script_tools._hint_judged(
-                doc, play, contents_state, seat.player, supplied, catalog, [], facts=facts
+                doc, play, contents_state, seat.player, bindings, []
             )
         state = contents_state
     # S2 review finding 5: an id this process already ran at this exact

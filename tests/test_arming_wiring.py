@@ -179,7 +179,7 @@ def test_pass_until_surfaces_scripts_it_skipped_for_unavailable_facts(
     seats = wired(monkeypatch, game)
     seat, hook = hooked_seat(seats, alice)
 
-    def refuse(self: seatkit.Seat) -> dict[str, Any]:
+    def refuse(self: seatkit.Seat, *, horizon: str | None = None) -> dict[str, Any]:
         raise seatkit.HypotheticalFactsUnavailable(500)
 
     monkeypatch.setattr(seatkit.Seat, "hypothetical_facts", refuse)
