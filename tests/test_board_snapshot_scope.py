@@ -75,7 +75,13 @@ BOARDS_PER_READ = 4
 #: "if it's neither day nor night, it becomes day as this creature enters"
 #: (CR 614.12, CR 731.1) - one more in-command board, again the same on any
 #: battlefield size.
-BOARDS_PER_ACTION = 14
+#:
+#: 16, not 14, since engine C01 (storied, CR 702.195a/c): before any event's
+#: triggers are matched the engine checks whether a player without an
+#: enduring story now controls three artifacts, legendaries and/or Sagas,
+#: off the computed board - one more in-command board per event, and a land
+#: drop raises two (it enters, and it is played).
+BOARDS_PER_ACTION = 16
 
 READS = (
     "get_state",
