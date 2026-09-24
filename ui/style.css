@@ -233,9 +233,10 @@ h3 { font-size: 14px; }
 }
 /* `silent` and `notice` are a definite verdict (nothing runs / the engine
    refuses on purpose), so both keep the sharper warning/bad hues.
-   `unaudited` - rendered as the softer "not verified" label - gets the
-   dimmest, least alarming tint: a static line nobody has checked either
-   way is not the same claim as one known to do nothing. */
+   `unaudited` - rendered as "likely not working" - is treated as not fully
+   supported the same as the other two tiers; it keeps its own dimmer tint
+   only to distinguish it as a static line nobody has checked either way,
+   not as a lower-severity claim. */
 .support-tier.support-silent { color: var(--bad); border-color: var(--bad); }
 .support-tier.support-notice { color: var(--warn); border-color: var(--warn); }
 .support-tier.support-unaudited { color: var(--ink-faint); border-color: var(--line-bright); }

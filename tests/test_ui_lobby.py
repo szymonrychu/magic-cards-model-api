@@ -201,10 +201,10 @@ def test_render_validation_shows_the_support_warnings_panel() -> None:
     assert "May not be fully supported" in html
     assert "Inscrutable Husk" in html
     assert "glimmers" in html
-    # `unaudited` renders as the softer "not verified" tier in its visible
-    # text - the raw word only survives as a styling hook
-    # (`support-unaudited`, a CSS class), never as something a person reads.
-    assert "not verified" in html
+    # `unaudited` renders as "likely not working" in its visible text - the
+    # raw word only survives as a styling hook (`support-unaudited`, a CSS
+    # class), never as something a person reads.
+    assert "likely not working" in html
     assert ">unaudited<" not in html
 
 

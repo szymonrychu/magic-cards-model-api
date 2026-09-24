@@ -154,7 +154,7 @@ def test_current_game_names_cards_the_engine_may_not_fully_support(tmp_path, gui
     text = render_current_game(assignment(guide, support_warnings=warnings), tmp_path / "memory")
     assert "cards the engine may not fully support" in text.lower()
     assert "Inscrutable Husk (silent)" in text
-    assert "Alhammarret's Archive (unaudited)" in text
+    assert "Alhammarret's Archive (unaudited - likely not working)" in text
     assert "glimmers" in text
 
 

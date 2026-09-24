@@ -5616,7 +5616,7 @@
         "type": "object"
       },
       "DeckSupportWarning": {
-        "description": "One card the engine does not fully support, as flow 6 (W2) surfaces\nit on every decklist submit/validate/load: `magic_cards_model.support.\ncard_support`'s own verdict for the card, sourced never hard-coded, with\n`unaudited` the softer of the two non-`notice` tiers (`docs/\nengine-coverage.md`'s own four-tier ladder) - a static ability nothing\nhas checked either way, as opposed to `silent` (nothing reads the clause\nat all) or `notice` (read, but fails closed on purpose). A fully\n`handled` card never appears; `decks.deck_support_warnings` is what\nbuilds this list.",
+        "description": "One card the engine does not fully support, as flow 6 (W2) surfaces\nit on every decklist submit/validate/load: `magic_cards_model.support.\ncard_support`'s own verdict for the card, sourced never hard-coded.\n`unaudited` is one of `docs/engine-coverage.md`'s own four-tier ladder -\na static ability nothing has checked either way, as opposed to `silent`\n(nothing reads the clause at all) or `notice` (read, but fails closed on\npurpose) - but every non-`handled` status here is treated the same way:\nlikely not working, never a softer tier a caller can afford to ignore.\nA fully `handled` card never appears; `decks.deck_support_warnings` is\nwhat builds this list.",
         "properties": {
           "card": {
             "title": "Card",

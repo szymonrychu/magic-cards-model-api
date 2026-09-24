@@ -107,13 +107,14 @@ class DeckSupportClause(BaseModel):
 class DeckSupportWarning(BaseModel):
     """One card the engine does not fully support, as flow 6 (W2) surfaces
     it on every decklist submit/validate/load: `magic_cards_model.support.
-    card_support`'s own verdict for the card, sourced never hard-coded, with
-    `unaudited` the softer of the two non-`notice` tiers (`docs/
-    engine-coverage.md`'s own four-tier ladder) - a static ability nothing
-    has checked either way, as opposed to `silent` (nothing reads the clause
-    at all) or `notice` (read, but fails closed on purpose). A fully
-    `handled` card never appears; `decks.deck_support_warnings` is what
-    builds this list."""
+    card_support`'s own verdict for the card, sourced never hard-coded.
+    `unaudited` is one of `docs/engine-coverage.md`'s own four-tier ladder -
+    a static ability nothing has checked either way, as opposed to `silent`
+    (nothing reads the clause at all) or `notice` (read, but fails closed on
+    purpose) - but every non-`handled` status here is treated the same way:
+    likely not working, never a softer tier a caller can afford to ignore.
+    A fully `handled` card never appears; `decks.deck_support_warnings` is
+    what builds this list."""
 
     card: str
     status: Literal["silent", "notice", "unaudited"]

@@ -129,14 +129,13 @@ async function validateAndReport(root, prefix) {
   }
 }
 
-/** The softer label `unaudited` renders as everywhere a person reads it -
- * "not verified" rather than the engine's own internal tier name, since
- * `unaudited` means "nobody has checked either way" (never "known broken"),
- * and reads harsher than that to someone who is not the engine's own
- * maintainer. `silent` and `notice` keep their own words - both are a
- * definite verdict, not a shrug. */
+/** `unaudited` renders as "likely not working" everywhere a person reads it,
+ * rather than the engine's own internal tier name: nobody has checked the
+ * clause either way, so it is treated the same as any other not-fully-
+ * supported card rather than given a softer read. `silent` and `notice`
+ * keep their own words - both are already a definite verdict. */
 function supportTierLabel(status) {
-  return status === "unaudited" ? "not verified" : status;
+  return status === "unaudited" ? "likely not working" : status;
 }
 
 /** Flow 6 (W2): "May not be fully supported" - the panel that goes under a

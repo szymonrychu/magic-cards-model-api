@@ -308,6 +308,14 @@ def _clip(text: str, limit: int = PLAYS_NAME_CHARS) -> str:
     return flat if len(flat) <= limit else flat[: limit - 3].rstrip() + "..."
 
 
+def _status_label(status: str) -> str:
+    """`unaudited` spelled out as "unaudited - likely not working" so the
+    agent reads it as not fully supported, the same as `silent`/`notice`,
+    rather than as a softer tier - mirrors `lobby.js`'s `supportTierLabel`
+    for the person-facing panel."""
+    return f"{status} - likely not working" if status == "unaudited" else status
+
+
 def _support_warnings_lines(warnings: Sequence[Mapping[str, Any]]) -> list[str]:
     """Flow 6 (W2): "cards the engine may not fully support: ..." - the
     agent's own copy of the same `support_warnings` the UI shows a human,
@@ -318,7 +326,9 @@ def _support_warnings_lines(warnings: Sequence[Mapping[str, Any]]) -> list[str]:
     """
     if not warnings:
         return []
-    names = ", ".join(f"{warning['card']} ({warning['status']})" for warning in warnings)
+    names = ", ".join(
+        f"{warning['card']} ({_status_label(warning['status'])})" for warning in warnings
+    )
     lines = [
         f"Cards the engine may not fully support: {names}. Do not rely on any clause "
         "named below to happen on its own; play around it.",
