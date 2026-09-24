@@ -532,9 +532,9 @@ PROTOCOL_VERSION = "seatkit-23"
 #: provably exclusive by `whose_turn`, `steps` or turn range, never the
 #: plain count of plays that apply - no longer exists: DR5 (owner,
 #: 2026-09-24, `lint.py`'s own corpus-rules docstring) removed it along with
-#: its constant, so a deck may now carry any number of archetype-active
-#: plays and no lint cap or constant governs them. A card's `enters` fact is
-#: one of exactly three `EntersState` values:
+#: its constant `MAX_ACTIVE_PER_ARCHETYPE`, so a deck may now carry any
+#: number of archetype-active plays and no lint cap or constant governs
+#: them. A card's `enters` fact is one of exactly three `EntersState` values:
 #: `"untapped"`, `"tapped"`, `"untapped_if_paid"` (a land that only enters
 #: untapped by paying a cost, e.g. a shock land). `prefer`/`ties` are not
 #: only a `pick`'s: `play_land.card` (`LandCard`) and both `cast.card` and
