@@ -60,6 +60,7 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from ..audit import UNRECORDED_ACTION
+from ..baseline_seat import attack_candidates, block_candidates
 from ..decisions import TOOL_FIELD_FOR_KIND
 from ..seatkit import (
     AUTOPASS_STEPS,
@@ -1396,10 +1397,12 @@ def _attack_request(
     """`POST .../actions/attack`'s body for a `declare_attackers` move (FB2
     M2, CR 508.1) - the same route the seat's own `declare_attackers` tool
     and `BaselineSeat.attack_declaration` send to. Each `AttackGroup` is
-    resolved over this seat's own untapped battlefield permanents in turn, so
-    two groups never declare the same creature twice."""
+    resolved over this seat's own untapped creatures that can attack
+    (`baseline_seat.attack_candidates`: creature, untapped, not summoning
+    sick - CR 302.6), in turn, so two groups never declare the same creature
+    twice."""
     present = conditions.presence(state, me)
-    pool = [card for card in _zone_cards(state, "battlefield", me) if not card.get("tapped")]
+    pool = attack_candidates(state, me)
     used: set[str] = set()
     pairs: list[dict[str, str]] = []
     for index, group in enumerate(move.get("attackers") or []):
@@ -1442,12 +1445,12 @@ def _block_request(
     """`POST .../actions/declare-blockers`'s body for a `declare_blockers`
     move (FB2 M3, CR 509.1) - the same route the seat's own
     `declare_blockers` tool and `BaselineSeat.block_declaration` send to.
-    Each `Block`'s blocker(s) come from this seat's own untapped battlefield
-    permanents, one attacker at a time, so two blocks never reuse a blocker."""
+    Each `Block`'s blocker(s) come from this seat's own untapped creatures
+    (`baseline_seat.block_candidates`: creature, untapped - summoning
+    sickness does not stop a block, CR 509.1a), one attacker at a time, so
+    two blocks never reuse a blocker."""
     present = conditions.presence(state, me)
-    blocker_pool = [
-        card for card in _zone_cards(state, "battlefield", me) if not card.get("tapped")
-    ]
+    blocker_pool = block_candidates(state, me)
     attacker_pool = _attacking_cards(state)
     used: set[str] = set()
     pairs: list[dict[str, str]] = []

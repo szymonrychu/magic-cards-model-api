@@ -275,6 +275,45 @@ def test_pass_move_sends_hold_priority_false_release_false() -> None:
     ]
 
 
+def test_pass_move_refused_by_the_engine_exits_refused_with_its_text() -> None:
+    """`pass` sends straight through to `actions/pass-priority` with no
+    priority pre-check of its own (`_send_move`'s own `pass` branch never
+    reads `holds_priority`); the engine's own refusal - this seat no longer
+    holding priority, CR 117.3d already having released it - is what turns
+    into `Exit.REFUSED`, in its own words, exactly like every other move's
+    server refusal (`_outcome_exit`)."""
+
+    def refusing_run_action(seat: Any, perform: Any, **kwargs: Any) -> dict[str, Any]:
+        perform()
+        return {"outcome": {"allowed": False, "reason": "bob has priority, not alice"}}
+
+    seat = _FakeSeat(state_view())
+    ctx = runtime._Context(
+        seat=seat,  # type: ignore[arg-type]
+        reasoning=REASONING,
+        corpus={},
+        inputs={},
+        catalog={},
+        deadline=0.0,
+        poll_seconds=0.0,
+        call_started=0.0,
+    )
+    run = runtime._Run(
+        run_id="r",
+        script_id="p",
+        script_sha="s",
+        parent_run_id=None,
+        scripts_run=["p"],
+        moves_run=0,
+    )
+    play = {"moves": [{"kind": "pass"}]}
+    with patch.object(runtime, "run_action", refusing_run_action):
+        result = runtime._send_move(ctx, run, play)
+    assert result == runtime.ScriptExit(
+        Exit.REFUSED, refusal="bob has priority, not alice", refusal_source="server"
+    )
+
+
 # -- M2: declare_attackers ---------------------------------------------------------
 
 
@@ -450,6 +489,95 @@ def test_declare_attackers_ties_any_takes_the_alphabetically_first(
     assert by_id[attack["attackers"][0]["card_id"]] == "Elvish Mystic"
 
 
+def test_declare_attackers_pool_excludes_summoning_sick_creatures(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A count-1 selector tied between a ready creature and a freshly cast
+    (summoning-sick) one is not a tie at all: the sick one is not a
+    candidate (CR 302.6), the same rule `baseline_seat.attack_candidates`
+    applies, so the pick is unambiguous."""
+    alice = seat_uid(board, "alice")
+    ready(client, board, add_card(client, board, "Grizzly Bears", "alice", "battlefield"))
+    add_card(client, board, "Elvish Mystic", "alice", "battlefield")  # left summoning sick
+    to_declare_attackers(client, board)
+    play = combat_move_play(
+        "attack-sick",
+        declare_attackers_move([attack_group({"types_all": ["Creature"]}, count=1)]),
+    )
+    register(client, board, alice, play)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="attack-sick", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [attack] = hook.posts("/actions/attack")
+    named = state(client, board)["battlefield"]
+    by_id = {card["id"]: card["name"] for card in named}
+    assert by_id[attack["attackers"][0]["card_id"]] == "Grizzly Bears"
+
+
+def test_declare_attackers_pool_excludes_non_creature_permanents(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`count: all` over a wide-open selector must still resolve over the
+    seat's untapped creatures that can attack, never every untapped
+    permanent - an untapped land in the pool would make the engine refuse
+    the whole declaration (CR 508.1a)."""
+    alice = seat_uid(board, "alice")
+    ready(client, board, add_card(client, board, "Grizzly Bears", "alice", "battlefield"))
+    add_card(client, board, "Island", "alice", "battlefield")
+    to_declare_attackers(client, board)
+    play = combat_move_play(
+        "attack-all-open",
+        declare_attackers_move([attack_group({}, count="all")]),
+    )
+    register(client, board, alice, play)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="attack-all-open", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [attack] = hook.posts("/actions/attack")
+    assert len(attack["attackers"]) == 1, attack
+
+
+def test_declare_attackers_engine_refusal_is_refused_with_the_engines_text(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A creature with defender (CR 508.1a "a creature can't attack unless
+    it has haste or has been under its controller's control continuously
+    since their most recent turn began" is the pool's own job; `defender`,
+    CR 302.6's own attacking restriction, is the engine's alone) is refused
+    by the engine itself, in its own words - the runner never re-derives
+    that rule, it just builds the request and reports the refusal."""
+    alice = seat_uid(board, "alice")
+    wall = ready(client, board, add_card(client, board, "Wall of Omens", "alice", "battlefield"))
+    to_declare_attackers(client, board)
+    play = combat_move_play(
+        "attack-defender",
+        declare_attackers_move([attack_group({"subtypes_any": ["Wall"]}, count=1)]),
+    )
+    register(client, board, alice, play)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="attack-defender", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.REFUSED, result.to_dict()
+    assert result.script_exit.refusal_source == "server"
+    assert result.script_exit.refusal
+    assert hook.posts("/actions/attack"), "the request must still have been sent and refused"
+    assert wall  # the wall itself never attacked
+
+
 # -- M3: declare_blockers -----------------------------------------------------------
 
 
@@ -551,6 +679,73 @@ def test_declare_blockers_a_tie_between_different_blockers_is_ambiguous(
     )
 
     assert result.script_exit.exit is Exit.AMBIGUOUS, result.to_dict()
+
+
+def test_declare_blockers_ties_any_takes_the_alphabetically_first(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harbingers = ready(
+        client, board, add_card(client, board, "Lupine Harbingers", "alice", "battlefield")
+    )
+    add_card(client, board, "Grizzly Bears", "bob", "battlefield")
+    add_card(client, board, "Elvish Mystic", "bob", "battlefield")
+    to_declare_attackers(client, board)
+    to_declare_blockers(client, board, harbingers)
+    bob = seat_uid(board, "bob")
+    play = combat_move_play(
+        "block-ties-any",
+        declare_blockers_move(
+            [
+                block(
+                    attacker_select={},
+                    blocker={"select": {"types_all": ["Creature"]}, "ties": "any"},
+                )
+            ]
+        ),
+    )
+    register(client, board, bob, play)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, bob)
+
+    result = run_script(
+        seat, script_id="block-ties-any", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [blocks] = hook.posts("/actions/declare-blockers")
+    named = state(client, board)["battlefield"]
+    by_id = {card["id"]: card["name"] for card in named}
+    assert by_id[blocks["blocks"][0]["blocker"]] == "Elvish Mystic"
+
+
+def test_declare_blockers_pool_excludes_non_creature_permanents(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wide-open blocker selector must still resolve over the seat's own
+    untapped creatures, never every untapped permanent - an untapped land in
+    the pool would make the engine refuse the whole declaration."""
+    harbingers = ready(
+        client, board, add_card(client, board, "Lupine Harbingers", "alice", "battlefield")
+    )
+    add_card(client, board, "Grizzly Bears", "bob", "battlefield")
+    add_card(client, board, "Island", "bob", "battlefield")
+    to_declare_attackers(client, board)
+    to_declare_blockers(client, board, harbingers)
+    bob = seat_uid(board, "bob")
+    play = combat_move_play("block-open", declare_blockers_move([block({}, {})]))
+    register(client, board, bob, play)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, bob)
+
+    result = run_script(
+        seat, script_id="block-open", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [blocks] = hook.posts("/actions/declare-blockers")
+    named = state(client, board)["battlefield"]
+    by_id = {card["id"]: card["name"] for card in named}
+    assert by_id[blocks["blocks"][0]["blocker"]] == "Grizzly Bears"
 
 
 def test_declare_blockers_illegal_block_is_refused_with_the_engines_text(
@@ -702,6 +897,44 @@ def test_choose_targets_resolves_a_graveyard_card_target_by_zone() -> None:
     assert body["targets"] == [grave_card["id"]]
 
 
+def test_choose_targets_a_tie_between_different_offered_targets_is_ambiguous() -> None:
+    bear = card("Grizzly Bears", type_line="Creature — Bear", zone="battlefield", controller="bob")
+    mystic = card("Elvish Mystic", type_line="Creature — Elf", zone="battlefield", controller="bob")
+    pending = {
+        "player": "alice",
+        "kind": "choose_targets",
+        "generation": 1,
+        "targets": [{"kind": "card", "id": bear["id"]}, {"kind": "card", "id": mystic["id"]}],
+    }
+    view = state_view(battlefield=[bear, mystic])
+    item = targets_answer([card_target({"types_all": ["Creature"]}, side="opponent")])
+
+    body = runtime.decide_body(item, pending, view, "alice", REASONING)
+
+    assert isinstance(body, runtime.ScriptExit)
+    assert body.exit is Exit.AMBIGUOUS
+    assert set(body.ambiguous_names) == {"Elvish Mystic", "Grizzly Bears"}
+
+
+def test_choose_targets_ties_any_takes_the_alphabetically_first() -> None:
+    bear = card("Grizzly Bears", type_line="Creature — Bear", zone="battlefield", controller="bob")
+    mystic = card("Elvish Mystic", type_line="Creature — Elf", zone="battlefield", controller="bob")
+    pending = {
+        "player": "alice",
+        "kind": "choose_targets",
+        "generation": 1,
+        "targets": [{"kind": "card", "id": bear["id"]}, {"kind": "card", "id": mystic["id"]}],
+    }
+    view = state_view(battlefield=[bear, mystic])
+    item = targets_answer(
+        [card_target({"types_all": ["Creature"]}, side="opponent", ties="any")]
+    )
+
+    body = runtime.decide_body(item, pending, view, "alice", REASONING)
+
+    assert body["targets"] == [mystic["id"]]
+
+
 def test_choose_targets_a_target_not_offered_is_unforeseen() -> None:
     offered = card("Offered", type_line="Creature")
     not_offered = card("Not Offered", type_line="Creature")
@@ -742,6 +975,27 @@ def test_cast_target_prefer_and_ties_narrow_and_break_ties() -> None:
     chosen = runtime._targets(move, view, "alice")
 
     assert chosen == [bear["id"]]
+
+
+def test_cast_target_zone_narrows_the_pool_to_that_zone() -> None:
+    """T1: a cast/activate target's own `zone` (FB2 T1) narrows `_targets`'
+    pool the same way it narrows a `choose_targets` answer's - here to the
+    graveyard, so a same-named battlefield decoy on the same side is never a
+    candidate even though the default (battlefield+stack) would offer it."""
+    grave_card = card("Dead Guy", type_line="Creature", zone="graveyard", controller="alice")
+    battlefield_decoy = card(
+        "Dead Guy", type_line="Creature", zone="battlefield", controller="alice"
+    )
+    view = state_view(graveyards={"alice": [grave_card]}, battlefield=[battlefield_decoy])
+    move = {
+        "kind": "cast",
+        "card": {"zone": "hand", "select": {}},
+        "targets": [card_target({}, side="me", zone="graveyard")],
+    }
+
+    chosen = runtime._targets(move, view, "alice")
+
+    assert chosen == [grave_card["id"]]
 
 
 # -- M4: ability_index ---------------------------------------------------------------
