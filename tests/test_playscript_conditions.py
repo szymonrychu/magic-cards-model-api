@@ -1010,3 +1010,276 @@ def test_evaluate_computes_untapped_mana_for_affordable_selectors():
     doc = play(true=[count("hand", "me", ">=", 1, {"affordable": {"extra": 0}})])
     hypo = {spell["id"]: {"castable_now": True}}
     assert evaluate(doc, view, "alice", hypothetical=hypo)["applies"]
+
+
+# -- FB2 C1: pending_decision -----------------------------------------------------
+
+
+def pending(decision: str) -> dict[str, Any]:
+    return {"kind": "pending_decision", "decision": decision}
+
+
+def test_pending_decision_holds_when_that_kind_is_pending_for_the_viewer():
+    view = state_view()
+    view["pending_decision"] = {"player": "alice", "kind": "scry", "count": 1}
+    assert holds(pending("scry"), view)
+    assert not holds(pending("surveil"), view)
+
+
+def test_pending_decision_does_not_hold_when_it_is_someone_elses():
+    view = state_view()
+    view["pending_decision"] = {"player": "bob", "kind": "scry", "count": 1}
+    assert not holds(pending("scry"), view)
+
+
+def test_pending_decision_does_not_hold_with_no_decision_pending():
+    view = state_view()
+    assert not holds(pending("scry"), view)
+    assert seen(pending("scry"), view) is None
+
+
+def test_pending_decision_seen_names_the_pending_kind():
+    view = state_view()
+    view["pending_decision"] = {"player": "alice", "kind": "surveil", "count": 1}
+    assert seen(pending("surveil"), view) == "surveil"
+
+
+def test_pending_decision_is_mine_when_i_decide_for_a_controlled_player():
+    """`decision_is_mine` (seatkit): while alice controls bob (CR 723.5),
+    a decision addressed to bob is still alice's own to answer."""
+    view = state_view()
+    view["players"][1]["decisions_made_by"] = "alice"
+    view["pending_decision"] = {"player": "bob", "kind": "scry", "count": 1}
+    assert holds(pending("scry"), view)
+
+
+# -- FB2 C2: compare ----------------------------------------------------------------
+
+
+def compare_cond(left: dict[str, Any], op: str, right: dict[str, Any]) -> dict[str, Any]:
+    return {"kind": "compare", "left": left, "op": op, "right": right}
+
+
+def op_count(
+    select: dict[str, Any], side: str, zone: str = "battlefield", **extra: Any
+) -> dict[str, Any]:
+    return {"of": "count", "select": select, "side": side, "zone": zone, **extra}
+
+
+def op_zone_size(zone: str, side: str) -> dict[str, Any]:
+    return {"of": "zone_size", "zone": zone, "side": side}
+
+
+def op_life(side: str) -> dict[str, Any]:
+    return {"of": "life", "side": side}
+
+
+def op_untapped_mana(side: str) -> dict[str, Any]:
+    return {"of": "untapped_mana", "side": side}
+
+
+def op_power_sum(select: dict[str, Any], side: str) -> dict[str, Any]:
+    return {"of": "power_sum", "select": select, "side": side}
+
+
+def op_toughness_sum(select: dict[str, Any], side: str) -> dict[str, Any]:
+    return {"of": "toughness_sum", "select": select, "side": side}
+
+
+def op_n(n: int) -> dict[str, Any]:
+    return {"of": "n", "n": n}
+
+
+def test_compare_count_vs_count():
+    view = state_view(
+        battlefield=[
+            card("Bear1", type_line="Creature — Bear", controller="alice"),
+            card("Bear2", type_line="Creature — Bear", controller="alice"),
+            card("Elf", type_line="Creature — Elf", controller="bob"),
+        ]
+    )
+    select = {"types_any": ["Creature"]}
+    cond = compare_cond(op_count(select, "me"), ">=", op_count(select, "opponent"))
+    assert holds(cond, view)
+    assert seen(cond, view) == {"left": 2, "right": 1}
+    assert not holds(compare_cond(op_count(select, "opponent"), ">=", op_count(select, "me")), view)
+
+
+def test_compare_power_sum_of_my_board_vs_opponent_life_the_lethal_on_board_case():
+    creature = {"types_any": ["Creature"]}
+    lethal = compare_cond(op_power_sum(creature, "me"), ">=", op_life("opponent"))
+    board = [
+        card("Bear1", type_line="Creature — Bear", controller="alice", power=3, toughness=3),
+        card("Bear2", type_line="Creature — Bear", controller="alice", power=2, toughness=2),
+        card("Wall", type_line="Creature — Wall", controller="alice", power=0, toughness=4),
+    ]
+    view = state_view(life={"alice": 20, "bob": 4}, battlefield=board)
+    assert holds(lethal, view)
+    assert seen(lethal, view) == {"left": 5, "right": 4}
+    not_lethal_view = state_view(life={"alice": 20, "bob": 10}, battlefield=board)
+    assert not holds(lethal, not_lethal_view)
+
+
+def test_compare_toughness_sum_reads_toughness_not_power():
+    creature = {"types_any": ["Creature"]}
+    view = state_view(
+        battlefield=[
+            card("Wall1", type_line="Creature — Wall", controller="alice", power=0, toughness=4),
+            card("Wall2", type_line="Creature — Wall", controller="alice", power=0, toughness=5),
+        ]
+    )
+    cond = compare_cond(op_toughness_sum(creature, "me"), "==", op_n(9))
+    assert holds(cond, view)
+
+
+def test_compare_zone_size_vs_n():
+    view = state_view(hand_count={"alice": 2, "bob": 7})
+    assert holds(compare_cond(op_zone_size("hand", "me"), "<", op_n(3)), view)
+    assert not holds(compare_cond(op_zone_size("hand", "me"), ">", op_n(3)), view)
+
+
+def test_compare_untapped_mana_vs_n():
+    view = state_view(battlefield=[mountain(), mountain(tapped=True)])
+    assert holds(compare_cond(op_untapped_mana("me"), "==", op_n(1)), view)
+
+
+def test_compare_life_vs_life():
+    view = state_view(life={"alice": 20, "bob": 4})
+    assert holds(compare_cond(op_life("me"), ">", op_life("opponent")), view)
+    assert not holds(compare_cond(op_life("opponent"), ">", op_life("me")), view)
+
+
+def test_compare_a_hidden_zone_operand_obeys_the_same_side_rule_as_count():
+    doc = play(
+        true=[
+            compare_cond(op_count({"types_any": ["Creature"]}, "me", zone="library"), ">=", op_n(1))
+        ]
+    )
+    assert needs_contents(doc)
+    with pytest.raises(ContentsRequired):
+        evaluate(doc, state_view(), "alice")
+    known_doc = play(
+        true=[
+            compare_cond(
+                op_count({"types_any": ["Creature"]}, "opponent", zone="library"), ">=", op_n(1)
+            )
+        ]
+    )
+    assert not needs_contents(known_doc)
+    assert evaluate(known_doc, state_view(), "alice")["applies"] is False
+
+
+# -- FB2 C3: all_of -----------------------------------------------------------------
+
+
+def test_all_of_excludes_only_when_every_member_holds():
+    healthy = {"kind": "life", "side": "me", "op": ">=", "n": 8}
+    weak = {"kind": "life", "side": "opponent", "op": "<=", "n": 5}
+    doc = play(true=[], false=[{"kind": "all_of", "conditions": [healthy, weak]}])
+    assert not evaluate(doc, state_view(life={"alice": 10, "bob": 3}), "alice")["applies"], (
+        "both members hold: excluded"
+    )
+    assert evaluate(doc, state_view(life={"alice": 10, "bob": 10}), "alice")["applies"], (
+        "only healthy holds: not excluded"
+    )
+    assert evaluate(doc, state_view(life={"alice": 2, "bob": 3}), "alice")["applies"], (
+        "only weak holds: not excluded"
+    )
+    assert evaluate(doc, state_view(life={"alice": 2, "bob": 10}), "alice")["applies"], (
+        "neither holds: not excluded"
+    )
+
+
+def test_all_of_needs_input_when_an_unmet_member_needs_one_and_none_already_fails():
+    doc = play(
+        true=[],
+        false=[
+            {
+                "kind": "all_of",
+                "conditions": [
+                    {"kind": "life", "side": "me", "op": ">=", "n": 1},
+                    inp("clock", "<", 3),
+                ],
+            }
+        ],
+    )
+    result = evaluate(doc, state_view(life={"alice": 20}), "alice", catalog=CATALOG)
+    assert result["needs_input"] == "clock"
+
+
+def test_all_of_short_circuits_on_a_definite_false_member_without_needing_input():
+    doc = play(
+        true=[],
+        false=[
+            {
+                "kind": "all_of",
+                "conditions": [
+                    {"kind": "life", "side": "me", "op": ">=", "n": 99},
+                    inp("clock", "<", 3),
+                ],
+            }
+        ],
+    )
+    result = evaluate(doc, state_view(life={"alice": 20}), "alice", catalog=CATALOG)
+    assert result == HOLDS
+
+
+# -- FB2: needs_contents/needs_hypothetical/needs_next_turn recurse into compare/all_of --
+
+
+def test_needs_contents_recurses_into_a_compare_operand():
+    doc = play(
+        true=[
+            compare_cond(op_count({"types_any": ["Creature"]}, "me", zone="library"), ">=", op_n(1))
+        ]
+    )
+    assert needs_contents(doc)
+
+
+def test_needs_contents_recurses_into_an_all_of_member():
+    inner = count("library", "me", ">=", 1)
+    doc = play(
+        false=[
+            {
+                "kind": "all_of",
+                "conditions": [inner, {"kind": "life", "side": "me", "op": ">=", "n": 1}],
+            }
+        ]
+    )
+    assert needs_contents(doc)
+
+
+def test_needs_hypothetical_recurses_into_a_compare_operand():
+    doc = play(true=[compare_cond(op_power_sum({"unlocks": True}, "me"), ">=", op_n(1))])
+    assert needs_hypothetical(doc)
+
+
+def test_needs_hypothetical_recurses_into_an_all_of_member():
+    inner = count("hand", "me", ">=", 1, {"unlocks": True})
+    doc = play(
+        false=[
+            {
+                "kind": "all_of",
+                "conditions": [inner, {"kind": "life", "side": "me", "op": ">=", "n": 1}],
+            }
+        ]
+    )
+    assert needs_hypothetical(doc)
+
+
+def test_needs_next_turn_recurses_into_a_compare_operand():
+    doc = play(true=[compare_cond(op_power_sum({"payable_any": ["now"]}, "me"), ">=", op_n(1))])
+    assert needs_next_turn(doc)
+
+
+def test_needs_next_turn_recurses_into_an_all_of_member():
+    inner = count("hand", "me", ">=", 1, {"payable_any": ["now"]})
+    doc = play(
+        false=[
+            {
+                "kind": "all_of",
+                "conditions": [inner, {"kind": "life", "side": "me", "op": ">=", "n": 1}],
+            }
+        ]
+    )
+    assert needs_next_turn(doc)

@@ -32,6 +32,8 @@ from magic_cards_model_api.playscripts.lint import (
     EXCLUSIVITY_DIMENSIONS,
     WARNING_CODES,
     check_report,
+    conflict_dimensions,
+    exclusivity,
 )
 
 
@@ -94,6 +96,7 @@ def test_codes_and_warning_codes_are_the_shared_contract():
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "input",
         "true_false",
         "numeric_range",
@@ -644,6 +647,7 @@ def test_identical_plays_conflict_and_the_warning_names_both(root):
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "true_false",
         "numeric_range",
     ]
@@ -680,6 +684,11 @@ EXCLUSIVE_PAIRS = [
             "true": [{"kind": "stack_top", "controller": "opponent", "select": {}}],
             "false": [],
         },
+    ),
+    (
+        "pending_decision",
+        {"true": [{"kind": "pending_decision", "decision": "scry"}], "false": []},
+        {"true": [{"kind": "pending_decision", "decision": "surveil"}], "false": []},
     ),
     (
         "input",
@@ -869,6 +878,146 @@ def test_different_conditions_in_true_and_false_can_apply(root):
     assert check_report(root)[0] == []
 
 
+# -- FB2 C1/C2/C3: pending_decision, compare, all_of --------------------------------
+
+
+def pending(decision: str) -> dict[str, Any]:
+    return {"kind": "pending_decision", "decision": decision}
+
+
+def test_pending_decision_dimension_proves_different_pending_kinds_exclusive():
+    a = play(true=[pending("scry")], false=[])
+    b = play(true=[pending("surveil")], false=[])
+    assert exclusivity(a, b, {}) == ["pending_decision"]
+
+
+def test_pending_decision_dimension_does_not_fire_for_the_same_kind():
+    a = play(true=[pending("scry")], false=[])
+    b = play(true=[pending("scry")], false=[])
+    assert exclusivity(a, b, {}) == []
+    assert "pending_decision" in conflict_dimensions(a, b, {})
+
+
+def test_declare_attackers_and_declare_blockers_plays_are_exclusive_by_pending_decision(root):
+    # Combat moves: a declare_attackers play and a declare_blockers play are
+    # exclusive by decision (FB2 requirement 2) - the runtime only relaxes
+    # the priority gate for a first move whose kind matches the seat's own
+    # pending decision, so these two first-move kinds can never both be the
+    # one decision pending for a seat at once.
+    put_inputs(root, INPUTS)
+    put(root, play(id="a", moves=[{"kind": "declare_attackers", "attackers": []}]))
+    put(root, play(id="b", moves=[{"kind": "declare_blockers", "blocks": []}]))
+    assert check_report(root) == ([], [])
+
+
+def test_never_applicable_for_two_different_pending_decisions_in_one_true(root):
+    put(root, play(true=[pending("scry"), pending("surveil")], false=[]))
+    (error,) = check_report(root)[0]
+    assert error.code == "never-applicable"
+    assert "true[0]" in error.message and "true[1]" in error.message
+
+
+def test_the_same_pending_decision_twice_in_true_is_not_never_applicable(root):
+    put(root, play(true=[pending("scry"), pending("scry")], false=[]))
+    assert check_report(root)[0] == []
+
+
+def test_two_different_pending_decisions_across_true_and_false_is_not_never_applicable(root):
+    # Only a contradiction within one play's own true is provable (a seat can
+    # hold only one pending decision at once); scry required true and
+    # surveil excluded in false do not contradict each other at all.
+    put(root, play(true=[pending("scry")], false=[pending("surveil")]))
+    assert check_report(root)[0] == []
+
+
+def test_a_compare_condition_in_true_and_its_identical_twin_in_false_are_exclusive(root):
+    cmp = {
+        "kind": "compare",
+        "left": {"of": "count", "select": {"types_any": ["Creature"]}, "side": "me"},
+        "op": ">=",
+        "right": {"of": "n", "n": 3},
+    }
+    put(root, play(id="a", true=[cmp], false=[]))
+    put(root, play(id="b", true=[], false=[cmp]))
+    assert check_report(root) == ([], [])
+
+
+def test_two_different_compare_conditions_that_can_overlap_are_not_falsely_exclusive(root):
+    left_cmp = {
+        "kind": "compare",
+        "left": {"of": "power_sum", "select": {"types_any": ["Creature"]}, "side": "me"},
+        "op": ">=",
+        "right": {"of": "life", "side": "opponent"},
+    }
+    right_cmp = {
+        "kind": "compare",
+        "left": {"of": "count", "select": {"types_any": ["Land"]}, "side": "me"},
+        "op": ">=",
+        "right": {"of": "n", "n": 4},
+    }
+    a = play(id="a", true=[left_cmp], false=[])
+    b = play(id="b", true=[right_cmp], false=[])
+    assert exclusivity(a, b, {}) == []
+    assert "numeric_range" not in conflict_dimensions(a, b, {})
+    put(root, a)
+    put(root, b)
+    (warning,) = warnings_of(root)
+    assert warning["code"] == "play-conflict"
+    assert "numeric_range" not in warning["dimensions"]
+
+
+def test_all_of_is_one_literal_never_decomposed_into_its_members_for_true_false(root):
+    # "compare and all_of are canonicalised as single literals for
+    # true_false" (FB2 requirement 2): a bare member of an all_of never
+    # matches the all_of itself, so no exclusivity is falsely claimed
+    # between them.
+    member = {"kind": "life", "side": "me", "op": ">=", "n": 8}
+    allof = {
+        "kind": "all_of",
+        "conditions": [member, {"kind": "life", "side": "opponent", "op": "<=", "n": 5}],
+    }
+    a = play(id="a", true=[member], false=[])
+    b = play(id="b", true=[], false=[allof])
+    assert exclusivity(a, b, {}) == []
+    put(root, a)
+    put(root, b)
+    (warning,) = warnings_of(root)
+    assert warning["code"] == "play-conflict"
+    assert "true_false" not in warning["dimensions"]
+
+
+def test_a_play_conflict_warning_disappears_once_the_complement_condition_is_added(root):
+    # An all_of-false play (a) excludes itself whenever every one of its
+    # members holds. `all_of` is refused outside `false` (schema), so its
+    # complement can only ever be expressed as the other play's own `true`
+    # requiring every one of those same members - proven only once ALL of
+    # them are present, never from one member alone (that stays the
+    # never-decomposed partial-match case covered by
+    # test_all_of_is_one_literal_never_decomposed_into_its_members_for_true_false
+    # above, so no false exclusivity is ever claimed from a partial match).
+    x = {"kind": "life", "side": "me", "op": ">=", "n": 8}
+    y = {"kind": "life", "side": "opponent", "op": "<=", "n": 5}
+    allof = {"kind": "all_of", "conditions": [x, y]}
+    a = play(id="a", true=[], false=[allof])
+    b_empty = play(id="b", true=[], false=[])
+    put(root, a)
+    put(root, b_empty)
+    (warning,) = warnings_of(root)
+    assert warning["code"] == "play-conflict"
+    assert exclusivity(a, b_empty, {}) == []
+
+    b_one_member = play(id="b", true=[x], false=[])
+    put(root, b_one_member)
+    (warning,) = warnings_of(root)
+    assert warning["code"] == "play-conflict"
+    assert exclusivity(a, b_one_member, {}) == []
+
+    b_both_members = play(id="b", true=[x, y], false=[])
+    put(root, b_both_members)
+    assert check_report(root) == ([], [])
+    assert exclusivity(a, b_both_members, {}) == ["true_false"]
+
+
 def life(side: str, op: str, n: int) -> dict[str, Any]:
     return {"kind": "life", "side": side, "op": op, "n": n}
 
@@ -1035,6 +1184,7 @@ def test_an_archetype_list_overlapping_the_built_in_input_still_conflicts(root):
         "steps",
         "opposing_archetypes",
         "stack",
+        "pending_decision",
         "true_false",
         "numeric_range",
     ]

@@ -143,11 +143,47 @@ _COMPARE: dict[str, Callable[[Any, Any], bool]] = {
 }
 
 
+def _is_real_number(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int | float)
+
+
 def compare(value: Any, op: str, n: Any) -> bool:
-    """`value op n` for a real number; anything else never compares."""
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return False
-    return _COMPARE[op](value, n)
+    """`value op n` for two real numbers; anything else never compares.
+
+    Both sides are guarded, not only `value`: every existing caller already
+    passes a schema-validated literal for `n` (an int), so this is a no-op
+    for them, but `compare`'s own `compare` condition (FB2 C2) puts a second
+    board read on the right as well - a `life` operand over a player the
+    view holds no life for, for one - and that must fail closed the same
+    way a missing `value` always has, never raise."""
+    return _is_real_number(value) and _is_real_number(n) and _COMPARE[op](value, n)
+
+
+def sum_matching(
+    cards: Iterable[dict[str, Any]],
+    selector: BaseModel | dict[str, Any],
+    field: str,
+    present: Present | None = None,
+    *,
+    untapped_mana: int | None = None,
+    hypo: Hypo | None = None,
+) -> int:
+    """The summed `field` (`power` or `toughness`) of every card in `cards`
+    that `matches` `selector` - `compare`'s `power_sum`/`toughness_sum`
+    operands (FB2 C2), reading a side's battlefield permanents through the
+    same selector matching every other condition and selector field uses.
+    A card that does not match, or matches but does not carry `field` as a
+    real number (a noncreature's power), contributes 0 - "a number the card
+    does not have never matches" (the module docstring), extended here to
+    "and so it adds nothing to the sum" rather than raising."""
+    total = 0
+    for card in cards:
+        if not matches(selector, card, present, untapped_mana=untapped_mana, hypo=hypo):
+            continue
+        value = card.get(field)
+        if _is_real_number(value):
+            total += value
+    return total
 
 
 def parse_type_line(type_line: str | None) -> tuple[set[str], set[str], set[str]]:
