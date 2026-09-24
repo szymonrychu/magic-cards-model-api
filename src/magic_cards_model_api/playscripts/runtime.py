@@ -79,7 +79,8 @@ from ..seatkit import (
     step_position,
 )
 from . import conditions
-from .inputs import BUILTIN_INPUT, input_catalog
+from .bindings import judge_bindings
+from .inputs import BUILTIN_INPUT
 from .schema import AMOUNT_DECISION_KINDS, CHOICE_DECISION_KINDS, WILDCARD, Play
 from .selectors import Hypo, Present, matches
 
@@ -446,17 +447,27 @@ def run_script(
         return RunResult(True, corpus)
     supplied = dict(inputs or {})
     asserted = supplied.get(BUILTIN_INPUT)
+    # B1 (FC5 item 8): `inputs`/`catalog` are judged through the same
+    # `bindings.judge_bindings` `script_tools.applicable_hint`/`listing`/
+    # `arming._judge_round` judge an offer against, so an offer and the run
+    # it invites never disagree about what applied (the module's own
+    # docstring). `declared_inputs` - the runner has no deck directory to
+    # read matchup stems from, so the caller passes them straight through -
+    # stands in for `judge_bindings`'s own `corpus["inputs"]` read, since
+    # this call's `corpus` may not carry the same declared list a resumed
+    # run's caller originally supplied.
+    bindings = judge_bindings(
+        seat,
+        {**corpus, "inputs": list(declared_inputs or [])},
+        archetype=asserted,
+        supplied=supplied,
+    )
     ctx = _Context(
         seat=seat,
         reasoning=reasoning.strip(),
         corpus=corpus,
-        inputs=supplied,
-        # The runner has no deck directory to read matchup stems from, so the
-        # asserted archetype is its own enum value; the play's
-        # `opposing_archetypes` check is what judges it.
-        catalog=input_catalog(
-            list(declared_inputs or []), [asserted] if isinstance(asserted, str) else ()
-        ),
+        inputs=bindings.inputs,
+        catalog=bindings.catalog,
         deadline=now + cap,
         poll_seconds=poll_seconds,
         call_started=now,

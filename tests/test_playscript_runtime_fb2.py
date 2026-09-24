@@ -1,17 +1,15 @@
 """FB2 B4 runtime (`playscripts/runtime.py`): the new moves and answers - M1
 `pass`, M2 `declare_attackers`, M3 `declare_blockers`, A1 `top_order`/
 `position`, A2 choose_targets `targets`, T1 target `prefer`/`ties`/`zone`,
-M4 `ability_index`, and the standalone pending-decision answer (D2/item 7).
+M4 `ability_index`, the standalone pending-decision answer (D2/item 7), and
+B1 wiring (item 8): `run_script`'s own inputs/catalog come from FC1's
+`bindings.judge_bindings`.
 
 Unit-level tests call the request/answer builders directly against a
 hand-built `state_view`/`pending` dict, the same style `test_playscript_
 runtime.py` already uses for `decide_body`/`_move_request`; the happy path of
 every new move is also proved end to end against a real engine board through
 `run_script` (`register` + `hooked_seat`, imported from that same module).
-
-Part 8 (`run_script` judging through `bindings.judge_bindings`) is not here:
-it needs FC1's `playscripts/bindings.py`, which has not landed on this
-branch yet (FC1 runs in its own worktree, in parallel) - see the task report.
 """
 
 from __future__ import annotations
@@ -38,8 +36,10 @@ from playscript_testkit import (
     top_order_answer,
 )
 from test_playscript_runtime import (
+    PREFERENCE,
     REASONING,
     hooked_seat,
+    land_script,
     opponent_passes,
     register,
     seat_uid,
@@ -926,9 +926,7 @@ def test_choose_targets_ties_any_takes_the_alphabetically_first() -> None:
         "targets": [{"kind": "card", "id": bear["id"]}, {"kind": "card", "id": mystic["id"]}],
     }
     view = state_view(battlefield=[bear, mystic])
-    item = targets_answer(
-        [card_target({"types_all": ["Creature"]}, side="opponent", ties="any")]
-    )
+    item = targets_answer([card_target({"types_all": ["Creature"]}, side="opponent", ties="any")])
 
     body = runtime.decide_body(item, pending, view, "alice", REASONING)
 
@@ -1181,3 +1179,44 @@ def test_pending_ready_matches_only_the_first_move_s_own_combat_kind() -> None:
     assert runtime._pending_ready(standalone_wrong, state, "alice") is False
     assert runtime._pending_ready({"moves": [{"kind": "pass"}]}, state, "alice") is False
     assert runtime._pending_ready(matching, {"pending_decision": None}, "alice") is False
+
+
+# -- B1: run_script's own inputs/catalog wiring (item 8) -----------------------------
+
+
+def test_run_script_builds_its_context_through_judge_bindings(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FC5 item 8: `run_script`'s own `_Context.inputs`/`.catalog` are
+    exactly `bindings.judge_bindings`'s answer for this run's corpus/
+    archetype/supplied inputs - the same one place `script_tools.
+    applicable_hint`/`listing` and `arming._judge_round` judge an offer
+    against (`bindings`'s own module docstring) - not a second,
+    independently-maintained copy of the same catalog-building logic."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, _hook = hooked_seat(seats, alice)
+    real_judge_bindings = runtime.judge_bindings
+    calls: list[dict[str, Any]] = []
+
+    def spying_judge_bindings(seat_arg: Any, corpus: Any, **kwargs: Any) -> Any:
+        result = real_judge_bindings(seat_arg, corpus, **kwargs)
+        calls.append({"corpus": corpus, **kwargs, "result": result})
+        return result
+
+    with patch.object(runtime, "judge_bindings", spying_judge_bindings):
+        result = run_script(
+            seat,
+            script_id="drop",
+            reasoning=REASONING,
+            corpora=seats.script_corpora,
+            declared_inputs=[{**PREFERENCE, "required": False}],
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert len(calls) == 1, "run_script must judge its own inputs/catalog through judge_bindings"
+    assert calls[0]["corpus"]["inputs"] == [{**PREFERENCE, "required": False}]
+    assert calls[0]["archetype"] is None
+    assert calls[0]["supplied"] == {}
