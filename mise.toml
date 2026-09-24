@@ -162,6 +162,25 @@ export MTG_DECKS="${MTG_DECKS:-/tmp}"
 docker compose down "$@"
 """
 
+[tasks."compose:aivai"]
+description = "Bring up the Opus-vs-Opus stack (DR7): postgres + game + two agent/driver pairs, one per seat, routed by DRIVER_URLS."
+run = """
+set -eu
+POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
+export POSTGRES_PASSWORD
+docker compose -f docker-compose.aivai.yml up --build
+"""
+
+[tasks."compose:aivai:down"]
+description = "Stop the Opus-vs-Opus stack. Pass -v to drop the postgres, cache and guides volumes."
+run = """
+set -eu
+POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
+export POSTGRES_PASSWORD
+export MTG_DECKS="${MTG_DECKS:-/tmp}"
+docker compose -f docker-compose.aivai.yml down "$@"
+"""
+
 [tasks.image-tag]
 description = "Print the tag the image tasks would use: <api sha>-<engine sha>"
 # BOTH shas, because BOTH repos are baked into the image. With the api sha

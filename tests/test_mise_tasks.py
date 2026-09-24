@@ -112,3 +112,48 @@ def test_the_plain_test_task_still_needs_no_docker() -> None:
     `mise run test` is the docker-free entry point and stays that way."""
     run = _mise()["tasks"]["test"]["run"]
     assert "docker" not in run
+
+
+# -- compose:aivai / compose:aivai:down (DR7) --------------------------------
+#
+# The Opus-vs-Opus stack gets its own bring-up/down pair, mirroring the
+# `compose`/`compose:down` postgres-password pattern rather than growing a
+# flag on those tasks.
+
+
+def test_the_aivai_compose_task_exists_and_says_what_it_does() -> None:
+    task = _mise()["tasks"]["compose:aivai"]
+    assert task["description"].strip()
+
+
+def test_the_aivai_compose_task_targets_the_dedicated_compose_file() -> None:
+    run = _mise()["tasks"]["compose:aivai"]["run"]
+    assert "-f docker-compose.aivai.yml" in run
+    assert "up --build" in run
+
+
+def test_the_aivai_compose_task_generates_a_postgres_password_the_same_way() -> None:
+    """Same `scripts/postgres-password.sh` source as `compose`'s own task -
+    two independently-typed passwords would be a way for the aivai stack's
+    postgres to silently diverge from the single-seat stack's."""
+    run = _mise()["tasks"]["compose:aivai"]["run"]
+    assert "./scripts/postgres-password.sh" in run
+    assert "POSTGRES_PASSWORD" in run
+
+
+def test_the_aivai_compose_down_task_targets_the_dedicated_compose_file() -> None:
+    run = _mise()["tasks"]["compose:aivai:down"]["run"]
+    assert "-f docker-compose.aivai.yml" in run
+    assert "down" in run
+
+
+def test_the_aivai_compose_down_task_forwards_its_own_arguments() -> None:
+    """`mise run compose:aivai:down -- -v` has to reach `docker compose down`,
+    or the guides/postgres volumes are unreachable to drop."""
+    run = _mise()["tasks"]["compose:aivai:down"]["run"]
+    assert '"$@"' in run
+
+
+def test_the_aivai_compose_down_task_defaults_mtg_decks_like_the_single_seat_one() -> None:
+    run = _mise()["tasks"]["compose:aivai:down"]["run"]
+    assert 'MTG_DECKS="${MTG_DECKS:-/tmp}"' in run

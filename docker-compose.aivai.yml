@@ -1,0 +1,297 @@
+# Opus-vs-Opus: two continuous AI seats playing each other in one game,
+# under `AI_SEAT_MODE=wrapper` with per-seat driver routing (DR7). This is a
+# SEPARATE compose file from docker-compose.yml, not a profile of it - one
+# game with two AI-driven seats needs two of every wrapper-mode container
+# (agent + driver), each with its own writable guides checkout, and that
+# doubling is not something the single-agent file should grow a flag for.
+#
+# Bring the whole thing up from the magic-cards-model-api directory:
+#
+#     cp .env.example .env   # then put ONE of these in it:
+#                            #   CLAUDE_CODE_OAUTH_TOKEN  (from `claude setup-token`)
+#                            #   ANTHROPIC_API_KEY        (a real sk-ant-... key)
+#     mise run compose:aivai
+#
+# Then open a new AIvAI game at http://127.0.0.1:8000/ with both seats set to
+# AI. `game`'s `DRIVER_URLS` lists both drivers; `ai_seat.driver_urls()`
+# reads it and `ai_seat._dispatch_to_driver` sends each seat to the first
+# driver whose own `/status` is idle, so the second seat's dispatch never
+# hits the "one container, one match" 409 `driver-p1` would otherwise give
+# it - see `ai_seat.py`'s module docstring and `_dispatch_to_driver`.
+#
+# Every build context is `..` because the engine is a path dependency at
+# ../magic-cards-model, same as docker-compose.yml.
+#
+# `docker-compose.yml` itself is UNCHANGED - this file duplicates its
+# single-seat services (game/agent/driver/guides-init/postgres) rather than
+# extending them with `docker compose -f a -f b`, because every one of them
+# needs a seat-specific override (env, ports, volumes) and a merge would be
+# harder to read than the plain duplication below.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-mtg}
+      # No default on purpose - see docker-compose.yml's own postgres service.
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?}
+      - POSTGRES_DB=${POSTGRES_DB:-mtg}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-mtg} -d ${POSTGRES_DB:-mtg}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  game:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile
+      platforms:
+        - ${DOCKER_PLATFORM:-linux/amd64}
+    ports:
+      - "8000:8000"
+    environment:
+      - AI_SEAT_MODE=wrapper
+      # DR7: an ordered candidate list, not the single DRIVER_URL - each AI
+      # seat's dispatch is routed to whichever of these is idle
+      # (`ai_seat.driver_urls`/`_dispatch_to_driver`). DRIVER_URL itself is
+      # left unset here on purpose: DRIVER_URLS always wins when set, and
+      # leaving both would suggest a fallback ordering that does not exist.
+      - DRIVER_URLS=http://driver-p1:8090,http://driver-p2:8090
+      - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
+    volumes:
+      - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro
+      - scryfall-cache:/app/.scryfall-cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx;httpx.get('http://127.0.0.1:8000/api/health').raise_for_status()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One writable clone per seat: two agents committing guide edits through
+  # two independent git checkouts must never share one index/.git, or a
+  # concurrent commit from one seat corrupts or blocks the other's -
+  # `playscripts/gitwork.checkout_lock` only serialises writers within a
+  # single checkout, not across two.
+  guides-init-p1:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile.agent
+      platforms:
+        - ${DOCKER_PLATFORM:-linux/amd64}
+      args:
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        AGENT_UID: ${AGENT_UID:-1000}
+        AGENT_GID: ${AGENT_GID:-1000}
+    command: ["/bin/sh", "/usr/local/bin/guides-clone.sh"]
+    environment:
+      - GH_PAT_FILE=/var/run/mtg-decks-git/GH_PAT
+      - GUIDES_REF=main
+      - GIT_TERMINAL_PROMPT=0
+      - HOME=/agent-home
+    secrets:
+      - source: mtg_decks_gh_pat
+        target: /var/run/mtg-decks-git/GH_PAT
+    volumes:
+      - agent-guides-p1:/guides
+
+  guides-init-p2:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile.agent
+      platforms:
+        - ${DOCKER_PLATFORM:-linux/amd64}
+      args:
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        AGENT_UID: ${AGENT_UID:-1000}
+        AGENT_GID: ${AGENT_GID:-1000}
+    command: ["/bin/sh", "/usr/local/bin/guides-clone.sh"]
+    environment:
+      - GH_PAT_FILE=/var/run/mtg-decks-git/GH_PAT
+      - GUIDES_REF=main
+      - GIT_TERMINAL_PROMPT=0
+      - HOME=/agent-home
+    secrets:
+      - source: mtg_decks_gh_pat
+        target: /var/run/mtg-decks-git/GH_PAT
+    volumes:
+      - agent-guides-p2:/guides
+
+  agent-p1:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile.agent
+      platforms:
+        - ${DOCKER_PLATFORM:-linux/amd64}
+      args:
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        AGENT_UID: ${AGENT_UID:-1000}
+        AGENT_GID: ${AGENT_GID:-1000}
+    depends_on:
+      game:
+        condition: service_healthy
+      guides-init-p1:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
+      # Opus-vs-Opus at low effort by default: this file's whole point is a
+      # cheap, fast self-play loop, and the post-game review stays the fixed
+      # Opus-high `agent_settings.review_default()` regardless - see
+      # `agent_settings.py`'s module docstring for the documented `low`
+      # stop risk and where the loop watches for it (DR8).
+      - MODEL=${CLAUDE_MODEL:-claude-opus-5}
+      - EFFORT=${CLAUDE_EFFORT:-low}
+      - MAX_THINKING_TOKENS=${CLAUDE_MAX_THINKING_TOKENS:-}
+      - HTTP_ADDR=:8080
+      - INTERNAL_ADDR=127.0.0.1:8090
+      - WORKSPACE=/workspace
+      - HOME_DIR=/agent-home
+      - HOOK_COMMAND=/app/.venv/bin/cc-stop-hook
+      - CCW_INTERNAL_URL=http://127.0.0.1:8090/internal/turn-complete
+      - CCW_RESULT_JSON=/workspace/result.json
+      - BASE_MCP_PATH=/app/deploy/mcp.base.json
+      - TURN_TIMEOUT_SECONDS=1800
+      - BOOT_TIMEOUT_SECONDS=120
+      - LOG_LEVEL=info
+      - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-tools}
+      - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
+      - MTG_ROLE=seat
+      - MTG_GAME_ID=${MTG_GAME_ID:-}
+    secrets:
+      - source: mtg_decks_gh_pat
+        target: /var/run/mtg-decks-git/GH_PAT
+    volumes:
+      # This seat's own writable checkout - never agent-p2's, so the two
+      # git indexes (and the two agents' commits) never collide.
+      - agent-guides-p1:/guides
+      - ./memory:/workspace/memory
+    restart: unless-stopped
+    stop_grace_period: 30m
+
+  agent-p2:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile.agent
+      platforms:
+        - ${DOCKER_PLATFORM:-linux/amd64}
+      args:
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        AGENT_UID: ${AGENT_UID:-1000}
+        AGENT_GID: ${AGENT_GID:-1000}
+    depends_on:
+      game:
+        condition: service_healthy
+      guides-init-p2:
+        condition: service_completed_successfully
+    ports:
+      - "8081:8080"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
+      - MODEL=${CLAUDE_MODEL:-claude-opus-5}
+      - EFFORT=${CLAUDE_EFFORT:-low}
+      - MAX_THINKING_TOKENS=${CLAUDE_MAX_THINKING_TOKENS:-}
+      - HTTP_ADDR=:8080
+      - INTERNAL_ADDR=127.0.0.1:8090
+      - WORKSPACE=/workspace
+      - HOME_DIR=/agent-home
+      - HOOK_COMMAND=/app/.venv/bin/cc-stop-hook
+      - CCW_INTERNAL_URL=http://127.0.0.1:8090/internal/turn-complete
+      - CCW_RESULT_JSON=/workspace/result.json
+      - BASE_MCP_PATH=/app/deploy/mcp.base.json
+      - TURN_TIMEOUT_SECONDS=1800
+      - BOOT_TIMEOUT_SECONDS=120
+      - LOG_LEVEL=info
+      - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-tools}
+      - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
+      - MTG_ROLE=seat
+      - MTG_GAME_ID=${MTG_GAME_ID:-}
+    secrets:
+      - source: mtg_decks_gh_pat
+        target: /var/run/mtg-decks-git/GH_PAT
+    volumes:
+      - agent-guides-p2:/guides
+      - ./memory:/workspace/memory
+    restart: unless-stopped
+    stop_grace_period: 30m
+
+  driver-p1:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile
+      platforms:
+        - ${DOCKER_PLATFORM:-linux/amd64}
+    command: ["python", "-m", "mtg_agent.driver"]
+    depends_on:
+      - agent-p1
+    ports:
+      - "8090:8090"
+    environment:
+      - GAME_API=http://game:8000
+      # Points at this driver's own agent, never the other seat's.
+      - WRAPPER_API=http://agent-p1:8080
+      - DRIVER_SELF_URL=http://driver-p1:8090
+      - GUIDES_ROOT=/guides
+      - MEMORY_ROOT=/workspace/memory
+      - DRIVER_WORKSPACE=/driver-workspace
+      - HTTP_ADDR=:8090
+      - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
+    volumes:
+      # Read-only mount of agent-p1's own guides checkout, so this driver
+      # reads *its* agent's results journal / revision stamp - never
+      # agent-p2's.
+      - agent-guides-p1:/guides:ro
+      - ./memory:/workspace/memory
+    stop_grace_period: 30m
+
+  driver-p2:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile
+      platforms:
+        - ${DOCKER_PLATFORM:-linux/amd64}
+    command: ["python", "-m", "mtg_agent.driver"]
+    depends_on:
+      - agent-p2
+    ports:
+      - "8091:8090"
+    environment:
+      - GAME_API=http://game:8000
+      - WRAPPER_API=http://agent-p2:8080
+      - DRIVER_SELF_URL=http://driver-p2:8090
+      - GUIDES_ROOT=/guides
+      - MEMORY_ROOT=/workspace/memory
+      - DRIVER_WORKSPACE=/driver-workspace
+      - HTTP_ADDR=:8090
+      - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
+    volumes:
+      - agent-guides-p2:/guides:ro
+      - ./memory:/workspace/memory
+    stop_grace_period: 30m
+
+secrets:
+  # Sourced from the MTG_DECKS_GH_PAT environment variable, same as
+  # docker-compose.yml. Mounted only into the two guides-init clones and the
+  # two agents - never into a driver or into game.
+  mtg_decks_gh_pat:
+    environment: MTG_DECKS_GH_PAT
+
+volumes:
+  scryfall-cache:
+  postgres-data:
+  agent-guides-p1:
+  agent-guides-p2:

@@ -22,7 +22,9 @@ working, one-line "DONE" reply.
 from __future__ import annotations
 
 import time
+from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -349,6 +351,255 @@ def test_kubernetes_why_gone_carries_the_kubernetes_status_reason(
     seats.reconcile(live_game_ids=lambda: {"g-k8s"})
     reason = fresh_registry.why_gone("u-k8s")
     assert "missing" in reason and job_name("g-k8s", "u-k8s") in reason
+
+
+# -- wrapper mode: per-seat driver routing (DR7) -----------------------------
+#
+# `AI_SEAT_MODE=wrapper` normally dispatches every AI seat to the single
+# `driver_url()`. DR7 lets a game server list several driver base URLs
+# (`DRIVER_URLS`, comma-separated) so an Opus-vs-Opus game can put its two AI
+# seats on two different driver containers instead of the second one 409ing
+# against the first's "one container, one match" limit
+# (`mtg_agent/driver/app.py:assign`). No real driver is spawned - a fake
+# multi-driver farm stands in behind `httpx.MockTransport`, keeping with this
+# repo's no-real-subprocess-for-httpx-calls testing style used elsewhere
+# (`test_watch_game.py`, `test_post_game_lifecycle.py`).
+
+
+class _FakeDriverFarm:
+    """One entry per driver base URL: whether it already holds a match
+    (`holding`, a game id or `None` for idle), whether it is reachable at
+    all, and how many times `/dispatch` was actually called on it - so a
+    test can assert routing skipped a driver without ever calling
+    `/dispatch` on it."""
+
+    def __init__(self) -> None:
+        self.drivers: dict[str, dict[str, Any]] = {}
+        self.dispatch_order: list[str] = []
+
+    def add(self, base: str, *, holding: str | None = None, unreachable: bool = False) -> None:
+        self.drivers[base] = {
+            "holding": holding,
+            "unreachable": unreachable,
+            "dispatch_calls": 0,
+            "force_409_once": False,
+        }
+
+    def _base_of(self, request: httpx.Request) -> str:
+        url = request.url
+        port = f":{url.port}" if url.port else ""
+        base = f"{url.scheme}://{url.host}{port}"
+        assert base in self.drivers, f"no fake driver registered for {base}"
+        return base
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        base = self._base_of(request)
+        state = self.drivers[base]
+        if state["unreachable"]:
+            raise httpx.ConnectError("connection refused", request=request)
+        if request.url.path == "/status":
+            return httpx.Response(
+                200,
+                json={
+                    "gameId": state["holding"],
+                    "lastError": None,
+                    "pending": False,
+                    "turnActive": False,
+                },
+            )
+        if request.url.path == "/dispatch":
+            self.dispatch_order.append(base)
+            state["dispatch_calls"] += 1
+            if state["holding"] is not None or state["force_409_once"]:
+                state["force_409_once"] = False
+                return httpx.Response(409, json={"detail": f"busy: {base}"})
+            state["holding"] = "assigned-game"
+            return httpx.Response(
+                202,
+                json={
+                    "deck": "izzet-flip",
+                    "turnId": "t-1",
+                    "confidence": 0.9,
+                    "archetype": "tempo",
+                },
+            )
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+
+@pytest.fixture
+def driver_farm(monkeypatch: pytest.MonkeyPatch) -> _FakeDriverFarm:
+    farm = _FakeDriverFarm()
+
+    def fake_driver_client(base_url: str) -> httpx.Client:
+        return httpx.Client(base_url=base_url, transport=httpx.MockTransport(farm.handler))
+
+    monkeypatch.setattr(ai_seat, "_driver_client", fake_driver_client)
+    return farm
+
+
+def test_driver_urls_reads_the_comma_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DRIVER_URLS", " http://driver-p1:8090 , http://driver-p2:8090 ")
+    assert ai_seat.driver_urls() == ["http://driver-p1:8090", "http://driver-p2:8090"]
+
+
+def test_driver_urls_falls_back_to_driver_url_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DRIVER_URLS", raising=False)
+    monkeypatch.delenv("DRIVER_URL", raising=False)
+    assert ai_seat.driver_urls() == [ai_seat.driver_url()]
+
+    monkeypatch.setenv("DRIVER_URL", "http://driver-solo:8090")
+    assert ai_seat.driver_urls() == ["http://driver-solo:8090"]
+
+
+def test_two_ai_seats_in_one_game_land_on_two_different_drivers(
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_registry: ai_seat.AiSeatRegistry,
+    driver_farm: _FakeDriverFarm,
+) -> None:
+    monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
+    monkeypatch.setenv("DRIVER_URLS", "http://driver-p1:8090,http://driver-p2:8090")
+    driver_farm.add("http://driver-p1:8090")
+    driver_farm.add("http://driver-p2:8090")
+
+    first = fresh_registry.start(
+        uid="seat-p1", game_id="g1", player="p1", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    second = fresh_registry.start(
+        uid="seat-p2", game_id="g1", player="p2", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert first["mechanism"] == "wrapper"
+    assert second["mechanism"] == "wrapper"
+    assert first["driver"] != second["driver"]
+    assert {first["driver"], second["driver"]} == {
+        "http://driver-p1:8090",
+        "http://driver-p2:8090",
+    }
+
+
+def test_a_busy_first_driver_is_skipped_for_the_idle_second_one(
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_registry: ai_seat.AiSeatRegistry,
+    driver_farm: _FakeDriverFarm,
+) -> None:
+    monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
+    monkeypatch.setenv("DRIVER_URLS", "http://driver-p1:8090,http://driver-p2:8090")
+    driver_farm.add("http://driver-p1:8090", holding="some-other-game")
+    driver_farm.add("http://driver-p2:8090")
+
+    status = fresh_registry.start(
+        uid="seat-p1", game_id="g1", player="p1", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert status["mechanism"] == "wrapper"
+    assert status["driver"] == "http://driver-p2:8090"
+    # The busy driver's own /status said so before any /dispatch was spent on it.
+    assert driver_farm.drivers["http://driver-p1:8090"]["dispatch_calls"] == 0
+
+
+def test_a_409_on_dispatch_moves_on_to_the_next_driver(
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_registry: ai_seat.AiSeatRegistry,
+    driver_farm: _FakeDriverFarm,
+) -> None:
+    """A race: the first driver's own `/status` still said idle, but by the
+    time `/dispatch` actually reached it another caller had just claimed it -
+    the driver's 409 (not the earlier `/status` probe) is what moves routing
+    on to the next candidate."""
+    monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
+    monkeypatch.setenv("DRIVER_URLS", "http://driver-p1:8090,http://driver-p2:8090")
+    driver_farm.add("http://driver-p1:8090")
+    driver_farm.drivers["http://driver-p1:8090"]["force_409_once"] = True
+    driver_farm.add("http://driver-p2:8090")
+
+    status = fresh_registry.start(
+        uid="seat-p1", game_id="g1", player="p1", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert status["mechanism"] == "wrapper"
+    assert status["driver"] == "http://driver-p2:8090"
+    assert driver_farm.dispatch_order == ["http://driver-p1:8090", "http://driver-p2:8090"]
+
+
+def test_all_drivers_busy_or_unreachable_falls_back_naming_each_one(
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_registry: ai_seat.AiSeatRegistry,
+    driver_farm: _FakeDriverFarm,
+) -> None:
+    monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
+    monkeypatch.setenv("DRIVER_URLS", "http://driver-p1:8090,http://driver-p2:8090")
+    driver_farm.add("http://driver-p1:8090", holding="game-a")
+    driver_farm.add("http://driver-p2:8090", unreachable=True)
+
+    status = fresh_registry.start(
+        uid="seat-p1", game_id="g1", player="p1", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert status["mechanism"] == "fallback"
+    assert status["state"] == "not_started"
+    assert "http://driver-p1:8090" in status["reason"]
+    assert "http://driver-p2:8090" in status["reason"]
+
+
+def test_two_seats_never_share_a_driver_even_with_three_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_registry: ai_seat.AiSeatRegistry,
+    driver_farm: _FakeDriverFarm,
+) -> None:
+    monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
+    monkeypatch.setenv(
+        "DRIVER_URLS", "http://driver-p1:8090,http://driver-p2:8090,http://driver-p3:8090"
+    )
+    driver_farm.add("http://driver-p1:8090")
+    driver_farm.add("http://driver-p2:8090")
+    driver_farm.add("http://driver-p3:8090")
+
+    first = fresh_registry.start(
+        uid="seat-p1", game_id="g1", player="p1", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    second = fresh_registry.start(
+        uid="seat-p2", game_id="g1", player="p2", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert first["driver"] != second["driver"]
+
+
+def test_unset_driver_urls_matches_todays_single_driver_behaviour(
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_registry: ai_seat.AiSeatRegistry,
+    driver_farm: _FakeDriverFarm,
+) -> None:
+    """With `DRIVER_URLS` unset, `driver_urls()` is the one-element
+    `[driver_url()]` list - dispatch must take exactly the single-driver path
+    it always has: no `/status` probe spent before the one and only
+    `/dispatch` call, success and fallback shapes unchanged."""
+    monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
+    monkeypatch.delenv("DRIVER_URLS", raising=False)
+    monkeypatch.setenv("DRIVER_URL", "http://driver:8090")
+    driver_farm.add("http://driver:8090")
+
+    status = fresh_registry.start(
+        uid="seat-solo", game_id="g1", player="p1", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert status["mechanism"] == "wrapper"
+    assert status["driver"] == "http://driver:8090"
+    assert status["deck"] == "izzet-flip"
+    assert status["turn_id"] == "t-1"
+    # Only the one call this path has always made - no idle probe first.
+    assert driver_farm.dispatch_order == ["http://driver:8090"]
+
+
+def test_unset_driver_urls_unreachable_driver_falls_back_with_the_old_reason_wording(
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_registry: ai_seat.AiSeatRegistry,
+    driver_farm: _FakeDriverFarm,
+) -> None:
+    monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
+    monkeypatch.delenv("DRIVER_URLS", raising=False)
+    monkeypatch.setenv("DRIVER_URL", "http://driver:8090")
+    driver_farm.add("http://driver:8090", unreachable=True)
+
+    status = fresh_registry.start(
+        uid="seat-solo", game_id="g1", player="p1", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert status["mechanism"] == "fallback"
+    assert status["state"] == "not_started"
+    assert "the driver at http://driver:8090 could not be reached" in status["reason"]
 
 
 # -- HTTP layer (ai_seat_api.py) ---------------------------------------------

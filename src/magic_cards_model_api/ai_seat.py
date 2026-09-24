@@ -43,6 +43,7 @@ establish - see its docstring for which way each failure falls and why.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.resources
 import os
 import shutil
@@ -104,6 +105,26 @@ def ai_seat_mode() -> str:
 
 def driver_url() -> str:
     return (os.environ.get("DRIVER_URL") or "http://driver:8090").strip()
+
+
+def driver_urls() -> list[str]:
+    """The ordered candidate driver base URLs a wrapper-mode dispatch may
+    try, most preferred first.
+
+    `DRIVER_URLS` (comma-separated) lists them explicitly - the Opus-vs-Opus
+    compose file (`docker-compose.aivai.yml`, DR7) sets one per seat so two
+    AI seats in the same game land on two different driver containers
+    instead of the second one 409ing against the first's "one container, one
+    match" limit (`mtg_agent/driver/app.py:assign`). Unset - every other
+    deployment today (`docker-compose.yml`, the kubernetes seat Job) - this
+    is `[driver_url()]`: one element, so `_dispatch_to_driver` takes the
+    exact single-driver code path it always has, byte-identical to before
+    `DRIVER_URLS` existed."""
+    raw = os.environ.get("DRIVER_URLS")
+    if raw is None or not raw.strip():
+        return [driver_url()]
+    urls = [candidate.strip() for candidate in raw.split(",") if candidate.strip()]
+    return urls or [driver_url()]
 
 
 def api_service_url() -> str:
@@ -381,8 +402,22 @@ class AiSeatRegistry:
         the UI has something to show and the game stays playable.
 
         `role` rides in the dispatch payload (`DispatchIn.role`), where the
-        driver's `assign` reads it to pick the advisor prose."""
-        base = driver_url()
+        driver's `assign` reads it to pick the advisor prose.
+
+        **Routing (DR7).** `driver_urls()` is the ordered candidate list;
+        `DRIVER_URLS` unset makes it one element, and this method then takes
+        exactly the single-driver path it always has - one `/dispatch` call,
+        no `/status` probe first, the exact fallback reason text a caller
+        elsewhere in this codebase may already be matching on. With more
+        than one candidate, this picks the first whose own `GET /status`
+        reports nothing assigned to it (idle - `_driver_busy_reason`), then
+        dispatches to it; a `409` there (the driver was claimed by another
+        request between the probe and this call) moves on to the next
+        candidate rather than giving up, and each driver a seat lands on
+        holds it (the driver refuses a second assignment with the same
+        `409`), so two seats of one game are never sent to the same driver.
+        All candidates busy or unreachable gives the same fallback shape,
+        naming every driver tried and why."""
         payload: dict[str, Any] = {
             "uid": uid,
             "game_id": game_id,
@@ -395,34 +430,112 @@ class AiSeatRegistry:
             # receives the body it always received. `DispatchIn.role`
             # defaults to `seat`, so absence keeps meaning what it meant.
             payload["role"] = role
-        try:
-            with _driver_client(base) as client:
-                response = client.post("/dispatch", json=payload)
-                response.raise_for_status()
-                answer = response.json()
-        except Exception as exc:  # report, never raise - see the docstring
+
+        bases = driver_urls()
+        if len(bases) <= 1:
+            # Unchanged from before DRIVER_URLS existed: no idle probe, one
+            # dispatch attempt, the same fallback reason wording. Kept as its
+            # own branch rather than folded into the loop below so that
+            # wording can never drift out from under whatever already reads
+            # it - see the docstring.
+            base = bases[0]
+            try:
+                with _driver_client(base) as client:
+                    response = client.post("/dispatch", json=payload)
+                    response.raise_for_status()
+                    answer = response.json()
+            except Exception as exc:  # report, never raise - see the docstring
+                return {
+                    "uid": uid,
+                    "player": player,
+                    "role": role,
+                    "mechanism": "fallback",
+                    "state": "not_started",
+                    "reason": f"the driver at {base} could not be reached: {exc}",
+                }
             return {
                 "uid": uid,
                 "player": player,
                 "role": role,
-                "mechanism": "fallback",
-                "state": "not_started",
-                "reason": f"the driver at {base} could not be reached: {exc}",
+                "game_id": game_id,
+                "mechanism": "wrapper",
+                "state": "dispatched",
+                "deck": answer.get("deck"),
+                "turn_id": answer.get("turnId"),
+                "confidence": answer.get("confidence"),
+                "archetype": answer.get("archetype"),
+                "driver": base,
+                "dispatched_at": time.time(),
+            }
+
+        tried: list[str] = []
+        for base in bases:
+            busy_reason = self._driver_busy_reason(base)
+            if busy_reason is not None:
+                tried.append(f"{base} ({busy_reason})")
+                continue
+            try:
+                with _driver_client(base) as client:
+                    response = client.post("/dispatch", json=payload)
+            except Exception as exc:  # noqa: BLE001 - try the next candidate
+                tried.append(f"{base} (unreachable: {exc})")
+                continue
+            if response.status_code == 409:
+                # The idle probe above raced a concurrent dispatch - the
+                # driver's own refusal is the authority here, not the
+                # now-stale probe, so this moves on exactly as a driver that
+                # never looked idle would.
+                detail = None
+                with contextlib.suppress(Exception):  # a non-JSON 409 body is still a 409
+                    detail = response.json().get("detail")
+                tried.append(f"{base} (busy: {detail or 'assigned between probe and dispatch'})")
+                continue
+            try:
+                response.raise_for_status()
+                answer = response.json()
+            except Exception as exc:  # noqa: BLE001 - try the next candidate
+                tried.append(f"{base} (dispatch failed: {exc})")
+                continue
+            return {
+                "uid": uid,
+                "player": player,
+                "role": role,
+                "game_id": game_id,
+                "mechanism": "wrapper",
+                "state": "dispatched",
+                "deck": answer.get("deck"),
+                "turn_id": answer.get("turnId"),
+                "confidence": answer.get("confidence"),
+                "archetype": answer.get("archetype"),
+                "driver": base,
+                "dispatched_at": time.time(),
             }
         return {
             "uid": uid,
             "player": player,
             "role": role,
-            "game_id": game_id,
-            "mechanism": "wrapper",
-            "state": "dispatched",
-            "deck": answer.get("deck"),
-            "turn_id": answer.get("turnId"),
-            "confidence": answer.get("confidence"),
-            "archetype": answer.get("archetype"),
-            "driver": base,
-            "dispatched_at": time.time(),
+            "mechanism": "fallback",
+            "state": "not_started",
+            "reason": "every driver was busy or unreachable: " + "; ".join(tried),
         }
+
+    def _driver_busy_reason(self, base: str) -> str | None:
+        """`None` if `base`'s own `GET /status` reports nothing assigned to
+        it (idle - a candidate `_dispatch_to_driver` may try); otherwise why
+        it is not one right now, for the fallback message when every
+        candidate is skipped: the game it already holds (`/status`'s
+        `gameId`, set from the driver's own `current["assignment"]`), or
+        that it could not be reached at all. Only consulted when routing
+        among more than one driver."""
+        try:
+            with _driver_client(base) as client:
+                answer = client.get("/status").json()
+        except Exception as exc:  # noqa: BLE001 - an unreachable driver is not a candidate
+            return f"unreachable: {exc}"
+        game_id = answer.get("gameId")
+        if game_id:
+            return f"holding game {game_id}"
+        return None
 
     def _dispatch_to_kubernetes(
         self,

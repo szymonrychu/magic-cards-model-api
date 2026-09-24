@@ -18,7 +18,14 @@ is what makes a seat slow. That finding is unchanged; the owner's call on
 what to trade for it is. `low` is still deliberately not the default: it is
 documented as stopping to ask when a task is multi-step, but a seat's
 `AskUserQuestion` tool is denied and it is forbidden from stopping, so a seat
-that wants to ask and cannot may simply stop - worse than slow.
+that wants to ask and cannot may simply stop - worse than slow. This is not
+hypothetical for `docker-compose.aivai.yml` (DR7), which defaults both of its
+seats to `low` on purpose for a cheap self-play loop - the mitigation there
+is not raising the seat's own effort but catching a seat that has gone quiet:
+the Opus-vs-Opus loop's own watcher (DR8) treats a seat with no activity past
+its grace as the stalled case to detect and restart, the same shape
+`ai_pregame.py`'s `GONE`/`activity()` backstop already catches for a seat
+that never started at all.
 `AGENT_DEFAULT_EFFORT` overrides the default per deployment, the same as
 `AGENT_DEFAULT_MODEL` does for the model - there is no longer a per-game
 lobby control for either (2026-09-19: the model/effort/thinking-budget

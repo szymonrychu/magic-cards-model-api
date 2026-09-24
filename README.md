@@ -357,6 +357,23 @@ supervising one PTY, and that does not multiply. Running several games
 against continuous agents at once means running against a cluster in
 `kubernetes` mode instead.
 
+**Opus-vs-Opus in compose (DR7).** `docker-compose.yml`'s single `agent`/
+`driver` cannot play *both* seats of one game either - a second dispatch to
+the same driver hits the same "one container, one match" 409. A dedicated
+`docker-compose.aivai.yml` (`mise run compose:aivai`) brings up two full
+agent/driver pairs instead - `agent-p1`/`driver-p1` and `agent-p2`/
+`driver-p2`, each with its own writable guides checkout (`agent-guides-p1`/
+`agent-guides-p2`, so two git indexes never collide) and its own host port
+(`8080`/`8081`) - plus `game` configured with `DRIVER_URLS` (a
+comma-separated list, not the single `DRIVER_URL`): `ai_seat.driver_urls()`
+reads it, and `_dispatch_to_driver` sends each seat to the first driver whose
+own `/status` reports idle, retrying the next candidate on a `409` from a
+race. Both seats default to `claude-opus-5` at `low` effort (`CLAUDE_MODEL`/
+`CLAUDE_EFFORT`, same variables as the single-seat file) - a cheap, fast
+self-play loop; the post-game review stays the fixed Opus-`high`
+`agent_settings.review_default()` regardless. Bring it down with
+`mise run compose:aivai:down`.
+
 ### The lobby
 
 - **List**: `GET /api/ui/games` returns every lobby-booted game - players,
