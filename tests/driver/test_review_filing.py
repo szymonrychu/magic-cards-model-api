@@ -37,6 +37,7 @@ makes the *ordering* under test (clause b) explicit rather than incidental.
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -285,7 +286,10 @@ def test_a_released_game_that_never_reflected_files_a_review_the_page_can_read(t
     assert len(reviews) == 1, run.review["entries"]
     entry = reviews[0]
     assert entry["detail"]["player"] == "bob"
-    assert entry["detail"]["text"] == REVIEW_TEXT
+    # DR3 (3): the filed text is the reviewer's own words plus the appended
+    # "Play statistics" block - never the reviewer's text alone any more.
+    assert entry["detail"]["text"].startswith(REVIEW_TEXT)
+    assert "Play statistics:" in entry["detail"]["text"]
     assert isinstance(entry["seq"], int)
     assert entry["ts"]
     # And nothing claimed the review failed.
@@ -307,7 +311,9 @@ def test_the_review_page_reads_that_filed_review_out_of_the_real_body(tmp_path):
 
     found = run_module(UI_MODULE, "m.aiReviewsOf(rev)", rev=run.review)
     assert len(found) == 1, found
-    assert found[0]["text"] == REVIEW_TEXT
+    # DR3 (3): the appended "Play statistics" block, same as above.
+    assert found[0]["text"].startswith(REVIEW_TEXT)
+    assert "Play statistics:" in found[0]["text"]
     assert found[0]["player"] == "bob"
     # The page never mistakes it for the seat's own write-up: this game has
     # no reflection at all, and the reflection reader says so.
@@ -395,7 +401,10 @@ def test_the_page_shows_one_review_and_the_reflection_beside_it(tmp_path):
             api_client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})
 
     found = run_module(UI_MODULE, "m.aiReviewsOf(rev)", rev=body)
-    assert [entry["text"] for entry in found] == [REVIEW_TEXT]
+    assert len(found) == 1, found
+    # DR3 (3): the appended "Play statistics" block, same as above.
+    assert found[0]["text"].startswith(REVIEW_TEXT)
+    assert "Play statistics:" in found[0]["text"]
     reflection = run_module(UI_MODULE, "m.reflectionOf(rev)", rev=body)
     assert reflection["text"] == "wrote up the game"
 
@@ -460,3 +469,87 @@ def test_a_review_that_came_back_empty_says_so_on_the_same_surface(
     failure = run.review["ai_review_failures"][0]
     assert failure["stage"] == expected_stage
     assert failure["invoked"] is expected_invoked
+
+
+# -- DR3 (3): a fixed "Play statistics" block is appended to the filed text -
+
+
+def _write_reviewer_admit_journal(
+    tmp_path: Path, game_id: str, *, added=(), updated=()
+) -> None:
+    """One `plays admit` line, written the way the real `mcp-seat` process
+    would (`playscripts.gitwork._JOURNALED_KEYS`, read back by
+    `handover.read_journal(guides_root, game_id, "reviewer")`), directly
+    under the `/guides` checkout `_driver` points this test's driver at -
+    `handover.journal_path` falls back to `<guides_root>/.git/<name>` when
+    `.git` is not a linked-worktree file, which a bare `mkdir` here
+    satisfies without a real git checkout."""
+    git_dir = tmp_path / "guides" / ".git"
+    git_dir.mkdir(parents=True, exist_ok=True)
+    line = {
+        "game_id": game_id,
+        "role": "reviewer",
+        "command": "plays admit",
+        "result": "admitted",
+        "dsl_change": True,
+        "added": list(added),
+        "updated": list(updated),
+        "reprioritized": [],
+    }
+    with (git_dir / "mcm-results.jsonl").open("a") as handle:
+        handle.write(json.dumps(line) + "\n")
+
+
+def test_the_filed_review_carries_a_play_statistics_block_with_zeros_when_nothing_admitted(
+    tmp_path,
+):
+    """DR3 (3): the block is appended even when the game's journal has no
+    admits at all - zeros for every count, never a missing block."""
+    run = released_without_a_reflection(tmp_path)
+    text = _rows(run.review, audit.AI_REVIEW_ACTION)[0]["detail"]["text"]
+    assert REVIEW_TEXT in text
+    assert "Play statistics:" in text
+    for line in (
+        "- plays in deck: 0",
+        "- added: 0",
+        "- updated: 0",
+        "- used: 0",
+        "- denied: 0",
+        "- passed over: 0",
+    ):
+        assert line in text, text
+
+
+def test_the_filed_review_carries_the_reviews_own_admits_from_the_journal(tmp_path):
+    """The journal is read AFTER the review one-shot returns
+    (`role="reviewer"`, this game's own `plays admit` line), and its
+    `added`/`updated` play ids are folded into the appended block - proving
+    the statistics reflect what THIS review admitted, not merely whatever
+    `GET /review` already knew when `post_ai_review` started."""
+    wrapper, pushed, reviewed = _wrapper_app(lambda settings, prompt, model, effort: REVIEW_TEXT)
+    with TestClient(api_app) as api_client:
+        info = _agent_game(api_client)
+        _write_reviewer_admit_journal(
+            tmp_path, info["game_id"], added=["p1", "p2"], updated=["p3"]
+        )
+        driver = _driver(tmp_path, wrapper)
+        try:
+            _dispatch(driver, info)
+            _concede(api_client, info["game_id"])
+            driver.post(
+                "/release", json={"uid": info["seat_uids"]["bob"], "reason": "lobby reset"}
+            )
+            driver.post(
+                "/turn-done",
+                json={"turnId": "turn-1", "state": "complete", "finalText": "I attack"},
+            )
+            _complete_handover(driver, pushed)
+            wait_for(lambda: driver.get("/status").json()["gameId"] is None)
+            body = _review_body(api_client, info)
+        finally:
+            api_client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})
+
+    text = _rows(body, audit.AI_REVIEW_ACTION)[0]["detail"]["text"]
+    assert "Play statistics:" in text
+    assert "- added: 2" in text
+    assert "- updated: 1" in text

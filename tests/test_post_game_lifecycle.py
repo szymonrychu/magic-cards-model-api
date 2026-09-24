@@ -357,5 +357,8 @@ def test_the_bound_is_derived_from_the_drivers_own_allowances() -> None:
         + HANDOVER_BUDGET_SECONDS
         + RETIRE_REVIEW_JOIN_TIMEOUT
     )
-    assert 3000 <= lobby.POSTGAME_RELEASE_SECONDS <= 4000
+    # DR3: `RETIRE_REVIEW_JOIN_TIMEOUT` moved from 1330s to 3730s with
+    # `review_timeout`'s own 1200 -> 3600 raise, so the sanity range this
+    # pins moves with it (was 3000-4000, about an hour).
+    assert 5000 <= lobby.POSTGAME_RELEASE_SECONDS <= 7000
     assert lobby.POSTGAME_RELEASE_SECONDS < 14400, "inside the Job's activeDeadlineSeconds"

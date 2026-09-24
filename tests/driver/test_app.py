@@ -349,14 +349,49 @@ def test_the_completed_reflection_turn_also_generates_and_posts_an_ai_review(wor
     assert "wrote" in review_request["prompt"]
     assert "bob" in review_request["prompt"]
 
-    assert world.ai_review_posts == [
-        {
-            "game_id": "g-1",
-            "player": "bob",
-            "uid": "secret-uid",
-            "text": "a solid game overall, but the turn 6 attack was a misread",
-        }
-    ]
+    # DR3 (3): the filed text is the reviewer's own words plus the appended
+    # "Play statistics" block now, so this checks the fixed fields and the
+    # text's own prefix/block rather than exact equality.
+    assert len(world.ai_review_posts) == 1
+    posted = world.ai_review_posts[0]
+    assert posted["game_id"] == "g-1"
+    assert posted["player"] == "bob"
+    assert posted["uid"] == "secret-uid"
+    assert posted["text"].startswith("a solid game overall, but the turn 6 attack was a misread")
+    assert "Play statistics:" in posted["text"]
+    for line in ("plays in deck", "added", "updated", "used", "denied", "passed over"):
+        assert f"- {line}: " in posted["text"], posted["text"]
+
+
+def test_the_ai_review_statistics_fold_in_this_reviews_own_journal_admits(world):
+    """DR3 (3): `post_ai_review` reads this game's `role="reviewer"` results
+    journal AFTER the review one-shot returns, and the admits it finds there
+    - this review's own `mcp-seat plays admit` calls, never anything the
+    handover admitted - are what the appended block's `added`/`updated`
+    counts come from."""
+    guides_root = world.settings.guides_root
+    git_dir = guides_root / ".git"
+    git_dir.mkdir(parents=True, exist_ok=True)
+    line = {
+        "game_id": "g-1",
+        "role": "reviewer",
+        "command": "plays admit",
+        "result": "admitted",
+        "dsl_change": True,
+        "added": ["p1", "p2"],
+        "updated": ["p3"],
+        "reprioritized": [],
+    }
+    (git_dir / "mcm-results.jsonl").write_text(json.dumps(line) + "\n")
+
+    client = world.client
+    state = world.state
+    play_out_the_match(client, state, world.submitted)
+    wait_for(lambda: len(world.ai_review_posts) == 1)
+
+    text = world.ai_review_posts[0]["text"]
+    assert "- added: 2" in text
+    assert "- updated: 1" in text
 
 
 def test_a_slow_review_never_delays_the_handover_response(world):
@@ -613,12 +648,13 @@ def test_two_sequential_games_through_one_driver_each_get_their_own_review(world
 
     play_out_the_match(client, state, submitted)
     wait_for(lambda: len(world.ai_review_posts) == 1)
-    assert world.ai_review_posts[0] == {
-        "game_id": "g-1",
-        "player": "bob",
-        "uid": "secret-uid",
-        "text": "a solid game overall, but the turn 6 attack was a misread",
-    }
+    # DR3 (3): the appended "Play statistics" block, same as above.
+    first = world.ai_review_posts[0]
+    assert first["game_id"] == "g-1"
+    assert first["player"] == "bob"
+    assert first["uid"] == "secret-uid"
+    assert first["text"].startswith("a solid game overall, but the turn 6 attack was a misread")
+    assert "Play statistics:" in first["text"]
 
     state["agent"] = "up"  # the replacement container finished booting
     state["winner"] = None
@@ -668,12 +704,13 @@ def test_two_sequential_games_through_one_driver_each_get_their_own_review(world
         "uid": "uid-2",
         "text": "wrote2",
     }
-    assert world.ai_review_posts[-1] == {
-        "game_id": "g-2",
-        "player": "bob",
-        "uid": "uid-2",
-        "text": "the second game's own critique",
-    }
+    # DR3 (3): the appended "Play statistics" block, same as above.
+    second = world.ai_review_posts[-1]
+    assert second["game_id"] == "g-2"
+    assert second["player"] == "bob"
+    assert second["uid"] == "uid-2"
+    assert second["text"].startswith("the second game's own critique")
+    assert "Play statistics:" in second["text"]
     # Neither game's own reflection or review was duplicated by the other's.
     assert len(world.reflection_posts) == 2
     assert len(world.ai_review_posts) == 2

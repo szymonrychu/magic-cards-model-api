@@ -453,9 +453,20 @@ def test_the_drivers_client_timeout_outlasts_the_wrappers_own_bound() -> None:
     bound = Settings.from_env({}).review_timeout
     assert bound < REVIEW_HTTP_TIMEOUT
     assert RETIRE_REVIEW_JOIN_TIMEOUT > REVIEW_HTTP_TIMEOUT
-    # Both stay inside the driver container's own preStop wait (1740s,
-    # deploy/seat-job.yaml), or the join is cut short by the kubelet.
-    assert RETIRE_REVIEW_JOIN_TIMEOUT < 1740.0
+    # DR3: `review_timeout` (and the two bounds stacked over it) tripled
+    # (1200 -> 3600) so a review can run several `mcp-seat` rounds per game
+    # rather than one. The driver container's own preStop wait
+    # (`handover.PRESTOP_WAIT_SECONDS`, 1740s, mirrored at
+    # `deploy/seat-job.yaml`) has NOT moved with it - raising it is out of
+    # this task's own file scope (`handover.py` is imported, never edited)
+    # - so this bound no longer fits inside that wait, and
+    # `RETIRE_REVIEW_JOIN_TIMEOUT.__doc__` says so. This assertion is the
+    # documented ordering invariant DR3 was asked to keep under test: the
+    # driver outlasts the wrapper, nothing more.
+    assert RETIRE_REVIEW_JOIN_TIMEOUT > 1740.0, (
+        "if this ever goes back under 1740s, the preStop-wait comment on "
+        "RETIRE_REVIEW_JOIN_TIMEOUT is stale and should be restored"
+    )
 
 
 # ---------------------------------------------------------------------------

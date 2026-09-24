@@ -57,6 +57,32 @@ def test_effort_is_validated() -> None:
         AgentSettings(model="sonnet", effort="high", max_thinking_tokens=-1)
 
 
+def test_review_argv_ignores_a_low_effort_seat_and_stays_opus_high() -> None:
+    """DR3 (4): `docker-compose.aivai.yml` (DR7) defaults an Opus-vs-Opus
+    seat to `effort=low` on purpose (cheap self-play). The review must never
+    inherit that - it is generated with `AgentSettings.review_default()`
+    (`driver.app.post_ai_review`'s own `review_settings`), fixed Opus/high,
+    and this proves it survives all the way to the argv `wrapper.oneshot`
+    actually spawns `claude` with, not merely to the settings object."""
+    from pathlib import Path
+
+    from mtg_agent.wrapper.config import Settings
+    from mtg_agent.wrapper.oneshot import _argv
+
+    seat = AgentSettings(model="claude-sonnet-5", effort="low")  # DR7's own compose value
+    review = AgentSettings.review_default()
+    assert (review.model, review.effort) != (seat.model, seat.effort)
+
+    argv = _argv(
+        Settings.from_env({}), "prompt text", review.model, review.effort, Path("/mcp.json")
+    )
+    index = argv.index("--model")
+    assert argv[index : index + 4] == ["--model", "claude-opus-5", "--effort", "high"]
+    # And the low-effort seat's own settings never appear anywhere in it.
+    assert seat.model not in argv
+    assert "low" not in argv
+
+
 def test_env_and_args() -> None:
     settings = AgentSettings(model="fable", effort="max", max_thinking_tokens=0)
     assert settings.env() == {"MODEL": "fable", "EFFORT": "max", "MAX_THINKING_TOKENS": "0"}

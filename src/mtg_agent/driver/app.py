@@ -127,24 +127,24 @@ from .prompt import (
     render_current_game,
     turn_zero,
 )
-from .review import review_prompt
+from .review import play_statistics_block, review_prompt
 from .revision import guides_revision
 
 log = logging.getLogger("driver")
 
 #: Headroom over the wrapper's own `Settings.review_timeout` default
-#: (1200s, `oneshot.run_review`'s bound on the subprocess itself) - the
-#: driver's own client timeout for `POST /v1/review` must outlast it, or a
-#: review that was about to succeed reads here as an unreachable wrapper
-#: instead.
+#: (3600s, DR3 - up from 1200, `oneshot.run_review`'s bound on the
+#: subprocess itself) - the driver's own client timeout for `POST
+#: /v1/review` must outlast it, or a review that was about to succeed reads
+#: here as an unreachable wrapper instead.
 #:
 #: It moved with that bound rather than being re-chosen: the review is a
 #: tool-using call now (it edits a deck's guide and takes the change to
 #: mtg-decks through `mcp-seat`, waiting on the `/guides` checkout lock
-#: first), so 1200s is what the wrapper allows and this has to sit above it.
+#: first), so this has to sit above whatever the wrapper allows itself.
 #: `tests/wrapper/test_oneshot.py` pins the ordering against
 #: `Settings.review_timeout` itself, so neither number can be moved alone.
-REVIEW_HTTP_TIMEOUT = 1260.0
+REVIEW_HTTP_TIMEOUT = 3660.0
 
 #: How long `retire` waits for the AI review's background thread
 #: (`post_ai_review`, spawned by `turn_done`'s reflection branch) before
@@ -160,10 +160,19 @@ REVIEW_HTTP_TIMEOUT = 1260.0
 #: hit it only on the same failures that would have made the review
 #: unreachable anyway.
 #:
-#: Derived, so it follows `REVIEW_HTTP_TIMEOUT` up without a second edit,
-#: and it still has to fit inside the driver container's own preStop wait
-#: (1740s, `deploy/seat-job.yaml`): past that the kubelet cuts the join
-#: short anyway and the bound stops meaning anything.
+#: Derived, so it follows `REVIEW_HTTP_TIMEOUT` up without a second edit.
+#:
+#: **DR3: this now exceeds the driver container's own preStop wait**
+#: (`handover.PRESTOP_WAIT_SECONDS`, 1740s, mirrored at
+#: `deploy/seat-job.yaml`) - past that the kubelet cuts the join short
+#: anyway and the bound stops meaning anything for a review still running
+#: that late. Raising `handover.py`'s `PRESTOP_WAIT_SECONDS` and the
+#: deploy manifest's own preStop wait to match is out of this task's own
+#: file scope (`handover.py` is imported here, never edited - see this
+#: module's own docstring); until that follow-up lands, a review that
+#: genuinely needs the whole of the new, longer `REVIEW_HTTP_TIMEOUT` can
+#: still be cut short by the kubelet before `retire`'s own join here would
+#: have given up on it.
 RETIRE_REVIEW_JOIN_TIMEOUT = REVIEW_HTTP_TIMEOUT + 70.0
 
 #: The auto-continue loop guard. One wrapper turn is meant to cover a whole
@@ -858,6 +867,27 @@ def build_app(
                 invoked=True,
             )
             return
+
+        # DR3 (3): appended once the review one-shot has returned, never
+        # blocking the filing itself. `role="reviewer"` - the review shares
+        # the `/guides` checkout with the handover but writes its own
+        # journal lines under that role (`handover.py`'s own module
+        # docstring); reading it and building the statistics block is
+        # best-effort, exactly like every other step in this function - a
+        # game whose journal cannot be read still files the review text it
+        # already has, with no statistics block rather than none at all.
+        try:
+            journal_entries = read_journal(settings.guides_root, assignment.game_id, "reviewer")
+            stats_block = play_statistics_block(
+                review_record, journal_entries, assignment.player, assignment.game_id
+            )
+            review_text = f"{review_text}\n\n{stats_block}"
+        except Exception as exc:  # noqa: BLE001 - statistics are a bonus, never a blocker
+            log.warning(
+                "ai-review[statistics]: could not append play statistics for game %s: %s",
+                assignment.game_id,
+                exc,
+            )
 
         try:
             with make_client(settings.game_api) as client:

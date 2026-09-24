@@ -111,8 +111,14 @@ RETIRE_REASON = "the game is over"
 #: driver package: `mtg_agent.driver.handover.HANDOVER_BUDGET_SECONDS` and
 #: `mtg_agent.driver.app.RETIRE_REVIEW_JOIN_TIMEOUT`.
 #: `tests/test_post_game_lifecycle.py` pins both against the real values.
+#:
+#: DR3: `DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT` moved from 1330.0 to 3730.0 with
+#: `mtg_agent.driver.app.REVIEW_HTTP_TIMEOUT`'s own DR3 raise (1260 -> 3660,
+#: itself following `wrapper.config.Settings.review_timeout`'s 1200 -> 3600)
+#: - see that constant's own docstring for why a review now needs several
+#: times the budget it used to.
 DRIVER_HANDOVER_BUDGET_SECONDS = 1680.0
-DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT = 1330.0
+DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT = 3730.0
 
 #: What a reflection turn is given before the handover starts. It is one
 #: short turn that writes the agent's memory notes, far shorter than the
@@ -128,9 +134,10 @@ POSTGAME_RELEASE_SECONDS = (
 doing post-game work before `release_overdue` hard-releases them: the
 reflection turn (`DRIVER_REFLECTION_ALLOWANCE_SECONDS`), then the handover
 (`DRIVER_HANDOVER_BUDGET_SECONDS`, 1680s), then `retire`'s join on the Opus
-review thread (`DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT`, 1330s) - about an hour,
-3610s. Past that the driver has overrun every allowance it has, so holding
-the row in "recording plays..." any longer only hides a stuck pod."""
+review thread (`DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT`, DR3: 3730s, up from
+1330s) - about an hour and forty minutes now, 6010s. Past that the driver
+has overrun every allowance it has, so holding the row in "recording
+plays..." any longer only hides a stuck pod."""
 
 #: What `schedule_followup` records itself under (`audit.
 #: PLAYS_OUTCOME_FOLLOWUP_ACTION`).

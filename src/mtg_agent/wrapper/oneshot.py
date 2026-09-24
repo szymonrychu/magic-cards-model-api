@@ -97,7 +97,13 @@ from .config import Settings
 #: through to `subprocess.run`'s argv, which the OS itself bounds
 #: (`ARG_MAX`) and would otherwise fail with a confusing `OSError` instead
 #: of this module's own, clearer `ReviewFailed`.
-MAX_PROMPT_CHARS = 200_000
+#:
+#: DR3: raised from 200_000 by exactly the 30_000 `driver.review.
+#: PROMPT_BUDGET_CHARS` itself grew by (170_000 -> 200_000) to give the new
+#: Decisions section its own fixed slice - "only as far as the new
+#: PROMPT_BUDGET_CHARS needs", never re-chosen independently of it. The
+#: 30_000-character margin between the two is unchanged.
+MAX_PROMPT_CHARS = 230_000
 
 #: The built-in tools the review is given (`--tools`), and why each one is
 #: here. This is an ALLOWLIST: a built-in tool not named here does not exist

@@ -18,11 +18,13 @@ def test_defaults_when_env_is_empty():
     assert s.enable_all_mcp is True
     # The post-game AI review's one-shot `claude --print` bound (`POST
     # /v1/review`, `oneshot.py`) - separate from `turn_timeout`, which
-    # bounds the supervised interactive session's own turns. 1200 rather
-    # than the tool-less 600: the review now waits on the `/guides` checkout
-    # lock (300s of the budget in the worst case) before it runs a single
-    # `mcp-seat` command. See the field's own docstring.
-    assert s.review_timeout == 1200.0
+    # bounds the supervised interactive session's own turns. 3600 (DR3, up
+    # from 1200): the review now runs several `mcp-seat` rounds - a
+    # `plays check`/`plays admit` pair per decision and per declined offer,
+    # plus `guides propose` - each capable of waiting on the `/guides`
+    # checkout lock (300s in the worst case). See the field's own
+    # docstring.
+    assert s.review_timeout == 3600.0
     assert s.guides_dir == Path("/guides")
 
 

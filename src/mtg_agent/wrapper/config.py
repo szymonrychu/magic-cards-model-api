@@ -85,23 +85,32 @@ class Settings:
     #: turn of the supervised *interactive* session, not this independent,
     #: non-PTY subprocess.
     #:
-    #: **1200s, re-justified for a review that uses tools.** 600 was the
-    #: bound on a tool-less call: one model round trip, nothing else. The
-    #: review now reads and edits a deck's guide and takes its changes to
-    #: mtg-decks through `mcp-seat`, and that is slower in a way that is not
-    #: a guess: the FIRST thing `plays admit` / `guides propose` do is wait
-    #: for the `/guides` checkout (`playscripts.gitwork.checkout_lock`),
-    #: bounded at `CHECKOUT_LOCK_TIMEOUT` = 300s, because the handover turn
-    #: is working the same clone concurrently (defect D-1). A budget that
-    #: could be half-spent before any work starts has to leave room for the
-    #: work: 1200 is that wait plus a model call plus a fetch, a merge or
-    #: rebase, the gates and up to three push attempts.
+    #: **3600s (DR3, up from 1200), re-justified again for per-decision DSL
+    #: submission.** 600 was the bound on a tool-less call: one model round
+    #: trip, nothing else. 1200 covered a review that reads and edits a
+    #: deck's guide and takes its changes to mtg-decks through `mcp-seat`:
+    #: the FIRST thing `plays admit` / `guides propose` do is wait for the
+    #: `/guides` checkout (`playscripts.gitwork.checkout_lock`), bounded at
+    #: `CHECKOUT_LOCK_TIMEOUT` = 300s, because the handover turn is working
+    #: the same clone concurrently (defect D-1), plus a model call, a fetch,
+    #: a merge or rebase, the gates and up to three push attempts.
+    #:
+    #: DR3 adds a `plays check`/`plays admit` pair PER DECISION the seat
+    #: made this game (refine or draft, then land), a second `plays check`/
+    #: `plays admit` pair per declined offer (the corner-case play), and a
+    #: `guides propose` per properly generalized decision - a game with a
+    #: few dozen decisions can now run several times as many `mcp-seat`
+    #: calls as the flat review 1200s was sized for, each one still capable
+    #: of hitting `CHECKOUT_LOCK_TIMEOUT` behind the handover's own
+    #: concurrent write. 3600 is not a re-derivation from first principles,
+    #: it is the same "1200 was one lock wait plus one round of work" budget
+    #: given three rounds of work instead of one.
     #:
     #: Every timeout stacked on top of this one must outlast it -
     #: `driver.app.REVIEW_HTTP_TIMEOUT` (the driver's own client timeout for
     #: `POST /v1/review`) and `RETIRE_REVIEW_JOIN_TIMEOUT` over that, both
     #: pinned by a test against this number.
-    review_timeout: float = 1200.0
+    review_timeout: float = 3600.0
     boot_timeout: float = 60.0
     submit_delay: float = 0.4
     #: How long an interrupted turn gets to end on its own before the wrapper
@@ -152,7 +161,7 @@ class Settings:
             permission_mode=_str(env, "PERMISSION_MODE", "bypassPermissions"),
             hook_command=_str(env, "HOOK_COMMAND", "cc-stop-hook"),
             turn_timeout=_float(env, "TURN_TIMEOUT_SECONDS", 1800.0),
-            review_timeout=_float(env, "REVIEW_TIMEOUT_SECONDS", 1200.0),
+            review_timeout=_float(env, "REVIEW_TIMEOUT_SECONDS", 3600.0),
             boot_timeout=_float(env, "BOOT_TIMEOUT_SECONDS", 60.0),
             submit_delay=_float(env, "SUBMIT_DELAY_SECONDS", 0.4),
             interrupt_settle=_float(env, "INTERRUPT_SETTLE_SECONDS", 20.0),
