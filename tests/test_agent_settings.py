@@ -73,9 +73,7 @@ def test_review_argv_ignores_a_low_effort_seat_and_stays_opus_high() -> None:
     review = AgentSettings.review_default()
     assert (review.model, review.effort) != (seat.model, seat.effort)
 
-    argv = _argv(
-        Settings.from_env({}), "prompt text", review.model, review.effort, Path("/mcp.json")
-    )
+    argv = _argv(Settings.from_env({}), review.model, review.effort, Path("/mcp.json"))
     index = argv.index("--model")
     assert argv[index : index + 4] == ["--model", "claude-opus-5", "--effort", "high"]
     # And the low-effort seat's own settings never appear anywhere in it.

@@ -207,6 +207,39 @@ AGENT_GONE_ERRORS = ("claude exited", "claude reported a fatal error", "write to
 FINAL_TEXT_CHARS = 1200
 
 
+def _wrapper_failure_reason(response: httpx.Response) -> str:
+    """`the wrapper answered <status>[: <detail>]` - FB1's answer to the
+    bare `the wrapper answered <status>` that used to be the whole of
+    `record_review_failure`'s `generate` reason, with nothing telling an
+    operator WHY the wrapper's own `POST /v1/review` refused.
+
+    `<detail>` is the response body's own account of what went wrong: the
+    JSON `detail` string FastAPI's `HTTPException` carries (exactly what
+    `wrapper.api.post_review` raises on a `ReviewFailed` - see its own
+    `review-failed:` log line) when the body parses as JSON and `detail` is
+    a string, `response.text` otherwise - so a non-JSON error page (an
+    nginx failure, a bare string) still reaches the operator rather than
+    being silently dropped for not matching the expected shape.
+    Whitespace-collapsed (a multi-line body reads as one line here) and cut
+    to its LAST 1000 characters, since the actual complaint is usually at
+    the end of a message, not the start of a stack trace or a wall of HTML.
+    An empty body leaves the bare `the wrapper answered <status>` exactly as
+    before this detail existed, rather than a colon with nothing after
+    it."""
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    if isinstance(body, dict) and isinstance(body.get("detail"), str):
+        detail = body["detail"]
+    else:
+        detail = response.text
+    detail = " ".join(detail.split())
+    if not detail:
+        return f"the wrapper answered {response.status_code}"
+    return f"the wrapper answered {response.status_code}: {detail[-1000:]}"
+
+
 def trim_final_text(text: str, limit: int = FINAL_TEXT_CHARS) -> str:
     """`text` collapsed to what is worth putting in the log: blank lines
     dropped, indented one level so it reads as a quoted block, and cut at
@@ -821,11 +854,12 @@ def build_app(
                     timeout=REVIEW_HTTP_TIMEOUT,
                 )
             if response.status_code >= 400:
+                reason = _wrapper_failure_reason(response)
                 log.warning(
                     "ai-review-failed[generate]: the wrapper could not generate an AI "
                     "review for game %s: %s",
                     assignment.game_id,
-                    response.status_code,
+                    reason,
                 )
                 # The wrapper answered, so the reviewer WAS invoked - it ran
                 # and failed, which is a different fact from never having
@@ -833,7 +867,7 @@ def build_app(
                 record_review_failure(
                     assignment,
                     "generate",
-                    f"the wrapper answered {response.status_code}",
+                    reason,
                     invoked=True,
                 )
                 return

@@ -90,13 +90,20 @@ from pathlib import Path
 from .bootstrap import DENY_TOOLS
 from .config import Settings
 
-#: A generous ceiling on the prompt this call ever sends as a bare argv
-#: element - not a realistic size (a game record plus a reflection,
-#: `driver/review.py`'s own `MAX_DECLARATIONS` cap included, comes nowhere
-#: close), but a backstop against passing something pathological straight
-#: through to `subprocess.run`'s argv, which the OS itself bounds
-#: (`ARG_MAX`) and would otherwise fail with a confusing `OSError` instead
-#: of this module's own, clearer `ReviewFailed`.
+#: A generous ceiling on the prompt this call ever sends - not a realistic
+#: size (a game record plus a reflection, `driver/review.py`'s own
+#: `MAX_DECLARATIONS` cap included, comes nowhere close), but a backstop
+#: against passing something pathological straight through to
+#: `subprocess.run`'s stdin.
+#:
+#: **FB1: the prompt travels on stdin, not argv** (see `_argv`'s and
+#: `run_review`'s own docstrings) - Linux's `MAX_ARG_STRLEN` (131072 bytes
+#: per argv element) made a ~190KB review prompt fail with `OSError: [Errno
+#: 7] Argument list too long` when it rode argv as the trailing element
+#: after `--`. This ceiling still exists (stdin has no comparable practical
+#: bound at this size, but an unbounded read from a pathological caller is
+#: still worth refusing with this module's own, clearer `ReviewFailed`
+#: rather than an OS-level surprise somewhere downstream).
 #:
 #: DR3: raised from 200_000 by exactly the 30_000 `driver.review.
 #: PROMPT_BUDGET_CHARS` itself grew by (170_000 -> 200_000) to give the new
@@ -310,13 +317,21 @@ def _env_for(settings: Settings) -> dict[str, str]:
     return env
 
 
-def _argv(settings: Settings, prompt: str, model: str, effort: str, mcp_config: Path) -> list[str]:
+def _argv(settings: Settings, model: str, effort: str, mcp_config: Path) -> list[str]:
     """The argv `claude` is spawned with - see the module docstring for the
     allowlist and the two isolation guards.
 
-    `--` is load-bearing: `--tools`, `--allowedTools` and the rest are
-    variadic flags, and without it a prompt beginning with a dash is read as
-    more tool names (the same reason `ai_seat.command_for` carries one)."""
+    **The prompt is not here.** It used to be the trailing element after a
+    bare `--` (`--tools`, `--allowedTools` and the rest are variadic flags,
+    and without a `--` a prompt beginning with a dash would be read as more
+    tool names - the same reason `ai_seat.command_for` carries one). Linux's
+    `MAX_ARG_STRLEN` (131072 bytes per argv element) made a ~190KB review
+    prompt fail with `OSError: [Errno 7] Argument list too long` riding argv
+    that way, so `run_review` now sends it on stdin instead
+    (`subprocess.run(..., input=_capped(prompt))`), which `claude --print`
+    reads its prompt from exactly as it would from a terminal pipe - and
+    the trailing `--`/prompt pair this function used to return is gone with
+    it, not merely moved."""
     return [
         settings.claude_path,
         "--print",
@@ -348,8 +363,6 @@ def _argv(settings: Settings, prompt: str, model: str, effort: str, mcp_config: 
         "--strict-mcp-config",
         "--mcp-config",
         str(mcp_config),
-        "--",
-        _capped(prompt),
     ]
 
 
@@ -381,6 +394,14 @@ def run_review(settings: Settings, prompt: str, model: str, effort: str) -> str:
     """Run a bounded `claude --print` with the review's tool allowlist, in
     the agent's own workspace and HOME, and return its stdout, stripped.
 
+    **The prompt travels on stdin, never on argv.** `subprocess.run` is
+    called with `input=_capped(prompt)` (`text=True`, so a `str` is fine),
+    and `claude --print` reads its prompt from stdin exactly as it would
+    from a terminal pipe. Before this, the prompt rode argv as the trailing
+    element after a bare `--`, and Linux's `MAX_ARG_STRLEN` (131072 bytes
+    per argv element) made a ~190KB review prompt fail with `OSError:
+    [Errno 7] Argument list too long` - see `_argv`'s own docstring.
+
     Raises `ReviewFailed` for every way this can go wrong - an unrendered
     workspace or a missing guides checkout (before anything is spawned), a
     nonzero exit (the tail of BOTH streams in the message), the timeout,
@@ -392,9 +413,10 @@ def run_review(settings: Settings, prompt: str, model: str, effort: str) -> str:
     mcp_config = _preflight(settings)
     try:
         result = subprocess.run(
-            _argv(settings, prompt, model, effort, mcp_config),
+            _argv(settings, model, effort, mcp_config),
             cwd=settings.workspace,
             env=_env_for(settings),
+            input=_capped(prompt),
             capture_output=True,
             text=True,
             timeout=settings.review_timeout,

@@ -45,7 +45,7 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
@@ -79,23 +79,33 @@ def wait_for(predicate, timeout: float = 10.0):
     raise AssertionError("condition never became true")
 
 
-def _wrapper_app(review_runner) -> tuple[FastAPI, list[dict], list[dict]]:
+def _wrapper_app(review_runner=None, *, raw_review=None) -> tuple[FastAPI, list[dict], list[dict]]:
     """The agent container's HTTP surface: the supervised session faked, the
-    post-game review route real.
+    post-game review route real - or, with `raw_review`, answered directly.
 
     `/v1/review` forwards the driver's own body, verbatim, into the real
     `mtg_agent.wrapper.api` app built with `review_runner` in place of
     `oneshot.run_review` - so the request the driver sends is judged by the
     real `ReviewIn` (`extra="forbid"`) and the answer the driver reads is the
-    real route's, while no `claude` subprocess is ever spawned."""
+    real route's, while no `claude` subprocess is ever spawned.
+
+    `raw_review`, when given, answers `/v1/review` directly with a
+    caller-built `Response` instead - for exercising exactly what the
+    driver's `_wrapper_failure_reason` does with a wrapper response body
+    `wrapper.api.post_review`'s own `str(ReviewFailed(...))` could never
+    produce (a non-JSON body, an empty one), rather than only what that
+    route happens to shape."""
     pushed: list[dict] = []
     reviewed: list[dict] = []
-    # An unstarted `Manager`: `POST /v1/review` is deliberately independent
-    # of the supervised session (it never submits a turn, never waits on
-    # one), so nothing here needs a running pty or its threads.
-    real = TestClient(
-        build_public_app(make(FakeProc(b"ready")), fast_settings(), review_runner=review_runner)
-    )
+    real = None
+    if raw_review is None:
+        # An unstarted `Manager`: `POST /v1/review` is deliberately
+        # independent of the supervised session (it never submits a turn,
+        # never waits on one), so nothing here needs a running pty or its
+        # threads.
+        real = TestClient(
+            build_public_app(make(FakeProc(b"ready")), fast_settings(), review_runner=review_runner)
+        )
 
     app = FastAPI()
 
@@ -121,8 +131,10 @@ def _wrapper_app(review_runner) -> tuple[FastAPI, list[dict], list[dict]]:
         return {"stopping": True, "exiting": True}
 
     @app.post("/v1/review")
-    def post_review(body: dict) -> JSONResponse:
+    def post_review(body: dict) -> Response:
         reviewed.append(body)
+        if raw_review is not None:
+            return raw_review(body)
         answer = real.post("/v1/review", json=body)
         return JSONResponse(status_code=answer.status_code, content=answer.json())
 
@@ -213,7 +225,9 @@ def _rows(body: dict[str, Any], action: str) -> list[dict[str, Any]]:
     return [entry for entry in body["entries"] if entry["action"] == action]
 
 
-def released_without_a_reflection(tmp_path: Path, review_runner=None) -> SimpleNamespace:
+def released_without_a_reflection(
+    tmp_path: Path, review_runner=None, raw_review=None
+) -> SimpleNamespace:
     """Drive one whole game down the live-observed path and hand back what
     the surfaces say afterwards.
 
@@ -225,7 +239,7 @@ def released_without_a_reflection(tmp_path: Path, review_runner=None) -> SimpleN
     internal, by hand.
     """
     runner = review_runner or (lambda settings, prompt, model, effort: REVIEW_TEXT)
-    wrapper, pushed, reviewed = _wrapper_app(runner)
+    wrapper, pushed, reviewed = _wrapper_app(runner, raw_review=raw_review)
     with TestClient(api_app) as api_client:
         info = _agent_game(api_client)
         driver = _driver(tmp_path, wrapper)
@@ -463,6 +477,56 @@ def test_a_review_that_could_not_be_generated_reaches_the_same_body(tmp_path):
     assert failures[0]["invoked"] is True
     assert "502" in failures[0]["reason"]
     assert _rows(run.review, audit.AI_REVIEW_FAILED_ACTION)[0]["detail"]["stage"] == "generate"
+
+
+def test_a_generate_failure_with_a_json_detail_is_recorded_verbatim(tmp_path, caplog):
+    """FB1 (4): the wrapper's own `detail` - the JSON `HTTPException` body
+    shape every real 502 from `wrapper.api.post_review` actually carries -
+    rides straight into the durable reason and the driver's own warning
+    line, not just the bare status code."""
+
+    def raw(_body: dict) -> Response:
+        return JSONResponse(status_code=502, content={"detail": "boom detail"})
+
+    with caplog.at_level("WARNING"):
+        run = released_without_a_reflection(tmp_path, raw_review=raw)
+
+    failures = run.review["ai_review_failures"]
+    assert len(failures) == 1, run.review["entries"]
+    assert failures[0]["reason"] == "the wrapper answered 502: boom detail"
+    assert any("boom detail" in r.getMessage() for r in caplog.records)
+
+
+def test_a_generate_failure_with_a_non_json_body_records_its_text(tmp_path):
+    """A body that never parses as JSON at all - an upstream error page, a
+    bare string - must still reach the operator: `response.text` stands in
+    for the missing `detail`, whitespace-collapsed."""
+
+    def raw(_body: dict) -> Response:
+        return Response(
+            content="  Bad Gateway\nfrom  nginx  ", status_code=502, media_type="text/plain"
+        )
+
+    run = released_without_a_reflection(tmp_path, raw_review=raw)
+
+    failures = run.review["ai_review_failures"]
+    assert len(failures) == 1, run.review["entries"]
+    assert failures[0]["reason"] == "the wrapper answered 502: Bad Gateway from nginx"
+
+
+def test_a_generate_failure_with_an_empty_body_keeps_the_bare_status(tmp_path):
+    """No body at all leaves the bare `the wrapper answered <status>` -
+    exactly as before FB1 - rather than a trailing colon with nothing after
+    it."""
+
+    def raw(_body: dict) -> Response:
+        return Response(content=b"", status_code=502)
+
+    run = released_without_a_reflection(tmp_path, raw_review=raw)
+
+    failures = run.review["ai_review_failures"]
+    assert len(failures) == 1, run.review["entries"]
+    assert failures[0]["reason"] == "the wrapper answered 502"
 
 
 @requires_node

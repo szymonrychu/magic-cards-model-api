@@ -9,6 +9,7 @@ endpoint.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -21,6 +22,8 @@ from .config import Settings
 from .oneshot import ReviewFailed, run_review
 from .probe import ProbeUnavailableError
 from .session import BusyError, DeadError, Manager, NotReadyError
+
+log = logging.getLogger("wrapper.api")
 
 #: `review_runner`'s shape (`api.py`'s own default is `oneshot.run_review`) -
 #: `(settings, prompt, model, effort) -> text`, raising `ReviewFailed` on
@@ -219,6 +222,11 @@ def build_public_app(
         try:
             text = review_runner(settings, body.prompt, body.model, body.effort)
         except ReviewFailed as exc:
+            # Greppable prefix, logged before the 502 is raised: an operator
+            # reading this container's own logs sees exactly why the review
+            # failed, not just the status code the driver's `post_ai_review`
+            # sees on its side of the call.
+            log.warning("review-failed: %s", exc)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {"text": text}
 

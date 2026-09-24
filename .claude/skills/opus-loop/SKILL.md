@@ -183,9 +183,10 @@ decisions, a `declined` offer is refined (its conditions tightened to name
 the corner case precisely - an agent may not turn down a play whose
 conditions hold on corner-case grounds, it must describe the corner case as a
 condition split instead) and a new per-decision play is drafted, generalized
-to the mechanic, and merged/deduped against the existing corpus
-(`play-conflict` exclusivity, the `<=1 new move-bearing play per review`
-bar). **Every properly generalized decision goes into the guide** - this is
+to the mechanic, and merged/deduped against the existing corpus under `play-conflict` exclusivity
+- every properly generalized decision becomes its own play, with no
+per-review or per-game count limit. **Every properly generalized decision
+goes into the guide** - this is
 the existing "guides push to main" flow (`playscripts/guides_propose.py`,
 `NOTES.md` + matchup boarding-plan allowlist, content-gated, pushed to
 `mtg-decks` main with race retries): agents pushing guide edits to `mtg-decks`

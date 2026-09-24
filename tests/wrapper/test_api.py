@@ -391,6 +391,37 @@ def test_post_review_surfaces_a_runner_failure_as_502(monkeypatch):
         manager.shutdown()
 
 
+def test_post_review_failure_is_logged_with_a_greppable_prefix(monkeypatch, caplog):
+    """FB1 (3): the 502's `detail` must not be the only place a
+    `ReviewFailed` lands - a `review-failed:` prefixed warning goes into
+    this container's own log first, carrying the full `str(exc)`, so an
+    operator grepping this pod's logs finds it without cross-referencing
+    the driver's."""
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc)
+
+    def failing_runner(settings, prompt, model, effort):
+        from mtg_agent.wrapper.oneshot import ReviewFailed
+
+        raise ReviewFailed("boom detail")
+
+    public = TestClient(build_public_app(manager, manager.settings, review_runner=failing_runner))
+    try:
+        with caplog.at_level("WARNING"):
+            response = public.post(
+                "/v1/review", json={"prompt": "critique this game", "model": "m", "effort": "high"}
+            )
+        assert response.status_code == 502
+        assert response.json()["detail"] == "boom detail"
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1, warnings
+        assert warnings[0].startswith("review-failed:")
+        assert "boom detail" in warnings[0]
+    finally:
+        manager.shutdown()
+
+
 def test_the_default_review_runner_is_the_real_one_shot_call(monkeypatch):
     """Every test above substitutes a fake runner, which is exactly why the
     wiring itself needs a test of its own: nothing else here would notice

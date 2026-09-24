@@ -255,14 +255,21 @@ def test_the_guides_checkout_is_reachable_and_the_play_settings_are_not(
     )
 
 
-def test_the_prompt_is_the_last_argument_after_a_bare_double_dash(
+def test_the_prompt_travels_on_stdin_never_in_argv(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`--` is load-bearing with variadic flags in front of it: without it a
-    prompt beginning with a dash is read as more tool names."""
-    argv = _captured(monkeypatch, tmp_path)["argv"]
-    assert argv[-2] == "--"
-    assert argv[-1] == "critique this game"
+    """FB1/E2BIG: the prompt used to be the last argv element after a bare
+    `--`. Linux's `MAX_ARG_STRLEN` (131072 bytes per argv element) made a
+    ~190KB review prompt fail with `OSError: [Errno 7] Argument list too
+    long` before this - so the prompt now travels on stdin
+    (`subprocess.run(..., input=_capped(prompt))`), and the trailing
+    `--`/prompt pair argv used to carry is simply gone, not merely moved."""
+    seen = _captured(monkeypatch, tmp_path)
+    argv = seen["argv"]
+    assert "critique this game" not in argv
+    assert "--" not in argv
+    assert argv[-2:] == ["--mcp-config", str(seen["settings"].workspace / ".mcp.json")]
+    assert seen["input"] == oneshot._capped("critique this game")
 
 
 # ---------------------------------------------------------------------------
@@ -549,12 +556,16 @@ def test_run_review_raises_on_an_unexecutable_binary(tmp_path: Path) -> None:
 
 
 def test_run_review_caps_an_oversized_prompt(tmp_path: Path) -> None:
-    captured = tmp_path / "captured-argv-len.json"
+    """The prompt now arrives on stdin, so the cap has to be proven there -
+    an oversized prompt read off `sys.argv` would trivially pass this test
+    for the wrong reason (there is no such argv element any more)."""
+    captured = tmp_path / "captured-stdin-len.json"
     stub = _stub(
         tmp_path,
         f"""
         import json, sys
-        json.dump(len(sys.argv[-1]), open({str(captured)!r}, "w"))
+        data = sys.stdin.read()
+        json.dump(len(data), open({str(captured)!r}, "w"))
         print("ok")
         """,
     )
@@ -562,6 +573,60 @@ def test_run_review_caps_an_oversized_prompt(tmp_path: Path) -> None:
     huge = "x" * 10_000_000
     run_review(settings, huge, "m", "high")
     assert json.loads(captured.read_text()) < len(huge)
+
+
+def _prompt_200k() -> str:
+    """A 200_000-char prompt, mostly plain ASCII with one multi-byte line
+    (in UTF-8 bytes, not code points), and no leading/trailing whitespace -
+    so `.strip()` on the way back out never changes it."""
+    multibyte_line = "café résumé 世界 🎲 review"
+    ascii_head = "a" * 50_000
+    remainder = 200_000 - len(ascii_head) - len(multibyte_line) - 2  # 2 newlines
+    prompt = f"{ascii_head}\n{multibyte_line}\n{'b' * remainder}"
+    assert len(prompt) == 200_000
+    return prompt
+
+
+def test_run_review_sends_a_200k_prompt_on_stdin_byte_for_byte(tmp_path: Path) -> None:
+    """RED for the E2BIG fix, run against the REAL `run_review` - no
+    monkeypatched `subprocess.run`. The fake `claude` ignores its argv
+    entirely and copies stdin to stdout, so this only passes if the prompt
+    actually arrives on stdin: on Linux (`MAX_ARG_STRLEN` = 131072 bytes)
+    unchanged code raises `OSError` E2BIG trying to put a 200KB prompt into
+    one argv element, which `run_review` turns into `ReviewFailed`."""
+    script = tmp_path / "fake-claude"
+    script.write_text("#!/bin/sh\ncat\n")
+    script.chmod(0o755)
+    settings = _settings(str(script), tmp_path)
+    prompt = _prompt_200k()
+
+    text = run_review(settings, prompt, "m", "high")
+
+    assert text == oneshot._capped(prompt).strip()
+    assert text == prompt  # well under MAX_PROMPT_CHARS, so `_capped` is a no-op
+
+
+def test_argv_never_carries_a_200k_prompt_or_exceeds_max_arg_strlen(tmp_path: Path) -> None:
+    """The guard: whatever `_argv` returns, no element can carry the prompt
+    - not the whole thing, not even its first 1000 characters - and no
+    element crosses Linux's 131072-byte `MAX_ARG_STRLEN` per argv element,
+    which is exactly the bound a re-embedded prompt would eventually blow
+    through again."""
+    prompt = _prompt_200k()
+    settings = _settings("claude", tmp_path)
+    mcp_config = settings.workspace / ".mcp.json"
+
+    argv = oneshot._argv(settings, "claude-opus-5", "high", mcp_config)
+
+    for element in argv:
+        encoded = element.encode("utf-8")
+        assert len(encoded) <= 131072, (
+            f"{element[:80]!r}... is {len(encoded)} bytes, over Linux's MAX_ARG_STRLEN"
+        )
+    assert prompt not in argv
+    prefix = prompt[:1000]
+    for element in argv:
+        assert prefix not in element
 
 
 def test_an_unrendered_workspace_is_a_named_failure_not_a_cli_error(
