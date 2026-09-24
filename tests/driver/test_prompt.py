@@ -1104,6 +1104,76 @@ def test_plan_section_still_allows_a_current_turn_plan_if_not_planned_ahead(tmp_
     assert "if you did not plan ahead for it" in section
 
 
+# F3: the short contract - board_read/my_role optional (auto board, carried
+# role), reuse_previous for a plan that still holds, and the default is to
+# plan ahead during the opponent's turn rather than at your own upkeep.
+
+
+def test_plan_section_defaults_to_planning_ahead_during_the_opponents_turn(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## Declare your plan before you act")).lower()
+    assert 'default to `for_turn="next"`' in section
+    assert "during your opponent's turn" in section
+
+
+def test_plan_section_documents_board_read_is_optional(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## Declare your plan before you act")).lower()
+    assert "`board_read`" in section
+    assert "compact board" in section
+
+    seat = _flat(_mcp_declare_plan_docstring()).lower()
+    assert "compact board" in seat
+
+
+def test_plan_section_documents_my_role_is_carried_after_the_first_declaration(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## Declare your plan before you act")).lower()
+    assert "`my_role`" in section
+    assert "carries forward" in section
+    assert "first declaration" in section
+
+
+def test_plan_section_documents_reuse_previous(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## Declare your plan before you act")).lower()
+    assert "reuse when the plan still holds" in section
+    assert "`reuse_previous=true`" in section
+    assert "`still_because`" in section
+
+
+def test_plan_section_never_demands_a_length(tmp_path, guide):
+    """The short-contract rewrite says the opposite of a length demand: one
+    short sentence per field, nowhere a minimum."""
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    section = _flat(_section(text, "## Declare your plan before you act")).lower()
+    assert "one short sentence per field" in section
+    assert "at least" not in section
+    assert "paragraph" not in section
+
+
+def test_seat_brief_documents_not_now_next_to_unaffordable_casts():
+    """F1: the seat docs say timing-locked casts are listed with the
+    engine's reason, next to unaffordable ones - so a seat reads `not_now`
+    as more of the same kind of information `affordable: "no"` already is,
+    not a second surface it has to learn from scratch."""
+    text = (BRIEFS / "ai_seat_brief.md").read_text()
+    flat = _flat(text).lower()
+    assert "not_now" in flat
+    assert "timing" in flat
+
+
+def test_seat_brief_plan_section_documents_the_same_short_contract():
+    text = (BRIEFS / "ai_seat_brief.md").read_text()
+    section = _flat(_section(text, "## Declare your plan before you act")).lower()
+    assert 'default to `--for-turn next`' in section
+    assert "compact board" in section
+    assert "carries forward" in section
+    assert "reuse when the plan still holds" in section
+    assert "`--reuse-previous`" in section
+    assert "`--still-because`" in section
+
+
 def test_buddy_prompt_names_wake_to_draft_and_stage_advice(tmp_path, guide):
     text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
     flat = _flat(text)

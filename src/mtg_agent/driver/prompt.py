@@ -1273,21 +1273,32 @@ mean to play your own next turn only once a wait has come back because your
 opponent is the one still deciding - that is, once you do NOT hold priority,
 never while you do. The one thing that is not "nothing to do" is a response
 you are actually weighing: hold priority for that, decide it, then act or
-pass, before you turn to next turn's plan. Leaving `for_turn` at its default
-`"current"` still works for the turn already in front of you, if you did not
-plan ahead for it:
+pass, before you turn to next turn's plan.
 
-  declare_plan(player_uid=..., board_read="...", my_role="...", plan="...",
-    expecting="...", because="...", confidence="medium", for_turn="next")
+Default to `for_turn="next"`, during your opponent's turn: that keeps your
+own turn's declaration off its critical path entirely. Leaving `for_turn` at
+its default `"current"` still works for the turn already in front of you, if
+you did not plan ahead for it:
 
-- `board_read`: what you actually see on the board right now, in your own
-  words.
-- `my_role`: your role in this matchup - beatdown or control, what your deck
-  is trying to do, what losing looks like.
-- `plan`: what you intend to do this turn, and why that follows from the two
-  above.
+  declare_plan(player_uid=..., for_turn="next", plan="...", expecting="...",
+    because="...")
+
+One short sentence per field - this is not a place to write more:
+
+- `board_read`: only worth giving when the engine's own compact board (what
+  you get for free by leaving this out) would miss something that matters.
+- `my_role`: your role in this matchup, in one line. Required on your first
+  declaration this game; left off after that, your last one carries forward.
+- `plan`: what you intend to do this turn, and why.
 - `expecting` / `because` / `confidence` (`"low"`/`"medium"`/`"high"`): what
-  you expect your opponent to do in response, and the read that supports it.
+  you expect your opponent to do, and the read behind it - the field a human
+  actually checks against what happened, and the one that never gets a
+  shortcut.
+
+Reuse when the plan still holds: `reuse_previous=True` plus one line in
+`still_because` copies your last `plan`/`prediction` forward unchanged,
+instead of asking you to restate them - use it whenever nothing about your
+read has actually changed.
 
 Called once per turn: `for_turn="next"` while your own turn is already under
 way is refused (409). A second declaration for the same turn is not refused

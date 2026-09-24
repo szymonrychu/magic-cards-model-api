@@ -423,10 +423,23 @@ def _declarations(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "step": entry["step"],
                 "phase": entry["phase"],
                 "player": player,
+                # F3: `board_read`/`board_read_auto` are mutually exclusive -
+                # a row carries whichever one it was actually written with,
+                # honestly, rather than the review quietly presenting an
+                # auto-generated board as if it were the seat's own prose (or
+                # vice versa). Same for `my_role_carried`/`reused_from_seq`:
+                # both are markers next to the value they describe, never a
+                # substitute for it - `my_role`/`plan`/`prediction` still
+                # carry the actual content whether it was typed fresh,
+                # carried forward, or reused.
                 "board_read": detail.get("board_read"),
+                "board_read_auto": detail.get("board_read_auto"),
                 "my_role": detail.get("my_role"),
+                "my_role_carried": detail.get("my_role_carried", False),
                 "plan": detail.get("plan"),
                 "prediction": detail.get("prediction"),
+                "reused_from_seq": detail.get("reused_from_seq"),
+                "still_because": detail.get("still_because"),
                 "did": [_paired(row) for row in window if _is_move(row) and _actor(row) == player],
                 "opponent_did": [
                     _paired(row)

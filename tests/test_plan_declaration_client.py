@@ -272,3 +272,140 @@ def test_mcp_declare_plan_refuses_an_unknown_uid(client, monkeypatch) -> None:
         assert text == NO_SUCH_SEAT
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+# ---------------------------------------------------------------------------
+# F3: the cheaper shapes, through both transports
+# ---------------------------------------------------------------------------
+
+
+def test_seat_declare_plan_omits_board_read_when_not_given(client, monkeypatch) -> None:
+    """`Seat.declare_plan` must not send a body key for a field the caller
+    left at its default `None` - the server tells an omitted `board_read`
+    apart from an empty one."""
+    info = _agent_game(client)
+    game_id = info["game_id"]
+    try:
+        seats = wired_seats(monkeypatch, game_id)
+        bob = seats.seat_for(info["seat_uids"]["bob"])
+        assert bob is not None
+        no_board = {k: v for k, v in PLAN.items() if k != "board_read"}
+        outcome = bob.declare_plan(**no_board)
+        assert outcome["declared"] is True, outcome
+
+        log = client.get(f"/api/games/{game_id}/log", params={"uid": info["admin_key"]}).json()[
+            "log"
+        ]
+        [plan] = [e for e in log if e["action"] == "plan_declared"]
+        assert not plan["detail"].get("board_read")
+        assert isinstance(plan["detail"].get("board_read_auto"), dict)
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_seat_declare_plan_reuse_previous_round_trips(client, monkeypatch) -> None:
+    info = _agent_game(client)
+    game_id = info["game_id"]
+    try:
+        seats = wired_seats(monkeypatch, game_id)
+        bob = seats.seat_for(info["seat_uids"]["bob"])
+        assert bob is not None
+        first = bob.declare_plan(**PLAN)
+        assert first["declared"] is True
+
+        second = bob.declare_plan(reuse_previous=True, still_because="board is unchanged")
+        assert second["declared"] is True, second
+
+        log = client.get(f"/api/games/{game_id}/log", params={"uid": info["admin_key"]}).json()[
+            "log"
+        ]
+        plans = [e for e in log if e["action"] == "plan_declared"]
+        assert plans[-1]["detail"]["plan"] == PLAN["plan"]
+        assert plans[-1]["detail"]["reused_from_seq"] == plans[0]["seq"]
+        assert plans[-1]["detail"]["still_because"] == "board is unchanged"
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_mcp_declare_plan_tool_accepts_the_short_shape(client, monkeypatch) -> None:
+    info = _agent_game(client)
+    game_id = info["game_id"]
+    try:
+        seats = wired_seats(monkeypatch, game_id)
+        server = build_server(seats)
+
+        first_text = call_tool_raw(
+            server, "declare_plan", {"player_uid": info["seat_uids"]["bob"], **PLAN}
+        )
+        assert json.loads(first_text)["declared"] is True
+
+        second_text = call_tool_raw(
+            server,
+            "declare_plan",
+            {
+                "player_uid": info["seat_uids"]["bob"],
+                "reuse_previous": True,
+                "still_because": "still on the same read",
+            },
+        )
+        second = json.loads(second_text)
+        assert second["declared"] is True, second
+
+        log = client.get(f"/api/games/{game_id}/log", params={"uid": info["admin_key"]}).json()[
+            "log"
+        ]
+        plans = [e for e in log if e["action"] == "plan_declared"]
+        assert plans[-1]["detail"]["reused_from_seq"] == plans[0]["seq"]
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_seat_cli_declare_plan_accepts_reuse_previous(client, monkeypatch, capsys) -> None:
+    from magic_cards_model_api import seat_cli
+
+    info = _agent_game(client)
+    game_id = info["game_id"]
+    try:
+        wired_seats(monkeypatch, game_id)
+        uid = info["seat_uids"]["bob"]
+        code = seat_cli.run(
+            [
+                "--uid",
+                uid,
+                "--game",
+                game_id,
+                "plan",
+                "--board-read",
+                PLAN["board_read"],
+                "--my-role",
+                PLAN["my_role"],
+                "--plan",
+                PLAN["plan"],
+                "--expecting",
+                PLAN["expecting"],
+                "--because",
+                PLAN["because"],
+            ]
+        )
+        out = capsys.readouterr().out
+        assert code in (0, None), out
+        assert json.loads(out)["declared"] is True, out
+
+        code = seat_cli.run(
+            [
+                "--uid",
+                uid,
+                "--game",
+                game_id,
+                "plan",
+                "--reuse-previous",
+                "--still-because",
+                "same read as last turn",
+            ]
+        )
+        out = capsys.readouterr().out
+        assert code in (0, None), out
+        result = json.loads(out)
+        assert result["declared"] is True, out
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})

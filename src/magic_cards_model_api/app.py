@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import Answer, DecisionKind
 from magic_cards_model.machines.decisions import PendingDecision as PendingDecisionEngine
+from magic_cards_model.machines.legal_actions import blocked_casts
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
 from starlette.convertors import Convertor, register_url_convertor
@@ -57,6 +58,7 @@ from . import (
 )
 from .action_rows import legal_action_rows
 from .board_scope import read_on_one_board
+from .playscripts import decision_dsl
 from .playscripts.hypothetical_facts import build_hypothetical_facts
 from .playscripts.report import (
     development_candidates,
@@ -247,6 +249,29 @@ def _missing_plan(_: Request, exc: records.MissingPlan) -> JSONResponse:
     return JSONResponse(
         status_code=422,
         content={"detail": [{"loc": ["body", "plan"], "msg": str(exc), "type": "missing"}]},
+    )
+
+
+@app.exception_handler(records.MissingRole)
+def _missing_role(_: Request, exc: records.MissingRole) -> JSONResponse:
+    """422, the same shape `MissingPlan` gets, naming `my_role` as the
+    missing field - a seat's very first declaration this game is the one
+    with nothing earlier to carry it forward from."""
+    return JSONResponse(
+        status_code=422,
+        content={"detail": [{"loc": ["body", "my_role"], "msg": str(exc), "type": "missing"}]},
+    )
+
+
+@app.exception_handler(records.NoPriorDeclaration)
+def _no_prior_declaration(_: Request, exc: records.NoPriorDeclaration) -> JSONResponse:
+    """422 naming `reuse_previous`: it was set, but this seat has no earlier
+    declaration in this game to copy `plan`/`prediction` forward from."""
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": [{"loc": ["body", "reuse_previous"], "msg": str(exc), "type": "value_error"}]
+        },
     )
 
 
@@ -2739,20 +2764,27 @@ def get_legal_actions(
         # what the rows describe (U1: a stolen, hasty creature's attack row).
         board = commands.board_at_pause(game, paused[0], paused[1]) or game
 
-    def rows() -> list[dict[str, Any]]:
+    def rows() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         actions, views = _rows_while_controlling(board, player, pending)
         if candidates:
             _attach_target_candidates(board, actions, views)
-        return views
+        # F1: the companion enumeration - every cast blocked on timing/
+        # prohibition alone, never legal (so never in `views`/`actions`),
+        # on this exact same board and for this exact same player. Computed
+        # inside the same `read_on_one_board` layering `views` itself is, so
+        # a `not_now` row can never describe a board `actions` does not.
+        not_now = [row.model_dump(mode="json") for row in blocked_casts(board, player, pending)]
+        return views, not_now
 
-    # One layered board for the enumeration and its target candidates both.
-    views = read_on_one_board(rows, board)
+    # One layered board for the enumeration, its target candidates, and
+    # `not_now` all three.
+    views, not_now = read_on_one_board(rows, board)
     # The ledger position this enumeration describes, handed back with it
     # (`LegalActionsResponse.last_seq`): a seat names it as `expected_seq` on
     # whatever it decides to do, and that is what makes its refusals
     # splittable into races and rules errors at all. See `at_seq` above for
     # why it is read before the board rather than here.
-    return {"actions": views, "last_seq": at_seq}
+    return {"actions": views, "not_now": not_now, "last_seq": at_seq}
 
 
 @app.post(
@@ -3674,6 +3706,24 @@ def declare_plan(game_id: str, req: DeclarePlanIn) -> dict[str, Any]:
     `turns_taken` the row is actually filed under, so the ledger shows both
     without ambiguity. `for_turn: "next"` while this seat's own turn is
     already in progress is refused - `records.OwnTurnInProgress`, 409.
+
+    **F3: three ways to make this cheaper to write, none of them touching
+    `prediction`.** `records.latest_declaration` is this seat's own most
+    recent row, read once and reused for all three:
+
+    - `board_read` left off fills `board_read_auto` in instead -
+      `playscripts.decision_dsl.compact_board` of this seat's own redacted
+      view at this exact moment (`visibility.redact_view`, the same
+      function `review.py` itself reads a board through), objective and
+      free to produce.
+    - `my_role` left off carries the seat's last declared role forward
+      (`my_role_carried: true` on the row) - refused, `records.MissingRole`
+      (422), on this seat's very first declaration, which has nothing to
+      carry.
+    - `reuse_previous: true` (with `still_because`) copies `plan` and
+      `prediction` forward from that same latest declaration verbatim,
+      marking the row `reused_from_seq` - refused, `records.
+      NoPriorDeclaration` (422), with nothing to copy from.
     """
     game = game_or_404(game_id)
     if store.player_for_uid(game_id, req.uid) != req.player:
@@ -3688,6 +3738,38 @@ def declare_plan(game_id: str, req: DeclarePlanIn) -> dict[str, Any]:
     else:
         plan_turns_taken = declared_at
         response_turn_number = turn.turn_number if turn is not None else None
+
+    previous = records.latest_declaration(game_id, req.player)
+
+    board_read: str | None = req.board_read
+    board_read_auto: dict[str, Any] | None = None
+    if board_read is None:
+        raw_view = state_view(game, game_id)
+        redacted = visibility.redact_view(raw_view, req.player)
+        board_read_auto = decision_dsl.compact_board(redacted)
+
+    my_role_carried = False
+    my_role = req.my_role
+    if my_role is None:
+        if previous is None:
+            raise records.MissingRole(req.player)
+        my_role = previous[1].get("my_role")
+        my_role_carried = True
+
+    reused_from_seq: int | None = None
+    if req.reuse_previous:
+        if previous is None:
+            raise records.NoPriorDeclaration(req.player)
+        reused_from_seq = previous[0]
+        plan = previous[1].get("plan")
+        prediction = previous[1].get("prediction")
+    else:
+        # `schemas.DeclarePlanIn._shape` already refused a fresh declaration
+        # missing either field - `plan`/`prediction` are never `None` here.
+        assert req.plan is not None and req.prediction is not None
+        plan = req.plan
+        prediction = req.prediction.model_dump()
+
     seq = audit.record(
         game_id,
         audit.PLAN_ACTION,
@@ -3705,10 +3787,14 @@ def declare_plan(game_id: str, req: DeclarePlanIn) -> dict[str, Any]:
         turn_number=response_turn_number,
         for_turn=req.for_turn,
         declared_turns_taken=declared_at,
-        board_read=req.board_read,
-        my_role=req.my_role,
-        plan=req.plan,
-        prediction=req.prediction.model_dump(),
+        board_read=board_read,
+        board_read_auto=board_read_auto,
+        my_role=my_role,
+        my_role_carried=my_role_carried,
+        plan=plan,
+        prediction=prediction,
+        reused_from_seq=reused_from_seq,
+        still_because=req.still_because,
     )
     return {
         "declared": True,
@@ -4392,7 +4478,12 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         return {"accepted": False, "reason": reason, "log_seq": seq}
 
     records.require_current_board(
-        game_id, "decide", req.expected_seq, player=req.player, reasoning=req.reasoning
+        game_id,
+        "decide",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        decision_generation=req.generation,
     )
     game = game_or_404(game_id)
     legal_before: records.LegalActionsBefore | None = None

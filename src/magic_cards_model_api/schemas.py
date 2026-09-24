@@ -320,13 +320,12 @@ class DeclarePlanIn(RequestModel):
     """`POST /api/games/{game_id}/plan` - a seat's declaration, made before
     it acts, of how it reads this turn.
 
-    Deliberately five fields and no more. Each one is something the post-game
-    review has to show and cannot reconstruct from the board: what the seat
-    saw (`board_read`), where it thought it stood in the matchup
-    (`my_role`), what it meant to do (`plan`), and what it expected back
-    (`prediction`, with its own reason and confidence). Anything longer and
-    an agent fills it in with filler; anything shorter and the review is
-    narrative again rather than evidence.
+    Five fields and no more, but three of them are now cheaper to write
+    (F3, MEMORY.md dated): `board_read` and `my_role` are objective/stable
+    enough that a seat should not have to retype them every turn, and a plan
+    that still holds should not have to be re-composed from scratch. What
+    never gets cheaper is `prediction` - the part of a declaration that is
+    actually evidence, checkable against what the opponent then did.
 
     `uid` is the seat's own credential, carried in the body beside `player`
     rather than in the query string: a plan is hidden information about how
@@ -337,17 +336,31 @@ class DeclarePlanIn(RequestModel):
     player: Stated
     uid: Stated
     """This seat's own uid - `player` must be the seat it opens."""
-    board_read: Stated
-    """What you see on the board right now - the state you are planning
-    against, in your own words."""
-    my_role: Stated
-    """Your own role in this matchup as you understand it - who is the
-    beatdown, what your deck is trying to do, what losing looks like."""
-    plan: Stated
+    board_read: Stated | None = None
+    """What you see on the board right now, in your own words - optional.
+    Left off, `app.declare_plan` fills the row's `board_read_auto` in for
+    you: `playscripts.decision_dsl.compact_board` of your own redacted view
+    at the moment you declare. That is objective and costs you nothing to
+    produce, which is the whole point of making this field optional - write
+    prose here only when the compact board would miss something that
+    matters (a read on the opponent's likely hand, a line you are watching
+    for)."""
+    my_role: Stated | None = None
+    """Your own role in this matchup - who is the beatdown, what your deck
+    is trying to do, what losing looks like. Required on your first
+    declaration of the game (refused 422, naming `my_role`, when it is not);
+    optional on every one after that, where leaving it off carries your most
+    recent declaration's role forward unchanged (the row is marked
+    `my_role_carried: true`). Give it again only when your role has actually
+    changed."""
+    plan: Stated | None = None
     """What you intend to do this turn, and why that follows from the two
-    above."""
-    prediction: OpponentPrediction
-    """What you expect the opponent to do in response, and why."""
+    above. Required on a fresh declaration; left out entirely when
+    `reuse_previous` is set, since that copies it forward instead."""
+    prediction: OpponentPrediction | None = None
+    """What you expect the opponent to do in response, and why. Required on
+    a fresh declaration, exactly like `plan` - the prediction is the one
+    field this whole facility exists for, and it never gets a shortcut."""
     for_turn: Literal["current", "next"] = "current"
     """Which turn this declaration is about. `"current"` (the default) is
     the turn already under way - the only shape this ever took before this
@@ -360,7 +373,46 @@ class DeclarePlanIn(RequestModel):
     2026-09-14: a ~110s plan written in upkeep with the human waiting on
     it). `"next"` while this seat's own turn is already in progress is
     refused - `app.declare_plan` answers 409 `own_turn_in_progress`; one
-    plan per turn, and `"current"` is how that turn gets its own."""
+    plan per turn, and `"current"` is how that turn gets its own.
+
+    Declare `for_turn: "next"` during the opponent's turn by default: your
+    own-turn declaration then only has to cover what changed, and is off
+    the critical path of your own turn entirely."""
+    reuse_previous: bool = False
+    """`true` copies `plan` and `prediction` forward from your most recent
+    declaration (plan-ahead or current) into this turn's row, verbatim -
+    when the read that produced them still holds and there is nothing new
+    to say. Requires `still_because`. Refused 422 when you have no earlier
+    declaration this game to copy from. `plan`/`prediction` are left out of
+    the request entirely when this is set - they come from the row being
+    reused, not from you."""
+    still_because: Stated | None = None
+    """One line saying why the reused plan still holds - required exactly
+    when `reuse_previous` is set, and meaningless otherwise. Not a second
+    prediction: it is the one-sentence reason today's board has not moved
+    you off yesterday's read."""
+
+    @model_validator(mode="after")
+    def _shape(self) -> DeclarePlanIn:
+        if self.reuse_previous:
+            if not self.still_because:
+                raise ValueError(
+                    "reuse_previous requires still_because: one line saying why "
+                    "the plan you are carrying forward still holds"
+                )
+        else:
+            if self.plan is None:
+                raise ValueError(
+                    "plan is required on a fresh declaration - set reuse_previous: "
+                    "true (with still_because) to carry your last plan forward instead"
+                )
+            if self.prediction is None:
+                raise ValueError(
+                    "prediction is required on a fresh declaration - set "
+                    "reuse_previous: true (with still_because) to carry your last "
+                    "prediction forward instead"
+                )
+        return self
 
 
 class DeclarePlanResponse(BaseModel):
@@ -3435,6 +3487,23 @@ class LegalActionsResponse(BaseModel):
     on a row it applies to - so a row carrying none of them is exactly an
     engine `Action`, and `Action` stays a published name."""
 
+    not_now: list[BlockedCastView] = Field(default_factory=list)
+    """F1: every cast CR 601.3 refuses right now on timing (CR 117.1a) or a
+    CR 611.1 prohibition alone, for this same `player` and this same board -
+    `machines.legal_actions.blocked_casts`'s own `BlockedCast` rows,
+    `model_dump(mode="json")`-ed exactly like `actions`.
+
+    **Never a row in `actions`, and never treated as legal by anything that
+    reads this answer** - `seatkit.available_actions`'s `legal_actions_
+    before`/auto-pass/"nothing legal" checks and the baseline seat's own
+    choice all read `actions` alone. This is the *other* thing worth telling
+    a seat: not "nothing to do", but "this would work later" - Ocelot Pride
+    sitting in hand the whole game, uncastable only because the stack was
+    never empty, is now visible as exactly that instead of indistinguishable
+    from a hand with nothing playable in it. Empty while a decision is
+    pending, the same way `blocked_casts` itself answers empty then - nothing
+    but the decision's own answers is live."""
+
     last_seq: int = 0
     """The ledger position this enumeration was computed against
     (`audit.last_seq`) - the number a seat names back as
@@ -3453,6 +3522,20 @@ class LegalActionsResponse(BaseModel):
 
     `0` for a game with no ledger, which is the same "name nothing" answer
     `require_current_board` already short-circuits on."""
+
+
+class BlockedCastView(BaseModel):
+    """One `LegalActionsResponse.not_now` row - the engine's own
+    `models.action.BlockedCast`, `model_dump(mode="json")`-ed unchanged.
+    `zone`/`spell_face` are plain strings on the wire (the engine's `Zone`
+    enum and `str | None` respectively, already JSON-safe from that dump)."""
+
+    card_id: str
+    name: str
+    zone: str
+    spell_face: str | None = None
+    reason: str
+    rule: str
 
 
 class CandidateView(BaseModel):

@@ -2300,13 +2300,15 @@ class Seat:
     def declare_plan(
         self,
         *,
-        board_read: str,
-        my_role: str,
-        plan: str,
-        expecting: str,
-        because: str,
+        board_read: str | None = None,
+        my_role: str | None = None,
+        plan: str | None = None,
+        expecting: str | None = None,
+        because: str | None = None,
         confidence: str = "medium",
         for_turn: str = "current",
+        reuse_previous: bool = False,
+        still_because: str | None = None,
     ) -> dict[str, Any]:
         """`POST .../plan` (`schemas.DeclarePlanIn`) - a thin passthrough,
         no rule of the engine's own re-implemented here. This mutates no
@@ -2327,24 +2329,47 @@ class Seat:
         ahead for this seat's own next turn instead of holding priority in
         its own upkeep to write one there (live game 2026-09-14).
 
+        **F3: every field but `for_turn`/`reuse_previous` is now optional
+        here too**, and only the ones actually given are put on the wire -
+        `DeclarePlanIn` tells an omitted field apart from an empty one, which
+        `board_read`/`my_role` both lean on (auto board, carried role).
+        `expecting`/`because` travel together: give both or neither, since
+        together they are `prediction`, and `prediction` is what stays
+        required on a fresh declaration. `reuse_previous: True` (with
+        `still_because`) copies the seat's last `plan`/`prediction` forward
+        instead of sending either.
+
         Returns `call_json`'s normalised shape either way - `declared: True`
         with the ledger's own `log_seq` on success, or `{"allowed": False,
         "reason": ...}` on a refusal (a blank field, a uid that does not
-        open this seat, or - for `for_turn: "next"` - this seat's own turn
-        already under way, `code: own_turn_in_progress`) - the same shape
-        every action tool's own outcome already is, so a caller checks a
-        refusal the one way it already knows rather than learning a second
-        one for this call alone.
+        open this seat, a fresh declaration missing `plan`/`prediction`, a
+        first declaration missing `my_role`, `reuse_previous` with nothing to
+        reuse, or - for `for_turn: "next"` - this seat's own turn already
+        under way, `code: own_turn_in_progress`) - the same shape every
+        action tool's own outcome already is, so a caller checks a refusal
+        the one way it already knows rather than learning a second one for
+        this call alone.
         """
-        body = {
+        body: dict[str, Any] = {
             "player": self.player,
             "uid": self.uid,
-            "board_read": board_read,
-            "my_role": my_role,
-            "plan": plan,
-            "prediction": {"expecting": expecting, "because": because, "confidence": confidence},
             "for_turn": for_turn,
+            "reuse_previous": reuse_previous,
         }
+        if board_read is not None:
+            body["board_read"] = board_read
+        if my_role is not None:
+            body["my_role"] = my_role
+        if plan is not None:
+            body["plan"] = plan
+        if expecting is not None or because is not None:
+            body["prediction"] = {
+                "expecting": expecting,
+                "because": because,
+                "confidence": confidence,
+            }
+        if still_because is not None:
+            body["still_because"] = still_because
         return self.call_json("POST", f"/api/games/{self.game_id()}/plan", body)
 
     def sources_or_all(self, given: str, state: dict[str, Any] | None = None) -> list[str]:
@@ -3362,7 +3387,9 @@ def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
         return _actions_unavailable(
             state, f"the legal-actions call answered HTTP {response.status_code}: {detail}"
         )
-    return _actions_view(state, payload.get("actions") or [], None)
+    return _actions_view(
+        state, payload.get("actions") or [], None, not_now=payload.get("not_now") or []
+    )
 
 
 #: What the envelope says once, rather than every row saying it twenty times.
@@ -3382,11 +3409,24 @@ TARGETS_NOTE = (
 )
 
 
-def _actions_view(state: dict[str, Any], actions: list[Any], error: str | None) -> dict[str, Any]:
+def _actions_view(
+    state: dict[str, Any],
+    actions: list[Any],
+    error: str | None,
+    *,
+    not_now: list[Any] | None = None,
+) -> dict[str, Any]:
     pending = state.get("pending_decision")
     kind = pending.get("kind") if pending is not None else None
     view: dict[str, Any] = {
         "actions": actions,
+        # F1: kept apart from `actions` end to end - never merged in, never
+        # read by `legal_actions_before`, auto-pass, a "nothing legal" check,
+        # a play offer, or the baseline seat's own choice, every one of which
+        # reads `actions` alone. `mcp._compact_actions` is what renders these
+        # for a seat, each marked `castable_now: "no"` so no tool downstream
+        # of it could mistake one for legal.
+        "not_now": not_now if not_now is not None else [],
         "attackers_requested": kind == "declare_attackers",
         "blockers_requested": kind == "declare_blockers",
         "pending_decision": pending,

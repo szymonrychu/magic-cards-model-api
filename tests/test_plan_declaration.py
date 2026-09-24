@@ -305,3 +305,174 @@ def _live_game(client: TestClient, info: dict[str, Any]):
     game = store.get(info["game_id"])
     assert game is not None
     return game
+
+
+# ---------------------------------------------------------------------------
+# F3: a cheaper declaration - optional board_read, carried my_role, reuse
+# ---------------------------------------------------------------------------
+
+#: A sentinel so a test can ask for a field to be left off the body entirely,
+#: which `dict.update`/`**overrides` cannot express on its own (an override
+#: can only replace a key `PLAN` already carries, never remove one).
+_OMIT = object()
+
+
+def _declare_omitting(
+    client: TestClient, info: dict[str, Any], *omit: str, player: str = "bob", **overrides: Any
+):
+    body = {"player": player, "uid": _uid(info, player), **PLAN, **overrides}
+    for key in omit:
+        body.pop(key, None)
+    return client.post(f"/api/games/{info['game_id']}/plan", json=body)
+
+
+def _declared_detail(client: TestClient, info: dict[str, Any]) -> dict[str, Any]:
+    plans = [e for e in _log(client, info) if e["action"] == audit.PLAN_ACTION]
+    return plans[-1]["detail"]
+
+
+def test_board_read_omitted_stores_an_auto_compact_board(client: TestClient) -> None:
+    """(1) `board_read` becomes optional. Left off, the row carries
+    `board_read_auto`: `decision_dsl.compact_board` of this seat's own
+    redacted view at declaration time - objective, and cheaper than prose."""
+    info = _agent_game(client)
+    try:
+        response = _declare_omitting(client, info, "board_read")
+        assert response.status_code == 200, response.text
+
+        detail = _declared_detail(client, info)
+        assert not detail.get("board_read")
+        auto = detail.get("board_read_auto")
+        assert isinstance(auto, dict), detail
+        assert auto["players"]["bob"]["life"] == 20
+        assert auto["players"]["alice"]["life"] == 20
+    finally:
+        client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})
+
+
+def test_my_role_is_required_on_a_first_declaration(client: TestClient) -> None:
+    """(2) `my_role` is optional only *after* this seat's first declaration
+    this game. Omitted on the very first one, it is refused 422 naming
+    `my_role`."""
+    info = _agent_game(client)
+    try:
+        response = _declare_omitting(client, info, "my_role")
+        assert response.status_code == 422, response.text
+        detail = response.json()["detail"]
+        assert detail[0]["loc"] == ["body", "my_role"]
+        assert "bob" in detail[0]["msg"]
+
+        assert [e for e in _log(client, info) if e["action"] == audit.PLAN_ACTION] == []
+    finally:
+        client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})
+
+
+def test_my_role_omitted_after_a_first_declaration_is_carried(client: TestClient) -> None:
+    info = _agent_game(client, active="bob")
+    try:
+        first = _declare_omitting(client, info)
+        assert first.status_code == 200, first.text
+
+        second = _declare_omitting(client, info, "my_role")
+        assert second.status_code == 200, second.text
+
+        detail = _declared_detail(client, info)
+        assert detail["my_role"] == PLAN["my_role"]
+        assert detail["my_role_carried"] is True
+    finally:
+        client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})
+
+
+def test_reuse_previous_copies_plan_and_prediction_forward(client: TestClient) -> None:
+    """(3) `reuse_previous: true` plus a one-line `still_because` copies
+    `plan`/`prediction` from the seat's most recent declaration into a new
+    row for this turn, marked `reused_from_seq`."""
+    info = _agent_game(client, active="bob")
+    try:
+        first = _declare_omitting(client, info)
+        assert first.status_code == 200, first.text
+        first_seq = first.json()["log_seq"]
+
+        second = client.post(
+            f"/api/games/{info['game_id']}/plan",
+            json={
+                "player": "bob",
+                "uid": _uid(info, "bob"),
+                "reuse_previous": True,
+                "still_because": "board has not changed since last turn",
+            },
+        )
+        assert second.status_code == 200, second.text
+
+        detail = _declared_detail(client, info)
+        assert detail["plan"] == PLAN["plan"]
+        assert detail["prediction"]["expecting"] == PLAN["prediction"]["expecting"]
+        assert detail["reused_from_seq"] == first_seq
+        assert detail["still_because"] == "board has not changed since last turn"
+    finally:
+        client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})
+
+
+def test_reuse_previous_with_no_earlier_declaration_is_refused(client: TestClient) -> None:
+    info = _agent_game(client)
+    try:
+        response = client.post(
+            f"/api/games/{info['game_id']}/plan",
+            json={
+                "player": "bob",
+                "uid": _uid(info, "bob"),
+                "reuse_previous": True,
+                "still_because": "nothing has changed",
+            },
+        )
+        assert response.status_code == 422, response.text
+    finally:
+        client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})
+
+
+def test_reuse_previous_without_still_because_is_refused(client: TestClient) -> None:
+    info = _agent_game(client)
+    try:
+        assert _declare_omitting(client, info).status_code == 200
+
+        response = client.post(
+            f"/api/games/{info['game_id']}/plan",
+            json={"player": "bob", "uid": _uid(info, "bob"), "reuse_previous": True},
+        )
+        assert response.status_code == 422, response.text
+    finally:
+        client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})
+
+
+def test_a_fresh_declaration_still_requires_plan_and_prediction(client: TestClient) -> None:
+    """(4) `plan` and `prediction` stay required on a fresh (non-reuse)
+    declaration."""
+    info = _agent_game(client)
+    try:
+        no_plan = _declare_omitting(client, info, "plan")
+        assert no_plan.status_code == 422, no_plan.text
+
+        no_prediction = _declare_omitting(client, info, "prediction")
+        assert no_prediction.status_code == 422, no_prediction.text
+    finally:
+        client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})
+
+
+def test_an_existing_full_five_field_declaration_is_unchanged(client: TestClient) -> None:
+    """Backward compatibility: a full declaration with every field named
+    behaves exactly as it always has - no auto board, no carried role, no
+    reuse marker."""
+    info = _agent_game(client)
+    try:
+        response = _declare(client, info)
+        assert response.status_code == 200, response.text
+
+        detail = _declared_detail(client, info)
+        assert detail["board_read"] == PLAN["board_read"]
+        assert not detail.get("board_read_auto")
+        assert detail["my_role"] == PLAN["my_role"]
+        assert not detail.get("my_role_carried")
+        assert detail["plan"] == PLAN["plan"]
+        assert not detail.get("reused_from_seq")
+    finally:
+        client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})

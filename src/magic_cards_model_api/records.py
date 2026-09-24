@@ -313,6 +313,62 @@ def next_own_turn(game: Game, player: str) -> TurnMachine:
     raise ValueError(f"{player} is not seated in this game - no next turn of theirs exists")
 
 
+class MissingRole(Exception):
+    """Raised by `app.declare_plan` when `my_role` is left off a seat's
+    *first* declaration this game - the one declaration with nothing earlier
+    to carry it forward from. `app.py` maps this to the same 422 shape
+    `MissingPlan` gets, naming `my_role` as the field that is missing."""
+
+    def __init__(self, player: str) -> None:
+        super().__init__(
+            f"{player} has not declared a role in this game yet - my_role is "
+            "required on your first declaration; after that, leaving it off "
+            "carries your last one forward"
+        )
+        self.player = player
+
+
+class NoPriorDeclaration(Exception):
+    """Raised by `app.declare_plan` when `reuse_previous` is set but this
+    seat has no earlier declaration in this game to copy `plan`/`prediction`
+    forward from. `app.py` maps this to a 422 naming `reuse_previous`."""
+
+    def __init__(self, player: str) -> None:
+        super().__init__(
+            f"{player} has no earlier declaration this game to reuse - declare "
+            "plan and prediction in full first, then reuse_previous once there "
+            "is something standing to carry forward"
+        )
+        self.player = player
+
+
+def latest_declaration(game_id: str, player: str) -> tuple[int, dict[str, Any]] | None:
+    """`(seq, detail)` of `player`'s most recent `plan_declared` row in
+    `game_id` - newest first, `None` when this seat has never declared one
+    (at least not within the same bounded window `require_plan` itself
+    reads, `RECENT_RECORDS_WINDOW` of the newest rows - a plan is declared at
+    most once or twice a turn, so "the last declaration" is always
+    comfortably inside it for any realistic game, the identical margin
+    `require_plan`'s own docstring already argues for its narrower "this
+    turn or the one before it" question).
+
+    Read by `app.declare_plan` alone, for the two shortcuts that need to
+    know what a seat last said: carrying `my_role` forward when a fresh
+    declaration leaves it off, and copying `plan`/`prediction` forward
+    verbatim when `reuse_previous` is set.
+    """
+    from .store import store
+
+    for row in reversed(store.recent_records(game_id, RECENT_RECORDS_WINDOW)):
+        payload = row["payload"]
+        if payload.get("action") != PLAN_ACTION:
+            continue
+        detail = payload.get("detail") or {}
+        if detail.get("player") == player:
+            return row["seq"], detail
+    return None
+
+
 #: Whether the request being served named a ledger position
 #: (`expected_seq`) and it was the one the game was actually on. Set by
 #: `require_current_board`, read by `named_a_current_board` - and by nothing
@@ -612,10 +668,27 @@ def require_current_board(
     player: str | None = None,
     reasoning: str | None = None,
     dry_run: bool = False,
+    decision_generation: int | None = None,
 ) -> None:
     """Refuse `action` outright when `expected_seq` names a ledger position
     this game has already moved past - `BoardMoved`, before the engine has
     been asked anything at all.
+
+    **`decision_generation`, for `action == "decide"` alone.** A stale
+    `expected_seq` is not always a lost race: the opponent's own unrelated
+    row (a `pass_priority`, most often) can land between a seat reading a
+    pending decision and answering it, moving the ledger without touching
+    the question at all. When `expected_seq` is behind but this game still
+    has a pause standing (`store.paused_command`) and `store.pause_generation`
+    is exactly `decision_generation`, that is proof the question this seat
+    is answering is the one still standing - the generation only advances
+    when `store.store_paused_command` replaces the question itself, never
+    when an unrelated row lands. The mismatch is forgiven: no stale row is
+    written, and this call counts as having named a current board, exactly
+    as a matching `expected_seq` does. Every other case - `decision_
+    generation` left `None`, a `decide` naming a generation that has since
+    moved on, no pause standing at all, or any action other than `decide` -
+    is refused exactly as it always was.
 
     Called first in every mutating route, ahead of `require_reasoning` and
     `require_plan`: a seat that lost a race is owed the news that it lost
@@ -678,6 +751,15 @@ def require_current_board(
         # NOT stamped - nothing about this request's board position was ever
         # confirmed, and there is no game for a refusal row to belong to.
         return
+    if action == "decide" and decision_generation is not None:
+        from .store import store
+
+        paused = store.paused_command(game_id)
+        if paused is not None and store.pause_generation(game_id) == decision_generation:
+            # The ledger moved, but the standing question did not - see the
+            # docstring above. Forgiven exactly like a matching `expected_seq`.
+            _NAMED_A_CURRENT_BOARD.set(True)
+            return
     moved = BoardMoved(game_id, expected_seq, current)
     if not dry_run:
         audit.record(

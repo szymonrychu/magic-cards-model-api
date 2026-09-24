@@ -1308,19 +1308,41 @@ def build_parser() -> argparse.ArgumentParser:
         "plan",
         help=(
             "declare, before you act, how you read the turn (POST .../plan) - "
-            "the same five fields and the same for-turn choice mcp.py's "
-            "declare_plan tool takes"
+            "the same fields and the same for-turn choice mcp.py's "
+            "declare_plan tool takes; board_read/my_role are optional (auto "
+            "board, carried role), and --reuse-previous copies your last "
+            "plan/prediction forward"
         ),
     )
-    plan.add_argument("--board-read", required=True, help="what you see on the board right now")
     plan.add_argument(
-        "--my-role", required=True, help="your role in this matchup - beatdown, control, ..."
+        "--board-read",
+        default=None,
+        help="what you see on the board right now; omit for an auto compact board",
     )
     plan.add_argument(
-        "--plan", dest="plan_text", required=True, help="what you intend to do this turn, and why"
+        "--my-role",
+        default=None,
+        help=(
+            "your role in this matchup - beatdown, control, ...; required on your "
+            "first declaration this game, optional (carried forward) after that"
+        ),
     )
-    plan.add_argument("--expecting", required=True, help="what you expect the opponent to do")
-    plan.add_argument("--because", required=True, help="the read that supports that expectation")
+    plan.add_argument(
+        "--plan",
+        dest="plan_text",
+        default=None,
+        help="what you intend to do this turn, and why; required unless --reuse-previous",
+    )
+    plan.add_argument(
+        "--expecting",
+        default=None,
+        help="what you expect the opponent to do; required unless --reuse-previous",
+    )
+    plan.add_argument(
+        "--because",
+        default=None,
+        help="the read that supports that expectation; required unless --reuse-previous",
+    )
     plan.add_argument(
         "--confidence",
         choices=["low", "medium", "high"],
@@ -1339,6 +1361,18 @@ def build_parser() -> argparse.ArgumentParser:
             "deciding, not while you hold priority with nothing to do "
             "(pass instead)"
         ),
+    )
+    plan.add_argument(
+        "--reuse-previous",
+        dest="reuse_previous",
+        action="store_true",
+        help="copy plan/prediction forward from your last declaration; needs --still-because",
+    )
+    plan.add_argument(
+        "--still-because",
+        dest="still_because",
+        default=None,
+        help="one line saying why the reused plan still holds; required with --reuse-previous",
     )
 
     stage_advice = sub.add_parser(
@@ -2327,6 +2361,8 @@ def run(argv: list[str] | None = None) -> int:
                 because=args.because,
                 confidence=args.confidence,
                 for_turn=args.for_turn,
+                reuse_previous=args.reuse_previous,
+                still_because=args.still_because,
             )
             print(json.dumps(result, indent=1, sort_keys=True))
         elif args.command == "stage-advice":

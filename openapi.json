@@ -2820,6 +2820,51 @@
         "title": "BlockPair",
         "type": "object"
       },
+      "BlockedCastView": {
+        "description": "One `LegalActionsResponse.not_now` row - the engine's own\n`models.action.BlockedCast`, `model_dump(mode=\"json\")`-ed unchanged.\n`zone`/`spell_face` are plain strings on the wire (the engine's `Zone`\nenum and `str | None` respectively, already JSON-safe from that dump).",
+        "properties": {
+          "card_id": {
+            "title": "Card Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "spell_face": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spell Face"
+          },
+          "zone": {
+            "title": "Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id",
+          "name",
+          "zone",
+          "reason",
+          "rule"
+        ],
+        "title": "BlockedCastView",
+        "type": "object"
+      },
       "BundledDeckText": {
         "properties": {
           "name": {
@@ -5706,12 +5751,19 @@
       },
       "DeclarePlanIn": {
         "additionalProperties": false,
-        "description": "`POST /api/games/{game_id}/plan` - a seat's declaration, made before\nit acts, of how it reads this turn.\n\nDeliberately five fields and no more. Each one is something the post-game\nreview has to show and cannot reconstruct from the board: what the seat\nsaw (`board_read`), where it thought it stood in the matchup\n(`my_role`), what it meant to do (`plan`), and what it expected back\n(`prediction`, with its own reason and confidence). Anything longer and\nan agent fills it in with filler; anything shorter and the review is\nnarrative again rather than evidence.\n\n`uid` is the seat's own credential, carried in the body beside `player`\nrather than in the query string: a plan is hidden information about how\na seat intends to play, so the server checks that the caller *is* the\nseat it is declaring for before writing anything into its name.",
+        "description": "`POST /api/games/{game_id}/plan` - a seat's declaration, made before\nit acts, of how it reads this turn.\n\nFive fields and no more, but three of them are now cheaper to write\n(F3, MEMORY.md dated): `board_read` and `my_role` are objective/stable\nenough that a seat should not have to retype them every turn, and a plan\nthat still holds should not have to be re-composed from scratch. What\nnever gets cheaper is `prediction` - the part of a declaration that is\nactually evidence, checkable against what the opponent then did.\n\n`uid` is the seat's own credential, carried in the body beside `player`\nrather than in the query string: a plan is hidden information about how\na seat intends to play, so the server checks that the caller *is* the\nseat it is declaring for before writing anything into its name.",
         "properties": {
           "board_read": {
-            "minLength": 1,
-            "title": "Board Read",
-            "type": "string"
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Board Read"
           },
           "for_turn": {
             "default": "current",
@@ -5723,14 +5775,28 @@
             "type": "string"
           },
           "my_role": {
-            "minLength": 1,
-            "title": "My Role",
-            "type": "string"
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "My Role"
           },
           "plan": {
-            "minLength": 1,
-            "title": "Plan",
-            "type": "string"
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
           },
           "player": {
             "minLength": 1,
@@ -5738,7 +5804,31 @@
             "type": "string"
           },
           "prediction": {
-            "$ref": "#/components/schemas/OpponentPrediction"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpponentPrediction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reuse_previous": {
+            "default": false,
+            "title": "Reuse Previous",
+            "type": "boolean"
+          },
+          "still_because": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Still Because"
           },
           "uid": {
             "minLength": 1,
@@ -5748,11 +5838,7 @@
         },
         "required": [
           "player",
-          "uid",
-          "board_read",
-          "my_role",
-          "plan",
-          "prediction"
+          "uid"
         ],
         "title": "DeclarePlanIn",
         "type": "object"
@@ -6934,6 +7020,13 @@
             "default": 0,
             "title": "Last Seq",
             "type": "integer"
+          },
+          "not_now": {
+            "items": {
+              "$ref": "#/components/schemas/BlockedCastView"
+            },
+            "title": "Not Now",
+            "type": "array"
           }
         },
         "required": [
@@ -17303,7 +17396,7 @@
     },
     "/api/games/{game_id}/plan": {
       "post": {
-        "description": "Declare, before acting, how this seat reads the turn it is about to\ntake: what it sees, its own role in the matchup, what it intends to do,\nand what it expects the opponent to do and why (`schemas.DeclarePlanIn`).\n\n**This mutates no `Game`.** It calls `audit.record` and nothing else - no\n`store.replace`, no compare-and-swap, no version bump - because a\ndeclaration is a statement *about* the game rather than a move in it. A\nroute that quietly committed one would make every plan something the\nopponent's client has to notice, and would put a CAS conflict in the way\nof an agent that is only trying to think out loud.\n\n`audit.record` stamps the game's own turn and step from the live game\n(its own docstring), and that stamping is what makes the post-game\npairing in `review.py` possible: the declaration and the opponent's\nlater rows are ordered by the same `seq`, from the same ledger, with no\nsecond clock to reconcile. `turns_taken` is written into the detail\nbeside them because `turn_number` counts rounds of the table rather than\nplayer-turns - see `records.require_plan`.\n\nAuthorised on the seat's own uid, carried in the body: a plan is hidden\ninformation about how a seat means to play, so nobody may write one into\nanother seat's name. An unrecognised uid, or one that opens a different\nseat, is a 404 - the same answer every other seat-scoped route gives,\nand one that does not confirm which uids exist.\n\nNothing stops a human seat declaring a plan; the gate only *requires* one\nof an agent seat (`records.require_plan`).\n\n**`for_turn: \"next\"` plans ahead** (`schemas.DeclarePlanIn.for_turn`):\ncalled while it is NOT this seat's own turn, the row is written against\nthe turn `records.next_own_turn` computes - this seat's own next turn,\nCR 500.7 extra turns skipped over exactly as a real game would skip\nthem - rather than the turn under way right now. `declared_turns_taken`\nrecords what `turns_taken` stood at the moment of declaring, beside the\n`turns_taken` the row is actually filed under, so the ledger shows both\nwithout ambiguity. `for_turn: \"next\"` while this seat's own turn is\nalready in progress is refused - `records.OwnTurnInProgress`, 409.",
+        "description": "Declare, before acting, how this seat reads the turn it is about to\ntake: what it sees, its own role in the matchup, what it intends to do,\nand what it expects the opponent to do and why (`schemas.DeclarePlanIn`).\n\n**This mutates no `Game`.** It calls `audit.record` and nothing else - no\n`store.replace`, no compare-and-swap, no version bump - because a\ndeclaration is a statement *about* the game rather than a move in it. A\nroute that quietly committed one would make every plan something the\nopponent's client has to notice, and would put a CAS conflict in the way\nof an agent that is only trying to think out loud.\n\n`audit.record` stamps the game's own turn and step from the live game\n(its own docstring), and that stamping is what makes the post-game\npairing in `review.py` possible: the declaration and the opponent's\nlater rows are ordered by the same `seq`, from the same ledger, with no\nsecond clock to reconcile. `turns_taken` is written into the detail\nbeside them because `turn_number` counts rounds of the table rather than\nplayer-turns - see `records.require_plan`.\n\nAuthorised on the seat's own uid, carried in the body: a plan is hidden\ninformation about how a seat means to play, so nobody may write one into\nanother seat's name. An unrecognised uid, or one that opens a different\nseat, is a 404 - the same answer every other seat-scoped route gives,\nand one that does not confirm which uids exist.\n\nNothing stops a human seat declaring a plan; the gate only *requires* one\nof an agent seat (`records.require_plan`).\n\n**`for_turn: \"next\"` plans ahead** (`schemas.DeclarePlanIn.for_turn`):\ncalled while it is NOT this seat's own turn, the row is written against\nthe turn `records.next_own_turn` computes - this seat's own next turn,\nCR 500.7 extra turns skipped over exactly as a real game would skip\nthem - rather than the turn under way right now. `declared_turns_taken`\nrecords what `turns_taken` stood at the moment of declaring, beside the\n`turns_taken` the row is actually filed under, so the ledger shows both\nwithout ambiguity. `for_turn: \"next\"` while this seat's own turn is\nalready in progress is refused - `records.OwnTurnInProgress`, 409.\n\n**F3: three ways to make this cheaper to write, none of them touching\n`prediction`.** `records.latest_declaration` is this seat's own most\nrecent row, read once and reused for all three:\n\n- `board_read` left off fills `board_read_auto` in instead -\n  `playscripts.decision_dsl.compact_board` of this seat's own redacted\n  view at this exact moment (`visibility.redact_view`, the same\n  function `review.py` itself reads a board through), objective and\n  free to produce.\n- `my_role` left off carries the seat's last declared role forward\n  (`my_role_carried: true` on the row) - refused, `records.MissingRole`\n  (422), on this seat's very first declaration, which has nothing to\n  carry.\n- `reuse_previous: true` (with `still_because`) copies `plan` and\n  `prediction` forward from that same latest declaration verbatim,\n  marking the row `reused_from_seq` - refused, `records.\n  NoPriorDeclaration` (422), with nothing to copy from.",
         "operationId": "declare_plan_api_games__game_id__plan_post",
         "parameters": [
           {

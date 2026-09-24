@@ -225,6 +225,67 @@ def test_a_finished_games_review_pairs_the_prediction_with_the_outcome(
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
+def test_declarations_show_auto_board_carried_role_and_reused_plan_honestly(
+    client: TestClient,
+) -> None:
+    """F3: `_declarations` must not hide that a row's board was auto-
+    generated, its role carried, or its plan/prediction reused - a review
+    that quietly presented those as freshly-written prose would be the
+    review lying about what evidence it actually has."""
+    info = _agent_game(client, active="bob")
+    game_id = info["game_id"]
+    try:
+        first = client.post(
+            f"/api/games/{game_id}/plan",
+            json={"player": "bob", "uid": info["seat_uids"]["bob"], **PLAN},
+        )
+        assert first.status_code == 200, first.text
+
+        second = client.post(
+            f"/api/games/{game_id}/plan",
+            json={
+                "player": "bob",
+                "uid": info["seat_uids"]["bob"],
+                "plan": "hold everything back",
+                "prediction": PLAN["prediction"],
+            },
+        )
+        assert second.status_code == 200, second.text
+
+        third = client.post(
+            f"/api/games/{game_id}/plan",
+            json={
+                "player": "bob",
+                "uid": info["seat_uids"]["bob"],
+                "reuse_previous": True,
+                "still_because": "nothing changed",
+            },
+        )
+        assert third.status_code == 200, third.text
+
+        entries = audit.entries(game_id)
+        declarations = review._declarations(entries)
+        assert len(declarations) == 3
+
+        fresh_row, auto_row, reused_row = declarations
+
+        assert fresh_row["board_read"] == PLAN["board_read"]
+        assert not fresh_row.get("board_read_auto")
+        assert not fresh_row.get("my_role_carried")
+        assert not fresh_row.get("reused_from_seq")
+
+        assert not auto_row.get("board_read")
+        assert isinstance(auto_row.get("board_read_auto"), dict)
+        assert auto_row["my_role"] == PLAN["my_role"]
+        assert auto_row.get("my_role_carried") is True
+
+        assert reused_row["plan"] == "hold everything back"
+        assert reused_row.get("reused_from_seq") == second.json()["log_seq"]
+        assert reused_row.get("still_because") == "nothing changed"
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
 def test_the_review_carries_the_whole_ledger_with_its_snapshots(client: TestClient) -> None:
     """Every `records` row already carries a full-information snapshot
     (`audit.record` writes `serialize.snapshot` on all of them), so the

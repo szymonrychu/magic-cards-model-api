@@ -171,7 +171,13 @@ What that means concretely, for the five commands you will be tempted to run
   and - for every action that targets - that action's legal target candidates
   per slot under `targets.slots[].candidates`, each candidate a plain string
   whose leading id is exactly what `--target` takes back. Choosing what to do
-  and issuing it both come off that one answer.
+  and issuing it both come off that one answer. `available_actions.not_now`
+  is the companion list, next to it: a card whose only problem is timing -
+  Ocelot Pride sitting in hand with something already on the stack - listed
+  with `castable_now: "no"`, `why_not` (the engine's own reason, the same
+  kind of thing `affordable: "no"` already tells you about an unpayable
+  cast), and `rule`. Never treat one of these as legal - it is not in
+  `actions`, and nothing else on this list reads it either.
 - **Do NOT run `log`.** `recent_log` rides every one of those answers: the
   tail of what both seats have actually done, allowed and refused, in the
   game's own words, with `omitted` saying how many entries fell off the front
@@ -760,21 +766,33 @@ to play your own next turn only once a wait has come back because your
 opponent is the one still deciding - that is, once you do NOT hold priority,
 never while you do. The one thing that is not "nothing to do" is a response
 you are actually weighing: hold priority for that, decide it, then act or
-pass, before you turn to next turn's plan. Leaving `--for-turn` at its
-default `current` still works for the turn already in front of you, if you
-did not plan ahead for it:
+pass, before you turn to next turn's plan.
 
-    ... plan --board-read "..." --my-role "..." --plan "..." \
-        --expecting "..." --because "..." --confidence medium --for-turn next
+Default to `--for-turn next`, during your opponent's turn: that keeps your
+own turn's declaration off its critical path entirely. Leaving `--for-turn`
+at its default `current` still works for the turn already in front of you,
+if you did not plan ahead for it:
 
-- `--board-read`: what you actually see on the board right now, in your own
-  words.
-- `--my-role`: your role in this matchup - beatdown or control, what your
-  deck is trying to do, what losing looks like.
-- `--plan`: what you intend to do this turn, and why that follows from the
-  two above.
+    ... plan --for-turn next --plan "..." --expecting "..." --because "..."
+
+One short sentence per field - this is not a place to write more:
+
+- `--board-read`: only worth giving when the engine's own compact board
+  (what you get for free by leaving this out) would miss something that
+  matters.
+- `--my-role`: your role in this matchup, in one line. Required on your
+  first declaration this game; left off after that, your last one carries
+  forward.
+- `--plan`: what you intend to do this turn, and why.
 - `--expecting` / `--because` / `--confidence` (`low`/`medium`/`high`): what
-  you expect your opponent to do in response, and the read that supports it.
+  you expect your opponent to do, and the read behind it - the field a human
+  actually checks against what happened, and the one that never gets a
+  shortcut.
+
+Reuse when the plan still holds: `--reuse-previous` plus one line in
+`--still-because` copies your last plan/prediction forward unchanged,
+instead of asking you to restate them - use it whenever nothing about your
+read has actually changed.
 
 Called once per turn: `--for-turn next` while your own turn is already under
 way is refused. A second declaration for the same turn is not refused -

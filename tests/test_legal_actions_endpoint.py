@@ -149,6 +149,124 @@ def test_a_pending_decision_narrows_the_pool_to_its_own_answers_for_the_player_i
     assert bob_actions == [], "nothing else is legal while alice's own decision stands"
 
 
+# ---------------------------------------------------------------------------
+# F1: `not_now` - casts blocked only on timing/prohibition, engine
+# `machines.legal_actions.blocked_casts` (FB3), never in `actions`.
+# ---------------------------------------------------------------------------
+
+
+def not_now(client, game_id: str, player: str = "alice", **params) -> list[dict]:
+    response = client.get(
+        f"/api/games/{game_id}/legal-actions",
+        params={"player": player, "uid": seat_uid(game_id, player), **params},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["not_now"]
+
+
+def _stack_a_bolt(client, game_id: str, player: str = "alice") -> None:
+    """Puts a real object on the stack in `player`'s own precombat main
+    phase - a cast Lightning Bolt, still unresolved, so CR 117.1a's "stack
+    empty" half of sorcery-speed timing genuinely fails."""
+    add_card(client, game_id, "Mountain", player, "battlefield")
+    add_card(client, game_id, "Lightning Bolt", player, "hand")
+    board = state(client, game_id)
+    bolt = find(board["hands"][player], "Lightning Bolt")
+    mountain = find(board["battlefield"], "Mountain")
+    cast = client.post(
+        f"/api/games/{game_id}/actions/cast",
+        json={
+            "player": player,
+            "card_id": bolt["id"],
+            "targets": ["bob"],
+            "mana_sources": [mountain["id"]],
+        },
+    )
+    assert cast.status_code == 200, cast.text
+    assert cast.json()["allowed"] is True, cast.text
+
+
+def test_a_timing_locked_creature_shows_up_in_not_now_with_the_engines_reason(client, game):
+    _stack_a_bolt(client, game)
+    add_card(client, game, "Ocelot Pride", "alice", "hand")
+    ocelot = find(state(client, game)["hands"]["alice"], "Ocelot Pride")
+
+    blocked = [row for row in not_now(client, game) if row["card_id"] == ocelot["id"]]
+    assert len(blocked) == 1, not_now(client, game)
+    row = blocked[0]
+    assert row["name"] == "Ocelot Pride"
+    assert row["rule"] == "117.1a"
+    assert "stack" in row["reason"] and "main phase" in row["reason"]
+
+    cast_rows = [
+        a for a in by_kind(legal_actions(client, game), "cast") if a["card_id"] == ocelot["id"]
+    ]
+    assert cast_rows == [], "a blocked cast must never also appear in actions"
+
+
+def test_an_empty_stack_moves_the_card_from_not_now_to_actions(client, game):
+    add_card(client, game, "Ocelot Pride", "alice", "hand")
+    ocelot = find(state(client, game)["hands"]["alice"], "Ocelot Pride")
+
+    blocked = [row for row in not_now(client, game) if row["card_id"] == ocelot["id"]]
+    assert blocked == [], "an empty stack in the main phase is not a timing block"
+
+    cast_rows = [
+        a for a in by_kind(legal_actions(client, game), "cast") if a["card_id"] == ocelot["id"]
+    ]
+    assert len(cast_rows) == 1, "the same card is legal to cast once the stack is empty"
+
+
+def test_not_now_is_empty_while_a_decision_is_pending(client, game):
+    stuff_hand(client, game, "alice", 8)
+    client.put(f"/api/games/{game}/step", json={"step": "end_step", "player": "alice"})
+    paused = advance_into_cleanup(game)
+    assert paused is not None
+    assert paused["pending_decision"]["kind"] == "choose_cards"
+
+    assert not_now(client, game, player="alice") == []
+
+
+def test_the_opponents_uid_cannot_read_another_seats_not_now(client, game):
+    """Same guarded route, same refusal `actions` already gets - `not_now`
+    rides along on the identical viewer check, never a second gate that
+    could drift from it."""
+    add_card(client, game, "Ocelot Pride", "bob", "hand")
+    secrets = hidden_card_names(client, game)
+    assert secrets, "bob's hand must carry something hidden"
+
+    response = ask(client, game, "bob", uid=seat_uid(game, "alice"))
+    assert response.status_code == 400, response.text
+    assert "Ocelot Pride" not in response.text
+
+
+def test_legal_actions_before_is_unaffected_by_not_now(client, game, admin_key):
+    """The audit-row enumeration (`records.legal_actions_before`, read back
+    as the row's own `legal_actions_before` key on every mutating row) is
+    built by `action_rows.legal_action_rows` alone, never touched by this
+    task - confirmed here rather than merely assumed, since a silent
+    `not_now` leak into that structure would quietly change what every
+    existing ledger row means."""
+    _stack_a_bolt(client, game)
+    add_card(client, game, "Ocelot Pride", "alice", "hand")
+
+    response = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    assert response.status_code == 200, response.text
+
+    log = client.get(f"/api/games/{game}/log", params={"uid": admin_key}).json()["log"]
+    passes = [
+        e
+        for e in log
+        if e["action"] == "pass_priority" and e["detail"].get("player") == "alice"
+    ]
+    assert passes
+    entry = passes[-1]
+    assert entry["legal_actions_before"] is not None
+    assert isinstance(entry["legal_actions_before"], list)
+    assert "not_now" not in entry
+    assert all("card_id" in row for row in entry["legal_actions_before"])
+
+
 def test_unknown_affordability_reaches_the_seat_through_available_actions(
     client, game, monkeypatch
 ):

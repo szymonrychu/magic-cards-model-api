@@ -36,8 +36,11 @@ That answer carries three things and not one, because a seat needs all three
 after every move and used to spend a round trip - and so a whole inference
 cycle, which is what a seat's turn latency is actually made of - on each:
 `state` (the board it left behind), `available_actions` (what is legal in it,
-the engine's own enumeration) and `recent_log` (the tail of what has actually
-happened, both seats, allowed and refused). `battlefield_state` and
+the engine's own enumeration - plus its own `not_now`, every cast blocked
+only on timing or a prohibition, `castable_now: "no"` and the engine's own
+reason, kept apart from the legal list so nothing here ever treats one as
+legal) and `recent_log` (the tail of what has actually happened, both seats,
+allowed and refused). `battlefield_state` and
 `wait_for_priority` carry `recent_log` too. The pair this closes is the one
 the driver prompt used to spell out in as many words - "read `my_state`, read
 `game_log`", `my_state` being what `battlefield_state` was called then - and
@@ -589,10 +592,39 @@ def _spend_pays_with_budget(actions: list[Any]) -> list[Any]:
     return budgeted
 
 
+def _compact_not_now_row(row: Any) -> Any:
+    """One `not_now` entry (`schemas.BlockedCastView`), rendered for a seat:
+    `castable_now: "no"` and `why_not` (the engine's own refusal, verbatim)
+    stand in the same place `affordable`/`unaffordable_reason` stand on an
+    ordinary action row, so a reader learns why without learning two
+    vocabularies - but the key name itself (`castable_now`, never
+    `affordable`) is what keeps a tool that merely greps for `affordable`
+    from mistaking this for a legal row it could act on."""
+    if not isinstance(row, dict):
+        return row
+    return _without_empty(
+        {
+            "card_id": row.get("card_id"),
+            "name": row.get("name"),
+            "zone": row.get("zone"),
+            "spell_face": row.get("spell_face"),
+            "castable_now": "no",
+            "why_not": row.get("reason"),
+            "rule": row.get("rule"),
+        }
+    )
+
+
 def _compact_actions(available: Any) -> Any:
     """`available_actions` with each action entry stripped to what it says,
     its target candidates trimmed to what the answer can afford, and its
-    `pays_with` entries trimmed to what a separate, smaller budget affords."""
+    `pays_with` entries trimmed to what a separate, smaller budget affords.
+
+    F1: `not_now` rows are rendered too (`_compact_not_now_row`), kept in
+    their own list beside `actions` rather than folded into it - `_without_
+    empty` above has already dropped the key outright when the list came in
+    empty, the common case, so there is nothing here to render most of the
+    time."""
     if not isinstance(available, dict):
         return available
     compacted = _without_empty(available)
@@ -606,6 +638,9 @@ def _compact_actions(available: Any) -> Any:
                 ]
             )
         )
+    not_now = compacted.get("not_now")
+    if isinstance(not_now, list):
+        compacted["not_now"] = [_compact_not_now_row(row) for row in not_now]
     return compacted
 
 
@@ -2889,13 +2924,15 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
     @_guarded(seats)
     def declare_plan(
         player_uid: str,
-        board_read: str,
-        my_role: str,
-        plan: str,
-        expecting: str,
-        because: str,
+        board_read: str = "",
+        my_role: str = "",
+        plan: str = "",
+        expecting: str = "",
+        because: str = "",
         confidence: str = "medium",
         for_turn: str = "current",
+        reuse_previous: bool = False,
+        still_because: str = "",
     ) -> str:
         """Declare, before you act, how you read the turn you are about to
         take (`POST .../plan`). Call this once at the top of every one of
@@ -2903,53 +2940,62 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         first mutating action of its own turn is refused - 422, naming
         `plan` - until this has been called for that turn.
 
-        `board_read`: what you actually see on the board right now, in your
-        own words. `my_role`: your role in this matchup - beatdown or
-        control, what your deck is trying to do, what losing looks like.
-        `plan`: what you intend to do this turn, and why that follows from
-        the two above. `expecting`/`because`/`confidence`
-        (`"low"`/`"medium"`/`"high"`, default `"medium"`): what you expect
-        your opponent to do in response, and the read that supports it - the
-        part that makes this evidence rather than commentary.
+        Pass first, plan second: if you hold priority and have nothing you
+        want to do, pass (or `pass_until`) before you call this - CR 117.4
+        will not resolve anything and the turn will not move for as long as
+        you hold priority, so composing a plan while you hold it is a stall.
+        Default to calling this with `for_turn="next"` **during your
+        opponent's turn**, once you do not hold priority yourself - that
+        puts your own-turn declaration off the critical path of your own
+        turn entirely. Reach for the plain call, on your own turn, only when
+        you skipped the chance to plan ahead.
 
-        `for_turn` (`"current"`, the default, or `"next"`): plan ahead, but
-        pass first. If you hold priority and have nothing you want to do,
-        pass (or `pass_until`) before reaching for this - holding priority
-        to compose a plan costs your opponent real time, same as any other
-        idle hold. Call this with `for_turn="next"` only once a wait has
-        come back because your OPPONENT is the one still deciding, that is,
-        once you do NOT hold priority, to declare for your own next turn.
-        The one thing that is not "nothing to do" is a response you are
-        actually weighing: decide that first, then act or pass, before you
-        plan next turn. Called with `for_turn="next"` while your own turn is
-        already under way, this is refused (409, `own_turn_in_progress`):
-        declare once per turn, and use the default `"current"` for the turn
-        already in front of you.
+        One short sentence per field is enough - this is not a place to
+        write more:
 
-        This is written to an append-only ledger before your opponent's next
-        move, and cannot be edited afterward to fit whatever they actually
-        did. After the game, a human reads it next to what your opponent
-        actually did - you are not scored, there is no grade, and nothing
-        here is graded against you. The only thing that makes it worth
-        reading is that it is honest: state the concrete call you actually
-        expect, not one vague enough to never be wrong. A prediction that
-        cannot be wrong proves nothing either way; an honest wrong read is
-        worth far more than a hedge.
+        - `board_read`: what matters on the board right now, if anything the
+          engine's own compact board (which you get for free when you leave
+          this blank) would not show a reader.
+        - `my_role`: your role in this matchup, in one line. Give it again
+          only when it changed; leave it blank otherwise and your last one
+          carries forward.
+        - `plan`: what you intend to do this turn, and why.
+        - `expecting`/`because`/`confidence` (`"low"`/`"medium"`/`"high"`,
+          default `"medium"`): what you expect your opponent to do, and the
+          read behind it - the one field that is always worth writing fresh,
+          because it is the part a human checks against what actually
+          happened.
 
-        Mutates no `Game` and never blocks. Every field but `for_turn` is
-        required and stripped of surrounding whitespace - blank is refused
-        the same as missing."""
+        **Reuse when the plan still holds.** `reuse_previous=True` plus one
+        line in `still_because` copies your last `plan`/`prediction` forward
+        unchanged instead of asking you to restate them - use it whenever
+        nothing about your read has actually changed since your last
+        declaration. Refused (422) if you have no earlier declaration this
+        game yet.
+
+        `for_turn` (`"current"`, the default, or `"next"`): called with
+        `for_turn="next"` while your own turn is already under way, this is
+        refused (409, `own_turn_in_progress`) - declare once per turn.
+
+        Mutates no `Game` and never blocks. `board_read`, `my_role`,
+        `plan`, and `expecting`/`because` given together are stripped of
+        surrounding whitespace and refused if blank; `plan` and
+        `expecting`/`because` are required unless `reuse_previous` supplies
+        them, and `my_role` is required only on your first declaration this
+        game."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
         result = seat.declare_plan(
-            board_read=board_read,
-            my_role=my_role,
-            plan=plan,
-            expecting=expecting,
-            because=because,
+            board_read=board_read or None,
+            my_role=my_role or None,
+            plan=plan or None,
+            expecting=expecting or None,
+            because=because or None,
             confidence=confidence,
             for_turn=for_turn,
+            reuse_previous=reuse_previous,
+            still_because=still_because or None,
         )
         return json.dumps(result, indent=1, sort_keys=True)
 
