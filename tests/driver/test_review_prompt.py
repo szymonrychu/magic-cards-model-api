@@ -775,17 +775,21 @@ def _seq_all(entries: list[dict]) -> list[dict]:
     return entries
 
 
-def test_the_review_prompt_states_all_three_write_bars() -> None:
+def test_the_review_prompt_states_both_write_bars() -> None:
+    """DR4: the old three bars (TIGHTEN A CONDITION / NEW MOVE-BEARING PLAY /
+    NEW ADVICE-ONLY PLAY) collapsed into two - one generalized play per
+    seat decision (merged/deduped, a single decline enough to refine it),
+    and the unchanged advice-only bar."""
     text = _flat(review_prompt(_assignment(), "r", _record()))
-    assert "TIGHTEN A CONDITION" in text
-    assert "at least 2 declines of" in text
-    assert "1 decline" in text and "2 distinct games" in text
-    assert "names a board fact a condition can express" in text
+    assert "SUBMIT ONE GENERALIZED PLAY PER DECISION" in text
+    assert "merged into the deck's existing corpus" in text
+    assert "ONE write, deduplicated" in text
+    assert "A DECLINE REFINES THE DECLINED PLAY ON ITS OWN" in text
+    assert "one decline, in this one game, is evidence enough" in text
+    assert "must name a board fact a condition can express" in text
     assert "never a priority nudge" in text
-
-    assert "NEW MOVE-BEARING PLAY" in text
-    assert "declined" in text and "twice" in text
-    assert "at most ONE new play per deck" in text
+    assert "at least 2 declines of" not in text
+    assert "at most ONE new play per deck" not in text
 
     assert "NEW ADVICE-ONLY PLAY" in text
     assert "one game" in text
@@ -817,7 +821,7 @@ def test_the_review_prompt_cites_the_format_spec_for_dsl_expressibility() -> Non
 def test_the_write_bars_section_sits_after_the_untrusted_game_record() -> None:
     text = review_prompt(_assignment(), "r", _record())
     end = next(line for line in text.splitlines() if line.startswith("=== END GAME RECORD"))
-    assert text.index("TIGHTEN A CONDITION") > text.index(end)
+    assert text.index("SUBMIT ONE GENERALIZED PLAY PER DECISION") > text.index(end)
 
 
 def test_the_offer_table_is_interpolated_into_the_prompt() -> None:
@@ -895,7 +899,6 @@ def test_the_review_prompt_states_the_guides_propose_scope() -> None:
     assert "straight to mtg-decks main" in text
     assert "pull request" not in text
     assert "awaiting_owner_review" not in text
-    assert "by hand" not in text
 
 
 def test_the_review_prompt_states_the_plays_admit_scope() -> None:
@@ -1102,10 +1105,28 @@ def test_a_review_without_evidence_says_none_was_read() -> None:
 
 
 def test_the_review_prompt_states_no_play_count_cap() -> None:
-    # DR5 removed the play-count caps outright (owner, 2026-09-24).
+    """DR5 removed the deck-wide play-count caps (MAX_PLAYS/MAX_ADVICE/
+    MAX_ACTIVE_PER_ARCHETYPE) outright, and DR4 removed the "<=1 new
+    move-bearing play per review" bar on top - neither belongs in the
+    prompt any more. The per-play structural caps (prefer selectors,
+    conditions, moves, steps) are a different, unrelated limit that DR4
+    keeps and states verbatim, quoted from the lint constants, with
+    retire-by-deletion as the at-cap path (owner, 2026-09-24)."""
     text = _flat(review_prompt(_assignment(), "r", _record()))
-    assert "retire-by-deletion" not in text
-    assert "at the cap of" not in text
+    assert "at most ONE new play per deck" not in text
+    assert "at least 2 declines of" not in text
+
+    from magic_cards_model_api.playscripts.schema import (
+        MAX_CONDITIONS,
+        MAX_MOVES,
+        MAX_PREFER,
+        MAX_STEPS,
+    )
+
+    assert f"at most {MAX_PREFER} `prefer` selectors" in text
+    assert f"{MAX_CONDITIONS} conditions" in text
+    assert f"{MAX_MOVES} moves and {MAX_STEPS} steps per play" in text
+    assert "retire-by-deletion" in text
 
 
 def test_a_worst_case_prompt_with_full_evidence_still_stays_under_the_ceiling() -> None:
