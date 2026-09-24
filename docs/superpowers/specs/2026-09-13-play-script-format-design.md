@@ -572,41 +572,51 @@ DSL had no way to say at all before `note` and an empty `moves` landed
 written, its `intent`) is the whole of what it has to say - naming one
 "hold up Fatal Push for their Tarmogoyf" *is* the play.
 
-An advice-only play is outside `too-many-active-for-archetype`'s
-live-together count and outside the `play-conflict`/`next-conflict` proofs
-by construction, not by an exemption layered on top of them: every one of
-those is a proof about what can *commit* at one decision point, and a play
-with no moves has no move to commit, so there is nothing about it for the
-proof to be. `lint._advice_only` docs draws the same line - an advice-only
-play never reaches `active`, priority or not, because the proofs' own
-dimensions (`whose_turn`, `steps`, `opposing_archetypes`, `stack`, `input`,
-`true_false`, `numeric_range`) are never asked about it in the first place,
-not because a carve-out excuses it after the fact.
+An advice-only play is outside the `play-conflict`/`next-conflict` proofs
+by construction, not by an exemption layered on top of them (the
+now-removed `too-many-active-for-archetype` cap drew the same line over its
+own live-together count while it existed): every one of those is a proof
+about what can *commit* at one decision point, and a play with no moves has
+no move to commit, so there is nothing about it for the proof to be.
+`lint._advice_only` docs draws the same line - an advice-only play is never
+one half of a play-conflict or a next-conflict entry, priority or not,
+because the proofs' own dimensions (`whose_turn`, `steps`,
+`opposing_archetypes`, `stack`, `input`, `true_false`, `numeric_range`) are
+never asked about it in the first place, not because a carve-out excuses it
+after the fact.
 
-### The two play caps
+### No play-count cap
 
-`too-many-plays` counts move-bearing plays only: at most 16 per deck. A play
-whose `moves` is empty or absent (advice-only) is never counted toward it.
-`too-many-advice` counts exactly what `too-many-plays` leaves out: at most 6
-advice-only plays per deck, counted and capped separately, reported against
-the same `plays/` directory path `too-many-plays` uses.
-`too-many-active-for-archetype` (O8) skips advice-only plays the same way:
-its own 6-play live-together cap over priority > 0 plays never adds an
-advice-only play to an archetype's `active` set - see "Advice-only plays"
-above for why.
+`too-many-plays` (move-bearing plays), `too-many-advice` (advice-only
+plays) and `too-many-active-for-archetype` (O8, priority > 0 plays live
+together per archetype key) are removed outright, not raised (owner,
+2026-09-24): a deck may carry any number of plays of each kind. Per-decision
+review submission (see "The review loop" below) means every reviewed game
+can propose a refined play, a new play or a re-prioritized play for each
+decision the seat made - a fixed per-deck ceiling on move-bearing,
+advice-only or live-together plays would only cap how much of a game's
+decisions review can actually land.
 
-A deck already at the `too-many-plays` cap retires a play by deleting its
-file (`git rm decks/<deck>/plays/<id>.json`) rather than lowering its
-priority to zero - a disabled play still counts toward the cap, it only
-stops counting toward `too-many-active-for-archetype`. `plays admit` takes a
-retirement and an addition in the same call: it commits the working tree as
-it stands, so a deck that deletes one play and adds another nets no change
-in the move-bearing count and is admitted at the cap, not just below it. The
-conflict ratchet (`_ratchet`) diffs the deck's warnings before and after the
-change by rebuilding the corpus at each of `origin/main` and the new commit,
-so a `play-conflict` or `next-conflict` tied only to the retired play is
-simply absent from the "after" side - it is read as a conflict that vanished,
-never as a new one to refuse.
+What `check_deck` still proves, in bounded time regardless of play count, is
+pairwise non-overlap: `exclusivity` and `_conflict_warnings` compare every
+pair of enabled (`priority > 0`), move-bearing plays and warn
+(`play-conflict`, never failing the gate) when neither can be proven
+exclusive by `whose_turn`, `steps`, `opposing_archetypes`, `stack`, `input`,
+`true_false` or `numeric_range` - an O(n^2) pass over the deck's enabled
+plays, never the exponential live-together search the old per-archetype cap
+used to gate against (`_max_live_together`, Bron-Kerbosch without a pivot,
+removed along with the cap it bounded). A deck of 60 move-bearing plays (30
+of them sharing one archetype key), 20 advice-only plays, all pairwise
+non-conflicting, still clears `check_deck` well under 3 seconds.
+
+`plays admit` still takes a retirement and an addition in the same call: it
+commits the working tree as it stands, so a deck that deletes one play and
+adds another lands both in one push. The conflict ratchet (`_ratchet`) diffs
+the deck's warnings before and after the change by rebuilding the corpus at
+each of `origin/main` and the new commit, so a `play-conflict` or
+`next-conflict` tied only to the retired play is simply absent from the
+"after" side - it is read as a conflict that vanished, never as a new one to
+refuse.
 
 ### `advice-only-chained`
 
@@ -777,6 +787,38 @@ and pushes `HEAD:main`, never forced. After three lost races the result is
 `error` with `retryable: true` and the edit left uncommitted on the newest
 upstream. `mcp-seat plays admit` ends the same way after three races; it no
 longer falls back to anything else.
+
+## The review loop
+
+Per-decision review submission (owner, 2026-09-24): the handover turn walks
+every decision the seat made that game and proposes a play for it -
+refining a script it ran, drafting a new one for a line it played by hand,
+or recording why no change is due (`mcp-seat plays no-change`) - merged and
+deduped into the deck's existing plays rather than kept one-to-one with the
+game's decisions. This is what made the play-count caps above a liability
+rather than a backstop, and is why they are removed rather than raised.
+
+**Denied means declined.** The runtime has no "deny" action:
+`playscripts.report` pairs each offer with the seat's next committing
+action into `taken`, `passed_over`, `declined` or `offered` (no commitment
+yet). A `declined` offer is what "denied" means in review. When a play is
+declined, the review must refine it - narrow or extend its conditions, and,
+if the offer really was wrong for that board, add a new or adjusted play
+for what should have happened instead - and then adjust both the old and
+the new/refined play so their conditions cannot both hold at once. The
+play-conflict exclusivity proof (`lint.exclusivity`, `_conflict_warnings`)
+is the check: an admit that leaves the pair overlapping fails the conflict
+ratchet (`_ratchet`, `conflict_regression`) the same as any other new
+conflict.
+
+**A corner case is described, never turned down.** An offered play whose
+conditions hold may not be declined on corner-case grounds - the seat takes
+it, plays it out, and in review describes the corner case as a precise
+condition that splits the play into two, one for the common case and one
+for the corner, each narrowed until their conditions cannot both hold.
+There is no probability or frequency field anywhere in the schema
+(`priority` is ordinal, not a weight) for exactly this reason: a corner
+case is named by a condition, never discounted by a likelihood.
 
 ## Migration: `note` becomes required later
 

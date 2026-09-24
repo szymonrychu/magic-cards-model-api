@@ -32,7 +32,7 @@ from guides_git_testkit import (
 )
 from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG, play
 
-from magic_cards_model_api.playscripts.lint import MAX_PLAYS, check_report
+from magic_cards_model_api.playscripts.lint import check_report
 
 SHOCK = f"decks/{SLUG}/plays/fetch-untapped-shock.json"
 SURVEIL = f"decks/{SLUG}/plays/fetch-surveil-land.json"
@@ -474,15 +474,17 @@ def test_resolving_a_conflict_by_extending_a_condition_is_admitted(capsys, tmp_p
 # -- retire-and-add in one admit, at the cap (A4) ----------------------------
 
 
-def test_retire_and_add_at_the_cap_is_admitted(capsys, tmp_path, isolated):
-    """A deck already at MAX_PLAYS whose working tree deletes one play and
-    adds another nets no change in count and is admitted. The deleted play
-    (`p0`) carries a pre-existing play-conflict with `p1`; that warning must
-    vanish once `p0` is gone, never be counted as a newly introduced one."""
+def test_retire_and_add_in_one_admit_is_admitted(capsys, tmp_path, isolated):
+    """A working tree that deletes one play and adds another in the same
+    admit lands both in one push. The deleted play (`p0`) carries a
+    pre-existing play-conflict with `p1`; that warning must vanish once `p0`
+    is gone, never be counted as a newly introduced one. The play-count caps
+    (`too-many-plays` et al.) are removed (owner, 2026-09-24), so a deck's
+    play count is no longer a reason to retire before adding - this test
+    keeps a modest filler count only to exercise the retire-and-add path."""
     conflicting = play(id="p0"), play(id="p1")
-    filler = tuple(play(id=f"p{i}", priority=0) for i in range(2, MAX_PLAYS))
+    filler = tuple(play(id=f"p{i}", priority=0) for i in range(2, 16))
     plays = (*conflicting, *filler)
-    assert len(plays) == MAX_PLAYS
     bare = seed_guides(tmp_path, plays)
     before = conflicts_on_main(bare, tmp_path, "before")
     assert before == [("play-conflict", ["p0", "p1"])]
@@ -494,6 +496,9 @@ def test_retire_and_add_at_the_cap_is_admitted(capsys, tmp_path, isolated):
 
     rc, result, _, _ = admit(capsys, root)
     assert (rc, result["result"]) == (0, "admitted"), result
+    assert result["added"] == ["p-new"]
+    assert result["updated"] == ["p0"]
+    assert result["reprioritized"] == []
 
     tracked = git(bare, "ls-tree", "-r", "--name-only", "main").splitlines()
     assert f"decks/{SLUG}/plays/p0.json" not in tracked
@@ -501,7 +506,7 @@ def test_retire_and_add_at_the_cap_is_admitted(capsys, tmp_path, isolated):
     play_files = [
         p for p in tracked if p.startswith(f"decks/{SLUG}/plays/") and p.endswith(".json")
     ]
-    assert len(play_files) == MAX_PLAYS
+    assert len(play_files) == len(plays)
 
     # The deletion landed in the pushed commit, not merely in the working
     # tree (--no-renames: p0 and p-new are similar enough that git's default
@@ -603,6 +608,98 @@ def test_a_reformatted_play_with_only_its_priority_moved_is_no_dsl_change(capsys
     rc, result, _, _ = admit(capsys, root)
     assert (rc, result["result"]) == (0, "admitted"), result
     assert last_entry(root)["dsl_change"] is False
+
+
+# -- added / updated / reprioritized: `_landing`'s per-play classification --
+
+
+def test_a_new_play_is_classified_as_added(capsys, root):
+    added = copy.deepcopy(FETCH_SURVEIL) | {
+        "id": "fetch-late",
+        "when": {"whose_turn": "theirs", "steps": ["upkeep"], "stack": "empty"},
+    }
+    (root / f"decks/{SLUG}/plays/fetch-late.json").write_text(dump(added), encoding="utf-8")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert result["added"] == ["fetch-late"]
+    assert result["updated"] == []
+    assert result["reprioritized"] == []
+    line = last_entry(root)
+    assert line["added"] == ["fetch-late"]
+    assert line["updated"] == []
+    assert line["reprioritized"] == []
+
+
+def test_a_deleted_play_is_classified_as_updated(capsys, root, bare):
+    git(root, "rm", "-q", SURVEIL)
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert result["updated"] == ["fetch-surveil-land"]
+    assert result["added"] == []
+    assert result["reprioritized"] == []
+    assert last_entry(root)["updated"] == ["fetch-surveil-land"]
+
+
+def test_a_condition_change_is_classified_as_updated_not_reprioritized(capsys, root):
+    doc = read_play(root)
+    doc["priority"] = 62
+    doc["intent"] = "Crack the fetch for the shock only with a two-drop in hand."
+    (root / SHOCK).write_text(dump(doc), encoding="utf-8")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert result["updated"] == ["fetch-untapped-shock"]
+    assert result["added"] == []
+    assert result["reprioritized"] == []
+
+
+def test_a_priority_only_change_is_classified_as_reprioritized(capsys, root):
+    doc = read_play(root)
+    doc["priority"] = 63
+    (root / SHOCK).write_text(dump(doc), encoding="utf-8")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert result["reprioritized"] == ["fetch-untapped-shock"]
+    assert result["added"] == []
+    assert result["updated"] == []
+    line = last_entry(root)
+    assert line["reprioritized"] == ["fetch-untapped-shock"]
+
+
+def test_added_updated_and_reprioritized_are_all_reported_from_one_admit(capsys, root):
+    # priority-only -> reprioritized
+    shock = read_play(root)
+    shock["priority"] = 63
+    (root / SHOCK).write_text(dump(shock), encoding="utf-8")
+    # condition change beyond priority -> updated
+    surveil = read_play(root, SURVEIL)
+    surveil["priority"] = 51
+    surveil["intent"] = "Different plan for this game."
+    (root / SURVEIL).write_text(dump(surveil), encoding="utf-8")
+    # new play -> added
+    new_play = copy.deepcopy(FETCH_SURVEIL) | {
+        "id": "fetch-late",
+        "when": {"whose_turn": "theirs", "steps": ["upkeep"], "stack": "empty"},
+    }
+    (root / f"decks/{SLUG}/plays/fetch-late.json").write_text(dump(new_play), encoding="utf-8")
+
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+    assert result["added"] == ["fetch-late"]
+    assert result["updated"] == ["fetch-surveil-land"]
+    assert result["reprioritized"] == ["fetch-untapped-shock"]
+
+    line = last_entry(root)
+    assert line["added"] == ["fetch-late"]
+    assert line["updated"] == ["fetch-surveil-land"]
+    assert line["reprioritized"] == ["fetch-untapped-shock"]
+
+
+def test_nothing_to_admit_carries_empty_landing_lists(capsys, root):
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (0, "nothing_to_admit")
+    assert (result["added"], result["updated"], result["reprioritized"]) == ([], [], [])
+    line = last_entry(root)
+    assert (line["added"], line["updated"], line["reprioritized"]) == ([], [], [])
 
 
 def test_nothing_to_admit_is_journaled(capsys, root):

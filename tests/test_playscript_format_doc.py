@@ -11,7 +11,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from magic_cards_model_api.playscripts.lint import MAX_ADVICE, MAX_PLAYS
 from magic_cards_model_api.playscripts.runtime import Exit
 from magic_cards_model_api.playscripts.schema import (
     AMOUNT_DECISION_KINDS,
@@ -287,19 +286,21 @@ def test_doc_defines_advice_only_plays() -> None:
     assert "by construction" in section and "not" in section
 
 
-def test_doc_names_the_advice_only_caps() -> None:
+def test_doc_states_the_play_count_caps_are_removed() -> None:
     text = DOC.read_text()
-    assert f"`too-many-plays` {MAX_PLAYS}" in text or f"{MAX_PLAYS}" in text
+    section = text.split("### No play-count cap", 1)[1].split("\n### ", 1)[0]
     for phrase in (
         "`too-many-plays`",
-        f"{MAX_PLAYS}",
         "`too-many-advice`",
-        f"{MAX_ADVICE}",
         "`too-many-active-for-archetype`",
-        "move-bearing",
-        "skips advice-only",
+        "removed",
+        "2026-09-24",
+        "any number of plays",
+        "O(n^2)",
+        "60 move-bearing",
+        "3 seconds",
     ):
-        assert phrase in text
+        assert phrase in section
 
 
 def test_doc_defines_advice_only_chained() -> None:
@@ -320,6 +321,24 @@ def test_doc_states_there_is_no_autofire() -> None:
     ):
         assert phrase in text
     assert "`unknown-field`" in text.split("no autofire", 1)[1].split("\n## ", 1)[0]
+
+
+def test_doc_describes_the_review_loop() -> None:
+    text = DOC.read_text()
+    section = text.split("## The review loop", 1)[1].split("\n## ", 1)[0]
+    for phrase in (
+        "Per-decision review submission",
+        "2026-09-24",
+        "`declined`",
+        "Denied means declined",
+        "corner case",
+        "never turned down",
+        "`lint.exclusivity`",
+        "`_conflict_warnings`",
+        "conflict_regression",
+        "No probability",
+    ):
+        assert phrase in section or phrase.lower() in section.lower()
 
 
 def test_doc_describes_the_note_migration() -> None:

@@ -1494,7 +1494,8 @@ def build_parser() -> argparse.ArgumentParser:
             "commit, rebase, gate and push decks/*/plays/** changes to mtg-decks main; "
             "prints admitted | refused | conflict | gate_failed | conflict_regression | "
             "error (retryable: main moved under 3 pushes, the change is left uncommitted - run "
-            "it again) | nothing_to_admit"
+            "it again) | nothing_to_admit; an admitted or nothing_to_admit result also carries "
+            "added/updated/reprioritized play-id lists (written into the results journal too)"
         ),
     )
     _guides_target(admit, game=True)

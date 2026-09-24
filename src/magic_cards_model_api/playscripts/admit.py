@@ -37,12 +37,13 @@ and not a play (`_play_file` takes `decks/<deck>/plays/<id>.json` only), so
 it is never linted or reprioritised. An admit carrying nothing but evidence
 is `admitted` with `dsl_change: false`.
 
-`admitted` also says what landed: `files`, `dsl_change` - true when a play
-file was added or deleted, or changed beyond its top-level `priority` - and
-`plays`, the same verdict broken out per play file touched (`_landing`),
-which is what lets a per-game reader (`playscripts.stats.game_play_stats`)
-count adds/updates/reprioritizations by play id rather than only know that
-*something* in the admit was or wasn't a DSL change.
+`admitted` also says what landed: `files`, and `dsl_change` - true when a
+play file was added or deleted, or changed beyond its top-level `priority`.
+It also sorts every play path HEAD carries over origin main into `added`
+(a new play file), `updated` (an existing play changed beyond its
+`priority`, or deleted) or `reprioritized` (an existing play whose only
+change is its top-level `priority`) - each a sorted list of play ids
+(`_landing`).
 
 `no-change` changes nothing: it records, for one post-game candidate (a play
 by `--play`, or a hand-played line by `--line`), why it needs no DSL change.
@@ -321,53 +322,57 @@ def _without_priority(text: str | None) -> Any:
     return doc
 
 
-def _landing(git: Git) -> tuple[list[str], bool, list[dict[str, Any]]]:
-    """Every path HEAD carries over origin main, whether any of them is a
-    DSL change (a play file added or deleted, or changed beyond its
-    top-level priority), and, per play file touched, which of the four ways
-    it changed: `plays`, one `{"id": <play id>, "change": ...}` per play
-    file, `change` one of `"added"` (status `A`), `"deleted"` (status `D` -
-    still a DSL change; a caller counting play ids treats it as `"updated"`,
-    same as `stats.game_play_stats` does), `"updated"` (status `M`, and the
-    file differs from upstream beyond its top-level `priority`), or
-    `"reprioritized"` (status `M`, `priority` the only difference). Unlike
-    the old aggregate-only `dsl_change`, this is computed for every play
-    file touched, not just up to the first one that set `dsl_change` true -
-    a caller that wants to know *which* play changed *how* (`stats.
-    game_play_stats`'s `added`/`updated`/`reprioritized`) needs all of them,
-    not only whichever justified the boolean."""
+class _Landing:
+    """Every path HEAD carries over origin main; whether any of them is a
+    DSL change; and each play path's id sorted into `added` (A), `updated`
+    (M with a change beyond priority, or D) or `reprioritized` (M, priority
+    only)."""
+
+    __slots__ = ("files", "dsl_change", "added", "updated", "reprioritized")
+
+    def __init__(self) -> None:
+        self.files: list[str] = []
+        self.dsl_change = False
+        self.added: list[str] = []
+        self.updated: list[str] = []
+        self.reprioritized: list[str] = []
+
+
+def _landing(git: Git) -> _Landing:
     raw = git.out("diff", "--no-renames", "--name-status", "-z", UPSTREAM, "HEAD").split("\0")
-    files: list[str] = []
-    plays: list[dict[str, Any]] = []
-    dsl_change = False
+    landing = _Landing()
     for status, path in zip(raw[0::2], raw[1::2], strict=False):
         if not path:
             continue
-        files.append(path)
+        landing.files.append(path)
         if not _play_file(path):
             continue
         play_id = Path(path).stem
         if status == "A":
-            plays.append({"id": play_id, "change": "added"})
-            dsl_change = True
+            landing.dsl_change = True
+            landing.added.append(play_id)
             continue
         if status == "D":
-            plays.append({"id": play_id, "change": "deleted"})
-            dsl_change = True
+            landing.dsl_change = True
+            landing.updated.append(play_id)
             continue
         try:
             before = _without_priority(git.show(f"{UPSTREAM}:{path}"))
             after = _without_priority(git.show(f"HEAD:{path}"))
         except ValueError:
-            plays.append({"id": play_id, "change": "updated"})
-            dsl_change = True
+            landing.dsl_change = True
+            landing.updated.append(play_id)
             continue
         if before != after:
-            plays.append({"id": play_id, "change": "updated"})
-            dsl_change = True
+            landing.dsl_change = True
+            landing.updated.append(play_id)
         else:
-            plays.append({"id": play_id, "change": "reprioritized"})
-    return sorted(files), dsl_change, plays
+            landing.reprioritized.append(play_id)
+    landing.files.sort()
+    landing.added.sort()
+    landing.updated.sort()
+    landing.reprioritized.sort()
+    return landing
 
 
 def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
@@ -393,7 +398,13 @@ def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
     if not changed and not local:
         _save_deltas(git, {})
         return result(
-            "nothing_to_admit", "no play-script change to admit", dsl_change=False, **picked
+            "nothing_to_admit",
+            "no play-script change to admit",
+            dsl_change=False,
+            added=[],
+            updated=[],
+            reprioritized=[],
+            **picked,
         )
 
     deltas = _sync_deltas(git, sorted(set(changed) | set(local)))
@@ -423,16 +434,18 @@ def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
                 # the agent to fix and admit again as one commit.
                 git.out("reset", "-q", "--soft", "HEAD~1")
             raise
-        files, dsl_change, plays = _landing(git)
+        landing = _landing(git)
         if git.push(f"HEAD:refs/heads/{MAIN}"):
             _save_deltas(git, {})
             return result(
                 "admitted",
                 f"pushed to {MAIN}",
                 sha=git.head(),
-                files=files,
-                dsl_change=dsl_change,
-                plays=plays,
+                files=landing.files,
+                dsl_change=landing.dsl_change,
+                added=landing.added,
+                updated=landing.updated,
+                reprioritized=landing.reprioritized,
                 **picked,
             )
 

@@ -23,21 +23,14 @@ Corpus rules (a deck's plays together), by code:
 - `chain-too-deep`: the longest `next` chain is at most 3 plays, measured with
   every play that can reach itself left out, so a cycle is reported once as
   `next-cycle` and never masks the depth of the rest of the graph.
-- `too-many-plays`: at most 16 *move-bearing* plays per deck (a play whose
-  `moves` is absent or empty is advice-only, per `Play`'s own docstring, and
-  is never counted here - see `too-many-advice`).
-- `too-many-advice`: at most 6 advice-only plays per deck, counted and capped
-  separately from move-bearing ones, reported against the same `plays/`
-  directory path `too-many-plays` uses.
-- `too-many-active-for-archetype` (O8): at most 6 plays that can be *live
-  together* per (deck, archetype key) - the largest subset of the priority
-  > 0 plays applying to that key no two of which are provably exclusive by
-  `whose_turn`, `steps` or turn range (`_max_live_together`), not the plain
-  count of plays that apply. A `*` play counts toward every key. Two groups
-  a deck's own turn-range guards already prove disjoint (an opening's `turn
-  <= 2` against a later play's `turn >= 3`) are never summed together, only
-  the larger of the two compared against the cap. An advice-only play never
-  enters this count, priority or not: see the note on advice-only plays below.
+- Play-count caps (`too-many-plays`, `too-many-advice` and
+  `too-many-active-for-archetype`/O8) are removed (owner, 2026-09-24): a
+  deck may carry any number of move-bearing, advice-only or
+  archetype-active plays. The per-decision review submission (one
+  generalized play per decision the seat made that game, merged into the
+  deck) is what made a fixed ceiling a liability rather than a backstop.
+  What `check_deck` still proves in bounded time regardless of play count
+  is pairwise non-overlap - see "Conflict warnings" below.
 - `advice-only-chained` (F8): an advice-only play's own `next` is non-empty,
   or some play names an advice-only play in its `next` - either way one error
   naming both play ids, since a play with no moves commits nothing and so has
@@ -66,12 +59,13 @@ are prose and may name cards - the exemption is top-level only, so a
 machine-read field nested anywhere below the top level is judged like any
 other, its key coinciding with a prose field's name notwithstanding.
 
-Conflict warnings, too-many-active-for-archetype and advice-only-chained's
-"chained into" half are all proofs about what can *commit* at one decision
-point; a play with no moves commits nothing, so an advice-only play is
-outside each of those proofs by construction, not exempted from them by
-policy. Conflict warnings never fail the gate, and a play with any error reported
-against its own file is left out of them. Two plays are provably exclusive when
+Conflict warnings and advice-only-chained's "chained into" half are both
+proofs about what can *commit* at one decision point; a play with no moves
+commits nothing, so an advice-only play is outside each of those proofs by
+construction, not exempted from them by policy. Conflict warnings never
+fail the gate, are an O(n^2) pass over the deck's enabled, move-bearing
+plays regardless of how many the deck carries, and a play with any error
+reported against its own file is left out of them. Two plays are provably exclusive when
 at least one dimension holds: `whose_turn` (mine vs theirs), `steps`
 (disjoint), `opposing_archetypes` (the archetype sets do not intersect: a
 play's set is its list, every archetype when it holds `*`, narrowed by each of
@@ -140,9 +134,6 @@ EXCLUSIVITY_DIMENSIONS = (
 )
 
 MAX_CHAIN = 3
-MAX_PLAYS = 16
-MAX_ADVICE = 6
-MAX_ACTIVE_PER_ARCHETYPE = 6
 PHRASE_MIN_CARDS = 3
 PROSE_KEYS = ("name", "intent", "note")
 PHRASE_KEYS = ("ability_text_has", "oracle_has")
@@ -218,8 +209,8 @@ def _is_int(value: Any) -> bool:
 def _advice_only(doc: dict[str, Any]) -> bool:
     """A play whose `moves` is absent or empty: it commits nothing to the
     game, so it is outside every proof about what can commit at one decision
-    point (too-many-active-for-archetype, play-conflict, next-conflict) by
-    construction, not by an exemption on top of them."""
+    point (play-conflict, next-conflict) by construction, not by an
+    exemption on top of them."""
     moves = doc.get("moves")
     return not (isinstance(moves, list) and len(moves) > 0)
 
@@ -627,75 +618,6 @@ def exclusivity(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -
     return proven
 
 
-def _turn_range(condition: dict[str, Any], polarity: bool) -> tuple[Any, ...] | None:
-    """The numeric constraint of one `turn` condition alone, a false one
-    negated first - O8's live-together count reads only this, narrower than
-    the general `numeric_range` dimension (`_constraint`), which also covers
-    count/zone_size/life/untapped_mana and int inputs."""
-    if (
-        condition.get("kind") != "turn"
-        or condition.get("op") not in OPS
-        or not _is_int(condition.get("n"))
-    ):
-        return None
-    op = condition["op"] if polarity else NEGATED[condition["op"]]
-    return _ints(op, condition["n"], 0, None)
-
-
-def _turn_ranges(doc: dict[str, Any]) -> list[tuple[Any, ...]]:
-    ranges = []
-    for _, polarity, condition in _placed(doc):
-        found = _turn_range(condition, polarity)
-        if found is not None:
-            ranges.append(found)
-    return ranges
-
-
-def _live_together_exclusive(a: dict[str, Any], b: dict[str, Any]) -> bool:
-    """Provably exclusive by `whose_turn`, `steps` or turn range alone - the
-    three dimensions O8's too-many-active-for-archetype live-together count
-    uses, so plays whose turn windows or steps cannot overlap are never both
-    counted toward the cap. A narrower question than full `exclusivity`:
-    `opposing_archetypes`, `stack`, `input`, `true_false` and the other
-    `numeric_range` keys prove nothing here."""
-    if {_when(a).get("whose_turn"), _when(b).get("whose_turn")} == {"mine", "theirs"}:
-        return True
-    steps_a, steps_b = _string_set(_when(a).get("steps")), _string_set(_when(b).get("steps"))
-    if steps_a and steps_b and not steps_a & steps_b:
-        return True
-    return any(_ints_disjoint(x, y) for x in _turn_ranges(a) for y in _turn_ranges(b))
-
-
-def _max_live_together(plays: list[dict[str, Any]]) -> int:
-    """The largest subset of `plays` no two of which are
-    `_live_together_exclusive`: the count too-many-active-for-archetype
-    compares against the cap, since turn-disjoint or step-disjoint plays can
-    never both be live at one decision point - counting every play that
-    merely applies against a key, the way a plain sum would, over-counts a
-    deck whose openings and their later-turn plays are already provably
-    exclusive. Bron-Kerbosch without a pivot: a deck carries at most
-    `MAX_PLAYS` plays, so the search space is always tiny."""
-    n = len(plays)
-    compatible = [
-        {j for j in range(n) if j != i and not _live_together_exclusive(plays[i], plays[j])}
-        for i in range(n)
-    ]
-    best = 0
-
-    def bronk(size: int, candidates: set[int], excluded: set[int]) -> None:
-        nonlocal best
-        if not candidates and not excluded:
-            best = max(best, size)
-            return
-        for v in list(candidates):
-            bronk(size + 1, candidates & compatible[v], excluded & compatible[v])
-            candidates = candidates - {v}
-            excluded = excluded | {v}
-
-    bronk(0, set(range(n)), set())
-    return best
-
-
 def conflict_dimensions(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -> list[str]:
     """The dimensions two conflicting plays overlap on, for the warning."""
     dimensions = ["whose_turn", "steps", "opposing_archetypes", "stack"]
@@ -877,15 +799,11 @@ def check_deck(
         return errors, [], 0
     if cards is None:
         cards = CardIndex.load(cards_path)
-    plays_rel = _rel(deck / "plays", root)
 
     known_keys = newest_matchup_keys(deck)
     catalog = input_catalog(declared or [], known_keys)
     graph: dict[str, tuple[str, list[str]]] = {}
-    active: list[tuple[list[str], dict[str, Any]]] = []
     docs: list[tuple[str, str, dict[str, Any]]] = []
-    move_bearing = 0
-    advice_only_count = 0
     for path in files:
         rel = _rel(path, root)
         try:
@@ -899,11 +817,6 @@ def check_deck(
         errors.extend(_input_errors(doc, rel, catalog, declared_ok=declared is not None))
         errors.extend(_never_applicable(doc, rel, catalog))
         docs.append((path.stem, rel, doc))
-        advice = _advice_only(doc)
-        if advice:
-            advice_only_count += 1
-        else:
-            move_bearing += 1
         archetypes = doc.get("opposing_archetypes")
         archetypes = (
             [a for a in archetypes if isinstance(a, str)] if isinstance(archetypes, list) else []
@@ -918,59 +831,11 @@ def check_deck(
                         "newest analysis run",
                     )
                 )
-        priority = doc.get("priority")
-        # An advice-only play commits nothing at any decision point, so it
-        # never enters the live-together count, priority > 0 or not.
-        if not advice and _is_int(priority) and priority > 0:
-            active.append((archetypes, doc))
         nxt = doc.get("next", [])
         graph[path.stem] = (
             rel,
             [n for n in nxt if isinstance(n, str)] if isinstance(nxt, list) else [],
         )
-
-    if move_bearing > MAX_PLAYS:
-        errors.append(
-            PlaysError(
-                "too-many-plays",
-                plays_rel,
-                f"{move_bearing} plays with moves, at most {MAX_PLAYS} per deck "
-                "(advice-only plays are counted separately and are not included here)",
-            )
-        )
-    if advice_only_count > MAX_ADVICE:
-        errors.append(
-            PlaysError(
-                "too-many-advice",
-                plays_rel,
-                f"{advice_only_count} advice-only plays (no moves), at most {MAX_ADVICE} per deck",
-            )
-        )
-
-    # `_max_live_together`'s own docstring assumes "a deck carries at most
-    # MAX_PLAYS plays, so the search space is always tiny" - true only once
-    # `too-many-plays` above has actually bounded the move-bearing plays that
-    # can ever reach `active`. Past that cap the pivotless Bron-Kerbosch
-    # search is exponential (measured ~7 minutes at 30 plays), and
-    # `too-many-plays` already reported the real problem, so this search is
-    # skipped rather than run redundantly and slowly.
-    keys = {WILDCARD} | {k for archetypes, _ in active for k in archetypes}
-    if move_bearing <= MAX_PLAYS:
-        for key in sorted(keys):
-            matching = [
-                doc for archetypes, doc in active if WILDCARD in archetypes or key in archetypes
-            ]
-            count = _max_live_together(matching)
-            if count > MAX_ACTIVE_PER_ARCHETYPE:
-                errors.append(
-                    PlaysError(
-                        "too-many-active-for-archetype",
-                        plays_rel,
-                        f"{count} plays with priority > 0 can be live together against "
-                        f"{key!r} (not provably exclusive by whose_turn, steps or turn "
-                        f"range), at most {MAX_ACTIVE_PER_ARCHETYPE}",
-                    )
-                )
 
     errors.extend(_graph_errors(graph))
     errors.extend(_advice_chain_errors(docs))

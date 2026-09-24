@@ -73,13 +73,17 @@ CHECKOUT_LOCK_NAME = "mcm-checkout.lock"
 RESULTS_JOURNAL = "mcm-results.jsonl"
 
 #: The result keys a journal line copies from a command's own result, when
-#: the command set them. `plays` is `admit`'s own per-play-file
-#: classification (`admit._landing`) - one `{id, change}` per play file the
-#: admit touched, `change` one of `added`/`updated`/`reprioritized`/
-#: `deleted` - carried through so a reader of the journal (or, eventually,
-#: a `plays_outcome` row built from it) never has to re-derive from `files`
-#: and the aggregate `dsl_change` what specifically changed about which play.
-_JOURNALED_KEYS = ("sha", "files", "dsl_change", "plays", "retryable", "evidence")
+#: the command set them.
+_JOURNALED_KEYS = (
+    "sha",
+    "files",
+    "dsl_change",
+    "retryable",
+    "evidence",
+    "added",
+    "updated",
+    "reprioritized",
+)
 
 
 @contextlib.contextmanager

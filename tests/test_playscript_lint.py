@@ -30,8 +30,6 @@ from magic_cards_model_api import seat_cli
 from magic_cards_model_api.playscripts.lint import (
     CODES,
     EXCLUSIVITY_DIMENSIONS,
-    MAX_ADVICE,
-    MAX_PLAYS,
     WARNING_CODES,
     check_report,
 )
@@ -41,11 +39,6 @@ def advice(id: str, **over: Any) -> dict[str, Any]:
     """An advice-only play: `moves` empty, so it commits nothing."""
     over.setdefault("priority", 0)
     return play(id=id, moves=[], **over)
-
-
-def test_max_plays_and_max_advice_are_the_documented_caps():
-    assert MAX_PLAYS == 16
-    assert MAX_ADVICE == 6
 
 
 def move_bearing(id: str, **over: Any) -> dict[str, Any]:
@@ -313,22 +306,14 @@ def test_a_chain_of_three_is_fine(root):
     assert check_report(root)[0] == []
 
 
-def test_too_many_plays(root):
-    for i in range(17):
-        put(root, play(id=f"p{i}", priority=0))
-    assert error_codes(root) == ["too-many-plays"]
+# -- play-count caps removed (owner, 2026-09-24): a deck may carry any
+# -- number of move-bearing, advice-only or archetype-active plays --------
 
 
-def test_too_many_plays_message_says_advice_only_plays_are_not_counted(root):
+def test_seventeen_move_bearing_plays_raise_no_count_error(root):
     for i in range(17):
         put(root, move_bearing(f"p{i}"))
-    (error,) = [e for e in check_report(root)[0] if e.code == "too-many-plays"]
-    assert "17" in error.message and str(MAX_PLAYS) in error.message
-    assert "advice-only" in error.message
-
-
-# -- MAX_PLAYS and MAX_ADVICE: move-bearing and advice-only plays, capped
-# -- and reported separately (API-2) -------------------------------------
+    assert error_codes(root) == []
 
 
 def test_sixteen_move_bearing_and_six_advice_only_plays_are_clean(root):
@@ -339,39 +324,10 @@ def test_sixteen_move_bearing_and_six_advice_only_plays_are_clean(root):
     assert check_report(root) == ([], [])
 
 
-def test_seventeen_move_bearing_plays_trip_too_many_plays_regardless_of_advice(root):
-    for i in range(17):
-        put(root, move_bearing(f"m{i}"))
-    for i in range(6):
-        put(root, advice(f"a{i}"))
-    codes = error_codes(root)
-    assert "too-many-plays" in codes
-    assert "too-many-advice" not in codes
-
-
-def test_seven_advice_only_plays_trip_too_many_advice_regardless_of_move_bearing(root):
-    for i in range(16):
-        put(root, move_bearing(f"m{i}"))
+def test_seven_advice_only_plays_raise_no_count_error(root):
     for i in range(7):
         put(root, advice(f"a{i}"))
-    codes = error_codes(root)
-    assert "too-many-advice" in codes
-    assert "too-many-plays" not in codes
-
-
-def test_too_many_advice_message_names_the_count_and_the_cap(root):
-    for i in range(7):
-        put(root, advice(f"a{i}"))
-    (error,) = check_report(root)[0]
-    assert error.code == "too-many-advice"
-    assert "7" in error.message and str(MAX_ADVICE) in error.message
-
-
-def test_too_many_advice_reports_against_the_plays_dir_like_too_many_plays(root):
-    for i in range(7):
-        put(root, advice(f"a{i}"))
-    (error,) = check_report(root)[0]
-    assert error.path == f"decks/{SLUG}/plays"
+    assert error_codes(root) == []
 
 
 def test_inputs_json_is_not_a_play(root):
@@ -381,7 +337,7 @@ def test_inputs_json_is_not_a_play(root):
     assert check_report(root)[0] == []
 
 
-def test_too_many_active_for_a_wildcard(root):
+def test_seven_plays_live_together_at_one_archetype_raise_no_count_error(root):
     for i in range(7):
         put(
             root,
@@ -391,106 +347,49 @@ def test_too_many_active_for_a_wildcard(root):
                 when={"whose_turn": "mine", "steps": ["upkeep"], "stack": "empty"},
             ),
         )
-    assert "too-many-active-for-archetype" in error_codes(root)
+    assert error_codes(root) == []
 
 
-def test_a_wildcard_play_counts_toward_every_named_key(root):
+def test_a_wildcard_play_beside_a_named_key_raises_no_count_error(root):
     for i in range(4):
         put(root, play(id=f"star{i}", priority=10))
     for i in range(3):
         put(root, play(id=f"frog{i}", priority=10, opposing_archetypes=["dimir-frog"]))
-    errors = [e for e in check_report(root)[0] if e.code == "too-many-active-for-archetype"]
-    assert len(errors) == 1 and "'dimir-frog'" in errors[0].message
+    assert error_codes(root) == []
 
 
-def test_a_disabled_play_does_not_count_as_active(root):
-    for i in range(6):
-        put(root, play(id=f"p{i}", priority=10))
-    put(root, play(id="off", priority=0))
-    assert check_report(root)[0] == []
-
-
-def test_advice_only_plays_never_count_toward_too_many_active_for_archetype(root):
-    # Requirement 4: an advice-only play never enters `active` and never
-    # enters `_max_live_together`, priority > 0 or not - it commits nothing
-    # at any decision point, so it is outside the O8 proof by construction.
-    for i in range(6):
-        put(root, play(id=f"p{i}", priority=10))
-    for i in range(6):
+def test_a_large_deck_all_pairwise_non_conflicting_clears_check_deck_under_3s(root):
+    """The play-count caps (`too-many-plays`, `too-many-advice` and
+    `too-many-active-for-archetype`/O8) are removed (owner, 2026-09-24): a
+    deck may carry any number of plays of each kind. What `check_deck` still
+    proves in bounded time is pairwise non-overlap: `exclusivity` and
+    `_conflict_warnings` are an O(n^2) pass over the deck's enabled,
+    move-bearing plays, never the exponential live-together search the old
+    per-archetype cap used to gate against (`_max_live_together`,
+    Bron-Kerbosch without a pivot, removed along with the cap it bounded).
+    60 move-bearing plays (30 of them sharing one archetype key), each on
+    its own turn so every pair is provably exclusive by `numeric_range`,
+    plus 20 advice-only plays, clear `check_deck` well under 3s and raise no
+    cap error at all."""
+    for i in range(60):
+        put(
+            root,
+            play(
+                id=f"m{i}",
+                priority=10,
+                opposing_archetypes=["dimir-frog"] if i < 30 else ["*"],
+                true=[{"kind": "turn", "op": "==", "n": i + 1}],
+                false=[],
+            ),
+        )
+    for i in range(20):
         put(root, advice(f"a{i}", priority=10))
-    assert check_report(root)[0] == []
-
-
-# -- O8: too-many-active-for-archetype counts the live-together group --------
-
-
-def turn_condition(op: str, n: int) -> dict[str, Any]:
-    return {"kind": "turn", "op": op, "n": n}
-
-
-def test_5_plays_turn_ge_3_plus_3_plays_turn_le_2_pass_the_cap(root):
-    # Turn-range-disjoint plays can never both be live, so the cap compares
-    # the largest of the two groups (5), not their sum (8), against 6.
-    for i in range(5):
-        put(root, play(id=f"late{i}", priority=10, true=[turn_condition(">=", 3)], false=[]))
-    for i in range(3):
-        put(root, play(id=f"early{i}", priority=10, true=[turn_condition("<=", 2)], false=[]))
-    assert check_report(root)[0] == []
-
-
-def test_7_overlapping_plays_at_the_same_turn_range_fail_the_cap(root):
-    for i in range(7):
-        put(root, play(id=f"p{i}", priority=10, true=[turn_condition(">=", 3)], false=[]))
-    errors = [e for e in check_report(root)[0] if e.code == "too-many-active-for-archetype"]
-    assert len(errors) == 1
-    assert "7 " in errors[0].message
-
-
-def test_the_live_together_search_is_skipped_past_too_many_plays(root):
-    """`_max_live_together` is Bron-Kerbosch without a pivot (its own
-    docstring: "a deck carries at most MAX_PLAYS plays, so the search space
-    is always tiny") - an assumption `too-many-plays` alone does not enforce.
-    30 plays that are all live together at once (same `when`, no turn/step
-    exclusivity at all - the worst case for a pivotless search, empirically
-    ~7 minutes before this fix) must never reach that search once
-    `too-many-plays` has already fired for the deck."""
-    for i in range(30):
-        put(
-            root,
-            play(
-                id=f"p{i}",
-                priority=10,
-                when={"whose_turn": "mine", "steps": ["upkeep"], "stack": "empty"},
-            ),
-        )
     start = time.monotonic()
-    codes = error_codes(root)
+    errors, warnings = check_report(root)
     elapsed = time.monotonic() - start
-    assert "too-many-plays" in codes
-    assert "too-many-active-for-archetype" not in codes
-    assert elapsed < 3.0, f"took {elapsed}s - the live-together search must be skipped"
-
-
-def test_the_live_together_cap_is_also_proven_by_whose_turn_and_steps(root):
-    for i in range(4):
-        put(
-            root,
-            play(
-                id=f"mine{i}",
-                priority=10,
-                when={"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
-            ),
-        )
-    for i in range(4):
-        put(
-            root,
-            play(
-                id=f"theirs{i}",
-                priority=10,
-                when={"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
-            ),
-        )
-    assert check_report(root)[0] == []
+    assert errors == []
+    assert warnings == []
+    assert elapsed < 3.0, f"took {elapsed}s"
 
 
 def test_unknown_archetype_key_reads_the_newest_analysis_run(tmp_path):
