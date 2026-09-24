@@ -54,6 +54,33 @@ def problem_category(detail: Mapping[str, Any]) -> str:
     return detail.get("category") or DEFAULT_PROBLEM_CATEGORY
 
 
+def normalize_problem_category(entry: Mapping[str, Any]) -> dict[str, Any]:
+    """`entry`, unchanged, except a `PROBLEM_ACTION` row's `detail` gains an
+    explicit `category` when it has none (`problem_category`'s own
+    fallback) - the fix for a review finding this module's helper alone did
+    not close: `problem_category` existed from the day `category` did, but
+    nothing on any read path ever called it, so a legacy row (no `category`
+    key at all) still read back with none over `GET .../log`, `GET
+    .../review`, and every consumer of either.
+
+    Deliberately **not** folded into `entries`/`entries_since`/`_entry`:
+    those three are read raw on purpose (see `_entry`'s own docstring and
+    `test_a_legacy_row_with_no_category_key_reads_as_engine`, which asserts
+    `audit.entries()` still hands back a row with no `category` key at all)
+    - a caller that wants the exact stored row keeps getting it, and a
+    caller that wants to *show* a report calls this instead. Every other
+    entry - the overwhelming majority - comes back as an equal, unmutated
+    copy, never the same object, so a caller that mutates its own copy never
+    reaches back into whatever `store.records`/`entries` still hold.
+    """
+    if entry.get("action") != PROBLEM_ACTION:
+        return dict(entry)
+    detail = entry.get("detail")
+    if not isinstance(detail, Mapping):
+        return dict(entry)
+    return {**entry, "detail": {**detail, "category": problem_category(detail)}}
+
+
 #: A seat's own pregame move refused because something had already made it for
 #: that seat (`opening.PregameOverruled`). Treated like a problem report: it
 #: means the game took a decision away from a player, and a line at INFO among

@@ -290,7 +290,12 @@ export function logMessages(review, steps) {
       continue;
     }
     if (entry.action === "report_problem") {
-      push(entry, "report_problem", detail.player, "Problem reported", detail.text || "");
+      // DR2: `category` (`engine`/`dsl`/`ux`, `audit.ReportProblemCategory`)
+      // - a row written before the field existed carries no `category` key
+      // at all and reads as `engine`, `audit.problem_category`'s own
+      // default, so a legacy row never shows as uncategorized here.
+      const category = detail.category || "engine";
+      push(entry, "report_problem", detail.player, `Problem reported (${category})`, detail.text || "");
       continue;
     }
     if (entry.action === "pregame_overruled") {

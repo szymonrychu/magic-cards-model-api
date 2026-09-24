@@ -245,6 +245,24 @@ def test_the_review_carries_the_whole_ledger_with_its_snapshots(client: TestClie
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
+def test_a_legacy_report_problem_row_reads_as_engine_over_the_review_route(
+    client: TestClient,
+) -> None:
+    """DR2 review fix: `audit.problem_category` existed but no read path
+    called it, so a row written before `category` existed (no key at all)
+    read back with no `category` at all in `GET .../review`'s own
+    `entries` too. This route must fill it in as `engine`."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        audit.record(game_id, "report_problem", player="alice", text="an old report")
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        [row] = [entry for entry in body["entries"] if entry["action"] == "report_problem"]
+        assert row["detail"]["category"] == "engine"
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
 def test_a_seat_may_read_the_finished_games_review(client: TestClient) -> None:
     info = _played_out(client)
     game_id = info["game_id"]

@@ -216,17 +216,26 @@ def _board_by_perspective(
     re-derived here) and then reduced the same way `board` is
     (`decision_dsl.compact_board`, imported, never edited - DR1's own).
 
-    Two fields ride on top of what `compact_board` already carries, both
-    read off the *redacted* view so neither can ever name a card this player
+    Three fields ride on top of what `compact_board` already carries, all
+    read off the *redacted* view so none can ever name a card this player
     was not entitled to: `hand`, that player's own hand card names (a real
     list - `redact_view` never empties a viewer's own hand, only every other
-    seat's), and `known_opponent_hand`, whatever of another player's hand
-    this player was specifically shown or has looked at by now
+    seat's); `known_opponent_hand`, whatever of another player's hand this
+    player was specifically shown or has looked at by now
     (`known_cards[player]["hand"]` - CR 701.20a/e's reveal/look, the same
     record `visibility._redact_known_cards` already scopes to this player
-    alone). Both are left off the board entirely when empty, matching
-    `compact_board`'s own "only the facts a board actually has" style.
-    Library contents/order are never in either field for anyone, own seat
+    alone); and `known_library`, this player's own live knowledge of any
+    library's top cards, in the order they sit (`known_cards[player][
+    "library"]`, already ordered by `index_from_top` - CR 701.20e again, a
+    scry or a look at the top of a library being the canonical case,
+    `Game.look`). Unlike `known_opponent_hand`, `known_library` is not
+    limited to another player's cards: `serialize._known_cards_view` keeps a
+    player's own library knowledge too (their hand is dropped there because
+    they already see it whole; their library order is not, since nothing
+    else on the board carries it). All three are left off the board
+    entirely when empty, matching `compact_board`'s own "only the facts a
+    board actually has" style. Library *contents*, as opposed to a specific
+    known card, are never in any of these fields for anyone, own seat
     included - `compact_board` never reads `libraries` to begin with."""
     boards: dict[str, dict[str, Any]] = {}
     for player in players:
@@ -246,6 +255,15 @@ def _board_by_perspective(
         )
         if known_names:
             board["known_opponent_hand"] = known_names
+        known_library_names = [
+            record["card"].get("name")
+            for record in known.get("library", ())
+            if isinstance(record, Mapping)
+            and isinstance(record.get("card"), Mapping)
+            and record["card"].get("name")
+        ]
+        if known_library_names:
+            board["known_library"] = known_library_names
         boards[player] = board
     return boards
 

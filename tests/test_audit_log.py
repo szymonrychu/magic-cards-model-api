@@ -11,6 +11,7 @@ from magic_cards_model.machines import PriorityOutcome
 from magic_cards_model.machines.effects import effect_for as real_effect_for
 from magic_cards_model.models import game as game_module
 
+from magic_cards_model_api import audit
 from magic_cards_model_api.store import store  # noqa: E402
 
 
@@ -127,6 +128,25 @@ def test_log_endpoint_order_and_unknown_game_404(client, game):
 
     missing = client.get("/api/games/no-such-game/log")
     assert missing.status_code == 404
+
+
+def test_a_legacy_report_problem_row_reads_as_engine_over_the_log_route(client, game):
+    """DR2 review fix: `audit.problem_category` existed but no read path
+    called it, so a row written before `category` existed (no key at all -
+    the exact shape `audit.record` still writes for a caller that omits it)
+    read back with no `category` at all over `GET .../log` too. This route
+    must fill it in as `engine`, `problem_category`'s own default."""
+    audit.record(game, "report_problem", player="alice", text="an old report")
+    log = log_of(client, game)
+    row = entry_of(log, "report_problem")
+    assert row["detail"]["category"] == "engine"
+
+
+def test_a_categorized_report_problem_row_keeps_its_own_category_over_the_log_route(client, game):
+    audit.record(game, "report_problem", player="alice", text="a dsl gap", category="dsl")
+    log = log_of(client, game)
+    row = entry_of(log, "report_problem")
+    assert row["detail"]["category"] == "dsl"
 
 
 def test_pass_priority_outcomes(client, game):

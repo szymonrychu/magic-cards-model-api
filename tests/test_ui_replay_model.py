@@ -430,6 +430,37 @@ def test_reflection_ai_review_and_related_rows_all_become_messages() -> None:
     assert "the backstop already kept the hand for bob" in by_kind["pregame_overruled"]["text"]
 
 
+def test_report_problem_shows_its_category_defaulting_to_engine() -> None:
+    """DR2: `category` (`engine`, `dsl`, `ux`) is a `report_problem` row's
+    own field; a row written before it existed carries no `category` key at
+    all and must still show as `engine` (`audit.problem_category`'s own
+    default), exactly like every other read surface of this row."""
+    entries = [
+        meta_entry(
+            1,
+            "report_problem",
+            detail={
+                "player": "alice",
+                "text": "a DSL gap - no move for suspend",
+                "category": "dsl",
+            },
+        ),
+        meta_entry(
+            2,
+            "report_problem",
+            detail={"player": "bob", "text": "no category named at all"},
+        ),
+    ]
+    r = review(entries)
+    steps = call("m.replaySteps(REVIEW)", REVIEW=r)
+    messages = call("m.logMessages(REVIEW, STEPS)", REVIEW=r, STEPS=steps)
+    reports = [m for m in messages if m["kind"] == "report_problem"]
+    assert len(reports) == 2
+    by_seq = {m["seq"]: m for m in reports}
+    assert "dsl" in by_seq[1]["title"]
+    assert "engine" in by_seq[2]["title"]
+
+
 def test_script_run_rows_become_messages_when_present() -> None:
     entries = [
         entry(1, "play_land", detail={"player": "bob", "card": "Forest"}),

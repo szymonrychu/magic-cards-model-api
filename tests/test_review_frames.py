@@ -775,6 +775,52 @@ def test_a_revealed_card_shows_only_in_the_shown_players_known_opponent_hand(
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
+def _perspective_fixture_with_library_look(client: TestClient) -> dict[str, Any]:
+    """A finished game where bob looks at his own top library card (CR
+    701.20e - a scry is the canonical example) before playing a land, so a
+    decision row with a recorded state exists strictly after the look."""
+    info = _agent_game(client, active="bob")
+    game_id = info["game_id"]
+    assert _declare(client, info).status_code == 200
+    add_card(client, game_id, "Lightning Bolt", "bob", "library")
+    with store.locked(game_id) as live:
+        top = live.player("bob").library[0]
+        top_name = top.name
+        live.look(top, "bob")
+    client.post(
+        f"/api/games/{game_id}/cards", json={"card": "Mountain", "player": "bob", "zone": "hand"}
+    )
+    played = client.post(
+        f"/api/games/{game_id}/actions/play-land",
+        json={"player": "bob", "card": "Mountain", "reasoning": "after the look"},
+    )
+    assert played.status_code == 200, played.text
+    conceded = client.post(
+        f"/api/games/{game_id}/actions/concede",
+        json={"player": "alice", "reasoning": "the race is lost"},
+    )
+    assert conceded.status_code == 200, conceded.text
+    info["top_name"] = top_name
+    return info
+
+
+def test_a_library_look_shows_only_in_the_lookers_own_known_library(client: TestClient) -> None:
+    """CR 701.20e: a look is shown only to the specified player, so bob -
+    who looked at his own top library card - knows it; alice, who was
+    never shown it, gets no such field in her own perspective."""
+    info = _perspective_fixture_with_library_look(client)
+    game_id = info["game_id"]
+    try:
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        row = _bobs_land_decision(body)
+        bobs_view = row["board_by_perspective"]["bob"]
+        assert bobs_view.get("known_library") == [info["top_name"]]
+        alices_view = row["board_by_perspective"]["alice"]
+        assert "known_library" not in alices_view
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
 def test_no_hidden_card_of_the_opponent_leaks_into_a_perspective(client: TestClient) -> None:
     """`Giant Growth` is never revealed or looked at by bob - it must never
     appear anywhere in bob's own perspective board, own hand included,

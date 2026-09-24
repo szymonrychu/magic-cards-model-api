@@ -1664,6 +1664,11 @@ def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, 
             for entry in log
             if (redacted := visibility.redact_log_entry(entry, viewer)) is not None
         ]
+    # A `report_problem` row shows its own `category` (`engine`/`dsl`/`ux`)
+    # here, normalized for a row written before that field existed
+    # (`audit.normalize_problem_category`) - never left to whatever the
+    # stored payload happens to carry, admin viewer included.
+    log = [audit.normalize_problem_category(entry) for entry in log]
     return {"log": log, "last_seq": last_seq}
 
 
@@ -1856,6 +1861,10 @@ def game_review(game_id: str, uid: str | None = None, key: str | None = None) ->
     opponent, during the game or after it.
     """
     archived, viewer, ledger = _review_access(game_id, uid, key)
+    # A `report_problem` row shows its own `category` here too, normalized
+    # for a row written before the field existed - same helper, same reason,
+    # as `game_log` above (`audit.normalize_problem_category`).
+    ledger = [audit.normalize_problem_category(entry) for entry in ledger]
     # R2: which of this review's own (already filtered) rows also have an
     # exact engine state recorded - `[]` on a `reconstructed` review (there
     # is no `archived.game` to have been read back from when any of those

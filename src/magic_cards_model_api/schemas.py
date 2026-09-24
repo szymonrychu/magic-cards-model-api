@@ -2923,12 +2923,16 @@ class ReviewDecision(BaseModel):
     another `seq`. `board_by_perspective` (the 2026-09-24 owner addon) is
     two such boards, one per player, each independently redacted through
     `visibility.redact_view` to what that player could actually see at this
-    exact moment: `hand` is that player's own hand card names, and
+    exact moment: `hand` is that player's own hand card names,
     `known_opponent_hand` is whatever of the opponent's hand this player was
-    specifically shown or looked at by then (`known_cards`) - never the
-    opponent's hidden cards otherwise, and never a library's contents or
-    order for anyone, including its own owner. `None` for the same rows
-    `board` is `None` for."""
+    specifically shown or looked at by then (`known_cards`), and
+    `known_library` is whatever specific library card - anyone's, including
+    this player's own - this player had looked at or been shown by then
+    (CR 701.20a/e, a scry or a look at the top of a library being the
+    canonical case), in the order those cards sit. Never the opponent's
+    hidden cards otherwise, and never a library's full *contents* or order
+    for anyone, including its own owner - only the specific cards this
+    player actually knows. `None` for the same rows `board` is `None` for."""
 
     seq: int
     turn: int | None = None
