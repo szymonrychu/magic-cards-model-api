@@ -44,36 +44,64 @@ required and has no honest empty value - see `_cast_or_play_land`/
 `_activate`.
 
 **Not in the vocabulary** (spec `docs/superpowers/specs/2026-09-13-play-
-script-format-design.md`, "Not in the vocabulary": attack, block, mulligan,
-concede, pass, and any iteration field). This module reaches all five of
-those off the rows it is asked to convert - `attack` (the `declare_attackers`
-tool's own ledger action, `"attack"`), `block` (`declare_blockers`),
-`mulligan`, `concede` (`app.action_concede`'s own ledger action, `"concede"`
-- CR 104.3a lets a player concede at any time, and the vocabulary has no move
-for it any more than it has one for a pass), `pass` (`pass_priority` - `pass`
-and `pass_until` are the same ledger action; `pass_until` only *threads one
-reason across several of them*, see `seatkit.pass_until`, so there is
-nothing here for it to convert differently) - plus a sixth of this module's
-own, `pregame`: a CR 103.6 `opening_hand_action` row carries no `turn`/`step`
-at all (`opening.py`'s own `audit.record` call - pregame has no turn yet), so
-no `when` block can be built without inventing one out of nothing, which
+script-format-design.md`, "Not in the vocabulary": mulligan, concede, assign
+combat damage, and any iteration field - FB2's B4 moved attack, block and
+pass INTO the vocabulary, as `declare_attackers`/`declare_blockers`/`pass`
+moves). This module reaches `mulligan` (`mulligan_declared`), `concede`
+(`app.action_concede`'s own ledger action, `"concede"` - CR 104.3a lets a
+player concede at any time, and the vocabulary has no move for it) off the
+rows it is asked to convert, plus a third of this module's own, `pregame`: a
+CR 103.6 `opening_hand_action` row carries no `turn`/`step` at all
+(`opening.py`'s own `audit.record` call - pregame has no turn yet), so no
+`when` block can be built without inventing one out of nothing, which
 `never a fabricated move` forbids exactly as much as inventing the move
-itself would.
+itself would. These three never become expressible, however much board data
+a row carries.
 
-A `decide` row can also miss the vocabulary at a *finer* grain than the five
-above, one `DecisionKind` at a time - a real answer schema `Answer` has no
-field for (`order_triggers`'s ordering, `put_on_top_or_bottom`'s specific
-card with no id in the ledger row to look up at all) or one this module
-declines to fabricate without board data to ground it in
-(`choose_cards`/`choose_targets`'s own `pick`, a non-empty `surveil`/`scry`).
-Those get `unexpressible: "decide:<kind>"` - prefixed, unlike the five above,
-because they are the DSL's answer-shape vocabulary falling short of one
-`DecisionKind`, not the closed five the spec itself names. A `decide` row
-whose own kind *is* one of the five forbidden kinds (`assign_combat_damage`
-joins them here, structurally: `schema.FORBIDDEN_DECISION_KINDS`) reuses that
-plain label instead, so `unexpressible` never disagrees with itself about
-what a `mulligan`/`attack`/`block` decision is, wherever in the ledger it
-shows up.
+`attack` (`declare_attackers`'s own ledger action, `"attack"`), `block`
+(`declare_blockers`) and `pass`/`pass_until` (`pass_priority` - the same
+ledger action for both; `pass_until` only *threads one reason across several
+of them*, see `seatkit.pass_until`, so there is nothing here for it to
+convert differently) are real moves now: `pass` needs no board data at all
+(`{"kind": "pass"}`), an empty `attackers`/`blocks` list needs none either
+(`declare_attackers`/`declare_blockers` with an empty list is itself a legal
+"no attackers"/"no blocks" declaration), and a non-empty one is written with
+card-name-free selectors the same way `cast`/`play_land`/`activate` already
+are - grouped by shared defender (attackers) or shared blocked attacker
+(blockers) into one `AttackGroup`/`Block` apiece. Without a `state_view` that
+resolves every card an entry names, or with more distinct groups than the
+schema's own `MAX_ATTACK_GROUPS`/`MAX_BLOCKS`, the row falls back to the
+plain `"attack"`/`"block"` label - never a half-built move standing in for
+one it could not finish honestly.
+
+A `decide` row can also miss the vocabulary at a *finer* grain, one
+`DecisionKind` at a time - `order_triggers` has no answer shape in the
+schema at all (its ordering is not one `Answer` field can carry), so it stays
+`unexpressible: "decide:order_triggers"` unconditionally. `scry`/`surveil`
+(`to_bottom`/`to_graveyard` + `top_order`), `put_on_top_or_bottom`
+(`position`), `choose_cards` look-and-keep (`pick`) and `choose_targets`
+(`targets`, a card or a player) are built from board data the same way the
+combat moves are, and fall back to `"decide:<kind>"` only when a card the
+row names cannot be resolved in the attached `state_view` (`put_on_top_or_bottom`
+needs no board data at all - `position` is written straight off the row's own
+`top` flag). A `decide` row whose own kind is one of the two structurally
+forbidden ones (`schema.FORBIDDEN_DECISION_KINDS`: `assign_combat_damage`,
+`mulligan`) reuses the plain `mulligan`/`decide:assign_combat_damage` label
+instead, so `unexpressible` never disagrees with itself about what a
+`mulligan` decision is, wherever in the ledger it shows up.
+
+**Off-priority answers.** A `decide` row answered while this seat did not
+hold priority (`state_view["priority_holder"] != seat` - a decision raised
+mid-resolution, not at an ordinary priority window `when.steps` alone could
+predict) is written as a *standalone* pending-decision answer: its `true`
+carries one `pending_decision` condition naming the same `DecisionKind` the
+answer itself names (`schema.PendingDecisionCondition`,
+`Play._standalone_pending_answer_names_the_pending_decision`), so the play
+only ever runs as a direct answer to a decision already on the table, not on
+`when` timing that happened to match this one historical row. A row with no
+`state_view` at all is read as having held priority (nothing here to say
+otherwise), the same "least specific but honest" default every other board
+read in this module takes.
 
 **`run_script`.** Running an existing play is not itself one of the DSL's
 four move kinds (`activate`/`cast`/`play_land`/`answer` - `MOVE_KINDS`); it
@@ -97,10 +125,22 @@ from .schema import (
     CHOICE_DECISION_KINDS,
     COUNT_ZONES,
     FORBIDDEN_DECISION_KINDS,
+    MAX_ABILITY_INDEX,
+    MAX_ATTACK_GROUPS,
+    MAX_BLOCKS,
     MAX_SELECTOR_WORDS,
+    MAX_TARGETS,
+    MAX_TOP_ORDER,
     STEPS,
+    TARGET_ZONES,
 )
 from .selectors import parse_type_line
+
+#: A defender/target token that named a card, but one this module could not
+#: resolve in the attached `state_view` - distinct from `None`, which for a
+#: `Defender` token means "the opponent player, so the field is simply left
+#: out" (see `_defender_for_token`).
+_UNRESOLVED = object()
 
 #: The upper bound `compact_board` stays at or under, in characters of its
 #: `json.dumps(..., sort_keys=True)` form - a review prompt's own budget
@@ -269,9 +309,12 @@ def _find_card(
 ) -> tuple[dict[str, Any], str] | None:
     """The card `card_id` (or, failing that, `name`) names, and the zone it
     was found in - searched across every zone one redacted view can show a
-    card in at all. `None` when no view was given or nothing in it matches;
-    this is the only place a view's own cards are read, so every selector
-    this module writes traces back to here."""
+    card in at all, plus this seat's own `known_cards` record of a hidden
+    card it has looked at (CR 701.20e - a scry/surveil/look-and-keep
+    decision's own candidates live only there, never on the public board).
+    `None` when no view was given or nothing in it matches; this is the only
+    place a view's own cards are read, so every selector this module writes
+    traces back to here."""
     if not isinstance(state_view, Mapping):
         return None
     wanted_id = str(card_id) if card_id is not None else None
@@ -289,6 +332,19 @@ def _find_card(
     if isinstance(graveyards, Mapping):
         for cards in graveyards.values():
             pools.append(("graveyard", cards or ()))
+    known_cards = state_view.get("known_cards")
+    if isinstance(known_cards, Mapping):
+        for known in known_cards.values():
+            if not isinstance(known, Mapping):
+                continue
+            for zone_name in ("hand", "sideboard"):
+                pools.append((zone_name, known.get(zone_name) or ()))
+            library = [
+                entry.get("card")
+                for entry in known.get("library") or ()
+                if isinstance(entry, Mapping) and isinstance(entry.get("card"), Mapping)
+            ]
+            pools.append(("library", library))
     for zone, cards in pools:
         for card in cards:
             if not isinstance(card, Mapping):
@@ -300,24 +356,48 @@ def _find_card(
     return None
 
 
-def _card_selector(card: Mapping[str, Any]) -> dict[str, Any]:
-    """A `Selector` for `card` by characteristic alone - type-line words
-    (`selectors.parse_type_line`, already casefolded and never the card's
-    own `name`) plus its keywords - never a name, which is what keeps this
-    inside the card-name ban every selector in this schema is written
-    under."""
-    supertypes, types, subtypes = parse_type_line(card.get("type_line"))
+def _selector_for_cards(cards: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """A `Selector` matching every one of `cards` by characteristic alone -
+    type-line words (`selectors.parse_type_line`, already casefolded and
+    never a card's own `name`) plus keywords - never a name, which is what
+    keeps this inside the card-name ban every selector in this schema is
+    written under.
+
+    `types_all` is the *intersection* of every card's own types: the
+    selector's AND semantics still admit each card, since each one carries
+    at least those shared types. `supertypes_any`/`subtypes_any`/
+    `keywords_any` are each the *union* of every card's own words: the
+    selector's OR-within-the-field semantics are then guaranteed to admit
+    each card by at least one of its own words. One card is the trivial case
+    of this - an intersection or union of one set is that set - so this is
+    also `_card_selector`'s own reading."""
+    type_sets: list[set[str]] = []
+    supertypes: set[str] = set()
+    subtypes: set[str] = set()
+    keywords: set[str] = set()
+    for card in cards:
+        card_supertypes, card_types, card_subtypes = parse_type_line(card.get("type_line"))
+        type_sets.append(card_types)
+        supertypes |= card_supertypes
+        subtypes |= card_subtypes
+        keywords |= {str(k) for k in (card.get("keywords") or ()) if str(k).strip()}
+    common_types = set.intersection(*type_sets) if type_sets else set()
     selector: dict[str, Any] = {}
-    if types:
-        selector["types_all"] = sorted(types)[:MAX_SELECTOR_WORDS]
+    if common_types:
+        selector["types_all"] = sorted(common_types)[:MAX_SELECTOR_WORDS]
     if supertypes:
         selector["supertypes_any"] = sorted(supertypes)[:MAX_SELECTOR_WORDS]
     if subtypes:
         selector["subtypes_any"] = sorted(subtypes)[:MAX_SELECTOR_WORDS]
-    keywords = sorted({str(k) for k in (card.get("keywords") or ()) if str(k).strip()})
     if keywords:
-        selector["keywords_any"] = keywords[:MAX_SELECTOR_WORDS]
+        selector["keywords_any"] = sorted(keywords)[:MAX_SELECTOR_WORDS]
     return selector
+
+
+def _card_selector(card: Mapping[str, Any]) -> dict[str, Any]:
+    """A `Selector` for `card` alone - `_selector_for_cards`'s one-card
+    case."""
+    return _selector_for_cards([card])
 
 
 def _cast_or_play_land(
@@ -338,6 +418,16 @@ def _cast_or_play_land(
 def _activate(
     detail: Mapping[str, Any], state_view: Mapping[str, Any] | None
 ) -> dict[str, Any] | None:
+    """An `ActivateMove` for this row, or `None` when there is no honest one
+    to write. With no board data at all there is no `source` to select and
+    no ability to name either way - `unexpressible`, never a bare empty
+    selector the way `cast`/`play_land` fall back to (a `source` naming
+    nothing is not "whichever permanent", it is no permanent). With the
+    card found, its ability named by `ability_index` (FB2 M4) when that
+    ability's own text is blank or missing - nothing in the schema's own
+    `ability_text_has` can name an ability with no text to match a phrase
+    against - and by `ability_text_has` (the real oracle text, a phrase)
+    otherwise."""
     found = _find_card(state_view, detail.get("card_id"), detail.get("card"))
     if found is None:
         return None
@@ -348,23 +438,249 @@ def _activate(
         return None
     ability = abilities[index]
     text = ability.get("text") if isinstance(ability, Mapping) else None
-    if not isinstance(text, str) or not text.strip():
-        return None
-    return {
+    move: dict[str, Any] = {
         "kind": "activate",
         "source": {
             "zone": zone if zone in COUNT_ZONES else "battlefield",
             "select": _card_selector(card),
         },
-        "ability_text_has": text,
     }
+    if isinstance(text, str) and text.strip():
+        move["ability_text_has"] = text
+    elif index <= MAX_ABILITY_INDEX:
+        move["ability_index"] = index
+    else:
+        return None
+    return move
+
+
+# -- declare_attackers / declare_blockers: FB2's B4 combat moves ----------------
+
+
+def _defender_for_token(token: str, state_view: Mapping[str, Any] | None) -> Any:
+    """The `Defender` FB2's `AttackGroup` names for `token` (a player's
+    username or a card id - `decisions.declared_pairs_answer`'s own token
+    shape for a `defender`): `None` when it names the opponent player (the
+    schema's own default for a left-out `defender`, so nothing is written at
+    all), a `DefenderCard` selector when it resolves to one of their
+    permanents, or the module's own `_UNRESOLVED` sentinel when no board
+    data can ground either reading honestly."""
+    if not isinstance(state_view, Mapping):
+        return _UNRESOLVED
+    players = {
+        p.get("username") for p in (state_view.get("players") or ()) if isinstance(p, Mapping)
+    }
+    if token in players:
+        return None
+    found = _find_card(state_view, token, None)
+    if found is None:
+        return _UNRESOLVED
+    card, _zone = found
+    return {"select": _card_selector(card), "side": "opponent"}
+
+
+def _declare_attackers(
+    detail: Mapping[str, Any], state_view: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """A `DeclareAttackersMove` for this row's own `attackers` (CR 508.1),
+    grouped by shared defender into one `AttackGroup` apiece - "an attack of
+    two creatures at the player" is one group, `count: 2`, not two. `[]`
+    needs no board data at all (still a legal "no attackers" declaration);
+    a non-empty list needs every attacker and every card-shaped defender
+    resolved in `state_view`, or this is `None` (the caller's `_ATTACK`
+    fallback)."""
+    attackers = detail.get("attackers")
+    if not isinstance(attackers, list):
+        return None
+    if not attackers:
+        return {"kind": "declare_attackers", "attackers": []}
+    groups: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for entry in attackers:
+        if not isinstance(entry, Mapping):
+            return None
+        found = _find_card(state_view, entry.get("card"), None)
+        if found is None:
+            return None
+        card, _zone = found
+        key = str(entry.get("defender"))
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(card)
+    if len(order) > MAX_ATTACK_GROUPS:
+        return None
+    attack_groups: list[dict[str, Any]] = []
+    for key in order:
+        cards = groups[key]
+        group: dict[str, Any] = {"select": _selector_for_cards(cards), "count": len(cards)}
+        defender = _defender_for_token(key, state_view)
+        if defender is _UNRESOLVED:
+            return None
+        if defender is not None:
+            group["defender"] = defender
+        attack_groups.append(group)
+    return {"kind": "declare_attackers", "attackers": attack_groups}
+
+
+def _declare_blockers(
+    detail: Mapping[str, Any], state_view: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """A `DeclareBlockersMove` for this row's own `blocks` (CR 509.1),
+    grouped by shared attacker into one `Block` apiece (a double block is one
+    `Block`, `blocker.count: 2`). `[]` needs no board data at all; a
+    non-empty list needs every blocker and every attacker resolved in
+    `state_view`, or this is `None` (the caller's `_BLOCK` fallback)."""
+    blocks = detail.get("blocks")
+    if not isinstance(blocks, list):
+        return None
+    if not blocks:
+        return {"kind": "declare_blockers", "blocks": []}
+    groups: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for entry in blocks:
+        if not isinstance(entry, Mapping):
+            return None
+        found = _find_card(state_view, entry.get("blocker"), None)
+        if found is None:
+            return None
+        blocker_card, _zone = found
+        key = str(entry.get("blocked"))
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(blocker_card)
+    if len(order) > MAX_BLOCKS:
+        return None
+    result: list[dict[str, Any]] = []
+    for key in order:
+        attacker_found = _find_card(state_view, key, None)
+        if attacker_found is None:
+            return None
+        attacker_card, _zone = attacker_found
+        blocker_cards = groups[key]
+        result.append(
+            {
+                "blocker": {
+                    "select": _selector_for_cards(blocker_cards),
+                    "count": len(blocker_cards),
+                },
+                "attacker": {"select": _card_selector(attacker_card)},
+            }
+        )
+    return {"kind": "declare_blockers", "blocks": result}
 
 
 # -- decide/answer ---------------------------------------------------------------
 
 
+def _target_for_token(
+    token: str, seat: str, state_view: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """One `Target` for a `choose_targets` token (a player's username or a
+    card id - `decisions.targets_answer`'s own token shape): a
+    `PlayerTarget` when the token names a player of the game, a `CardTarget`
+    selector when it resolves to a card in `state_view` (`zone` set only
+    when the card's own zone is one `CardTarget.zone` can name - FB2 T1;
+    left out, a target still resolves over battlefield and stack), or `None`
+    when neither reading can be grounded."""
+    if not isinstance(state_view, Mapping):
+        return None
+    players = {
+        p.get("username") for p in (state_view.get("players") or ()) if isinstance(p, Mapping)
+    }
+    if token in players:
+        return {"player": "me"} if token == seat else {"player": "opponent"}
+    found = _find_card(state_view, token, None)
+    if found is None:
+        return None
+    card, zone = found
+    target: dict[str, Any] = {
+        "select": _card_selector(card),
+        "side": "me" if card.get("controller") == seat else "opponent",
+    }
+    if zone in TARGET_ZONES:
+        target["zone"] = zone
+    return target
+
+
+def _scry_or_surveil_answer(
+    kind: str, detail: Mapping[str, Any], state_view: Mapping[str, Any] | None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """`to_bottom` (scry, CR 701.22a) or `to_graveyard` (surveil, CR 701.25a)
+    plus `top_order` (FB2 A1) for a `scry`/`surveil` row's own `moved`/
+    `top_order` ids. An empty `moved` with no `top_order` is the bare "keep
+    everything on top, unchanged" answer, needing no board data at all - the
+    same reading the module already gave it. A non-empty one needs every
+    named card resolved in `state_view`, and `top_order` at or under
+    `MAX_TOP_ORDER` tiers (one card's own selector per tier, in the order
+    the row itself gives - the finest-grained honest reading of a fixed
+    permutation), or this is `(None, "decide:<kind>")`."""
+    moved = detail.get("moved")
+    top_order = detail.get("top_order")
+    if not isinstance(moved, list):
+        return None, f"decide:{kind}"
+    if not moved and not top_order:
+        return {"decision": kind}, None
+    answer: dict[str, Any] = {"decision": kind}
+    if moved:
+        moved_found = [_find_card(state_view, card_id, None) for card_id in moved]
+        if any(found is None for found in moved_found):
+            return None, f"decide:{kind}"
+        field = "to_bottom" if kind == "scry" else "to_graveyard"
+        answer[field] = _selector_for_cards([found[0] for found in moved_found])
+    if top_order:
+        if len(top_order) > MAX_TOP_ORDER:
+            return None, f"decide:{kind}"
+        order_found = [_find_card(state_view, card_id, None) for card_id in top_order]
+        if any(found is None for found in order_found):
+            return None, f"decide:{kind}"
+        answer["top_order"] = [_card_selector(found[0]) for found in order_found]
+    return answer, None
+
+
+def _choose_cards_answer(
+    detail: Mapping[str, Any], state_view: Mapping[str, Any] | None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """A `pick` answer (a "look and keep" `choose_cards` row's own
+    `card_ids`, e.g. a fetch's search, CR 401.2): every named card resolved
+    in `state_view` and merged into one selector, `count` the number chosen
+    - or `(None, "decide:choose_cards")` when the ids are empty or any one
+    of them cannot be resolved."""
+    card_ids = detail.get("card_ids")
+    if not isinstance(card_ids, list) or not card_ids:
+        return None, "decide:choose_cards"
+    found = [_find_card(state_view, card_id, None) for card_id in card_ids]
+    if any(entry is None for entry in found):
+        return None, "decide:choose_cards"
+    cards = [entry[0] for entry in found if entry is not None]
+    return {
+        "decision": "choose_cards",
+        "pick": {"select": _selector_for_cards(cards), "count": len(cards)},
+    }, None
+
+
+def _choose_targets_answer(
+    detail: Mapping[str, Any], seat: str, state_view: Mapping[str, Any] | None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """A `targets` answer (FB2 A2) for a `choose_targets` row's own
+    `targets` tokens - card or player, `_target_for_token` each - or
+    `(None, "decide:choose_targets")` when the tokens are empty, exceed
+    `MAX_TARGETS`, or any one of them cannot be resolved."""
+    tokens = detail.get("targets")
+    if not isinstance(tokens, list) or not tokens or len(tokens) > MAX_TARGETS:
+        return None, "decide:choose_targets"
+    targets: list[dict[str, Any]] = []
+    for token in tokens:
+        target = _target_for_token(str(token), seat, state_view)
+        if target is None:
+            return None, "decide:choose_targets"
+        targets.append(target)
+    return {"decision": "choose_targets", "targets": targets}, None
+
+
 def _answer_for_decide(
-    decide_kind: Any, detail: Mapping[str, Any], seat: str
+    decide_kind: Any, detail: Mapping[str, Any], seat: str, state_view: Mapping[str, Any] | None
 ) -> tuple[dict[str, Any] | None, str | None]:
     """One `Answer` for a `decide` row's own `detail["kind"]`, or (`None`,
     the `unexpressible` label) - see the module docstring's finer-grained
@@ -395,6 +711,17 @@ def _answer_for_decide(
         if not isinstance(pile_one, bool):
             return None, f"decide:{kind}"
         return {"decision": kind, "pile_one": pile_one}, None
+    if kind == "put_on_top_or_bottom":
+        top = detail.get("top")
+        if not isinstance(top, bool):
+            return None, f"decide:{kind}"
+        return {"decision": kind, "position": "top" if top else "bottom"}, None
+    if kind in ("surveil", "scry"):
+        return _scry_or_surveil_answer(kind, detail, state_view)
+    if kind == "choose_cards":
+        return _choose_cards_answer(detail, state_view)
+    if kind == "choose_targets":
+        return _choose_targets_answer(detail, seat, state_view)
     if kind == "choose_players":
         usernames = detail.get("usernames")
         if not isinstance(usernames, list):
@@ -403,14 +730,6 @@ def _answer_for_decide(
         if not players:
             return None, f"decide:{kind}"
         return {"decision": kind, "players": players}, None
-    if kind in ("surveil", "scry"):
-        moved = detail.get("moved")
-        if moved == []:
-            # A bare answer means "keep everything on top" - schema-valid
-            # and exactly what an empty `moved` recorded (runtime.py's own
-            # reading of a bare `surveil`/`scry` answer).
-            return {"decision": kind}, None
-        return None, f"decide:{kind}"
     return None, f"decide:{kind}"
 
 
@@ -427,16 +746,10 @@ def _dsl_for(
     active_player: Any,
     state_view: Mapping[str, Any] | None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    if kind == "declare_attackers":
-        return None, _ATTACK
-    if kind == "declare_blockers":
-        return None, _BLOCK
     if kind == "mulligan":
         return None, _MULLIGAN
     if kind == "concede":
         return None, _CONCEDE
-    if kind == "pass":
-        return None, _PASS
     if kind == "opening_hand_action":
         return None, _PREGAME
 
@@ -452,12 +765,30 @@ def _dsl_for(
         if move is None:
             return None, "activate:no-ability-text"
         return _play("decision-activate", when, [move]), None
+    if kind == "pass":
+        return _play("decision-pass", when, [{"kind": "pass"}]), None
+    if kind == "declare_attackers":
+        move = _declare_attackers(detail, state_view)
+        if move is None:
+            return None, _ATTACK
+        return _play("decision-declare-attackers", when, [move]), None
+    if kind == "declare_blockers":
+        move = _declare_blockers(detail, state_view)
+        if move is None:
+            return None, _BLOCK
+        return _play("decision-declare-blockers", when, [move]), None
     if kind == "decide":
-        answer, unexpressible = _answer_for_decide(detail.get("kind"), detail, seat)
+        answer, unexpressible = _answer_for_decide(detail.get("kind"), detail, seat, state_view)
         if answer is None:
             return None, unexpressible
         move = {"kind": "answer", "answers": [answer]}
-        return _play("decision-decide", when, [move]), None
+        play = _play("decision-decide", when, [move])
+        # See the module docstring's "Off-priority answers": a decision
+        # answered without this seat holding priority is a standalone
+        # pending-decision answer, not a `when`-timed one.
+        if isinstance(state_view, Mapping) and state_view.get("priority_holder") != seat:
+            play["true"] = [{"kind": "pending_decision", "decision": str(detail.get("kind"))}]
+        return play, None
     return None, kind
 
 

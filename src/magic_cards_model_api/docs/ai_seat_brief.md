@@ -974,8 +974,10 @@ or discard. Wait for every subagent and background task you started to report
 back before you end the handover turn: the pod stops when that turn ends.
 
 To retire a play, delete its file (`git rm decks/SLUG/plays/<id>.json`) and
-admit; a deck at its play cap may retire its weakest play in the same admit
-that adds a new one. Each game's offer counts (offered, taken, passed over,
+admit. There is no per-deck play cap: a deck may carry any number of
+move-bearing, advice-only or archetype-active plays, so retiring a play is
+never required to make room for a new one - do it only when the play itself
+is superseded or wrong. Each game's offer counts (offered, taken, passed over,
 declined per play) are written by the driver and land at your admit as
 `decks/SLUG/plays/evidence/GAME.json` - one file per game, never a play,
 never edited by hand; the evidence table you are shown is built from them,

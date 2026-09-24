@@ -2771,7 +2771,9 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         routes a hand-played move uses - so every refusal is the engine's own
         - answers each decision a move raises from the move's `answers`, and
         passes priority only over its own objects until they resolve. It
-        never passes beyond the resolution of its last move.
+        never passes beyond the resolution of its last move - unless that
+        last move is itself `pass` (CR 117.3d), which releases priority once
+        there and ends the run on it, the same as any other hand-played pass.
 
         `reasoning`: why you are running this script now, in your own words.
         Every move it makes is sent with it; without it the run is refused.
@@ -3051,7 +3053,12 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
           something wrong.
         - `dsl`: a play the play-script DSL could not express, or a DSL
           feature that is missing - name the specific missing condition or
-          move kind, not just "the DSL couldn't do it".
+          move kind, not just "the DSL couldn't do it". The vocabulary
+          already covers `declare_attackers`, `declare_blockers` and a bare
+          `pass` as moves, and `top_order`/`position`/`targets` and a
+          standalone `pending_decision` answer, `compare` and `all_of` as
+          conditions - a decision that fits one of those is not a `dsl`
+          report.
         - `ux`: friction with these MCP tools themselves - an overcomplicated
           call, a confusing answer, workflow steps that could be merged into
           one. Not a rules bug and not a DSL gap - this tool surface itself
