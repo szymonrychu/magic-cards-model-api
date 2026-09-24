@@ -2588,7 +2588,7 @@
       },
       "AiReviewIn": {
         "additionalProperties": false,
-        "description": "`POST /api/games/{game_id}/ai-review` - the post-game AI review\n(`audit.AI_REVIEW_ACTION`), a separate critique generated on Opus from a\nseat's own reflection plus the game's review record\n(`mtg_agent.driver.review`), never a seat's own account of what it did.\n\nShaped exactly like `ReflectionIn` and gated the same way (post-game\nonly, `uid` must open `player`'s own seat) - see that class's docstring\nfor why this is deliberately just one seat's credential and one block of\ntext, nothing structured.",
+        "description": "`POST /api/games/{game_id}/ai-review` - the post-game AI review\n(`audit.AI_REVIEW_ACTION`), a separate critique generated on Opus from a\nseat's own reflection plus the game's review record\n(`mtg_agent.driver.review`), never a seat's own account of what it did.\n\nShaped mostly like `ReflectionIn` and gated the same way (post-game\nonly, `uid` must open `player`'s own seat) - see that class's docstring\nfor why the review itself stays one block of text, nothing structured.\n\n**`turning_points`, DR3 owner addon 2, is the one deliberately\nstructured field.** `mtg_agent.driver.review.parse_turning_points` pulls\nit out of the reviewer's own `turning_points: {...}` line so the game's\nturning points are stored on the review record as data\n(`{<seat>: [{\"turn\": ..., \"action\": ..., \"why\": ...}, ...]}`), not only\nargued in `text`'s own prose. Defaulted to `{}` rather than required: a\nreview whose text carried no parseable line still files.",
         "properties": {
           "player": {
             "minLength": 1,
@@ -2599,6 +2599,17 @@
             "minLength": 1,
             "title": "Text",
             "type": "string"
+          },
+          "turning_points": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "title": "Turning Points",
+            "type": "object"
           },
           "uid": {
             "minLength": 1,
