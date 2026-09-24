@@ -2194,9 +2194,16 @@ reinvented:
 - A new or refined play under bar (a) or (b) must be expressible in the DSL
   exactly as docs/superpowers/specs/2026-09-13-play-script-format-design.md
   defines it - a selector, a condition kind, and, for a move-bearing play, a
-  `moves` entry the schema already has a field for. A line that format cannot
-  say is a NOTES.md sentence, or nothing - never a play written to fit it
-  anyway."""
+  `moves` entry the schema already has a field for. The vocabulary reaches
+  further than it used to: `declare_attackers`, `declare_blockers` and a bare
+  `pass` are real moves now, not just hand-played actions, an answer can
+  name `top_order`, `position` or `targets`, and a condition can be
+  `pending_decision` (a play that stands alone as the direct answer to a
+  decision already on the table, no `when` timing needed), `compare` (one
+  board- or literal-read value against another, so "their board's power
+  beats my life" is one condition) or `all_of` (inside `false` only: "not
+  (A and B ...)"). A line that format still cannot say is a NOTES.md
+  sentence, or nothing - never a play written to fit it anyway."""
 
 
 #: T15: the heading over the reviewer's own two write channels, named apart

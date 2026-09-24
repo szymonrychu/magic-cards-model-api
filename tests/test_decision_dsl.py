@@ -103,17 +103,39 @@ def test_board_is_compact_board_of_the_row_state_view():
     assert record["board"] is not None
 
 
-# -- unexpressible: not in the vocabulary -------------------------------------
+# -- unexpressible: still not in the vocabulary -------------------------------
 
 
-def test_declare_attackers_is_unexpressible_attack():
-    record = only(decision_rows([row(1, "attack", attackers=[])], SEAT))
+def test_declare_attackers_without_board_data_is_unexpressible_attack():
+    # A non-empty `attackers` needs every attacker resolved in a state
+    # view - with none attached at all, nothing can be resolved.
+    record = only(
+        decision_rows(
+            [row(1, "attack", attackers=[{"card": "00000000-0000-4000-8000-000000000009"}])], SEAT
+        )
+    )
     assert record["dsl"] is None
     assert record["unexpressible"] == "attack"
 
 
-def test_declare_blockers_is_unexpressible_block():
-    record = only(decision_rows([row(1, "declare_blockers", blocks=[])], SEAT))
+def test_declare_blockers_without_board_data_is_unexpressible_block():
+    record = only(
+        decision_rows(
+            [
+                row(
+                    1,
+                    "declare_blockers",
+                    blocks=[
+                        {
+                            "blocker": "00000000-0000-4000-8000-000000000009",
+                            "blocked": "00000000-0000-4000-8000-000000000010",
+                        }
+                    ],
+                )
+            ],
+            SEAT,
+        )
+    )
     assert record["dsl"] is None
     assert record["unexpressible"] == "block"
 
@@ -124,34 +146,15 @@ def test_mulligan_is_unexpressible_mulligan():
     assert record["unexpressible"] == "mulligan"
 
 
-def test_pass_is_unexpressible_pass():
-    record = only(decision_rows([row(1, "pass_priority")], SEAT))
-    assert record["dsl"] is None
-    assert record["unexpressible"] == "pass"
-
-
 def test_concede_is_unexpressible_concede():
     # `app.action_concede` records `"concede"` with `allowed=True` and the
     # seat's own reasoning (CR 104.3a: concede at any time) - the vocabulary
-    # has no move for it, same as attack/block/mulligan/pass.
+    # has no move for it, same as mulligan/pregame.
     record = only(decision_rows([row(1, "concede", reasoning="the board is lost")], SEAT))
     assert record["dsl"] is None
     assert record["unexpressible"] == "concede"
     assert record["action"] == "concede"
     assert record["reasoning"] == "the board is lost"
-
-
-def test_pass_until_rows_are_pass_priority_rows_each_unexpressible():
-    # `seatkit.pass_until` threads one reason onto every `pass_priority` row
-    # it drives - there is no separate ledger action for it (see the
-    # module docstring); two such rows just read as two `pass` records.
-    entries = [
-        row(1, "pass_priority", reasoning="thread"),
-        row(2, "pass_priority", reasoning="thread"),
-    ]
-    out = decision_rows(entries, SEAT)
-    assert [r["unexpressible"] for r in out] == ["pass", "pass"]
-    assert [r["reasoning"] for r in out] == ["thread", "thread"]
 
 
 def test_opening_hand_action_is_unexpressible_pregame():
@@ -168,17 +171,141 @@ def test_opening_hand_action_is_unexpressible_pregame():
     assert record["unexpressible"] == "pregame"
 
 
-def test_every_unexpressible_kind_this_module_can_produce():
+def test_every_still_unexpressible_kind_this_module_can_produce():
     entries = [
-        row(1, "attack"),
-        row(2, "declare_blockers"),
-        row(3, "mulligan_declared"),
-        row(4, "concede"),
-        row(5, "pass_priority"),
-        row(6, "opening_hand_action", step="pregame_actions"),
+        row(1, "mulligan_declared"),
+        row(2, "concede"),
+        row(3, "opening_hand_action", step="pregame_actions"),
     ]
     kinds = {r["unexpressible"] for r in decision_rows(entries, SEAT)}
-    assert kinds == {"attack", "block", "mulligan", "concede", "pass", "pregame"}
+    assert kinds == {"mulligan", "concede", "pregame"}
+
+
+# -- pass: FB2's M1 --------------------------------------------------------------
+
+
+def test_pass_gives_a_pass_move_needing_no_board_data():
+    record = only(decision_rows([row(1, "pass_priority")], SEAT))
+    play = play_of(record)
+    assert play["moves"] == [{"kind": "pass"}]
+
+
+def test_pass_until_rows_each_give_their_own_pass_move_with_the_row_step():
+    # `seatkit.pass_until` threads one reason onto every `pass_priority` row
+    # it drives - there is no separate ledger action for it (see the
+    # module docstring); two such rows just read as two `pass` records,
+    # each carrying its own row's own step in `when`.
+    entries = [
+        row(1, "pass_priority", reasoning="thread", step="upkeep"),
+        row(2, "pass_priority", reasoning="thread", step="end_step"),
+    ]
+    out = decision_rows(entries, SEAT)
+    plays = [play_of(r) for r in out]
+    assert [p["when"]["steps"] for p in plays] == [["upkeep"], ["end_step"]]
+    assert [p["moves"] for p in plays] == [[{"kind": "pass"}], [{"kind": "pass"}]]
+    assert [r["reasoning"] for r in out] == ["thread", "thread"]
+
+
+# -- declare_attackers / declare_blockers: FB2's M2/M3 --------------------------
+
+
+def _attacker(controller: str = SEAT, **kw: Any) -> dict[str, Any]:
+    return kit.card(
+        "Bruiser",
+        type_line="Creature — Bear",
+        controller=controller,
+        power=2,
+        toughness=2,
+        **kw,
+    )
+
+
+def test_declare_attackers_two_creatures_at_the_player_gives_one_group():
+    bear1, bear2 = _attacker(), _attacker()
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[bear1, bear2])
+    entries = [
+        row(
+            1,
+            "attack",
+            step="declare_attackers",
+            attackers=[
+                {"card": bear1["id"], "defender": OPPONENT},
+                {"card": bear2["id"], "defender": OPPONENT},
+            ],
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["kind"] == "declare_attackers"
+    assert len(move["attackers"]) == 1
+    group = move["attackers"][0]
+    assert group["count"] == 2
+    assert "defender" not in group  # left out means the opponent player
+    dumped = json.dumps(group)
+    assert bear1["name"].lower() not in dumped.lower()
+
+
+def test_declare_attackers_empty_list_is_expressible_with_no_board_data():
+    record = only(decision_rows([row(1, "attack", step="declare_attackers", attackers=[])], SEAT))
+    play = play_of(record)
+    assert play["moves"] == [{"kind": "declare_attackers", "attackers": []}]
+
+
+def test_declare_attackers_at_a_planeswalker_gives_a_defender_card():
+    bear = _attacker()
+    walker = kit.card("Walker", type_line="Legendary Planeswalker — Foo", controller=OPPONENT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[bear, walker])
+    entries = [
+        row(
+            1,
+            "attack",
+            step="declare_attackers",
+            attackers=[{"card": bear["id"], "defender": walker["id"]}],
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    group = play["moves"][0]["attackers"][0]
+    assert group["defender"]["side"] == "opponent"
+    assert "planeswalker" in group["defender"]["select"].get("types_all", [])
+
+
+def test_declare_blockers_no_block_gives_empty_blocks():
+    record = only(
+        decision_rows([row(1, "declare_blockers", step="declare_blockers", blocks=[])], SEAT)
+    )
+    play = play_of(record)
+    assert play["moves"] == [{"kind": "declare_blockers", "blocks": []}]
+
+
+def test_declare_blockers_one_block_groups_by_attacker():
+    blocker = kit.card(
+        "Guardian", type_line="Creature — Wall", controller=SEAT, power=0, toughness=4
+    )
+    attacker = _attacker(controller=OPPONENT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[blocker, attacker])
+    entries = [
+        row(
+            1,
+            "declare_blockers",
+            step="declare_blockers",
+            blocks=[{"blocker": blocker["id"], "blocked": attacker["id"]}],
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["kind"] == "declare_blockers"
+    assert len(move["blocks"]) == 1
+    block = move["blocks"][0]
+    assert block["blocker"]["count"] == 1
+    dumped = json.dumps(block)
+    assert blocker["name"].lower() not in dumped.lower()
+    assert attacker["name"].lower() not in dumped.lower()
 
 
 # -- run_script ----------------------------------------------------------------
@@ -381,10 +508,136 @@ def test_decide_order_triggers_is_unexpressible():
     assert record["unexpressible"] == "decide:order_triggers"
 
 
-def test_decide_put_on_top_or_bottom_is_unexpressible():
+def test_decide_put_on_top_or_bottom_gives_a_position_answer_needing_no_board_data():
     record = only(decision_rows([_decide(1, "put_on_top_or_bottom", top=True)], SEAT))
-    assert record["dsl"] is None
-    assert record["unexpressible"] == "decide:put_on_top_or_bottom"
+    play = play_of(record)
+    assert play["moves"][0]["answers"][0] == {"decision": "put_on_top_or_bottom", "position": "top"}
+
+
+def test_decide_put_on_top_or_bottom_bottom():
+    record = only(decision_rows([_decide(1, "put_on_top_or_bottom", top=False)], SEAT))
+    play = play_of(record)
+    assert play["moves"][0]["answers"][0]["position"] == "bottom"
+
+
+# -- decide/answer with board data: scry/surveil, choose_cards, choose_targets --
+
+
+def _library_known(*cards: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "library": [
+            {"index_from_top": i, "source": "scry", "card": card} for i, card in enumerate(cards)
+        ]
+    }
+
+
+def test_decide_scry_keep_one_bottom_one_gives_to_bottom_and_top_order():
+    on_top = kit.card("Firebolt", type_line="Instant")
+    sent_down = kit.card("Swampland", type_line="Land")
+    view = kit.state_view(SEAT, opponent=OPPONENT, known=_library_known(on_top, sent_down))
+    record = only(
+        decision_rows(
+            [
+                _decide(
+                    1, "scry", moved=[sent_down["id"]], top_order=[on_top["id"]], state_view=view
+                )
+            ],
+            SEAT,
+        )
+    )
+    play = play_of(record)
+    answer = play["moves"][0]["answers"][0]
+    assert answer["decision"] == "scry"
+    assert "land" in answer["to_bottom"].get("types_all", [])
+    assert answer["top_order"] == [{"types_all": ["instant"]}]
+    dumped = json.dumps(answer)
+    assert "firebolt" not in dumped.lower() and "swampland" not in dumped.lower()
+
+
+def test_decide_surveil_with_cards_moved_and_board_data_gives_to_graveyard():
+    moved = kit.card("Moved", type_line="Creature — Bear")
+    view = kit.state_view(SEAT, opponent=OPPONENT, known=_library_known(moved))
+    record = only(
+        decision_rows([_decide(1, "surveil", moved=[moved["id"]], state_view=view)], SEAT)
+    )
+    play = play_of(record)
+    answer = play["moves"][0]["answers"][0]
+    assert answer["decision"] == "surveil"
+    assert "creature" in answer["to_graveyard"].get("types_all", [])
+
+
+def test_decide_choose_cards_with_board_data_gives_a_pick():
+    found = kit.card("Found", type_line="Land — Mountain")
+    view = kit.state_view(SEAT, opponent=OPPONENT, known=_library_known(found))
+    record = only(
+        decision_rows([_decide(1, "choose_cards", card_ids=[found["id"]], state_view=view)], SEAT)
+    )
+    play = play_of(record)
+    answer = play["moves"][0]["answers"][0]
+    assert answer["decision"] == "choose_cards"
+    assert answer["pick"]["count"] == 1
+    assert "land" in answer["pick"]["select"].get("types_all", [])
+
+
+def test_decide_choose_targets_player_target_gives_targets():
+    view = kit.state_view(SEAT, opponent=OPPONENT)
+    record = only(
+        decision_rows([_decide(1, "choose_targets", targets=[OPPONENT], state_view=view)], SEAT)
+    )
+    play = play_of(record)
+    answer = play["moves"][0]["answers"][0]
+    assert answer == {"decision": "choose_targets", "targets": [{"player": "opponent"}]}
+
+
+def test_decide_choose_targets_card_target_resolves_side_and_zone():
+    theirs = kit.card("Theirs", type_line="Creature — Bear", controller=OPPONENT, zone="graveyard")
+    view = kit.state_view(SEAT, opponent=OPPONENT, graveyards={OPPONENT: [theirs]})
+    record = only(
+        decision_rows([_decide(1, "choose_targets", targets=[theirs["id"]], state_view=view)], SEAT)
+    )
+    play = play_of(record)
+    target = play["moves"][0]["answers"][0]["targets"][0]
+    assert target["side"] == "opponent"
+    assert target["zone"] == "graveyard"
+
+
+# -- off-priority answers: a standalone pending_decision -------------------------
+
+
+def test_decide_answered_off_priority_gives_a_pending_decision_condition():
+    view = kit.state_view(SEAT, opponent=OPPONENT)
+    view["priority_holder"] = OPPONENT
+    record = only(decision_rows([_decide(1, "may", accept=True, state_view=view)], SEAT))
+    play = play_of(record)
+    assert play["true"] == [{"kind": "pending_decision", "decision": "may"}]
+    assert play["moves"][0]["answers"][0] == {"decision": "may", "accept": True}
+
+
+def test_decide_answered_with_priority_carries_no_pending_decision_condition():
+    view = kit.state_view(SEAT, opponent=OPPONENT)
+    view["priority_holder"] = SEAT
+    record = only(decision_rows([_decide(1, "may", accept=True, state_view=view)], SEAT))
+    play = play_of(record)
+    assert play["true"] == []
+
+
+# -- activate: FB2's M4 ability_index fallback ------------------------------------
+
+
+def test_activate_with_blank_ability_text_uses_ability_index():
+    blank = kit.card(
+        "Blank",
+        type_line="Artifact",
+        controller=SEAT,
+        abilities=(("", False),),
+    )
+    view = _view_with_battlefield_card(blank)
+    entries = [row(1, "activate", card_id=blank["id"], ability_index=0, state_view=view)]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["ability_index"] == 0
+    assert "ability_text_has" not in move
 
 
 def test_decide_declare_attackers_is_a_decide_kind_gap():

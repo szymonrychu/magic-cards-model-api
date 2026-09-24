@@ -33,6 +33,7 @@ from mtg_agent.driver.prompt import (
     NOTES_ROUTING_DURING_GAME,
     REPUSH_OPENING,
     WRITE_BARS,
+    WRITE_BARS_HARD_RULES,
     WRITE_CHANNELS,
     Assignment,
     advisor_turn_zero,
@@ -1166,7 +1167,7 @@ def test_seat_brief_documents_not_now_next_to_unaffordable_casts():
 def test_seat_brief_plan_section_documents_the_same_short_contract():
     text = (BRIEFS / "ai_seat_brief.md").read_text()
     section = _flat(_section(text, "## Declare your plan before you act")).lower()
-    assert 'default to `--for-turn next`' in section
+    assert "default to `--for-turn next`" in section
     assert "compact board" in section
     assert "carries forward" in section
     assert "reuse when the plan still holds" in section
@@ -2122,6 +2123,48 @@ def test_write_bars_still_offers_an_advice_only_play():
     text = _flat(WRITE_BARS)
     assert "NEW ADVICE-ONLY PLAY" in text
     assert "one game is evidence enough" in text
+
+
+# -- FC7: the DSL's new vocabulary is named, and no play-count cap survives --
+#
+# FB2's B4 gave the play-script DSL real moves for attack, block and a bare
+# pass, plus new answer shapes and condition kinds - a seat's own decision
+# in any of these is now something the corpus can generalize, not a decision
+# `WRITE_BARS_HARD_RULES` would have to wave off as unexpressible. The
+# vocabulary is named where that rule is stated, so a reader does not have
+# to already know the schema changed to see it applies.
+
+NEW_VOCABULARY_MOVE_KINDS = ("declare_attackers", "declare_blockers", "pass")
+NEW_VOCABULARY_CONDITIONS = ("pending_decision", "compare", "all_of")
+NEW_VOCABULARY_ANSWER_FIELDS = ("top_order", "position", "targets")
+
+
+@pytest.mark.parametrize("kind", NEW_VOCABULARY_MOVE_KINDS)
+def test_write_bars_hard_rules_names_the_new_move_kinds(kind):
+    assert f"`{kind}`" in _flat(WRITE_BARS_HARD_RULES)
+
+
+@pytest.mark.parametrize("field", NEW_VOCABULARY_ANSWER_FIELDS)
+def test_write_bars_hard_rules_names_the_new_answer_fields(field):
+    assert f"`{field}`" in _flat(WRITE_BARS_HARD_RULES)
+
+
+@pytest.mark.parametrize("kind", NEW_VOCABULARY_CONDITIONS)
+def test_write_bars_hard_rules_names_the_new_condition_kinds(kind):
+    assert f"`{kind}`" in _flat(WRITE_BARS_HARD_RULES)
+
+
+@pytest.mark.parametrize(
+    "text", (_flat(WRITE_BARS), _flat(WRITE_BARS_HARD_RULES), _flat(WRITE_CHANNELS))
+)
+def test_no_play_count_cap_language_survives(text):
+    # `MAX_MOVES`/`MAX_CONDITIONS`/`MAX_PREFER`/`MAX_STEPS` are per-play
+    # structural bounds (WRITE_CHANNELS states them, correctly) - never a
+    # ceiling on how many plays a deck's corpus may hold at all, which the
+    # owner dropped entirely (see WRITE_BARS' own "No autofire bar" note).
+    assert "play cap" not in text.lower()
+    assert "deck at its play cap" not in text.lower()
+    assert "retire its weakest play in the same admit" not in text.lower()
 
 
 # -- DR4: WRITE_CHANNELS drops the stale autofire sentence, caps from DR5 ---
