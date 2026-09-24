@@ -19,24 +19,23 @@ of the ledger:
 - **the admitted entries** (`admitted`) - one entry per successful
   `playscripts.admit.admit()` run of this game's own handover, each shaped
   exactly like that call's own `"admitted"` result (`admit._landing`):
-  `plays`, a list of `{"id": <play id>, "change": ...}`, one per play file
-  that admit actually touched, `change` one of `"added"` (a new play file),
-  `"updated"` (changed beyond its `priority`), `"reprioritized"` (a
-  `priority`-only change), or `"deleted"`. This is deliberately the *real*
-  shape `admit.py` computes from its own git diff - not a label a caller
-  invents - so `added`/`updated`/`reprioritized` are never a fourth,
-  independent reimplementation of "what kind of change was this": they are
-  read straight off the one place that rule is actually evaluated (see
+  `added` (new play files), `updated` (changed beyond `priority`, or
+  deleted) and `reprioritized` (a `priority`-only change), each a list of
+  play ids. This is deliberately the *real* shape `admit.py` computes from
+  its own git diff - not a label a caller invents - so these are never a
+  fourth, independent reimplementation of "what kind of change was this":
+  they are read straight off the one place that rule is actually evaluated (see
   `admit._landing`'s own docstring for exactly how). Scoped to this game the
   same way `records` is: a real admitted entry carries no `game_id` of its
   own (a `plays admit` run is already scoped to one game by the caller that
   invoked it), so filtering *which* admits belong to `game_id` is this
   function's caller's job, same as it already is for `records` spanning
   several games would be its caller's job to split first. `added`/`updated`/
-  `reprioritized` count the *distinct* play ids across every entry's `plays`
+  `reprioritized` count the *distinct* play ids across every entry's lists
   whose last mention (list order - later admits of the same game supersede
-  earlier ones) is that kind of change; `"deleted"` counts as `"updated"`
-  (a deleted play file is still a play file that changed). A game admitted
+  earlier ones) is that kind of change; `admit._landing` already files a
+  deletion under `updated` (a deleted play file is still a play file that
+  changed). A game admitted
   several times counts each play id once, off its last mention - "ids are
   deduped across several admits of one game".
 
@@ -76,10 +75,9 @@ GAME_PLAY_STATS_FIELDS = (
     "updated_ids",
 )
 
-#: An admitted entry's own `change` values that count as `updated` -
-#: `"updated"` itself, and `"deleted"` (a deleted play file is still a play
-#: file that changed, per this module's own docstring).
-_UPDATED_CHANGES = frozenset({"updated", "deleted"})
+#: The per-play keys of an admitted entry (`admit._Landing`), each a list of
+#: play ids.
+_ADMIT_KINDS = ("added", "updated", "reprioritized")
 
 
 def _corpus_docs(
@@ -118,24 +116,18 @@ def _admitted_counts(
 ) -> tuple[int, int, int, tuple[str, ...], tuple[str, ...]]:
     """`admitted`'s own real per-play classification, flattened and deduped
     - see the module docstring for the entry shape (`admit._landing`'s own
-    `plays` list, one entry per admit) and why no `game_id` field is read
-    off it."""
+    `added`/`updated`/`reprioritized` lists, one entry per admit) and why no
+    `game_id` field is read off it."""
     last_change: dict[str, str] = {}
     for entry in admitted:
-        for play in entry.get("plays") or ():
-            if not isinstance(play, Mapping):
-                continue
-            play_id = play.get("id")
-            change = play.get("change")
-            if not isinstance(play_id, str) or not isinstance(change, str):
-                continue
-            last_change[play_id] = change
+        for kind in _ADMIT_KINDS:
+            for play_id in entry.get(kind) or ():
+                if isinstance(play_id, str):
+                    last_change[play_id] = kind
 
-    added_ids = tuple(sorted(pid for pid, change in last_change.items() if change == "added"))
-    updated_ids = tuple(
-        sorted(pid for pid, change in last_change.items() if change in _UPDATED_CHANGES)
-    )
-    reprioritized = sum(1 for change in last_change.values() if change == "reprioritized")
+    added_ids = tuple(sorted(pid for pid, kind in last_change.items() if kind == "added"))
+    updated_ids = tuple(sorted(pid for pid, kind in last_change.items() if kind == "updated"))
+    reprioritized = sum(1 for kind in last_change.values() if kind == "reprioritized")
     return len(added_ids), len(updated_ids), reprioritized, added_ids, updated_ids
 
 

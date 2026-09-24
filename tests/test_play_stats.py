@@ -71,11 +71,15 @@ def play_doc(play_id: str, *, moves: bool = True) -> dict[str, Any]:
 
 def admit_result(*plays: tuple[str, str]) -> dict[str, Any]:
     """One `playscripts.admit.admit()` `"admitted"` result, in exactly the
-    shape `_landing` builds it - `plays` a list of `{id, change}` - so these
-    tests exercise `_admitted_counts` against the real producer's own shape
-    rather than a label invented for the test (see `test_real_admit_...`
-    below for the same claim proven against a real git checkout)."""
-    return {"plays": [{"id": play_id, "change": change} for play_id, change in plays]}
+    shape `_landing` builds it - `added`/`updated`/`reprioritized`, each a
+    list of play ids - so these tests exercise `_admitted_counts` against the
+    real producer's own shape rather than a label invented for the test (see
+    `test_real_admit_...` below for the same claim proven against a real git
+    checkout)."""
+    result: dict[str, Any] = {"added": [], "updated": [], "reprioritized": []}
+    for play_id, kind in plays:
+        result[kind].append(play_id)
+    return result
 
 
 ZERO_STATS = {
@@ -181,11 +185,12 @@ def test_offer_outcomes_reuse_report_offer_outcomes_not_a_reimplementation():
 def test_added_updated_reprioritized_counts_and_ids():
     admitted = [
         admit_result(("play-a", "added"), ("play-b", "updated")),
-        admit_result(("play-c", "reprioritized"), ("play-d", "deleted")),
+        # `admit._landing` files a deleted play (play-d) under `updated`.
+        admit_result(("play-c", "reprioritized"), ("play-d", "updated")),
     ]
     result = stats.game_play_stats([], GAME, SEAT, corpus=[], admitted=admitted)
     assert result["added"] == 1
-    assert result["updated"] == 2  # deletions counted as updated
+    assert result["updated"] == 2
     assert result["reprioritized"] == 1
     assert result["added_ids"] == ("play-a",)
     assert result["updated_ids"] == ("play-b", "play-d")
@@ -206,9 +211,18 @@ def test_admitted_ids_are_deduped_across_several_admits_of_one_game():
 
 def test_an_admit_entry_with_no_plays_is_evidence_only_and_counts_nothing():
     # `admit()` admits evidence-only handovers too (see `admit.py`'s own
-    # docstring): a `plays` field that is empty, not one this function
-    # invents a fallback for.
-    admitted = [{"sha": "abc", "dsl_change": False, "files": ["evidence.json"], "plays": []}]
+    # docstring): empty `added`/`updated`/`reprioritized`, not something this
+    # function invents a fallback for.
+    admitted = [
+        {
+            "sha": "abc",
+            "dsl_change": False,
+            "files": ["evidence.json"],
+            "added": [],
+            "updated": [],
+            "reprioritized": [],
+        }
+    ]
     result = stats.game_play_stats([], GAME, SEAT, corpus=[], admitted=admitted)
     assert result["added"] == 0
     assert result["updated"] == 0
