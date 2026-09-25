@@ -1236,10 +1236,19 @@ class OptionalCostChoice(RequestModel):
     `Harmonize` (CR 702.180a/b, `Casting.pay_harmonize` - the creature a
     `keyword: Harmonize` cast taps to reduce its cost) and `Pay life`
     (CR 601.2b, the life half of a "pay N life or pay {M}" additional cost,
-    `Casting.paying_life_for_additional_cost`) - every optional cost choice
-    the engine charges."""
+    `Casting.paying_life_for_additional_cost`), `Bargain` (CR 702.166a,
+    `Casting.pay_bargain` - name the sacrificed permanent in `choosing`),
+    `Collect evidence` (CR 701.59a, `Casting.collect_evidence` - the cards in
+    `choosing`, or left for the payment to pick) and `Reveal` (CR 701.20a,
+    `Casting.reveal_for_cost` - the revealed card in `choosing`) - every
+    optional cost choice the engine charges."""
 
     keyword: str
+    cost: str | None = None
+    """Which printed cost of the keyword is paid, as the row's own
+    `optional_costs[].cost` prints it - only for a card printing two kicker
+    costs ("Kicker {R} and/or {W}", CR 702.33b), where each is announced on its
+    own and "if it was kicked with its {W} kicker" (CR 702.33f) reads which."""
     times: int = 1
     """How many times it is paid. Only a repeatable cost (multikicker,
     replicate) takes more than 1; the engine refuses a second payment of any

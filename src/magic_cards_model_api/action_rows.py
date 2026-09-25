@@ -61,6 +61,7 @@ from magic_cards_model.machines.casting import (
     _BLIGHT_PHRASE,
     granted_cast_options,
     keyword_cast_options,
+    kicker_costs,
     marker_cast_options,
 )
 from magic_cards_model.machines.cost import (
@@ -587,6 +588,23 @@ class _Rows:
             if known is None or (face is not None and ability.face != face):
                 continue
             rule, repeatable = known
+            costs = kicker_costs(card.card) if ability.canonical.lower() == "kicker" else []
+            if len(costs) > 1:
+                # CR 702.33b: "Kicker [cost 1] and/or [cost 2]" is two kicker
+                # costs, each announced on its own - one offer each, named back
+                # by `OptionalCostChoice.cost`.
+                for cost in costs:
+                    offers.append(
+                        {
+                            "keyword": ability.keyword,
+                            "rule": rule,
+                            "cost": cost,
+                            "repeatable": False,
+                            **_UNDERSTOOD,
+                            **self._affordable_with(action, card, ability.keyword, cost),
+                        }
+                    )
+                continue
             offer: dict[str, Any] = {
                 "keyword": ability.keyword,
                 "rule": rule,

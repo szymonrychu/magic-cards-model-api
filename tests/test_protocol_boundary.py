@@ -356,10 +356,19 @@ def test_seatkit_21_names_the_pre_bump_behaviour() -> None:
         assert term in paragraph, f"the seatkit-21 paragraph does not name {term}"
 
 
-def test_seatkit_23_is_the_current_version() -> None:
-    """DR2's review DSL, play stats, plays-outcome admit classification and
-    report_problem category moved three answer shapes at once."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-23"
+def test_seatkit_24_is_the_current_version() -> None:
+    """EC3's optional costs: `OptionalCostChoice.cost` and the Bargain,
+    Collect evidence and Reveal keywords moved the cast request's shape."""
+    assert protocol.PROTOCOL_VERSION == "seatkit-24"
+    assert seatkit.PROTOCOL_VERSION == "seatkit-24"
+
+
+def test_seatkit_24_names_the_optional_cost_additions() -> None:
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-24`", 1)[1].split("`seatkit-23`", 1)[0]
+    for term in ("cost", "Kicker:{W}", "Bargain", "Collect evidence", "Reveal", "CR 702.33b"):
+        assert term in paragraph, f"the seatkit-24 paragraph does not name {term}"
 
 
 def test_seatkit_23_names_the_review_dsl_admit_and_category_additions() -> None:

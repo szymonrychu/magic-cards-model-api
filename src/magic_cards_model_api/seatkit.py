@@ -191,7 +191,18 @@ def scripts_enabled_here(env: Mapping[str, str] | None = None) -> bool:
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-23"
+PROTOCOL_VERSION = "seatkit-24"
+#: `seatkit-24` (EC3): an **additive request** change. `OptionalCostChoice`
+#: gained `cost`, which of two printed kicker costs is paid - CR 702.33b's
+#: "Kicker {R} and/or {W}" is two kicker costs, each announced on its own, and
+#: its cast row now offers one `Kicker` entry per cost - and `optional_costs`
+#: takes three more keywords the engine charges: `Bargain` (CR 702.166a, the
+#: sacrificed permanent's id in `choosing`), `Collect evidence` (CR 701.59a)
+#: and `Reveal` (CR 701.20a, the revealed card's id in `choosing`).
+#: `parse_optional_costs` reads `Kicker:{W}` as that cost. A bump because a
+#: seatkit-23 process parses `Kicker:{W}` as a gift's opponent, so a seat told
+#: to kick with one cost would be refused for naming none.
+#:
 #: `seatkit-23` (DR2): the post-game review gains a DSL-shaped record of
 #: every decision a seat made. `GET .../review` now carries `decisions`,
 #: keyed by seat - each row `{seq, turn, step, action, dsl, reasoning,
@@ -2662,8 +2673,10 @@ def parse_optional_costs(value: str) -> list[dict[str, Any]]:
     Each entry is a keyword (`Kicker`), optionally followed by `:`-separated
     arguments: a number is how many times a repeatable cost is paid
     (`Multikicker:2`), an id (or id fragment, which the API then refuses as a
-    malformed id) is an object the cost names (`Blight:<creature id>`), and
-    anything else is the opponent a gift is promised to (`Gift:bob`)."""
+    malformed id) is an object the cost names (`Blight:<creature id>`,
+    `Bargain:<artifact id>`, `Reveal:<card id>`), a `{...}` cost is which of
+    two printed kicker costs is paid (`Kicker:{W}`, CR 702.33b), and anything
+    else is the opponent a gift is promised to (`Gift:bob`)."""
     choices: list[dict[str, Any]] = []
     for entry in value.split(","):
         keyword, *arguments = [part.strip() for part in entry.split(":")]
@@ -2673,6 +2686,8 @@ def parse_optional_costs(value: str) -> list[dict[str, Any]]:
         for argument in arguments:
             if argument.isdigit():
                 choice["times"] = int(argument)
+            elif argument.startswith("{"):
+                choice["cost"] = argument
             elif _UUID.match(argument) or _ID_FRAGMENT.match(argument):
                 choice.setdefault("choosing", []).append(argument)
             elif argument:

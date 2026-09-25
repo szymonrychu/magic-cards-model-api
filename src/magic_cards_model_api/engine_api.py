@@ -932,7 +932,11 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
     anything determines the total cost (CR 601.2f).
 
     One engine door per mechanic, each refusing in its own words: kicker and
-    multikicker (CR 702.33a/c) through `pay_kicker`, replicate (CR 702.56a),
+    multikicker (CR 702.33a/c) through `pay_kicker` (with `cost` naming one of
+    two printed kicker costs, CR 702.33b), bargain (CR 702.166a,
+    `pay_bargain`), a printed "you may collect evidence N" (CR 701.59a,
+    `collect_evidence`) and "you may reveal a ... card" (CR 701.20a,
+    `reveal_for_cost`), replicate (CR 702.56a),
     offspring (CR 702.175a), blight (CR 701.68a), gift (CR 702.174a) and
     harmonize's "tapping up to one untapped creature you control"
     (CR 702.180a/b, `pay_harmonize`, which refuses unless the cast was
@@ -950,7 +954,27 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
         keyword = choice.keyword.strip().lower()
         chosen = [find_card(game, card_id) for card_id in choice.choosing or []]
         if keyword in ("kicker", "multikicker"):
-            casting.pay_kicker(choice.times, choosing=chosen)
+            # CR 702.33b: a card printing two kicker costs names the one paid.
+            casting.pay_kicker(choice.times, choosing=chosen, which=choice.cost)
+        elif keyword == "bargain":
+            _paid_once(choice, "bargain sacrifices one permanent (CR 702.166a)")
+            if len(chosen) != 1:
+                raise ValueError(
+                    "bargain sacrifices one artifact, enchantment, or token (CR 702.166a) - "
+                    "name exactly that permanent's id in choosing"
+                )
+            casting.pay_bargain(chosen[0])
+        elif keyword == "collect evidence":
+            _paid_once(choice, "evidence is collected once (CR 701.59a)")
+            casting.collect_evidence(chosen or None)
+        elif keyword == "reveal":
+            _paid_once(choice, "one card is revealed for this cost (CR 701.20a)")
+            if len(chosen) != 1:
+                raise ValueError(
+                    "the revealed card is named as the spell is cast (CR 701.20a) - "
+                    "name exactly that card's id in choosing"
+                )
+            casting.reveal_for_cost(chosen[0])
         elif keyword == "replicate":
             casting.pay_replicate(choice.times, choosing=chosen)
         elif keyword == "offspring":
@@ -1002,7 +1026,7 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
             raise ValueError(
                 f"{choice.keyword} is not an optional cost this engine pays (CR 601.2b): "
                 "name one of Kicker, Multikicker, Replicate, Offspring, Blight, Gift, "
-                "Entwine, Escalate, Harmonize or Pay life"
+                "Bargain, Collect evidence, Reveal, Entwine, Escalate, Harmonize or Pay life"
             )
     return mode_costs
 

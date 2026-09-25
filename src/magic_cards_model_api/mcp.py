@@ -1367,7 +1367,11 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
                   (CR 702.33a); a repeatable cost takes a count
                   (`"Multikicker:2"`), a gift names the opponent (`"Gift:bob"`),
                   and a cost naming objects takes their ids
-                  (`"Blight:<creature id>"`). `"Entwine"` chooses every mode
+                  (`"Blight:<creature id>"`, `"Bargain:<artifact id>"`,
+                  `"Reveal:<card id>"`); `"Collect evidence"` exiles
+                  graveyard cards for it (CR 701.59a), and a card printing two
+                  kicker costs names the one paid (`"Kicker:{W}"`, CR 702.33b).
+                  `"Entwine"` chooses every mode
                   (list them in `modes` too, CR 702.42a); escalate is charged
                   for each mode beyond the first (CR 702.120a), and
                   `"Escalate:<card id>"` names what a non-mana escalate cost

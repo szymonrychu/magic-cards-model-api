@@ -687,3 +687,162 @@ def test_the_life_half_named_on_a_card_without_one_is_refused(client, game):
     assert body["reason"] == (
         "Lightning Bolt has no 'pay N life or pay {M}' additional cost to pay with life (CR 601.2b)"
     )
+
+
+# -- two kicker costs, bargain, collect evidence and a revealed card -----------------
+#
+# CR 702.33b: "Kicker [cost 1] and/or [cost 2]" is two kicker costs, each
+# announced on its own, and CR 702.33f's "if it was kicked with its [A] kicker"
+# reads which. CR 702.166a: bargain is "you may sacrifice an artifact,
+# enchantment, or token", and paying it makes the spell bargained (CR 702.166b).
+# CR 701.59a: "you may collect evidence N" exiles graveyard cards of total mana
+# value N or greater. Orator of Ojutai's "you may reveal a Dragon card from your
+# hand" is an optional additional cost too (CR 118.8b). Each is a CR 601.2b
+# announcement a seat has to be able to make.
+
+
+def _record(game: str, card_id: str):
+    from uuid import UUID
+
+    engine = store.get(game)
+    return engine.cast_record(engine.find_by_id(UUID(card_id)))
+
+
+def _spell_on_stack(client, game: str, name: str) -> str:
+    return find(state(client, game)["stack"], name)["id"]
+
+
+def test_thornscape_battlemage_row_offers_each_kicker_cost(client, game):
+    lands(client, game, "Mountain", 2)
+    lands(client, game, "Plains", 2)
+    add_card(client, game, "Thornscape Battlemage", "alice", "hand")
+    row = cast_row(client, game, "Thornscape Battlemage")
+    kickers = sorted(
+        entry["cost"] for entry in row["optional_costs"] if entry["keyword"] == "Kicker"
+    )
+    assert kickers == ["{R}", "{W}"]
+
+
+def test_kicked_with_one_named_kicker_cost(client, game):
+    sources = lands(client, game, "Forest", 3) + lands(client, game, "Plains", 1)
+    add_card(client, game, "Thornscape Battlemage", "alice", "hand")
+    card = hand_card(client, game, "Thornscape Battlemage")["id"]
+    body = cast(
+        client,
+        game,
+        card,
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Kicker", "cost": "{W}"}],
+    )
+    assert body["allowed"] is True, body
+    record = _record(game, _spell_on_stack(client, game, "Thornscape Battlemage"))
+    assert record.kicker_costs_paid == ["{W}"]
+    assert record.kicked == 1
+
+
+def test_kicked_with_both_kicker_costs_is_kicked_twice(client, game):
+    sources = (
+        lands(client, game, "Forest", 3)
+        + lands(client, game, "Plains", 1)
+        + lands(client, game, "Mountain", 1)
+    )
+    add_card(client, game, "Thornscape Battlemage", "alice", "hand")
+    card = hand_card(client, game, "Thornscape Battlemage")["id"]
+    body = cast(
+        client,
+        game,
+        card,
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Kicker", "cost": "{R}"}, {"keyword": "Kicker", "cost": "{W}"}],
+    )
+    assert body["allowed"] is True, body
+    record = _record(game, _spell_on_stack(client, game, "Thornscape Battlemage"))
+    assert sorted(record.kicker_costs_paid) == ["{R}", "{W}"]
+    assert record.kicked == 2
+
+
+def test_troublemaker_ouphe_row_offers_bargain(client, game):
+    add_card(client, game, "Troublemaker Ouphe", "alice", "hand")
+    bargain = offer(cast_row(client, game, "Troublemaker Ouphe"), "Bargain")
+    assert bargain["rule"] == "CR 702.166a"
+    assert bargain["understood"] is True
+
+
+def test_bargained_by_sacrificing_the_named_artifact(client, game):
+    sources = lands(client, game, "Forest", 2)
+    add_card(client, game, "Ornithopter", "alice", "battlefield")
+    add_card(client, game, "Troublemaker Ouphe", "alice", "hand")
+    thopter = find(state(client, game)["battlefield"], "Ornithopter")["id"]
+    card = hand_card(client, game, "Troublemaker Ouphe")["id"]
+    body = cast(
+        client,
+        game,
+        card,
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Bargain", "choosing": [thopter]}],
+    )
+    assert body["allowed"] is True, body
+    board = state(client, game)
+    assert "Ornithopter" in [c["name"] for c in board["graveyards"]["alice"]]
+    assert _record(game, _spell_on_stack(client, game, "Troublemaker Ouphe")).bargained
+
+
+def test_bargain_names_exactly_one_permanent(client, game):
+    sources = lands(client, game, "Forest", 2)
+    add_card(client, game, "Troublemaker Ouphe", "alice", "hand")
+    card = hand_card(client, game, "Troublemaker Ouphe")["id"]
+    body = cast(
+        client,
+        game,
+        card,
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Bargain"}],
+        dry_run=True,
+    )
+    assert body["allowed"] is False
+    assert "CR 702.166a" in body["reason"]
+
+
+def test_evidence_collected_exiles_graveyard_cards(client, game):
+    sources = lands(client, game, "Forest", 2)
+    add_card(client, game, "Craw Wurm", "alice", "graveyard")
+    add_card(client, game, "Vitu-Ghazi Inspector", "alice", "hand")
+    card = hand_card(client, game, "Vitu-Ghazi Inspector")["id"]
+    assert offer(cast_row(client, game, "Vitu-Ghazi Inspector"), "Collect evidence")
+    body = cast(
+        client,
+        game,
+        card,
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Collect evidence"}],
+    )
+    assert body["allowed"] is True, body
+    assert "Craw Wurm" in [c["name"] for c in state(client, game)["exile"]]
+    record = _record(game, _spell_on_stack(client, game, "Vitu-Ghazi Inspector"))
+    assert record.evidence_collected
+
+
+def test_revealing_the_named_dragon_card(client, game):
+    sources = lands(client, game, "Plains", 2)
+    add_card(client, game, "Siege Dragon", "alice", "hand")
+    add_card(client, game, "Orator of Ojutai", "alice", "hand")
+    dragon = hand_card(client, game, "Siege Dragon")["id"]
+    card = hand_card(client, game, "Orator of Ojutai")["id"]
+    assert offer(cast_row(client, game, "Orator of Ojutai"), "Reveal")
+    body = cast(
+        client,
+        game,
+        card,
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Reveal", "choosing": [dragon]}],
+    )
+    assert body["allowed"] is True, body
+    record = _record(game, _spell_on_stack(client, game, "Orator of Ojutai"))
+    assert record.revealed_for_cost
+
+
+def test_the_one_parser_reads_a_kicker_cost_and_a_two_word_keyword():
+    assert seatkit.parse_optional_costs("Kicker:{W}, Collect evidence") == [
+        {"keyword": "Kicker", "cost": "{W}"},
+        {"keyword": "Collect evidence"},
+    ]
