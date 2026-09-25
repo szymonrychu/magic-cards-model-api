@@ -202,6 +202,7 @@ CAST_COSTS = (
     "bestow",
     "dash",
     "disguise",
+    "emerge",
     "escape",
     "evoke",
     "flashback",
