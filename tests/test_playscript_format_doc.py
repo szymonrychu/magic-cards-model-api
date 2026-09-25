@@ -45,7 +45,7 @@ def _listed(marker: str) -> list[str]:
     """The backticked words on the doc line starting with `marker`."""
     for line in DOC.read_text().splitlines():
         if line.startswith(marker):
-            return re.findall(r"`([a-z_]+)`", line[len(marker) :])
+            return re.findall(r"`([a-z_-]+)`", line[len(marker) :])
     raise AssertionError(f"no line starting {marker!r} in {DOC.name}")
 
 

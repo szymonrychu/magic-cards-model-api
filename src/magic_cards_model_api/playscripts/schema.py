@@ -218,7 +218,9 @@ CAST_COSTS = (
     "prowl",
     "sneak",
     "spectacle",
+    "surge",
     "warp",
+    "web-slinging",
 )
 #: The decision kinds an answer may name: every `DecisionKind` the api can
 #: pend (`decisions.ANSWERABLE_KINDS`), by value.

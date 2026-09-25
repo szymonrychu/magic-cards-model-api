@@ -552,7 +552,9 @@
             "prowl",
             "sneak",
             "spectacle",
-            "warp"
+            "surge",
+            "warp",
+            "web-slinging"
           ],
           "title": "Cost",
           "type": "string"
