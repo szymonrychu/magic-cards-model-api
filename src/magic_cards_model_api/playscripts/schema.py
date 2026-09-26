@@ -1643,6 +1643,17 @@ class Play(_Strict):
                     "'{kind}' must be the first move of moves",
                     {"kind": move.kind},
                 )
+            if isinstance(move, RepeatMove):
+                for body_index, body_move in enumerate(move.moves):
+                    if (
+                        isinstance(body_move, DeclareAttackersMove | DeclareBlockersMove)
+                        and body_index != 0
+                    ):
+                        raise PydanticCustomError(
+                            "combat_move_not_first",
+                            "'{kind}' must be the first move of moves",
+                            {"kind": body_move.kind},
+                        )
         return self
 
     @model_validator(mode="after")
@@ -1668,10 +1679,18 @@ class Play(_Strict):
     def _mulligan_move_needs_the_mulligan_step(self) -> Play:
         """FD2: a `mulligan` move's declaration is meaningless outside CR
         103.5's own step - `when.steps` must name it and nothing else,
-        otherwise `mulligan-wrong-step`."""
-        if any(isinstance(move, MulliganMove) for move in self.moves) and list(self.when.steps) != [
-            "mulligan"
-        ]:
+        otherwise `mulligan-wrong-step`. A repeat's own body is walked too -
+        nesting is the only thing `repeat` refuses, not the play-level rules
+        that apply to every move it carries."""
+        has_mulligan = any(
+            isinstance(move, MulliganMove)
+            or (
+                isinstance(move, RepeatMove)
+                and any(isinstance(body_move, MulliganMove) for body_move in move.moves)
+            )
+            for move in self.moves
+        )
+        if has_mulligan and list(self.when.steps) != ["mulligan"]:
             raise PydanticCustomError(
                 "mulligan_wrong_step",
                 "a 'mulligan' move is valid only with when.steps == ['mulligan'], not {steps}",

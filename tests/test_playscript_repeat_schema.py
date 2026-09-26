@@ -149,6 +149,57 @@ def test_repeat_body_may_hold_every_other_move_kind():
     assert play_errors(doc) == []
 
 
+# -- FD9 review: per-move play-level rules apply inside a repeat's body ------
+
+
+def test_repeat_body_mulligan_needs_the_mulligan_step():
+    """A `mulligan` move nested in a repeat's body is still a `mulligan`
+    move: `when.steps` must still be exactly `['mulligan']`, the same rule
+    `_mulligan_move_needs_the_mulligan_step` applies at the top level."""
+    doc = play(
+        moves=[repeat_move(moves=[{"kind": "mulligan", "keep": True}])],
+    )
+    assert codes(doc) == ["mulligan-wrong-step"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_repeat_body_mulligan_with_the_mulligan_step_validates():
+    doc = play(
+        when={"whose_turn": "mine", "steps": ["mulligan"], "stack": "empty"},
+        moves=[repeat_move(moves=[{"kind": "mulligan", "keep": True}])],
+    )
+    assert play_errors(doc) == []
+
+
+def test_repeat_body_combat_move_must_be_first_within_the_body():
+    doc = play(
+        moves=[
+            repeat_move(
+                moves=[
+                    activate_move(),
+                    {"kind": "declare_attackers", "attackers": []},
+                ]
+            )
+        ],
+    )
+    assert codes(doc) == ["combat-move-not-first"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_repeat_body_combat_move_first_in_the_body_validates():
+    doc = play(
+        moves=[
+            repeat_move(
+                moves=[{"kind": "declare_blockers", "blocks": []}],
+                until=[mana_pool_until()],
+            )
+        ],
+    )
+    assert play_errors(doc) == []
+
+
 # -- until: 1-MAX_CONDITIONS conditions of the existing kinds -----------------
 
 
@@ -330,9 +381,7 @@ def test_owner_example_while_an_opponent_has_untapped_blockers():
 def test_mana_pool_condition_color_is_optional():
     doc = play(moves=[repeat_move(until=[{"kind": "mana_pool", "op": ">=", "n": 3}])])
     assert play_errors(doc) == []
-    doc = play(
-        moves=[repeat_move(until=[{"kind": "mana_pool", "color": "U", "op": ">=", "n": 3}])]
-    )
+    doc = play(moves=[repeat_move(until=[{"kind": "mana_pool", "color": "U", "op": ">=", "n": 3}])])
     assert play_errors(doc) == []
 
 
@@ -358,9 +407,7 @@ def test_mana_pool_compare_operand_validates():
 # -- FD9's two proof fixtures: schema validity -------------------------------
 
 
-@pytest.mark.parametrize(
-    "name", ["repeat_devoted_druid.json", "repeat_walking_ballista.json"]
-)
+@pytest.mark.parametrize("name", ["repeat_devoted_druid.json", "repeat_walking_ballista.json"])
 def test_proof_fixture_validates(name: str):
     doc = json.loads((FIXTURES / name).read_text())
     assert play_errors(doc) == []
