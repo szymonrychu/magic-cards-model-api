@@ -821,27 +821,54 @@ _NONPERMANENT_TYPES = frozenset({"Instant", "Sorcery"})
 #: CR 300.1's permanent types. Two of THESE overlapping (an Artifact
 #: `types_all` selector and a Creature one) is the ordinary case - an
 #: artifact creature - so a disjoint permanent/permanent pairing is never
-#: itself proof of anything.
+#: itself proof of anything. Kindred (CR 308) is deliberately absent: it is
+#: printed on instants and sorceries too (Crib Swap is a Kindred Instant), so
+#: it never forces a card to be a permanent.
 _PERMANENT_TYPES = frozenset(
-    {"Artifact", "Battle", "Creature", "Enchantment", "Land", "Planeswalker", "Kindred"}
+    {"Artifact", "Battle", "Creature", "Enchantment", "Land", "Planeswalker"}
 )
 
 
-def _types_provably_disjoint(types_a: frozenset[str], types_b: frozenset[str]) -> bool:
-    """`True` only for the one type-set pairing CR 300.1's own list proves
-    disjoint on every printed card: one selector names only non-permanent
-    types (Instant/Sorcery) and the other names at least one permanent type.
-    Any other disjoint pairing - two different permanent types included -
-    proves nothing, since a single object routinely carries more than one
-    type (an artifact creature matches both `types_all: [Artifact]` and
-    `types_all: [Creature]`)."""
-    if not types_a or not types_b:
-        return False
-    a_nonpermanent_only = types_a <= _NONPERMANENT_TYPES
-    b_nonpermanent_only = types_b <= _NONPERMANENT_TYPES
-    if a_nonpermanent_only and (types_b & _PERMANENT_TYPES):
+def _forces_types(
+    types_all: frozenset[str], types_any: frozenset[str], side: frozenset[str]
+) -> bool:
+    """`True` when this constraint guarantees the matched card carries a
+    type from `side` (`_PERMANENT_TYPES` or `_NONPERMANENT_TYPES`).
+    `types_all` requires every type it names at once, so a single type from
+    `side` anywhere in it is already binding on its own. `types_any` is only
+    as strong as its weakest alternative - `types_any: [Instant, Creature]`
+    is satisfied by a bare Instant through the first alternative alone - so
+    it's binding only when EVERY alternative names a type from `side`, never
+    from one element matching."""
+    if types_all & side:
         return True
-    return bool(b_nonpermanent_only and (types_a & _PERMANENT_TYPES))
+    return bool(types_any) and types_any <= side
+
+
+def _types_provably_disjoint(
+    types_all_a: frozenset[str],
+    types_any_a: frozenset[str],
+    types_all_b: frozenset[str],
+    types_any_b: frozenset[str],
+) -> bool:
+    """`True` only for the one type-set pairing CR 300.1's own list proves
+    disjoint on every printed card: one side is forced to be non-permanent
+    (Instant/Sorcery) and the other is forced to carry a permanent type.
+    Forcing looks at `types_all` and `types_any` separately (see
+    `_forces_types`) rather than merging them, since a `types_any`
+    alternative that names the opposite side's type defeats the proof even
+    when another alternative would not - `types_all: [Instant]` against
+    `types_any: [Instant, Creature]` overlaps (a bare Instant satisfies
+    both) even though `Creature` is a permanent type. Any other disjoint
+    pairing - two different permanent types included - proves nothing,
+    since a single object routinely carries more than one type (an artifact
+    creature matches both `types_all: [Artifact]` and
+    `types_all: [Creature]`)."""
+    a_nonpermanent = _forces_types(types_all_a, types_any_a, _NONPERMANENT_TYPES)
+    b_nonpermanent = _forces_types(types_all_b, types_any_b, _NONPERMANENT_TYPES)
+    a_permanent = _forces_types(types_all_a, types_any_a, _PERMANENT_TYPES)
+    b_permanent = _forces_types(types_all_b, types_any_b, _PERMANENT_TYPES)
+    return (a_nonpermanent and b_permanent) or (b_nonpermanent and a_permanent)
 
 
 def _move_selectors_disjoint(a: dict[str, Any], b: dict[str, Any]) -> bool:
@@ -864,9 +891,12 @@ def _move_selectors_disjoint(a: dict[str, Any], b: dict[str, Any]) -> bool:
     zone_b, select_b = lookup_b
     if zone_a is not None and zone_b is not None and zone_a != zone_b:
         return True
-    types_a = _selector_word_set(select_a, "types_all", "types_any")
-    types_b = _selector_word_set(select_b, "types_all", "types_any")
-    return _types_provably_disjoint(types_a, types_b)
+    return _types_provably_disjoint(
+        _selector_word_set(select_a, "types_all"),
+        _selector_word_set(select_a, "types_any"),
+        _selector_word_set(select_b, "types_all"),
+        _selector_word_set(select_b, "types_any"),
+    )
 
 
 def exclusivity(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -> list[str]:

@@ -854,6 +854,40 @@ def test_nonpermanent_type_against_permanent_type_still_proves_move_selector(roo
     assert exclusivity(a_fragment, b_fragment, {}) == ["move_selector"]
 
 
+def test_types_all_instant_against_types_any_including_instant_is_not_disjoint(root):
+    """Review finding (FD2 7b): `types_all: [Instant]` requires only the
+    Instant type, and any plain Instant already satisfies
+    `types_any: [Instant, Creature]` through its first alternative - so the
+    two selectors overlap (a bare Instant matches both) and must not be
+    proven disjoint just because `Creature` is a permanent type."""
+    a_fragment = {
+        "moves": [{"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Instant"]}}}]
+    }
+    b_fragment = {
+        "moves": [
+            {
+                "kind": "cast",
+                "card": {"zone": "hand", "select": {"types_any": ["Instant", "Creature"]}},
+            }
+        ]
+    }
+    assert exclusivity(a_fragment, b_fragment, {}) == []
+
+
+def test_kindred_type_never_proves_move_selector_disjoint(root):
+    """Review finding (FD2 7b): Kindred (CR 308) is printed on instants and
+    sorceries too (Crib Swap is a Kindred Instant), so it is never
+    permanent-only and must not count toward a `types_all`/`types_any`
+    permanent-type proof against Instant/Sorcery."""
+    a_fragment = {
+        "moves": [{"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Instant"]}}}]
+    }
+    b_fragment = {
+        "moves": [{"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Kindred"]}}}]
+    }
+    assert exclusivity(a_fragment, b_fragment, {}) == []
+
+
 def test_pass_only_never_conflicts_with_a_move_bearing_play(root):
     """FD2 item 7b: a play whose only move is `pass` is a fallback."""
     put(root, play(id="a", moves=[{"kind": "pass"}]))
