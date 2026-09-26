@@ -35,9 +35,10 @@ def test_it_returns_as_soon_as_the_marker_exists(tmp_path):
 
 
 def test_the_pty_hold_cap_outlasts_the_driver_prestop():
-    """The agent's preStop and its SIGTERM hold keep the PTY for 5480 s: past
-    the driver preStop's 5460 s, inside the Job's 5520 s grace."""
-    assert handover_wait.DEFAULT_WAIT_SECONDS == 5480.0
+    """The agent's preStop and its SIGTERM hold keep the PTY for 7370 s
+    (review fix round 1, up from 5480): past the driver preStop's 7350 s,
+    inside the Job's 7410 s grace."""
+    assert handover_wait.DEFAULT_WAIT_SECONDS == 7370.0
 
 
 def test_it_gives_up_after_the_wait(tmp_path):

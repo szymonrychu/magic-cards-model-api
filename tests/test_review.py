@@ -387,6 +387,24 @@ def test_the_review_returns_decisions_and_play_stats_for_a_played_game(
                 assert isinstance(stats[field], int), (seat, field)
             assert stats["added_ids"] == []
             assert stats["updated_ids"] == []
+            # FD7 gap 4: every seat's own play_stats carries a "reviewer"
+            # breakdown, zero when nothing was filed under that role.
+            assert stats["reviewer"] == {
+                "added": 0,
+                "updated": 0,
+                "reprioritized": 0,
+                "added_ids": [],
+                "updated_ids": [],
+            }
+
+        # FD7 gap 4: `dsl_coverage` is the per-kind aggregate across every
+        # seat's own decisions - present whether or not anything is fully
+        # expressible yet.
+        coverage = body["dsl_coverage"]
+        assert coverage["play_land"]["count"] >= 1
+        assert coverage["play_land"]["unexpressible"] == 0
+        assert coverage["concede"]["unexpressible"] == coverage["concede"]["count"]
+        assert coverage["concede"]["labels"] == ["concede"]
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
@@ -468,6 +486,36 @@ def test_play_stats_counts_admitted_ids_across_two_plays_outcome_rows(
         assert stats["added_ids"] == ["play-a"]
         assert stats["updated"] == 1
         assert stats["updated_ids"] == ["play-b"]
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_plays_total_is_refreshed_by_a_brand_new_play_this_games_own_admit_landed(
+    client: TestClient,
+) -> None:
+    """Review fix (gap 4): `plays_total` used to come only from the corpus
+    registered once at dispatch (`app._review_corpora`/`store.scripts`),
+    frozen before this game's own handover could ever land a new play file.
+    A play id an admitted entry's own `added` names, and that the
+    dispatch-time corpus never had, is one more play than dispatch ever
+    knew about however it reads it - `plays_total` counts it."""
+    from test_plays_outcome_route import _body, _post
+
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        before = _review(client, game_id, key=info["admin_key"]).json()
+        baseline = before["play_stats"]["bob"]["plays_total"]
+
+        response = _post(
+            client,
+            game_id,
+            _body(info, admitted=[{"sha": "a" * 40, "dsl_change": True, "added": ["play-new"]}]),
+        )
+        assert response.status_code == 200, response.text
+
+        after = _review(client, game_id, key=info["admin_key"]).json()
+        assert after["play_stats"]["bob"]["plays_total"] == baseline + 1
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
@@ -844,6 +892,51 @@ def test_an_ai_review_is_refused_for_a_player_who_is_not_an_ai_seat(client: Test
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
+def test_a_human_seats_ai_review_files_with_the_review_jobs_own_key(client: TestClient) -> None:
+    """FD7 gap 15: `k8s_seats.build_review_job` dispatches the review-only
+    Job as the human seat's OWN uid (exactly the credential
+    `test_an_ai_review_is_refused_for_a_player_who_is_not_an_ai_seat` above
+    proves is not enough by itself), so the AI-seat check alone would refuse
+    every human-seat review forever - `alice` never becomes an AI seat.
+
+    The sanctioned way is `review_key`: this game's admin key, minted at
+    creation and handed only to whoever created the game - never to an
+    ordinary seat - which the review Job's own assignment now carries
+    (`k8s_seats._seat_job_values`) and the driver forwards onto this route
+    (`mtg_agent.driver.app.post_ai_review`). Presenting it is what proves
+    the caller is the sanctioned review dispatch rather than the seat typing
+    its own words into this route directly, which is exactly why the test
+    above still gets a 404 - it presents no key at all."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        filed = _ai_review(client, info, player="alice", review_key=info["admin_key"])
+        assert filed.status_code == 200, filed.text
+        assert filed.json()["player"] == "alice"
+
+        review_body = _review(client, game_id, key=info["admin_key"]).json()
+        reviews = [e for e in review_body["entries"] if e["action"] == audit.AI_REVIEW_ACTION]
+        assert any(e["detail"]["player"] == "alice" for e in reviews)
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_human_seats_ai_review_refuses_a_key_that_is_not_the_admin_key(
+    client: TestClient,
+) -> None:
+    """The sanctioned path checks the key's VALUE, not merely that the field
+    was sent - a seat cannot forge one by inventing a string for the new
+    field, which would reopen exactly the hole the AI-seat check exists to
+    close."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        forged = _ai_review(client, info, player="alice", review_key="not-the-admin-key")
+        assert forged.status_code == 404, forged.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
 def test_a_finished_games_ai_review_is_recorded_and_reaches_the_review(
     client: TestClient,
 ) -> None:
@@ -1055,6 +1148,29 @@ def test_an_ai_review_failure_is_gated_exactly_like_an_ai_review(client: TestCli
         assert wrong_seat.status_code == 404, wrong_seat.text
         human = _ai_review_failure(client, info, player="alice", uid=info["seat_uids"]["alice"])
         assert human.status_code == 404, human.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_human_seats_ai_review_failure_files_with_the_review_jobs_own_key(
+    client: TestClient,
+) -> None:
+    """Gated identically to `declare_ai_review` (see
+    `test_a_human_seats_ai_review_files_with_the_review_jobs_own_key`): the
+    review Job's own `review_key` lets a human seat's failure signal through
+    too, since T35 must be able to say "the reviewer failed" for a human
+    seat's review exactly as it does for an AI seat's."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        filed = _ai_review_failure(
+            client,
+            info,
+            player="alice",
+            uid=info["seat_uids"]["alice"],
+            review_key=info["admin_key"],
+        )
+        assert filed.status_code == 200, filed.text
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 

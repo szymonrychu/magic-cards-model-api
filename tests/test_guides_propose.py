@@ -414,6 +414,46 @@ def test_a_system_problem_in_an_appended_row_is_refused_content(capsys, root, ba
     assert (rc, result["result"]) == (1, CONTENT_REFUSED), result
 
 
+def _seed_stub_archetype(bare: Path, tmp_path: Path, slug: str, archetype: str) -> None:
+    """A stub deck already on `main`, guide-only, with an `archetype.json`
+    of its own - exactly how a rival like "the Pod" is named in the corpus
+    at all, without it ever needing a decklist or a boarding plan."""
+    other = clone(bare, tmp_path / f"seed-{slug}")
+    (other / "decks" / slug).mkdir(parents=True)
+    (other / f"decks/{slug}/NOTES.md").write_text(f"# {archetype}\n", encoding="utf-8")
+    (other / f"decks/{slug}/archetype.json").write_text(dump({"archetype": archetype}), "utf-8")
+    git(other, "add", "-A")
+    git(other, "commit", "-q", "-m", f"seed {slug}")
+    git(other, "push", "-q", "origin", "HEAD:main")
+
+
+def test_a_backticked_corpus_play_id_and_a_matchup_archetype_name_pass(
+    capsys, tmp_path, root, bare, render_log
+):
+    """FD7 gap 11 wiring: `_check_content` is given THIS proposal's own
+    corpus play ids and every corpus deck's own archetype name, so a guide
+    note naming either passes instead of being refused as system talk - the
+    end-to-end path, not only `content_gate`'s own unit tests."""
+    _seed_stub_archetype(bare, tmp_path, "pod-combo", "Pod")
+    git(root, "pull", "-q", "origin", "main")
+    with (root / NOTES).open("a", encoding="utf-8") as handle:
+        handle.write(
+            "- Land `fetch-untapped-shock` on their upkeep.\n- Board around the Pod's combo turn.\n"
+        )
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (0, "admitted"), result
+
+
+def test_an_unknown_backtick_and_archetype_still_refuse_as_content(capsys, root, bare, render_log):
+    """The exception is narrow: a backticked identifier that is not a real
+    corpus play id, and an archetype nobody's `archetype.json` names, still
+    read as system talk."""
+    with (root / NOTES).open("a", encoding="utf-8") as handle:
+        handle.write("- The `mcp-seat` tool timed out mid-game.\n")
+    rc, result, _, _ = propose(capsys, root)
+    assert (rc, result["result"]) == (1, CONTENT_REFUSED), result
+
+
 FORBIDDEN_FILES = [
     f"decks/{SLUG}/decklist.txt",
     f"decks/{SLUG}/evidence/run.json",

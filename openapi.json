@@ -2535,6 +2535,17 @@
             "title": "Reason",
             "type": "string"
           },
+          "review_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Key"
+          },
           "stage": {
             "enum": [
               "review_record",
@@ -2594,6 +2605,17 @@
             "minLength": 1,
             "title": "Player",
             "type": "string"
+          },
+          "review_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Key"
           },
           "text": {
             "minLength": 1,
@@ -6223,6 +6245,13 @@
               }
             ],
             "title": "Drawn"
+          },
+          "dsl_coverage": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReviewDslCoverage"
+            },
+            "title": "Dsl Coverage",
+            "type": "object"
           },
           "ended_at": {
             "anyOf": [
@@ -10212,7 +10241,7 @@
       },
       "PlaysOutcomeIn": {
         "additionalProperties": false,
-        "description": "`POST /api/games/{game_id}/plays-outcome` - the driver's record of\nwhat one handover did to the DSL (`audit.PLAYS_OUTCOME_ACTION`), built\nfrom the guides clone's results journal after the handover turn.\n\nGated like `AiReviewIn`: post-game only, and `uid` must be `player`'s own\ncredential - an AI seat's own seat uid (`role: seat`), or an advisor uid\nfor the human it watches (`role: advisor`). Never a controlled player's:\nCR 723.5 hands a controller in-game decisions, not the post-game record.\n\n`state` is `complete` when the handover landed a DSL change or a\nno-change for every candidate, and `unfinished` otherwise, with\n`unfinished_reasons` saying why (nudged, timed out, an admit or propose\nthat did not succeed, a re-push that did not satisfy). `repushed` says\nthe one re-push turn ran; `followup` that this row comes from the\nfollow-up DSL-development Job rather than the handover itself.\n\nAn `unfinished` row that is not a follow-up's own schedules F1's one\nfollow-up Job for this (game, uid) in kubernetes mode\n(`lobby.schedule_followup`); `deck` and `opponent` are what that Job's\nassignment is built from, so they ride in the row.",
+        "description": "`POST /api/games/{game_id}/plays-outcome` - the driver's record of\nwhat one handover did to the DSL (`audit.PLAYS_OUTCOME_ACTION`), built\nfrom the guides clone's results journal after the handover turn.\n\nGated like `AiReviewIn`: post-game only, and `uid` must be `player`'s own\ncredential - an AI seat's own seat uid (`role: seat`), or an advisor uid\nfor the human it watches (`role: advisor`). Never a controlled player's:\nCR 723.5 hands a controller in-game decisions, not the post-game record.\n\n`role: reviewer` (review fix, gap 4/15) is the SAME seat uid filing a\nSECOND time, for the post-game DR3 review rather than the handover\nitself - `review.py`'s own `play_stats[seat][\"reviewer\"]` reads exactly\nthese rows apart from the handover's own (`app.declare_plays_outcome`\nlets a seat uid file either `seat` or `reviewer`, and does not require\n`player` be an AI seat for a `reviewer` row, since FD7 gap 15 gives a\nhuman seat a review Job too).\n\n`state` is `complete` when the handover landed a DSL change or a\nno-change for every candidate, and `unfinished` otherwise, with\n`unfinished_reasons` saying why (nudged, timed out, an admit or propose\nthat did not succeed, a re-push that did not satisfy). `repushed` says\nthe one re-push turn ran; `followup` that this row comes from the\nfollow-up DSL-development Job rather than the handover itself.\n\nAn `unfinished` row that is not a follow-up's own schedules F1's one\nfollow-up Job for this (game, uid) in kubernetes mode\n(`lobby.schedule_followup`); `deck` and `opponent` are what that Job's\nassignment is built from, so they ride in the row.",
         "properties": {
           "admitted": {
             "items": {
@@ -10275,7 +10304,8 @@
           "role": {
             "enum": [
               "seat",
-              "advisor"
+              "advisor",
+              "reviewer"
             ],
             "title": "Role",
             "type": "string"
@@ -12393,6 +12423,30 @@
         "title": "ReviewDeclaration",
         "type": "object"
       },
+      "ReviewDslCoverage": {
+        "description": "FD7 gap 4: one decision kind's own DSL coverage for a game\n(`review.dsl_coverage`) - `count` decisions of this kind, `unexpressible`\nof them that could not become a play at all, and the distinct\n`unexpressible` reasons (`labels`) seen for it.",
+        "properties": {
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
+          },
+          "unexpressible": {
+            "default": 0,
+            "title": "Unexpressible",
+            "type": "integer"
+          }
+        },
+        "title": "ReviewDslCoverage",
+        "type": "object"
+      },
       "ReviewEntry": {
         "description": "One ledger row as a declaration's pairing carries it - no `snapshot`,\nwhich lives once in `GameReviewResponse.entries` (see `review.py`).",
         "properties": {
@@ -12533,6 +12587,9 @@
             "title": "Reprioritized",
             "type": "integer"
           },
+          "reviewer": {
+            "$ref": "#/components/schemas/ReviewerPlayStats"
+          },
           "updated": {
             "default": 0,
             "title": "Updated",
@@ -12552,6 +12609,42 @@
           }
         },
         "title": "ReviewPlayStats",
+        "type": "object"
+      },
+      "ReviewerPlayStats": {
+        "description": "FD7 gap 4: the same `added`/`updated`/`reprioritized` classification\n`ReviewPlayStats` carries for a seat's own totals, over only the\n`plays_outcome` rows the post-game reviewer filed (`detail[\"role\"] ==\n\"reviewer\"`) - `review.py`'s own `_REVIEWER_STATS_FIELDS`. Zero fields\nand empty id lists, never a missing key, when the reviewer filed\nnothing under this seat at all.",
+        "properties": {
+          "added": {
+            "default": 0,
+            "title": "Added",
+            "type": "integer"
+          },
+          "added_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Added Ids",
+            "type": "array"
+          },
+          "reprioritized": {
+            "default": 0,
+            "title": "Reprioritized",
+            "type": "integer"
+          },
+          "updated": {
+            "default": 0,
+            "title": "Updated",
+            "type": "integer"
+          },
+          "updated_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Updated Ids",
+            "type": "array"
+          }
+        },
+        "title": "ReviewerPlayStats",
         "type": "object"
       },
       "ScriptRunIn": {
@@ -16873,7 +16966,7 @@
     },
     "/api/games/{game_id}/ai-review": {
       "post": {
-        "description": "File the post-game AI review (`mtg_agent.driver.review`, run on Opus\nfrom a seat's own reflection plus the game's review record) -\n`audit.AI_REVIEW_ACTION`, a row entirely separate from\n`audit.REFLECTION_ACTION`.\n\nMirrors `declare_reflection` exactly: same gate (post-game only, against\n`store.archived` so a soft-deleted lobby game still accepts one), same\nuid-owns-seat check, same \"mutates no `Game`\" shape. See that route's\ndocstring for the reasoning; nothing here differs beyond which action\nthe row is filed under and whose words it carries.\n\n**One check `declare_reflection` does not need: `req.player` must be a\nregistered AI seat of this game (`archived.ai_players`).** A reflection\nis legitimately a human's own words about their own game; an AI review\nis never that - it is only ever the output of an AI seat's own driver\ncritiquing that seat's play, so a human's own uid (which genuinely opens\ntheir own seat, and would otherwise pass the check above) must not be\nable to file one in anybody's name. Without this a human player could\nforge a review of themselves or of their opponent, since the uid check\nalone only proves \"this credential speaks for this seat\", not \"this\nseat is the kind that ever calls this route\" - the same distinction\n`AiReviewIn`'s docstring draws in words.",
+        "description": "File the post-game AI review (`mtg_agent.driver.review`, run on Opus\nfrom a seat's own reflection plus the game's review record) -\n`audit.AI_REVIEW_ACTION`, a row entirely separate from\n`audit.REFLECTION_ACTION`.\n\nMirrors `declare_reflection` exactly: same gate (post-game only, against\n`store.archived` so a soft-deleted lobby game still accepts one), same\nuid-owns-seat check, same \"mutates no `Game`\" shape. See that route's\ndocstring for the reasoning; nothing here differs beyond which action\nthe row is filed under and whose words it carries.\n\n**One check `declare_reflection` does not need: `req.player` must be a\nregistered AI seat of this game (`archived.ai_players`) - UNLESS the\nrequest carries `req.review_key`, this game's admin key.** A reflection\nis legitimately a human's own words about their own game; an AI review\nis never that - it is only ever the output of a driver's own review run\ncritiquing that seat's play, so a human's own uid (which genuinely opens\ntheir own seat, and would otherwise pass the check above) must not be\nable to file one in anybody's name. Without this a human player could\nforge a review of themselves or of their opponent, since the uid check\nalone only proves \"this credential speaks for this seat\", not \"this\nseat is the kind that ever calls this route\" - the same distinction\n`AiReviewIn`'s docstring draws in words.\n\n**FD7 gap 15 widens \"the kind that ever calls this route\" to a human\nseat too, but only through its own review-only Job.** A human seat is\nnever in `ai_players` and never will be, so the AI-seat check alone\nwould refuse its review forever - `k8s_seats.build_review_job` dispatches\nas the human seat's OWN uid (there is no other credential to act as that\nseat with), so the uid-owns-seat check above cannot tell that dispatch\napart from the seat calling this route on its own. `review_key` is what\ncan: it is minted once per game and handed only to whoever created it,\nnever to a seat, and `k8s_seats` puts it in the review Job's assignment\nalone. `store.is_admin` is the same check `game_access`'s own admin-key\ncredential uses everywhere else, so this reuses that trust boundary\nrather than minting a parallel one.",
         "operationId": "declare_ai_review_api_games__game_id__ai_review_post",
         "parameters": [
           {
@@ -16923,7 +17016,7 @@
     },
     "/api/games/{game_id}/ai-review-failure": {
       "post": {
-        "description": "Record that the post-game AI review could NOT be produced, and why -\n`audit.AI_REVIEW_FAILED_ACTION`.\n\nGated identically to `declare_ai_review` beside it, down to the AI-seat\ncheck: only an AI seat's own driver ever generates a review, so only it\ncan report that one failed, and a human's own uid must not be able to\nwrite \"your review failed\" into anybody's ledger.\n\n**Why a route at all.** The driver is a separate process from this api\nand reaches it only over HTTP, so a durable signal it can write has to be\na route. The alternative - leaving the four failures in the driver's own\n`log.warning` calls - is what made \"the reviewer failed\" and \"the\nreviewer was never invoked\" indistinguishable once a pod's logs rolled.\nSee `audit.AI_REVIEW_FAILED_ACTION` for why this row is not loud.",
+        "description": "Record that the post-game AI review could NOT be produced, and why -\n`audit.AI_REVIEW_FAILED_ACTION`.\n\nGated identically to `declare_ai_review` beside it, down to the AI-seat\ncheck and its `review_key` exception (FD7 gap 15): only an AI seat's own\ndriver, or a human seat's own review Job presenting this game's admin\nkey, ever generates a review, so only they can report that one failed -\na human's own uid alone must not be able to write \"your review failed\"\ninto anybody's ledger.\n\n**Why a route at all.** The driver is a separate process from this api\nand reaches it only over HTTP, so a durable signal it can write has to be\na route. The alternative - leaving the four failures in the driver's own\n`log.warning` calls - is what made \"the reviewer failed\" and \"the\nreviewer was never invoked\" indistinguishable once a pod's logs rolled.\nSee `audit.AI_REVIEW_FAILED_ACTION` for why this row is not loud.",
         "operationId": "declare_ai_review_failure_api_games__game_id__ai_review_failure_post",
         "parameters": [
           {
@@ -17584,7 +17677,7 @@
     },
     "/api/games/{game_id}/plays-outcome": {
       "post": {
-        "description": "Record what one handover did to the DSL - `audit.PLAYS_OUTCOME_ACTION`,\nfiled by the seat's or the advisor's own driver after the handover turn\n(`schemas.PlaysOutcomeIn`).\n\nGated like `declare_ai_review`: against `store.archived`, so a game the\nlobby has already ended still takes one; post-game only (409 before);\nand the uid binds to exactly one player. A seat uid speaks for its own\nseat only, and only for an AI seat (`archived.ai_players`) - a human's\nown uid opens their seat but no driver of theirs ever runs a handover.\nAn advisor uid speaks for the human it watches; its lookup reads the\nlive game, so it is refused once the game is soft-deleted (the driver\nfiles before it retires). `game_access`'s `OWN_PLAYER_ROUTES` refuses a\nseat uid naming another player before this runs; the checks here are\nthe same binding, restated where the row is written. The role must\nmatch the credential (400), so the ledger cannot claim an advisor's\nhandover was a seat's. The uid itself is never recorded.\n\n**An `unfinished` row schedules F1's follow-up** - unless it is itself\na follow-up's (`followup: true`), which is what makes a second one\nimpossible. `lobby.schedule_followup` dedupes it per (game, uid),\nschedules the Job in kubernetes mode (or records it `unavailable`), and\nthe answer's `followup` says which. The follow-up runs as this same\n`uid`, so it can only ever speak for the player this route just bound\nit to. Its assignment is built here, from the ledger, at schedule time\n(`_followup_payload`).",
+        "description": "Record what one handover did to the DSL - `audit.PLAYS_OUTCOME_ACTION`,\nfiled by the seat's or the advisor's own driver after the handover turn\n(`schemas.PlaysOutcomeIn`).\n\nGated like `declare_ai_review`: against `store.archived`, so a game the\nlobby has already ended still takes one; post-game only (409 before);\nand the uid binds to exactly one player. A seat uid speaks for its own\nseat only, and only for an AI seat (`archived.ai_players`) UNLESS it\nfiles as `role: reviewer` - the post-game DR3 review, which FD7 gap 15\nalso gives a human seat, so a `reviewer` row is never held to the AI-only\nrule a `seat` row (the handover itself) is. An advisor uid speaks for\nthe human it watches; its lookup reads the live game, so it is refused\nonce the game is soft-deleted (the driver files before it retires).\n`game_access`'s `OWN_PLAYER_ROUTES` refuses a seat uid naming another\nplayer before this runs; the checks here are the same binding, restated\nwhere the row is written. The role must match the credential (400), so\nthe ledger cannot claim an advisor's handover was a seat's - a seat uid\nmay file as `seat` or `reviewer`, an advisor uid only ever as `advisor`.\nThe uid itself is never recorded.\n\n**An `unfinished` row schedules F1's follow-up** - unless it is itself\na follow-up's (`followup: true`), which is what makes a second one\nimpossible. `lobby.schedule_followup` dedupes it per (game, uid),\nschedules the Job in kubernetes mode (or records it `unavailable`), and\nthe answer's `followup` says which. The follow-up runs as this same\n`uid`, so it can only ever speak for the player this route just bound\nit to. Its assignment is built here, from the ledger, at schedule time\n(`_followup_payload`).",
         "operationId": "declare_plays_outcome_api_games__game_id__plays_outcome_post",
         "parameters": [
           {

@@ -67,7 +67,7 @@ HANDOVER_BUDGET_SECONDS = 1680.0
 
 #: The driver container's preStop wait (`deploy/seat-job.yaml`), the default
 #: for `--wait`. DR3: raised from 1680s + 60s margin (1740s) to comfortably
-#: outlast `driver.app.RETIRE_REVIEW_JOIN_TIMEOUT` (3730s) as well -
+#: outlast `driver.app.RETIRE_REVIEW_JOIN_TIMEOUT` (then 3730s) as well -
 #: `run_handover` writes the marker (bounded by `HANDOVER_BUDGET_SECONDS`)
 #: and only then calls `retire`, which joins the AI review thread for up to
 #: that long before giving up, all inside the SAME Job termination the
@@ -76,7 +76,15 @@ HANDOVER_BUDGET_SECONDS = 1680.0
 #: `terminationGracePeriodSeconds` all moved with it so a review that
 #: genuinely needs the whole of `REVIEW_HTTP_TIMEOUT` is not cut short by
 #: the kubelet. `tests/wrapper/test_oneshot.py` pins the ordering.
-PRESTOP_WAIT_SECONDS = 5460.0
+#:
+#: Review fix, round 1 finding 1: moved again, from 5460.0 to 7350.0
+#: (`HANDOVER_BUDGET_SECONDS` (1680) + `driver.app.RETIRE_REVIEW_JOIN_
+#: TIMEOUT`'s own new value (5620) + the same 50s margin DR3 used) -
+#: `RETIRE_REVIEW_JOIN_TIMEOUT` is decision-count aware now and moved to
+#: cover it; this bound has to keep outlasting it or the kubelet cuts a
+#: genuinely-scaling review short before the scaling (the fix's whole
+#: point) ever takes effect.
+PRESTOP_WAIT_SECONDS = 7350.0
 
 #: How long the handover turn's push is retried while the agent answers 409
 #: (its interrupted turn not ended yet) before the handover fails and writes

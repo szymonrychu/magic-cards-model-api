@@ -331,7 +331,7 @@ def review_wired(monkeypatch):
     settings = manager.settings
     calls: list[dict] = []
 
-    def fake_runner(settings, prompt, model, effort):
+    def fake_runner(settings, prompt, model, effort, **_kwargs):
         calls.append({"prompt": prompt, "model": model, "effort": effort})
         return "the review text"
 
@@ -349,6 +349,62 @@ def test_post_review_runs_the_injected_runner_and_returns_its_text(review_wired)
     assert response.status_code == 200, response.text
     assert response.json() == {"text": "the review text"}
     assert calls == [{"prompt": "critique this game", "model": "claude-opus-5", "effort": "high"}]
+
+
+def test_post_review_scales_the_runners_timeout_by_decision_count(monkeypatch):
+    """FD6 (3): the driver's own `post_ai_review` knows the reviewed game's
+    decision count and sends it as `decision_count`; this route is what
+    turns that into the timeout `review_runner` actually runs with, via
+    `wrapper.config.scaled_review_timeout`."""
+    from mtg_agent.wrapper.config import scaled_review_timeout
+
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc)
+    settings = manager.settings
+    seen: dict = {}
+
+    def capturing_runner(settings, prompt, model, effort, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        return "the review text"
+
+    public = TestClient(build_public_app(manager, settings, review_runner=capturing_runner))
+    try:
+        response = public.post(
+            "/v1/review",
+            json={
+                "prompt": "critique this game",
+                "model": "claude-opus-5",
+                "effort": "high",
+                "decision_count": 200,
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert seen["timeout"] == scaled_review_timeout(settings, 200)
+        assert seen["timeout"] > settings.review_timeout
+    finally:
+        manager.shutdown()
+
+
+def test_post_review_without_a_decision_count_uses_the_flat_timeout(monkeypatch):
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc)
+    settings = manager.settings
+    seen: dict = {}
+
+    def capturing_runner(settings, prompt, model, effort, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        return "the review text"
+
+    public = TestClient(build_public_app(manager, settings, review_runner=capturing_runner))
+    try:
+        response = public.post(
+            "/v1/review",
+            json={"prompt": "critique this game", "model": "m", "effort": "high"},
+        )
+        assert response.status_code == 200, response.text
+        assert seen["timeout"] == settings.review_timeout
+    finally:
+        manager.shutdown()
 
 
 def test_post_review_without_a_prompt_is_400(review_wired):
@@ -375,7 +431,7 @@ def test_post_review_surfaces_a_runner_failure_as_502(monkeypatch):
     proc = FakeProc(b"ready")
     manager = ready_manager(monkeypatch, proc)
 
-    def failing_runner(settings, prompt, model, effort):
+    def failing_runner(settings, prompt, model, effort, **_kwargs):
         from mtg_agent.wrapper.oneshot import ReviewFailed
 
         raise ReviewFailed("claude exited 1")
@@ -400,7 +456,7 @@ def test_post_review_failure_is_logged_with_a_greppable_prefix(monkeypatch, capl
     proc = FakeProc(b"ready")
     manager = ready_manager(monkeypatch, proc)
 
-    def failing_runner(settings, prompt, model, effort):
+    def failing_runner(settings, prompt, model, effort, **_kwargs):
         from mtg_agent.wrapper.oneshot import ReviewFailed
 
         raise ReviewFailed("boom detail")
@@ -449,7 +505,9 @@ def test_post_review_is_guarded_by_the_shared_secret(monkeypatch):
     proc = FakeProc(b"ready")
     settings = fast_settings(WRAPPER_SHARED_SECRET="s3cr3t")
     manager = ready_manager(monkeypatch, proc, settings=settings)
-    public = TestClient(build_public_app(manager, settings, review_runner=lambda *a: "unused"))
+    public = TestClient(
+        build_public_app(manager, settings, review_runner=lambda *a, **kw: "unused")
+    )
     try:
         response = public.post("/v1/review", json={"prompt": "x", "model": "m", "effort": "high"})
         assert response.status_code == 401

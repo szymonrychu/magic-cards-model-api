@@ -483,7 +483,8 @@ def test_targets_beside_pick_is_answer_shape_mismatch():
         Play.model_validate(doc)
 
 
-def test_choose_targets_targets_is_bounded_one_to_six():
+def test_choose_targets_targets_is_bounded_zero_to_six():
+    """FD2 item 6: `targets` now allows 0 - "choose none"."""
     one = play(moves=[answer_move({"decision": "choose_targets", "targets": [{"player": "me"}]})])
     assert play_errors(one) == []
     six = play(
@@ -493,9 +494,7 @@ def test_choose_targets_targets_is_bounded_one_to_six():
     )
     assert play_errors(six) == []
     empty = play(moves=[answer_move({"decision": "choose_targets", "targets": []})])
-    assert codes(empty) == ["bounds-exceeded"]
-    with pytest.raises(ValidationError):
-        Play.model_validate(empty)
+    assert play_errors(empty) == []
     seven = play(
         moves=[
             answer_move(

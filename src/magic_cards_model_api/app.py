@@ -4028,22 +4028,38 @@ def declare_ai_review(game_id: str, req: AiReviewIn) -> dict[str, Any]:
     the row is filed under and whose words it carries.
 
     **One check `declare_reflection` does not need: `req.player` must be a
-    registered AI seat of this game (`archived.ai_players`).** A reflection
+    registered AI seat of this game (`archived.ai_players`) - UNLESS the
+    request carries `req.review_key`, this game's admin key.** A reflection
     is legitimately a human's own words about their own game; an AI review
-    is never that - it is only ever the output of an AI seat's own driver
+    is never that - it is only ever the output of a driver's own review run
     critiquing that seat's play, so a human's own uid (which genuinely opens
     their own seat, and would otherwise pass the check above) must not be
     able to file one in anybody's name. Without this a human player could
     forge a review of themselves or of their opponent, since the uid check
     alone only proves "this credential speaks for this seat", not "this
     seat is the kind that ever calls this route" - the same distinction
-    `AiReviewIn`'s docstring draws in words."""
+    `AiReviewIn`'s docstring draws in words.
+
+    **FD7 gap 15 widens "the kind that ever calls this route" to a human
+    seat too, but only through its own review-only Job.** A human seat is
+    never in `ai_players` and never will be, so the AI-seat check alone
+    would refuse its review forever - `k8s_seats.build_review_job` dispatches
+    as the human seat's OWN uid (there is no other credential to act as that
+    seat with), so the uid-owns-seat check above cannot tell that dispatch
+    apart from the seat calling this route on its own. `review_key` is what
+    can: it is minted once per game and handed only to whoever created it,
+    never to a seat, and `k8s_seats` puts it in the review Job's assignment
+    alone. `store.is_admin` is the same check `game_access`'s own admin-key
+    credential uses everywhere else, so this reuses that trust boundary
+    rather than minting a parallel one."""
     archived = store.archived(game_id)
     if archived is None:
         raise KeyError(f"no game {game_id}")
     if archived.seat_uids.get(req.uid) != req.player:
         raise KeyError("that uid is not that seat in this game")
-    if req.player not in archived.ai_players:
+    if req.player not in archived.ai_players and not (
+        req.review_key is not None and store.is_admin(game_id, req.review_key)
+    ):
         raise KeyError("that seat is not an AI seat in this game")
     if not _post_game(archived, _gate_entries(archived)):
         raise HTTPException(
@@ -4074,9 +4090,11 @@ def declare_ai_review_failure(game_id: str, req: AiReviewFailureIn) -> dict[str,
     `audit.AI_REVIEW_FAILED_ACTION`.
 
     Gated identically to `declare_ai_review` beside it, down to the AI-seat
-    check: only an AI seat's own driver ever generates a review, so only it
-    can report that one failed, and a human's own uid must not be able to
-    write "your review failed" into anybody's ledger.
+    check and its `review_key` exception (FD7 gap 15): only an AI seat's own
+    driver, or a human seat's own review Job presenting this game's admin
+    key, ever generates a review, so only they can report that one failed -
+    a human's own uid alone must not be able to write "your review failed"
+    into anybody's ledger.
 
     **Why a route at all.** The driver is a separate process from this api
     and reaches it only over HTTP, so a durable signal it can write has to be
@@ -4089,7 +4107,9 @@ def declare_ai_review_failure(game_id: str, req: AiReviewFailureIn) -> dict[str,
         raise KeyError(f"no game {game_id}")
     if archived.seat_uids.get(req.uid) != req.player:
         raise KeyError("that uid is not that seat in this game")
-    if req.player not in archived.ai_players:
+    if req.player not in archived.ai_players and not (
+        req.review_key is not None and store.is_admin(game_id, req.review_key)
+    ):
         raise KeyError("that seat is not an AI seat in this game")
     if not _post_game(archived, _gate_entries(archived)):
         raise HTTPException(
@@ -4124,15 +4144,18 @@ def declare_plays_outcome(game_id: str, req: PlaysOutcomeIn) -> dict[str, Any]:
     Gated like `declare_ai_review`: against `store.archived`, so a game the
     lobby has already ended still takes one; post-game only (409 before);
     and the uid binds to exactly one player. A seat uid speaks for its own
-    seat only, and only for an AI seat (`archived.ai_players`) - a human's
-    own uid opens their seat but no driver of theirs ever runs a handover.
-    An advisor uid speaks for the human it watches; its lookup reads the
-    live game, so it is refused once the game is soft-deleted (the driver
-    files before it retires). `game_access`'s `OWN_PLAYER_ROUTES` refuses a
-    seat uid naming another player before this runs; the checks here are
-    the same binding, restated where the row is written. The role must
-    match the credential (400), so the ledger cannot claim an advisor's
-    handover was a seat's. The uid itself is never recorded.
+    seat only, and only for an AI seat (`archived.ai_players`) UNLESS it
+    files as `role: reviewer` - the post-game DR3 review, which FD7 gap 15
+    also gives a human seat, so a `reviewer` row is never held to the AI-only
+    rule a `seat` row (the handover itself) is. An advisor uid speaks for
+    the human it watches; its lookup reads the live game, so it is refused
+    once the game is soft-deleted (the driver files before it retires).
+    `game_access`'s `OWN_PLAYER_ROUTES` refuses a seat uid naming another
+    player before this runs; the checks here are the same binding, restated
+    where the row is written. The role must match the credential (400), so
+    the ledger cannot claim an advisor's handover was a seat's - a seat uid
+    may file as `seat` or `reviewer`, an advisor uid only ever as `advisor`.
+    The uid itself is never recorded.
 
     **An `unfinished` row schedules F1's follow-up** - unless it is itself
     a follow-up's (`followup: true`), which is what makes a second one
@@ -4149,11 +4172,19 @@ def declare_plays_outcome(game_id: str, req: PlaysOutcomeIn) -> dict[str, Any]:
     advised = player_for_advisor_uid(game_id, req.uid) if seat is None else None
     if (seat or advised) != req.player:
         raise KeyError("that uid is not that seat in this game")
-    if seat is not None and req.player not in archived.ai_players:
-        raise KeyError("that seat is not an AI seat in this game")
     role = "seat" if seat is not None else "advisor"
-    if req.role != role:
+    if req.role == "reviewer":
+        # review fix (gap 15): the seat's own post-game DR3 review, filed
+        # under the same uid a second time - never held to the AI-only rule
+        # a `seat` row (the handover itself) is, since FD7 gap 15 gives a
+        # human seat a review Job too. An advisor watches, it does not
+        # itself get reviewed.
+        if seat is None:
+            raise ValueError("an advisor uid never files a reviewer row")
+    elif req.role != role:
         raise ValueError(f"a {role} uid files its outcome as role {role!r}, not {req.role!r}")
+    elif seat is not None and req.player not in archived.ai_players:
+        raise KeyError("that seat is not an AI seat in this game")
     if not _post_game(archived, _gate_entries(archived)):
         raise HTTPException(
             status_code=409,
@@ -4169,7 +4200,10 @@ def declare_plays_outcome(game_id: str, req: PlaysOutcomeIn) -> dict[str, Any]:
         **req.model_dump(exclude={"uid"}),
     )
     answer: dict[str, Any] = {"recorded": True, "log_seq": seq, "player": req.player}
-    if req.state == "unfinished" and not req.followup:
+    # review fix (gap 15): a `reviewer` row is the DR3 review, not the
+    # handover's own development step - it never schedules F1's follow-up,
+    # whatever `state` it happens to carry.
+    if req.role != "reviewer" and req.state == "unfinished" and not req.followup:
         try:
             answer["followup"] = lobby.schedule_followup(
                 game_id,

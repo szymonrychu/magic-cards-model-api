@@ -1291,13 +1291,22 @@ def test_the_token_is_never_an_env_var_on_any_container(role: str) -> None:
 
 
 @pytest.mark.parametrize("role", ROLES)
-def test_the_agent_carries_its_role_game_and_git_identity(role: str) -> None:
+def test_the_agent_carries_its_role_and_game(role: str) -> None:
     job = _build_role(role)
     env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
     assert env["MTG_ROLE"] == role
     assert env["MTG_GAME_ID"] == "g1"
-    assert env["GIT_COMMITTER_NAME"] == "mtg-agent"
-    assert env["GIT_COMMITTER_EMAIL"] == "mtg-agent@mtg-trainer.invalid"
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_the_agent_carries_no_dead_git_committer_vars(role: str) -> None:
+    """FD6 (5), fb3-parity.md item 10: `gitwork.identity` sets the COMMITTER
+    from `MTG_ROLE` regardless of these two - dead config, dropped from the
+    manifest and from `wrapper.oneshot.PASSED_THROUGH`."""
+    job = _build_role(role)
+    env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
+    assert "GIT_COMMITTER_NAME" not in env
+    assert "GIT_COMMITTER_EMAIL" not in env
 
 
 @pytest.mark.parametrize("role", ROLES)
@@ -1333,23 +1342,24 @@ def test_role_and_game_id_reach_the_agent_through_their_own_placeholders() -> No
 
 @pytest.mark.parametrize("role", ROLES)
 def test_the_pod_gives_both_containers_time_to_hand_over(role: str) -> None:
-    """5520 s of grace, sized for a handover that develops scripts and guides
+    """7410 s of grace, sized for a handover that develops scripts and guides
     through subagents (game 16a9cf8f ran out a 510 s budget doing exactly
     that) AND for `retire`'s join on the post-game AI review thread after it
-    (DR3): the driver's preStop waits 5460 of it for the handover, the
-    agent's waits up to 5480 for that marker, so both finish inside the
+    (review fix round 1: decision-count aware now, up from DR3's flat
+    bound): the driver's preStop waits 7350 of it for the handover, the
+    agent's waits up to 7370 for that marker, so both finish inside the
     grace."""
     job = _build_role(role)
-    assert _pod(job)["terminationGracePeriodSeconds"] == 5520
+    assert _pod(job)["terminationGracePeriodSeconds"] == 7410
     driver_stop = _container(job, "driver")["lifecycle"]["preStop"]["exec"]["command"]
-    assert driver_stop == ["python", "-m", "mtg_agent.driver.handover", "--wait", "5460"]
+    assert driver_stop == ["python", "-m", "mtg_agent.driver.handover", "--wait", "7350"]
     agent_stop = _container(job, "agent")["lifecycle"]["preStop"]["exec"]["command"]
     assert agent_stop == [
         "python",
         "-m",
         "mtg_agent.wrapper.handover_wait",
         "--wait",
-        "5480",
+        "7370",
     ]
 
 
@@ -1388,7 +1398,7 @@ def test_the_role_job_still_validates_as_a_batch_v1_job(role: str) -> None:
     assert _leftover_placeholders(job) == []
     parsed = k8s_client.ApiClient()._ApiClient__deserialize(job, k8s_client.V1Job)
     spec = parsed.spec.template.spec
-    assert spec.termination_grace_period_seconds == 5520
+    assert spec.termination_grace_period_seconds == 7410
     agent = next(c for c in spec.containers if c.name == "agent")
     assert agent.lifecycle.pre_stop._exec.command[2] == "mtg_agent.wrapper.handover_wait"
 
@@ -1773,4 +1783,151 @@ def test_reconcile_deletes_a_followup_job_once_its_game_is_gone() -> None:
     _start_followup(seats)
     report = seats.reconcile(lambda: set())
     assert "mtg-followup-g1-u1" in report["deleted"]
+    assert batch.jobs == {}
+
+
+# ---- FD7 gap 15: the human-seat review Job ------------------------------------
+#
+# The Job path reaching a fresh pod for a game that has already ended (the
+# same guides clone, push credentials, `mode: review`) - a real DR3 review
+# declaration (`driver/app.py`'s `assign_review`), not F1's DSL-development
+# follow-up turn. Labelled and tracked on its own (`LABEL_REVIEW`), never as
+# F1's own follow-up.
+
+
+def _review_job() -> dict:
+    return k8s_seats.build_review_job(
+        K8sSettings.from_env(ENV),
+        game_id="g1",
+        uid="u1",
+        player="carol",
+        agent=AgentSettings.review_default(),
+    )
+
+
+def test_the_review_job_is_its_own_job_labelled_and_named_on_its_own() -> None:
+    job = _review_job()
+    assert job["metadata"]["name"] == k8s_seats.review_job_name("g1", "u1")
+    assert job["metadata"]["name"] == "mtg-review-g1-u1"
+    labels = {
+        "app.kubernetes.io/name": "mtg-agent",
+        "mtg/game-id": "g1",
+        k8s_seats.LABEL_REVIEW: "u1",
+    }
+    assert job["metadata"]["labels"] == labels
+    assert job["spec"]["template"]["metadata"]["labels"] == labels
+    assert k8s_seats.LABEL_FOLLOWUP not in job["metadata"]["labels"]
+    assert k8s_seats.LABEL_SEAT not in job["metadata"]["labels"]
+    assert _leftover_placeholders(job) == []
+
+
+def test_the_review_job_runs_opus_as_the_human_seats_own_credential() -> None:
+    from mtg_agent.driver.app import DispatchIn
+
+    job = _review_job()
+    agent_env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
+    assert agent_env["MODEL"] == AgentSettings.review_default().model == "claude-opus-5"
+    assert agent_env["MTG_ROLE"] == "seat"
+    driver_env = {e["name"]: e.get("value") for e in _container(job, "driver")["env"]}
+    assert driver_env["SEAT_UID"] == "u1"
+    parsed = DispatchIn.model_validate_json(driver_env["DRIVER_ASSIGNMENT_JSON"])
+    assert (parsed.uid, parsed.player, parsed.role, parsed.mode) == (
+        "u1",
+        "carol",
+        "seat",
+        "review",
+    )
+    # `assign_review` reads its deck from the lobby, not from a payload: no
+    # `followup` body is built for a review dispatch at all.
+    assert parsed.followup is None
+
+
+def test_the_review_jobs_assignment_carries_its_own_review_key() -> None:
+    """FD7-r1: `declare_ai_review`'s AI-seat check accepts a human seat's
+    review only when the request carries this game's admin key as
+    `review_key` - `k8s_seats.build_review_job` is the one place that key
+    is minted into the Job's own assignment, so a review Job with none
+    (the pre-fix shape) could never file for the human seat it reviews."""
+    from mtg_agent.driver.app import DispatchIn
+
+    job = k8s_seats.build_review_job(
+        K8sSettings.from_env(ENV),
+        game_id="g1",
+        uid="u1",
+        player="carol",
+        agent=AgentSettings.review_default(),
+        review_key="g1-admin-key",
+    )
+    driver_env = {e["name"]: e.get("value") for e in _container(job, "driver")["env"]}
+    parsed = DispatchIn.model_validate_json(driver_env["DRIVER_ASSIGNMENT_JSON"])
+    assert parsed.review_key == "g1-admin-key"
+
+
+def _start_review(seats: K8sSeats, review_key: str | None = None) -> dict:
+    return seats.start_review_followup(
+        uid="u1",
+        game_id="g1",
+        player="carol",
+        agent=AgentSettings.review_default(),
+        review_key=review_key,
+    )
+
+
+def test_start_review_followup_forwards_the_review_key_to_build_review_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`K8sSeats.start_review_followup` is only a scheduling wrapper around
+    `build_review_job` - proving it forwards `review_key` unchanged is what
+    keeps `test_the_review_jobs_assignment_carries_its_own_review_key`
+    (which proves `build_review_job` itself embeds it) meaningful for the
+    path a real dispatch actually takes."""
+    calls: list[dict] = []
+    real_build = k8s_seats.build_review_job
+
+    def recording_build(*args, **kwargs):
+        calls.append(kwargs)
+        return real_build(*args, **kwargs)
+
+    monkeypatch.setattr(k8s_seats, "build_review_job", recording_build)
+    seats, _, _ = make()
+    _start_review(seats, review_key="g1-admin-key")
+    assert calls and calls[0]["review_key"] == "g1-admin-key"
+
+
+def test_a_review_job_is_created_once_and_deduped_by_its_own_label() -> None:
+    seats, batch, _ = make()
+    first = _start_review(seats)
+    assert first["state"] == "scheduled" and first["job"] == "mtg-review-g1-u1"
+    assert first["mechanism"] == "kubernetes"
+    other = K8sSeats(K8sSettings.from_env(ENV), batch, FakeCore(), FakeDriverHttp({}))
+    again = other.start_review_followup(
+        uid="u1", game_id="g1", player="carol", agent=AgentSettings.review_default()
+    )
+    assert again["state"] == "exists" and again["job"] == first["job"]
+    assert batch.creates == 1
+
+
+def test_review_followup_running_reads_the_job_from_the_cluster() -> None:
+    seats, batch, _ = make()
+    assert seats.review_followup_running("u1") is False
+    _start_review(seats)
+    assert seats.review_followup_running("u1") is True
+    batch.jobs["mtg-review-g1-u1"].status.succeeded = 1
+    assert seats.review_followup_running("u1") is False
+
+
+def test_release_review_followup_deletes_the_review_job_only() -> None:
+    seats, batch, _ = make()
+    _start_review(seats)
+    _start_followup(seats)
+    assert seats.release_review_followup("u1") == {"deleted": ["mtg-review-g1-u1"]}
+    assert "mtg-followup-g1-u1" in batch.jobs
+    assert "mtg-review-g1-u1" not in batch.jobs
+
+
+def test_reconcile_deletes_a_review_job_once_its_game_is_gone() -> None:
+    seats, batch, _ = make()
+    _start_review(seats)
+    report = seats.reconcile(lambda: set())
+    assert "mtg-review-g1-u1" in report["deleted"]
     assert batch.jobs == {}

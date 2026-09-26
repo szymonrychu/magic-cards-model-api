@@ -4,13 +4,13 @@
 seatkit runner. `Play` is its model: every object forbids unknown keys, every
 union is discriminated on `kind` (or, for a `compare` operand, `of`), every
 list is bounded (`maxItems` in the exported JSON Schema, an explicit bound on
-every list field below), and no field or kind can iterate, mulligan, concede
-or assign combat damage. The vocabulary is closed at eleven condition kinds
-and seven move kinds; a `cast` names its cost from `CAST_COSTS` (the engine's
-own cast option kinds), and an answer names its decision from `DECISION_KINDS`
-(the api's pending decision kinds, less the mulligan and combat-damage
-assignment a script never makes - the two combat declarations moved to their
-own move kinds, `declare_attackers`/`declare_blockers`, in FB2's B4).
+every list field below), and no field or kind can iterate or concede. The
+vocabulary is closed at eleven condition kinds and nine move kinds (FD2 adds
+`keyword_action` and `mulligan` to FB2's seven); a `cast` names its cost from
+`CAST_COSTS` (the engine's own cast option kinds), and an answer names its
+decision from `DECISION_KINDS` (the api's pending decision kinds - the two
+combat declarations are answered by their own move kinds instead,
+`declare_attackers`/`declare_blockers`, since FB2's B4).
 `when.steps` names each step once, including the two combat declaration steps
 (FB2 W1), and `opposing_archetypes` is either `["*"]` or named keys, never
 both. An answer's fields fit its decision kind: a pay-amount decision
@@ -28,6 +28,24 @@ selector's optional `missing_from` names zones (`MISSING_FROM_ZONES`, at
 least one), a side (`MISSING_FROM_SIDES`) and what it compares
 (`MISSING_FROM_BY`); a word outside those is `malformed-play` and no zones
 `bounds-exceeded`, so it adds no code.
+
+FB3's FD2 additions (2026-09-26), all additive over the shipped v1
+vocabulary and over FB2's B4: `cast` gains `face` (a face selector for a
+split/Adventure/MDFC spell face), `modes`, `x`, `shares`, `optional_costs`,
+cost-object `sacrifice`/`discard`/`exile`/`tap` Picks and
+`convoke`/`delve`/`improvise` Picks; `activate` gains `exile`, `x` and
+`color`; two new move kinds, `keyword_action` (suspend, plot, foretell,
+cycle, equip, crew, turn_face_up, companion) and `mulligan` (valid only in
+the `mulligan` step); three schema-local steps (`cleanup`, `mulligan`,
+`pregame_actions`); an answer gains `order` (order_triggers), `damage`
+(assign_combat_damage) and `choice_from` (choose_a_quality, a selector
+instead of a literal string); `pick.count` and `targets` may now be 0
+("choose none"); and `FORBIDDEN_DECISION_KINDS` is empty - `mulligan` is
+answered like `may`/`pay_life` (the plain `accept` field) or, more fully,
+through the new `mulligan` move, and `assign_combat_damage` is answered
+only through the new `damage` field. `concede` was never in the vocabulary
+and still is not: it is not a `DecisionKind` the engine ever pends, and no
+move kind is ever named `concede`.
 
 FB2's B4 additions (2026-09-24), all additive over the shipped v1 vocabulary:
 `pass` (CR 117.3d, must be the play's last move - `pass-not-last`),
@@ -134,8 +152,64 @@ MAX_BLOCKS = 6
 #: schema's small lists.
 MIN_ALL_OF_CONDITIONS = 2
 MAX_ALL_OF_CONDITIONS = 4
+#: `CastMove.modes` (FD2): CR 700.2a's modal spells offer at most a handful of
+#: modes in practice; 5 is comfortably above the widest printed count.
+MAX_MODES = 5
+#: `CastMove.optional_costs` (FD2): one entry per optional cost the api's own
+#: `optional_costs` accepts (kicker, multikicker, replicate, offspring,
+#: blight, gift, entwine, escalate, harmonize, pay life, bargain, collect
+#: evidence, reveal) - 4 is comfortably above how many one printed spell ever
+#: stacks.
+MAX_OPTIONAL_COSTS = 4
+#: `Answer.order` (FD2): one entry per simultaneously triggered ability a
+#: seat orders (CR 603.3b) - the same fan-out `AttackGroup`/`Block` get.
+MAX_ORDER = 6
+#: `CastMove.x`/`ActivateMove.x` (FD2): CR 107.3's X, bounded well above any
+#: printed or reasonably paid value.
+MAX_X = 30
+#: `Answer.damage`'s own `tiers` (FD2): one entry per ordered blocker tier,
+#: the same fan-out `DeclareBlockersMove.blocks` gets.
+MAX_DAMAGE_TIERS = MAX_BLOCKS
+#: `ActivateMove.color` (FD2): the six colour letters `ActivateRequest.color`
+#: accepts.
+COLOR_LETTERS_CLOSED = ("W", "U", "B", "R", "G", "C")
+#: `KeywordActionMove.action` (FD2): the six existing keyword-action routes
+#: (suspend, plot, foretell, cycle, equip, crew) plus FD5's two new ones
+#: (turn_face_up, companion).
+KEYWORD_ACTIONS = (
+    "suspend",
+    "plot",
+    "foretell",
+    "cycle",
+    "equip",
+    "crew",
+    "turn_face_up",
+    "companion",
+)
+#: `Answer.damage`'s own `rest_to` (FD2): where damage past the last lethal
+#: blocker tier goes once trample lets it through - the defending player, or
+#: piled onto the last blocker tier instead.
+REST_TO_VALUES = ("player", "last_blocker")
+#: The decision kind `Answer.damage` (FD2) fits, and only it.
+DAMAGE_DECISION_KINDS = ("assign_combat_damage",)
+#: The decision kind `Answer.order` (FD2) fits, and only it.
+ORDER_DECISION_KINDS = ("order_triggers",)
+#: The decision kind `Answer.choice_from` (FD2) fits, and only it -
+#: `choose_a_mode` is always fully enumerated by fixed mode text, never a card.
+CHOICE_FROM_DECISION_KINDS = ("choose_a_quality",)
+#: FD2 item 5: `when.steps` accepts every step in which a decision can be
+#: pending, not only the steps a `pass_until` run can stop at
+#: (`AUTOPASS_STEPS`). `cleanup` (CR 514.2/514.3's own discard-to-hand-size
+#: and triggered-ability priority window), `mulligan` (CR 103.5) and
+#: `pregame_actions` (CR 103.6) are schema-local additions layered on top of
+#: `seatkit.AUTOPASS_STEPS`, which is never edited: no `pass_until` run can
+#: ever stop at any of the three (CR 502.4/514.3 give no player priority in
+#: an ordinary untap or cleanup step, and neither pregame step is in the
+#: engine's `TURN_ORDER` at all), but a script can still be scoped to run
+#: while one of them holds the board.
+SCHEMA_ONLY_STEPS = ("cleanup", "mulligan", "pregame_actions")
 
-STEPS = AUTOPASS_STEPS
+STEPS = AUTOPASS_STEPS + SCHEMA_ONLY_STEPS
 CONDITION_KINDS = (
     "count",
     "zone_size",
@@ -157,6 +231,8 @@ MOVE_KINDS = (
     "pass",
     "declare_attackers",
     "declare_blockers",
+    "keyword_action",
+    "mulligan",
 )
 #: `compare`'s own `Operand.of` vocabulary (FB2 C2) - purely descriptive here,
 #: the way `CONDITION_KINDS`/`MOVE_KINDS` are: each operand class carries its
@@ -225,15 +301,19 @@ CAST_COSTS = (
 #: The decision kinds an answer may name: every `DecisionKind` the api can
 #: pend (`decisions.ANSWERABLE_KINDS`), by value.
 DECISION_KINDS = tuple(sorted(kind.value for kind in ANSWERABLE_KINDS))
-#: Pending decision kinds a script never answers: scripts never mulligan or
-#: assign combat damage. `declare_attackers`/`declare_blockers` used to be
-#: here too; FB2's B4 gives them their own move kinds instead
-#: (`COMBAT_DECISION_KINDS` above), answered with `use-combat-move`, not
-#: `forbidden-kind`.
-FORBIDDEN_DECISION_KINDS = (
-    "assign_combat_damage",
-    "mulligan",
-)
+#: Pending decision kinds a script never answers directly: none, as of FD2.
+#: `declare_attackers`/`declare_blockers` used to be here too; FB2's B4 gives
+#: them their own move kinds instead (`COMBAT_DECISION_KINDS` above), answered
+#: with `use-combat-move`, not `forbidden-kind`. `assign_combat_damage` and
+#: `mulligan` were here through FB2: FD2 gives the first its own `damage`
+#: answer field (`DAMAGE_DECISION_KINDS`, required and exclusive there, the
+#: same footing `amount` has) and lets the second answer plainly with
+#: `accept`, the way `may`/`pay_life` already do, alongside the new dedicated
+#: `mulligan` move for the fuller keep-or-take-with-bottom shape. Kept as a
+#: named, empty tuple - not deleted - because it is still the vocabulary's own
+#: place for a kind a script must never answer directly, if one is ever
+#: added back.
+FORBIDDEN_DECISION_KINDS = ()
 #: The decision kinds answered with a number rather than yes/no or cards: the
 #: kinds `decisions.ANSWER_FIELD_FOR_KIND` answers on the engine's `amount`
 #: field (`pay_energy_amount`, `pay_life_amount` - an integer from 0 up to the
@@ -268,12 +348,33 @@ NON_AMOUNT_ANSWER_FIELDS = (
     "to_graveyard",
     "to_bottom",
     "choice",
+    "choice_from",
     "pile_one",
     "to_hand",
     "players",
     "top_order",
     "position",
     "targets",
+    "order",
+    "damage",
+)
+#: The answer fields an `assign_combat_damage` decision never takes - the
+#: same idea `NON_AMOUNT_ANSWER_FIELDS` is, `amount` included: `damage` (FD2)
+#: answers it alone.
+NON_DAMAGE_ANSWER_FIELDS = (
+    "pick",
+    "accept",
+    "to_graveyard",
+    "to_bottom",
+    "choice",
+    "choice_from",
+    "pile_one",
+    "players",
+    "top_order",
+    "position",
+    "targets",
+    "order",
+    "amount",
 )
 
 CODES = (
@@ -307,6 +408,7 @@ CODES = (
     "all-of-outside-false",
     "use-combat-move",
     "answer-decision-mismatch",
+    "mulligan-wrong-step",
 )
 
 
@@ -341,6 +443,11 @@ CastCost = Literal[CAST_COSTS]
 AbilityIndex = Annotated[int, Field(ge=0, le=MAX_ABILITY_INDEX)]
 #: `CardTarget.zone` (FB2 T1).
 TargetZone = Literal[TARGET_ZONES]
+#: `ActivateMove.color` (FD2): the six colour letters `ActivateRequest.color`
+#: accepts, for a mana ability with more than one colour to choose from.
+Color = Literal[COLOR_LETTERS_CLOSED]
+#: `KeywordActionMove.action` (FD2).
+KeywordAction = Literal[KEYWORD_ACTIONS]
 SelectorWords = Annotated[list[NonBlank], Field(max_length=MAX_SELECTOR_WORDS)]
 Ties = Literal[TIES]
 #: `searches_for_any` (O3): the five basic land types alone, so a word
@@ -743,6 +850,40 @@ Prefer = Annotated[list[Selector], Field(max_length=MAX_PREFER)]
 #: scry/surveil, first tier on top; the rest stay on top after them in
 #: looked-at order. The same fan-out `Prefer` gets.
 TopOrder = Annotated[list[Selector], Field(max_length=MAX_TOP_ORDER)]
+#: `Answer.order` (FD2, CR 603.3b): 1-6 selector tiers ordering pending
+#: triggered abilities - see `Answer.order`'s own docstring for the direction.
+Order = Annotated[list[Selector], Field(min_length=1, max_length=MAX_ORDER)]
+
+
+class ChoiceFromCard(_Strict):
+    """`Answer.choice_from` (FD2): a card resolved at run time by selector,
+    over `zone` on `side` - never a name written in the file. The runtime
+    derives `choose_a_quality`'s own answer text from whichever card this
+    selector matches (Cavern of Souls' creature type, say, read off the
+    matched creature)."""
+
+    zone: Literal[COUNT_ZONES]
+    side: Side
+    select: Selector
+    prefer: Prefer = None
+    ties: Ties = None
+
+
+class DamagePolicy(_Strict):
+    """`Answer.damage` (FD2, CR 510.1c/702.19b): a policy rather than a
+    literal amount per recipient. `tiers` orders the blockers (and, once
+    trample lets damage through, the defending player or planeswalker) from
+    first to last in `pending_decision.targets`' own damage-assignment order;
+    `lethal_first` assigns each tier only its lethal damage before any moves
+    past it (CR 510.1c's own order, the default when left out); `rest_to`
+    says where damage a trampling attacker has left over after every blocker
+    tier has lethal damage goes - `player` past the last blocker (CR
+    702.19b, the default when left out), or `last_blocker` to pile the rest
+    onto the last blocker tier instead of letting it through."""
+
+    tiers: list[Selector] = Field(default_factory=list, max_length=MAX_DAMAGE_TIERS)
+    lethal_first: bool = None
+    rest_to: Literal[REST_TO_VALUES] = None
 
 
 class Pick(_Strict):
@@ -750,6 +891,14 @@ class Pick(_Strict):
     count: Annotated[int, Field(ge=1)] = None
     prefer: Prefer = None
     ties: Ties = None
+
+
+class AnswerPick(Pick):
+    """`Answer.pick`. FD2: 0 is a legal count here - "choose none" - alongside
+    the decision's own default (left out) and any positive count. Every other
+    Pick (costs, blocks, crew) still names at least one object."""
+
+    count: Annotated[int, Field(ge=0)] = None
 
 
 def _amount_tag(value: Any) -> str:
@@ -766,6 +915,44 @@ Amount = Annotated[
     | Annotated[Literal[AMOUNT_POLICIES], Tag("amount-policy")],
     Discriminator(_amount_tag),
 ]
+
+
+def _x_tag(value: Any) -> str:
+    return "x-count" if isinstance(value, int) and not isinstance(value, bool) else "x-policy"
+
+
+#: `CastMove.x`/`ActivateMove.x` (FD2, CR 107.3): an integer 0-30, or `max`
+#: for the largest X the payer's mana can afford right now - the same
+#: count-or-policy shape `Amount` already gives a pay-amount decision.
+XValue = Annotated[
+    Annotated[Annotated[int, Field(ge=0, le=MAX_X)], Tag("x-count")]
+    | Annotated[Literal["max"], Tag("x-policy")],
+    Discriminator(_x_tag),
+]
+
+
+class ModeChoice(_Strict):
+    """One mode of a `CastMove.modes` list (CR 700.2a): the mode named by an
+    ability-text phrase, never a mode's literal printed number - the same
+    card-name-free discipline every other phrase field keeps."""
+
+    text_has: NonBlank
+
+
+class OptionalCost(_Strict):
+    """One optional cost of a `CastMove.optional_costs` list (CR 118.8):
+    kicker, bargain, collect evidence and the rest of what the api's own
+    `CastRequest.optional_costs` accepts, named by an ability-text phrase
+    rather than the cost's own keyword, so the vocabulary never has to track
+    the engine's own keyword spelling for this field."""
+
+    text_has: NonBlank
+
+
+#: `CastMove.shares` (FD2, CR 601.2d): how a divided effect (Electrolyze's
+#: damage, distributed counters) splits among `targets` - one entry per
+#: target, in the same order, the runner's own job to align.
+Shares = Annotated[list[AtLeastZero], Field(max_length=MAX_TARGETS)]
 
 
 class ZonedCard(_Strict):
@@ -810,17 +997,21 @@ def answer_shape_problem(answer: Any) -> str | None:
     """Why this answer item's fields do not fit its decision kind, or None.
 
     A pay-amount decision (`AMOUNT_DECISION_KINDS`) is answered with `amount`
-    and nothing else; no other decision kind takes an `amount`. `choice`
-    (O6) is answered only by `CHOICE_DECISION_KINDS`
-    (`choose_a_mode`/`choose_a_quality`); `top_order` (FB2 A1) only by
-    `TOP_ORDER_DECISION_KINDS` (`scry`/`surveil`); `position` (FB2 A1) only
-    by `POSITION_DECISION_KINDS` (`put_on_top_or_bottom`), and never beside
-    `to_bottom` - the two name the same decision two different ways;
-    `targets` (FB2 A2) only by `TARGETS_DECISION_KINDS` (`choose_targets`),
-    and never beside `pick` for the same reason. Everywhere else these are
-    `answer-shape-mismatch`, the same footing `amount` and `choice` are on.
-    A decision outside `DECISION_KINDS` is judged by `unknown-decision-kind`
-    instead."""
+    and nothing else; `assign_combat_damage` (`DAMAGE_DECISION_KINDS`, FD2)
+    the same way with `damage` alone - no other decision kind takes either.
+    `choice` (O6) is answered only by `CHOICE_DECISION_KINDS`
+    (`choose_a_mode`/`choose_a_quality`); `choice_from` (FD2) only by
+    `CHOICE_FROM_DECISION_KINDS` (`choose_a_quality`), and never beside
+    `choice` - the two name the same decision two different ways; `top_order`
+    (FB2 A1) only by `TOP_ORDER_DECISION_KINDS` (`scry`/`surveil`); `position`
+    (FB2 A1) only by `POSITION_DECISION_KINDS` (`put_on_top_or_bottom`), and
+    never beside `to_bottom` - the two name the same decision two different
+    ways; `targets` (FB2 A2) only by `TARGETS_DECISION_KINDS`
+    (`choose_targets`), and never beside `pick` for the same reason; `order`
+    (FD2) only by `ORDER_DECISION_KINDS` (`order_triggers`). Everywhere else
+    these are `answer-shape-mismatch`, the same footing `amount` and `choice`
+    are on. A decision outside `DECISION_KINDS` is judged by
+    `unknown-decision-kind` instead."""
     if not isinstance(answer, dict) or answer.get("decision") not in DECISION_KINDS:
         return None
     decision = answer["decision"]
@@ -833,8 +1024,23 @@ def answer_shape_problem(answer: Any) -> str | None:
         return None
     if "amount" in answer:
         return f"only {', '.join(AMOUNT_DECISION_KINDS)} take an amount, not '{decision}'"
+    if decision in DAMAGE_DECISION_KINDS:
+        others = [field for field in NON_DAMAGE_ANSWER_FIELDS if field in answer]
+        if others:
+            return f"'{decision}' is answered with damage, not {', '.join(others)}"
+        if "damage" not in answer:
+            return f"'{decision}' is answered with damage; name a policy"
+        return None
+    if "damage" in answer:
+        return f"only {', '.join(DAMAGE_DECISION_KINDS)} take damage, not '{decision}'"
     if "choice" in answer and decision not in CHOICE_DECISION_KINDS:
         return f"only {', '.join(CHOICE_DECISION_KINDS)} take a choice, not '{decision}'"
+    if "choice_from" in answer and decision not in CHOICE_FROM_DECISION_KINDS:
+        return f"only {', '.join(CHOICE_FROM_DECISION_KINDS)} take choice_from, not '{decision}'"
+    if "choice_from" in answer and "choice" in answer:
+        return (
+            "'choice_from' and 'choice' answer the same decision two different ways; use only one"
+        )
     if "top_order" in answer and decision not in TOP_ORDER_DECISION_KINDS:
         return f"only {', '.join(TOP_ORDER_DECISION_KINDS)} take a top_order, not '{decision}'"
     if "position" in answer and decision not in POSITION_DECISION_KINDS:
@@ -847,6 +1053,8 @@ def answer_shape_problem(answer: Any) -> str | None:
         return f"only {', '.join(TARGETS_DECISION_KINDS)} take targets, not '{decision}'"
     if "targets" in answer and "pick" in answer:
         return "'targets' and 'pick' answer the same decision two different ways; use only one"
+    if "order" in answer and decision not in ORDER_DECISION_KINDS:
+        return f"only {', '.join(ORDER_DECISION_KINDS)} take order, not '{decision}'"
     return None
 
 
@@ -859,7 +1067,7 @@ class Answer(_Strict):
     `to_hand` or `players`."""
 
     decision: DecisionKind
-    pick: Pick = None
+    pick: AnswerPick = None
     accept: bool = None
     to_graveyard: Selector = None
     to_bottom: Selector = None
@@ -891,8 +1099,22 @@ class Answer(_Strict):
     position: Literal["top", "bottom"] = None
     #: `choose_targets`'s own answer (FB2 A2) - an alternative to `pick` that
     #: can also name a player target, the same shapes a `cast`/`activate`
-    #: target already takes.
-    targets: list[Target] = Field(default=None, min_length=1, max_length=MAX_TARGETS)
+    #: target already takes. FD2: 0 targets is legal - "choose none".
+    targets: list[Target] = Field(default=None, min_length=0, max_length=MAX_TARGETS)
+    #: `order_triggers`'s own answer (FD2, CR 603.3b): 1-6 selector tiers
+    #: naming the pending triggered abilities in the order they go on the
+    #: stack - the FIRST tier here goes on the stack FIRST and so resolves
+    #: LAST (CR 603.3b's own "bottom of the stack first"); the LAST tier goes
+    #: on last and resolves first, on top.
+    order: Order = None
+    #: `assign_combat_damage`'s own answer (FD2, CR 510.1c/702.19b): a policy
+    #: rather than a literal amount per object - `DamagePolicy` below.
+    damage: DamagePolicy = None
+    #: `choose_a_quality`'s own alternative answer (FD2): a card resolved at
+    #: run time by selector, never a name written in the file - the runtime
+    #: derives the actual choice text from whichever card the selector
+    #: matches. An alternative to `choice`, never both.
+    choice_from: ChoiceFromCard = None
 
     @model_validator(mode="after")
     def _fields_fit_the_decision(self) -> Answer:
@@ -977,7 +1199,11 @@ Discard = Annotated[
 class ActivateMove(_Strict):
     """Names its ability by exactly one of `ability_text_has` (a phrase) or
     `ability_index` (FB2 M4, the card's own ability list index, 0-15) - both
-    or neither is `activate-ability-ref`."""
+    or neither is `activate-ability-ref`. FD2 adds `exile` (a Pick, the same
+    footing `sacrifice`/`discard` are on for an activation cost's own
+    "Exile ..." piece), `x` (CR 107.3a's X, announced as the activation
+    begins) and `color` (which coloured symbol a mana ability with more than
+    one colour to give covers)."""
 
     kind: Literal["activate"]
     source: ZonedCard
@@ -986,6 +1212,9 @@ class ActivateMove(_Strict):
     targets: list[Target] = Field(default_factory=list, max_length=MAX_TARGETS)
     sacrifice: Sacrifice = None
     discard: Discard = None
+    exile: Pick = None
+    x: XValue = None
+    color: Color = None
     answers: list[Answer] = Field(default_factory=list, max_length=MAX_ANSWERS)
 
     @model_validator(mode="after")
@@ -1000,9 +1229,32 @@ class ActivateMove(_Strict):
 
 
 class CastMove(_Strict):
+    """FD2 additions, all optional and additive: `face` (a face selector for
+    a split/Adventure/MDFC spell face - by type or text phrase, never a card
+    name, the same discipline every other selector field keeps), `modes`
+    (CR 700.2a, 1-5 modes each named by a phrase), `x` (CR 107.3a),
+    `shares` (CR 601.2d, aligned with `targets` by position), `optional_costs`
+    (CR 118.8, 1-4 of them), the cost-object Picks `sacrifice`/`discard`/
+    `exile`/`tap` for a printed additional cost naming one of those, and the
+    `convoke`/`delve`/`improvise` Picks (CR 702.51a/702.66a/702.126a)."""
+
     kind: Literal["cast"]
     card: ZonedCard
     cost: CastCost = None
+    face: Selector = None
+    modes: Annotated[list[ModeChoice], Field(min_length=1, max_length=MAX_MODES)] = None
+    x: XValue = None
+    shares: Shares = None
+    optional_costs: Annotated[
+        list[OptionalCost], Field(min_length=1, max_length=MAX_OPTIONAL_COSTS)
+    ] = None
+    sacrifice: Pick = None
+    discard: Pick = None
+    exile: Pick = None
+    tap: Pick = None
+    convoke: Pick = None
+    delve: Pick = None
+    improvise: Pick = None
     targets: list[Target] = Field(default_factory=list, max_length=MAX_TARGETS)
     mana: Literal["auto"] = None
     answers: list[Answer] = Field(default_factory=list, max_length=MAX_ANSWERS)
@@ -1122,6 +1374,38 @@ class DeclareBlockersMove(_Strict):
     blocks: list[Block] = Field(default_factory=list, max_length=MAX_BLOCKS)
 
 
+class KeywordActionMove(_Strict):
+    """FD2: one shape for the six existing keyword-action routes (suspend,
+    plot, foretell, cycle, equip, crew) and FD5's two new ones (turn_face_up,
+    companion) - `action` names which, `card` locates the card the way a
+    `cast`/`play_land` card already does, `target` names the creature an
+    `equip` attaches to (a `CardTarget`, never a player), and `crew_with`
+    names the creatures a `crew` action taps to pay its cost."""
+
+    kind: Literal["keyword_action"]
+    action: KeywordAction
+    card: ZonedCard
+    target: CardTarget = None
+    crew_with: Pick = None
+    answers: list[Answer] = Field(default_factory=list, max_length=MAX_ANSWERS)
+
+
+class MulliganMove(_Strict):
+    """FD2: CR 103.5's declaration - `keep` false takes a mulligan, true
+    keeps the hand dealt (drawing a fresh seven either way is London
+    mulligan's own rule, not this move's business); a seat that has already
+    mulliganed and keeps also owes CR 103.5's bottoming, named by `bottom`
+    (left out, the engine's own default - the back of the hand). Valid only
+    when `when.steps` is exactly `["mulligan"]`
+    (`Play._mulligan_move_needs_the_mulligan_step` below), otherwise
+    `mulligan-wrong-step` - the declaration this move makes is meaningless
+    anywhere else."""
+
+    kind: Literal["mulligan"]
+    keep: bool
+    bottom: Pick = None
+
+
 Move = Annotated[
     ActivateMove
     | CastMove
@@ -1129,7 +1413,9 @@ Move = Annotated[
     | AnswerMove
     | PassMove
     | DeclareAttackersMove
-    | DeclareBlockersMove,
+    | DeclareBlockersMove
+    | KeywordActionMove
+    | MulliganMove,
     Field(discriminator="kind"),
 ]
 
@@ -1239,6 +1525,21 @@ class Play(_Strict):
                         )
         return self
 
+    @model_validator(mode="after")
+    def _mulligan_move_needs_the_mulligan_step(self) -> Play:
+        """FD2: a `mulligan` move's declaration is meaningless outside CR
+        103.5's own step - `when.steps` must name it and nothing else,
+        otherwise `mulligan-wrong-step`."""
+        if any(isinstance(move, MulliganMove) for move in self.moves) and list(self.when.steps) != [
+            "mulligan"
+        ]:
+            raise PydanticCustomError(
+                "mulligan_wrong_step",
+                "a 'mulligan' move is valid only with when.steps == ['mulligan'], not {steps}",
+                {"steps": list(self.when.steps)},
+            )
+        return self
+
 
 def json_schema() -> dict[str, Any]:
     """`Play` as JSON Schema, for `contract/playscript.schema.json`."""
@@ -1267,6 +1568,11 @@ _ITEM_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "searches_for_any": TypeAdapter(Literal[BASIC_LAND_TYPES]),
     "enters_any": TypeAdapter(Literal[ENTERS_STATES]),
     "payable_any": TypeAdapter(Literal[PAYABLE_STATES]),
+    "modes": TypeAdapter(ModeChoice),
+    "optional_costs": TypeAdapter(OptionalCost),
+    "order": TypeAdapter(Selector),
+    "tiers": TypeAdapter(Selector),
+    "shares": TypeAdapter(AtLeastZero),
     **{field: TypeAdapter(NonBlank) for field in SELECTOR_WORD_FIELDS},
 }
 _BOUND_TYPES = (
@@ -1291,6 +1597,7 @@ _CUSTOM_CODES = {
     "all_of_outside_false": "all-of-outside-false",
     "use_combat_move": "use-combat-move",
     "answer_decision_mismatch": "answer-decision-mismatch",
+    "mulligan_wrong_step": "mulligan-wrong-step",
 }
 #: A value outside a closed Literal, by the field it is in.
 _LITERAL_CODES = {"decision": "unknown-decision-kind", "cost": "unknown-cast-cost"}
@@ -1302,6 +1609,7 @@ _SHAPE_TAGS = frozenset(
     | {"discard-keyword", "discard-choice"}
     | {"defender-player", "defender-card"}
     | {"attack-count-number", "attack-count-all"}
+    | {"x-count", "x-policy"}
 )
 _MISSING = object()
 

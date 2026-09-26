@@ -83,6 +83,8 @@ from magic_cards_model_api.playscripts.report import (
     script_run_table,
 )
 
+from ..wrapper.config import Settings as _WrapperSettings
+from ..wrapper.config import scaled_review_wall_time
 from .config import DriverSettings
 from .guides import (
     CONFIDENT,
@@ -144,31 +146,116 @@ log = logging.getLogger("driver")
 #: first), so this has to sit above whatever the wrapper allows itself.
 #: `tests/wrapper/test_oneshot.py` pins the ordering against
 #: `Settings.review_timeout` itself, so neither number can be moved alone.
+#:
+#: **Review fix, round 1 finding 1: this is now only the FLAT case
+#: (`decision_count <= 0`) of `review_http_timeout` below, not the value the
+#: POST itself is sent with.** It stayed a bare constant, used unchanged for
+#: every game regardless of decision count, while `wrapper.config.
+#: scaled_review_timeout` (and, after the prose-pass fix above,
+#: `scaled_review_wall_time`) grew the wrapper's OWN bound well past it for
+#: any game with more than about ten decisions - so the driver gave up on a
+#: review that was still correctly running, before either the scaling or
+#: the wrapper's own timeout-salvage note ever had a chance to matter. Kept
+#: as a named constant since `RETIRE_REVIEW_JOIN_TIMEOUT`'s own docstring
+#: and several tests still reference the flat case by name.
 REVIEW_HTTP_TIMEOUT = 3660.0
+
+#: This process runs in a container with no `claude` binary and does not
+#: read the wrapper's own env, so it mirrors `wrapper.config.
+#: scaled_review_wall_time` against the wrapper's DEFAULT `Settings` rather
+#: than a live value it cannot see - `tests/wrapper/test_config.py` pins the
+#: formula the two sides share.
+_WRAPPER_DEFAULTS = _WrapperSettings()
+
+#: The same +60s headroom `REVIEW_HTTP_TIMEOUT` always carried over the
+#: flat `Settings.review_timeout` (3600 -> 3660), now applied to the
+#: decision-count-aware bound instead of the flat one.
+REVIEW_HTTP_HEADROOM = 60.0
+
+
+def _uncapped_review_http_timeout(decision_count: int) -> float:
+    """The formula alone, before `REVIEW_HTTP_TIMEOUT_MAX` clamps it - kept
+    separate so that constant can be DEFINED from this function (at its own
+    chosen decision count) without calling the public, already-clamped
+    `review_http_timeout` on itself."""
+    return scaled_review_wall_time(_WRAPPER_DEFAULTS, decision_count) + REVIEW_HTTP_HEADROOM
+
+
+#: The ceiling `review_http_timeout` never crosses, chosen at 200 decisions
+#: so the fixed bounds derived from it below (`RETIRE_REVIEW_JOIN_TIMEOUT`,
+#: and `handover.PRESTOP_WAIT_SECONDS`/the Job's own
+#: `terminationGracePeriodSeconds` over that) move by a bounded, deliberate
+#: amount rather than needing to grow without limit.
+#:
+#: **Review fix, round 2 finding 2: this 200-decision assumption is no
+#: longer just a driver-side choice, it is also `wrapper.config.Settings.
+#: review_timeout_max`'s own default** (`review_timeout` + 200 *
+#: `review_timeout_per_decision` = 3600 + 1200 = 4800, plus the prose pass
+#: and this headroom here) - the wrapper's OWN plays-pass scaling
+#: (`scaled_review_timeout`/`scaled_review_wall_time`) is capped at exactly
+#: this same 200-decision point, so it can never grow past what this
+#: constant already waits for, however large the real game's decision count
+#: is. Before that alignment, the wrapper kept scaling for another ~1000
+#: decisions (up to its OWN, independently-sized 1200-decision asymptote)
+#: past this ceiling, so a real game in that gap (400 decisions was the
+#: reported case) ran past this timeout while the wrapper was still
+#: correctly working - the driver gave up and filed `ai_review_failed`,
+#: losing the whole response, prose included, to a client timeout rather
+#: than any real failure. Moving THIS constant's own decision count instead
+#: would need a much larger bump to the Job's own total termination budget,
+#: which is not what this fix reaches for - `wrapper.config.review_timeout_
+#: max`'s own docstring is the one to change (together with this constant's
+#: `200`) if that ever needs to move.
+REVIEW_HTTP_TIMEOUT_MAX = _uncapped_review_http_timeout(200)
+
+
+def review_http_timeout(decision_count: int) -> float:
+    """`POST /v1/review`'s own client timeout (review fix, round 1 finding
+    1) - scaled with `decision_count` exactly the way the wrapper scales
+    its OWN internal bound (`scaled_review_wall_time`), so a game with
+    enough decisions to earn the wrapper a longer bound is not read by this
+    process as an unreachable wrapper before that bound (or its own
+    timeout-salvage note) ever gets the chance to take effect. `decision_count
+    <= 0` reduces to `REVIEW_HTTP_TIMEOUT` exactly - the flat case every
+    caller before this fix got. Never exceeds `REVIEW_HTTP_TIMEOUT_MAX` -
+    see that constant's own docstring for why, and for what a game whose OWN
+    decision count would otherwise call for more gets instead."""
+    return min(_uncapped_review_http_timeout(decision_count), REVIEW_HTTP_TIMEOUT_MAX)
+
 
 #: How long `retire` waits for the AI review's background thread
 #: (`post_ai_review`, spawned by `turn_done`'s reflection branch) before
 #: giving up on it and proceeding anyway - `DELETE /v1/session` tears the
 #: agent container down, and `exit_after_match` can end this very process
 #: right after, so a review still in flight when either happens is lost for
-#: good rather than merely late. Bounded by `REVIEW_HTTP_TIMEOUT` (the
-#: review's own slow call, `POST /v1/review`) plus headroom for the two
-#: quick calls around it (the review-record fetch, the `ai-review` post,
-#: each on `make_client`'s ordinary 30s timeout) - `post_ai_review` itself
-#: never runs longer than this in practice, so the join is expected to
-#: return well before its own timeout on every call that succeeds, and to
-#: hit it only on the same failures that would have made the review
-#: unreachable anyway.
+#: good rather than merely late.
 #:
-#: Derived, so it follows `REVIEW_HTTP_TIMEOUT` up without a second edit.
+#: Sized off `REVIEW_HTTP_TIMEOUT_MAX`, never the per-call
+#: `review_http_timeout(decision_count)`: this bound is a fixed module
+#: constant, computed before any game's own decision count is known, so it
+#: has to cover the worst case `review_http_timeout` can return under its
+#: own ceiling. On top of that: `_REVIEW_RECORD_RETRY_WORST_CASE` (review
+#: fix, round 1 finding 1) - FD6 (4)'s retry-with-backoff on
+#: `fetch_review_record` runs BEFORE the wrapper is ever called and can
+#: itself take up to `DriverSettings.review_record_retry_budget` plus one
+#: more full `review_record_timeout` in flight when the deadline lands
+#: mid-wait (~420s at the defaults) - time this join has to cover too, since
+#: it bounds the WHOLE of `post_ai_review`, not only the wrapper POST - plus
+#: a last 40s for the closing `ai-review` POST on `make_client`'s own
+#: ordinary timeout, with slack.
 #:
-#: **DR3: `handover.PRESTOP_WAIT_SECONDS` (5460s), the deploy manifest's own
-#: preStop waits, and the Job's `terminationGracePeriodSeconds` all moved up
-#: with this** so the driver container's own termination window still
-#: outlasts this join - a kubelet that killed the container before this
-#: bound gave up on it would make the bound meaningless for a review still
-#: running that late. `tests/wrapper/test_oneshot.py` pins the ordering.
-RETIRE_REVIEW_JOIN_TIMEOUT = REVIEW_HTTP_TIMEOUT + 70.0
+#: **`handover.PRESTOP_WAIT_SECONDS` (moved to cover this), the deploy
+#: manifest's own preStop waits, and the Job's `terminationGracePeriodSeconds`
+#: all moved up with this** so the driver container's own termination window
+#: still outlasts this join - a kubelet that killed the container before
+#: this bound gave up on it would make the bound meaningless for a review
+#: still running that late. `tests/wrapper/test_oneshot.py` pins the
+#: ordering.
+_DRIVER_DEFAULTS = DriverSettings()
+_REVIEW_RECORD_RETRY_WORST_CASE = (
+    _DRIVER_DEFAULTS.review_record_retry_budget + _DRIVER_DEFAULTS.review_record_timeout
+)
+RETIRE_REVIEW_JOIN_TIMEOUT = REVIEW_HTTP_TIMEOUT_MAX + _REVIEW_RECORD_RETRY_WORST_CASE + 40.0
 
 #: The auto-continue loop guard. One wrapper turn is meant to cover a whole
 #: match, so a turn that ends while the game runs is followed at once by a
@@ -270,18 +357,33 @@ class DispatchIn(BaseModel):
     Defaulted, so a dispatch body written before roles existed - and
     `k8s_seats`' own `DRIVER_ASSIGNMENT_JSON`, which writes the key only for
     a non-default role - reads back as a seat, unchanged."""
-    mode: Literal["play", "followup"] = "play"
-    """`play` (a match: turn 0, the game, the reflection, the handover) or
+    mode: Literal["play", "followup", "review"] = "play"
+    """`play` (a match: turn 0, the game, the reflection, the handover),
     `followup` - F1's one bounded DSL-development turn for a handover that
-    ended unfinished (`assign_followup`). Defaulted, and written by
-    `k8s_seats` only on a follow-up Job, so every other payload reads as a
-    match, unchanged."""
+    ended unfinished (`assign_followup`) - or `review` (FD7 gap 15): a
+    review-only dispatch that declares the DR3 post-game AI review for a
+    seat that never played this game through a driver of its own, a human
+    seat (`assign_review`, written by `k8s_seats.build_review_job`). No
+    turn is ever pushed for `review`: the deck comes from the lobby's own
+    seat data, not from `followup` below, and `retire`'s existing
+    `consider_ai_review`/`post_ai_review` path does the rest. Defaulted, and
+    written by `k8s_seats` only on a follow-up or review Job, so every other
+    payload reads as a match, unchanged."""
     followup: dict | None = None
     """A follow-up's payload, built by the api from the ledger when it
     scheduled the Job: `deck`, `decklist`, `opponent`, `opponent_decklist`,
     `opponent_identification`, `outcome`, `run_table`, `offers`,
     `hand_played`, `candidates` (`{plays, lines}`) and
     `unfinished_reasons`."""
+    review_key: str | None = None
+    """FD7-r1: a `mode: "review"` dispatch's own credential - this game's
+    admin key, written only by `k8s_seats.build_review_job` (never by an
+    ordinary seat's own dispatch). `assign_review` carries it onto
+    `Assignment.review_key`, and `post_ai_review`/`record_review_failure`
+    forward it unchanged onto `POST .../ai-review` and
+    `.../ai-review-failure` - the field `app.declare_ai_review`'s AI-seat
+    check accepts in place of `archived.ai_players` membership for a seat
+    that is, and will always be, human. `None` for every other mode."""
 
 
 class HandoverIn(BaseModel):
@@ -755,6 +857,7 @@ def build_app(
                         "stage": stage,
                         "reason": reason,
                         "invoked": invoked,
+                        "review_key": assignment.review_key,
                     },
                 )
             if response.status_code >= 400:
@@ -772,6 +875,59 @@ def build_app(
                 assignment.game_id,
                 exc,
             )
+
+    def fetch_review_record(assignment: Assignment) -> tuple[Any, str]:
+        """FD6 (4): the review-record GET, with its own configurable
+        per-try timeout (`DriverSettings.review_record_timeout`, "well
+        above" `make_client`'s old fixed 30s) and a bounded exponential
+        backoff retry on exactly the two live-observed prod failures
+        (fb3-parity.md items 1/6): a transport TIMEOUT, and a 409 (the game
+        not yet released or ended - the api's post-game gate on this
+        route). Every other failure - a genuine 4xx/5xx, an unreachable
+        server, any other transport error - is non-retryable and returns at
+        once, exactly as it always did: a game server that is simply down
+        will not become reachable by waiting up to the retry budget for it,
+        and `post_ai_review`'s caller (`retire`) still has its own bounded
+        join to respect.
+
+        Returns `(record, "")` on success - `record` can legitimately be
+        `None` (a malformed review record IS a successful fetch; building
+        the prompt from it is what fails, and that is a different stage)
+        - or `(None, reason)` once retries are exhausted or a non-retryable
+        failure is hit. `reason` is empty exactly when the fetch succeeded,
+        so the caller checks THAT rather than `record is None`. On
+        exhaustion, `reason` is the LAST failure seen, never the first, so
+        `record_review_failure` files what an operator would actually need
+        to act on."""
+        deadline = time.monotonic() + settings.review_record_retry_budget
+        delay = settings.review_record_retry_start
+        reason = ""
+        while True:
+            retryable = False
+            try:
+                with make_client(settings.game_api) as client:
+                    response = client.get(
+                        f"/api/games/{assignment.game_id}/review",
+                        params={"uid": assignment.uid},
+                        timeout=settings.review_record_timeout,
+                    )
+            except httpx.TimeoutException as exc:
+                reason = str(exc) or repr(exc)
+                retryable = True
+            except Exception as exc:  # noqa: BLE001 - any other transport error is not retried
+                return None, str(exc) or repr(exc)
+            else:
+                if response.status_code == 409:
+                    reason = "the game server answered 409 (not yet released or ended)"
+                    retryable = True
+                elif response.status_code >= 400:
+                    return None, f"the game server answered {response.status_code}"
+                else:
+                    return response.json(), ""
+            if not retryable or time.monotonic() >= deadline:
+                return None, reason
+            time.sleep(max(0.0, min(delay, deadline - time.monotonic())))
+            delay = min(delay * 2, settings.review_record_retry_max_delay)
 
     def post_ai_review(assignment: Assignment, reflection_text: str) -> None:
         """Generate and file the post-game AI review - the handoff's other
@@ -796,33 +952,14 @@ def build_app(
         `ai-review-failed[<stage>]` prefix so they are greppable and told
         apart in logs too; the durable row is in addition to logging, never
         instead of it."""
-        try:
-            with make_client(settings.game_api) as client:
-                response = client.get(
-                    f"/api/games/{assignment.game_id}/review", params={"uid": assignment.uid}
-                )
-            if response.status_code >= 400:
-                log.warning(
-                    "ai-review-failed[review_record]: the game server refused the review "
-                    "record for game %s: %s",
-                    assignment.game_id,
-                    response.status_code,
-                )
-                record_review_failure(
-                    assignment,
-                    "review_record",
-                    f"the game server answered {response.status_code}",
-                    invoked=False,
-                )
-                return
-            review_record = response.json()
-        except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
+        review_record, review_record_failure = fetch_review_record(assignment)
+        if review_record_failure:
             log.warning(
                 "ai-review-failed[review_record]: could not read the review record for game %s: %s",
                 assignment.game_id,
-                exc,
+                review_record_failure,
             )
-            record_review_failure(assignment, "review_record", str(exc) or repr(exc), invoked=False)
+            record_review_failure(assignment, "review_record", review_record_failure, invoked=False)
             return
 
         try:
@@ -841,6 +978,15 @@ def build_app(
             record_review_failure(assignment, "prompt", str(exc) or repr(exc), invoked=False)
             return
         review_settings = AgentSettings.review_default()
+        # FD6 (3): how many decisions this game's own review record carries
+        # for this player - the wrapper scales the review's own timeout by
+        # this count (`wrapper.config.scaled_review_timeout`), since a game
+        # with hundreds of decisions runs many more `mcp-seat` round trips
+        # than the flat timeout was ever sized for. Review fix, round 1
+        # finding 1: this process's own client timeout for the POST below
+        # now scales with the SAME count (`review_http_timeout`), rather
+        # than staying at the flat `REVIEW_HTTP_TIMEOUT` regardless of it.
+        decision_count = len((review_record.get("decisions") or {}).get(assignment.player) or [])
         try:
             with make_client(settings.wrapper_api) as client:
                 response = client.post(
@@ -849,9 +995,10 @@ def build_app(
                         "prompt": prompt,
                         "model": review_settings.model,
                         "effort": review_settings.effort,
+                        "decision_count": decision_count,
                     },
                     headers=wrapper_headers(),
-                    timeout=REVIEW_HTTP_TIMEOUT,
+                    timeout=review_http_timeout(decision_count),
                 )
             if response.status_code >= 400:
                 reason = _wrapper_failure_reason(response)
@@ -913,6 +1060,7 @@ def build_app(
         # best-effort, exactly like every other step in this function - a
         # game whose journal cannot be read still files the review text it
         # already has, with no statistics block rather than none at all.
+        journal_entries: list[dict[str, Any]] = []
         try:
             journal_entries = read_journal(settings.guides_root, assignment.game_id, "reviewer")
             stats_block = play_statistics_block(
@@ -935,6 +1083,7 @@ def build_app(
                         "uid": assignment.uid,
                         "text": review_text,
                         "turning_points": turning_points,
+                        "review_key": assignment.review_key,
                     },
                 )
             if response.status_code >= 400:
@@ -956,6 +1105,45 @@ def build_app(
                 exc,
             )
             record_review_failure(assignment, "file", str(exc) or repr(exc), invoked=True)
+
+        # FD6 (4): the reviewer's own `plays_outcome` row, `role="reviewer"`,
+        # from the same journal entries the statistics block above already
+        # read - so FD7's `play_stats` (and the opus-loop's own reporting)
+        # count the reviewer's admits/no-changes as the reviewer's, never
+        # folded into the seat's own handover row. Best-effort like every
+        # other step here: this never blocks or fails the handover that
+        # follows, and a refusal is logged rather than raised.
+        #
+        # **Posted only when the journal is non-empty.** This POST runs on
+        # the review's own background thread (`consider_ai_review`), fully
+        # independent of the handover's own synchronous flow - a game whose
+        # reviewer wrote nothing through `mcp-seat` (every fake reviewer in
+        # this codebase's own tests, and plenty of real reviews too) would
+        # otherwise post an empty row that races the handover's own
+        # `plays_outcome` POST for no benefit: FD7's counters have nothing
+        # to count from it either way, and a reader keyed to "the first
+        # plays_outcome row this game posted" (several call sites assume
+        # exactly one, the handover's) would nondeterministically read the
+        # reviewer's empty row instead on whichever thread wins the race.
+        if journal_entries:
+            try:
+                reviewer_verdict = assess(journal_entries, DevelopmentCandidates())
+                reviewer_body = plays_outcome_body(
+                    uid=assignment.uid,
+                    player=assignment.player,
+                    role="reviewer",
+                    verdict=reviewer_verdict,
+                    reasons=(),
+                    repushed=False,
+                )
+                post_plays_outcome(assignment, reviewer_body)
+            except Exception as exc:  # noqa: BLE001 - a bonus row, never a blocker
+                log.warning(
+                    "ai-review[plays-outcome]: could not file the reviewer's plays_outcome row "
+                    "for game %s: %s",
+                    assignment.game_id,
+                    exc,
+                )
 
     def consider_ai_review(assignment: Assignment, reflection_text: str, path: str) -> bool:
         """ "The game has ended - file the AI review, or say why not."
@@ -1686,9 +1874,12 @@ def build_app(
         the startup hook that self-dispatches a per-game Job's own match
         from `DRIVER_ASSIGNMENT_JSON` - one code path either way. A
         `mode: "followup"` body is F1's follow-up, not a match
-        (`assign_followup`)."""
+        (`assign_followup`); a `mode: "review"` body is FD7 gap 15's
+        review-only dispatch, also not a match (`assign_review`)."""
         if body.mode == "followup":
             return assign_followup(body)
+        if body.mode == "review":
+            return assign_review(body)
         with lock:
             existing = current["assignment"]
             if existing is not None and existing.uid == body.uid:
@@ -1985,6 +2176,76 @@ def build_app(
             ours = current["assignment"] is assignment
         if ours:
             retire(assignment)
+
+    def assign_review(body: DispatchIn) -> dict:
+        """FD7 gap 15, completed: a review-only dispatch that declares the
+        DR3 post-game AI review for a seat that never played this game
+        through a driver of its own - a human seat, whose only path here is
+        `k8s_seats.build_review_job`.
+
+        No turn 0 and no reflection: a human played the match, not this
+        agent, so there is nothing for turn 0 to say and nothing for a
+        reflection to check. The deck comes straight from the lobby's own
+        seat data (`seat_decklist`, the same best-effort lookup `assign`'s
+        own match path uses) rather than from `body.followup` - there is no
+        ledger entry recording a driver dispatch for a human uid to build a
+        follow-up payload from, so `DispatchIn.followup` is not read here at
+        all.
+
+        `retire` does the rest, on a background thread exactly like a
+        follow-up's: it calls `consider_ai_review` with an empty reflection
+        text - the same shape its own bare `path="retire"` call already uses
+        for a match that ended before its reflection turn ran, so
+        `post_ai_review`'s review-record/prompt/generate/file chain runs
+        completely unchanged - joins that review (bounded by
+        `RETIRE_REVIEW_JOIN_TIMEOUT`), tears the agent container down, and
+        (kubernetes mode) ends this one-shot pod."""
+        with lock:
+            existing = current["assignment"]
+            if existing is not None:
+                if existing.uid == body.uid and existing.game_id == body.game_id:
+                    return {"mode": "review", "alreadyRunning": True}
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"this agent is already working on game {existing.game_id}",
+                )
+        decklist = parse_decklist(seat_decklist(body.game_id, body.uid, body.player))
+        identified = library.identify(decklist)
+        assignment = Assignment(
+            game_id=body.game_id,
+            uid=body.uid,
+            player=body.player,
+            opponent="",
+            api_base=body.api_base or settings.game_api,
+            decklist=decklist,
+            identification=identified,
+            guides_revision=guides_revision(settings.guides_root),
+            agent=body.agent,
+            role=body.role,
+            stub_decks=tuple(library.stub_decks()),
+            review_key=body.review_key,
+        )
+        with lock:
+            if current["assignment"] is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"this agent is already working on game {current['assignment'].game_id}",
+                )
+            clear_locked()
+            current.update(assignment=assignment, reflected=True, pending=False)
+        settings.workspace.mkdir(parents=True, exist_ok=True)
+        sync_agent_settings(body.agent)
+        log.info(
+            "review-only dispatch for game %s (%s, %s): deck=%s",
+            assignment.game_id,
+            assignment.player,
+            assignment.role,
+            assignment.deck_slug,
+        )
+        threading.Thread(
+            target=retire, args=(assignment,), daemon=True, name="driver-review-only"
+        ).start()
+        return {"mode": "review", "deck": assignment.deck_slug, "pending": True}
 
     def assign_followup(body: DispatchIn) -> dict:
         """Take F1's follow-up: build the assignment from the payload the api

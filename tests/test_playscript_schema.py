@@ -53,7 +53,7 @@ def test_both_worked_examples_validate():
         assert model.id == example["id"]
 
 
-def test_the_vocabulary_is_closed_at_eleven_conditions_and_seven_moves():
+def test_the_vocabulary_is_closed_at_eleven_conditions_and_nine_moves():
     assert CONDITION_KINDS == (
         "count",
         "zone_size",
@@ -75,15 +75,20 @@ def test_the_vocabulary_is_closed_at_eleven_conditions_and_seven_moves():
         "pass",
         "declare_attackers",
         "declare_blockers",
+        "keyword_action",
+        "mulligan",
     )
 
 
-def test_steps_are_the_autopass_steps_combat_declarations_included():
-    """FB2 W1: `when.steps` now accepts `declare_attackers`/`declare_blockers`
-    too - `STEPS` is the full `AUTOPASS_STEPS` list, no exclusion."""
+def test_steps_are_the_autopass_steps_plus_three_schema_local_additions():
+    """FB2 W1: `when.steps` accepts `declare_attackers`/`declare_blockers`
+    (the full `AUTOPASS_STEPS` list, no exclusion). FD2 item 5 layers three
+    more schema-local steps on top - `cleanup`, `mulligan`, `pregame_actions`
+    - steps in which a decision can be pending even though a `pass_until` run
+    can never stop there; `seatkit` itself is never edited."""
     from magic_cards_model_api.seatkit import AUTOPASS_STEPS
 
-    assert STEPS == AUTOPASS_STEPS
+    assert STEPS == AUTOPASS_STEPS + ("cleanup", "mulligan", "pregame_actions")
 
 
 def test_the_error_codes_are_the_shared_contract_in_order():
@@ -118,6 +123,7 @@ def test_the_error_codes_are_the_shared_contract_in_order():
         "all-of-outside-false",
         "use-combat-move",
         "answer-decision-mismatch",
+        "mulligan-wrong-step",
     )
 
 
@@ -156,7 +162,6 @@ BOUNDS = [
     ),
     ("answer-move-without-answers", mutate("moves", [{"kind": "answer", "answers": []}])),
     ("answer-move-four-answers", mutate("moves", [{"kind": "answer", "answers": [ANSWER] * 4}])),
-    ("pick-count-zero", mutate("moves.0.answers.0.pick.count", 0)),
     ("negative-n", mutate("true.1.n", -1)),
     ("negative-selector-n", mutate("true.0.select", {"power": {"op": ">=", "n": -2}})),
 ]
@@ -179,7 +184,7 @@ MALFORMED = [
     ("archetype-trailing-dash", mutate("opposing_archetypes", ["dimir-"])),
     ("whose-turn-unknown", mutate("when.whose_turn", "yours")),
     ("stack-unknown", mutate("when.stack", "full")),
-    ("step-unknown", mutate("when.steps", ["cleanup"])),
+    ("step-unknown", mutate("when.steps", ["untap"])),
     ("blank-name", mutate("name", "   ")),
     ("id-not-a-string", mutate("id", 7)),
     ("tapped-not-bool", mutate("true.0.select.tapped", 0)),
@@ -278,8 +283,11 @@ def test_a_combat_declaration_step_is_now_accepted(step):
     assert play_errors(mutate("when.steps", ["precombat_main", step])) == []
 
 
-@pytest.mark.parametrize("kind", ["attack", "block", "mulligan", "concede", "loop"])
-def test_a_move_outside_the_closed_seven_is_forbidden(kind):
+@pytest.mark.parametrize("kind", ["attack", "block", "concede", "loop"])
+def test_a_move_outside_the_closed_set_is_forbidden(kind):
+    """FD2: `mulligan` moved out of this forbidden set into a real move kind
+    (see `test_playscript_schema_fb3.py`) - `concede` never joins it, and
+    never will (see the module docstring)."""
     assert codes(mutate("moves", [{"kind": kind}])) == ["forbidden-kind"]
 
 
@@ -930,7 +938,7 @@ def test_items_beyond_a_too_long_list_are_still_judged():
 
 
 def test_the_error_message_says_where():
-    (error,) = play_errors(mutate("moves.0.answers.0.pick.count", 0))
+    (error,) = play_errors(mutate("moves.0.answers.0.pick.count", -1))
     assert "moves[0].answers[0].pick.count" in error.message
     (error,) = play_errors(mutate("true.1", {"kind": "turn_number"}))
     assert error.code == "forbidden-kind" and "true[1]" in error.message
@@ -1018,10 +1026,7 @@ def test_the_decision_kinds_are_the_apis_pending_decision_kinds():
     from magic_cards_model_api.decisions import ANSWERABLE_KINDS
 
     assert set(DECISION_KINDS) == {kind.value for kind in ANSWERABLE_KINDS}
-    assert set(FORBIDDEN_DECISION_KINDS) == {
-        "assign_combat_damage",
-        "mulligan",
-    }
+    assert set(FORBIDDEN_DECISION_KINDS) == set()
 
 
 @pytest.mark.parametrize(
@@ -1030,10 +1035,13 @@ def test_the_decision_kinds_are_the_apis_pending_decision_kinds():
         set(DECISION_KINDS)
         - set(FORBIDDEN_DECISION_KINDS)
         - set(AMOUNT_DECISION_KINDS)
-        - {"declare_attackers", "declare_blockers"}
+        - {"declare_attackers", "declare_blockers", "assign_combat_damage"}
     ),
 )
 def test_every_answerable_decision_kind_validates(kind):
+    """`assign_combat_damage` is excluded here: FD2 gives it its own exclusive
+    `damage` field, tested in `test_playscript_schema_fb3.py`, rather than the
+    generic `accept` this fixture's base answer carries."""
     assert play_errors(mutate("moves.0.answers.1.decision", kind)) == []
 
 
@@ -1058,9 +1066,15 @@ def test_a_decision_kind_typo_past_a_too_long_answers_list_is_still_judged():
     ]
 
 
-@pytest.mark.parametrize("kind", ["assign_combat_damage", "mulligan"])
-def test_answering_combat_damage_or_a_mulligan_is_forbidden(kind):
-    assert codes(mutate("moves.0.answers.0.decision", kind)) == ["forbidden-kind"]
+def test_mulligan_is_no_longer_forbidden_and_assign_combat_damage_needs_its_own_field():
+    """FD2: `FORBIDDEN_DECISION_KINDS` is now empty. `mulligan` answers like
+    `may`/`pay_life` (plain `accept`); `assign_combat_damage` is answerable
+    only through its own `damage` field (`test_playscript_schema_fb3.py`) - a
+    bare `accept` there is `answer-shape-mismatch`, not `forbidden-kind`."""
+    assert codes(mutate("moves.0.answers.1.decision", "mulligan")) == []
+    assert codes(mutate("moves.0.answers.1.decision", "assign_combat_damage")) == [
+        "answer-shape-mismatch"
+    ]
 
 
 @pytest.mark.parametrize("kind", ["declare_attackers", "declare_blockers"])

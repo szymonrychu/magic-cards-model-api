@@ -32,6 +32,8 @@ from guides_git_testkit import (
 )
 from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG, play
 
+from magic_cards_model_api.playscripts import admit as admit_mod
+from magic_cards_model_api.playscripts import gitwork
 from magic_cards_model_api.playscripts.lint import check_report
 
 SHOCK = f"decks/{SLUG}/plays/fetch-untapped-shock.json"
@@ -65,6 +67,12 @@ def root(tmp_path, bare):
 
 
 def priority(capsys, root: Path, play_id: str, *flag: str):
+    # Parity 4: `plays priority` now fails loudly with neither `--game-id`
+    # nor MTG_GAME_ID set, so every caller that does not itself supply
+    # `--game-id` (to test the per-game bound against a game of its own
+    # choosing) gets the suite's own `GAME` by default here.
+    if "--game-id" not in flag:
+        flag = (*flag, "--game-id", GAME)
     return cli(capsys, "plays", "priority", play_id, *flag, "--deck", SLUG, "--root", str(root))
 
 
@@ -118,7 +126,14 @@ def test_priority_clamps_to_0_100(capsys, root):
     (root / DELTAS).unlink()
     text = (root / SHOCK).read_text(encoding="utf-8")
     (root / SHOCK).write_text(text.replace('"priority": 100,', '"priority": 2,'), "utf-8")
-    assert priority(capsys, root, "fetch-untapped-shock", "--delta", "-5")[1]["new"] == 0
+    # A different game, so its own per-game allowance starts fresh from 2
+    # rather than being bound by the first call's game (which found it at 98).
+    assert (
+        priority(capsys, root, "fetch-untapped-shock", "--delta", "-5", "--game-id", "g-clamp")[1][
+            "new"
+        ]
+        == 0
+    )
 
 
 def test_priority_accumulates_one_delta_per_play(capsys, root):
@@ -168,11 +183,30 @@ def test_priority_refuses_a_second_call_that_takes_one_game_past_5(capsys, monke
     )
 
 
+def priority_no_flag(capsys, root: Path, play_id: str, *flag: str):
+    """`priority()` without the auto-injected `--game-id` - for the one test
+    that means to prove the MTG_GAME_ID env fallback still works on its own."""
+    return cli(capsys, "plays", "priority", play_id, *flag, "--deck", SLUG, "--root", str(root))
+
+
 def test_priority_reads_the_game_from_mtg_game_id(capsys, monkeypatch, root):
     monkeypatch.setenv("MTG_GAME_ID", "g-env")
-    assert priority(capsys, root, "fetch-untapped-shock", "--delta", "4")[0] == 0
-    rc, result, _, _ = priority(capsys, root, "fetch-untapped-shock", "--delta", "2")
+    assert priority_no_flag(capsys, root, "fetch-untapped-shock", "--delta", "4")[0] == 0
+    rc, result, _, _ = priority_no_flag(capsys, root, "fetch-untapped-shock", "--delta", "2")
     assert (rc, result["result"]) == (1, "priority_limit")
+
+
+def test_priority_refuses_loudly_with_neither_flag_nor_env(capsys, monkeypatch, root):
+    monkeypatch.delenv("MTG_GAME_ID", raising=False)
+    before = (root / SHOCK).read_text(encoding="utf-8")
+    rc, result, _, _ = priority_no_flag(capsys, root, "fetch-untapped-shock", "--delta", "4")
+    assert rc == 1
+    assert result["result"] == "refused"
+    assert "game-id" in result["message"] or "MTG_GAME_ID" in result["message"]
+    # Nothing was touched: a loud refusal before any write, not a priority
+    # move that merely forgot to record itself.
+    assert (root / SHOCK).read_text(encoding="utf-8") == before
+    assert not (root / DELTAS).exists()
 
 
 def test_the_per_game_allowance_survives_an_admit(capsys, monkeypatch, root, bare):
@@ -550,7 +584,7 @@ def test_an_admitted_priority_change_is_journaled_without_a_dsl_change(
     assert set_line["role"] == "advisor"
     assert set_line["files"] == [SHOCK]
     assert set_line["dsl_change"] is False
-    assert set_line["game_id"] is None
+    assert set_line["game_id"] == GAME
     assert isinstance(set_line["ts"], str) and set_line["ts"]
 
     rc, result, _, _ = admit(capsys, root)
@@ -987,3 +1021,194 @@ def test_the_evidence_file_is_not_linted_as_a_play(capsys, root, evidence_dir):
     rc, report, _, _ = cli(capsys, "plays", "check", "--root", str(root), "--deck", SLUG, "--json")
     assert rc == 0, report
     assert "evidence" not in json.dumps(report)
+
+
+# ======================================================================
+# FD7 (3): admit stops sweeping the whole checkout into one caller's commit
+# (gen gap 10) and stops refusing a whole batch over one conflicting play
+# (gen gap 9). The ratchet's own detection is unchanged (every existing
+# conflict_regression test above stays green, unmodified): what changes is
+# what a caller with several own files gets back.
+# ======================================================================
+
+
+def test_paths_scope_admit_to_only_the_caller_own_files_leaving_the_others_writer_dirty(
+    capsys, tmp_path, root, bare
+):
+    """Two writers share one checkout. Each admits by its own explicit
+    `paths` (the primary channel FD7 adds); the other's own uncommitted edit
+    is left exactly as it was, ready for its own later admit."""
+    a_path = f"decks/{SLUG}/plays/writer-a.json"
+    (root / a_path).write_text(dump(play(id="writer-a", priority=0)), encoding="utf-8")
+    b_doc = read_play(root, SURVEIL)
+    b_doc["priority"] = b_doc["priority"] + 1
+    (root / SURVEIL).write_text(dump(b_doc), encoding="utf-8")
+
+    result_a = admit_mod.admit(root, SLUG, "game-a", paths=[a_path])
+    assert result_a["result"] == "admitted", result_a
+    assert result_a["added"] == ["writer-a"]
+
+    # Writer B's own edit is untouched: still dirty, never swept into A's
+    # commit, and not reverted by anything A's admit did. (`git()`'s own
+    # `.strip()` eats the leading space `--porcelain` gives an unstaged
+    # `M`, the same convention `test_priority_changes_only_the_priority_
+    # line_and_records_the_delta` already relies on.)
+    assert git(root, "status", "--porcelain") == f"M {SURVEIL}"
+    assert json.loads((root / SURVEIL).read_text(encoding="utf-8"))["priority"] == b_doc["priority"]
+
+    result_b = admit_mod.admit(root, SLUG, "game-b", paths=[SURVEIL])
+    assert result_b["result"] == "admitted", result_b
+    assert result_b["reprioritized"] == ["fetch-surveil-land"]
+    assert git(root, "status", "--porcelain") == ""
+
+
+def test_with_no_explicit_paths_every_dirty_play_path_is_still_staged(capsys, root, bare):
+    """Back-compat: every caller before FD7 (and the CLI, which passes no
+    `paths`) still gets the old "stage everything under decks/*/plays/"
+    behaviour."""
+    (root / f"decks/{SLUG}/plays/new-one.json").write_text(
+        dump(play(id="new-one", priority=0)), encoding="utf-8"
+    )
+    result = admit_mod.admit(root, SLUG, GAME)
+    assert result["result"] == "admitted"
+    assert result["added"] == ["new-one"]
+
+
+def test_a_priority_journaled_by_a_different_role_is_not_swept_by_this_roles_admit(
+    capsys, monkeypatch, root, bare
+):
+    """The journal fallback (no explicit `paths`) is scoped by MTG_ROLE:
+    a priority nudge the SEAT journaled for this game is not this REVIEWER's
+    own path, and a reviewer admit with no explicit `paths` must not sweep
+    it in - even though it is the only tracked entry for this game at all."""
+    monkeypatch.setenv("MTG_ROLE", "seat")
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5", "--game-id", GAME)
+    # A second, untracked (raw) edit to a different play, made as if by the
+    # reviewer sharing the same checkout for the same game.
+    monkeypatch.setenv("MTG_ROLE", "reviewer")
+    doc = read_play(root, SURVEIL)
+    doc["intent"] = "Reviewer's own generalized play."
+    (root / SURVEIL).write_text(dump(doc), encoding="utf-8")
+
+    result = admit_mod.admit(root, SLUG, GAME)
+
+    # Nothing tracked for role "reviewer" in this game, so the fallback
+    # falls further back to "every dirty play path" - the raw edit lands...
+    assert result["result"] == "admitted", result
+    assert result["updated"] == ["fetch-surveil-land"]
+    # ...but the seat's own priority-only file is ALSO still dirty (its
+    # tracked-by-seat change was never staged by the reviewer's own call,
+    # since it was never part of `changed` at commit time - only its own
+    # untracked file was staged and committed). (`git()`'s own `.strip()`
+    # eats the leading space, as above.)
+    assert git(root, "status", "--porcelain") == f"M {SHOCK}"
+
+
+def test_a_role_that_nudged_a_priority_and_also_hand_edited_a_different_play_gets_both(
+    capsys, monkeypatch, root, bare
+):
+    """Review fix (gap 2): the journal used to narrow this role's own sweep
+    to exactly its `priority` lines the moment it had ANY of them, dropping
+    a second, untracked, hand-edited play by the SAME role - unreported and
+    left uncommitted forever, with the CLI's own no-`paths` call (the only
+    one production makes) having no other way to recover it."""
+    monkeypatch.setenv("MTG_ROLE", "seat")
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5", "--game-id", GAME)
+    doc = read_play(root, SURVEIL)
+    doc["intent"] = "Also this seat's own hand edit, no journal trace of its own."
+    (root / SURVEIL).write_text(dump(doc), encoding="utf-8")
+
+    result = admit_mod.admit(root, SLUG, GAME)
+
+    assert result["result"] == "admitted", result
+    assert set(result["updated"]) == {"fetch-surveil-land"}
+    assert set(result["reprioritized"]) == {"fetch-untapped-shock"}
+    assert git(root, "status", "--porcelain") == ""
+
+
+def test_another_roles_journaled_out_of_scope_file_does_not_block_this_admit(
+    capsys, monkeypatch, tmp_path, root, bare
+):
+    """Review fix (gap 9/10): a `guides propose` that left its own out-of-
+    scope file dirty (a `refused_content`/`conflict`, journaled under its
+    own role) must not refuse THIS caller's whole `plays admit` - two
+    writers sharing a checkout are meant not to block each other."""
+    monkeypatch.setenv("MTG_ROLE", "advisor")
+    notes = root / f"decks/{SLUG}/NOTES.md"
+    with notes.open("a", encoding="utf-8") as handle:
+        handle.write("- left dirty by a refused guides propose\n")
+    gitwork.append_journal_line(
+        root,
+        {
+            "ts": "2026-01-01T00:00:00Z",
+            "command": "propose",
+            "game_id": GAME,
+            "decks": [SLUG],
+            "role": "advisor",
+            "result": "refused_content",
+            "files": [f"decks/{SLUG}/NOTES.md"],
+        },
+    )
+    monkeypatch.setenv("MTG_ROLE", "seat")
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5", "--game-id", GAME)
+
+    result = admit_mod.admit(root, SLUG, GAME)
+
+    assert result["result"] == "admitted", result
+    assert result["reprioritized"] == ["fetch-untapped-shock"]
+    # The advisor's own out-of-scope file is exactly as it was - never
+    # staged, committed or reverted by this call.
+    assert git(root, "status", "--porcelain") == f"M {f'decks/{SLUG}/NOTES.md'}"
+
+
+def test_a_batch_with_one_conflicting_play_admits_the_clean_ones(capsys, tmp_path, isolated):
+    """A batch of several own paths, one of which introduces a conflict:
+    the clean plays land, the conflicting one is refused and named in the
+    report with its reason, and the checkout is left holding only that one
+    file's reversion - never the whole batch's."""
+    bare = seed_guides(tmp_path, (play(id="existing", priority=10),))
+    root = clone(bare, tmp_path / "guides")
+    good_path = f"decks/{SLUG}/plays/good.json"
+    bad_path = f"decks/{SLUG}/plays/bad.json"
+    # "good" gets its own window (theirs/upkeep) so it shares no dimension
+    # with "existing" - only "bad", left at "existing"'s own default
+    # when/mine/precombat_main, actually conflicts with it.
+    good = play(
+        id="good", priority=20, when={"whose_turn": "theirs", "steps": ["upkeep"], "stack": "empty"}
+    )
+    (root / good_path).write_text(dump(good), encoding="utf-8")
+    duplicate = play(id="bad")
+    (root / bad_path).write_text(dump(duplicate), encoding="utf-8")
+
+    result = admit_mod.admit(root, SLUG, GAME, paths=[good_path, bad_path])
+
+    assert result["result"] == "admitted", result
+    assert result["added"] == ["good"]
+    refused = {entry["path"]: entry for entry in result["refused_files"]}
+    assert set(refused) == {bad_path}
+    assert "bad" in refused[bad_path]["reason"] and "existing" in refused[bad_path]["reason"]
+
+    tracked = git(bare, "ls-tree", "-r", "--name-only", "main").splitlines()
+    assert good_path in tracked
+    assert bad_path not in tracked
+    # The refused file is restored in the working tree too: it never
+    # existed upstream, so it is gone, not left half-admitted.
+    assert not (root / bad_path).exists()
+    assert git(root, "status", "--porcelain") == ""
+
+
+def test_a_batch_where_every_play_conflicts_still_refuses_the_whole_batch(capsys, tmp_path):
+    """When nothing would survive dropping the culprits, the old
+    all-or-nothing `conflict_regression` still applies - unchanged from
+    every test above this section."""
+    bare = seed_guides(tmp_path, (play(id="existing", priority=10),))
+    root = clone(bare, tmp_path / "guides")
+    before = main_sha(bare)
+    duplicate_path = f"decks/{SLUG}/plays/dup.json"
+    (root / duplicate_path).write_text(dump(play(id="dup")), encoding="utf-8")
+
+    result = admit_mod.admit(root, SLUG, GAME, paths=[duplicate_path])
+
+    assert result["result"] == "conflict_regression", result
+    assert main_sha(bare) == before
+    assert (root / duplicate_path).exists()
