@@ -17,7 +17,14 @@ Corpus rules (a deck's plays together), by code:
   "Island" is in many oracle texts. Select by subtype instead
   (`subtypes_any: ["Island"]`), which is the intended form.
 - `phrase-too-narrow`: every `ability_text_has` / `oracle_has` phrase is in the
-  oracle text of at least 3 cached cards.
+  oracle text of at least 3 cached cards - except inside an `activate` move
+  that names its ability by `ability_index` rather than `ability_text_has`
+  (FD2 item 7a): the move does not depend on generalized phrase-matching to
+  pick the ability at all, so a source-locating selector's own
+  `ability_text_has` (or `oracle_has`) there is exempt. A hand-written
+  `activate.ability_text_has` - the field that actually names which ability
+  fires - still keeps the 3-card rule, because that field IS the generalized
+  reference the rule exists to enforce.
 - `unknown-next`: every `next` id is a play of the same deck.
 - `next-cycle`: the `next` graph is acyclic, self-edges included.
 - `chain-too-deep`: the longest `next` chain is at most 3 plays, measured with
@@ -89,7 +96,17 @@ play's `true` independently holding every one of its members - proven
 only once all of them do, never a subset), `numeric_range` (count, zone_size, life,
 untapped_mana, turn or int-input ranges on one key that cannot overlap -
 `compare` and `all_of` never register here at all: `_constraint` returns no
-numeric range for either kind). A `false`
+numeric range for either kind), `pass_fallback` (FD2 item 7b: a play whose
+only move is `pass` never conflicts with a play that has a real move - two
+pass-only plays are not covered, and still conflict the ordinary way) and
+`move_selector` (FD2 item 7b: the two plays' first moves' own card lookups -
+`cast`/`play_land`'s `card`, `activate`/`keyword_action`'s `source`/`card` -
+provably cannot match the same object: a different, determinate zone, or a
+disjoint non-empty `types_all`/`types_any` or `keywords_any` set. This is the
+same closed-world, symbolic reading of a play's own declared fields every
+other dimension here already gives - not a card-database lookup, so a real
+land creature such as Dryad Arbor is outside its model, on the same footing
+`numeric_range`'s independence assumption already is). A `false`
 condition is negated before the input and numeric checks. A selector's `missing_from` is
 never a dimension of its own: it is part of the normalized condition, its
 `zones` a set like every scalar list, so selectors that differ only in it are
@@ -148,7 +165,22 @@ EXCLUSIVITY_DIMENSIONS = (
     "input",
     "true_false",
     "numeric_range",
+    "pass_fallback",
+    "move_selector",
 )
+#: FD2 item 7b: `types_all`/`types_any` naming a non-permanent type
+#: (`Instant`/`Sorcery`) and one naming a permanent type never coincide on one
+#: card, by CR 300.1's own type list and how every printed card is templated -
+#: an instant or sorcery is never also a creature, artifact, enchantment,
+#: land, planeswalker, battle or kindred card. `_move_selectors_disjoint`
+#: below trusts a plain disjoint `types_all`/`types_any` set beyond this pair
+#: too (an ordinary "different card types" reading of item 7b), the same
+#: closed-world reading `numeric_range`/`true_false` already give a play's own
+#: declared conditions elsewhere in this file - not a proof against every
+#: real printed card (Dryad Arbor is a land creature), but a play naming two
+#: disjoint type sets is asking for two different cards in the overwhelming
+#: case, and the rule is symbolic, not a database lookup, on the same footing
+#: the rest of `exclusivity` already is.
 
 MAX_CHAIN = 3
 PHRASE_MIN_CARDS = 3
@@ -309,6 +341,32 @@ def _refused_key_pattern(error: PlaysError, doc: Any) -> bool:
     )
 
 
+def _ability_index_move_prefixes(doc: dict[str, Any]) -> set[str]:
+    """FD2 item 7a: the `where`-path prefix of every `activate` move that
+    names its ability by `ability_index` rather than `ability_text_has` -
+    `moves[2]`, say. A phrase anywhere inside such a move (most often the
+    source selector's own `ability_text_has`, used only to find the right
+    permanent, never to pick which ability fires) is exempt from
+    `phrase-too-narrow` below: the move does not depend on that phrase being
+    shared by other cards, since the ability itself is picked by index. The
+    3-card rule stays for a `activate.ability_text_has` that names the
+    ability by phrase - `ability_index` is what changes, not the field."""
+    moves = doc.get("moves")
+    if not isinstance(moves, list):
+        return set()
+    return {
+        f"moves[{index}]"
+        for index, move in enumerate(moves)
+        if isinstance(move, dict) and move.get("kind") == "activate" and "ability_index" in move
+    }
+
+
+def _within(where: str, prefixes: set[str]) -> bool:
+    return any(
+        where == prefix or where.startswith((f"{prefix}.", f"{prefix}[")) for prefix in prefixes
+    )
+
+
 def check_play(doc: Any, stem: str, rel: str, cards: CardIndex) -> list[PlaysError]:
     """One play's structural, id, card-name and phrase errors."""
     errors = [e for e in play_errors(doc, rel) if not _refused_key_pattern(e, doc)]
@@ -318,6 +376,7 @@ def check_play(doc: Any, stem: str, rel: str, cards: CardIndex) -> list[PlaysErr
         errors.append(
             PlaysError("id-mismatch", rel, f"id {doc['id']!r} is not the file stem {stem!r}")
         )
+    exempt_from_phrase_rule = _ability_index_move_prefixes(doc)
     for where, field, text in _machine_strings(doc):
         if cards.is_name(text, field):
             errors.append(
@@ -327,7 +386,7 @@ def check_play(doc: Any, stem: str, rel: str, cards: CardIndex) -> list[PlaysErr
                     f"{where}: {text!r} is a card name; select by characteristics",
                 )
             )
-        if field in PHRASE_KEYS and text.strip():
+        if field in PHRASE_KEYS and text.strip() and not _within(where, exempt_from_phrase_rule):
             hits = cards.phrase_matches(text)
             if hits < PHRASE_MIN_CARDS:
                 errors.append(
@@ -690,6 +749,91 @@ def _archetypes(doc: dict[str, Any], inputs: list[Any]) -> frozenset[str] | None
     return found
 
 
+#: FD2 item 7b: a play whose only move is `pass` is a fallback - it commits
+#: to nothing more specific than releasing priority, so it is never worth
+#: flagging as conflicting with a play that actually does something. Two
+#: pass-only plays are not covered (the "negative case" is exactly this: two
+#: fallbacks with overlapping conditions still conflict, the ordinary way).
+def _is_pass_only(doc: dict[str, Any]) -> bool:
+    moves = doc.get("moves")
+    return (
+        isinstance(moves, list)
+        and len(moves) == 1
+        and isinstance(moves[0], dict)
+        and moves[0].get("kind") == "pass"
+    )
+
+
+#: The move kinds whose first field names a card by zone + selector, for the
+#: `move_selector` dimension below - `activate`'s own card-locating field is
+#: `source`, every other one is `card`.
+_CARD_LOOKUP_FIELD = {
+    "cast": "card",
+    "activate": "source",
+    "play_land": "card",
+    "keyword_action": "card",
+}
+
+
+def _first_move_lookup(doc: dict[str, Any]) -> tuple[str | None, dict[str, Any]] | None:
+    """(zone or None, selector) of this play's first move's own card lookup,
+    or `None` when the first move has none (`answer`, `pass`, `mulligan`,
+    `declare_attackers`/`declare_blockers`) - `None` proves nothing for this
+    dimension, the same way an unreadable operand proves nothing for
+    `numeric_range`."""
+    moves = doc.get("moves")
+    if not isinstance(moves, list) or not moves or not isinstance(moves[0], dict):
+        return None
+    move = moves[0]
+    field = _CARD_LOOKUP_FIELD.get(move.get("kind"))
+    if field is None:
+        return None
+    card = move.get(field)
+    if not isinstance(card, dict):
+        return None
+    select = card.get("select") if isinstance(card.get("select"), dict) else {}
+    zone = card.get("zone")
+    # `play_land` never carries its own `zone` key - a land is always played
+    # from hand.
+    zone = zone if isinstance(zone, str) else ("hand" if move.get("kind") == "play_land" else None)
+    return zone, select
+
+
+def _selector_word_set(select: dict[str, Any], *keys: str) -> frozenset[str]:
+    words: set[str] = set()
+    for key in keys:
+        value = select.get(key)
+        if isinstance(value, list):
+            words.update(word for word in value if isinstance(word, str))
+    return frozenset(words)
+
+
+def _move_selectors_disjoint(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """FD2 item 7b: this play's and `b`'s first moves' own card lookups
+    provably cannot match the same object - a different, determinate zone (a
+    card is in exactly one zone at a time), a disjoint non-empty type set
+    (`types_all`/`types_any` together), or a disjoint non-empty
+    `keywords_any` set. `False` (proves nothing) whenever either play's first
+    move has no card lookup at all, or the two share no such dimension -
+    never a false positive against an overlapping selector, only ever a
+    positive where the two name characteristics that cannot both be true of
+    one card at once."""
+    lookup_a, lookup_b = _first_move_lookup(a), _first_move_lookup(b)
+    if lookup_a is None or lookup_b is None:
+        return False
+    zone_a, select_a = lookup_a
+    zone_b, select_b = lookup_b
+    if zone_a is not None and zone_b is not None and zone_a != zone_b:
+        return True
+    types_a = _selector_word_set(select_a, "types_all", "types_any")
+    types_b = _selector_word_set(select_b, "types_all", "types_any")
+    if types_a and types_b and not types_a & types_b:
+        return True
+    keywords_a = _selector_word_set(select_a, "keywords_any")
+    keywords_b = _selector_word_set(select_b, "keywords_any")
+    return bool(keywords_a and keywords_b and not keywords_a & keywords_b)
+
+
 def exclusivity(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -> list[str]:
     """The dimensions, in EXCLUSIVITY_DIMENSIONS order, that prove a and b
     exclusive. An empty list means they could both apply: a conflict."""
@@ -721,6 +865,10 @@ def exclusivity(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -
         proven.append("true_false")
     if any(ka == kb and _ints_disjoint(x, y) for ka, x in numeric_a for kb, y in numeric_b):
         proven.append("numeric_range")
+    if _is_pass_only(a) != _is_pass_only(b):
+        proven.append("pass_fallback")
+    if _move_selectors_disjoint(a, b):
+        proven.append("move_selector")
     return proven
 
 

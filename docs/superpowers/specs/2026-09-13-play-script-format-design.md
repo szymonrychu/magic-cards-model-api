@@ -23,22 +23,25 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   an advice-only play is never counted here - see "Advice-only plays" below),
   `opposing_archetypes` (1-32: `["*"]` alone, or matchup
   label slugs; `*` beside a key is `wildcard-with-keys`),
-  `when {whose_turn: mine|theirs|either, steps: [1-4 distinct autopass steps],
+  `when {whose_turn: mine|theirs|either, steps: [1-4 distinct steps],
   stack: empty|any}` (a repeated step is `duplicate-step`; FB2 W1 - the two
   combat declaration steps are now namable here, one board-position
   precondition among the rest, distinct from actually attacking or blocking,
   which still needs the M2/M3 move kinds below), `true` (0-8 conditions),
   `false` (0-8 conditions, each must NOT hold), `moves` (0-4 - empty or
   absent is advice-only, see "Advice-only plays" below), `next` (0-3 ids).
-  The autopass steps run `upkeep, draw, precombat_main, beginning_of_combat,
+  `when.steps` names every step a `pass_until` run can stop at (the autopass
+  steps: `upkeep, draw, precombat_main, beginning_of_combat,
   declare_attackers, declare_blockers, first_strike_damage, combat_damage,
-  end_of_combat, postcombat_main, end_step` - CR 510.4/506.1's first-strike
-  combat damage step is `first_strike_damage`, distinct from `combat_damage`
-  itself (the engine's own turn-based action, and the state view's `step`
-  field, name both occurrences `combat_damage`; a script naming
-  `first_strike_damage` fires only in the first one, one naming
-  `combat_damage` only in the second - or the only one, in a combat with no
-  first or double striker).
+  end_of_combat, postcombat_main, end_step`) plus three FD2 schema-local
+  additions naming a step in which a decision can be pending even though no
+  run can ever stop there - `cleanup`, `mulligan`, `pregame_actions` - see
+  "Schema-local steps" below. CR 510.4/506.1's first-strike combat damage
+  step is `first_strike_damage`, distinct from `combat_damage` itself (the
+  engine's own turn-based action, and the state view's `step` field, name
+  both occurrences `combat_damage`; a script naming `first_strike_damage`
+  fires only in the first one, one naming `combat_damage` only in the second
+  - or the only one, in a combat with no first or double striker).
 - Changing `priority` after a game goes through `mcp-seat plays priority`,
   and `plays admit` records each change as a `Script-Priority` trailer.
   Change a script's priority only for scripts that actually ran this game,
@@ -180,6 +183,27 @@ place it is allowed: `all_of` inside `true` is `all-of-outside-false`. A
 member is drawn from every condition kind except `all_of` itself - nesting is
 refused, since an `all_of` naming `all_of` among its own `conditions` is an
 unrecognized kind for that inner list.
+
+### Schema-local steps (FD2)
+
+`STEPS` (`when.steps`' own vocabulary) extends `seatkit.AUTOPASS_STEPS` - the
+steps a `pass_until` run may be told to stop at - with three additions that
+live in the schema alone, never in `seatkit`:
+
+- `cleanup` (CR 514.2/514.3): no player receives priority in an ordinary
+  cleanup step, but one is granted whenever a discard-to-hand-size happens or
+  a triggered ability triggers during it - a decision can be pending there.
+- `mulligan` (CR 103.5): the pregame step CR 103.5's declarations are made in.
+  A `mulligan` move (see "Moves" below) is valid only when `when.steps` is
+  exactly `["mulligan"]`.
+- `pregame_actions` (CR 103.6): the pregame step CR 103.6's opening-hand
+  actions are taken in.
+
+Neither pregame step, nor `cleanup`, is ever a destination `pass_until` can
+stop at (CR 502.4/514.3 grant no player priority in an ordinary untap or
+cleanup step by default, and neither pregame step is in the engine's own
+`TURN_ORDER` at all) - `STEPS` names them anyway because `when.steps` is
+about scoping a play to a board position, not about where a run can stop.
 
 ### `searches_for_any`
 
@@ -503,22 +527,24 @@ four-word vocabulary further.
 
 ## Moves
 
-Move kinds (7), each with `answers: [0-3]` (an `answer` move needs 1-3;
-`pass` has no `answers` field at all):
+Move kinds (9), each with `answers: [0-3]` (an `answer` move needs 1-3;
+`pass` and `mulligan` have no `answers` field at all):
 
-- `activate {source: {zone, select, prefer?: [0-4 select], ties?: any}, ability_text_has?: string, ability_index?: 0-15, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, discard?: none|<discard choice>, answers: [0-3]}` - names its ability by exactly one of `ability_text_has` (a phrase) or `ability_index` (FB2 M4, the card's own ability list index); both or neither is `activate-ability-ref`.
-- `cast {card: {zone, select, prefer?: [0-4 select], ties?: any}, cost?: <cast cost>, targets: [0-6 <target>], mana?: auto, answers: [0-3]}`
+- `activate {source: {zone, select, prefer?: [0-4 select], ties?: any}, ability_text_has?: string, ability_index?: 0-15, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, discard?: none|<discard choice>, exile?: <Pick>, x?: 0-30|max, color?: W|U|B|R|G|C, answers: [0-3]}` - names its ability by exactly one of `ability_text_has` (a phrase) or `ability_index` (FB2 M4, the card's own ability list index); both or neither is `activate-ability-ref`. FD2 adds `exile` (a Pick, the same footing `sacrifice`/`discard` are on), `x` (CR 107.3a's X, announced as the activation begins) and `color` (which coloured symbol a multi-colour mana ability covers).
+- `cast {card: {zone, select, prefer?: [0-4 select], ties?: any}, cost?: <cast cost>, face?: <selector>, modes?: [1-5 {text_has}], x?: 0-30|max, shares?: [0-6 int], optional_costs?: [1-4 {text_has}], sacrifice?: <Pick>, discard?: <Pick>, exile?: <Pick>, tap?: <Pick>, convoke?: <Pick>, delve?: <Pick>, improvise?: <Pick>, targets: [0-6 <target>], mana?: auto, answers: [0-3]}` - FD2 adds every field after `cost`: `face` names a split/Adventure/MDFC spell face by type or text phrase, never a card name; `modes` (CR 700.2a) and `optional_costs` (CR 118.8) each name 1-5/1-4 choices by phrase; `x` is CR 107.3a's X; `shares` (CR 601.2d) divides a divided effect among `targets`, aligned by position; the cost-object `sacrifice`/`discard`/`exile`/`tap` Picks pay a printed additional cost naming one of those, and `convoke`/`delve`/`improvise` (CR 702.51a/702.66a/702.126a) are Picks too.
 - `play_land {card: {select, prefer?: [0-4 select], ties?: any}, answers: [0-3]}`
 - `answer {answers: [1-3]}`, for a decision already pending
 - `pass {}` (FB2 M1, CR 117.3d) - release priority once. Must be the last move of `moves`, otherwise `pass-not-last`; a play whose only move is `pass` is a legal "do nothing here" play.
 - `declare_attackers {attackers: [0-6 AttackGroup]}` (FB2 M2, CR 508.1), `AttackGroup {select, count?: >=1|all, prefer?: [0-4 select], ties?: any, defender?: {player: opponent}|{select, side: opponent}}` - `defender` left out means the opponent player; `attackers: []` declares no attackers.
-- `declare_blockers {blocks: [0-6 Block]}` (FB2 M3, CR 509.1), `Block {blocker: {select, count?: >=1, prefer?: [0-4 select], ties?: any}, attacker: {select, prefer?: [0-4 select], ties?: any}}` - `blocks: []` declares no blocks.
+- `declare_blockers {blocks: [0-6 Block]}` (FB2 M3, CR 509.1), `Block {blocker: {select, count?: >=0, prefer?: [0-4 select], ties?: any}, attacker: {select, prefer?: [0-4 select], ties?: any}}` - `blocks: []` declares no blocks.
+- `keyword_action {action: suspend|plot|foretell|cycle|equip|crew|turn_face_up|companion, card: {zone, select, prefer?: [0-4 select], ties?: any}, target?: <CardTarget>, crew_with?: <Pick>, answers: [0-3]}` (FD2) - one shape for the six existing keyword-action routes and FD5's two new ones; `target` names the creature an `equip` attaches to, `crew_with` the creatures a `crew` action taps to pay its cost.
+- `mulligan {keep: bool, bottom?: <Pick>}` (FD2, CR 103.5) - `keep` false takes a mulligan; a seat that keeps after already mulliganing owes CR 103.5's bottoming, named by `bottom` (left out, the engine's own default). Valid only when `when.steps` is exactly `["mulligan"]`, otherwise `mulligan-wrong-step`.
 
 `declare_attackers` and `declare_blockers` must each be the first move of the
 play, otherwise `combat-move-not-first`, and a play carries at most one of
 them (a second combat move can never also be first).
 
-- Move kinds: `activate`, `cast`, `play_land`, `answer`, `pass`, `declare_attackers`, `declare_blockers`
+- Move kinds: `activate`, `cast`, `play_land`, `answer`, `pass`, `declare_attackers`, `declare_blockers`, `keyword_action`, `mulligan`
 
 A target is `{select, side, prefer?: [0-4 select], ties?: any, zone?:
 battlefield|stack|graveyard|exile}` (a card or permanent matching `select`,
@@ -584,16 +610,41 @@ and then this doc's test until it is listed here.
 
 ### `answers[]`
 
-Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select], ties?: any}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max, choice?: string, pile_one?: bool, players?: [0-2 me|opponent], top_order?: [0-4 select], position?: top|bottom, targets?: [1-6 <target>]}`.
+Answer item: `{decision, pick?: {select, count?: >=0, prefer?: [0-4 select], ties?: any}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max, choice?: string, choice_from?: {zone, side, select, prefer?: [0-4 select], ties?: any}, pile_one?: bool, players?: [0-2 me|opponent], top_order?: [0-4 select], position?: top|bottom, targets?: [0-6 <target>], order?: [1-6 select], damage?: {tiers: [0-6 select], lethal_first?: bool, rest_to?: player|last_blocker}}`.
+`pick.count` and `targets` may both be 0 (FD2): "choose none" is a legal
+answer, not a bound violation.
 
 An answer's fields must fit its decision kind, or it is
 `answer-shape-mismatch`. A pay-amount decision (Galvanic Discharge's
 `pay_energy_amount`, Necrodominance's `pay_life_amount`) is answered with
 `amount` alone: an integer from 0, or `max` for the most the decision allows.
-`accept`, `pick`, `to_graveyard`, `to_bottom`, `choice`, `pile_one`,
-`players`, `top_order`, `position` or `targets` on it, or no `amount`, is
-`answer-shape-mismatch`, and so is an `amount` on any other kind.
-A negative `amount` is `bounds-exceeded`; any other value is `malformed-play`.
+`accept`, `pick`, `to_graveyard`, `to_bottom`, `choice`, `choice_from`,
+`pile_one`, `players`, `top_order`, `position`, `targets`, `order` or
+`damage` on it, or no `amount`, is `answer-shape-mismatch`, and so is an
+`amount` on any other kind. A negative `amount` is `bounds-exceeded`; any
+other value is `malformed-play`.
+
+`order` (FD2, CR 603.3b) fits only `order_triggers`: 1-6 selector tiers
+ordering the pending triggered abilities - the FIRST tier goes on the stack
+FIRST and so resolves LAST ("bottom of the stack first"); the LAST tier goes
+on last and resolves first, on top. Naming it on any other kind is
+`answer-shape-mismatch`.
+
+- Order decision kinds: `order_triggers`
+
+`damage` (FD2, CR 510.1c/702.19b) fits only `assign_combat_damage`, and
+fits it alone - no other field may accompany it, the same footing `amount`
+is on: `{tiers: [0-6 select], lethal_first?: bool, rest_to?: player|last_blocker}`.
+`tiers` orders the blockers (and, once trample lets damage through, the
+defending player or planeswalker) from first to last in the decision's own
+damage-assignment order; `lethal_first` assigns each tier only its lethal
+damage before any moves past it (the default, left out); `rest_to` says
+where a trampling attacker's leftover damage goes once every blocker tier
+has lethal damage - `player` (the default, left out) or `last_blocker`.
+Naming `damage` on any other kind is `answer-shape-mismatch`, and so is
+naming it without `assign_combat_damage` answering with it.
+
+- Damage decision kinds: `assign_combat_damage`
 
 `top_order` (FB2 A1) fits only a `scry`/`surveil` answer: tiers ordering the
 cards kept on top after either, first tier on top, the rest kept in
@@ -641,19 +692,32 @@ the engine to judge. A `choice` naming something outside a non-empty
 
 - Choice decision kinds: `choose_a_mode`, `choose_a_quality`
 
+`choice_from` (FD2) is an alternative to `choice` for `choose_a_quality`
+alone (`CHOICE_FROM_DECISION_KINDS`) - never both on the same answer, and
+naming it on `choose_a_mode` (always fully enumerated by fixed mode text,
+never a card) or any other kind is `answer-shape-mismatch`. It is a selector
+over `zone` and `side`, resolved at run time to a matched card: the runtime
+derives the actual quality (Cavern of Souls' creature type, say) from
+whichever card it matches, so a card name never appears in the file - the
+whole point of the field, next to plainly writing the quality as a literal
+string in `choice`.
+
+- Choice-from decision kinds: `choose_a_quality`
+
 `decision` is a closed set equal to the api's pending decision kinds: the
 values of `decisions.ANSWERABLE_KINDS`, which are the engine `DecisionKind`s
 the api can pend. A value outside it (a typo such as `choose_cardz`) is
-`unknown-decision-kind`. Two of them are in the set but refused with
-`forbidden-kind`, because scripts never assign combat damage or mulligan.
-Two more, `declare_attackers`/`declare_blockers`, are in the set but refused
-with `use-combat-move` (FB2 D1) instead - a script never answers them as a
-decision either, but the refusal names the real fix: use the
-`declare_attackers`/`declare_blockers` move (M2/M3 above), not an answer
-item.
+`unknown-decision-kind`. `FORBIDDEN_DECISION_KINDS` is empty (FD2): every
+decision kind is answerable, each fitting one of the shapes above - `mulligan`
+plainly, with `accept` (or more fully with the `mulligan` move below),
+`assign_combat_damage` only through `damage`. `declare_attackers`/
+`declare_blockers` are in the set but refused with `use-combat-move` (FB2 D1)
+instead - a script never answers them as a decision either, but the refusal
+names the real fix: use the `declare_attackers`/`declare_blockers` move
+(M2/M3 above), not an answer item.
 
 - Decision kinds: `assign_combat_damage`, `choose_a_mode`, `choose_a_quality`, `choose_cards`, `choose_pile`, `choose_players`, `choose_targets`, `declare_attackers`, `declare_blockers`, `may`, `mulligan`, `opening_hand_action`, `order_triggers`, `pay_energy`, `pay_energy_amount`, `pay_life`, `pay_life_amount`, `pay_mana`, `put_on_top_or_bottom`, `scry`, `surveil`
-- Never answered: `assign_combat_damage`, `mulligan`
+- Never answered:
 
 ### D2: the standalone pending-decision answer
 
@@ -978,6 +1042,17 @@ deploy before FB2's mtg-decks mirror (FC8) pushes a play using any of the new
 vocabulary to mtg-decks' own `main` - the ordering note carried in the task
 plan that shipped this change.
 
+FD2 (2026-09-26) keeps `schema_version` at 1 the same way: every new field on
+`cast`/`activate` above, the two new move kinds (`keyword_action`,
+`mulligan`), the three schema-local steps, and the three new answer fields
+(`order`, `damage`, `choice_from`) are each a new optional field or a new
+discriminated value, and the two decision kinds `FORBIDDEN_DECISION_KINDS`
+used to refuse are now answerable rather than forbidden - loosening a refusal
+is additive the same way a new field is, since no play already committed
+could have named either kind at all. The same deploy-order consequence holds:
+this api's `main` reaches a live deploy before FD8's mtg-decks mirror update
+pushes a play naming any of FD2's vocabulary.
+
 ## Migration: `note` becomes required later
 
 `note` lands optional (API-1): every play already committed validates
@@ -995,7 +1070,11 @@ requirement; there is no date fixed for that step today.
 
 ## Not in the vocabulary
 
-Mulligan, concede, assign combat damage, and any iteration field. (FB2
-2026-09-24: attacking, blocking and passing moved out of this list -
-`pass`/`declare_attackers`/`declare_blockers` are now real move kinds, M1-M3
-above.)
+Concede, and any iteration field. (FB2 2026-09-24: attacking, blocking and
+passing moved out of this list - `pass`/`declare_attackers`/
+`declare_blockers` are now real move kinds, M1-M3 above. FD2 2026-09-26:
+mulligan and assign-combat-damage moved out too - `mulligan` is a real move
+kind and a plain `accept` answer, and `assign_combat_damage` is answered
+through `damage`. `concede` stays out permanently: it is not a `DecisionKind`
+the engine ever pends, it ends the game, and a script must never be the thing
+that ends a game.)

@@ -2,7 +2,7 @@
   "$defs": {
     "ActivateMove": {
       "additionalProperties": false,
-      "description": "Names its ability by exactly one of `ability_text_has` (a phrase) or\n`ability_index` (FB2 M4, the card's own ability list index, 0-15) - both\nor neither is `activate-ability-ref`.",
+      "description": "Names its ability by exactly one of `ability_text_has` (a phrase) or\n`ability_index` (FB2 M4, the card's own ability list index, 0-15) - both\nor neither is `activate-ability-ref`. FD2 adds `exile` (a Pick, the same\nfooting `sacrifice`/`discard` are on for an activation cost's own\n\"Exile ...\" piece), `x` (CR 107.3a's X, announced as the activation\nbegins) and `color` (which coloured symbol a mana ability with more than\none colour to give covers).",
       "properties": {
         "ability_index": {
           "default": null,
@@ -25,6 +25,19 @@
           "title": "Answers",
           "type": "array"
         },
+        "color": {
+          "default": null,
+          "enum": [
+            "W",
+            "U",
+            "B",
+            "R",
+            "G",
+            "C"
+          ],
+          "title": "Color",
+          "type": "string"
+        },
         "discard": {
           "default": null,
           "oneOf": [
@@ -37,6 +50,10 @@
             }
           ],
           "title": "Discard"
+        },
+        "exile": {
+          "$ref": "#/$defs/Pick",
+          "default": null
         },
         "kind": {
           "const": "activate",
@@ -76,6 +93,21 @@
           "maxItems": 6,
           "title": "Targets",
           "type": "array"
+        },
+        "x": {
+          "default": null,
+          "oneOf": [
+            {
+              "maximum": 30,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "const": "max",
+              "type": "string"
+            }
+          ],
+          "title": "X"
         }
       },
       "required": [
@@ -202,6 +234,14 @@
           "title": "Choice",
           "type": "string"
         },
+        "choice_from": {
+          "$ref": "#/$defs/ChoiceFromCard",
+          "default": null
+        },
+        "damage": {
+          "$ref": "#/$defs/DamagePolicy",
+          "default": null
+        },
         "decision": {
           "enum": [
             "assign_combat_damage",
@@ -228,6 +268,16 @@
           ],
           "title": "Decision",
           "type": "string"
+        },
+        "order": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "title": "Order",
+          "type": "array"
         },
         "pick": {
           "$ref": "#/$defs/Pick",
@@ -273,7 +323,7 @@
             ]
           },
           "maxItems": 6,
-          "minItems": 1,
+          "minItems": 0,
           "title": "Targets",
           "type": "array"
         },
@@ -434,7 +484,7 @@
       "properties": {
         "count": {
           "default": null,
-          "minimum": 1,
+          "minimum": 0,
           "title": "Count",
           "type": "integer"
         },
@@ -515,6 +565,7 @@
     },
     "CastMove": {
       "additionalProperties": false,
+      "description": "FD2 additions, all optional and additive: `face` (a face selector for\na split/Adventure/MDFC spell face - by type or text phrase, never a card\nname, the same discipline every other selector field keeps), `modes`\n(CR 700.2a, 1-5 modes each named by a phrase), `x` (CR 107.3a),\n`shares` (CR 601.2d, aligned with `targets` by position), `optional_costs`\n(CR 118.8, 1-4 of them), the cost-object Picks `sacrifice`/`discard`/\n`exile`/`tap` for a printed additional cost naming one of those, and the\n`convoke`/`delve`/`improvise` Picks (CR 702.51a/702.66a/702.126a).",
       "properties": {
         "answers": {
           "items": {
@@ -526,6 +577,10 @@
         },
         "card": {
           "$ref": "#/$defs/ZonedCard"
+        },
+        "convoke": {
+          "$ref": "#/$defs/Pick",
+          "default": null
         },
         "cost": {
           "default": null,
@@ -559,6 +614,26 @@
           "title": "Cost",
           "type": "string"
         },
+        "delve": {
+          "$ref": "#/$defs/Pick",
+          "default": null
+        },
+        "discard": {
+          "$ref": "#/$defs/Pick",
+          "default": null
+        },
+        "exile": {
+          "$ref": "#/$defs/Pick",
+          "default": null
+        },
+        "face": {
+          "$ref": "#/$defs/Selector",
+          "default": null
+        },
+        "improvise": {
+          "$ref": "#/$defs/Pick",
+          "default": null
+        },
         "kind": {
           "const": "cast",
           "title": "Kind",
@@ -569,6 +644,44 @@
           "default": null,
           "title": "Mana",
           "type": "string"
+        },
+        "modes": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/ModeChoice"
+          },
+          "maxItems": 5,
+          "minItems": 1,
+          "title": "Modes",
+          "type": "array"
+        },
+        "optional_costs": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/OptionalCost"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Optional Costs",
+          "type": "array"
+        },
+        "sacrifice": {
+          "$ref": "#/$defs/Pick",
+          "default": null
+        },
+        "shares": {
+          "default": null,
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 6,
+          "title": "Shares",
+          "type": "array"
+        },
+        "tap": {
+          "$ref": "#/$defs/Pick",
+          "default": null
         },
         "targets": {
           "items": {
@@ -584,6 +697,21 @@
           "maxItems": 6,
           "title": "Targets",
           "type": "array"
+        },
+        "x": {
+          "default": null,
+          "oneOf": [
+            {
+              "maximum": 30,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "const": "max",
+              "type": "string"
+            }
+          ],
+          "title": "X"
         }
       },
       "required": [
@@ -591,6 +719,59 @@
         "card"
       ],
       "title": "CastMove",
+      "type": "object"
+    },
+    "ChoiceFromCard": {
+      "additionalProperties": false,
+      "description": "`Answer.choice_from` (FD2): a card resolved at run time by selector,\nover `zone` on `side` - never a name written in the file. The runtime\nderives `choose_a_quality`'s own answer text from whichever card this\nselector matches (Cavern of Souls' creature type, say, read off the\nmatched creature).",
+      "properties": {
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent",
+            "any"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
+        },
+        "zone": {
+          "enum": [
+            "battlefield",
+            "graveyard",
+            "exile",
+            "hand",
+            "stack",
+            "library",
+            "sideboard"
+          ],
+          "title": "Zone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "zone",
+        "side",
+        "select"
+      ],
+      "title": "ChoiceFromCard",
       "type": "object"
     },
     "CompareCondition": {
@@ -876,6 +1057,36 @@
       "title": "CounterComparison",
       "type": "object"
     },
+    "DamagePolicy": {
+      "additionalProperties": false,
+      "description": "`Answer.damage` (FD2, CR 510.1c/702.19b): a policy rather than a\nliteral amount per recipient. `tiers` orders the blockers (and, once\ntrample lets damage through, the defending player or planeswalker) from\nfirst to last in `pending_decision.targets`' own damage-assignment order;\n`lethal_first` assigns each tier only its lethal damage before any moves\npast it (CR 510.1c's own order, the default when left out); `rest_to`\nsays where damage a trampling attacker has left over after every blocker\ntier has lethal damage goes - `player` past the last blocker (CR\n702.19b, the default when left out), or `last_blocker` to pile the rest\nonto the last blocker tier instead of letting it through.",
+      "properties": {
+        "lethal_first": {
+          "default": null,
+          "title": "Lethal First",
+          "type": "boolean"
+        },
+        "rest_to": {
+          "default": null,
+          "enum": [
+            "player",
+            "last_blocker"
+          ],
+          "title": "Rest To",
+          "type": "string"
+        },
+        "tiers": {
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 6,
+          "title": "Tiers",
+          "type": "array"
+        }
+      },
+      "title": "DamagePolicy",
+      "type": "object"
+    },
     "DeclareAttackersMove": {
       "additionalProperties": false,
       "description": "CR 508.1 (FB2 M2). `attackers: []` declares no attackers - still a\nlegal declare-attackers move. Must be the play's first move\n(`Play._pass_last_and_combat_first` below), otherwise\n`combat-move-not-first`.",
@@ -965,7 +1176,7 @@
       "properties": {
         "count": {
           "default": null,
-          "minimum": 1,
+          "minimum": 0,
           "title": "Count",
           "type": "integer"
         },
@@ -1033,6 +1244,57 @@
         "value"
       ],
       "title": "InputCondition",
+      "type": "object"
+    },
+    "KeywordActionMove": {
+      "additionalProperties": false,
+      "description": "FD2: one shape for the six existing keyword-action routes (suspend,\nplot, foretell, cycle, equip, crew) and FD5's two new ones (turn_face_up,\ncompanion) - `action` names which, `card` locates the card the way a\n`cast`/`play_land` card already does, `target` names the creature an\n`equip` attaches to (a `CardTarget`, never a player), and `crew_with`\nnames the creatures a `crew` action taps to pay its cost.",
+      "properties": {
+        "action": {
+          "enum": [
+            "suspend",
+            "plot",
+            "foretell",
+            "cycle",
+            "equip",
+            "crew",
+            "turn_face_up",
+            "companion"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "answers": {
+          "items": {
+            "$ref": "#/$defs/Answer"
+          },
+          "maxItems": 3,
+          "title": "Answers",
+          "type": "array"
+        },
+        "card": {
+          "$ref": "#/$defs/ZonedCard"
+        },
+        "crew_with": {
+          "$ref": "#/$defs/Pick",
+          "default": null
+        },
+        "kind": {
+          "const": "keyword_action",
+          "title": "Kind",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/CardTarget",
+          "default": null
+        }
+      },
+      "required": [
+        "kind",
+        "action",
+        "card"
+      ],
+      "title": "KeywordActionMove",
       "type": "object"
     },
     "LandCard": {
@@ -1198,6 +1460,47 @@
       "title": "MissingFrom",
       "type": "object"
     },
+    "ModeChoice": {
+      "additionalProperties": false,
+      "description": "One mode of a `CastMove.modes` list (CR 700.2a): the mode named by an\nability-text phrase, never a mode's literal printed number - the same\ncard-name-free discipline every other phrase field keeps.",
+      "properties": {
+        "text_has": {
+          "pattern": "\\S",
+          "title": "Text Has",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text_has"
+      ],
+      "title": "ModeChoice",
+      "type": "object"
+    },
+    "MulliganMove": {
+      "additionalProperties": false,
+      "description": "FD2: CR 103.5's declaration - `keep` false takes a mulligan, true\nkeeps the hand dealt (drawing a fresh seven either way is London\nmulligan's own rule, not this move's business); a seat that has already\nmulliganed and keeps also owes CR 103.5's bottoming, named by `bottom`\n(left out, the engine's own default - the back of the hand). Valid only\nwhen `when.steps` is exactly `[\"mulligan\"]`\n(`Play._mulligan_move_needs_the_mulligan_step` below), otherwise\n`mulligan-wrong-step` - the declaration this move makes is meaningless\nanywhere else.",
+      "properties": {
+        "bottom": {
+          "$ref": "#/$defs/Pick",
+          "default": null
+        },
+        "keep": {
+          "title": "Keep",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "mulligan",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "keep"
+      ],
+      "title": "MulliganMove",
+      "type": "object"
+    },
     "NOperand": {
       "additionalProperties": false,
       "description": "A plain literal number - the side of a `compare` that is not read off\nthe board at all.",
@@ -1217,6 +1520,22 @@
         "n"
       ],
       "title": "NOperand",
+      "type": "object"
+    },
+    "OptionalCost": {
+      "additionalProperties": false,
+      "description": "One optional cost of a `CastMove.optional_costs` list (CR 118.8):\nkicker, bargain, collect evidence and the rest of what the api's own\n`CastRequest.optional_costs` accepts, named by an ability-text phrase\nrather than the cost's own keyword, so the vocabulary never has to track\nthe engine's own keyword spelling for this field.",
+      "properties": {
+        "text_has": {
+          "pattern": "\\S",
+          "title": "Text Has",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text_has"
+      ],
+      "title": "OptionalCost",
       "type": "object"
     },
     "PassMove": {
@@ -1284,7 +1603,7 @@
       "properties": {
         "count": {
           "default": null,
-          "minimum": 1,
+          "minimum": 0,
           "title": "Count",
           "type": "integer"
         },
@@ -1395,7 +1714,7 @@
       "properties": {
         "count": {
           "default": null,
-          "minimum": 1,
+          "minimum": 0,
           "title": "Count",
           "type": "integer"
         },
@@ -1779,7 +2098,10 @@
               "combat_damage",
               "end_of_combat",
               "postcombat_main",
-              "end_step"
+              "end_step",
+              "cleanup",
+              "mulligan",
+              "pregame_actions"
             ],
             "type": "string"
           },
@@ -2025,6 +2347,8 @@
             "cast": "#/$defs/CastMove",
             "declare_attackers": "#/$defs/DeclareAttackersMove",
             "declare_blockers": "#/$defs/DeclareBlockersMove",
+            "keyword_action": "#/$defs/KeywordActionMove",
+            "mulligan": "#/$defs/MulliganMove",
             "pass": "#/$defs/PassMove",
             "play_land": "#/$defs/PlayLandMove"
           },
@@ -2051,6 +2375,12 @@
           },
           {
             "$ref": "#/$defs/DeclareBlockersMove"
+          },
+          {
+            "$ref": "#/$defs/KeywordActionMove"
+          },
+          {
+            "$ref": "#/$defs/MulliganMove"
           }
         ]
       },

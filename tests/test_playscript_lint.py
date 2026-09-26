@@ -34,6 +34,7 @@ from magic_cards_model_api.playscripts.lint import (
     check_report,
     conflict_dimensions,
     exclusivity,
+    run_check,
 )
 
 
@@ -88,8 +89,8 @@ def test_codes_and_warning_codes_are_the_shared_contract():
         "use-combat-move",
         "answer-decision-mismatch",
     )
-    assert CODES[30:] == ("never-applicable",)
-    assert len(CODES) == 31
+    assert CODES[30:32] == ("mulligan-wrong-step", "never-applicable")
+    assert len(CODES) == 32
     assert WARNING_CODES == ("play-conflict", "next-conflict")
     assert EXCLUSIVITY_DIMENSIONS == (
         "whose_turn",
@@ -100,6 +101,8 @@ def test_codes_and_warning_codes_are_the_shared_contract():
         "input",
         "true_false",
         "numeric_range",
+        "pass_fallback",
+        "move_selector",
     )
 
 
@@ -705,6 +708,31 @@ EXCLUSIVE_PAIRS = [
         {"true": [{"kind": "life", "side": "me", "op": ">=", "n": 8}], "false": []},
         {"true": [{"kind": "life", "side": "me", "op": "<=", "n": 5}], "false": []},
     ),
+    (
+        "pass_fallback",
+        {"moves": [{"kind": "pass"}]},
+        {
+            "moves": [
+                {"kind": "cast", "card": {"zone": "hand", "select": {"types_any": ["Instant"]}}}
+            ]
+        },
+    ),
+    (
+        "move_selector",
+        {
+            "moves": [
+                {"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Creature"]}}}
+            ]
+        },
+        {
+            "moves": [
+                {
+                    "kind": "cast",
+                    "card": {"zone": "graveyard", "select": {"types_all": ["Creature"]}},
+                }
+            ]
+        },
+    ),
 ]
 
 
@@ -728,6 +756,158 @@ def test_each_dimension_overlapping_is_a_conflict(root, dimension, a, b):
     (warning,) = warnings_of(root)
     assert warning["code"] == "play-conflict"
     assert warning["dimensions"][:4] == ["whose_turn", "steps", "opposing_archetypes", "stack"]
+
+
+# -- FD2 item 7: move-selector dimension, pass-only fallback, ability_index --
+
+
+def test_two_plays_whose_selectors_overlap_still_conflict(root):
+    """FD2 item 7b's negative case: `types_any: [Instant, Creature]` and
+    `types_all: [Creature]` are NOT disjoint - a Creature could match either
+    - so `move_selector` must not fire, and the pair still conflicts."""
+    put_inputs(root, INPUTS)
+    put(
+        root,
+        play(
+            id="a",
+            moves=[
+                {
+                    "kind": "cast",
+                    "card": {"zone": "hand", "select": {"types_any": ["Instant", "Creature"]}},
+                }
+            ],
+        ),
+    )
+    put(
+        root,
+        play(
+            id="b",
+            moves=[
+                {"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Creature"]}}}
+            ],
+        ),
+    )
+    (warning,) = warnings_of(root)
+    assert warning["code"] == "play-conflict"
+    a_fragment = {
+        "moves": [
+            {
+                "kind": "cast",
+                "card": {"zone": "hand", "select": {"types_any": ["Instant", "Creature"]}},
+            }
+        ]
+    }
+    b_fragment = {
+        "moves": [{"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Creature"]}}}]
+    }
+    assert exclusivity(a_fragment, b_fragment, {}) == []
+
+
+def test_pass_only_never_conflicts_with_a_move_bearing_play(root):
+    """FD2 item 7b: a play whose only move is `pass` is a fallback."""
+    put(root, play(id="a", moves=[{"kind": "pass"}]))
+    put(root, play(id="b"))
+    assert check_report(root) == ([], [])
+
+
+def test_two_pass_only_plays_are_not_covered_by_the_fallback_rule():
+    """The fallback exemption names exactly one side pass-only; two pass-only
+    plays with nothing else distinguishing them are not exempted."""
+    a = {"moves": [{"kind": "pass"}]}
+    assert exclusivity(a, a, {}) == []
+
+
+def test_an_ability_index_activate_passes_lint(root):
+    """FD2 item 7a: an activation naming its ability by `ability_index`
+    (rather than `ability_text_has`) is exempt from `phrase-too-narrow` on any
+    phrase inside that same move - here the source-locating selector's own
+    `ability_text_has`, which names no other cached card."""
+    doc = play(
+        moves=[
+            {
+                "kind": "activate",
+                "source": {
+                    "zone": "battlefield",
+                    "select": {"ability_text_has": "This exact narrow phrase names one card"},
+                },
+                "ability_index": 0,
+            }
+        ]
+    )
+    put(root, doc)
+    assert check_report(root) == ([], [])
+
+
+def test_a_hand_written_ability_text_has_still_keeps_the_three_card_rule(root):
+    """The exemption is scoped to `ability_index`: an activation that still
+    names its ability by `ability_text_has` keeps the 3-card generality
+    rule."""
+    doc = play(
+        moves=[
+            {
+                "kind": "activate",
+                "source": {"zone": "battlefield", "select": {}},
+                "ability_text_has": "This exact narrow phrase names one card",
+            }
+        ]
+    )
+    put(root, doc)
+    assert error_codes(root) == ["phrase-too-narrow"]
+
+
+@pytest.mark.parametrize(
+    "mutate_doc",
+    [
+        lambda doc: doc["moves"][0].update(face={"ability_text_has": "Lightning Bolt"}),
+        lambda doc: doc["moves"][0].update(
+            sacrifice={"select": {"ability_text_has": "Lightning Bolt"}}
+        ),
+    ],
+    ids=["face", "sacrifice-pick"],
+)
+def test_a_card_name_in_a_new_cast_field_is_card_name_in_field(root, mutate_doc):
+    doc = play(
+        moves=[{"kind": "cast", "card": {"zone": "hand", "select": {"types_any": ["Instant"]}}}]
+    )
+    mutate_doc(doc)
+    put(root, doc)
+    assert "card-name-in-field" in error_codes(root)
+
+
+def test_a_card_name_in_keyword_action_card_is_card_name_in_field(root):
+    doc = play(
+        moves=[
+            {
+                "kind": "keyword_action",
+                "action": "cycle",
+                "card": {"zone": "hand", "select": {"ability_text_has": "Lightning Bolt"}},
+            }
+        ]
+    )
+    put(root, doc)
+    assert "card-name-in-field" in error_codes(root)
+
+
+def test_a_card_name_in_choice_from_is_card_name_in_field(root):
+    doc = play(
+        moves=[
+            {
+                "kind": "answer",
+                "answers": [
+                    {
+                        "decision": "choose_a_quality",
+                        "choice_from": {
+                            "zone": "battlefield",
+                            "side": "me",
+                            "select": {"ability_text_has": "Lightning Bolt"},
+                        },
+                    }
+                ],
+            }
+        ]
+    )
+    put(root, doc)
+    assert "card-name-in-field" in error_codes(root)
 
 
 def test_next_conflict_names_the_play_and_both_entries(root):
@@ -1257,3 +1437,21 @@ def test_every_other_command_still_needs_a_uid(capsys):
         seat_cli.run(["state"])
     assert raised.value.code == 2
     assert "--uid" in capsys.readouterr().err
+
+
+# -- FD2 item 6/7: the real mtg-decks corpus still clears the gate ------------
+
+MTG_DECKS_ROOT = Path("/Users/szymonri/Documents/mtg-decks")
+
+
+def test_every_mtg_decks_play_still_clears_the_lint_gate():
+    """FD2's additions - the ability_index phrase-too-narrow exemption, the
+    move-selector and pass-fallback exclusivity dimensions, and every new
+    schema field - are additive: the real corpus's own errors and warnings
+    are unchanged (both empty, at the time of writing)."""
+    if not (MTG_DECKS_ROOT / "decks").exists():
+        pytest.skip(f"mtg-decks checkout not present at {MTG_DECKS_ROOT}")
+    errors, warnings, plays, decks = run_check(MTG_DECKS_ROOT)
+    assert plays > 0 and decks > 0
+    assert errors == []
+    assert warnings == []

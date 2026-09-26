@@ -41,6 +41,16 @@
       "letter": "h",
       "name": "numeric_range",
       "rule": "count, zone_size, life, untapped_mana or int-input conditions on the same key whose ranges cannot overlap; a false-list condition is negated first"
+    },
+    {
+      "letter": "i",
+      "name": "pass_fallback",
+      "rule": "a play whose only move is pass never conflicts with a play that has a real move (FD2 item 7b); two pass-only plays are not covered and still conflict the ordinary way"
+    },
+    {
+      "letter": "j",
+      "name": "move_selector",
+      "rule": "the two plays' first moves' own card lookups (cast/play_land's card, activate/keyword_action's source/card) provably cannot match the same object: a different determinate zone, or a disjoint non-empty types_all/types_any or keywords_any set (FD2 item 7b)"
     }
   ],
   "inputs": [
@@ -3512,6 +3522,232 @@
                 "n": 5
               }
             ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "pass-fallback-pass-only-vs-move-bearing",
+      "verdict": "exclusive",
+      "dimension": "pass_fallback",
+      "proven_by": [
+        "pass_fallback"
+      ],
+      "note": "a play whose only move is pass is a fallback that never conflicts with a move-bearing play",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "pass"
+          }
+        ]
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "cast",
+            "card": {
+              "zone": "hand",
+              "select": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "pass-fallback-two-pass-only-plays-still-conflict",
+      "verdict": "conflicting",
+      "dimension": "pass_fallback",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "pending_decision"
+      ],
+      "note": "the fallback exemption names exactly one side pass-only; two identical pass-only plays are not exempted",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "pass"
+          }
+        ]
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "name": "move-selector-different-zones",
+      "verdict": "exclusive",
+      "dimension": "move_selector",
+      "proven_by": [
+        "move_selector"
+      ],
+      "note": "a card is in exactly one zone at a time - battlefield and hand never coincide",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "activate",
+            "source": {
+              "zone": "battlefield",
+              "select": {}
+            },
+            "ability_index": 0
+          }
+        ]
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "cast",
+            "card": {
+              "zone": "hand",
+              "select": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "move-selector-overlapping-types-still-conflict",
+      "verdict": "conflicting",
+      "dimension": "move_selector",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "pending_decision"
+      ],
+      "note": "types_any: [Instant, Creature] and types_all: [Creature] are not disjoint - a Creature could match either - so the pair still conflicts",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "cast",
+            "card": {
+              "zone": "hand",
+              "select": {
+                "types_any": [
+                  "Instant",
+                  "Creature"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "cast",
+            "card": {
+              "zone": "hand",
+              "select": {
+                "types_all": [
+                  "Creature"
+                ]
+              }
+            }
           }
         ]
       }
