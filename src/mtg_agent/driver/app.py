@@ -83,6 +83,8 @@ from magic_cards_model_api.playscripts.report import (
     script_run_table,
 )
 
+from ..wrapper.config import Settings as _WrapperSettings
+from ..wrapper.config import scaled_review_wall_time
 from .config import DriverSettings
 from .guides import (
     CONFIDENT,
@@ -144,31 +146,108 @@ log = logging.getLogger("driver")
 #: first), so this has to sit above whatever the wrapper allows itself.
 #: `tests/wrapper/test_oneshot.py` pins the ordering against
 #: `Settings.review_timeout` itself, so neither number can be moved alone.
+#:
+#: **Review fix, round 1 finding 1: this is now only the FLAT case
+#: (`decision_count <= 0`) of `review_http_timeout` below, not the value the
+#: POST itself is sent with.** It stayed a bare constant, used unchanged for
+#: every game regardless of decision count, while `wrapper.config.
+#: scaled_review_timeout` (and, after the prose-pass fix above,
+#: `scaled_review_wall_time`) grew the wrapper's OWN bound well past it for
+#: any game with more than about ten decisions - so the driver gave up on a
+#: review that was still correctly running, before either the scaling or
+#: the wrapper's own timeout-salvage note ever had a chance to matter. Kept
+#: as a named constant since `RETIRE_REVIEW_JOIN_TIMEOUT`'s own docstring
+#: and several tests still reference the flat case by name.
 REVIEW_HTTP_TIMEOUT = 3660.0
+
+#: This process runs in a container with no `claude` binary and does not
+#: read the wrapper's own env, so it mirrors `wrapper.config.
+#: scaled_review_wall_time` against the wrapper's DEFAULT `Settings` rather
+#: than a live value it cannot see - `tests/wrapper/test_config.py` pins the
+#: formula the two sides share.
+_WRAPPER_DEFAULTS = _WrapperSettings()
+
+#: The same +60s headroom `REVIEW_HTTP_TIMEOUT` always carried over the
+#: flat `Settings.review_timeout` (3600 -> 3660), now applied to the
+#: decision-count-aware bound instead of the flat one.
+REVIEW_HTTP_HEADROOM = 60.0
+
+
+def _uncapped_review_http_timeout(decision_count: int) -> float:
+    """The formula alone, before `REVIEW_HTTP_TIMEOUT_MAX` clamps it - kept
+    separate so that constant can be DEFINED from this function (at its own
+    chosen decision count) without calling the public, already-clamped
+    `review_http_timeout` on itself."""
+    return scaled_review_wall_time(_WRAPPER_DEFAULTS, decision_count) + REVIEW_HTTP_HEADROOM
+
+
+#: The ceiling `review_http_timeout` never crosses, chosen so the fixed
+#: bounds derived from it below (`RETIRE_REVIEW_JOIN_TIMEOUT`, and
+#: `handover.PRESTOP_WAIT_SECONDS`/the Job's `terminationGracePeriodSeconds`
+#: over that) can move by a bounded, deliberate amount rather than needing
+#: to cover the wrapper's own theoretical worst case
+#: (`Settings.review_timeout_max`, up to 10800s of PLAYS-pass budget alone,
+#: reachable only past roughly 1200 decisions). 200 decisions is already
+#: twenty times the ~10-decision point where this bug bites (see the finding
+#: this fixes), and staying at this ceiling keeps `POSTGAME_RELEASE_SECONDS`
+#: (`magic_cards_model_api.lobby`) inside roughly half of the seat Job's own
+#: `activeDeadlineSeconds` - reaching the wrapper's full theoretical ceiling
+#: would need a much larger bump to the Job's own total budget, which is a
+#: cluster-capacity call for the owner, not something this fix reaches for.
+#: A game past this ceiling still gets `_uncapped_review_http_timeout`'s
+#: (smaller) clamped value - `review_http_timeout` below never returns more
+#: than this - so its own review is simply bounded at the same ceiling every
+#: other large game already shares, rather than growing without limit.
+REVIEW_HTTP_TIMEOUT_MAX = _uncapped_review_http_timeout(200)
+
+
+def review_http_timeout(decision_count: int) -> float:
+    """`POST /v1/review`'s own client timeout (review fix, round 1 finding
+    1) - scaled with `decision_count` exactly the way the wrapper scales
+    its OWN internal bound (`scaled_review_wall_time`), so a game with
+    enough decisions to earn the wrapper a longer bound is not read by this
+    process as an unreachable wrapper before that bound (or its own
+    timeout-salvage note) ever gets the chance to take effect. `decision_count
+    <= 0` reduces to `REVIEW_HTTP_TIMEOUT` exactly - the flat case every
+    caller before this fix got. Never exceeds `REVIEW_HTTP_TIMEOUT_MAX` -
+    see that constant's own docstring for why, and for what a game whose OWN
+    decision count would otherwise call for more gets instead."""
+    return min(_uncapped_review_http_timeout(decision_count), REVIEW_HTTP_TIMEOUT_MAX)
+
 
 #: How long `retire` waits for the AI review's background thread
 #: (`post_ai_review`, spawned by `turn_done`'s reflection branch) before
 #: giving up on it and proceeding anyway - `DELETE /v1/session` tears the
 #: agent container down, and `exit_after_match` can end this very process
 #: right after, so a review still in flight when either happens is lost for
-#: good rather than merely late. Bounded by `REVIEW_HTTP_TIMEOUT` (the
-#: review's own slow call, `POST /v1/review`) plus headroom for the two
-#: quick calls around it (the review-record fetch, the `ai-review` post,
-#: each on `make_client`'s ordinary 30s timeout) - `post_ai_review` itself
-#: never runs longer than this in practice, so the join is expected to
-#: return well before its own timeout on every call that succeeds, and to
-#: hit it only on the same failures that would have made the review
-#: unreachable anyway.
+#: good rather than merely late.
 #:
-#: Derived, so it follows `REVIEW_HTTP_TIMEOUT` up without a second edit.
+#: Sized off `REVIEW_HTTP_TIMEOUT_MAX`, never the per-call
+#: `review_http_timeout(decision_count)`: this bound is a fixed module
+#: constant, computed before any game's own decision count is known, so it
+#: has to cover the worst case `review_http_timeout` can return under its
+#: own ceiling. On top of that: `_REVIEW_RECORD_RETRY_WORST_CASE` (review
+#: fix, round 1 finding 1) - FD6 (4)'s retry-with-backoff on
+#: `fetch_review_record` runs BEFORE the wrapper is ever called and can
+#: itself take up to `DriverSettings.review_record_retry_budget` plus one
+#: more full `review_record_timeout` in flight when the deadline lands
+#: mid-wait (~420s at the defaults) - time this join has to cover too, since
+#: it bounds the WHOLE of `post_ai_review`, not only the wrapper POST - plus
+#: a last 40s for the closing `ai-review` POST on `make_client`'s own
+#: ordinary timeout, with slack.
 #:
-#: **DR3: `handover.PRESTOP_WAIT_SECONDS` (5460s), the deploy manifest's own
-#: preStop waits, and the Job's `terminationGracePeriodSeconds` all moved up
-#: with this** so the driver container's own termination window still
-#: outlasts this join - a kubelet that killed the container before this
-#: bound gave up on it would make the bound meaningless for a review still
-#: running that late. `tests/wrapper/test_oneshot.py` pins the ordering.
-RETIRE_REVIEW_JOIN_TIMEOUT = REVIEW_HTTP_TIMEOUT + 70.0
+#: **`handover.PRESTOP_WAIT_SECONDS` (moved to cover this), the deploy
+#: manifest's own preStop waits, and the Job's `terminationGracePeriodSeconds`
+#: all moved up with this** so the driver container's own termination window
+#: still outlasts this join - a kubelet that killed the container before
+#: this bound gave up on it would make the bound meaningless for a review
+#: still running that late. `tests/wrapper/test_oneshot.py` pins the
+#: ordering.
+_DRIVER_DEFAULTS = DriverSettings()
+_REVIEW_RECORD_RETRY_WORST_CASE = (
+    _DRIVER_DEFAULTS.review_record_retry_budget + _DRIVER_DEFAULTS.review_record_timeout
+)
+RETIRE_REVIEW_JOIN_TIMEOUT = REVIEW_HTTP_TIMEOUT_MAX + _REVIEW_RECORD_RETRY_WORST_CASE + 40.0
 
 #: The auto-continue loop guard. One wrapper turn is meant to cover a whole
 #: match, so a turn that ends while the game runs is followed at once by a
@@ -879,7 +958,10 @@ def build_app(
         # for this player - the wrapper scales the review's own timeout by
         # this count (`wrapper.config.scaled_review_timeout`), since a game
         # with hundreds of decisions runs many more `mcp-seat` round trips
-        # than the flat timeout was ever sized for.
+        # than the flat timeout was ever sized for. Review fix, round 1
+        # finding 1: this process's own client timeout for the POST below
+        # now scales with the SAME count (`review_http_timeout`), rather
+        # than staying at the flat `REVIEW_HTTP_TIMEOUT` regardless of it.
         decision_count = len((review_record.get("decisions") or {}).get(assignment.player) or [])
         try:
             with make_client(settings.wrapper_api) as client:
@@ -892,7 +974,7 @@ def build_app(
                         "decision_count": decision_count,
                     },
                     headers=wrapper_headers(),
-                    timeout=REVIEW_HTTP_TIMEOUT,
+                    timeout=review_http_timeout(decision_count),
                 )
             if response.status_code >= 400:
                 reason = _wrapper_failure_reason(response)

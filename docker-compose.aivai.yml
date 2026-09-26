@@ -220,7 +220,7 @@ services:
       - ./memory:/workspace/memory
       - driver-workspace-p1:/driver-workspace:ro
     restart: unless-stopped
-    stop_grace_period: 92m
+    stop_grace_period: 7410s
 
   agent-p2:
     platform: ${DOCKER_PLATFORM:-linux/amd64}
@@ -270,7 +270,7 @@ services:
       - ./memory:/workspace/memory
       - driver-workspace-p2:/driver-workspace:ro
     restart: unless-stopped
-    stop_grace_period: 92m
+    stop_grace_period: 7410s
 
   driver-p1:
     platform: ${DOCKER_PLATFORM:-linux/amd64}
@@ -304,7 +304,7 @@ services:
       # game's evidence record, the agent's `mcp-seat plays admit` reads it
       # (`MTG_EVIDENCE_DIR` above) - same shape as `deploy/seat-job.yaml`.
       - driver-workspace-p1:/driver-workspace
-    stop_grace_period: 92m
+    stop_grace_period: 7410s
 
   driver-p2:
     platform: ${DOCKER_PLATFORM:-linux/amd64}
@@ -331,7 +331,7 @@ services:
       - agent-guides-p2:/guides:ro
       - ./memory:/workspace/memory
       - driver-workspace-p2:/driver-workspace
-    stop_grace_period: 92m
+    stop_grace_period: 7410s
 
 secrets:
   # Sourced from the MTG_DECKS_GH_PAT environment variable, same as

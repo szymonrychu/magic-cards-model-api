@@ -596,13 +596,18 @@ def test_the_drivers_client_timeout_outlasts_the_wrappers_own_bound() -> None:
 
 
 def test_run_review_returns_stripped_stdout_on_success(tmp_path: Path) -> None:
+    """`run_review` now makes two calls (the prose pass, then the plays
+    pass - see the FD6 (3) review-fix section below), both against this
+    same stub, so the assertion here is only the invariant true of BOTH:
+    `--print` is always present. The plays pass's own `--tools` value is
+    pinned by the dedicated argv tests above (`_captured`, no real
+    subprocess), and the prose pass's by
+    `test_run_review_prose_pass_gets_no_tools_at_all` below."""
     stub = _stub(
         tmp_path,
         """
         import sys
         assert sys.argv[1] == "--print"
-        # The allowlist really arrives as one non-empty argv element.
-        assert sys.argv[sys.argv.index("--tools") + 1].split(",")[0] == "Read"
         print("  the review text  \\n")
         """,
     )
@@ -682,6 +687,70 @@ def test_run_review_salvages_partial_text_written_before_a_timeout(tmp_path: Pat
     text = run_review(settings, "x", "m", "high")
     assert "the critique text, written before the tools ran" in text
     assert "review_timed_out" in text
+
+
+def test_run_review_files_prose_from_a_toolless_pass_even_when_the_plays_pass_buffers_everything(
+    tmp_path: Path,
+) -> None:
+    """Review fix, round 1 finding 2: the salvage test above stubs a
+    `claude` that writes and flushes its prose BEFORE it sleeps past its
+    timeout - which is not how the real CLI behaves. `claude --print`'s
+    default (non-streaming) text output holds its ENTIRE answer in memory
+    and writes it in one block right before the process would exit
+    normally, so a real process killed mid-tool-call has NOTHING sitting in
+    the stdout pipe for `subprocess.TimeoutExpired.stdout` to salvage - the
+    prompt's own instruction to "write the whole critique before you touch
+    mcp-seat" describes an ORDER inside the transcript, not a guarantee
+    about what is flushed to this process's stdout before a kill.
+
+    The stub below reproduces that: given no tools at all (the prose-only
+    first pass `run_review` must now make) it prints its answer immediately,
+    exactly like a real `claude --print` call with nothing to wait on; given
+    ANY tools (the plays pass) it buffers everything and sleeps past its own
+    bound, so `TimeoutExpired.stdout` comes back empty - the realistic
+    failure this finding is about. `run_review` must still return the prose
+    pass's own text rather than raising `ReviewFailed`, because that pass
+    already completed and its own text was never at risk from the plays
+    pass's own timeout."""
+    stub = _stub(
+        tmp_path,
+        """
+        import sys, time
+        tools = sys.argv[sys.argv.index("--tools") + 1]
+        if tools:
+            # The plays pass: buffers its whole answer and never gets there.
+            time.sleep(5)
+        else:
+            print("the prose findings, from the tool-less first pass")
+        """,
+    )
+    settings = _settings(stub, tmp_path, REVIEW_TIMEOUT_SECONDS="0.3")
+    text = run_review(settings, "x", "m", "high")
+    assert "the prose findings, from the tool-less first pass" in text
+    assert "review_timed_out" in text
+
+
+def test_run_review_prose_pass_gets_no_tools_at_all(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The guarantee behind the fix above is structural, not a prompt
+    request: the prose-only first pass cannot run any `mcp-seat` command
+    even if it tried, because `--tools`/`--allowedTools` name none at all."""
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+        return _Completed()
+
+    monkeypatch.setattr(oneshot.subprocess, "run", fake_run)
+    settings = _settings("claude", tmp_path)
+    run_review(settings, "critique this game", "claude-opus-5", "high")
+
+    assert len(calls) == 2, "the prose pass and the plays pass are two separate calls"
+    prose_argv, plays_argv = calls
+    assert _flag(prose_argv, "--tools") == ""
+    assert _flag(prose_argv, "--allowedTools") == ""
+    assert _flag(plays_argv, "--tools") == ",".join(oneshot.REVIEW_TOOLS)
 
 
 def test_run_review_still_raises_when_a_timeout_leaves_no_partial_text(tmp_path: Path) -> None:

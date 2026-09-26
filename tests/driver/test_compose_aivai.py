@@ -245,9 +245,13 @@ def test_a_dotenv_carrying_the_shared_claude_model_does_not_change_the_aivai_sea
     assert game_env["AGENT_DEFAULT_EFFORT"] == "low"
 
 
-def test_both_agents_and_both_drivers_have_a_ninety_two_minute_stop_grace_period(compose):
+def test_both_agents_and_both_drivers_have_the_seat_jobs_stop_grace_period(compose):
+    """Review fix round 1: 7410s (up from 5520/92m) - mirrors
+    deploy/seat-job.yaml's own `terminationGracePeriodSeconds`, moved up
+    with `driver.app.RETIRE_REVIEW_JOIN_TIMEOUT`'s decision-count-aware
+    raise. See tests/driver/test_compose.py's own version of this test."""
     for name in ("agent-p1", "agent-p2", "driver-p1", "driver-p2"):
-        assert compose["services"][name]["stop_grace_period"] == "92m", name
+        assert compose["services"][name]["stop_grace_period"] == "7410s", name
 
 
 def test_both_agents_get_the_shared_memory_bind_mount(compose):

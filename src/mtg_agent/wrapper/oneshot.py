@@ -409,7 +409,15 @@ def _env_for(settings: Settings) -> dict[str, str]:
     return env
 
 
-def _argv(settings: Settings, model: str, effort: str, mcp_config: Path) -> list[str]:
+def _argv(
+    settings: Settings,
+    model: str,
+    effort: str,
+    mcp_config: Path,
+    *,
+    tools: tuple[str, ...] = REVIEW_TOOLS,
+    allowed_tools: tuple[str, ...] | None = None,
+) -> list[str]:
     """The argv `claude` is spawned with - see the module docstring for the
     allowlist and the two isolation guards.
 
@@ -423,7 +431,16 @@ def _argv(settings: Settings, model: str, effort: str, mcp_config: Path) -> list
     (`subprocess.run(..., input=_capped(prompt))`), which `claude --print`
     reads its prompt from exactly as it would from a terminal pipe - and
     the trailing `--`/prompt pair this function used to return is gone with
-    it, not merely moved."""
+    it, not merely moved.
+
+    **`tools`/`allowed_tools` (review fix, round 1 finding 2).** Default to
+    the plays pass's own full allowlist (`REVIEW_TOOLS`/
+    `review_allowed_tools()`) so every existing caller of this function
+    keeps its old shape. `run_review`'s prose-only first pass passes empty
+    tuples for both instead - not merely an unused allowlist, a `--tools ""`
+    that removes every built-in tool from the process's own surface, so
+    that pass cannot run `mcp-seat` (or anything else) even if it tried."""
+    resolved_allowed = allowed_tools if allowed_tools is not None else review_allowed_tools()
     return [
         settings.claude_path,
         "--print",
@@ -434,11 +451,9 @@ def _argv(settings: Settings, model: str, effort: str, mcp_config: Path) -> list
         # The tool surface: which built-ins exist, which may run unasked,
         # which stay denied, and that nothing may prompt.
         "--tools",
-        ",".join(REVIEW_TOOLS),
+        ",".join(tools),
         "--allowedTools",
-        # Resolved fresh on every call - see `review_allowed_tools`'s own
-        # docstring for why this is a function and not a module constant.
-        ",".join(review_allowed_tools()),
+        ",".join(resolved_allowed),
         "--disallowed-tools",
         ",".join(DENY_TOOLS),
         "--permission-prompts",
@@ -568,15 +583,40 @@ def run_review(
     of decisions is not bound by the same flat number a short game is.
     `None` (every caller before this) keeps the old behaviour exactly.
 
-    **FD6 (3): a timeout that already wrote prose loses no text.** The ask
-    (`driver.review._ask`) tells Opus to write its whole critique before it
-    touches `mcp-seat` at all, so a timeout that kills the process partway
-    through the DSL submission phase has usually already flushed the prose
-    findings to stdout. `subprocess.TimeoutExpired` carries whatever the
-    killed process had already written (`Popen.communicate`'s own
-    behaviour); when that is non-empty this returns it, marked with
-    `REVIEW_TIMED_OUT_NOTE`, instead of raising - a process that never wrote
-    anything still raises `ReviewFailed` exactly as it always did.
+    **A tool-less prose pass runs first (review fix, round 1 finding 2),
+    THEN the tool-using plays pass - two separate `claude --print` calls,
+    not one.** FD6 (3)'s original shape asked Opus, in a single call, to
+    write its whole critique before touching `mcp-seat`, and salvaged
+    `subprocess.TimeoutExpired.stdout` when a timeout killed that one call
+    mid-DSL-submission. That salvage is real (`_partial_text` below still
+    does it, for either pass), but it only ever recovers text the CHILD
+    PROCESS had already flushed to its own stdout - and the real `claude
+    --print` CLI, in its default non-streaming text output, holds its
+    entire answer in memory and writes it in one block right before the
+    process would exit normally. A process killed while it is still running
+    a tool call has nothing sitting in the pipe for that salvage to find,
+    no matter how early in the TRANSCRIPT the prose came before the tool
+    call did. `_prose_pass` below is what actually guarantees the prose
+    survives: it is given no tools at all (`_argv(..., tools=(),
+    allowed_tools=())`), so it cannot get stuck on an `mcp-seat` round trip
+    and reliably returns within `settings.review_prose_timeout` - well
+    before `_plays_pass` (the original single-call shape, unchanged) ever
+    starts. If the plays pass then times out, exits non-zero, or the
+    binary vanishes out from under it, THAT failure is degraded to a note
+    appended to the prose pass's own text (`_plays_phase_failed_note`)
+    rather than raised - the prose already exists and was never at risk
+    from the plays pass's own failure. Only the prose pass's own failure
+    (nothing to salvage from IT either) still raises `ReviewFailed`, exactly
+    as the single-call version always did.
+
+    `timeout`, when given, overrides `settings.review_timeout` for the
+    PLAYS pass only - `wrapper.config.scaled_review_timeout` computes it
+    from the reviewed game's own decision count (FD6 (3)), so a review with
+    hundreds of decisions is not bound by the same flat number a short game
+    is. The prose pass's own budget (`settings.review_prose_timeout`) is
+    unaffected: it makes no tool round trips, so it does not scale with
+    decision count the way the plays pass does. `None` (every caller before
+    this) keeps the old behaviour exactly for the plays pass's own bound.
 
     Raises `ReviewFailed` for every other way this can go wrong - an
     unrendered workspace or a missing guides checkout (before anything is
@@ -590,15 +630,111 @@ def run_review(
     bound = settings.review_timeout if timeout is None else timeout
     capped_prompt = _capped(prompt)
     truncated = len(prompt) > MAX_PROMPT_CHARS
+
+    prose_text = _prose_pass(settings, capped_prompt, model, effort, mcp_config)
+
+    try:
+        text = _plays_pass(settings, capped_prompt, model, effort, mcp_config, bound)
+    except ReviewFailed as exc:
+        text = f"{prose_text}\n\n{_plays_phase_failed_note(exc)}" if prose_text else None
+        if text is None:
+            raise
+
+    if truncated:
+        text = f"{text}\n\n{REVIEW_TRUNCATED_NOTE}"
+    return text
+
+
+#: Prepended to the prose pass's own stdin only (never the plays pass's,
+#: which keeps the original prompt verbatim - see `test_run_review_sends_a_
+#: 200k_prompt_on_stdin_byte_for_byte`, which pins the plays pass's input to
+#: the prompt exactly). The prompt below this preamble still carries the DSL
+#: submission ask (`driver.review._dsl_submission_ask`) - this pass simply
+#: has no tools to act on it with - so without this sentence the model would
+#: otherwise spend part of its own answer explaining that it cannot run
+#: `mcp-seat` rather than writing the critique this pass exists to get.
+_PROSE_PASS_PREAMBLE = (
+    "This is pass 1 of 2. You have no tools in this pass - that is deliberate, not an "
+    "error: it guarantees your prose critique and turning points survive even if pass 2 "
+    "(with tools, run separately afterward) runs out of time mid-DSL-submission. Write "
+    "the prose critique and the turning points section in full now, then stop - do not "
+    "attempt the DSL submission section below; pass 2 handles that with the tools you "
+    "do not have here.\n\n"
+)
+
+
+def _prose_pass(
+    settings: Settings, capped_prompt: str, model: str, effort: str, mcp_config: Path
+) -> str:
+    """`run_review`'s tool-less first pass - see that function's own
+    docstring for why it exists. No tools at all, so it cannot get stuck on
+    an `mcp-seat` round trip; its own bound is `settings.review_prose_timeout`,
+    fixed rather than scaled, since it makes no tool round trips to scale."""
+    return _run_claude(
+        settings,
+        _PROSE_PASS_PREAMBLE + capped_prompt,
+        model,
+        effort,
+        mcp_config,
+        tools=(),
+        allowed_tools=(),
+        timeout=settings.review_prose_timeout,
+    )
+
+
+def _plays_pass(
+    settings: Settings,
+    capped_prompt: str,
+    model: str,
+    effort: str,
+    mcp_config: Path,
+    bound: float,
+) -> str:
+    """`run_review`'s original single-call shape, unchanged: the full tool
+    allowlist, the full (possibly scaled) bound. Its own timeout/failure
+    salvage (`_run_claude`'s `subprocess.TimeoutExpired` handling) stays as
+    a backstop - it still recovers real partial text on the rare stub or
+    CLI that DOES flush before a kill - but `run_review`'s own prose-pass
+    fallback is what makes that recovery load-bearing rather than best hope
+    for the realistic case where it recovers nothing."""
+    return _run_claude(
+        settings,
+        capped_prompt,
+        model,
+        effort,
+        mcp_config,
+        tools=REVIEW_TOOLS,
+        allowed_tools=review_allowed_tools(),
+        timeout=bound,
+    )
+
+
+def _run_claude(
+    settings: Settings,
+    prompt: str,
+    model: str,
+    effort: str,
+    mcp_config: Path,
+    *,
+    tools: tuple[str, ...],
+    allowed_tools: tuple[str, ...],
+    timeout: float,
+) -> str:
+    """One bounded `claude --print` call with the given tool surface - the
+    machinery `_prose_pass` and `_plays_pass` both use, differing only in
+    `tools`/`allowed_tools`/`timeout`. This is `run_review`'s entire body
+    before the prose/plays split (FD6 (3) review fix, round 1): the
+    subprocess call, the timeout salvage, and the nonzero-exit failure
+    message, unchanged."""
     try:
         result = subprocess.run(
-            _argv(settings, model, effort, mcp_config),
+            _argv(settings, model, effort, mcp_config, tools=tools, allowed_tools=allowed_tools),
             cwd=settings.workspace,
             env=_env_for(settings),
-            input=capped_prompt,
+            input=prompt,
             capture_output=True,
             text=True,
-            timeout=bound,
+            timeout=timeout,
         )
     except FileNotFoundError as exc:
         raise ReviewFailed(f"{settings.claude_path} is not on PATH") from exc
@@ -606,7 +742,7 @@ def run_review(
         salvaged = _partial_text(exc.stdout)
         if salvaged:
             return f"{salvaged}\n\n{REVIEW_TIMED_OUT_NOTE}"
-        raise ReviewFailed(f"the review did not finish within {bound}s") from exc
+        raise ReviewFailed(f"the review did not finish within {timeout}s") from exc
     except OSError as exc:
         raise ReviewFailed(f"could not run {settings.claude_path}: {exc}") from exc
     if result.returncode != 0:
@@ -626,7 +762,18 @@ def run_review(
             if tail
             else f"claude exited {result.returncode}"
         )
-    text = result.stdout.strip()
-    if truncated:
-        text = f"{text}\n\n{REVIEW_TRUNCATED_NOTE}"
-    return text
+    return result.stdout.strip()
+
+
+def _plays_phase_failed_note(exc: ReviewFailed) -> str:
+    """What `run_review` appends to the prose pass's own text when the
+    plays pass could not complete at all (a timeout with nothing to
+    salvage, a nonzero exit, or the binary vanishing) - so a filed review
+    says its DSL submission never ran, rather than reading as a complete
+    critique that simply stopped early. Reuses the `review_timed_out` key
+    `REVIEW_TIMED_OUT_NOTE` already uses, since a caller grepping for that
+    marker should find every shape of "the plays phase did not finish"."""
+    return (
+        f"review_timed_out: true (the prose findings above were already written and filed "
+        f"before the DSL submission phase ran; that phase did not finish: {exc})"
+    )

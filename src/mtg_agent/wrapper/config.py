@@ -123,6 +123,16 @@ class Settings:
     #: decision count - a runaway game must still fail in bounded time
     #: rather than the review timeout growing without limit.
     review_timeout_max: float = 10800.0
+    #: FD6 (3) review fix: the budget for `run_review`'s own prose-only
+    #: first pass (no tools at all - see `oneshot.run_review`'s own
+    #: docstring for why the prose critique now runs as a separate call
+    #: before the tool-using DSL submission pass). Fixed, not scaled by
+    #: decision count like `review_timeout_per_decision` above: the prose
+    #: pass makes no `mcp-seat` round trips regardless of how many decisions
+    #: the game carries (its own output is capped at eight findings plus a
+    #: turning-points line), so its cost is reading a longer prompt, not
+    #: waiting on more tool calls. 300s is generous headroom for that alone.
+    review_prose_timeout: float = 300.0
     boot_timeout: float = 60.0
     submit_delay: float = 0.4
     #: How long an interrupted turn gets to end on its own before the wrapper
@@ -176,6 +186,7 @@ class Settings:
             review_timeout=_float(env, "REVIEW_TIMEOUT_SECONDS", 3600.0),
             review_timeout_per_decision=_float(env, "REVIEW_TIMEOUT_PER_DECISION_SECONDS", 6.0),
             review_timeout_max=_float(env, "REVIEW_TIMEOUT_MAX_SECONDS", 10800.0),
+            review_prose_timeout=_float(env, "REVIEW_PROSE_TIMEOUT_SECONDS", 300.0),
             boot_timeout=_float(env, "BOOT_TIMEOUT_SECONDS", 60.0),
             submit_delay=_float(env, "SUBMIT_DELAY_SECONDS", 0.4),
             interrupt_settle=_float(env, "INTERRUPT_SETTLE_SECONDS", 20.0),
@@ -223,3 +234,21 @@ def scaled_review_timeout(settings: Settings, decision_count: int) -> float:
         return settings.review_timeout
     scaled = settings.review_timeout + decision_count * settings.review_timeout_per_decision
     return min(scaled, settings.review_timeout_max)
+
+
+def scaled_review_wall_time(settings: Settings, decision_count: int) -> float:
+    """`run_review`'s own worst-case wall-clock time for one `POST
+    /v1/review` call at `decision_count` (review fix, round 1 finding 1):
+    the prose-only first pass's own fixed budget
+    (`settings.review_prose_timeout` - it makes no tool round trips, so it
+    does not scale with `decision_count`) plus the plays pass's scaled
+    bound (`scaled_review_timeout` above).
+
+    `driver.app.review_http_timeout` is the reason this exists as its own
+    function rather than being inlined there: the driver runs in a separate
+    container and cannot read the wrapper's own `Settings` (it has no
+    access to that env), so it mirrors this exact formula against the
+    wrapper's DEFAULTS instead of guessing at a live value it cannot see -
+    a change to either side's formula has to change both, and a shared
+    function is what keeps that from drifting apart silently."""
+    return settings.review_prose_timeout + scaled_review_timeout(settings, decision_count)

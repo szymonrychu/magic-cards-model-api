@@ -114,16 +114,17 @@ spec:
       # Room for a clean handover when the Job is deleted mid-game, subagent
       # development included, AND for the post-game AI review `retire` joins
       # right after: the driver's handover gives up at 1680s, its preStop
-      # waits 5460s (DR3: past the handover's own budget, far enough to also
-      # outlast `driver.app.RETIRE_REVIEW_JOIN_TIMEOUT`, 3730s, since `retire`
-      # runs the review join right after the marker write, inside the same
-      # termination window), the agent's preStop waits up to 5480s for the
-      # marker (and for its own last push), and both finish inside this grace
-      # before the kubelet sends SIGKILL. A seat's activeDeadlineSeconds
-      # (14400) is far longer, so it never cuts the grace short. A
-      # follow-up's driver writes the marker at once when its Job is
-      # deleted, so its preStops return straight away.
-      terminationGracePeriodSeconds: 5520
+      # waits 7350s (review fix round 1: past the handover's own budget, far
+      # enough to also outlast `driver.app.RETIRE_REVIEW_JOIN_TIMEOUT`,
+      # 5620s - decision-count aware now, up to its own new ceiling - since
+      # `retire` runs the review join right after the marker write, inside
+      # the same termination window), the agent's preStop waits up to 7370s
+      # for the marker (and for its own last push), and both finish inside
+      # this grace before the kubelet sends SIGKILL. A seat's
+      # activeDeadlineSeconds (14400) is still longer, so it never cuts the
+      # grace short. A follow-up's driver writes the marker at once when its
+      # Job is deleted, so its preStops return straight away.
+      terminationGracePeriodSeconds: 7410
       automountServiceAccountToken: false
       imagePullSecrets:
       - name: regcred
@@ -317,7 +318,7 @@ spec:
         - name: mtg-decks-git
           mountPath: /var/run/mtg-decks-git
           readOnly: true
-        # Waits (up to 5480s, inside the 5520s grace) for the driver's handover
+        # Waits (up to 7370s, inside the 7410s grace) for the driver's handover
         # to finish before the wrapper is stopped.
         lifecycle:
           preStop:
@@ -327,7 +328,7 @@ spec:
               - -m
               - mtg_agent.wrapper.handover_wait
               - --wait
-              - '5480'
+              - '7370'
         startupProbe:
           httpGet:
             path: /healthz
@@ -401,7 +402,7 @@ spec:
         - name: driver-workspace
           mountPath: /driver-workspace
         # Hands the seat over, then joins the AI review's thread (up to
-        # 5460s, inside the 5520s grace) before the driver is stopped.
+        # 7350s, inside the 7410s grace) before the driver is stopped.
         lifecycle:
           preStop:
             exec:
@@ -410,7 +411,7 @@ spec:
               - -m
               - mtg_agent.driver.handover
               - --wait
-              - '5460'
+              - '7350'
         readinessProbe:
           httpGet:
             path: /healthz

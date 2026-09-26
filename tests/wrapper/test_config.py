@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mtg_agent.wrapper.config import Settings, scaled_review_timeout
+from mtg_agent.wrapper.config import Settings, scaled_review_timeout, scaled_review_wall_time
 
 
 def test_defaults_when_env_is_empty():
@@ -150,3 +150,40 @@ def test_scaled_review_timeout_never_exceeds_the_configured_bound():
         }
     )
     assert scaled_review_timeout(s, 1000) == 5000.0
+
+
+# Review fix, round 1 finding 1: `driver.app.review_http_timeout` has to
+# mirror this exact formula against the wrapper's own defaults (it runs in a
+# separate container and cannot read the wrapper's env) - a shared function
+# is what keeps the two from drifting apart the way `REVIEW_HTTP_TIMEOUT`
+# already had, fixed while `scaled_review_timeout` grew underneath it.
+
+
+def test_review_prose_timeout_default_and_override():
+    assert Settings.from_env({}).review_prose_timeout == 300.0
+    s = Settings.from_env({"REVIEW_PROSE_TIMEOUT_SECONDS": "120"})
+    assert s.review_prose_timeout == 120.0
+
+
+def test_scaled_review_wall_time_is_the_prose_budget_plus_the_scaled_timeout():
+    s = Settings.from_env(
+        {
+            "REVIEW_TIMEOUT_SECONDS": "3600",
+            "REVIEW_TIMEOUT_PER_DECISION_SECONDS": "6",
+            "REVIEW_PROSE_TIMEOUT_SECONDS": "300",
+        }
+    )
+    assert scaled_review_wall_time(s, 0) == 300.0 + 3600.0
+    assert scaled_review_wall_time(s, 50) == 300.0 + 3600.0 + 50 * 6.0
+
+
+def test_scaled_review_wall_time_is_capped_by_review_timeout_max_too():
+    s = Settings.from_env(
+        {
+            "REVIEW_TIMEOUT_SECONDS": "3600",
+            "REVIEW_TIMEOUT_PER_DECISION_SECONDS": "100",
+            "REVIEW_TIMEOUT_MAX_SECONDS": "5000",
+            "REVIEW_PROSE_TIMEOUT_SECONDS": "300",
+        }
+    )
+    assert scaled_review_wall_time(s, 1000) == 300.0 + 5000.0

@@ -1342,23 +1342,24 @@ def test_role_and_game_id_reach_the_agent_through_their_own_placeholders() -> No
 
 @pytest.mark.parametrize("role", ROLES)
 def test_the_pod_gives_both_containers_time_to_hand_over(role: str) -> None:
-    """5520 s of grace, sized for a handover that develops scripts and guides
+    """7410 s of grace, sized for a handover that develops scripts and guides
     through subagents (game 16a9cf8f ran out a 510 s budget doing exactly
     that) AND for `retire`'s join on the post-game AI review thread after it
-    (DR3): the driver's preStop waits 5460 of it for the handover, the
-    agent's waits up to 5480 for that marker, so both finish inside the
+    (review fix round 1: decision-count aware now, up from DR3's flat
+    bound): the driver's preStop waits 7350 of it for the handover, the
+    agent's waits up to 7370 for that marker, so both finish inside the
     grace."""
     job = _build_role(role)
-    assert _pod(job)["terminationGracePeriodSeconds"] == 5520
+    assert _pod(job)["terminationGracePeriodSeconds"] == 7410
     driver_stop = _container(job, "driver")["lifecycle"]["preStop"]["exec"]["command"]
-    assert driver_stop == ["python", "-m", "mtg_agent.driver.handover", "--wait", "5460"]
+    assert driver_stop == ["python", "-m", "mtg_agent.driver.handover", "--wait", "7350"]
     agent_stop = _container(job, "agent")["lifecycle"]["preStop"]["exec"]["command"]
     assert agent_stop == [
         "python",
         "-m",
         "mtg_agent.wrapper.handover_wait",
         "--wait",
-        "5480",
+        "7370",
     ]
 
 
@@ -1397,7 +1398,7 @@ def test_the_role_job_still_validates_as_a_batch_v1_job(role: str) -> None:
     assert _leftover_placeholders(job) == []
     parsed = k8s_client.ApiClient()._ApiClient__deserialize(job, k8s_client.V1Job)
     spec = parsed.spec.template.spec
-    assert spec.termination_grace_period_seconds == 5520
+    assert spec.termination_grace_period_seconds == 7410
     agent = next(c for c in spec.containers if c.name == "agent")
     assert agent.lifecycle.pre_stop._exec.command[2] == "mtg_agent.wrapper.handover_wait"
 

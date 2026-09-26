@@ -117,8 +117,16 @@ RETIRE_REASON = "the game is over"
 #: itself following `wrapper.config.Settings.review_timeout`'s 1200 -> 3600)
 #: - see that constant's own docstring for why a review now needs several
 #: times the budget it used to.
+#:
+#: Review fix, round 1 finding 1: moved again, from 3730.0 to
+#: `mtg_agent.driver.app.RETIRE_REVIEW_JOIN_TIMEOUT`'s own new value
+#: (5620.0) - that constant stopped being a bare number derived once from
+#: the flat `REVIEW_HTTP_TIMEOUT` and is now sized off `REVIEW_HTTP_TIMEOUT_
+#: MAX` (itself decision-count aware) plus the review-record fetch's own
+#: retry budget (FD6 (4)) - see that constant's own docstring for the full
+#: derivation.
 DRIVER_HANDOVER_BUDGET_SECONDS = 1680.0
-DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT = 3730.0
+DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT = 5620.0
 
 #: What a reflection turn is given before the handover starts. It is one
 #: short turn that writes the agent's memory notes, far shorter than the
@@ -134,9 +142,9 @@ POSTGAME_RELEASE_SECONDS = (
 doing post-game work before `release_overdue` hard-releases them: the
 reflection turn (`DRIVER_REFLECTION_ALLOWANCE_SECONDS`), then the handover
 (`DRIVER_HANDOVER_BUDGET_SECONDS`, 1680s), then `retire`'s join on the Opus
-review thread (`DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT`, DR3: 3730s, up from
-1330s) - about an hour and forty minutes now, 6010s. Past that the driver
-has overrun every allowance it has, so holding the row in "recording
+review thread (`DRIVER_RETIRE_REVIEW_JOIN_TIMEOUT`, review fix round 1:
+5620s, up from 3730s) - a bit over two hours now, 7900s. Past that the
+driver has overrun every allowance it has, so holding the row in "recording
 plays..." any longer only hides a stuck pod."""
 
 #: What `schedule_followup` records itself under (`audit.
