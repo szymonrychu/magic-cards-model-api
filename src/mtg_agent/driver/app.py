@@ -773,6 +773,59 @@ def build_app(
                 exc,
             )
 
+    def fetch_review_record(assignment: Assignment) -> tuple[Any, str]:
+        """FD6 (4): the review-record GET, with its own configurable
+        per-try timeout (`DriverSettings.review_record_timeout`, "well
+        above" `make_client`'s old fixed 30s) and a bounded exponential
+        backoff retry on exactly the two live-observed prod failures
+        (fb3-parity.md items 1/6): a transport TIMEOUT, and a 409 (the game
+        not yet released or ended - the api's post-game gate on this
+        route). Every other failure - a genuine 4xx/5xx, an unreachable
+        server, any other transport error - is non-retryable and returns at
+        once, exactly as it always did: a game server that is simply down
+        will not become reachable by waiting up to the retry budget for it,
+        and `post_ai_review`'s caller (`retire`) still has its own bounded
+        join to respect.
+
+        Returns `(record, "")` on success - `record` can legitimately be
+        `None` (a malformed review record IS a successful fetch; building
+        the prompt from it is what fails, and that is a different stage)
+        - or `(None, reason)` once retries are exhausted or a non-retryable
+        failure is hit. `reason` is empty exactly when the fetch succeeded,
+        so the caller checks THAT rather than `record is None`. On
+        exhaustion, `reason` is the LAST failure seen, never the first, so
+        `record_review_failure` files what an operator would actually need
+        to act on."""
+        deadline = time.monotonic() + settings.review_record_retry_budget
+        delay = settings.review_record_retry_start
+        reason = ""
+        while True:
+            retryable = False
+            try:
+                with make_client(settings.game_api) as client:
+                    response = client.get(
+                        f"/api/games/{assignment.game_id}/review",
+                        params={"uid": assignment.uid},
+                        timeout=settings.review_record_timeout,
+                    )
+            except httpx.TimeoutException as exc:
+                reason = str(exc) or repr(exc)
+                retryable = True
+            except Exception as exc:  # noqa: BLE001 - any other transport error is not retried
+                return None, str(exc) or repr(exc)
+            else:
+                if response.status_code == 409:
+                    reason = "the game server answered 409 (not yet released or ended)"
+                    retryable = True
+                elif response.status_code >= 400:
+                    return None, f"the game server answered {response.status_code}"
+                else:
+                    return response.json(), ""
+            if not retryable or time.monotonic() >= deadline:
+                return None, reason
+            time.sleep(max(0.0, min(delay, deadline - time.monotonic())))
+            delay = min(delay * 2, settings.review_record_retry_max_delay)
+
     def post_ai_review(assignment: Assignment, reflection_text: str) -> None:
         """Generate and file the post-game AI review - the handoff's other
         half, run on Opus (`AgentSettings.review_default`, fixed, never this
@@ -796,33 +849,14 @@ def build_app(
         `ai-review-failed[<stage>]` prefix so they are greppable and told
         apart in logs too; the durable row is in addition to logging, never
         instead of it."""
-        try:
-            with make_client(settings.game_api) as client:
-                response = client.get(
-                    f"/api/games/{assignment.game_id}/review", params={"uid": assignment.uid}
-                )
-            if response.status_code >= 400:
-                log.warning(
-                    "ai-review-failed[review_record]: the game server refused the review "
-                    "record for game %s: %s",
-                    assignment.game_id,
-                    response.status_code,
-                )
-                record_review_failure(
-                    assignment,
-                    "review_record",
-                    f"the game server answered {response.status_code}",
-                    invoked=False,
-                )
-                return
-            review_record = response.json()
-        except Exception as exc:  # noqa: BLE001 - an unreachable game server must not block retire
+        review_record, review_record_failure = fetch_review_record(assignment)
+        if review_record_failure:
             log.warning(
                 "ai-review-failed[review_record]: could not read the review record for game %s: %s",
                 assignment.game_id,
-                exc,
+                review_record_failure,
             )
-            record_review_failure(assignment, "review_record", str(exc) or repr(exc), invoked=False)
+            record_review_failure(assignment, "review_record", review_record_failure, invoked=False)
             return
 
         try:
@@ -841,6 +875,12 @@ def build_app(
             record_review_failure(assignment, "prompt", str(exc) or repr(exc), invoked=False)
             return
         review_settings = AgentSettings.review_default()
+        # FD6 (3): how many decisions this game's own review record carries
+        # for this player - the wrapper scales the review's own timeout by
+        # this count (`wrapper.config.scaled_review_timeout`), since a game
+        # with hundreds of decisions runs many more `mcp-seat` round trips
+        # than the flat timeout was ever sized for.
+        decision_count = len((review_record.get("decisions") or {}).get(assignment.player) or [])
         try:
             with make_client(settings.wrapper_api) as client:
                 response = client.post(
@@ -849,6 +889,7 @@ def build_app(
                         "prompt": prompt,
                         "model": review_settings.model,
                         "effort": review_settings.effort,
+                        "decision_count": decision_count,
                     },
                     headers=wrapper_headers(),
                     timeout=REVIEW_HTTP_TIMEOUT,
@@ -913,6 +954,7 @@ def build_app(
         # best-effort, exactly like every other step in this function - a
         # game whose journal cannot be read still files the review text it
         # already has, with no statistics block rather than none at all.
+        journal_entries: list[dict[str, Any]] = []
         try:
             journal_entries = read_journal(settings.guides_root, assignment.game_id, "reviewer")
             stats_block = play_statistics_block(
@@ -956,6 +998,45 @@ def build_app(
                 exc,
             )
             record_review_failure(assignment, "file", str(exc) or repr(exc), invoked=True)
+
+        # FD6 (4): the reviewer's own `plays_outcome` row, `role="reviewer"`,
+        # from the same journal entries the statistics block above already
+        # read - so FD7's `play_stats` (and the opus-loop's own reporting)
+        # count the reviewer's admits/no-changes as the reviewer's, never
+        # folded into the seat's own handover row. Best-effort like every
+        # other step here: this never blocks or fails the handover that
+        # follows, and a refusal is logged rather than raised.
+        #
+        # **Posted only when the journal is non-empty.** This POST runs on
+        # the review's own background thread (`consider_ai_review`), fully
+        # independent of the handover's own synchronous flow - a game whose
+        # reviewer wrote nothing through `mcp-seat` (every fake reviewer in
+        # this codebase's own tests, and plenty of real reviews too) would
+        # otherwise post an empty row that races the handover's own
+        # `plays_outcome` POST for no benefit: FD7's counters have nothing
+        # to count from it either way, and a reader keyed to "the first
+        # plays_outcome row this game posted" (several call sites assume
+        # exactly one, the handover's) would nondeterministically read the
+        # reviewer's empty row instead on whichever thread wins the race.
+        if journal_entries:
+            try:
+                reviewer_verdict = assess(journal_entries, DevelopmentCandidates())
+                reviewer_body = plays_outcome_body(
+                    uid=assignment.uid,
+                    player=assignment.player,
+                    role="reviewer",
+                    verdict=reviewer_verdict,
+                    reasons=(),
+                    repushed=False,
+                )
+                post_plays_outcome(assignment, reviewer_body)
+            except Exception as exc:  # noqa: BLE001 - a bonus row, never a blocker
+                log.warning(
+                    "ai-review[plays-outcome]: could not file the reviewer's plays_outcome row "
+                    "for game %s: %s",
+                    assignment.game_id,
+                    exc,
+                )
 
     def consider_ai_review(assignment: Assignment, reflection_text: str, path: str) -> bool:
         """ "The game has ended - file the AI review, or say why not."

@@ -84,8 +84,25 @@ services:
       # silently inherited sonnet/high. Dedicated vars close that collision.
       - AGENT_DEFAULT_MODEL=${CLAUDE_AIVAI_MODEL:-claude-opus-5}
       - AGENT_DEFAULT_EFFORT=${CLAUDE_AIVAI_EFFORT:-low}
+      # FD6 (5), fb3-parity.md item 5: wired to the `postgres` service
+      # below - already present here for `mise run test:pg` parity, but
+      # never plumbed into `game` itself, so a finished local AIvAI game
+      # was lost on restart (`InMemoryRepository`) and the review read a
+      # different store than prod's own `REQUIRE_POSTGRES=1` one. Same
+      # component vars as docker-compose.yml's own `migrate` service.
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-mtg}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?}
+      - POSTGRES_DB=${POSTGRES_DB:-mtg}
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
-      - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro
+      # fb3-parity.md item 13: no code in `magic_cards_model_api` reads
+      # `/guides` outside `mcp-seat`'s own default root, and `game` never
+      # runs `mcp-seat` - prod's own api pod carries no guides mount
+      # either. Dropped rather than documented as unused.
       - scryfall-cache:/app/.scryfall-cache
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx;httpx.get('http://127.0.0.1:8000/api/health').raise_for_status()"]
@@ -106,7 +123,7 @@ services:
       platforms:
         - ${DOCKER_PLATFORM:-linux/amd64}
       args:
-        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.282}
         AGENT_UID: ${AGENT_UID:-1000}
         AGENT_GID: ${AGENT_GID:-1000}
     command: ["/bin/sh", "/usr/local/bin/guides-clone.sh"]
@@ -129,7 +146,7 @@ services:
       platforms:
         - ${DOCKER_PLATFORM:-linux/amd64}
       args:
-        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.282}
         AGENT_UID: ${AGENT_UID:-1000}
         AGENT_GID: ${AGENT_GID:-1000}
     command: ["/bin/sh", "/usr/local/bin/guides-clone.sh"]
@@ -152,7 +169,7 @@ services:
       platforms:
         - ${DOCKER_PLATFORM:-linux/amd64}
       args:
-        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.282}
         AGENT_UID: ${AGENT_UID:-1000}
         AGENT_GID: ${AGENT_GID:-1000}
     depends_on:
@@ -188,6 +205,11 @@ services:
       - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
       - MTG_ROLE=seat
       - MTG_GAME_ID=${MTG_GAME_ID:-}
+      # FD6 (5), fb3-parity.md item 3: where the driver writes this game's
+      # play-offer evidence record, read-only here - `plays admit` commits
+      # it next to the deck's plays, same as `deploy/seat-job.yaml`'s agent
+      # container.
+      - MTG_EVIDENCE_DIR=/driver-workspace/evidence
     secrets:
       - source: mtg_decks_gh_pat
         target: /var/run/mtg-decks-git/GH_PAT
@@ -196,6 +218,7 @@ services:
       # git indexes (and the two agents' commits) never collide.
       - agent-guides-p1:/guides
       - ./memory:/workspace/memory
+      - driver-workspace-p1:/driver-workspace:ro
     restart: unless-stopped
     stop_grace_period: 92m
 
@@ -207,7 +230,7 @@ services:
       platforms:
         - ${DOCKER_PLATFORM:-linux/amd64}
       args:
-        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.282}
         AGENT_UID: ${AGENT_UID:-1000}
         AGENT_GID: ${AGENT_GID:-1000}
     depends_on:
@@ -238,12 +261,14 @@ services:
       - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
       - MTG_ROLE=seat
       - MTG_GAME_ID=${MTG_GAME_ID:-}
+      - MTG_EVIDENCE_DIR=/driver-workspace/evidence
     secrets:
       - source: mtg_decks_gh_pat
         target: /var/run/mtg-decks-git/GH_PAT
     volumes:
       - agent-guides-p2:/guides
       - ./memory:/workspace/memory
+      - driver-workspace-p2:/driver-workspace:ro
     restart: unless-stopped
     stop_grace_period: 92m
 
@@ -275,6 +300,10 @@ services:
       # agent-p2's.
       - agent-guides-p1:/guides:ro
       - ./memory:/workspace/memory
+      # Read-write here, read-only on agent-p1: the driver writes this
+      # game's evidence record, the agent's `mcp-seat plays admit` reads it
+      # (`MTG_EVIDENCE_DIR` above) - same shape as `deploy/seat-job.yaml`.
+      - driver-workspace-p1:/driver-workspace
     stop_grace_period: 92m
 
   driver-p2:
@@ -301,6 +330,7 @@ services:
     volumes:
       - agent-guides-p2:/guides:ro
       - ./memory:/workspace/memory
+      - driver-workspace-p2:/driver-workspace
     stop_grace_period: 92m
 
 secrets:
@@ -315,3 +345,5 @@ volumes:
   postgres-data:
   agent-guides-p1:
   agent-guides-p2:
+  driver-workspace-p1:
+  driver-workspace-p2:

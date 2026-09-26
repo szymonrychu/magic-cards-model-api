@@ -288,10 +288,9 @@ spec:
           value: __MTG_ROLE__
         - name: MTG_GAME_ID
           value: __MTG_GAME_ID__
-        - name: GIT_COMMITTER_NAME
-          value: mtg-agent
-        - name: GIT_COMMITTER_EMAIL
-          value: mtg-agent@mtg-trainer.invalid
+        # FD6 (5), fb3-parity.md item 10: the git committer name/email used
+        # to be set here, but `gitwork.identity` sets the committer from
+        # MTG_ROLE above regardless - dead config, dropped.
         # Where the driver writes this game's play-offer evidence record
         # (`<dir>/<game>/<deck>.json`, on the read-only driver-workspace
         # mount below); `plays admit` commits it next to the deck's plays.

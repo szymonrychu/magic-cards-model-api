@@ -34,6 +34,23 @@ class DriverSettings:
     #: container is meant to exit 0 rather than sit idle waiting for the next
     #: match.
     exit_after_match: bool = False
+    #: FD6 (4): the per-try timeout on the review-record GET
+    #: (`app.post_ai_review`) - "well above 30s", the old, unconfigurable
+    #: bound `make_client`'s own 30s default gave it (fb3-parity.md item 6:
+    #: a live prod review timed out there, against an api pod capped at 1
+    #: CPU / 1Gi). Configurable so a slower api deployment can raise it
+    #: without a code change.
+    review_record_timeout: float = 120.0
+    #: How long, in total, the review-record GET keeps retrying a timeout or
+    #: a 409 (the game not yet released or ended, fb3-parity.md item 1)
+    #: before giving up and filing `ai_review_failed` with the final
+    #: reason - never partway through, and never unboundedly.
+    review_record_retry_budget: float = 300.0
+    #: The first retry's delay; each retry after that doubles it, capped at
+    #: `review_record_retry_max_delay` - a bounded exponential backoff, not
+    #: a tight retry loop hammering a game server that just said "not yet".
+    review_record_retry_start: float = 2.0
+    review_record_retry_max_delay: float = 30.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> DriverSettings:
@@ -53,4 +70,10 @@ class DriverSettings:
             agent_retry_interval=float(value("AGENT_RETRY_INTERVAL_SECONDS", "3")),
             assignment_json=value("DRIVER_ASSIGNMENT_JSON", ""),
             exit_after_match=value("DRIVER_EXIT_AFTER_MATCH", "").lower() in ("1", "true", "yes"),
+            review_record_timeout=float(value("REVIEW_RECORD_TIMEOUT_SECONDS", "120")),
+            review_record_retry_budget=float(value("REVIEW_RECORD_RETRY_BUDGET_SECONDS", "300")),
+            review_record_retry_start=float(value("REVIEW_RECORD_RETRY_START_SECONDS", "2")),
+            review_record_retry_max_delay=float(
+                value("REVIEW_RECORD_RETRY_MAX_DELAY_SECONDS", "30")
+            ),
         )

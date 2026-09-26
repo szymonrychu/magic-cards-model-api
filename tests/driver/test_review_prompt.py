@@ -483,7 +483,11 @@ def test_a_worst_case_long_games_prompt_stays_under_the_oneshot_ceiling() -> Non
 def test_the_ledger_block_respects_its_own_character_budget() -> None:
     record = _record(entries=[_row(seq, reasoning="z" * 5000) for seq in range(1, 201)])
     text = review_prompt(_assignment(), "notes", record)
-    assert len(text) < MAX_LEDGER_CHARS + 20_000
+    # FD6 (1): the fixed tail (ask + write bars) grew - the DSL ask now
+    # states the no-change command, the vocabulary, the 80-word cap and the
+    # content-gate summary - so the margin over MAX_LEDGER_CHARS grew with
+    # it. Still a bound with slack, not a measurement of the exact tail.
+    assert len(text) < MAX_LEDGER_CHARS + 35_000
     assert "earlier rows omitted" in text
 
 
@@ -1237,8 +1241,24 @@ def test_a_marker_lookalike_in_a_decisions_reasoning_is_defused() -> None:
     assert len(marker_lines) == 2, marker_lines
 
 
-def test_decisions_boards_are_dropped_oldest_first_with_a_marker_when_over_budget() -> None:
-    decisions = [_decision(n) for n in range(1, 151)]
+def _distinct_decision(seq: int, **overrides) -> dict:
+    """`_decision`, but with a `dsl` that is different for every `seq` (so
+    FD6 (2)'s grouping never collapses these) AND a board whose every field
+    changes every time (so FD6 (2)'s board-diffing never shrinks it either)
+    - the OLD per-decision drop behaviour (board stripped oldest single
+    decision first, once the section is genuinely over budget) is what a
+    test against this fixture is actually exercising."""
+    board = {"pad": f"{'x' * 550}-{seq}", "marker": f"board-mark-{seq}"}
+    return _decision(
+        seq,
+        dsl={"kind": "cast", "card": {"select": {}}, "seq_marker": seq},
+        board_by_perspective={"bob": board, "alice": {}},
+        **overrides,
+    )
+
+
+def test_decisions_with_distinct_dsl_have_boards_dropped_oldest_first_with_a_marker() -> None:
+    decisions = [_distinct_decision(n) for n in range(1, 151)]
     record = _record(decisions={"bob": decisions})
     text = review_prompt(_assignment(), "notes", record)
     assert "board(s) omitted" in text
@@ -1250,6 +1270,47 @@ def test_decisions_boards_are_dropped_oldest_first_with_a_marker_when_over_budge
     # so "board-mark-1" cannot be satisfied by "board-mark-100"/"...-150".
     assert '"board-mark-1"' not in text
     assert '"board-mark-150"' in text
+
+
+def test_decisions_sharing_one_generalized_dsl_are_grouped_into_one_entry() -> None:
+    """FD6 (2): the common real-game case - a long run of decisions (a
+    game's own passes chief among them, 83% of a real game's decisions per
+    fb3-measure.md) that all generalize to the identical DSL collapse to
+    ONE prompt entry naming every seq, instead of one entry per seq."""
+    decisions = [_decision(n) for n in range(1, 151)]  # `_decision`'s own dsl never varies by seq
+    record = _record(decisions={"bob": decisions})
+    text = review_prompt(_assignment(), "notes", record)
+    assert "identical, deduplicated" in text
+    # Every seq still appears, named in the one grouped entry.
+    for n in (1, 75, 150):
+        assert f"#{n}" in text
+    # Only one `dsl:` line for the whole run - not 150.
+    assert text.count("    dsl: ") == 1
+
+
+def test_a_decision_that_breaks_the_identical_run_gets_its_own_entry_and_a_real_diff() -> None:
+    """A decision whose generalization genuinely differs from the shared
+    run keeps its own board DIFF against the decision immediately before
+    it, never a diff against another member of the run it does not belong
+    to."""
+    decisions = [
+        _decision(1),
+        _decision(
+            2,
+            dsl={"kind": "activate", "ability_index": 0},
+            board_by_perspective={"bob": {"marker": "board-mark-2", "extra": "new-key"}},
+        ),
+        _decision(3),
+    ]
+    record = _record(decisions={"bob": decisions})
+    text = review_prompt(_assignment(), "notes", record)
+    # #1 and #3 share the default dsl and group together; #2's differs.
+    assert "decisions #1, #3" in text or "decisions #3, #1" in text
+    assert "decision #2" in text
+    # #2's board is a diff against #1's board: only the changed/added key
+    # rides in it, the unchanged "marker" default is gone from the diff -
+    # this decision's own new key is present either way.
+    assert '"extra":"new-key"' in text
 
 
 def test_a_short_decisions_section_declares_no_omission() -> None:
@@ -1439,3 +1500,120 @@ def test_review_prompt_guides_dir_defaults_to_the_real_default_path(
     text = review_prompt(_assignment(), "r", _record())
     assert "mcp-seat plays check --root /guides" in text
     assert parse_turning_points('turning_points: ["not", "a", "dict"]') == {}
+
+
+# ---------------------------------------------------------------------------
+# FD6 (1): the prompt contradictions are scoped, not left standing
+# ---------------------------------------------------------------------------
+
+
+def test_the_decline_trace_rule_is_scoped_to_refinements_of_offered_plays() -> None:
+    """gen gap 2: 'has to trace to a decline' used to read as a blanket ban
+    on drafting anything not tied to a decline - which flatly contradicts
+    the per-decision DSL ask a few paragraphs later. The rule survives for
+    what it was actually for (tightening an EXISTING play's conditions);
+    it no longer reads as covering a fresh draft or an advice-only play."""
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "has to trace to a decline" in text
+    assert "refinement" in text
+    assert "new play" in text or "brand-new play" in text
+    assert "needs no decline" in text or "no decline is owed" in text
+
+
+def test_prefer_prose_and_use_admit_conservatively_are_scoped_to_the_misplay_walk() -> None:
+    """The 'most conservatively'/'Prefer prose' guidance is about which
+    channel a MISPLAY finding goes through - it must not read as discouraging
+    the separate, unconditional per-decision DSL submission below it."""
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "most conservatively" in text
+    assert "Prefer prose" in text
+    assert "unconditional" in text
+    assert "DSL submission" in text or "dsl submission" in text.lower()
+
+
+def test_the_findings_cap_is_scoped_to_prose_findings_only() -> None:
+    """review.py:704-707: 'at most eight' and 'say nothing about a turn that
+    carried no misplay' describe the prose critique only - they must never
+    read as excusing a decision with no misplay from the DSL ask, which
+    owes a play or a no-change for every expressible decision regardless."""
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "at most eight" in text
+    assert "prose findings" in text
+    assert "every expressible decision" in text
+
+
+def test_the_dsl_ask_admits_a_play_or_records_a_decision_no_change() -> None:
+    """FD6's own restatement of the ask: for every expressible decision,
+    admit a generalized play OR record a `plays no-change --decision <seq>`
+    (FD7's command) - the DSL ask is never satisfied by silence on a
+    decision just because it carried no misplay."""
+    assignment = _assignment(game_id="g-42")
+    text = review_prompt(assignment, "r", _record())
+    assert "plays no-change --decision" in text
+    assert "--reason" in text
+    assert "every expressible decision" in text
+
+
+def test_the_ask_states_the_play_plan_word_cap() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "80 word" in text or "80-word" in text
+
+
+def test_the_ask_names_what_the_content_gate_refuses() -> None:
+    text = _flat(review_prompt(_assignment(), "r", _record()))
+    assert "content gate" in text
+    assert "api" in text or "http" in text
+
+
+def test_the_ask_names_the_dsl_vocabulary() -> None:
+    """After FD2 lands, this sentence's own vocabulary list grows - this
+    only pins that the sentence exists and names today's moves, so the list
+    can be extended in one place without this test needing to be rewritten
+    around the exact set."""
+    from mtg_agent.driver.review import EXPRESSIBLE_MOVE_VOCABULARY
+
+    text = review_prompt(_assignment(), "r", _record())
+    assert "vocabulary" in text.lower()
+    for word in EXPRESSIBLE_MOVE_VOCABULARY:
+        assert word in text
+
+
+# ---------------------------------------------------------------------------
+# FD6 (2): the budget never drops a decision's DSL, even at 400 decisions
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_decision(seq: int) -> dict:
+    """A realistic-shaped decision: mostly `pass` (measured at 83% of a real
+    game's decisions - fb3-measure.md), with a distinct cast/activate every
+    tenth one so the section carries some genuine variety too."""
+    if seq % 10 == 0:
+        return _decision(
+            seq,
+            dsl={"kind": "cast", "card": {"select": {"type": "creature"}}, "n": seq},
+            reasoning=f"cast on turn {seq}",
+        )
+    return _decision(
+        seq, dsl={"moves": [{"kind": "pass"}]}, action="pass", reasoning="nothing to do"
+    )
+
+
+def test_a_400_decision_synthetic_game_keeps_the_ask_and_every_seq() -> None:
+    """FD6 (2)'s own bar: a 400-decision game (fb3-gen.md gap 5's own
+    worst-case count) must never lose the ask, and every decision seq must
+    still be nameable in the Decisions section - the grouping fix is what
+    makes both true without needing `wrapper.oneshot._capped` to rescue
+    them."""
+    from mtg_agent.wrapper.oneshot import MAX_PROMPT_CHARS
+
+    decisions = [_synthetic_decision(n) for n in range(1, 401)]
+    record = _record(decisions={"bob": decisions})
+    text = review_prompt(_assignment(), "r", record)
+
+    assert len(text) < MAX_PROMPT_CHARS
+    # The ask (and the DSL submission instructions inside it) survives.
+    assert "SUBMIT ONE GENERALIZED PLAY PER DECISION" in text
+    assert "plays no-change --decision" in text
+    # Every single seq from 1 to 400 is named somewhere in the prompt.
+    missing = [n for n in range(1, 401) if f"#{n}" not in text]
+    assert missing == [], f"{len(missing)} decision seqs never appear: {missing[:10]}..."

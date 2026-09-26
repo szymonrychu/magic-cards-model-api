@@ -111,6 +111,18 @@ class Settings:
     #: `POST /v1/review`) and `RETIRE_REVIEW_JOIN_TIMEOUT` over that, both
     #: pinned by a test against this number.
     review_timeout: float = 3600.0
+    #: FD6 (3): how many extra seconds `scaled_review_timeout` adds to
+    #: `review_timeout` for each decision the reviewed game's own review
+    #: record carries - a game with hundreds of decisions submits many more
+    #: `mcp-seat plays check`/`plays admit`/`no-change` round trips than the
+    #: flat timeout above was ever sized for, and this scales with the count
+    #: instead of needing the flat number re-guessed upward again next time a
+    #: game's own decision count grows.
+    review_timeout_per_decision: float = 6.0
+    #: The ceiling `scaled_review_timeout` never crosses, however large the
+    #: decision count - a runaway game must still fail in bounded time
+    #: rather than the review timeout growing without limit.
+    review_timeout_max: float = 10800.0
     boot_timeout: float = 60.0
     submit_delay: float = 0.4
     #: How long an interrupted turn gets to end on its own before the wrapper
@@ -162,6 +174,8 @@ class Settings:
             hook_command=_str(env, "HOOK_COMMAND", "cc-stop-hook"),
             turn_timeout=_float(env, "TURN_TIMEOUT_SECONDS", 1800.0),
             review_timeout=_float(env, "REVIEW_TIMEOUT_SECONDS", 3600.0),
+            review_timeout_per_decision=_float(env, "REVIEW_TIMEOUT_PER_DECISION_SECONDS", 6.0),
+            review_timeout_max=_float(env, "REVIEW_TIMEOUT_MAX_SECONDS", 10800.0),
             boot_timeout=_float(env, "BOOT_TIMEOUT_SECONDS", 60.0),
             submit_delay=_float(env, "SUBMIT_DELAY_SECONDS", 0.4),
             interrupt_settle=_float(env, "INTERRUPT_SETTLE_SECONDS", 20.0),
@@ -194,3 +208,18 @@ class Settings:
         if resume:
             args.append("--continue")
         return args
+
+
+def scaled_review_timeout(settings: Settings, decision_count: int) -> float:
+    """`settings.review_timeout` extended by `settings.review_timeout_per_
+    decision` for every decision the reviewed game's own review record
+    carries, capped at `settings.review_timeout_max` (FD6 (3)).
+
+    A `decision_count` of 0 or less (unknown, or a game with nothing to
+    review) returns the flat `review_timeout` unchanged - the same value
+    every caller got before this existed, so a caller that cannot yet supply
+    a real count degrades to the old behaviour rather than to a wrong one."""
+    if decision_count <= 0:
+        return settings.review_timeout
+    scaled = settings.review_timeout + decision_count * settings.review_timeout_per_decision
+    return min(scaled, settings.review_timeout_max)

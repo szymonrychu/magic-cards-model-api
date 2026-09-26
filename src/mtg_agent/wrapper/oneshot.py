@@ -88,6 +88,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from .bootstrap import DENY_TOOLS
 from .config import Settings
@@ -318,18 +319,18 @@ REVIEW_STOP_HOOK_SINK = "http://127.0.0.1:1/internal/turn-complete"
 #:
 #: - `MTG_GAME_ID` - `plays priority`'s `--game-id` default, which is how
 #:   the per-game priority bound is attributed.
-#: - `GIT_COMMITTER_NAME` / `GIT_COMMITTER_EMAIL` - who the commits in the
-#:   checkout are committed by (the AUTHOR is `gitwork.identity`, which
-#:   derives from `MTG_ROLE` below).
 #: - `MTG_EVIDENCE_DIR` - where the driver wrote this game's play-offer
 #:   evidence record, which `plays admit` commits beside the deck's plays.
 #:
 #: `MTG_ROLE` is NOT in this list: it is set, not passed through, because
-#: the container's own value is the seat's.
+#: the container's own value is the seat's. `GIT_COMMITTER_NAME`/
+#: `GIT_COMMITTER_EMAIL` are NOT in this list either (FD6 (5), fb3-parity.md
+#: item 10): `gitwork.identity` sets the COMMITTER from `MTG_ROLE`, so
+#: either variable in this container's own environment never took effect -
+#: dead config, dropped here along with `deploy/seat-job.yaml`'s matching
+#: env entries.
 PASSED_THROUGH = (
     "MTG_GAME_ID",
-    "GIT_COMMITTER_NAME",
-    "GIT_COMMITTER_EMAIL",
     "MTG_EVIDENCE_DIR",
 )
 
@@ -459,10 +460,43 @@ def _argv(settings: Settings, model: str, effort: str, mcp_config: Path) -> list
     ]
 
 
+#: FD6 (2): what `_capped` appends when it had to cut anything to fit, and
+#: what `run_review` looks for on its own return value to know whether to
+#: append `REVIEW_TRUNCATED_NOTE` to the text it files. A plain marker
+#: string rather than a boolean return from `_capped`, so the one existing
+#: caller (`test_the_prompt_travels_on_stdin_never_in_argv`) that already
+#: pins `_capped`'s return value by equality keeps working unchanged.
+_CAPPED_NOTICE = "[truncated: earlier ledger/decision material was cut to fit the prompt budget]"
+
+
 def _capped(prompt: str) -> str:
+    """`prompt`, cut to `MAX_PROMPT_CHARS` when it is over - and, unlike the
+    naive `prompt[:MAX_PROMPT_CHARS]` this replaced, cutting the FRONT while
+    keeping the TAIL rather than the other way round.
+
+    **Why the front, not the back (FD6 (2)).** `driver.review.review_prompt`
+    builds the ledger and the per-decision boards first and appends the
+    write bars and the ask LAST - so the old behaviour silently discarded
+    exactly the instructions a reviewer needs to act (the DSL ask, the write
+    bars, `NOTES_ROUTING`) on the one game large enough to reach this
+    guillotine at all, while keeping the ledger material that is cheapest to
+    lose. Keeping the tail and cutting the front drops the ledger/decisions
+    material instead, and in practice never even reaches the tail at all:
+    `driver.review.PROMPT_BUDGET_CHARS` already keeps an ordinary game well
+    under this ceiling, so this is a backstop for a genuinely pathological
+    game, not the common path.
+
+    Cuts on a line boundary where practical (searching only a short window
+    right after the cut point), so the kept text does not open mid-row."""
     if len(prompt) <= MAX_PROMPT_CHARS:
         return prompt
-    return prompt[:MAX_PROMPT_CHARS] + "\n\n[truncated: the game record was too large]"
+    notice = _CAPPED_NOTICE + "\n\n"
+    keep = MAX_PROMPT_CHARS - len(notice)
+    tail = prompt[-keep:] if keep > 0 else ""
+    newline = tail.find("\n")
+    if 0 <= newline < 2000:
+        tail = tail[newline + 1 :]
+    return notice + tail
 
 
 def _preflight(settings: Settings) -> Path:
@@ -483,7 +517,40 @@ def _preflight(settings: Settings) -> Path:
     return mcp_config
 
 
-def run_review(settings: Settings, prompt: str, model: str, effort: str) -> str:
+def _partial_text(raw: Any) -> str:
+    """`subprocess.TimeoutExpired.stdout` as a stripped `str`, whatever
+    shape it arrived in - CPython's own `Popen.communicate` hands it back as
+    `bytes` even when `subprocess.run` was called with `text=True`, since
+    the exception is raised (and its `stdout`/`stderr` populated) inside
+    `communicate` before that decoding step ever runs."""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    return (raw or "").strip()
+
+
+#: FD6 (3): appended to a timeout's own salvaged partial text (see
+#: `_partial_text`/`run_review`), so a filed review that ran out of time
+#: mid-DSL-submission says so rather than reading as a complete critique
+#: that simply stopped early.
+REVIEW_TIMED_OUT_NOTE = (
+    "review_timed_out: true (the review process was killed after its own timeout; "
+    "the text above is whatever it had already written, and its DSL submission may "
+    "not have finished)"
+)
+
+#: FD6 (2): appended to the filed review when `_capped` had to cut the
+#: prompt to fit - see `_capped`'s own docstring for why the cut lands on
+#: the ledger/decisions material and never on the ask or the write bars.
+REVIEW_TRUNCATED_NOTE = (
+    "review_truncated: true (the game record was too large for the prompt budget; "
+    "earlier ledger and per-decision board material was cut to fit, and the ask and "
+    "write instructions were kept in full)"
+)
+
+
+def run_review(
+    settings: Settings, prompt: str, model: str, effort: str, *, timeout: float | None = None
+) -> str:
     """Run a bounded `claude --print` with the review's tool allowlist, in
     the agent's own workspace and HOME, and return its stdout, stripped.
 
@@ -495,29 +562,51 @@ def run_review(settings: Settings, prompt: str, model: str, effort: str) -> str:
     per argv element) made a ~190KB review prompt fail with `OSError:
     [Errno 7] Argument list too long` - see `_argv`'s own docstring.
 
-    Raises `ReviewFailed` for every way this can go wrong - an unrendered
-    workspace or a missing guides checkout (before anything is spawned), a
-    nonzero exit (the tail of BOTH streams in the message), the timeout,
+    `timeout`, when given, overrides `settings.review_timeout` for this one
+    call - `wrapper.config.scaled_review_timeout` computes it from the
+    reviewed game's own decision count (FD6 (3)), so a review with hundreds
+    of decisions is not bound by the same flat number a short game is.
+    `None` (every caller before this) keeps the old behaviour exactly.
+
+    **FD6 (3): a timeout that already wrote prose loses no text.** The ask
+    (`driver.review._ask`) tells Opus to write its whole critique before it
+    touches `mcp-seat` at all, so a timeout that kills the process partway
+    through the DSL submission phase has usually already flushed the prose
+    findings to stdout. `subprocess.TimeoutExpired` carries whatever the
+    killed process had already written (`Popen.communicate`'s own
+    behaviour); when that is non-empty this returns it, marked with
+    `REVIEW_TIMED_OUT_NOTE`, instead of raising - a process that never wrote
+    anything still raises `ReviewFailed` exactly as it always did.
+
+    Raises `ReviewFailed` for every other way this can go wrong - an
+    unrendered workspace or a missing guides checkout (before anything is
+    spawned), a nonzero exit (the tail of BOTH streams in the message),
     `claude` missing from `PATH`, or any other `OSError` spawning it
     (permission denied on the binary is the seen-in-production case, but
     this covers the class rather than that one instance) - so the caller
     (`api.post_review`) has one exception to turn into a 502/504 rather than
     several call sites each guessing which failure mode it is looking at."""
     mcp_config = _preflight(settings)
+    bound = settings.review_timeout if timeout is None else timeout
+    capped_prompt = _capped(prompt)
+    truncated = len(prompt) > MAX_PROMPT_CHARS
     try:
         result = subprocess.run(
             _argv(settings, model, effort, mcp_config),
             cwd=settings.workspace,
             env=_env_for(settings),
-            input=_capped(prompt),
+            input=capped_prompt,
             capture_output=True,
             text=True,
-            timeout=settings.review_timeout,
+            timeout=bound,
         )
     except FileNotFoundError as exc:
         raise ReviewFailed(f"{settings.claude_path} is not on PATH") from exc
     except subprocess.TimeoutExpired as exc:
-        raise ReviewFailed(f"the review did not finish within {settings.review_timeout}s") from exc
+        salvaged = _partial_text(exc.stdout)
+        if salvaged:
+            return f"{salvaged}\n\n{REVIEW_TIMED_OUT_NOTE}"
+        raise ReviewFailed(f"the review did not finish within {bound}s") from exc
     except OSError as exc:
         raise ReviewFailed(f"could not run {settings.claude_path}: {exc}") from exc
     if result.returncode != 0:
@@ -537,4 +626,7 @@ def run_review(settings: Settings, prompt: str, model: str, effort: str) -> str:
             if tail
             else f"claude exited {result.returncode}"
         )
-    return result.stdout.strip()
+    text = result.stdout.strip()
+    if truncated:
+        text = f"{text}\n\n{REVIEW_TRUNCATED_NOTE}"
+    return text

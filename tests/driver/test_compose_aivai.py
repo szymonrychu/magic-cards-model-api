@@ -72,10 +72,18 @@ def test_the_game_routes_to_both_drivers(compose):
     assert "DRIVER_URL" not in env
 
 
-def test_the_game_serves_8000_and_can_read_the_guides(compose):
+def test_the_game_serves_8000(compose):
     game = compose["services"]["game"]
     assert "8000:8000" in game["ports"]
-    assert any("/guides" in str(v) for v in game["volumes"])
+
+
+def test_the_game_has_no_guides_mount(compose):
+    """FD6 (5), fb3-parity.md item 13: no code in `magic_cards_model_api`
+    reads `/guides` outside `mcp-seat`'s own default root, and `game` never
+    runs `mcp-seat` - the mount was unused, and prod's own api pod never
+    carries it either."""
+    game = compose["services"]["game"]
+    assert not any("/guides" in str(v) for v in game.get("volumes") or [])
 
 
 def test_the_two_agents_get_distinct_host_ports(compose):
@@ -309,3 +317,85 @@ def test_docker_compose_config_parses_the_aivai_file() -> None:
         timeout=60,
     )
     assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# FD6 (5): parity with the prod seat Job (deploy/seat-job.yaml)
+# ---------------------------------------------------------------------------
+
+
+def test_the_game_gets_postgres_vars_and_a_postgres_service_like_the_single_seat_file(
+    compose,
+) -> None:
+    """fb3-parity.md item 5: without this, a finished local AIvAI game is
+    lost on restart and the review reads a different store than prod's,
+    since prod sets `REQUIRE_POSTGRES=1` off `mtg-database-app`. The
+    `postgres` service and `postgres-data` volume already exist in this
+    file (for `mise run test:pg` parity) - only `game`'s own env was
+    unwired."""
+    assert "postgres" in compose["services"]
+    assert "postgres-data" in compose["volumes"]
+    env = _env(compose["services"]["game"])
+    assert env["POSTGRES_HOST"] == "postgres"
+    assert env["POSTGRES_PORT"] == "5432"
+    assert env["POSTGRES_USER"] == "${POSTGRES_USER:-mtg}"
+    assert env["POSTGRES_PASSWORD"] == "${POSTGRES_PASSWORD:?}"
+    assert env["POSTGRES_DB"] == "${POSTGRES_DB:-mtg}"
+    assert compose["services"]["game"]["depends_on"]["postgres"]["condition"] == ("service_healthy")
+
+
+def test_each_seat_gets_a_driver_workspace_volume_shared_by_driver_and_agent(compose) -> None:
+    """fb3-parity.md item 3: prod's seat Job shares one `driver-workspace`
+    emptyDir between the driver (read-write) and the agent (read-only,
+    `MTG_EVIDENCE_DIR=/driver-workspace/evidence`) - compose had neither the
+    volume nor the env var, so a local `plays admit` committed no evidence
+    file at all."""
+    services = compose["services"]
+
+    def workspace_volume(service_name: str) -> list[str]:
+        return [str(v) for v in services[service_name]["volumes"] if "/driver-workspace" in str(v)]
+
+    p1 = workspace_volume("driver-p1")
+    p2 = workspace_volume("driver-p2")
+    assert p1 and not any(v.endswith(":ro") for v in p1)
+    assert p2 and not any(v.endswith(":ro") for v in p2)
+    agent_p1 = workspace_volume("agent-p1")
+    agent_p2 = workspace_volume("agent-p2")
+    assert agent_p1 and all(v.endswith(":ro") for v in agent_p1)
+    assert agent_p2 and all(v.endswith(":ro") for v in agent_p2)
+    # Each seat's own volume - never shared across the two seats.
+    assert p1[0].split(":", 1)[0] == agent_p1[0].split(":", 1)[0]
+    assert p2[0].split(":", 1)[0] == agent_p2[0].split(":", 1)[0]
+    assert p1[0].split(":", 1)[0] != p2[0].split(":", 1)[0]
+
+
+def test_each_agent_gets_mtg_evidence_dir_on_the_shared_workspace(compose) -> None:
+    for name in ("agent-p1", "agent-p2"):
+        env = _env(compose["services"][name])
+        assert env["MTG_EVIDENCE_DIR"] == "/driver-workspace/evidence"
+
+
+def test_the_claude_code_cli_version_is_pinned_not_latest(compose) -> None:
+    """fb3-parity.md item 11: prod pins nothing (`ARG CLAUDE_CODE_VERSION=
+    latest`), so a rebuild silently drifts the CLI version FC2's permission
+    rules depend on. One default, shared by every build in this file."""
+    for name in ("agent-p1", "agent-p2", "guides-init-p1", "guides-init-p2"):
+        args = compose["services"][name]["build"]["args"]
+        assert args["CLAUDE_CODE_VERSION"] != "${CLAUDE_CODE_VERSION:-latest}", name
+        assert "latest" not in args["CLAUDE_CODE_VERSION"], name
+
+
+def test_seat_job_and_compose_and_dockerfile_pin_the_same_claude_code_version() -> None:
+    import re
+
+    dockerfile = (ROOT / "Dockerfile.agent").read_text()
+    match = re.search(r"ARG CLAUDE_CODE_VERSION=(\S+)", dockerfile)
+    assert match, "Dockerfile.agent must declare a default CLAUDE_CODE_VERSION"
+    dockerfile_default = match.group(1)
+    assert dockerfile_default != "latest"
+
+    compose_text = (ROOT / "docker-compose.aivai.yml").read_text()
+    assert f"CLAUDE_CODE_VERSION:-{dockerfile_default}" in compose_text
+
+    mise_text = (ROOT / "mise.toml").read_text()
+    assert mise_text.count(f"CLAUDE_CODE_VERSION:-{dockerfile_default}") >= 2

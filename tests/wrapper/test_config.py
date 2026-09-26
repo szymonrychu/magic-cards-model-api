@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mtg_agent.wrapper.config import Settings
+from mtg_agent.wrapper.config import Settings, scaled_review_timeout
 
 
 def test_defaults_when_env_is_empty():
@@ -103,3 +103,50 @@ def test_the_rules_researcher_model_is_its_own_setting():
     s = Settings.from_env({"MODEL": "opus", "RULES_RESEARCHER_MODEL": "haiku"})
     assert s.model == "opus"
     assert s.rules_researcher_model == "haiku"
+
+
+# FD6 (3): the review timeout scales with the decision count a game's own
+# review record carries, within a bound this module owns - a game with
+# hundreds of decisions runs many more `mcp-seat` round trips than the flat
+# `review_timeout` was ever sized for (see that field's own docstring).
+
+
+def test_review_timeout_scaling_defaults():
+    s = Settings.from_env({})
+    assert s.review_timeout_per_decision == 6.0
+    assert s.review_timeout_max == 10800.0
+
+
+def test_review_timeout_scaling_env_overrides():
+    s = Settings.from_env(
+        {
+            "REVIEW_TIMEOUT_PER_DECISION_SECONDS": "10",
+            "REVIEW_TIMEOUT_MAX_SECONDS": "9000",
+        }
+    )
+    assert s.review_timeout_per_decision == 10.0
+    assert s.review_timeout_max == 9000.0
+
+
+def test_scaled_review_timeout_is_the_flat_timeout_with_no_decisions():
+    s = Settings.from_env({})
+    assert scaled_review_timeout(s, 0) == s.review_timeout
+    assert scaled_review_timeout(s, -5) == s.review_timeout
+
+
+def test_scaled_review_timeout_grows_with_decision_count():
+    s = Settings.from_env(
+        {"REVIEW_TIMEOUT_SECONDS": "3600", "REVIEW_TIMEOUT_PER_DECISION_SECONDS": "6"}
+    )
+    assert scaled_review_timeout(s, 50) == 3600.0 + 50 * 6.0
+
+
+def test_scaled_review_timeout_never_exceeds_the_configured_bound():
+    s = Settings.from_env(
+        {
+            "REVIEW_TIMEOUT_SECONDS": "3600",
+            "REVIEW_TIMEOUT_PER_DECISION_SECONDS": "100",
+            "REVIEW_TIMEOUT_MAX_SECONDS": "5000",
+        }
+    )
+    assert scaled_review_timeout(s, 1000) == 5000.0

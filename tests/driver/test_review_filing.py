@@ -141,9 +141,23 @@ def _wrapper_app(review_runner=None, *, raw_review=None) -> tuple[FastAPI, list[
     return app, pushed, reviewed
 
 
-def _driver(tmp_path: Path, wrapper: FastAPI) -> TestClient:
+def _driver(
+    tmp_path: Path, wrapper: FastAPI, *, game_client_factory=None, **settings_overrides
+) -> TestClient:
+    """`game_client_factory`, when given, replaces the plain
+    `TestClient(api_app, ...)` the game side normally gets - FD6 (4)'s
+    review-record retry tests use it to inject a scripted sequence of
+    timeouts/409s onto the review-record GET specifically, while every
+    other game-api call still reaches the real app unchanged.
+    `settings_overrides` reach `DriverSettings` directly, so the same tests
+    can shrink the retry budget/backoff to keep themselves fast."""
+
     def client_factory(base_url: str) -> httpx.Client:
-        return TestClient(api_app if "game" in base_url else wrapper, base_url=base_url)
+        if "game" not in base_url:
+            return TestClient(wrapper, base_url=base_url)
+        if game_client_factory is not None:
+            return game_client_factory(base_url)
+        return TestClient(api_app, base_url=base_url)
 
     settings = DriverSettings(
         game_api="http://game:8000",
@@ -156,6 +170,7 @@ def _driver(tmp_path: Path, wrapper: FastAPI) -> TestClient:
         http_addr=":8090",
         agent_boot_wait=1.0,
         agent_retry_interval=0.01,
+        **settings_overrides,
     )
     return TestClient(build_app(settings, client_factory=client_factory))
 
@@ -226,7 +241,12 @@ def _rows(body: dict[str, Any], action: str) -> list[dict[str, Any]]:
 
 
 def released_without_a_reflection(
-    tmp_path: Path, review_runner=None, raw_review=None
+    tmp_path: Path,
+    review_runner=None,
+    raw_review=None,
+    *,
+    game_client_factory=None,
+    **settings_overrides,
 ) -> SimpleNamespace:
     """Drive one whole game down the live-observed path and hand back what
     the surfaces say afterwards.
@@ -237,12 +257,18 @@ def released_without_a_reflection(
     returns on its handover branch and the reflection check below it is never
     reached. Nothing here calls `post_ai_review`, or any other driver
     internal, by hand.
+
+    `game_client_factory`/`settings_overrides` reach `_driver` unchanged -
+    FD6 (4)'s review-record retry tests use them to inject scripted
+    failures and to shrink the retry backoff so the test stays fast.
     """
-    runner = review_runner or (lambda settings, prompt, model, effort: REVIEW_TEXT)
+    runner = review_runner or (lambda settings, prompt, model, effort, **_kwargs: REVIEW_TEXT)
     wrapper, pushed, reviewed = _wrapper_app(runner, raw_review=raw_review)
     with TestClient(api_app) as api_client:
         info = _agent_game(api_client)
-        driver = _driver(tmp_path, wrapper)
+        driver = _driver(
+            tmp_path, wrapper, game_client_factory=game_client_factory, **settings_overrides
+        )
         try:
             _dispatch(driver, info)
             # The game genuinely ends - a real concession through the real
@@ -310,7 +336,7 @@ def test_a_released_game_that_never_reflected_files_a_review_the_page_can_read(t
     assert run.review["ai_review_failures"] == []
     # The generation really went through the wrapper's own route.
     assert len(run.reviewed) == 1
-    assert sorted(run.reviewed[0]) == ["effort", "model", "prompt"]
+    assert sorted(run.reviewed[0]) == ["decision_count", "effort", "model", "prompt"]
     assert "(the seat left no reflection)" in run.reviewed[0]["prompt"]
 
 
@@ -325,7 +351,8 @@ def test_a_reviews_turning_points_are_stored_on_the_real_review_record(tmp_path)
         'turning_points: {"bob": [{"turn": 6, "action": "attacked into open mana", '
         '"why": "walked into the sweeper"}]}'
     )
-    def runner(settings, prompt, model, effort):
+
+    def runner(settings, prompt, model, effort, **_kwargs):
         return text_with_turning_points
 
     run = released_without_a_reflection(tmp_path, review_runner=runner)
@@ -373,7 +400,9 @@ def test_the_reflection_path_still_files_exactly_one_review(tmp_path):
     starts, and the `retire` funnel at the end of that handover - plus a
     retried `/turn-done` delivery on top, which `webhook.Deliverer` really
     does send. Exactly one `ai_review` row, and exactly one reflection."""
-    wrapper, pushed, reviewed = _wrapper_app(lambda settings, prompt, model, effort: REVIEW_TEXT)
+    wrapper, pushed, reviewed = _wrapper_app(
+        lambda settings, prompt, model, effort, **_kwargs: REVIEW_TEXT
+    )
     with TestClient(api_app) as api_client:
         info = _agent_game(api_client)
         driver = _driver(tmp_path, wrapper)
@@ -424,7 +453,9 @@ def test_the_page_shows_one_review_and_the_reflection_beside_it(tmp_path):
     """The dedupe is only worth as much as what the page ends up drawing:
     `aiReviewsOf` returns one entry per player, so a second filed row would
     surface here as a changed text rather than as a visible duplicate."""
-    wrapper, pushed, _ = _wrapper_app(lambda settings, prompt, model, effort: REVIEW_TEXT)
+    wrapper, pushed, _ = _wrapper_app(
+        lambda settings, prompt, model, effort, **_kwargs: REVIEW_TEXT
+    )
     with TestClient(api_app) as api_client:
         info = _agent_game(api_client)
         driver = _driver(tmp_path, wrapper)
@@ -453,6 +484,227 @@ def test_the_page_shows_one_review_and_the_reflection_beside_it(tmp_path):
     assert reflection["text"] == "wrote up the game"
 
 
+def test_driver_settings_review_record_retry_defaults_and_env() -> None:
+    defaults = DriverSettings.from_env({})
+    assert defaults.review_record_timeout == 120.0
+    assert defaults.review_record_timeout > 30.0, "well above the old fixed 30s"
+    assert defaults.review_record_retry_budget == 300.0
+    assert defaults.review_record_retry_start == 2.0
+    assert defaults.review_record_retry_max_delay == 30.0
+
+    overridden = DriverSettings.from_env(
+        {
+            "REVIEW_RECORD_TIMEOUT_SECONDS": "90",
+            "REVIEW_RECORD_RETRY_BUDGET_SECONDS": "60",
+            "REVIEW_RECORD_RETRY_START_SECONDS": "1",
+            "REVIEW_RECORD_RETRY_MAX_DELAY_SECONDS": "5",
+        }
+    )
+    assert overridden.review_record_timeout == 90.0
+    assert overridden.review_record_retry_budget == 60.0
+    assert overridden.review_record_retry_start == 1.0
+    assert overridden.review_record_retry_max_delay == 5.0
+
+
+# -- FD6 (4): the review-record GET retries on a timeout or a 409 ----------
+
+
+class _FlakyReviewRecordClient:
+    """Wraps a real `TestClient(api_app, ...)`, injecting a scripted
+    sequence of failures onto the review-record GET specifically (`.../
+    review`) - every other game-api call the driver makes (dispatch,
+    turn-done, plays-outcome, ...) still reaches the real app unchanged.
+    Each popped failure is either the string `"timeout"` (raises
+    `httpx.TimeoutException`) or an int status code (a bare `httpx.Response`
+    with that status, body-less - `post_ai_review` only ever reads
+    `response.status_code`/`.json()` on success, never on a non-2xx)."""
+
+    def __init__(self, real: httpx.Client, failures: list) -> None:
+        self._real = real
+        self._failures = failures
+
+    def __enter__(self) -> _FlakyReviewRecordClient:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def get(self, url: str, params: dict | None = None, timeout: float | None = None):
+        if url.endswith("/review") and self._failures:
+            failure = self._failures.pop(0)
+            if failure == "timeout":
+                raise httpx.TimeoutException("simulated timeout")
+            return httpx.Response(failure, request=httpx.Request("GET", url))
+        return self._real.get(url, params=params, timeout=timeout)
+
+    def post(self, *args, **kwargs):
+        return self._real.post(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        return self._real.delete(*args, **kwargs)
+
+
+def _flaky_game_client_factory(failures: list):
+    def factory(base_url: str) -> httpx.Client:
+        real = TestClient(api_app, base_url=base_url)
+        return _FlakyReviewRecordClient(real, failures)
+
+    return factory
+
+
+#: Small enough that a whole retry sequence finishes well inside a test's own
+#: timeout, large enough that the retry loop genuinely sleeps between tries.
+_FAST_RETRY_SETTINGS = {
+    "review_record_retry_start": 0.01,
+    "review_record_retry_max_delay": 0.02,
+    "review_record_retry_budget": 2.0,
+}
+
+
+def test_a_409_then_a_timeout_then_success_still_files_the_review(tmp_path):
+    """The game-not-yet-released 409 and a transport timeout are both
+    retried, with the review record read successfully on the next try -
+    exactly the two live-observed prod failures (fb3-parity.md items 1/6)
+    this task exists to close."""
+    run = released_without_a_reflection(
+        tmp_path,
+        game_client_factory=_flaky_game_client_factory([409, "timeout", 409]),
+        **_FAST_RETRY_SETTINGS,
+    )
+    assert run.review["ai_review_failures"] == []
+    reviews = _rows(run.review, audit.AI_REVIEW_ACTION)
+    assert len(reviews) == 1, run.review["entries"]
+    assert reviews[0]["detail"]["text"].startswith(REVIEW_TEXT)
+
+
+def test_review_record_failures_beyond_the_bound_file_the_final_reason(tmp_path):
+    """Once the retry budget is spent, `ai_review_failed` is filed with the
+    LAST failure's own reason - never the first, and never silently nothing,
+    which is what a caller reading the review page needs to act on. The
+    failure sequence outlasts the budget on purpose (a game server stuck
+    answering 409 forever), and the budget itself is small enough that only
+    a couple of retries fit before it gives up."""
+    run = released_without_a_reflection(
+        tmp_path,
+        game_client_factory=_flaky_game_client_factory([409] * 50),
+        review_record_retry_start=0.02,
+        review_record_retry_max_delay=0.02,
+        review_record_retry_budget=0.05,
+    )
+    assert _rows(run.review, audit.AI_REVIEW_ACTION) == []
+    failure = run.review["ai_review_failures"][0]
+    assert failure["stage"] == "review_record"
+    assert failure["invoked"] is False
+    assert "409" in failure["reason"]
+
+
+# -- FD6 (4): the review posts its own reviewer plays_outcome row ----------
+
+
+class _ReviewerPlaysOutcomeCapturingClient:
+    """Wraps a real `TestClient(api_app, ...)`, capturing every
+    `role: "reviewer"` `/plays-outcome` POST and acknowledging it directly
+    rather than forwarding it - the game api's own `declare_plays_outcome`
+    (`magic_cards_model_api/app.py`, FD5's file) does not yet accept
+    `role="reviewer"` for a seat uid, so this proves what THIS task owns -
+    the driver sends the right row, with the right shape - without coupling
+    to that separate, not-yet-landed server-side change. Every other call
+    (dispatch, turn-done, the `ai-review` post itself, ...) reaches the real
+    app unchanged."""
+
+    def __init__(self, real: httpx.Client, captured: list) -> None:
+        self._real = real
+        self._captured = captured
+
+    def __enter__(self) -> _ReviewerPlaysOutcomeCapturingClient:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def get(self, *args, **kwargs):
+        return self._real.get(*args, **kwargs)
+
+    def post(self, url: str, json: dict | None = None, **kwargs):
+        if url.endswith("/plays-outcome") and (json or {}).get("role") == "reviewer":
+            self._captured.append(json)
+            return httpx.Response(200, json={"recorded": True}, request=httpx.Request("POST", url))
+        return self._real.post(url, json=json, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        return self._real.delete(*args, **kwargs)
+
+
+def _reviewer_plays_outcome_capturing_factory(captured: list):
+    def factory(base_url: str) -> httpx.Client:
+        real = TestClient(api_app, base_url=base_url)
+        return _ReviewerPlaysOutcomeCapturingClient(real, captured)
+
+    return factory
+
+
+def test_the_review_files_its_own_reviewer_plays_outcome_row(tmp_path):
+    """After the review is filed, the driver posts a `plays_outcome` row
+    with `role: 'reviewer'` from the reviewer's own journal - FD7's
+    `play_stats` counts it there, separately from the seat's own handover
+    row, instead of the reviewer's admits going uncounted (fb3-gen.md gap
+    4). Needs a real journal line: an EMPTY reviewer journal posts nothing
+    at all (see the test right below this one) - there is nothing here for
+    FD7 to count, and posting an empty row would only race the handover's
+    own `plays_outcome` POST for readers that assume there is exactly one."""
+    captured: list[dict] = []
+    wrapper, pushed, _ = _wrapper_app(
+        lambda settings, prompt, model, effort, **_kwargs: REVIEW_TEXT
+    )
+    with TestClient(api_app) as api_client:
+        info = _agent_game(api_client)
+        _write_reviewer_admit_journal(tmp_path, info["game_id"], added=["p1"], updated=["p2"])
+        driver = _driver(
+            tmp_path,
+            wrapper,
+            game_client_factory=_reviewer_plays_outcome_capturing_factory(captured),
+        )
+        try:
+            _dispatch(driver, info)
+            _concede(api_client, info["game_id"])
+            driver.post(
+                "/release", json={"uid": info["seat_uids"]["bob"], "reason": "lobby reset"}
+            )
+            driver.post(
+                "/turn-done",
+                json={"turnId": "turn-1", "state": "complete", "finalText": "I attack"},
+            )
+            _complete_handover(driver, pushed)
+            wait_for(lambda: driver.get("/status").json()["gameId"] is None)
+        finally:
+            api_client.delete(f"/api/games/{info['game_id']}", params={"key": info["admin_key"]})
+
+    assert len(captured) == 1, captured
+    row = captured[0]
+    assert row["role"] == "reviewer"
+    assert row["player"] == "bob"
+    assert row["uid"] == info["seat_uids"]["bob"]
+    assert row["admitted"] == [
+        {"sha": None, "dsl_change": True, "added": ["p1"], "updated": ["p2"], "reprioritized": []}
+    ]
+    assert row["state"] == "complete"
+
+
+def test_an_empty_reviewer_journal_posts_no_plays_outcome_row_at_all(tmp_path):
+    """The regression this task's own review path could otherwise cause:
+    every fake reviewer in this whole suite writes no journal at all (it
+    just returns text), and posting an empty `role: 'reviewer'` row for
+    every one of them would race the handover's own `plays_outcome` POST -
+    several existing tests read `plays_outcomes[0]` assuming the handover's
+    is the only, or at least the first, row this game ever posts."""
+    captured: list[dict] = []
+    run = released_without_a_reflection(
+        tmp_path, game_client_factory=_reviewer_plays_outcome_capturing_factory(captured)
+    )
+    assert run.review["ai_review_failures"] == []
+    assert captured == []
+
+
 # -- (d) a review that failed is distinguishable on the same surface --------
 
 
@@ -464,7 +716,7 @@ def test_a_review_that_could_not_be_generated_reaches_the_same_body(tmp_path):
     `ai_review` row, which is what makes the two outcomes tellable apart by
     a reader of `GET .../review` rather than of a pod log."""
 
-    def failing(settings, prompt, model, effort):
+    def failing(settings, prompt, model, effort, **_kwargs):
         raise ReviewFailed("claude exited 1")
 
     run = released_without_a_reflection(tmp_path, review_runner=failing)
@@ -535,7 +787,7 @@ def test_the_page_reads_no_review_from_a_game_whose_review_failed(tmp_path):
     lands in must make `aiReviewsOf` return nothing, so the page draws no
     `section.ai-review` at all rather than an empty or half-filled one."""
 
-    def failing(settings, prompt, model, effort):
+    def failing(settings, prompt, model, effort, **_kwargs):
         raise ReviewFailed("claude exited 1")
 
     run = released_without_a_reflection(tmp_path, review_runner=failing)
@@ -547,8 +799,8 @@ def test_the_page_reads_no_review_from_a_game_whose_review_failed(tmp_path):
 @pytest.mark.parametrize(
     ("runner", "expected_stage", "expected_invoked"),
     [
-        (lambda settings, prompt, model, effort: "", "empty", True),
-        (lambda settings, prompt, model, effort: "   ", "empty", True),
+        (lambda settings, prompt, model, effort, **_kwargs: "", "empty", True),
+        (lambda settings, prompt, model, effort, **_kwargs: "   ", "empty", True),
     ],
 )
 def test_a_review_that_came_back_empty_says_so_on_the_same_surface(
@@ -568,9 +820,7 @@ def test_a_review_that_came_back_empty_says_so_on_the_same_surface(
 # -- DR3 (3): a fixed "Play statistics" block is appended to the filed text -
 
 
-def _write_reviewer_admit_journal(
-    tmp_path: Path, game_id: str, *, added=(), updated=()
-) -> None:
+def _write_reviewer_admit_journal(tmp_path: Path, game_id: str, *, added=(), updated=()) -> None:
     """One `plays admit` line, written the way the real `mcp-seat` process
     would (`playscripts.gitwork._JOURNALED_KEYS`, read back by
     `handover.read_journal(guides_root, game_id, "reviewer")`), directly
@@ -620,19 +870,17 @@ def test_the_filed_review_carries_the_reviews_own_admits_from_the_journal(tmp_pa
     `added`/`updated` play ids are folded into the appended block - proving
     the statistics reflect what THIS review admitted, not merely whatever
     `GET /review` already knew when `post_ai_review` started."""
-    wrapper, pushed, reviewed = _wrapper_app(lambda settings, prompt, model, effort: REVIEW_TEXT)
+    wrapper, pushed, reviewed = _wrapper_app(
+        lambda settings, prompt, model, effort, **_kwargs: REVIEW_TEXT
+    )
     with TestClient(api_app) as api_client:
         info = _agent_game(api_client)
-        _write_reviewer_admit_journal(
-            tmp_path, info["game_id"], added=["p1", "p2"], updated=["p3"]
-        )
+        _write_reviewer_admit_journal(tmp_path, info["game_id"], added=["p1", "p2"], updated=["p3"])
         driver = _driver(tmp_path, wrapper)
         try:
             _dispatch(driver, info)
             _concede(api_client, info["game_id"])
-            driver.post(
-                "/release", json={"uid": info["seat_uids"]["bob"], "reason": "lobby reset"}
-            )
+            driver.post("/release", json={"uid": info["seat_uids"]["bob"], "reason": "lobby reset"})
             driver.post(
                 "/turn-done",
                 json={"turnId": "turn-1", "state": "complete", "finalText": "I attack"},

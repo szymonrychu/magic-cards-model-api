@@ -1291,13 +1291,22 @@ def test_the_token_is_never_an_env_var_on_any_container(role: str) -> None:
 
 
 @pytest.mark.parametrize("role", ROLES)
-def test_the_agent_carries_its_role_game_and_git_identity(role: str) -> None:
+def test_the_agent_carries_its_role_and_game(role: str) -> None:
     job = _build_role(role)
     env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
     assert env["MTG_ROLE"] == role
     assert env["MTG_GAME_ID"] == "g1"
-    assert env["GIT_COMMITTER_NAME"] == "mtg-agent"
-    assert env["GIT_COMMITTER_EMAIL"] == "mtg-agent@mtg-trainer.invalid"
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_the_agent_carries_no_dead_git_committer_vars(role: str) -> None:
+    """FD6 (5), fb3-parity.md item 10: `gitwork.identity` sets the COMMITTER
+    from `MTG_ROLE` regardless of these two - dead config, dropped from the
+    manifest and from `wrapper.oneshot.PASSED_THROUGH`."""
+    job = _build_role(role)
+    env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
+    assert "GIT_COMMITTER_NAME" not in env
+    assert "GIT_COMMITTER_EMAIL" not in env
 
 
 @pytest.mark.parametrize("role", ROLES)
