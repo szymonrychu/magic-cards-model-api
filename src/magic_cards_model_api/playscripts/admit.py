@@ -484,6 +484,26 @@ def _own_paths(
     return sorted(p for p in changed if is_plays_path(p) and p not in other_tracked)
 
 
+def _stage(git: Git, paths: list[str]) -> None:
+    """Stage exactly `paths` - a pathspec, never `-A` over the whole
+    checkout (FD7 gap 10). Split in two because `git add -- <path>` (or
+    even `git add -A -- <path>`) refuses "did not match any files" for a
+    path a caller already retired with `git rm`: fully gone from both the
+    working tree and the index already, so there is nothing left for a
+    pathspec to resolve against - not a real failure, just nothing further
+    to stage for that one path. A path still present on disk always adds
+    cleanly in one call; a path that is not is attempted on its own and
+    simply skipped when git says there was nothing to add - the deletion
+    `git rm` already staged is not lost either way."""
+    present = [p for p in paths if (git.root / p).exists()]
+    if present:
+        git.out("add", "--", *present)
+    for path in paths:
+        if path in present:
+            continue
+        git.run("add", "-A", "--", path)
+
+
 def _admit(
     root: Path, deck: str, game_id: str, paths: Sequence[str] | None = None
 ) -> dict[str, Any]:
@@ -529,11 +549,7 @@ def _admit(
     committed = False
     if own:
         priorities = _priority_changes(git, own)
-        # A pathspec, not `-A`: FD7 gap 10 - `outside` above already refused
-        # any change beyond decks/*/plays/**, but the working tree can still
-        # hold ANOTHER writer's own dirty plays paths, which `own` has
-        # already excluded and which must stay exactly as they are.
-        git.out("add", "--", *own)
+        _stage(git, own)
         message = commit_message(f"Plays: {deck} after game {game_id}", game_id, priorities)
         git.out("commit", "-q", "--no-verify", "-F", "-", input=message)
         committed = True
