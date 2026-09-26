@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "id": "repeat_walking_ballista",
+  "name": "Pump Walking Ballista while mana allows, then ping down small blockers",
+  "intent": "FD9's second proof fixture, from a different deck than the Devoted Druid loop (eldrazi-tron / prison-tron): a resource-guard loop adds +1/+1 counters while untapped mana still pays the {4} activation, then a second loop removes counters to ping opposing creatures until none with toughness 1 remain - the same 'while an opponent has' shape the owner's own untapped-blockers example gives, over toughness instead of tapped state.",
+  "note": "Pump while untapped mana allows, then ping down every toughness-1 creature the opponent controls.",
+  "priority": 70,
+  "opposing_archetypes": ["*"],
+  "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+  "true": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {"types_all": ["Artifact", "Creature"], "subtypes_any": ["Construct"]}
+    },
+    {"kind": "untapped_mana", "op": ">=", "n": 4},
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "opponent",
+      "op": ">=",
+      "n": 1,
+      "select": {"types_all": ["Creature"], "toughness": {"op": "==", "n": 1}}
+    }
+  ],
+  "false": [],
+  "moves": [
+    {
+      "kind": "repeat",
+      "moves": [
+        {
+          "kind": "activate",
+          "source": {
+            "zone": "battlefield",
+            "select": {"types_all": ["Artifact", "Creature"], "subtypes_any": ["Construct"]}
+          },
+          "ability_index": 0
+        }
+      ],
+      "until": [
+        {"kind": "untapped_mana", "op": "<", "n": 4}
+      ],
+      "max_iterations": 8
+    },
+    {
+      "kind": "repeat",
+      "moves": [
+        {
+          "kind": "activate",
+          "source": {
+            "zone": "battlefield",
+            "select": {"types_all": ["Artifact", "Creature"], "subtypes_any": ["Construct"]}
+          },
+          "ability_index": 1,
+          "targets": [
+            {
+              "select": {"types_all": ["Creature"], "toughness": {"op": "==", "n": 1}},
+              "side": "opponent"
+            }
+          ]
+        }
+      ],
+      "until": [
+        {
+          "kind": "count",
+          "zone": "battlefield",
+          "side": "opponent",
+          "op": "==",
+          "n": 0,
+          "select": {"types_all": ["Creature"], "toughness": {"op": "==", "n": 1}}
+        }
+      ],
+      "max_iterations": 15
+    }
+  ],
+  "next": []
+}

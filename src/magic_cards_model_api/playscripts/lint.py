@@ -161,7 +161,7 @@ __all__ = [
 
 #: The schema's codes, then the corpus rules this gate adds on top of them.
 CODES = (*SCHEMA_CODES, "never-applicable")
-WARNING_CODES = ("play-conflict", "next-conflict")
+WARNING_CODES = ("play-conflict", "next-conflict", "repeat-until-static")
 EXCLUSIVITY_DIMENSIONS = (
     "whose_turn",
     "steps",
@@ -347,30 +347,88 @@ def _refused_key_pattern(error: PlaysError, doc: Any) -> bool:
     )
 
 
+def _ability_index_prefixes_in(moves: list[Any], where: str) -> set[str]:
+    """`_ability_index_move_prefixes`'s own recursion, so a `repeat`'s own
+    body (FD9) is walked the same way the play's top-level `moves` is - a
+    repeat cannot nest another repeat (schema: `repeat-nested`), so one level
+    of recursion into `moves[i].moves` covers every body an `activate` could
+    sit in."""
+    found: set[str] = set()
+    for index, move in enumerate(moves):
+        if not isinstance(move, dict):
+            continue
+        prefix = f"{where}[{index}]"
+        if move.get("kind") == "activate" and "ability_index" in move:
+            found.add(prefix)
+        body = move.get("moves")
+        if move.get("kind") == "repeat" and isinstance(body, list):
+            found |= _ability_index_prefixes_in(body, f"{prefix}.moves")
+    return found
+
+
 def _ability_index_move_prefixes(doc: dict[str, Any]) -> set[str]:
     """FD2 item 7a: the `where`-path prefix of every `activate` move that
     names its ability by `ability_index` rather than `ability_text_has` -
-    `moves[2]`, say. A phrase anywhere inside such a move (most often the
-    source selector's own `ability_text_has`, used only to find the right
-    permanent, never to pick which ability fires) is exempt from
-    `phrase-too-narrow` below: the move does not depend on that phrase being
-    shared by other cards, since the ability itself is picked by index. The
-    3-card rule stays for a `activate.ability_text_has` that names the
-    ability by phrase - `ability_index` is what changes, not the field."""
+    `moves[2]`, say, or, inside a `repeat`'s own body (FD9), `moves[0].moves[1]`.
+    A phrase anywhere inside such a move (most often the source selector's own
+    `ability_text_has`, used only to find the right permanent, never to pick
+    which ability fires) is exempt from `phrase-too-narrow` below: the move
+    does not depend on that phrase being shared by other cards, since the
+    ability itself is picked by index. The 3-card rule stays for an
+    `activate.ability_text_has` that names the ability by phrase -
+    `ability_index` is what changes, not the field."""
     moves = doc.get("moves")
     if not isinstance(moves, list):
         return set()
-    return {
-        f"moves[{index}]"
-        for index, move in enumerate(moves)
-        if isinstance(move, dict) and move.get("kind") == "activate" and "ability_index" in move
-    }
+    return _ability_index_prefixes_in(moves, "moves")
 
 
 def _within(where: str, prefixes: set[str]) -> bool:
     return any(
         where == prefix or where.startswith((f"{prefix}.", f"{prefix}[")) for prefix in prefixes
     )
+
+
+#: FD9 item 2: `until` condition kinds that read nothing a repeat's own body
+#: could ever change - the wall clock (`turn`) and the agent's own declared
+#: facts (`input`). Every other kind (`count`, `zone_size`, `life`,
+#: `stack_top`, `land_drop_available`, `untapped_mana`, `mana_pool`,
+#: `pending_decision`, `compare`, `all_of`) reads the board, which the body's
+#: own moves can move.
+STATIC_UNTIL_KINDS = ("turn", "input")
+
+
+def _repeat_until_static_warnings(doc: dict[str, Any], rel: str) -> list[PlaysWarning]:
+    """FD9's own `repeat-until-static` warning: a `repeat` whose `until`
+    reads only `turn`/`input` conditions can never be moved by running its
+    own body, so the loop either stops on its first judgement (before the
+    body ever runs) or never stops short of `max_iterations`/a refusal.
+    Never fails the gate - the same footing every other warning here is on -
+    since a script author may genuinely want exactly that (a fixed-count
+    loop bounded by `max_iterations` alone, say)."""
+    moves = doc.get("moves")
+    if not isinstance(moves, list):
+        return []
+    warnings = []
+    play_id = doc.get("id") if isinstance(doc.get("id"), str) else "?"
+    for index, move in enumerate(moves):
+        if not isinstance(move, dict) or move.get("kind") != "repeat":
+            continue
+        until = move.get("until")
+        conditions = [c for c in until if isinstance(c, dict)] if isinstance(until, list) else []
+        if conditions and all(c.get("kind") in STATIC_UNTIL_KINDS for c in conditions):
+            warnings.append(
+                PlaysWarning(
+                    "repeat-until-static",
+                    rel,
+                    [play_id],
+                    [],
+                    f"moves[{index}].until reads only turn/input conditions, which this "
+                    "repeat's own body can never change; the loop either stops on its first "
+                    "judgement or runs until max_iterations or a refusal ends it",
+                )
+            )
+    return warnings
 
 
 def check_play(doc: Any, stem: str, rel: str, cards: CardIndex) -> list[PlaysError]:
@@ -786,11 +844,20 @@ def _first_move_lookup(doc: dict[str, Any]) -> tuple[str | None, dict[str, Any]]
     or `None` when the first move has none (`answer`, `pass`, `mulligan`,
     `declare_attackers`/`declare_blockers`) - `None` proves nothing for this
     dimension, the same way an unreadable operand proves nothing for
-    `numeric_range`."""
+    `numeric_range`. FD9 item 2: when the first move is a `repeat`, its own
+    first body move is read instead - the runtime sends that body move first,
+    the same way an ordinary play's first move is sent first, so a repeat
+    play and a plain play of the same first move are judged by the same rule
+    a play whose first move is not a repeat already gets."""
     moves = doc.get("moves")
     if not isinstance(moves, list) or not moves or not isinstance(moves[0], dict):
         return None
     move = moves[0]
+    if move.get("kind") == "repeat":
+        body = move.get("moves")
+        if not isinstance(body, list) or not body or not isinstance(body[0], dict):
+            return None
+        move = body[0]
     field = _CARD_LOOKUP_FIELD.get(move.get("kind"))
     if field is None:
         return None
@@ -1160,7 +1227,10 @@ def check_deck(
     errors.extend(_advice_chain_errors(docs))
     errored = {e.path for e in errors}
     clean = [entry for entry in docs if entry[1] not in errored]
-    return errors, _conflict_warnings(clean, catalog), len(files)
+    warnings = _conflict_warnings(clean, catalog)
+    for _, rel, doc in clean:
+        warnings.extend(_repeat_until_static_warnings(doc, rel))
+    return errors, warnings, len(files)
 
 
 def _deck_dirs(root: Path, decks: list[str] | None) -> list[Path]:
