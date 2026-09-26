@@ -2178,9 +2178,15 @@ def test_a_cast_cost_the_card_does_not_offer_is_refused_with_the_engines_text(
     out = result.script_exit
     assert out.exit is Exit.REFUSED, result.to_dict()
     assert out.refusal_source == "server"
-    assert "alternative cost for Lightning Bolt" in out.refusal
+    # FD3: `flashback` is a real engine keyword (`CastRequest.keyword`, the
+    # way `mcp.py`'s own cast tool sends it), not `alternative_cost` - only
+    # `printed`/`impending` go there (`ALTERNATIVE_COST_CAST_COSTS`). The
+    # engine's own keyword-route refusal is more specific than the generic
+    # "no alternative cost" text the old, less correct mapping produced.
+    assert "Lightning Bolt has no flashback ability" in out.refusal
     [body] = hook.posts("/actions/cast")
-    assert body["alternative_cost"] == "flashback"
+    assert body["keyword"] == "flashback"
+    assert "alternative_cost" not in body
     assert finished(board)[0]["refusal_text"] == out.refusal
 
 

@@ -298,6 +298,8 @@ def card(
     toughness: int | None = None,
     colors: tuple[str, ...] = (),
     mana_value: float = 0.0,
+    mana_cost: str = "",
+    cast: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     built = []
     for position, entry in enumerate(abilities):
@@ -307,7 +309,7 @@ def card(
         # request`'s new branch) is picked by this list's own index.
         one["index"] = position
         built.append(one)
-    return {
+    doc = {
         "id": f"00000000-0000-4000-8000-{next(_ids):012d}",
         "name": name,
         "card_name": name,
@@ -317,7 +319,7 @@ def card(
         "tapped": tapped,
         "face_up": True,
         "type_line": type_line,
-        "mana_cost": "",
+        "mana_cost": mana_cost,
         "oracle_text": oracle_text,
         "counters": dict(counters or {}),
         "damage": 0,
@@ -328,6 +330,55 @@ def card(
         "mana_value": mana_value,
         "abilities": built,
     }
+    # FD3: `cast` mirrors `affordances.cast_hints`'s own unconditional
+    # publication on a hand/exile card view - `spell_faces`/`modes`/
+    # `additional_costs`, the shapes `runtime.cast_body`'s new `face`/
+    # `modes`/`optional_costs` handling reads, never through
+    # `available_actions`.
+    if cast is not None:
+        doc["cast"] = cast
+    return doc
+
+
+def cast_hints(
+    *,
+    mana_cost: str | None = None,
+    spell_faces: list[dict[str, Any]] | None = None,
+    modes: list[dict[str, Any]] | None = None,
+    additional_costs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """FD3: a hand/exile card's own `cast` block
+    (`affordances.cast_hints`) - pass to `card(..., cast=cast_hints(...))`."""
+    hints: dict[str, Any] = {"needs_x": False}
+    if mana_cost is not None:
+        hints["mana_cost"] = mana_cost
+    if spell_faces is not None:
+        hints["spell_faces"] = spell_faces
+    if modes is not None:
+        hints["modes"] = {
+            "instruction": "Choose one -",
+            "minimum": 1,
+            "maximum": 1,
+            "repeatable": False,
+            "understood": True,
+            "entwine_cost": None,
+            "escalate_cost": None,
+            "options": modes,
+        }
+    if additional_costs is not None:
+        hints["additional_costs"] = additional_costs
+    return hints
+
+
+def spell_face(name: str, type_line: str, *, spell_face: str | None = None) -> dict[str, Any]:
+    """One `cast.spell_faces[]` entry (FD3, `affordances._spell_faces`) -
+    `spell_face` left out is the card's own plain front-face cast."""
+    return {"spell_face": spell_face, "name": name, "type_line": type_line, "needs_x": False}
+
+
+def mode_option(number: int, text: str) -> dict[str, Any]:
+    """One `cast.modes.options[]` entry (FD3, `affordances.cast_hints`)."""
+    return {"number": number, "text": text, "understood": True, "notice": None}
 
 
 def fetchland(**kw: Any) -> dict[str, Any]:
@@ -391,6 +442,8 @@ def state_view(
     combat_attacks: list[dict[str, Any]] | None = None,
     step: str = "precombat_main",
     priority_holder: str | None = None,
+    pregame: dict[str, Any] | None = None,
+    mana_pool: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, Any]:
     """A redacted `GameStateView` as `viewer` receives it."""
     names = (viewer, opponent)
@@ -430,6 +483,7 @@ def state_view(
                 "lands_played": played[name],
                 "land_allowance": allowance[name],
                 "own_turns_taken": taken[name],
+                "mana_pool": (mana_pool or {}).get(name) or {"floating": {}},
             }
             for name in names
         ],
@@ -454,6 +508,7 @@ def state_view(
         "conceded": [],
         "combat": {"attacks": list(combat_attacks or [])},
         "you": viewer,
+        "pregame": pregame,
     }
     if library_contents is not None:
         view["library_contents"] = {viewer: library_contents}
@@ -559,3 +614,157 @@ def targets_answer(targets: list[dict[str, Any]], **over: Any) -> dict[str, Any]
     item = {"decision": "choose_targets", "targets": list(targets)}
     item.update(over)
     return item
+
+
+# -- FD3 builders: keyword_action / mulligan / repeat moves, order / damage / --
+# -- choice_from answers, and the pending-decision shapes each one reads -----
+
+
+def keyword_action_move(
+    action: str, select: dict[str, Any] | None = None, *, zone: str = "hand", **over: Any
+) -> dict[str, Any]:
+    """A `KeywordActionMove` (FD2/FD3 item 3): `action` names the route,
+    `select` the card by characteristic; `target`/`crew_with` go in `over`."""
+    move: dict[str, Any] = {
+        "kind": "keyword_action",
+        "action": action,
+        "card": {"zone": zone, "select": select if select is not None else {}},
+    }
+    move.update(over)
+    return move
+
+
+def mulligan_move(keep: bool, *, bottom: dict[str, Any] | None = None) -> dict[str, Any]:
+    """A `MulliganMove` (FD2/FD3 item 4)."""
+    move: dict[str, Any] = {"kind": "mulligan", "keep": keep}
+    if bottom is not None:
+        move["bottom"] = bottom
+    return move
+
+
+def pick(select: dict[str, Any] | None = None, **over: Any) -> dict[str, Any]:
+    """A bare `Pick` (`select`, plus `count`/`prefer`/`ties` in `over`) - the
+    cost-object shape `sacrifice`/`discard`/`exile`/`tap`/`convoke`/`delve`/
+    `improvise`/`crew_with`/`bottom` all share."""
+    item: dict[str, Any] = {"select": select if select is not None else {}}
+    item.update(over)
+    return item
+
+
+def repeat_move(
+    moves: list[dict[str, Any]],
+    until: list[dict[str, Any]],
+    max_iterations: int,
+    *,
+    stop_when_refused: bool = False,
+) -> dict[str, Any]:
+    """FD9's `RepeatMove`, run by FD3 part 7."""
+    return {
+        "kind": "repeat",
+        "moves": list(moves),
+        "until": list(until),
+        "max_iterations": max_iterations,
+        "stop_when_refused": stop_when_refused,
+    }
+
+
+def order_answer(tiers: list[dict[str, Any]], **over: Any) -> dict[str, Any]:
+    """An `order_triggers` answer (FD2, CR 603.3b): `order` tiers, first
+    resolves last."""
+    item = {"decision": "order_triggers", "order": list(tiers)}
+    item.update(over)
+    return item
+
+
+def damage_policy(
+    tiers: list[dict[str, Any]] | None = None,
+    *,
+    lethal_first: bool | None = None,
+    rest_to: str | None = None,
+) -> dict[str, Any]:
+    """A `DamagePolicy` (FD2, `Answer.damage`)."""
+    policy: dict[str, Any] = {}
+    if tiers is not None:
+        policy["tiers"] = list(tiers)
+    if lethal_first is not None:
+        policy["lethal_first"] = lethal_first
+    if rest_to is not None:
+        policy["rest_to"] = rest_to
+    return policy
+
+
+def damage_answer(policy: dict[str, Any], **over: Any) -> dict[str, Any]:
+    item = {"decision": "assign_combat_damage", "damage": policy}
+    item.update(over)
+    return item
+
+
+def choice_from_answer(
+    zone: str, side: str, select: dict[str, Any] | None = None, **over: Any
+) -> dict[str, Any]:
+    """A `choose_a_quality` answer naming `choice_from` (FD2): the matched
+    card's own name, resolved at run time."""
+    item = {
+        "decision": "choose_a_quality",
+        "choice_from": {"zone": zone, "side": side, "select": select if select is not None else {}},
+    }
+    item.update(over)
+    return item
+
+
+def pending_order_triggers(abilities: list[dict[str, Any]], **over: Any) -> dict[str, Any]:
+    """A redacted `order_triggers` pending decision - `abilities` entries are
+    `{id, name, controller, text, source_card_id}` (`decisions.PendingDecision
+    .abilities`)."""
+    pending: dict[str, Any] = {
+        "kind": "order_triggers",
+        "prompt": "order triggers",
+        "cards": [entry["id"] for entry in abilities],
+        "abilities": list(abilities),
+    }
+    pending.update(over)
+    return pending
+
+
+def pending_assign_combat_damage(
+    attacker_id: str,
+    blockers: list[tuple[str, int]],
+    *,
+    amount: int,
+    trample: bool = False,
+    player: str = "alice",
+    defender: str = "bob",
+) -> dict[str, Any]:
+    """A redacted `assign_combat_damage` pending decision - `blockers` is
+    `[(card_id, lethal_damage), ...]`; `targets`/`lethal_damage` are aligned
+    (`decisions.damage_assignment_answer`'s own reading), the defending
+    player appended last when `trample` (offered only once every blocker has
+    lethal, which this test builder does not itself enforce - it is the
+    engine's own rule, not the DSL's)."""
+    targets = [{"kind": "card", "id": card_id} for card_id, _ in blockers]
+    lethal = [amount_needed for _, amount_needed in blockers]
+    if trample:
+        targets.append({"kind": "player", "id": defender})
+        lethal.append(0)
+    return {
+        "kind": "assign_combat_damage",
+        "prompt": "assign combat damage",
+        "player": player,
+        "cards": [attacker_id, *(card_id for card_id, _ in blockers)],
+        "amount": amount,
+        "targets": targets,
+        "lethal_damage": lethal,
+        "trample": trample,
+    }
+
+
+def pending_choose_a_quality(**over: Any) -> dict[str, Any]:
+    pending: dict[str, Any] = {
+        "kind": "choose_a_quality",
+        "prompt": "choose a quality",
+        "cards": [],
+        "amount": 0,
+        "options": [],
+    }
+    pending.update(over)
+    return pending

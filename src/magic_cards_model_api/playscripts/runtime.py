@@ -81,7 +81,16 @@ from ..seatkit import (
 from . import conditions
 from .bindings import judge_bindings
 from .inputs import BUILTIN_INPUT
-from .schema import AMOUNT_DECISION_KINDS, CHOICE_DECISION_KINDS, WILDCARD, Play
+from .schema import (
+    AMOUNT_DECISION_KINDS,
+    CHOICE_DECISION_KINDS,
+    CHOICE_FROM_DECISION_KINDS,
+    DAMAGE_DECISION_KINDS,
+    MAX_X,
+    ORDER_DECISION_KINDS,
+    WILDCARD,
+    Play,
+)
 from .selectors import Hypo, Present, matches
 
 #: The tool parameter each decision kind is answered on, by kind value - the
@@ -95,6 +104,28 @@ NUMBER_WORDS = {"a": 1, "an": 1, "another": 1, "one": 1, "two": 2, "three": 3, "
 #: FB2 M2/M3: the two move kinds a pending combat decision may be answered
 #: by, as the play's own first move - see `_pending_ready`.
 COMBAT_MOVE_KINDS = ("declare_attackers", "declare_blockers")
+
+#: FD3: the two `CAST_COSTS` values the cast route takes as `alternative_cost`
+#: rather than `keyword` - `printed` (CR 118.9's own alternative cost, named
+#: by the card's own name, never a keyword string) and `impending`
+#: (CR 702.176a, not among the engine's own `keyword_cast_options` yet, so
+#: `use_keyword` would refuse it - `alternative_cost_names.resolve` reaches it
+#: instead, the same way the existing `impending`/`flashback`/`printed` tests
+#: already send it). Every other `CAST_COSTS` value is a real keyword name the
+#: engine's `Casting.use_keyword` matches case-insensitively
+#: (`option.keyword.lower() == keyword.lower()`), so it is sent as `keyword`
+#: exactly as `CAST_COSTS` already spells it.
+ALTERNATIVE_COST_CAST_COSTS = frozenset({"printed", "impending"})
+
+#: FD3: an activation/cast cost object's own "Exile ..." piece (CR 118.3) has
+#: no one canonical zone the way "Sacrifice ..." (always the battlefield) and
+#: "Discard ..." (always hand) do - a printed exile cost names its own zone in
+#: its own words, and neither `CastMove.exile`/`ActivateMove.exile` nor `Pick`
+#: carries a zone field of its own to say which. The two engine docstring
+#: examples this vocabulary is built against (`CastRequest.exiling`'s
+#: Abhorrent Oculus, `ActivateRequest.exiling`'s Back from the Brink) are both
+#: graveyard costs, so that is this runner's own default pool.
+EXILE_COST_ZONE = "graveyard"
 
 MAX_SCRIPTS_PER_RUN = 3
 MAX_MOVES_PER_RUN = 6
@@ -176,6 +207,12 @@ class ScriptExit:
     unvalidated: list[dict[str, Any]] | None = None
     scripts_run: list[str] = field(default_factory=list)
     record_refusal: str | None = None
+    #: FD9/FD3 part 7: the current (or, once the loop is done, the final)
+    #: `repeat` move's own iteration count - `None` when no `repeat` move has
+    #: run in this play at all, so a plain non-looping exit still carries no
+    #: stray `iterations: 0` a caller could mistake for a loop that ran zero
+    #: times on purpose.
+    iterations: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = asdict(self)
@@ -192,6 +229,10 @@ class RunResult:
     script_exit: ScriptExit | None
     resume: dict[str, Any] | None = None
     state: dict[str, Any] | None = None
+    #: FD9/FD3 part 7: mirrors `ScriptExit.iterations` on a finished run's own
+    #: result (and stays `None` on an unfinished one, whose iteration count so
+    #: far lives in `resume` for the next call to carry on from).
+    iterations: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -199,6 +240,7 @@ class RunResult:
             "script_exit": self.script_exit.to_dict() if self.script_exit else None,
             "resume": self.resume,
             "state": self.state,
+            "iterations": self.iterations,
         }
 
 
@@ -245,6 +287,31 @@ class _Run:
     #: stops asking: nobody holds priority in between, so another player's
     #: pass landing then is the pause-slot clobber, not a pass.
     mid_resolution: bool = False
+    #: FD9/FD3 part 7: a `repeat` move's own sub-position, meaningful only
+    #: while `move_index` points at one - the loop's completed-iteration
+    #: count and which of its `moves` is next to send within the iteration
+    #: under way, so a resumed run carries on the same loop rather than
+    #: restarting it. Both reset to 0 the moment the loop itself ends
+    #: (`until` met, `max_iterations` hit, a refusal, or `stop_when_refused`).
+    repeat_iteration: int = 0
+    repeat_body_index: int = 0
+    #: The board digest (`_board_digest`) taken right before the iteration
+    #: under way sent its first body move - `None` between iterations (and
+    #: at the very start of one, before the digest is taken). Compared
+    #: against the digest once the iteration's moves have all landed to
+    #: judge the no-progress guard (`repeat_no_progress`).
+    repeat_digest_before: str | None = None
+    #: Body moves actually sent across every iteration of the CURRENT
+    #: `repeat` move, cumulative - FD9/FD3 part 7's own `moves_done` reading
+    #: ("counts the body moves sent across iterations") for whichever move
+    #: index a repeat sits at.
+    repeat_moves_done: int = 0
+    #: The most recently completed (or currently running) `repeat` move's own
+    #: iteration count, surviving past that move's own end so `_end` can
+    #: still stamp `ScriptExit.iterations` on a run that goes on to finish a
+    #: later move after the loop - `None` when no `repeat` has run yet in
+    #: this run at all.
+    iterations: int | None = None
 
     def token(self, elapsed_ms: int) -> dict[str, Any]:
         return {
@@ -267,6 +334,11 @@ class _Run:
                 "seq_start": self.seq_start,
                 "resumes": self.resumes,
                 "wall_ms": self.wall_ms + elapsed_ms,
+                "repeat_iteration": self.repeat_iteration,
+                "repeat_body_index": self.repeat_body_index,
+                "repeat_digest_before": self.repeat_digest_before,
+                "repeat_moves_done": self.repeat_moves_done,
+                "iterations": self.iterations,
             },
         }
 
@@ -292,6 +364,11 @@ class _Run:
             resumes=int(chain.get("resumes") or 0) + 1,
             wall_ms=int(chain.get("wall_ms") or 0),
             mid_resolution=bool(chain.get("mid_resolution")),
+            repeat_iteration=int(chain.get("repeat_iteration") or 0),
+            repeat_body_index=int(chain.get("repeat_body_index") or 0),
+            repeat_digest_before=chain.get("repeat_digest_before"),
+            repeat_moves_done=int(chain.get("repeat_moves_done") or 0),
+            iterations=chain.get("iterations"),
         )
 
 
@@ -546,7 +623,13 @@ def _guarded(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> R
         state = ctx.seat.fetch_state()
         if not run.started:
             run.turn, run.step = state.get("turns_taken"), step_position(state)
-        return RunResult(False, None, resume=run.token(ctx.elapsed_ms()), state=state)
+        return RunResult(
+            False,
+            None,
+            resume=run.token(ctx.elapsed_ms()),
+            state=state,
+            iterations=run.repeat_iteration or None,
+        )
     except HypotheticalFactsUnavailable as exc:
         # D2: wherever inside `_drive` a hypothetical-facts fetch failed
         # (`_evaluate`, a move's own `ctx.hypothetical.get`, an answer's),
@@ -660,12 +743,25 @@ def _pending_ready(play: dict[str, Any], state: dict[str, Any], me: str) -> bool
 
     When true, `_drive` skips `_wait` (and so `_wait_for_own_priority`'s own
     UNFORESEEN-on-pending exit) entirely for this play's first move - there
-    is nothing to wait for, the decision is already on the table."""
+    is nothing to wait for, the decision is already on the table.
+
+    FD3 item 4 adds a third shape, on the same footing but gated on
+    something other than `pending_decision`: a `mulligan` move, or a
+    standalone answer to `opening_hand_action`, while the pregame step this
+    seat's own declaration/action belongs to is genuinely waiting on it
+    (`state.pregame.awaiting_mulligan`/`.opening_hand_actor`) - CR 103.5/103.6
+    both predate CR 117's priority entirely, so `holds_priority` never holds
+    pregame and would otherwise wait forever."""
+    moves = play.get("moves") or []
+    if moves and moves[0]["kind"] == "mulligan":
+        pregame = state.get("pregame") or {}
+        return me in (pregame.get("awaiting_mulligan") or [])
+    if moves and _opening_hand_answer(moves[0]) is not None:
+        return (state.get("pregame") or {}).get("opening_hand_actor") == me
     pending = state.get("pending_decision")
     if not isinstance(pending, dict) or not decision_is_mine(pending, state, me):
         return False
     kind = pending.get("kind")
-    moves = play.get("moves") or []
     if moves and moves[0]["kind"] in COMBAT_MOVE_KINDS:
         return moves[0]["kind"] == kind
     return kind in _standalone_pending_kinds(play)
@@ -789,6 +885,17 @@ def _moves(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None:
         if ctx.time_up():
             raise _Unfinished
         move = play["moves"][run.move_index]
+        if move["kind"] == "repeat":
+            # FD9/FD3 part 7: a `repeat` drives its own sub-loop (each
+            # iteration's board re-read, `until`, the no-progress guard, its
+            # own resumable position) rather than the plain send-then-settle
+            # shape below - `_exec_repeat` already leaves `run.move_index`/
+            # `run.moves_done` exactly where the rest of this loop expects
+            # them once it returns `None`.
+            stopped = _exec_repeat(ctx, run, play)
+            if stopped is not None:
+                return stopped
+            continue
         stopped = _send_move(ctx, run, play)
         # B7-14: the engine accepting the move (paid, resolved or paused) is
         # what "done" means, so `moves_done` counts it the moment `move_index`
@@ -804,6 +911,170 @@ def _moves(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None:
                 return stopped
         run.moves_done = run.move_index
     return None
+
+
+def _board_digest(state: dict[str, Any]) -> str:
+    """FD9/FD3 part 7's own no-progress guard reading: zones, tapped state,
+    counters, life and mana pool. An iteration whose body moves the engine
+    all accepted but that changed none of this is `repeat_no_progress` -
+    otherwise an accepted move that does nothing (an ability with no legal
+    target, say) would spin every remaining iteration for no reason."""
+    cards: list[Any] = []
+    for zone_key in ("battlefield", "stack", "exile"):
+        cards.extend(state.get(zone_key) or [])
+    for zone_key in ("hands", "graveyards"):
+        for owned in (state.get(zone_key) or {}).values():
+            cards.extend(owned or [])
+    card_rows = sorted(
+        json.dumps(
+            {
+                "id": str(card.get("id")),
+                "zone": card.get("zone"),
+                "controller": card.get("controller"),
+                "tapped": bool(card.get("tapped")),
+                "counters": card.get("counters") or {},
+            },
+            sort_keys=True,
+            default=str,
+        )
+        for card in cards
+        if isinstance(card, dict)
+    )
+    player_rows = sorted(
+        json.dumps(
+            {
+                "username": player.get("username"),
+                "life": player.get("life"),
+                "mana_pool": player.get("mana_pool"),
+            },
+            sort_keys=True,
+            default=str,
+        )
+        for player in state.get("players") or []
+    )
+    return hashlib.sha256(
+        json.dumps([card_rows, player_rows], sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _exec_repeat(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None:
+    """FD9/FD3 part 7: drive the `repeat` move at `run.move_index` to
+    completion (or a stop), reusing `_send_move`/`_settle` for every body
+    move by temporarily pointing them at the body itself (`body_play`) and
+    `run.move_index`/`run.answer_index` at the body's own position, restored
+    to the outer position - via `finally`, so an `_Unfinished` cut mid-body
+    still leaves the resume token describing the right place - once each
+    iteration's moves are sent or the loop stops.
+
+    `until` is judged fresh, against a freshly read board, only at the start
+    of an iteration (`run.repeat_body_index == 0`) - not on every resume,
+    which would otherwise abandon an iteration already partway sent for a
+    coincidental board read. Zero iterations is a real, immediate loop end
+    when `until` already holds the first time it is judged."""
+    seat = ctx.seat
+    outer_index = run.move_index
+    move = play["moves"][outer_index]
+    body = move["moves"]
+    until = move["until"]
+    max_iterations = move["max_iterations"]
+    stop_when_refused = bool(move.get("stop_when_refused"))
+    body_play = {**play, "moves": body}
+
+    def finish(exit_out: ScriptExit | None) -> ScriptExit | None:
+        # Read off `run.repeat_moves_done`/`.repeat_iteration` before
+        # `end_loop` (below) ever resets either - the whole reason this and
+        # `end_loop` are two separate calls, always made in that order.
+        run.moves_done = outer_index + run.repeat_moves_done
+        run.iterations = run.repeat_iteration
+        if exit_out is not None:
+            exit_out.iterations = run.repeat_iteration
+        return exit_out
+
+    def end_loop() -> None:
+        run.move_index = outer_index + 1
+        run.answer_index = 0
+        run.repeat_body_index = 0
+        run.repeat_digest_before = None
+        run.repeat_moves_done = 0
+
+    while True:
+        if run.repeat_body_index == 0:
+            if ctx.time_up():
+                raise _Unfinished
+            state = seat.fetch_state(include_contents=conditions.needs_contents({"true": until}))
+            hypo = (
+                ctx.hypothetical.get(
+                    seat, state, horizon=conditions.needs_next_turn({"true": until})
+                )
+                if conditions.needs_hypothetical({"true": until})
+                else None
+            )
+            result = conditions.evaluate(
+                {"true": until, "false": []},
+                state,
+                ctx.me,
+                ctx.inputs,
+                ctx.catalog,
+                hypothetical=hypo,
+            )
+            stopped = _condition_exit(result)
+            if stopped is None:
+                # Every `until` condition holds: the loop ends here (zero
+                # iterations, the first time round) and the script continues.
+                finish(None)
+                end_loop()
+                return None
+            if stopped.exit is not Exit.NOT_APPLICABLE:
+                # `needs_input`/`invalid_input`: `until` cannot be judged at
+                # all, so the run stops the same way any other unevaluable
+                # condition does.
+                return finish(stopped)
+            if run.repeat_iteration >= max_iterations:
+                return finish(ScriptExit(Exit.UNFORESEEN, stop_reason="repeat_bound"))
+            run.repeat_digest_before = _board_digest(state)
+        run.move_index, run.answer_index = run.repeat_body_index, 0
+        # `stop_now`/`result_exit` are read only after the `finally` below has
+        # restored the outer position - `finish`/`end_loop` must never run
+        # while `run.move_index` still holds a body-relative value, or the
+        # `finally` clause would immediately clobber whatever they just set.
+        stop_now = False
+        result_exit: ScriptExit | None = None
+        try:
+            while run.move_index < len(body):
+                if ctx.time_up():
+                    raise _Unfinished
+                stopped_move = _send_move(ctx, run, body_play)
+                if stopped_move is not None:
+                    if stopped_move.exit is Exit.REFUSED and stop_when_refused:
+                        stop_now = True
+                    else:
+                        result_exit = stopped_move
+                    break
+                run.repeat_moves_done += 1
+                if _needs_settle(body[run.move_index - 1]):
+                    stopped_settle = _settle(ctx, run, body_play)
+                    if stopped_settle is not None:
+                        if stopped_settle.exit is Exit.REFUSED and stop_when_refused:
+                            stop_now = True
+                        else:
+                            result_exit = stopped_settle
+                        break
+        finally:
+            run.repeat_body_index = run.move_index
+            run.move_index = outer_index
+        if stop_now:
+            # `stop_when_refused`: a normal end of the loop, not a run failure.
+            finish(None)
+            end_loop()
+            return None
+        if result_exit is not None:
+            return finish(result_exit)
+        after = seat.fetch_state()
+        if _board_digest(after) == run.repeat_digest_before:
+            return finish(ScriptExit(Exit.UNFORESEEN, stop_reason="repeat_no_progress"))
+        run.repeat_body_index = 0
+        run.repeat_digest_before = None
+        run.repeat_iteration += 1
 
 
 def _next(ctx: _Context, run: _Run, play: dict[str, Any]) -> RunResult:
@@ -870,6 +1141,41 @@ def _send_move(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | N
     state = seat.fetch_state(include_contents=conditions.needs_contents(move))
     reasoning = _suffixed(ctx, run, f"move {index + 1}/{len(play['moves'])} ({move['kind']})")
     if move["kind"] == "answer":
+        opening_hand_item = _opening_hand_answer(move)
+        if opening_hand_item is not None:
+            # FD3 item 4: CR 103.6's action never parks a `pending_decision`
+            # at all (`state.pregame.opening_hand_actor`/`.opening_hand_
+            # options` drive it instead), so this bypasses the ordinary
+            # "a decision is pending" check and sends the dedicated route
+            # directly, the same as `pass` above sends its own route directly.
+            hypo = (
+                ctx.hypothetical.get(
+                    ctx.seat, state, horizon=conditions.needs_next_turn(opening_hand_item)
+                )
+                if conditions.needs_hypothetical(opening_hand_item)
+                else None
+            )
+            mana = conditions.untapped_mana(state, ctx.me)
+            built = _opening_hand_request(
+                opening_hand_item, state, ctx.me, reasoning, hypo=hypo, mana=mana
+            )
+            if isinstance(built, ScriptExit):
+                return built
+            path, body = built
+            # Not `run_action`: `OpeningHandActionRequest` is a plain
+            # `RequestModel`, not `BoardRead` - it carries no `expected_seq`
+            # field for `Seat.call_json`'s own race-protection to fold in
+            # (`extra="forbid"` refuses it as "Extra inputs are not
+            # permitted"), and pregame has no CR 117 priority to release or
+            # check for anyway. Called and read directly instead, the same
+            # normalised `{allowed, reason, ...}`/`{unknown_outcome}` shape
+            # `_refused`/`_unknown_outcome` already read off any other route.
+            raw = seat.call_json("POST", f"/api/games/{seat.game_id()}/{path}", body)
+            stopped = _direct_outcome_exit(raw)
+            if stopped is not None:
+                return stopped
+            run.move_index, run.answer_index = index + 1, 0
+            return None
         pending = state.get("pending_decision")
         if pending is None or not decision_is_mine(pending, state, ctx.me):
             return ScriptExit(
@@ -1135,6 +1441,23 @@ def _outcome_exit(answer: dict[str, Any]) -> ScriptExit | None:
     return None
 
 
+def _direct_outcome_exit(outcome: Any) -> ScriptExit | None:
+    """The exit one plain `Seat.call_json` answer forces, or None to carry
+    on - `_outcome_exit`'s own reading, minus the `run_action`/`block_until_
+    wake` envelope a route with no `expected_seq` field can never take part
+    in (FD3 item 4's own `opening_hand_action`)."""
+    reason = outcome.get("reason") if isinstance(outcome, dict) else None
+    if _unknown_outcome(outcome):
+        return ScriptExit(Exit.UNKNOWN_OUTCOME, stop_reason=reason)
+    if is_stale(outcome):
+        return ScriptExit(Exit.STALE, refusal=reason, refusal_source="server")
+    if _missing_plan(outcome):
+        return ScriptExit(Exit.NEEDS_PLAN, refusal=reason, refusal_source="server")
+    if _refused(outcome):
+        return ScriptExit(Exit.REFUSED, refusal=reason, refusal_source="server")
+    return None
+
+
 def _missing_plan(outcome: Any) -> bool:
     """`records.MissingPlan`'s 422: a validation-shaped `detail` naming the
     `plan` field as missing."""
@@ -1169,6 +1492,10 @@ def _move_request(
         return _attack_request(move, state, me, reasoning, hypo=hypo, mana=mana)
     if kind == "declare_blockers":
         return _block_request(move, state, me, reasoning, hypo=hypo, mana=mana)
+    if kind == "keyword_action":
+        return _keyword_action_request(move, state, me, reasoning, hypo=hypo, mana=mana)
+    if kind == "mulligan":
+        return _mulligan_request(move, state, me, reasoning, hypo=hypo, mana=mana)
     chosen = _pick(
         _zone_cards(state, "hand", me),
         move["card"]["select"],
@@ -1301,11 +1628,243 @@ def _activate_request(
         if isinstance(discarded, ScriptExit):
             return discarded
         body["discarding"] = [card["id"] for card in discarded]
+    exile = move.get("exile")
+    if isinstance(exile, dict):
+        # FD2: an activation cost's own "Exile ..." piece (CR 118.3) - the
+        # same footing `sacrifice`/`discard` are on, over `EXILE_COST_ZONE`
+        # (no zone field of its own on the Pick to say otherwise).
+        exiled = _pick(
+            _zone_cards(state, EXILE_COST_ZONE, me),
+            exile["select"],
+            "the card to exile",
+            exile.get("prefer"),
+            exile.get("count") or 1,
+            present=present,
+            ties=exile.get("ties"),
+            hypo=hypo,
+            mana=mana,
+        )
+        if isinstance(exiled, ScriptExit):
+            return exiled
+        body["exiling"] = [card["id"] for card in exiled]
+    x_value = move.get("x")
+    if x_value is not None:
+        resolved_x = _resolve_x(x_value, ability.get("cost"), mana)
+        if isinstance(resolved_x, ScriptExit):
+            return resolved_x
+        body["x_value"] = resolved_x
+    color = move.get("color")
+    if color is not None:
+        body["color"] = color
     # B7-10 (B5-05 variant): a play never names its own mana sources, so the
     # request names none and lets the engine auto-pay (CR 601.2g) - matching
     # the CLI/MCP semantics of #32. Naming every untapped source here made an
     # audit row look like it paid with sources that never tapped.
     return "actions/activate", body
+
+
+#: FD2 item 3/FD3 item 3: `KeywordActionMove.action` (`schema.KEYWORD_ACTIONS`)
+#: to the route it sends, in `actions/<...>` kebab-case exactly as every
+#: other move-request path in this module already is. `turn_face_up`/
+#: `companion` are FD5 part 5's own two routes - named here to the same
+#: convention (`actions/turn-face-up`, `actions/companion`) so this executor
+#: needs no further change once that part lands; unverified against a real
+#: route until then (FD3's own notes: rebase onto FD5 part 5, do not add the
+#: route here).
+_KEYWORD_ACTION_ROUTES = {
+    "suspend": "actions/suspend",
+    "plot": "actions/plot",
+    "foretell": "actions/foretell",
+    "cycle": "actions/cycle",
+    "equip": "actions/equip",
+    "crew": "actions/crew",
+    "turn_face_up": "actions/turn-face-up",
+    "companion": "actions/companion",
+}
+
+
+def _keyword_action_request(
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> tuple[str, dict[str, Any]] | ScriptExit:
+    """FD2 item 3/FD3 item 3: one shape for the six existing keyword-action
+    routes (suspend, plot, foretell, cycle, equip, crew) and FD5's two new
+    ones (turn_face_up, companion) - the same `_pick` rule every other move
+    already uses (`unforeseen` when nothing matches the card/target/crew
+    selector, `ambiguous` on a tie)."""
+    action = move["action"]
+    route = _KEYWORD_ACTION_ROUTES.get(action)
+    if route is None:
+        return ScriptExit(
+            Exit.UNFORESEEN, stop_reason=f"no route is wired for keyword_action {action!r}"
+        )
+    present = conditions.presence(state, me)
+    if action == "companion":
+        # Bringing a companion to hand names no card of its own (CR 702.139c:
+        # exactly one companion, sitting in a zone this DSL's `ZonedCard`
+        # cannot select at all - `schema.COUNT_ZONES` has no "command" entry)
+        # - the request is the bare declaration.
+        return route, {"player": me, "reasoning": reasoning}
+    zone = move["card"]["zone"]
+    chosen = _pick(
+        _zone_cards(state, zone, me),
+        move["card"]["select"],
+        f"the card to {action}",
+        move["card"].get("prefer"),
+        present=present,
+        ties=move["card"].get("ties"),
+        hypo=hypo,
+        mana=mana,
+    )
+    if isinstance(chosen, ScriptExit):
+        return chosen
+    card = chosen[0]
+    if action in ("suspend", "plot", "foretell", "cycle", "turn_face_up"):
+        return route, {"player": me, "card_id": card["id"], "reasoning": reasoning}
+    if action == "equip":
+        target = move.get("target")
+        if target is None:
+            return ScriptExit(Exit.UNFORESEEN, stop_reason="equip needs a target creature")
+        zones = [target["zone"]] if target.get("zone") else None
+        pool = _target_pool(state, target["side"], me, zones)
+        picked = _pick(
+            pool,
+            target["select"],
+            "the equip target",
+            target.get("prefer"),
+            present=present,
+            ties=target.get("ties"),
+            hypo=hypo,
+            mana=mana,
+        )
+        if isinstance(picked, ScriptExit):
+            return picked
+        return route, {
+            "player": me,
+            "card_id": card["id"],
+            "target": picked[0]["id"],
+            "reasoning": reasoning,
+        }
+    # action == "crew"
+    crew_with = move.get("crew_with")
+    if crew_with is None:
+        return ScriptExit(Exit.UNFORESEEN, stop_reason="crew needs crew_with")
+    crewing = _cost_object_pick(
+        crew_with, state, me, "battlefield", "the crew", hypo=hypo, mana=mana
+    )
+    if isinstance(crewing, ScriptExit):
+        return crewing
+    return route, {"player": me, "card_id": card["id"], "crewing": crewing, "reasoning": reasoning}
+
+
+def _mulligan_request(
+    move: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> tuple[str, dict[str, Any]] | ScriptExit:
+    """FD2 item 4/FD3 item 4: `POST .../pregame/mulligan`'s body for a
+    `mulligan` move - `keep: false` takes a mulligan (`take: true`); `keep:
+    true` (with the hand this seat is dealt) is `take: false`, and if this
+    seat has already mulliganed it owes CR 103.5's bottoming, named by
+    `bottom` (a Pick over its own hand) or left to the engine's own default
+    (the back of the hand) when the move gives none."""
+    take = not move["keep"]
+    body: dict[str, Any] = {"player": me, "take": take, "reasoning": reasoning}
+    if not take:
+        bottom = move.get("bottom")
+        if bottom is not None:
+            owed = ((state.get("pregame") or {}).get("cards_to_bottom") or {}).get(me, 0)
+            chosen = _pick(
+                _zone_cards(state, "hand", me),
+                bottom["select"],
+                "the cards to bottom",
+                bottom.get("prefer"),
+                bottom.get("count") or max(owed, 1),
+                present=conditions.presence(state, me),
+                ties=bottom.get("ties"),
+                hypo=hypo,
+                mana=mana,
+            )
+            if isinstance(chosen, ScriptExit):
+                return chosen
+            body["bottom"] = [card["id"] for card in chosen]
+    return "pregame/mulligan", body
+
+
+def _opening_hand_answer(move: dict[str, Any]) -> dict[str, Any] | None:
+    """FD2 item 4/FD3 item 4: the play's own `answer` item naming
+    `opening_hand_action` (CR 103.6), when `move` is a standalone answer to
+    one - the same `answer`-move shape FB2 item 7 already gives a standalone
+    pending-decision answer, except CR 103.6's own action never reaches
+    `state.pending_decision` at all (it is driven off `state.pregame.
+    opening_hand_actor`/`.opening_hand_options` instead), so `_send_move`
+    routes it here rather than through the ordinary decide path."""
+    if move["kind"] != "answer":
+        return None
+    return next(
+        (
+            item
+            for item in move.get("answers") or []
+            if item.get("decision") == "opening_hand_action"
+        ),
+        None,
+    )
+
+
+def _opening_hand_request(
+    item: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    reasoning: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> tuple[str, dict[str, Any]] | ScriptExit:
+    """FD2 item 4/FD3 item 4: `POST .../pregame/opening-hand/action`'s body -
+    `item["pick"]` names which of this seat's own `pregame.
+    opening_hand_options` to take, by selector over the eligible hand cards."""
+    pregame = state.get("pregame") or {}
+    if pregame.get("opening_hand_actor") != me:
+        return ScriptExit(
+            Exit.UNFORESEEN, stop_reason="no opening-hand action is this seat's to take right now"
+        )
+    offered = {
+        str(option["card_id"])
+        for option in (pregame.get("opening_hand_options") or {}).get(me) or []
+    }
+    pool = [card for card in _zone_cards(state, "hand", me) if str(card["id"]) in offered]
+    pick = item.get("pick")
+    if pick is None:
+        return ScriptExit(
+            Exit.UNFORESEEN, stop_reason="opening_hand_action is answered with a pick"
+        )
+    chosen = _pick(
+        pool,
+        pick["select"],
+        "the opening-hand action card",
+        pick.get("prefer"),
+        pick.get("count") or 1,
+        present=conditions.presence(state, me),
+        ties=pick.get("ties"),
+        hypo=hypo,
+        mana=mana,
+    )
+    if isinstance(chosen, ScriptExit):
+        return chosen
+    return "pregame/opening-hand/action", {
+        "player": me,
+        "card_id": chosen[0]["id"],
+        "reasoning": reasoning,
+    }
 
 
 def _opponent_name(state: dict[str, Any], me: str) -> str | None:
@@ -1656,6 +2215,177 @@ def _decision_targets_answer(
     return chosen
 
 
+_MANA_SYMBOL = re.compile(r"\{([^}]+)\}")
+
+
+def _symbol_value(symbol: str) -> int:
+    """One `{...}` mana symbol's own contribution to a fixed (non-X) cost:
+    a numeric symbol's own value, or 1 for anything else that still has to be
+    paid with a mana source - a colored, hybrid, colorless or Phyrexian
+    symbol alike. Not exact for every hybrid/Phyrexian shape (CR 202.2), but
+    close enough to bound `_max_x`'s search, which only ever narrows an
+    integer a script's own board read already approximates."""
+    return int(symbol) if symbol.isdigit() else 1
+
+
+def _max_x(mana_cost: str | None, available: int) -> int:
+    """The largest X (CR 107.3a) this printed cost's `{X}` symbols could be
+    announced for, with `available` mana to spend on the whole cost - the
+    non-X symbols paid first, whatever is left divided evenly among the X
+    symbols (Walking Ballista's `{X}{X}` splits one X across two symbols,
+    CR 107.3i). Clamped to `schema.MAX_X`; 0 when there is no `{X}` in the
+    cost at all, or nothing is left to fund one."""
+    symbols = _MANA_SYMBOL.findall(mana_cost or "")
+    x_count = symbols.count("X")
+    if x_count == 0:
+        return 0
+    fixed = sum(_symbol_value(symbol) for symbol in symbols if symbol != "X")
+    spendable = available - fixed
+    if spendable <= 0:
+        return 0
+    return min(MAX_X, spendable // x_count)
+
+
+def _resolve_x(x_value: Any, mana_cost: str | None, mana: int | None) -> int | ScriptExit:
+    """`CastMove.x`/`ActivateMove.x` (FD2): a literal int, or `'max'`
+    (schema.py's own `XValue`), resolved to the largest payable X from the
+    untapped mana this seat's own state view already reads (`mana`, the same
+    count every other selector-driven pick already threads through)."""
+    if x_value != "max":
+        return int(x_value)
+    if mana is None:
+        return ScriptExit(
+            Exit.UNFORESEEN, stop_reason="x: 'max' needs the untapped-mana count from the board"
+        )
+    return _max_x(mana_cost, mana)
+
+
+def _spell_faces(card: dict[str, Any]) -> list[dict[str, Any]]:
+    """A hand/exile card's own `cast.spell_faces` (`affordances._spell_faces`,
+    published on the state view unconditionally, before any `Casting` exists,
+    so the runner never has to call `available_actions` to see it) - one
+    entry per face a cast may name, `spell_face: None` first for the card's
+    plain front-face cast. Empty for a card with no choice to make."""
+    return list((card.get("cast") or {}).get("spell_faces") or [])
+
+
+def _resolve_face(
+    face: dict[str, Any],
+    card: dict[str, Any],
+    present: Present | None,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> str | None | ScriptExit:
+    """`CastMove.face` (FD2): which of `card`'s castable faces (a split
+    card's two halves, an adventurer card's normal cast and its Adventure)
+    matches this selector, by type or subtype - the only characteristics
+    `affordances._spell_faces` publishes per face (`name`/`mana_cost`/
+    `type_line`). Resolves to the matched entry's own `spell_face` value,
+    `None` for the card's plain front-face cast (never sent at all -
+    `CastRequest.spell_face` already reads an absent field that way)."""
+    faces = _spell_faces(card)
+    if not faces:
+        return ScriptExit(
+            Exit.UNFORESEEN,
+            stop_reason=f"{card.get('name') or card['id']} has no alternative face to cast",
+        )
+    candidates = [{**entry, "id": entry.get("spell_face") or card["id"]} for entry in faces]
+    picked = _pick(candidates, face, "the spell face", present=present, hypo=hypo, mana=mana)
+    if isinstance(picked, ScriptExit):
+        return picked
+    return picked[0]["spell_face"]
+
+
+def _resolve_modes(modes: list[dict[str, Any]], card: dict[str, Any]) -> list[int] | ScriptExit:
+    """`CastMove.modes` (FD2, CR 700.2a): each `ModeChoice.text_has` matched
+    against this card's own printed mode text (`cast.modes.options`,
+    published the same unconditional way `spell_faces` is), in the order
+    given - never the mode's own printed number, which is not a
+    characteristic a script may read off the card."""
+    options = ((card.get("cast") or {}).get("modes") or {}).get("options") or []
+    chosen: list[int] = []
+    for index, mode in enumerate(modes):
+        phrase = mode["text_has"].casefold()
+        found = next(
+            (option for option in options if phrase in str(option.get("text") or "").casefold()),
+            None,
+        )
+        if found is None:
+            return ScriptExit(
+                Exit.UNFORESEEN, stop_reason=f"mode {index + 1}: nothing printed matches {phrase!r}"
+            )
+        chosen.append(found["number"])
+    return chosen
+
+
+def _resolve_optional_costs(
+    costs: list[dict[str, Any]], card: dict[str, Any]
+) -> list[dict[str, Any]] | ScriptExit:
+    """`CastMove.optional_costs` (FD2, CR 118.8): each `OptionalCost.text_has`
+    matched against this card's own printed additional costs
+    (`cast.additional_costs`, published the same unconditional way
+    `spell_faces`/`modes` are) by its keyword name - kicker, bargain, collect
+    evidence and the rest, named the way a card's own reminder text names
+    them, never the api's internal spelling guessed at."""
+    options = (card.get("cast") or {}).get("additional_costs") or []
+    chosen: list[dict[str, Any]] = []
+    for index, cost in enumerate(costs):
+        phrase = cost["text_has"].casefold()
+        found = next(
+            (
+                option
+                for option in options
+                if option.get("keyword")
+                and (
+                    phrase in str(option["keyword"]).casefold()
+                    or str(option["keyword"]).casefold() in phrase
+                )
+            ),
+            None,
+        )
+        if found is None:
+            return ScriptExit(
+                Exit.UNFORESEEN,
+                stop_reason=f"optional cost {index + 1}: nothing printed matches {phrase!r}",
+            )
+        chosen.append({"keyword": found["keyword"]})
+    return chosen
+
+
+def _cost_object_pick(
+    pick: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    zone: str,
+    what: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> list[str] | ScriptExit:
+    """One cost-object `Pick` (FD2's `sacrifice`/`discard`/`exile`/`tap` on a
+    cast's own printed additional cost, and its `convoke`/`delve`/
+    `improvise`) resolved to the ids it names, `count` of them (the Pick's
+    own, or 1 when left out - the engine's own count refusal
+    ("sacrifice needs N chosen, M given") is the backstop for a script that
+    under-names one, exactly the discipline `_activate_request`'s own
+    `sacrifice`/`discard` already keep)."""
+    chosen = _pick(
+        _zone_cards(state, zone, me),
+        pick["select"],
+        what,
+        pick.get("prefer"),
+        pick.get("count") or 1,
+        present=conditions.presence(state, me),
+        ties=pick.get("ties"),
+        hypo=hypo,
+        mana=mana,
+    )
+    if isinstance(chosen, ScriptExit):
+        return chosen
+    return [card["id"] for card in chosen]
+
+
 def cast_body(
     move: dict[str, Any],
     state: dict[str, Any],
@@ -1667,37 +2397,270 @@ def cast_body(
 ) -> dict[str, Any] | ScriptExit:
     """`POST .../actions/cast`'s body for a `cast` move, read off the view.
     A `cost` other than `normal` is the alternative cost it is announced
-    under: the keyword, or for `printed` the card's name, which is how the
-    engine names a card's own CR 118.9 cost."""
+    under: `alternative_cost` (the card's own name for `printed`, or the
+    cost's own name for `impending`, which the engine does not yet offer as a
+    `keyword_cast_options` entry) or, for every other `CAST_COSTS` value, the
+    route's `keyword` field (`ALTERNATIVE_COST_CAST_COSTS`)."""
+    present = conditions.presence(state, me)
     zone = move["card"]["zone"]
     chosen = _pick(
         _zone_cards(state, zone, me),
         move["card"]["select"],
         "the card to cast",
         move["card"].get("prefer"),
-        present=conditions.presence(state, me),
+        present=present,
         ties=move["card"].get("ties"),
         hypo=hypo,
         mana=mana,
     )
     if isinstance(chosen, ScriptExit):
         return chosen
+    card = chosen[0]
     targets = _targets(move, state, me, hypo=hypo, mana=mana)
     if isinstance(targets, ScriptExit):
         return targets
     body: dict[str, Any] = {
         "player": me,
-        "card_id": chosen[0]["id"],
+        "card_id": card["id"],
         "from_zone": zone,
         "reasoning": reasoning,
     }
     cost = move.get("cost")
     if cost is not None and cost != "normal":
-        body["alternative_cost"] = chosen[0]["name"] if cost == "printed" else cost
+        if cost == "printed":
+            body["alternative_cost"] = card["name"]
+        elif cost in ALTERNATIVE_COST_CAST_COSTS:
+            body["alternative_cost"] = cost
+        else:
+            body["keyword"] = cost
+    face = move.get("face")
+    if face is not None:
+        resolved_face = _resolve_face(face, card, present, hypo=hypo, mana=mana)
+        if isinstance(resolved_face, ScriptExit):
+            return resolved_face
+        if resolved_face is not None:
+            body["spell_face"] = resolved_face
+    modes = move.get("modes")
+    if modes:
+        resolved_modes = _resolve_modes(modes, card)
+        if isinstance(resolved_modes, ScriptExit):
+            return resolved_modes
+        body["modes"] = resolved_modes
+    x_value = move.get("x")
+    if x_value is not None:
+        mana_cost = card.get("cast", {}).get("mana_cost") or card.get("mana_cost")
+        resolved_x = _resolve_x(x_value, mana_cost, mana)
+        if isinstance(resolved_x, ScriptExit):
+            return resolved_x
+        body["x_value"] = resolved_x
     if targets:
         body["targets"] = targets
-    # B7-10 (B5-05 variant): no sources named, so the engine auto-pays.
+    shares = move.get("shares")
+    if shares:
+        body["shares"] = shares
+    optional_costs = move.get("optional_costs")
+    if optional_costs:
+        resolved_costs = _resolve_optional_costs(optional_costs, card)
+        if isinstance(resolved_costs, ScriptExit):
+            return resolved_costs
+        body["optional_costs"] = resolved_costs
+    for cost_field, zone_name, key in (
+        ("sacrifice", "battlefield", "sacrificing"),
+        ("discard", "hand", "discarding"),
+        ("exile", EXILE_COST_ZONE, "exiling"),
+        ("tap", "battlefield", "tapping"),
+        ("delve", "graveyard", "delve"),
+        ("improvise", "battlefield", "improvise"),
+    ):
+        pick = move.get(cost_field)
+        if pick is None:
+            continue
+        ids = _cost_object_pick(
+            pick, state, me, zone_name, f"the {cost_field} cost", hypo=hypo, mana=mana
+        )
+        if isinstance(ids, ScriptExit):
+            return ids
+        body[key] = ids
+    convoke = move.get("convoke")
+    if convoke is not None:
+        ids = _cost_object_pick(
+            convoke, state, me, "battlefield", "the convoke creatures", hypo=hypo, mana=mana
+        )
+        if isinstance(ids, ScriptExit):
+            return ids
+        body["convoke"] = [{"card_id": card_id} for card_id in ids]
+    # B7-10 (B5-05 variant): no mana sources named, so the engine auto-pays.
     return body
+
+
+def _ability_candidates(pending: dict[str, Any]) -> list[dict[str, Any]]:
+    """`order_triggers`'s own candidates (FD2, CR 603.3b): `pending.abilities`
+    - structured per-entry `{id, name, controller, text, source_card_id}`
+    (`decisions.PendingDecision.abilities`) - read as card-like dicts so
+    `matches()`'s own `_texts()` reads `text` as the ability's own oracle
+    text (`selectors._texts`'s "an ability list, or `text` directly" fallback,
+    already there for exactly this shape). Falls back to bare ids with no
+    characteristic to match, for an older engine that stamped none."""
+    abilities = pending.get("abilities") or []
+    if abilities:
+        return [
+            {
+                "id": ref.get("id"),
+                "name": ref.get("name"),
+                "text": ref.get("text"),
+                "controller": ref.get("controller"),
+            }
+            for ref in abilities
+        ]
+    return [{"id": card_id} for card_id in pending.get("cards") or []]
+
+
+def _tiered(
+    candidates: list[dict[str, Any]],
+    tiers: list[dict[str, Any]],
+    present: Present | None,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> list[dict[str, Any]]:
+    """`candidates`, grouped by the first `tiers` selector each matches (in
+    tier order), with whatever matches none left in its own original order
+    at the end - the fan-out `top_order`/`Answer.order` share (FD2's own
+    docstring on `Order`: "the FIRST tier here goes on the stack FIRST")."""
+    remaining = list(candidates)
+    ordered: list[dict[str, Any]] = []
+    for tier in tiers:
+        matched = [
+            card
+            for card in remaining
+            if matches(tier, card, present, untapped_mana=mana, hypo=hypo)
+        ]
+        ordered.extend(matched)
+        remaining = [card for card in remaining if card not in matched]
+    ordered.extend(remaining)
+    return ordered
+
+
+def _order_body(
+    tiers: list[dict[str, Any]], pending: dict[str, Any], state: dict[str, Any], me: str
+) -> list[str] | ScriptExit:
+    """`Answer.order` (FD2, CR 603.3b): `tiers` ordering the pending
+    triggered abilities - the FIRST tier goes on the stack first (bottom) and
+    so resolves LAST; a tier with more than one match keeps them together, in
+    the order the engine offered them; whatever no tier names goes after
+    every named tier, in the same order."""
+    candidates = _ability_candidates(pending)
+    if not candidates:
+        return ScriptExit(Exit.UNFORESEEN, stop_reason="order_triggers: nothing pending to order")
+    ordered = _tiered(candidates, tiers, conditions.presence(state, me))
+    if len(ordered) != len(candidates):
+        return ScriptExit(
+            Exit.UNFORESEEN, stop_reason="order_triggers: could not place every pending trigger"
+        )
+    return [str(card["id"]) for card in ordered]
+
+
+def _damage_body(
+    policy: dict[str, Any],
+    pending: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> list[dict[str, Any]] | ScriptExit:
+    """`Answer.damage` (FD2, CR 510.1c/702.19b): a policy over
+    `pending.cards[1:]` (the blockers, `pending.cards[0]` the attacker) and
+    `pending.targets`/`.lethal_damage` (aligned, the blockers plus - once
+    every one of them has lethal and the attacker has trample -
+    the defending player or planeswalker). `lethal_first` (the default)
+    assigns each tier only what `lethal_damage` says it still needs before
+    any moves onward, exactly CR 510.1c's own order, and the leftover after
+    every blocker has lethal goes to `rest_to` (`player`, the default, or
+    `last_blocker`) when trample lets it through - onto the last blocker
+    tier otherwise, since nothing else is a legal recipient without it.
+    `lethal_first: false` skips the minimum-first order entirely and gives
+    the whole assignment to the earliest tier that can still take it."""
+    present = conditions.presence(state, me)
+    candidates = _decision_cards(pending, state, me)
+    if not candidates:
+        return ScriptExit(
+            Exit.UNFORESEEN, stop_reason="assign_combat_damage: nothing pending to assign"
+        )
+    blockers = candidates[1:]
+    total = int(pending.get("amount") or 0)
+    trample = bool(pending.get("trample"))
+    offered = pending.get("targets") or []
+    lethal = list(pending.get("lethal_damage") or [])
+    lethal_by_id = {
+        str(ref.get("id")): lethal[index]
+        for index, ref in enumerate(offered)
+        if ref.get("kind") != "player" and index < len(lethal)
+    }
+    defender = next((ref for ref in offered if ref.get("kind") == "player"), None)
+    tiers = policy.get("tiers") or []
+    ordered = _tiered(blockers, tiers, present, hypo=hypo, mana=mana)
+    lethal_first = policy.get("lethal_first")
+    if lethal_first is None:
+        lethal_first = True
+    rest_to = policy.get("rest_to") or "player"
+    given: dict[str, int] = {}
+    remaining = total
+    if lethal_first:
+        for blocker in ordered:
+            bid = str(blocker["id"])
+            take = min(remaining, lethal_by_id.get(bid, 0))
+            given[bid] = take
+            remaining -= take
+        if remaining > 0:
+            if trample and rest_to == "player" and defender is not None:
+                given[str(defender["id"])] = given.get(str(defender["id"]), 0) + remaining
+                remaining = 0
+            elif ordered:
+                last_id = str(ordered[-1]["id"])
+                given[last_id] = given.get(last_id, 0) + remaining
+                remaining = 0
+    else:
+        for blocker in ordered:
+            if remaining <= 0:
+                break
+            bid = str(blocker["id"])
+            given[bid] = remaining
+            remaining = 0
+    if remaining > 0:
+        return ScriptExit(
+            Exit.UNFORESEEN,
+            stop_reason="assign_combat_damage: this policy names nowhere for all of the damage",
+        )
+    return [
+        {"target": target_id, "amount": amount} for target_id, amount in given.items() if amount
+    ]
+
+
+def _choice_from_body(
+    spec: dict[str, Any],
+    state: dict[str, Any],
+    me: str,
+    *,
+    hypo: Hypo | None = None,
+    mana: int | None = None,
+) -> str | ScriptExit:
+    """`Answer.choice_from` (FD2): the matched card's own NAME, resolved at
+    run time over `zone`/`side` - never a name written in the script."""
+    pool = _zone_pool(state, spec["zone"], spec["side"], me)
+    chosen = _pick(
+        pool,
+        spec["select"],
+        "the choice_from card",
+        spec.get("prefer"),
+        present=conditions.presence(state, me),
+        ties=spec.get("ties"),
+        hypo=hypo,
+        mana=mana,
+    )
+    if isinstance(chosen, ScriptExit):
+        return chosen
+    return str(chosen[0]["name"])
 
 
 def decide_body(
@@ -1736,6 +2699,24 @@ def decide_body(
             )
         body["choice"] = item["choice"]
         return body
+    if kind in ORDER_DECISION_KINDS and item.get("order") is not None:
+        order = _order_body(item["order"], pending, state, me)
+        if isinstance(order, ScriptExit):
+            return order
+        body["order"] = order
+        return body
+    if kind in DAMAGE_DECISION_KINDS and item.get("damage") is not None:
+        damage = _damage_body(item["damage"], pending, state, me, hypo=hypo, mana=mana)
+        if isinstance(damage, ScriptExit):
+            return damage
+        body["damage"] = damage
+        return body
+    if kind in CHOICE_FROM_DECISION_KINDS and item.get("choice_from") is not None:
+        choice = _choice_from_body(item["choice_from"], state, me, hypo=hypo, mana=mana)
+        if isinstance(choice, ScriptExit):
+            return choice
+        body["choice"] = choice
+        return body
     cards = _decision_cards(pending, state, me)
     present = conditions.presence(state, me)
     if kind == "choose_targets" and item.get("targets") is not None:
@@ -1764,6 +2745,14 @@ def decide_body(
             field_name = "targets"
         else:
             pool, field_name = cards, "card_ids"
+        if pick.get("count") == 0:
+            # FD2: choose-zero is a real answer - "choose none" - and never
+            # a selector match to disambiguate: `_pick`'s own ambiguity rule
+            # (more than one distinct name tied for the count asked) would
+            # wrongly fire here, since asking for zero never disambiguates
+            # anything. Sent as an empty list with no board read at all.
+            body[field_name] = []
+            return body
         chosen = _pick(
             pool,
             pick["select"],
@@ -2247,8 +3236,10 @@ def _end(
     out.script_id, out.run_id = run.script_id, run.run_id
     out.moves_done, out.moves_total = done, total
     out.scripts_run = list(run.scripts_run)
+    if out.iterations is None:
+        out.iterations = run.iterations
     if not record:
-        return RunResult(True, out, state=state)
+        return RunResult(True, out, state=state, iterations=out.iterations)
     reapplicable = None
     if play is not None:
         # D2: this re-check itself needs hypothetical facts exactly when
@@ -2279,7 +3270,7 @@ def _end(
     recorded = _post_run(ctx, finish)
     if not (isinstance(recorded, dict) and recorded.get("recorded") is True):
         out.record_refusal = str(recorded.get("reason") if isinstance(recorded, dict) else recorded)
-    return RunResult(True, out, state=state)
+    return RunResult(True, out, state=state, iterations=out.iterations)
 
 
 def _run_fields(ctx: _Context, run: _Run, play: dict[str, Any] | None) -> dict[str, Any]:
