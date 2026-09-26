@@ -528,7 +528,7 @@ def test_plays_priority_refuses_loudly_with_neither_flag_nor_env(monkeypatch, ca
 
 
 # ======================================================================
-# FD10 (a): `mcp-seat script stage --file PATH|-` and `script run
+# FD10 (a): `mcp-seat script stage PATH|-` and `script run
 # --body-file PATH|-`, mirroring the MCP tools' own `stage_script`/
 # `run_script(body=...)` arguments. FD5's `POST .../scripts/adhoc` route
 # does not exist yet (FD5 part 7), so these tests fake `script_tools.stage`
@@ -556,7 +556,7 @@ def test_script_stage_reads_the_file_and_prints_id_and_warnings(
     path = tmp_path / "play.json"
     path.write_text(json.dumps(body))
 
-    assert cli(board, alice, "stage", "--file", str(path)) == 0
+    assert cli(board, alice, "stage", str(path)) == 0
     assert printed(capsys) == {"id": "adhoc-1-x", "warnings": []}
     assert calls == [(alice, body, REASONING)]
 
@@ -574,7 +574,7 @@ def test_script_stage_reads_the_body_from_stdin_with_a_dash(
     monkeypatch.setattr(seat_cli.script_tools, "stage", fake_stage)
     monkeypatch.setattr(seat_cli.sys, "stdin", __import__("io").StringIO(json.dumps(body)))
 
-    assert cli(board, alice, "stage", "--file", "-") == 0
+    assert cli(board, alice, "stage", "-") == 0
     assert printed(capsys) == {"id": "adhoc-1-x", "warnings": []}
 
 
@@ -591,7 +591,7 @@ def test_script_stage_prints_errors_and_fails_on_a_refusal(
     path = tmp_path / "play.json"
     path.write_text(json.dumps({"schema_version": 1, "id": "x", "moves": []}))
 
-    assert cli(board, alice, "stage", "--file", str(path)) == 1
+    assert cli(board, alice, "stage", str(path)) == 1
     out = printed(capsys)
     assert out["errors"][0]["code"] == "card-name-in-field"
 
@@ -609,7 +609,7 @@ def test_script_stage_refuses_invalid_json_without_calling_stage(
     path = tmp_path / "play.json"
     path.write_text("not json")
 
-    assert cli(board, alice, "stage", "--file", str(path)) == 1
+    assert cli(board, alice, "stage", str(path)) == 1
     out = capsys.readouterr().out
     assert "not valid JSON" in out
 

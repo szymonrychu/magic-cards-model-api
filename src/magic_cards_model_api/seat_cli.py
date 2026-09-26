@@ -464,7 +464,7 @@ def parse_inputs(values: list[str] | None) -> dict[str, Any] | None:
 
 def _read_json_body(path_str: str) -> dict[str, Any] | str:
     """FD10: `path_str` ('-' for stdin, a path otherwise) read as one JSON
-    object - `script stage --file`/`script run --body-file`'s own inline
+    object - `script stage`/`script run --body-file`'s own inline
     play document. A refusal string for anything that is not a JSON object:
     unreadable, not JSON, or JSON that is not an object (a list, a bare
     string) - a play is always an object, and this is the one place both
@@ -1464,12 +1464,12 @@ def build_parser() -> argparse.ArgumentParser:
     script_run.add_argument(
         "script",
         nargs="?",
-        default=None,
+        default="",
         help="the script's id (a registered or already-staged one) - omit it with --body-file",
     )
     script_run.add_argument(
         "--body-file",
-        dest="body_file",
+        dest="body",
         metavar="PATH|-",
         default=None,
         help=(
@@ -1522,10 +1522,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     script_stage.add_argument(
-        "--file",
-        dest="file",
+        "body",
         metavar="PATH|-",
-        required=True,
         help="the play document (JSON) to stage - a file path, or '-' to read it from stdin",
     )
 
@@ -2389,7 +2387,7 @@ def run(argv: list[str] | None = None) -> int:
             # FD10 (a): stage an inline play document as one of this seat's
             # own ad-hoc scripts, without running it - `mcp.stage_script`'s
             # own CLI mirror.
-            body = _read_json_body(args.file)
+            body = _read_json_body(args.body)
             if isinstance(body, str):
                 print(body)
                 return 1
@@ -2408,24 +2406,24 @@ def run(argv: list[str] | None = None) -> int:
                 return 1
             if args.script_command == "run":
                 body = None
-                if getattr(args, "body_file", None) is not None:
-                    if args.script is not None:
+                if args.body is not None:
+                    if args.script:
                         print(
                             "script run takes exactly one of the positional `script` or "
                             "--body-file, not both"
                         )
                         return 1
-                    body = _read_json_body(args.body_file)
+                    body = _read_json_body(args.body)
                     if isinstance(body, str):
                         print(body)
                         return 1
-                elif args.script is None:
+                elif not args.script:
                     print("script run needs the positional `script` id, or --body-file")
                     return 1
                 answer = script_tools.run(
                     seat,
                     seats.script_corpora,
-                    script=args.script or "",
+                    script=args.script,
                     body=body,
                     reasoning=args.reasoning or "",
                     opposing_archetype=args.opposing_archetype,

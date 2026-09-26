@@ -293,7 +293,7 @@ def _inlined_notes(standing: list[Path], budget: int) -> list[str]:
     spent = 0
     for path in standing:
         try:
-            body = path.read_text()
+            content = path.read_text()
         except OSError:
             lines.append(f"- `{path}` (unreadable)")
             continue
@@ -303,11 +303,11 @@ def _inlined_notes(standing: list[Path], budget: int) -> list[str]:
                 f"- `{path}` - not inlined, the note budget was spent; read it if you want it"
             )
             continue
-        clipped = body.encode()[:room].decode(errors="ignore")
+        clipped = content.encode()[:room].decode(errors="ignore")
         spent += len(clipped.encode())
         lines += [f"**`{path}`** - your standing read on this matchup:", "", "````"]
         lines.append(clipped.rstrip())
-        if len(clipped) < len(body):
+        if len(clipped) < len(content):
             lines.append(f"[...cut at {room} bytes - the rest is in the file]")
         lines += ["````", ""]
     return lines
