@@ -117,6 +117,12 @@ def test_a_claude_that_dies_takes_the_container_with_it(wrapper_process):
     assert session["state"] == "ready"
 
     # Kill the stub claude itself, not the wrapper: this is the crash case.
-    subprocess.run(["pkill", "-f", str(STUB)], check=False)  # noqa: S603, S607
+    # Scoped to a child of THIS test's wrapper process (`-P`) - a bare
+    # `pkill -f <STUB>` matches by command line only, machine-wide, and under
+    # parallel test workers each running their own `stack`-fixture stub
+    # (tests/wrapper/test_integration.py) it killed an unrelated worker's
+    # in-flight stub process too (pty.fork() makes the stub a direct child of
+    # `proc`, so `-P str(proc.pid)` is exact).
+    subprocess.run(["pkill", "-f", "-P", str(proc.pid), str(STUB)], check=False)  # noqa: S603, S607
 
     assert proc.wait(timeout=30) == 0

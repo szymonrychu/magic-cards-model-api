@@ -32,7 +32,18 @@ description = "Run the API tests - always docker-free against InMemoryRepository
 run = """
 set -eu
 unset MCM_TEST_DATABASE_URL MCM_REQUIRE_POSTGRES_TESTS
-uv run pytest
+uv run pytest -n 6 --ignore=tests/test_ui_viewport_layout.py
+# tests/test_ui_viewport_layout.py drives real headless Chrome, and its own
+# `measurements` fixture docstring already names the failure mode `-n 6`
+# reopens even with every OTHER copy of this file kept off other workers
+# (its `xdist_group` marker): the other five `-n 6` workers above are still
+# saturating the remaining cores for the whole run above, and this file's
+# documented "roughly one run in five" per-attempt flake rate (measured in
+# total CPU isolation) climbs past its 6-attempt retry budget under that
+# contention. Run alone, serially, after the parallel run finishes and every
+# other worker has exited - the closest this suite can get to the serial CPU
+# availability the retry count was actually tuned against.
+uv run pytest tests/test_ui_viewport_layout.py
 """
 
 [tasks."tools:export"]
@@ -99,7 +110,11 @@ DATABASE_URL="$MCM_TEST_DATABASE_URL" uv run alembic upgrade head
 # hard pytest failure instead of a quiet skip (see conftest.py's
 # require_postgres_database_url) - test:pg must never report success while
 # the postgres-parameterised tests did not actually run.
-MCM_TEST_DATABASE_URL="$MCM_TEST_DATABASE_URL" MCM_REQUIRE_POSTGRES_TESTS=1 uv run pytest
+MCM_TEST_DATABASE_URL="$MCM_TEST_DATABASE_URL" MCM_REQUIRE_POSTGRES_TESTS=1 uv run pytest -n 6 --ignore=tests/test_ui_viewport_layout.py
+# See `test`'s own comment on the matching line: this file's real-Chrome
+# flake rate climbs past its retry budget while five other workers are still
+# busy, `xdist_group` or not - carved out to run alone, serially, after them.
+MCM_TEST_DATABASE_URL="$MCM_TEST_DATABASE_URL" MCM_REQUIRE_POSTGRES_TESTS=1 uv run pytest tests/test_ui_viewport_layout.py
 """
 
 [tasks."eval:gauntlet"]

@@ -146,6 +146,7 @@
                 "input": "#/$defs/InputCondition",
                 "land_drop_available": "#/$defs/LandDropCondition",
                 "life": "#/$defs/LifeCondition",
+                "mana_pool": "#/$defs/ManaPoolCondition",
                 "pending_decision": "#/$defs/PendingDecisionCondition",
                 "stack_top": "#/$defs/StackTopCondition",
                 "turn": "#/$defs/TurnCondition",
@@ -172,6 +173,9 @@
               },
               {
                 "$ref": "#/$defs/UntappedManaCondition"
+              },
+              {
+                "$ref": "#/$defs/ManaPoolCondition"
               },
               {
                 "$ref": "#/$defs/TurnCondition"
@@ -829,6 +833,7 @@
             "mapping": {
               "count": "#/$defs/CountOperand",
               "life": "#/$defs/LifeOperand",
+              "mana_pool": "#/$defs/ManaPoolOperand",
               "n": "#/$defs/NOperand",
               "power_sum": "#/$defs/PowerSumOperand",
               "toughness_sum": "#/$defs/ToughnessSumOperand",
@@ -849,6 +854,9 @@
             },
             {
               "$ref": "#/$defs/UntappedManaOperand"
+            },
+            {
+              "$ref": "#/$defs/ManaPoolOperand"
             },
             {
               "$ref": "#/$defs/PowerSumOperand"
@@ -879,6 +887,7 @@
             "mapping": {
               "count": "#/$defs/CountOperand",
               "life": "#/$defs/LifeOperand",
+              "mana_pool": "#/$defs/ManaPoolOperand",
               "n": "#/$defs/NOperand",
               "power_sum": "#/$defs/PowerSumOperand",
               "toughness_sum": "#/$defs/ToughnessSumOperand",
@@ -899,6 +908,9 @@
             },
             {
               "$ref": "#/$defs/UntappedManaOperand"
+            },
+            {
+              "$ref": "#/$defs/ManaPoolOperand"
             },
             {
               "$ref": "#/$defs/PowerSumOperand"
@@ -1454,6 +1466,92 @@
       "title": "LifeOperand",
       "type": "object"
     },
+    "ManaPoolCondition": {
+      "additionalProperties": false,
+      "description": "FD9: the viewer's own floating mana pool (`ManaPoolView.floating`,\nCR 106.4) - the mana already produced by mana abilities and not yet\nspent, on the same footing `untapped_mana` is on (always the viewer's\nown, never a `side`). `untapped_mana` counts untapped SOURCES, never this\npool, so it cannot express a repeat-until loop's own mana target (the\nDevoted Druid + Vizier of Remedies loop, finding seq 191). `color` (FD2's\n`Color`) narrows to one coloured symbol's own count; left out, `n`\ncompares the pool's total across every color, `{C}` included.",
+      "properties": {
+        "color": {
+          "default": null,
+          "enum": [
+            "W",
+            "U",
+            "B",
+            "R",
+            "G",
+            "C"
+          ],
+          "title": "Color",
+          "type": "string"
+        },
+        "kind": {
+          "const": "mana_pool",
+          "title": "Kind",
+          "type": "string"
+        },
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "op": {
+          "enum": [
+            ">=",
+            "<=",
+            "==",
+            "!=",
+            ">",
+            "<"
+          ],
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "op",
+        "n"
+      ],
+      "title": "ManaPoolCondition",
+      "type": "object"
+    },
+    "ManaPoolOperand": {
+      "additionalProperties": false,
+      "description": "`compare`'s own `mana_pool` operand (FD9): the same read\n`ManaPoolCondition` gives, on a named `side` - `untapped_mana`'s own\noperand footing (`UntappedManaOperand`).",
+      "properties": {
+        "color": {
+          "default": null,
+          "enum": [
+            "W",
+            "U",
+            "B",
+            "R",
+            "G",
+            "C"
+          ],
+          "title": "Color",
+          "type": "string"
+        },
+        "of": {
+          "const": "mana_pool",
+          "title": "Of",
+          "type": "string"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent"
+          ],
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "of",
+        "side"
+      ],
+      "title": "ManaPoolOperand",
+      "type": "object"
+    },
     "MissingFrom": {
       "additionalProperties": false,
       "description": "`{zones, side, by}`: the candidate matches only when no card on `side`\nin `zones` shares what `by` compares with it - its subtypes (those the\nselector's own `subtypes_any` also lists, when it lists any) or its name.\nA comparison between objects, never a name written in the script.",
@@ -1748,6 +1846,151 @@
         "side"
       ],
       "title": "PowerSumOperand",
+      "type": "object"
+    },
+    "RepeatMove": {
+      "additionalProperties": false,
+      "description": "FD9: repeat `moves` (1-`MAX_REPEAT_BODY` of the existing move kinds,\nnone of them `repeat` itself - `repeat-nested` - or `pass` -\n`repeat-pass-in-body`: a loop's body commits real moves and exits through\n`until`, `max_iterations` or a refusal, never by releasing priority)\nuntil every one of `until`'s 1-`MAX_CONDITIONS` conditions holds -\n`repeat-empty-until` when the list is empty. `until` is judged fresh\nagainst a freshly read board before every iteration, so an `until` that\nalready holds runs the loop zero times. `max_iterations` is required,\n1-`MAX_REPEAT_ITERATIONS` (missing or out of range is `repeat-bound`):\nthe loop's own hard stop, distinct from whatever `until` alone would\nleave unbounded. `stop_when_refused` (default false) turns an engine\nrefusal mid-loop into a normal end of the loop instead of a run failure.\nCounts once toward `MAX_MOVES`/`MAX_MOVES_PER_RUN`; its own iterations\nare bounded only by `max_iterations`. The runtime that actually drives\nthe loop (each iteration's board re-read, the no-progress guard, the\nresume token) is FD3 part 7's, in `playscripts.runtime` - see the spec's\nown 'Repeat' section for its exact stop rules.",
+      "properties": {
+        "kind": {
+          "const": "repeat",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_iterations": {
+          "default": null,
+          "title": "Max Iterations",
+          "type": "integer"
+        },
+        "moves": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "activate": "#/$defs/ActivateMove",
+                "answer": "#/$defs/AnswerMove",
+                "cast": "#/$defs/CastMove",
+                "declare_attackers": "#/$defs/DeclareAttackersMove",
+                "declare_blockers": "#/$defs/DeclareBlockersMove",
+                "keyword_action": "#/$defs/KeywordActionMove",
+                "mulligan": "#/$defs/MulliganMove",
+                "pass": "#/$defs/PassMove",
+                "play_land": "#/$defs/PlayLandMove",
+                "repeat": "#/$defs/RepeatMove"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ActivateMove"
+              },
+              {
+                "$ref": "#/$defs/CastMove"
+              },
+              {
+                "$ref": "#/$defs/PlayLandMove"
+              },
+              {
+                "$ref": "#/$defs/AnswerMove"
+              },
+              {
+                "$ref": "#/$defs/PassMove"
+              },
+              {
+                "$ref": "#/$defs/DeclareAttackersMove"
+              },
+              {
+                "$ref": "#/$defs/DeclareBlockersMove"
+              },
+              {
+                "$ref": "#/$defs/KeywordActionMove"
+              },
+              {
+                "$ref": "#/$defs/MulliganMove"
+              },
+              {
+                "$ref": "#/$defs/RepeatMove"
+              }
+            ]
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Moves",
+          "type": "array"
+        },
+        "stop_when_refused": {
+          "default": false,
+          "title": "Stop When Refused",
+          "type": "boolean"
+        },
+        "until": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "all_of": "#/$defs/AllOfCondition",
+                "compare": "#/$defs/CompareCondition",
+                "count": "#/$defs/CountCondition",
+                "input": "#/$defs/InputCondition",
+                "land_drop_available": "#/$defs/LandDropCondition",
+                "life": "#/$defs/LifeCondition",
+                "mana_pool": "#/$defs/ManaPoolCondition",
+                "pending_decision": "#/$defs/PendingDecisionCondition",
+                "stack_top": "#/$defs/StackTopCondition",
+                "turn": "#/$defs/TurnCondition",
+                "untapped_mana": "#/$defs/UntappedManaCondition",
+                "zone_size": "#/$defs/ZoneSizeCondition"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CountCondition"
+              },
+              {
+                "$ref": "#/$defs/ZoneSizeCondition"
+              },
+              {
+                "$ref": "#/$defs/LifeCondition"
+              },
+              {
+                "$ref": "#/$defs/StackTopCondition"
+              },
+              {
+                "$ref": "#/$defs/LandDropCondition"
+              },
+              {
+                "$ref": "#/$defs/UntappedManaCondition"
+              },
+              {
+                "$ref": "#/$defs/ManaPoolCondition"
+              },
+              {
+                "$ref": "#/$defs/TurnCondition"
+              },
+              {
+                "$ref": "#/$defs/InputCondition"
+              },
+              {
+                "$ref": "#/$defs/PendingDecisionCondition"
+              },
+              {
+                "$ref": "#/$defs/CompareCondition"
+              },
+              {
+                "$ref": "#/$defs/AllOfCondition"
+              }
+            ]
+          },
+          "maxItems": 8,
+          "title": "Until",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "moves",
+        "until"
+      ],
+      "title": "RepeatMove",
       "type": "object"
     },
     "SacrificeChoice": {
@@ -2321,6 +2564,7 @@
             "input": "#/$defs/InputCondition",
             "land_drop_available": "#/$defs/LandDropCondition",
             "life": "#/$defs/LifeCondition",
+            "mana_pool": "#/$defs/ManaPoolCondition",
             "pending_decision": "#/$defs/PendingDecisionCondition",
             "stack_top": "#/$defs/StackTopCondition",
             "turn": "#/$defs/TurnCondition",
@@ -2347,6 +2591,9 @@
           },
           {
             "$ref": "#/$defs/UntappedManaCondition"
+          },
+          {
+            "$ref": "#/$defs/ManaPoolCondition"
           },
           {
             "$ref": "#/$defs/TurnCondition"
@@ -2392,7 +2639,8 @@
             "keyword_action": "#/$defs/KeywordActionMove",
             "mulligan": "#/$defs/MulliganMove",
             "pass": "#/$defs/PassMove",
-            "play_land": "#/$defs/PlayLandMove"
+            "play_land": "#/$defs/PlayLandMove",
+            "repeat": "#/$defs/RepeatMove"
           },
           "propertyName": "kind"
         },
@@ -2423,6 +2671,9 @@
           },
           {
             "$ref": "#/$defs/MulliganMove"
+          },
+          {
+            "$ref": "#/$defs/RepeatMove"
           }
         ]
       },
@@ -2482,6 +2733,7 @@
             "input": "#/$defs/InputCondition",
             "land_drop_available": "#/$defs/LandDropCondition",
             "life": "#/$defs/LifeCondition",
+            "mana_pool": "#/$defs/ManaPoolCondition",
             "pending_decision": "#/$defs/PendingDecisionCondition",
             "stack_top": "#/$defs/StackTopCondition",
             "turn": "#/$defs/TurnCondition",
@@ -2508,6 +2760,9 @@
           },
           {
             "$ref": "#/$defs/UntappedManaCondition"
+          },
+          {
+            "$ref": "#/$defs/ManaPoolCondition"
           },
           {
             "$ref": "#/$defs/TurnCondition"

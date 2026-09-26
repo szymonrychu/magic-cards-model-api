@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "id": "repeat_devoted_druid",
+  "name": "Loop the free-untap mana engine until the pool pays the X spell, then cast it",
+  "intent": "FD9's own proof fixture (finding seq 191): with Vizier of Remedies live, Devoted Druid's own untap ability costs zero -1/-1 counters, so the mana ability and the untap ability repeat for free. A bounded repeat expresses the whole loop as one move instead of interleaving roughly 25 manual activate calls by hand to reach the same X target.",
+  "note": "Loop the mana ability then the untap ability until the floating pool reaches the X target, then cast the tutored X spell.",
+  "priority": 82,
+  "opposing_archetypes": ["*"],
+  "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+  "true": [
+    {"kind": "turn", "op": ">=", "n": 1},
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {"types_all": ["Creature"], "subtypes_any": ["Elf"], "tapped": false}
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {"types_all": ["Creature"], "subtypes_any": ["Cleric"]}
+    },
+    {
+      "kind": "count",
+      "zone": "hand",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {"types_all": ["Sorcery"]}
+    }
+  ],
+  "false": [],
+  "moves": [
+    {
+      "kind": "repeat",
+      "moves": [
+        {
+          "kind": "activate",
+          "source": {
+            "zone": "battlefield",
+            "select": {"types_all": ["Creature"], "subtypes_any": ["Elf"], "tapped": false}
+          },
+          "ability_index": 0
+        },
+        {
+          "kind": "activate",
+          "source": {
+            "zone": "battlefield",
+            "select": {"types_all": ["Creature"], "subtypes_any": ["Elf"]}
+          },
+          "ability_index": 1
+        }
+      ],
+      "until": [
+        {"kind": "mana_pool", "color": "G", "op": ">=", "n": 8}
+      ],
+      "max_iterations": 10
+    },
+    {
+      "kind": "cast",
+      "card": {"zone": "hand", "select": {"types_all": ["Sorcery"]}},
+      "x": 8
+    }
+  ],
+  "next": []
+}

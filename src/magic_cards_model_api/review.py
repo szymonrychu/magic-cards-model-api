@@ -71,9 +71,11 @@ from .audit import (
     GAME_OVER_ACTION,
     PLAN_ACTION,
     PLAYS_OUTCOME_ACTION,
+    SCRIPT_RUN_ACTION,
     SCRIPT_RUN_ACTIONS,
 )
 from .playscripts import decision_dsl, stats
+from .records import SCRIPT_STAGED_ACTION
 from .repository import ArchivedGame
 
 #: The keys a paired entry carries inside a declaration. Deliberately not
@@ -182,6 +184,7 @@ def build_review(
         "decisions": decisions,
         "play_stats": play_stats,
         "dsl_coverage": dsl_coverage(decisions),
+        "adhoc_scripts": adhoc_scripts_by_seat(entries, players=head["players"], viewer=viewer),
     }
 
 
@@ -420,6 +423,67 @@ def dsl_coverage(decisions: Mapping[str, list[dict[str, Any]]]) -> dict[str, dic
                 entry["unexpressible"] += 1
                 entry["labels"].add(label)
     return {kind: {**entry, "labels": sorted(entry["labels"])} for kind, entry in coverage.items()}
+
+
+def adhoc_scripts_by_seat(
+    entries: list[dict[str, Any]], *, players: list[str], viewer: str | None
+) -> dict[str, list[dict[str, Any]]]:
+    """FD10 (a): every ad-hoc script one of `players` staged this game
+    (`records.stage_adhoc_script`'s own `script_staged` row), each with the
+    runs the ledger recorded of it and how each ended - so the post-game
+    review can generalize and admit a script a seat actually used, exactly
+    as it already does for a hand-played line or a declined offer.
+
+    One entry per seat `viewer` may see (`None`, the admin key, sees every
+    seat), oldest staged first; each is `{id, staged_at, turn, step, play,
+    reasoning, warnings, runs}`, `runs` a list of `{run_id, exit,
+    moves_done}` for every `script_run` finish row naming that same id.
+    `entries` is `audit.entries(game_id)` - the whole ledger, unredacted,
+    same convention as every other function here."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for seat in players:
+        if viewer is not None and viewer != seat:
+            continue
+        staged: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for entry in entries:
+            if entry.get("action") != SCRIPT_STAGED_ACTION:
+                continue
+            detail = entry.get("detail") or {}
+            if detail.get("seat") != seat:
+                continue
+            script_id = detail.get("id")
+            if not isinstance(script_id, str):
+                continue
+            if script_id not in staged:
+                order.append(script_id)
+            staged[script_id] = {
+                "id": script_id,
+                "staged_at": entry.get("ts"),
+                "turn": entry.get("turn"),
+                "step": entry.get("step"),
+                "play": detail.get("play"),
+                "reasoning": entry.get("reasoning"),
+                "warnings": list(detail.get("warnings") or []),
+                "runs": [],
+            }
+        for entry in entries:
+            if entry.get("action") != SCRIPT_RUN_ACTION:
+                continue
+            detail = entry.get("detail") or {}
+            if detail.get("seat") != seat:
+                continue
+            script_id = detail.get("script_id")
+            if script_id in staged:
+                staged[script_id]["runs"].append(
+                    {
+                        "run_id": detail.get("run_id"),
+                        "exit": detail.get("exit"),
+                        "moves_done": detail.get("moves_done"),
+                    }
+                )
+        out[seat] = [staged[script_id] for script_id in order]
+    return out
 
 
 def _ai_review_failures(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:

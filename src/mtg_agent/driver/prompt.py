@@ -293,7 +293,7 @@ def _inlined_notes(standing: list[Path], budget: int) -> list[str]:
     spent = 0
     for path in standing:
         try:
-            body = path.read_text()
+            content = path.read_text()
         except OSError:
             lines.append(f"- `{path}` (unreadable)")
             continue
@@ -303,11 +303,11 @@ def _inlined_notes(standing: list[Path], budget: int) -> list[str]:
                 f"- `{path}` - not inlined, the note budget was spent; read it if you want it"
             )
             continue
-        clipped = body.encode()[:room].decode(errors="ignore")
+        clipped = content.encode()[:room].decode(errors="ignore")
         spent += len(clipped.encode())
         lines += [f"**`{path}`** - your standing read on this matchup:", "", "````"]
         lines.append(clipped.rstrip())
-        if len(clipped) < len(body):
+        if len(clipped) < len(content):
             lines.append(f"[...cut at {room} bytes - the rest is in the file]")
         lines += ["````", ""]
     return lines
@@ -745,6 +745,23 @@ scripts through subagents, along with guides. Aim for deterministic scripts.
 When plays conflict, resolve it by extending conditions, never by priority
 alone. Pass inputs, such as the opposing archetype or your preferences,
 explicitly.
+
+**DSL-first: write a play-script for anything multi-step or repetitive, and
+run it with `run_script` - never chain manual MCP calls for it.** A mana
+loop (activate an untap ability, then a mana ability, until a floating-mana
+target is reached), a run of repeated activations, a multi-card combo turn
+or repeated pings each belong in a script, using `repeat` for the loop
+itself (bounded by `max_iterations`, judged against a freshly read board
+before every iteration) rather than sent one activation at a time. `run_script`
+takes a `body` (an inline play document) as well as a registered `script`
+id: naming `body` stages the script and runs it in this same call, so a
+sequence you have not registered ahead of time still costs one call, not one
+per step. `stage_script` stages a script without running it yet, when you
+want it ready for a later `run_script` by its assigned id rather than run
+immediately. Keep manual `cast`/`activate`/`decide` calls for a genuine
+one-off decision; the moment a sequence would repeat past two or three
+steps, write it as a script instead of hand-driving it - a seat was measured
+spending about 25 manual calls hand-driving one mana loop this way.
 
 Your deck's play scripts are listed in the briefing under "Your registered
 play scripts". They were registered once, at dispatch, and do not change for
@@ -1857,6 +1874,23 @@ scripts through subagents, along with guides. Aim for deterministic scripts.
 When plays conflict, resolve it by extending conditions, never by priority
 alone. Pass inputs, such as the opposing archetype or your preferences,
 explicitly.
+
+**DSL-first: write a play-script for anything multi-step or repetitive, and
+run it with `run_script` - never chain manual MCP calls for it.** A mana
+loop (activate an untap ability, then a mana ability, until a floating-mana
+target is reached), a run of repeated activations, a multi-card combo turn
+or repeated pings each belong in a script, using `repeat` for the loop
+itself (bounded by `max_iterations`, judged against a freshly read board
+before every iteration) rather than sent one activation at a time. `run_script`
+takes a `body` (an inline play document) as well as a registered `script`
+id: naming `body` stages the script and runs it in this same call, so a
+sequence you have not registered ahead of time still costs one call, not one
+per step. `stage_script` stages a script without running it yet, when you
+want it ready for a later `run_script` by its assigned id rather than run
+immediately. Keep manual `cast`/`activate`/`decide` calls for a genuine
+one-off decision; the moment a sequence would repeat past two or three
+steps, write it as a script instead of hand-driving it - a seat was measured
+spending about 25 manual calls hand-driving one mana loop this way.
 
 {assignment.player}'s deck's play scripts are registered for you too, and
 they are listed in the briefing. **Read the hint - `list_scripts` is no

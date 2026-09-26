@@ -462,6 +462,26 @@ def parse_inputs(values: list[str] | None) -> dict[str, Any] | None:
     return parsed
 
 
+def _read_json_body(path_str: str) -> dict[str, Any] | str:
+    """FD10: `path_str` ('-' for stdin, a path otherwise) read as one JSON
+    object - `script stage`/`script run --body-file`'s own inline
+    play document. A refusal string for anything that is not a JSON object:
+    unreadable, not JSON, or JSON that is not an object (a list, a bare
+    string) - a play is always an object, and this is the one place both
+    commands need to say so before ever reaching the API."""
+    try:
+        text = sys.stdin.read() if path_str == "-" else Path(path_str).read_text()
+    except OSError as exc:
+        return f"could not read {path_str!r}: {exc}"
+    try:
+        parsed = json.loads(text)
+    except ValueError as exc:
+        return f"{path_str!r} is not valid JSON: {exc}"
+    if not isinstance(parsed, dict):
+        return f"{path_str!r} must be a JSON object (a play document), got {type(parsed).__name__}"
+    return parsed
+
+
 def _attach_script_hint(
     answer: dict[str, Any],
     seat: Seat,
@@ -1441,7 +1461,23 @@ def build_parser() -> argparse.ArgumentParser:
             "script_exit and the state; --reasoning is required"
         ),
     )
-    script_run.add_argument("script", help="the script's id")
+    script_run.add_argument(
+        "script",
+        nargs="?",
+        default="",
+        help="the script's id (a registered or already-staged one) - omit it with --body-file",
+    )
+    script_run.add_argument(
+        "--body-file",
+        dest="body",
+        metavar="PATH|-",
+        default=None,
+        help=(
+            "FD10: an inline play document (JSON) to stage and run in this same call - "
+            "read from PATH, or from stdin with '-'. Exactly one of the positional `script` "
+            "or --body-file is given"
+        ),
+    )
     script_flags(script_run)
     script_run.add_argument(
         "--resume",
@@ -1476,6 +1512,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     script_flags(script_list)
+
+    script_stage = script_sub.add_parser(
+        "stage",
+        help=(
+            "FD10: stage an inline play document (JSON) as one of your own ad-hoc scripts "
+            "for this game, without running it - prints {id, warnings} or every schema/lint "
+            "error; --reasoning is required"
+        ),
+    )
+    script_stage.add_argument(
+        "body",
+        metavar="PATH|-",
+        help="the play document (JSON) to stage - a file path, or '-' to read it from stdin",
+    )
 
     plays = sub.add_parser(
         "plays",
@@ -2333,6 +2383,19 @@ def run(argv: list[str] | None = None) -> int:
                 print(answer.text)
                 return 1
             print(json.dumps(entries, indent=1, sort_keys=True))
+        elif args.command == "script" and args.script_command == "stage":
+            # FD10 (a): stage an inline play document as one of this seat's
+            # own ad-hoc scripts, without running it - `mcp.stage_script`'s
+            # own CLI mirror.
+            body = _read_json_body(args.body)
+            if isinstance(body, str):
+                print(body)
+                return 1
+            answer = script_tools.stage(
+                seat, seats.script_corpora, body=body, reasoning=args.reasoning or ""
+            )
+            print(json.dumps(answer, indent=1, sort_keys=True))
+            return 1 if isinstance(answer, str) or "errors" in answer else 0
         elif args.command == "script":
             # `playscripts.script_tools` is `mcp.run_script`/`list_scripts` too, so
             # the two front ends differ only in what they print.
@@ -2342,10 +2405,26 @@ def run(argv: list[str] | None = None) -> int:
                 print(exc)
                 return 1
             if args.script_command == "run":
+                body = None
+                if args.body is not None:
+                    if args.script:
+                        print(
+                            "script run takes exactly one of the positional `script` or "
+                            "--body-file, not both"
+                        )
+                        return 1
+                    body = _read_json_body(args.body)
+                    if isinstance(body, str):
+                        print(body)
+                        return 1
+                elif not args.script:
+                    print("script run needs the positional `script` id, or --body-file")
+                    return 1
                 answer = script_tools.run(
                     seat,
                     seats.script_corpora,
                     script=args.script,
+                    body=body,
                     reasoning=args.reasoning or "",
                     opposing_archetype=args.opposing_archetype,
                     resume=args.resume,
@@ -2363,6 +2442,12 @@ def run(argv: list[str] | None = None) -> int:
                 )
             if isinstance(answer, str):
                 print(answer)
+                return 1
+            if isinstance(answer, dict) and "errors" in answer:
+                # FD10 (a): `run(body=...)`'s own stage step was refused -
+                # schema/lint errors, not a run outcome, so this never reaches
+                # `emit`'s draft handling, which expects a real `script_exit`.
+                print(json.dumps(answer, indent=1, sort_keys=True))
                 return 1
             if args.script_command == "run":
                 # `script_tools.run` above already did every bit of waiting

@@ -2762,7 +2762,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
     @_guarded(seats)
     def run_script(
         player_uid: str,
-        script: str,
+        script: str = "",
         opposing_archetype: str = "*",
         *,
         reasoning: str,
@@ -2770,12 +2770,19 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         wait: bool = True,
         max_seconds: float = 0.0,
         inputs: dict[str, Any] | None = None,
+        body: dict[str, Any] | None = None,
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Run one of your registered play scripts: its moves, in order, and
         the one `next` script that applies after them.
 
-        `script` is the script's `id`. The runner waits for the script's
+        `script` is the script's `id` - a registered one, or one you staged
+        with `stage_script`. Or give `body` instead: an inline play document
+        for a sequence you are facing right now (a mana loop, say - a
+        `repeat` move), staged exactly as `stage_script` stages it and run in
+        this same call. Give exactly one of `script` or `body`; a `body` the
+        schema or lint refuses comes back as `{"errors": [...]}` and nothing
+        runs. The runner waits for the script's
         `when` (passing priority with every stop on, the way `pass_until`
         does), checks `opposing_archetypes` and its `true`/`false`
         conditions against the board, makes each move through the same
@@ -2825,6 +2832,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             seat,
             seats.script_corpora,
             script=script,
+            body=body,
             reasoning=reasoning,
             opposing_archetype=opposing_archetype,
             resume=resume,
@@ -2836,7 +2844,34 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         )
         if isinstance(answer, str):
             return answer
+        if "errors" in answer:
+            return json.dumps(answer, indent=1)
         return _tool_result(seat, answer, ctx.protocol_version if ctx is not None else None)
+
+    @server.tool()
+    @_guarded(seats)
+    def stage_script(player_uid: str, body: dict[str, Any], *, reasoning: str) -> str:
+        """Stage an inline play document as one of your own ad-hoc scripts for
+        this game, without running it and without waiting for the post-game
+        admit - for a multi-step or repetitive sequence you are facing right
+        now (a mana loop, say - a `repeat` move).
+
+        `body` is one play document, in the same format as a registered
+        script's. Its `id` is replaced with a fresh one. `reasoning`: why you
+        are scripting this now, in your own words. It is recorded for the
+        post-game review, which must close every ad-hoc script that ran.
+
+        The answer is `{"id": ..., "warnings": [...]}`: pass `id` to
+        `run_script` as `script`. `warnings` are the static conflicts the new
+        play has with your other scripts, for you to weigh - they never
+        refuse the stage. A play the schema or lint refuses comes back as
+        `{"errors": [...]}`. `run_script(body=...)` stages and runs in one
+        call."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        answer = script_tools.stage(seat, seats.script_corpora, body=body, reasoning=reasoning)
+        return answer if isinstance(answer, str) else json.dumps(answer, indent=1)
 
     @server.tool()
     @_guarded(seats)

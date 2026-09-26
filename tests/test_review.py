@@ -1383,6 +1383,73 @@ def test_an_undecodable_game_with_no_recorded_ending_says_so_rather_than_guessin
     assert body["declarations"][0]["plan"] == PLAN["plan"]
 
 
+# -- FD10 (a): the review record lists each seat's own ad-hoc scripts ------
+
+
+def test_the_review_record_lists_ad_hoc_scripts_per_seat_and_respects_the_viewer(
+    client: TestClient, game: str
+) -> None:
+    """`review.adhoc_scripts_by_seat` (`records.stage_adhoc_script` on the
+    write side): a seat's own staged-and-run ad-hoc script shows up under its
+    own name, never under the other seat's, and a seat-scoped `viewer` sees
+    only its own - the same rule every other per-seat block in this review
+    already follows (`decisions`, `play_stats`)."""
+    from magic_cards_model_api import records
+    from magic_cards_model_api.store import store
+
+    alice_uid = next(uid for uid, name in store.seat_uids(game).items() if name == "alice")
+    play = {
+        "schema_version": 1,
+        "id": "whatever",
+        "name": "Cast a permanent at instant speed",
+        "intent": "Hold and commit in the latest legal window.",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "theirs", "steps": ["end_step"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [
+            {
+                "kind": "cast",
+                "card": {"zone": "hand", "select": {"keywords_any": ["Flash"]}},
+                "mana": "auto",
+            }
+        ],
+        "next": [],
+    }
+    staged = records.stage_adhoc_script(game, alice_uid, play, "loop reasoning")
+    audit.record(
+        game,
+        audit.SCRIPT_RUN_ACTION,
+        player="alice",
+        seat="alice",
+        game_id=game,
+        run_id="run-x",
+        script_id=staged["id"],
+        exit="chain_complete",
+        moves_done=1,
+    )
+
+    entries = audit.entries(game)
+    unfiltered = review.build_review(store.archived(game), entries)
+    assert list(unfiltered["adhoc_scripts"]["alice"][0]) == [
+        "id",
+        "staged_at",
+        "turn",
+        "step",
+        "play",
+        "reasoning",
+        "warnings",
+        "runs",
+    ]
+    assert unfiltered["adhoc_scripts"]["alice"][0]["id"] == staged["id"]
+    assert unfiltered["adhoc_scripts"]["bob"] == []
+
+    as_alice = review.build_review(store.archived(game), entries, viewer="alice")
+    assert "alice" in as_alice["adhoc_scripts"]
+    assert "bob" not in as_alice["adhoc_scripts"]
+
+
 def test_an_undecodable_live_games_review_is_still_refused(
     client: TestClient, unloadable: dict[str, str]
 ) -> None:

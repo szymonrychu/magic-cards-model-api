@@ -1064,8 +1064,8 @@
           "type_error": null
         },
         {
-          "default": null,
-          "has_default": false,
+          "default": "",
+          "has_default": true,
           "name": "script",
           "type": "str",
           "type_error": null
@@ -1111,6 +1111,13 @@
           "name": "inputs",
           "type": "dict[str, Any] | None",
           "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "body",
+          "type": "dict[str, Any] | None",
+          "type_error": null
         }
       ]
     },
@@ -1136,6 +1143,33 @@
           "default": "mine",
           "has_default": true,
           "name": "whose_turn",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Stage an inline play document as one of your own ad-hoc scripts for",
+      "name": "stage_script",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "body",
+          "type": "dict[str, Any]",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "reasoning",
           "type": "str",
           "type_error": null
         }

@@ -49,6 +49,111 @@ def require_postgres_database_url(env_var: str) -> str:
     raise AssertionError("unreachable: pytest.skip/pytest.fail always raise")
 
 
+def _xdist_worker_schema() -> str | None:
+    """This xdist worker's private postgres schema name (`test_gw0`, ...), or
+    `None` outside xdist. `PYTEST_XDIST_WORKER` is set by pytest-xdist inside
+    each worker subprocess (`gw0`, `gw1`, ...) and is unset for a plain,
+    un-parallel `pytest` run - which keeps using whatever schema `mise run
+    test:pg`'s own `alembic upgrade head` step already migrated (`public`),
+    unchanged from before xdist existed."""
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    return f"test_{worker_id}" if worker_id else None
+
+
+def _schema_scoped_database_url(base_url: str, schema: str) -> str:
+    """`base_url` with its connection's `search_path` pinned to `schema`
+    *alone* - the standard psycopg/libpq `options=-c search_path=...`
+    parameter, carried as a URL query param so every consumer that already
+    just forwards this URL unchanged (SQLAlchemy's `create_engine`,
+    alembic's `env.py` via `database_url_from_env`) gets the isolated schema
+    for free, with no schema-aware code of its own.
+
+    Deliberately *not* `<schema>,public`: alembic decides whether a
+    migration has already run by reading `alembic_version` through this same
+    search_path, and `mise run test:pg`'s own bring-up step has already
+    migrated `public` to head before pytest ever starts. With `public` as a
+    fallback, a brand-new, still-empty worker schema resolves
+    `alembic_version` straight through to `public.alembic_version` - already
+    stamped at head - so `command.upgrade(cfg, "head")` sees nothing to do
+    and silently leaves the worker schema with no tables at all, in which
+    case every unqualified table lookup for the rest of that worker's run
+    falls through to `public` too (`games`/`records`, shared with every
+    other worker's `public`-only fallback) - the one thing this whole
+    mechanism exists to prevent. There is no other schema-qualified object
+    (extension, etc.) this codebase's migrations need, so a bare `schema`
+    is sufficient."""
+    from sqlalchemy.engine import make_url
+
+    url = make_url(base_url)
+    query = dict(url.query)
+    query["options"] = f"-csearch_path={schema}"
+    return url.set(query=query).render_as_string(hide_password=False)
+
+
+def _provision_xdist_worker_schema(base_url: str, schema: str) -> None:
+    """Create `schema` on the shared postgres `mise run test:pg` already
+    brought up, then migrate it to head - once per worker process, before
+    any test in that worker touches postgres. Every worker runs this against
+    a *different* schema name, so six workers doing this at once (`-n 6`)
+    never contend with each other."""
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(base_url, future=True)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+    finally:
+        engine.dispose()
+
+    from alembic.config import Config
+
+    from alembic import command
+
+    repo_root = Path(__file__).resolve().parents[1]
+    cfg = Config(str(repo_root / "alembic.ini"))
+    scoped_url = _schema_scoped_database_url(base_url, schema)
+    # `%%`, not `%`: `Config.set_main_option` stores the value through
+    # `configparser`, whose `BasicInterpolation` treats a lone `%` as the
+    # start of an interpolation reference and refuses anything else - which
+    # `options=-csearch_path%3D...` (the URL's own percent-encoding of `=`
+    # and `,`) always is. Doubling it here is exactly what interpolation
+    # undoes on the way back out (`get_main_option`/`get_section`), so
+    # `env.py` sees the URL unchanged.
+    cfg.set_main_option("sqlalchemy.url", scoped_url.replace("%", "%%"))
+    command.upgrade(cfg, "head")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Under `mise run test:pg -n 6`, give each xdist worker its own postgres
+    schema so the six worker processes sharing the one `docker compose up -d
+    postgres` instance cannot race each other's tables -
+    `tests/postgres_store_testkit.py`'s `TRUNCATE TABLE ... games` at the top
+    of every postgres-backed test would otherwise wipe out whatever another
+    worker's in-flight test had just written, or a unique-constraint
+    collision would fire between two workers' rows that would never have
+    coexisted serially.
+
+    Rewriting `MCM_TEST_DATABASE_URL` itself - rather than editing the ~15
+    test files that independently call `require_postgres_database_url`
+    directly - makes every one of them pick up the isolated schema with no
+    per-file change: they all just read the env var this function has
+    already repointed by the time any test runs.
+
+    A no-op outside xdist (`_xdist_worker_schema` returns `None`) and outside
+    `test:pg` (`MCM_TEST_DATABASE_URL` unset) - `config` is unused, required
+    only by the `pytest_configure` hook signature.
+    """
+    del config
+    base_url = os.environ.get("MCM_TEST_DATABASE_URL")
+    if not base_url:
+        return
+    schema = _xdist_worker_schema()
+    if schema is None:
+        return
+    _provision_xdist_worker_schema(base_url, schema)
+    os.environ["MCM_TEST_DATABASE_URL"] = _schema_scoped_database_url(base_url, schema)
+
+
 #: The methods the harness credential is added to. `game_access.py`'s
 #: positive rule also covers `DELETE`, and this deliberately does not:
 #: `app.delete_game` and `decks_api.end_lobby_game` have always required a

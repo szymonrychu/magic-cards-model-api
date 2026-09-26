@@ -78,10 +78,25 @@ def _scratch_database() -> Iterator[str]:
     try:
         with admin.connect() as conn:
             conn.execute(text(f'CREATE DATABASE "{name}"'))
+        # Drop `options` (the `-c search_path=...` an xdist worker's
+        # `MCM_TEST_DATABASE_URL` carries, per `conftest.py`) before pointing
+        # at the new database: that search_path names a schema that exists
+        # only in the *shared* `test:pg` database this scratch database was
+        # just carved off from, with no `public` fallback (see
+        # `conftest._schema_scoped_database_url`'s own docstring for why
+        # there is deliberately no fallback) - carried onto a brand-new,
+        # otherwise-empty database it resolves to nothing, and every
+        # unqualified `CREATE TABLE` here fails with `InvalidSchemaName`.
+        # This database's whole point is to be a fresh, single-purpose
+        # database no other worker ever touches, so it just uses its own
+        # default `public` schema like `alembic upgrade` normally would.
+        #
         # `render_as_string(hide_password=False)`, never `str(url)`:
         # `URL.__str__` masks the password, and the masked string is a
         # perfectly well-formed URL that simply cannot authenticate.
-        yield make_url(base_url).set(database=name).render_as_string(hide_password=False)
+        scratch_url = make_url(base_url).set(database=name)
+        query = {k: v for k, v in scratch_url.query.items() if k != "options"}
+        yield scratch_url.set(query=query).render_as_string(hide_password=False)
     finally:
         with admin.connect() as conn:
             conn.execute(

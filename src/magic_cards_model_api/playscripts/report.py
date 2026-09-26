@@ -52,6 +52,7 @@ from ..audit import (
     SCRIPT_RUN_OFFERED_ACTION,
     SCRIPT_RUN_STARTED_ACTION,
 )
+from ..records import SCRIPT_STAGED_ACTION
 from . import decision_dsl
 
 #: The most a table may take, in UTF-8 bytes.
@@ -440,6 +441,77 @@ def decision_candidates(
     return tuple(candidates)
 
 
+# -- FD10 (a): manual chains and ad-hoc scripts are candidates too ---------
+#
+# `stats._manual_chains` (FD10 (c)) finds every run of `MANUAL_CHAIN_MIN` or
+# more consecutive manual action rows a seat made - exactly the shape the
+# owner's own evidence names (finding seq 191: about 25 manual MCP calls
+# hand-driving a mana loop). Each one is owed a generalized `repeat` or
+# multi-move play, or a `plays no-change`, precisely like an ordinary
+# expressible decision - so both candidate kinds below are built as ordinary
+# `DecisionCandidate`s and closed the identical way, `decision_candidate_id`
+# of a real ledger `seq` (a chain's own first `seq`; an ad-hoc script's own
+# `script_staged` row `seq`) - `plays no-change --decision <seq>` needs no
+# change of its own to close either kind.
+
+
+def manual_chain_candidates(
+    records: Iterable[Mapping[str, Any]], seat: str
+) -> tuple[DecisionCandidate, ...]:
+    """One candidate per manual chain `stats._manual_chains` finds for `seat`
+    in `records` (one game's own ledger, unfiltered - same convention as
+    `decision_candidates`)."""
+    from .stats import _manual_chains
+
+    all_records = list(records)
+    return tuple(
+        DecisionCandidate(
+            action="manual_chain",
+            dsl={"kinds": list(chain["kinds"]), "turn": chain["turn"], "step": chain["step"]},
+            seqs=chain["seqs"],
+        )
+        for chain in _manual_chains(all_records, seat)
+    )
+
+
+def adhoc_script_candidates(
+    records: Iterable[Mapping[str, Any]], seat: str
+) -> tuple[DecisionCandidate, ...]:
+    """One candidate per ad-hoc script `seat` staged (`records.
+    stage_adhoc_script`'s own `script_staged` row) AND then actually ran at
+    least once in this game - a script staged but never run asked nothing of
+    the seat, so it is not a candidate at all. Told apart from a registered
+    script's own run by `stats._is_adhoc_script_id`, off the `script_id`
+    alone."""
+    from .stats import _is_adhoc_script_id
+
+    all_records = list(records)
+    staged_at: dict[str, int] = {}
+    order: list[str] = []
+    ran: set[str] = set()
+    for record in all_records:
+        payload = _payload(record)
+        detail = payload.get("detail") or {}
+        if detail.get("seat") != seat:
+            continue
+        action = payload.get("action")
+        if action == SCRIPT_STAGED_ACTION:
+            script_id = detail.get("id")
+            seq = record.get("seq")
+            if isinstance(script_id, str) and isinstance(seq, int) and script_id not in staged_at:
+                staged_at[script_id] = seq
+                order.append(script_id)
+        elif action == SCRIPT_RUN_ACTION and _is_adhoc_script_id(detail.get("script_id")):
+            ran.add(str(detail.get("script_id")))
+    return tuple(
+        DecisionCandidate(
+            action="adhoc_script", dsl={"id": script_id}, seqs=(staged_at[script_id],)
+        )
+        for script_id in order
+        if script_id in ran
+    )
+
+
 @dataclass(frozen=True)
 class Assessment:
     """`assess`'s own verdict: every candidate this seat faced, and which of
@@ -467,9 +539,16 @@ class Assessment:
 
 def assess(records: Iterable[Mapping[str, Any]], seat: str) -> Assessment:
     """Every expressible decision `seat` faced, closed or open - see
-    `Assessment`'s own docstring for exactly what closes one."""
+    `Assessment`'s own docstring for exactly what closes one. FD10 (a): a
+    manual chain and an ad-hoc script that ran are candidates here too
+    (`manual_chain_candidates`/`adhoc_script_candidates`), listed alongside
+    the ordinary per-decision ones."""
     all_records = list(records)
-    candidates = decision_candidates(all_records, seat)
+    candidates = (
+        decision_candidates(all_records, seat)
+        + manual_chain_candidates(all_records, seat)
+        + adhoc_script_candidates(all_records, seat)
+    )
     closed_ids: set[str] = set()
     any_admitted = False
     for record in all_records:

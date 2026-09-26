@@ -792,10 +792,11 @@ CLI_COMMAND_TOOLS = {
 }
 
 #: `seat_cli` commands whose subcommands each front one MCP tool: `script run`
-#: is `run_script` and `script list` is `list_scripts`, with the same argument
-#: names (`test_script_subcommands_take_their_tools_parameters_by_name`).
+#: is `run_script`, `script list` is `list_scripts` and `script stage` is
+#: `stage_script`, with the same argument names
+#: (`test_script_subcommands_take_their_tools_parameters_by_name`).
 CLI_SUBCOMMAND_TOOLS = {
-    "script": {"run": "run_script", "list": "list_scripts"},
+    "script": {"run": "run_script", "list": "list_scripts", "stage": "stage_script"},
 }
 
 #: Commands that are CLI-only by design, each with why.
@@ -949,7 +950,11 @@ def test_script_subcommands_take_their_tools_parameters_by_name():
 
 
 def test_the_input_flag_is_repeatable_and_names_inputs():
-    for name in CLI_SUBCOMMAND_TOOLS["script"]:
+    checked = []
+    for name, tool in CLI_SUBCOMMAND_TOOLS["script"].items():
+        if "inputs" not in _tool_parameters(tool):
+            continue
+        checked.append(name)
         [flag] = [
             action
             for action in _script_subcommand(name)._actions
@@ -960,6 +965,7 @@ def test_the_input_flag_is_repeatable_and_names_inputs():
         assert flag.default is None and flag.metavar == "NAME=VALUE"
         said = " ".join((flag.help or "").split())
         assert "repeat" in said and "JSON" in said
+    assert sorted(checked) == ["list", "run"], checked
 
 
 def _two_scripts_on_one_board(client: TestClient, game_id: str) -> str:
