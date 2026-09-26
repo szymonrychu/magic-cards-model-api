@@ -260,6 +260,46 @@ def test_report_makes_a_ran_adhoc_script_a_candidate_closed_by_no_change(client,
     assert report.assess(audit.entries(game), "alice").satisfied
 
 
+def test_report_makes_a_ran_adhoc_script_a_candidate_closed_by_an_admit(client, game):
+    """FD10 (a): the spec's own words are "closed by an admit or a
+    no-change" - `test_report_makes_a_ran_adhoc_script_a_candidate_closed_by_
+    no_change`, right above, only ever exercises the no-change half. An
+    ad-hoc script's candidate closes exactly like an ordinary decision
+    candidate does: a `plays_outcome` row admitting a real `dsl_change`
+    closes every open candidate for the seat (`report.Assessment`'s own
+    docstring), the ad-hoc one included - no `no_change` entry naming its
+    id is required at all."""
+    uid = seat_uid(game, "alice")
+    result = records.stage_adhoc_script(game, uid, flash_permanent_play("whatever"), REASONING)
+    audit.record(
+        game,
+        audit.SCRIPT_RUN_ACTION,
+        player="alice",
+        seat="alice",
+        game_id=game,
+        run_id="run-x",
+        script_id=result["id"],
+        exit="chain_complete",
+        moves_done=1,
+    )
+    entries = audit.entries(game)
+    verdict = report.assess(entries, "alice")
+    adhoc_candidate = next(c for c in verdict.candidates if c.action == "adhoc_script")
+    assert adhoc_candidate.id in {c.id for c in verdict.open}
+    assert not verdict.satisfied
+
+    audit.record(
+        game,
+        audit.PLAYS_OUTCOME_ACTION,
+        player="alice",
+        admitted=[{"dsl_change": True, "added": ["new-play"], "updated": [], "reprioritized": []}],
+        no_change=[],
+    )
+    verdict2 = report.assess(audit.entries(game), "alice")
+    assert adhoc_candidate.id not in {c.id for c in verdict2.open}
+    assert verdict2.satisfied
+
+
 # -- script_tools.stage / run(body=...): the client-side glue, fake seat ----
 
 

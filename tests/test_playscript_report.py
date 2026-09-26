@@ -542,6 +542,26 @@ def test_a_no_change_by_decision_closes_a_manual_chain_candidate_too():
     assert verdict.satisfied
 
 
+def test_an_admit_closes_a_manual_chain_candidate_too():
+    """FD10 (a): "closed by an admit or a no-change" - the no-change half is
+    `test_a_no_change_by_decision_closes_a_manual_chain_candidate_too`,
+    above; this is the admit half. A `plays_outcome` admitting a real
+    `dsl_change` closes every open candidate for the seat, the manual-chain
+    one included, with no `no_change` entry naming its id at all."""
+    records = [
+        *(move(seq, "activate") for seq in range(1, 5)),
+        plays_outcome(
+            5,
+            admitted=[
+                {"dsl_change": True, "added": ["new-play"], "updated": [], "reprioritized": []}
+            ],
+        ),
+    ]
+    verdict = report.assess(records, "alice")
+    assert verdict.open == ()
+    assert verdict.satisfied
+
+
 def test_a_short_run_of_manual_rows_is_not_a_candidate():
     records = [move(seq, "activate") for seq in range(1, 4)]
     assert report.manual_chain_candidates(records, "alice") == ()
@@ -591,3 +611,28 @@ def test_adhoc_script_candidates_join_assess_and_are_closed_by_no_change():
     ]
     verdict2 = report.assess(closed, "alice")
     assert adhoc_candidate.id not in {c.id for c in verdict2.open}
+
+
+def test_adhoc_script_candidates_are_also_closed_by_an_admit():
+    """FD10 (a): the no-change half is the test right above this one; this
+    is the admit half, mirrored for the ad-hoc-script candidate the same
+    way `test_an_admit_closes_a_manual_chain_candidate_too` mirrors it for
+    the manual-chain one."""
+    records = [
+        staged(1, "adhoc-1-alice"),
+        started(2, "adhoc-1-alice", "run-x"),
+        script_row(3, audit.SCRIPT_RUN_ACTION, "adhoc-1-alice", "run-x", exit="resolved"),
+    ]
+    admitted = [
+        *records,
+        plays_outcome(
+            4,
+            admitted=[
+                {"dsl_change": True, "added": ["new-play"], "updated": [], "reprioritized": []}
+            ],
+        ),
+    ]
+    verdict = report.assess(admitted, "alice")
+    adhoc_candidate = next(c for c in verdict.candidates if c.action == "adhoc_script")
+    assert adhoc_candidate.id not in {c.id for c in verdict.open}
+    assert verdict.satisfied
