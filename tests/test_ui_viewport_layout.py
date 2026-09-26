@@ -46,6 +46,18 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 UI = ROOT / "ui"
 
+#: This module's own `measurements` fixture docstring already names the
+#: failure mode `-n 6` reopens: "near-certainly [fails] when several copies
+#: of this file race each other" - a real headless-Chrome flake, not
+#: something a retry budget invented. Without this, xdist's default
+#: scheduling can hand different tests from this one module to different
+#: workers, so up to six of them launch their own concurrent Chrome copy at
+#: once even though `measurements` (`scope="module"`) means only one COULD
+#: ever be needed per worker. `xdist_group` pins every test below to a
+#: single worker, so at most one Chrome copy from this file ever runs at a
+#: time - exactly the serial suite's own concurrency, restored under `-n 6`.
+pytestmark = pytest.mark.xdist_group(name="ui_viewport_layout")
+
 #: (width, height) of every viewport checked. Phones in landscape are the
 #: sizes the old stacked layout scrolled on; the rest cover each breakpoint.
 VIEWPORTS = [
