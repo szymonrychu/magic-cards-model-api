@@ -1832,10 +1832,56 @@ def test_the_review_job_runs_opus_as_the_human_seats_own_credential() -> None:
     assert parsed.followup is None
 
 
-def _start_review(seats: K8sSeats) -> dict:
-    return seats.start_review_followup(
-        uid="u1", game_id="g1", player="carol", agent=AgentSettings.review_default()
+def test_the_review_jobs_assignment_carries_its_own_review_key() -> None:
+    """FD7-r1: `declare_ai_review`'s AI-seat check accepts a human seat's
+    review only when the request carries this game's admin key as
+    `review_key` - `k8s_seats.build_review_job` is the one place that key
+    is minted into the Job's own assignment, so a review Job with none
+    (the pre-fix shape) could never file for the human seat it reviews."""
+    from mtg_agent.driver.app import DispatchIn
+
+    job = k8s_seats.build_review_job(
+        K8sSettings.from_env(ENV),
+        game_id="g1",
+        uid="u1",
+        player="carol",
+        agent=AgentSettings.review_default(),
+        review_key="g1-admin-key",
     )
+    driver_env = {e["name"]: e.get("value") for e in _container(job, "driver")["env"]}
+    parsed = DispatchIn.model_validate_json(driver_env["DRIVER_ASSIGNMENT_JSON"])
+    assert parsed.review_key == "g1-admin-key"
+
+
+def _start_review(seats: K8sSeats, review_key: str | None = None) -> dict:
+    return seats.start_review_followup(
+        uid="u1",
+        game_id="g1",
+        player="carol",
+        agent=AgentSettings.review_default(),
+        review_key=review_key,
+    )
+
+
+def test_start_review_followup_forwards_the_review_key_to_build_review_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`K8sSeats.start_review_followup` is only a scheduling wrapper around
+    `build_review_job` - proving it forwards `review_key` unchanged is what
+    keeps `test_the_review_jobs_assignment_carries_its_own_review_key`
+    (which proves `build_review_job` itself embeds it) meaningful for the
+    path a real dispatch actually takes."""
+    calls: list[dict] = []
+    real_build = k8s_seats.build_review_job
+
+    def recording_build(*args, **kwargs):
+        calls.append(kwargs)
+        return real_build(*args, **kwargs)
+
+    monkeypatch.setattr(k8s_seats, "build_review_job", recording_build)
+    seats, _, _ = make()
+    _start_review(seats, review_key="g1-admin-key")
+    assert calls and calls[0]["review_key"] == "g1-admin-key"
 
 
 def test_a_review_job_is_created_once_and_deduped_by_its_own_label() -> None:

@@ -252,6 +252,7 @@ def _seat_job_values(
     role: str = ROLE_SEAT,
     followup: Mapping[str, Any] | None = None,
     mode: str | None = None,
+    review_key: str | None = None,
 ) -> dict[str, Any]:
     assignment: dict[str, Any] = {
         "uid": uid,
@@ -278,6 +279,14 @@ def _seat_job_values(
         # (`driver/app.py`'s `assign_review`), so no `followup` key is ever
         # written for it.
         assignment["mode"] = mode
+    if review_key is not None:
+        # FD7-r1: this game's admin key, so `assign_review`'s later POSTs to
+        # `/ai-review`/`/ai-review-failure` can prove they are the sanctioned
+        # review dispatch rather than the human seat's own uid speaking for
+        # itself - `app.declare_ai_review`'s own gate. Absent on every
+        # payload but a human-seat review Job's, for the same byte-identical
+        # reason as `role` and `mode` above.
+        assignment["review_key"] = review_key
     return {
         "__GAME_ID__": game_id,
         "__SEAT_UID__": uid,
@@ -444,7 +453,13 @@ def build_followup_job(
 
 
 def build_review_job(
-    settings: K8sSettings, *, game_id: str, uid: str, player: str, agent: AgentSettings
+    settings: K8sSettings,
+    *,
+    game_id: str,
+    uid: str,
+    player: str,
+    agent: AgentSettings,
+    review_key: str | None = None,
 ) -> dict[str, Any]:
     """FD7 gap 15 (parity item 15), completed: a game with a human seat gets
     an automatic post-game review only in kubernetes mode, and only through
@@ -464,7 +479,16 @@ def build_review_job(
 
     Scheduling, deduping and releasing this Job is by its own label
     (`LABEL_REVIEW`, never `LABEL_FOLLOWUP` - a human seat's Job must not be
-    mistaken for, or clash with, F1's own)."""
+    mistaken for, or clash with, F1's own).
+
+    **FD7-r1: carries `review_key`, this game's admin key, in its own
+    assignment.** `assign_review`'s later `POST .../ai-review` runs as the
+    human seat's own uid - there is no other credential to act as that seat
+    with - which `app.declare_ai_review`'s AI-seat check cannot tell apart
+    from the seat calling the route on its own, since a human seat is never
+    in `archived.ai_players`. The admin key is minted once per game and
+    handed only to whoever created it, never to a seat, so presenting it
+    here is what proves this Job, and not the seat, is filing."""
     labels = {LABEL_APP: APP_LABEL_VALUE, LABEL_GAME: game_id, LABEL_REVIEW: uid}
     values = _seat_job_values(
         game_id=game_id,
@@ -478,6 +502,7 @@ def build_review_job(
         guides_ref=settings.guides_ref,
         role=ROLE_SEAT,
         mode="review",
+        review_key=review_key,
     )
     job = render_seat_job_template(_load_seat_job_template(settings.job_template_path), values)
     job["metadata"]["name"] = review_job_name(game_id, uid)
@@ -981,13 +1006,23 @@ class K8sSeats:
         return [job for job in jobs if (job.metadata.labels or {}).get(LABEL_REVIEW) == uid]
 
     def start_review_followup(
-        self, *, uid: str, game_id: str, player: str, agent: AgentSettings
+        self,
+        *,
+        uid: str,
+        game_id: str,
+        player: str,
+        agent: AgentSettings,
+        review_key: str | None = None,
     ) -> dict[str, Any]:
         """Create `uid`'s one human-seat review Job (`build_review_job`),
         unless the cluster already holds one for this game: deduped by
         `LABEL_REVIEW`, and a 409 AlreadyExists on the deterministic name
         reads the same. The answer's `state` is `scheduled` or `exists`. A
-        create failure raises, for the registry to report."""
+        create failure raises, for the registry to report.
+
+        `review_key` (FD7-r1) is this game's admin key, carried straight
+        into the Job's own assignment (`build_review_job`) - see that
+        function's docstring for why."""
         name = review_job_name(game_id, uid)
         base = {
             "uid": uid,
@@ -1000,7 +1035,14 @@ class K8sSeats:
             (job.metadata.labels or {}).get(LABEL_GAME) == game_id for job in self._review_jobs(uid)
         ):
             return {**base, "state": "exists"}
-        body = build_review_job(self.settings, game_id=game_id, uid=uid, player=player, agent=agent)
+        body = build_review_job(
+            self.settings,
+            game_id=game_id,
+            uid=uid,
+            player=player,
+            agent=agent,
+            review_key=review_key,
+        )
         try:
             self.batch.create_namespaced_job(self.settings.namespace, body=body)
         except ApiException as exc:

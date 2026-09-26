@@ -971,7 +971,9 @@ class AiSeatRegistry:
         except Exception:  # noqa: BLE001 - unknown, and the caller says what that means
             return None
 
-    def start_review_followup(self, *, uid: str, game_id: str, player: str) -> dict[str, Any]:
+    def start_review_followup(
+        self, *, uid: str, game_id: str, player: str, review_key: str | None = None
+    ) -> dict[str, Any]:
         """FD7 gap 15 (parity item 15), completed: schedule the human seat
         `uid`'s own post-game review Job (`k8s_seats.build_review_job`,
         `mode: "review"` - a real DR3 narrative review declaration, not a
@@ -984,7 +986,12 @@ class AiSeatRegistry:
         human seat never gets an automatic review outside kubernetes,
         because compose mode has no follow-up mechanism at all for ANY
         seat, human or AI. Never raises: a cluster that refuses answers
-        `state: failed`."""
+        `state: failed`.
+
+        `review_key` (FD7-r1) is this game's admin key
+        (`lobby._start_human_seat_reviews` reads it off `store`) - carried
+        straight into the Job's own assignment, never read or used here,
+        since `app.declare_ai_review`'s AI-seat check is the only reader."""
         mode = ai_seat_mode()
         if mode != "kubernetes":
             return {
@@ -999,7 +1006,11 @@ class AiSeatRegistry:
             }
         try:
             status = k8s_seats.get().start_review_followup(
-                uid=uid, game_id=game_id, player=player, agent=AgentSettings.review_default()
+                uid=uid,
+                game_id=game_id,
+                player=player,
+                agent=AgentSettings.review_default(),
+                review_key=review_key,
             )
         except Exception as exc:  # noqa: BLE001 - report, never raise
             return {

@@ -393,6 +393,31 @@ def test_kubernetes_start_review_followup_create_failure_reports_never_raises(
     assert "kubelet is down" in status["reason"]
 
 
+def test_kubernetes_start_review_followup_forwards_its_review_key(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FD7-r1: `lobby._start_human_seat_reviews` reads this game's admin key
+    and hands it through as `review_key` - `AiSeatRegistry.
+    start_review_followup` must carry it to `K8sSeats.start_review_followup`
+    unchanged, since that is the only place it reaches the Job's own
+    assignment (`k8s_seats.build_review_job`) and, through it, the
+    `app.declare_ai_review` gate a human seat's review must pass."""
+    from magic_cards_model_api import k8s_seats
+
+    calls: list[dict] = []
+    real = k8s_seats.K8sSeats.start_review_followup
+
+    def recording(self, **kwargs):
+        calls.append(kwargs)
+        return real(self, **kwargs)
+
+    monkeypatch.setattr(k8s_seats.K8sSeats, "start_review_followup", recording)
+    fresh_registry.start_review_followup(
+        uid="u-human", game_id="g-1", player="carol", review_key="g1-admin-key"
+    )
+    assert calls and calls[0]["review_key"] == "g1-admin-key"
+
+
 def test_review_followup_is_never_available_outside_kubernetes_mode(
     fresh_registry: ai_seat.AiSeatRegistry, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -288,6 +288,15 @@ class DispatchIn(BaseModel):
     `opponent_identification`, `outcome`, `run_table`, `offers`,
     `hand_played`, `candidates` (`{plays, lines}`) and
     `unfinished_reasons`."""
+    review_key: str | None = None
+    """FD7-r1: a `mode: "review"` dispatch's own credential - this game's
+    admin key, written only by `k8s_seats.build_review_job` (never by an
+    ordinary seat's own dispatch). `assign_review` carries it onto
+    `Assignment.review_key`, and `post_ai_review`/`record_review_failure`
+    forward it unchanged onto `POST .../ai-review` and
+    `.../ai-review-failure` - the field `app.declare_ai_review`'s AI-seat
+    check accepts in place of `archived.ai_players` membership for a seat
+    that is, and will always be, human. `None` for every other mode."""
 
 
 class HandoverIn(BaseModel):
@@ -761,6 +770,7 @@ def build_app(
                         "stage": stage,
                         "reason": reason,
                         "invoked": invoked,
+                        "review_key": assignment.review_key,
                     },
                 )
             if response.status_code >= 400:
@@ -941,6 +951,7 @@ def build_app(
                         "uid": assignment.uid,
                         "text": review_text,
                         "turning_points": turning_points,
+                        "review_key": assignment.review_key,
                     },
                 )
             if response.status_code >= 400:
@@ -2041,6 +2052,7 @@ def build_app(
             agent=body.agent,
             role=body.role,
             stub_decks=tuple(library.stub_decks()),
+            review_key=body.review_key,
         )
         with lock:
             if current["assignment"] is not None:

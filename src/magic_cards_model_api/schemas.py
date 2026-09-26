@@ -500,6 +500,18 @@ class AiReviewIn(RequestModel):
     ...]}` - the reviewer's own opinion, keyed by seat, never validated
     beyond being JSON-shaped: this is a critique's parsed opinion, not a
     fact `visibility.redact_log_entry` or anything else needs to check."""
+    review_key: str | None = None
+    """FD7 gap 15: the human-seat review Job's own credential - this game's
+    admin key, minted at creation and handed only to whoever created the
+    game, never to an ordinary seat. `app.declare_ai_review`'s AI-seat check
+    (`archived.ai_players`) has nothing to match for a human seat, since a
+    human is never registered as one; presenting the admin key here, which
+    `k8s_seats.build_review_job` carries in the Job's own assignment and
+    nowhere else, is what proves this POST is the sanctioned review
+    dispatch rather than the seat writing its own words into this route
+    directly - the forgery `AiReviewIn`'s `uid` field already documents.
+    `None` for an AI seat's own driver, which needs nothing beyond
+    `archived.ai_players` membership."""
 
 
 class AiReviewResponse(BaseModel):
@@ -553,6 +565,11 @@ class AiReviewFailureIn(RequestModel):
     description of an answer it could not use."""
     invoked: bool
     """Whether the reviewer itself was ever asked."""
+    review_key: str | None = None
+    """Gated exactly like `AiReviewIn.review_key` beside it - the human-seat
+    review Job's own credential, this game's admin key, for the same reason:
+    T35's failure signal must reach the ledger for a human seat's review
+    exactly as it does for an AI seat's."""
 
 
 class AiReviewFailureResponse(BaseModel):

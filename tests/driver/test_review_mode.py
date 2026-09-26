@@ -105,6 +105,21 @@ def test_review_mode_reads_the_lobby_not_a_followup_payload(world) -> None:
     assert world.seat_reads, "seat_decklist never read the lobby"
 
 
+def test_review_mode_carries_the_review_jobs_key_onto_the_ai_review_post(world) -> None:
+    """FD7-r1: `declare_ai_review` on the real api refuses a human seat
+    outright unless the request carries `review_key` (this game's admin
+    key, minted server-side and handed only to `k8s_seats.build_review_job`'s
+    own assignment, never to an ordinary seat uid) - `bob` here is no more
+    an `ai_players` entry than any other seat this world models. The
+    dispatch body's own `review_key` must therefore ride straight onto
+    `POST .../ai-review` unchanged, which is what the real route checks
+    (`tests/test_review.py::
+    test_a_human_seats_ai_review_files_with_the_review_jobs_own_key`)."""
+    dispatch_review(world, review_key="the-games-admin-key")
+    wait_for(lambda: world.ai_review_posts)
+    assert world.ai_review_posts[0]["review_key"] == "the-games-admin-key"
+
+
 def test_review_mode_rejects_a_rival_game_while_still_current(world) -> None:
     """One container, one job: a rival game dispatched before this one's
     review has retired gets the normal 409, the same shape

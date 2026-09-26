@@ -308,14 +308,23 @@ def _start_human_seat_reviews(game_id: str) -> list[dict[str, Any]]:
     None`) - never an advisor uid, since a buddy is not itself a seat
     perspective to review. Idempotent: `start_review_followup` is itself
     deduped by its own Job label, so a `retire_game` that somehow ran twice
-    for the same game costs nothing beyond a cluster read."""
+    for the same game costs nothing beyond a cluster read.
+
+    **FD7-r1**: also reads this game's admin key (`store.admin_key`) and
+    hands it through as `review_key` - the credential the Job's own
+    assignment carries so its later `POST .../ai-review` can prove it is the
+    sanctioned review dispatch, not the human seat's own uid speaking for
+    itself (`app.declare_ai_review`'s AI-seat check)."""
     if ai_seat.ai_seat_mode() != "kubernetes":
         return []
+    review_key = store.admin_key(game_id)
     started = []
     for uid, player in store.seat_uids(game_id).items():
         if ai_seat.registry.mechanism(uid) is not None:
             continue
-        status = ai_seat.registry.start_review_followup(uid=uid, game_id=game_id, player=player)
+        status = ai_seat.registry.start_review_followup(
+            uid=uid, game_id=game_id, player=player, review_key=review_key
+        )
         started.append(status | {"player": player})
     return started
 

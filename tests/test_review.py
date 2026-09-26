@@ -892,6 +892,51 @@ def test_an_ai_review_is_refused_for_a_player_who_is_not_an_ai_seat(client: Test
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
+def test_a_human_seats_ai_review_files_with_the_review_jobs_own_key(client: TestClient) -> None:
+    """FD7 gap 15: `k8s_seats.build_review_job` dispatches the review-only
+    Job as the human seat's OWN uid (exactly the credential
+    `test_an_ai_review_is_refused_for_a_player_who_is_not_an_ai_seat` above
+    proves is not enough by itself), so the AI-seat check alone would refuse
+    every human-seat review forever - `alice` never becomes an AI seat.
+
+    The sanctioned way is `review_key`: this game's admin key, minted at
+    creation and handed only to whoever created the game - never to an
+    ordinary seat - which the review Job's own assignment now carries
+    (`k8s_seats._seat_job_values`) and the driver forwards onto this route
+    (`mtg_agent.driver.app.post_ai_review`). Presenting it is what proves
+    the caller is the sanctioned review dispatch rather than the seat typing
+    its own words into this route directly, which is exactly why the test
+    above still gets a 404 - it presents no key at all."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        filed = _ai_review(client, info, player="alice", review_key=info["admin_key"])
+        assert filed.status_code == 200, filed.text
+        assert filed.json()["player"] == "alice"
+
+        review_body = _review(client, game_id, key=info["admin_key"]).json()
+        reviews = [e for e in review_body["entries"] if e["action"] == audit.AI_REVIEW_ACTION]
+        assert any(e["detail"]["player"] == "alice" for e in reviews)
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_human_seats_ai_review_refuses_a_key_that_is_not_the_admin_key(
+    client: TestClient,
+) -> None:
+    """The sanctioned path checks the key's VALUE, not merely that the field
+    was sent - a seat cannot forge one by inventing a string for the new
+    field, which would reopen exactly the hole the AI-seat check exists to
+    close."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        forged = _ai_review(client, info, player="alice", review_key="not-the-admin-key")
+        assert forged.status_code == 404, forged.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
 def test_a_finished_games_ai_review_is_recorded_and_reaches_the_review(
     client: TestClient,
 ) -> None:
@@ -1103,6 +1148,29 @@ def test_an_ai_review_failure_is_gated_exactly_like_an_ai_review(client: TestCli
         assert wrong_seat.status_code == 404, wrong_seat.text
         human = _ai_review_failure(client, info, player="alice", uid=info["seat_uids"]["alice"])
         assert human.status_code == 404, human.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_human_seats_ai_review_failure_files_with_the_review_jobs_own_key(
+    client: TestClient,
+) -> None:
+    """Gated identically to `declare_ai_review` (see
+    `test_a_human_seats_ai_review_files_with_the_review_jobs_own_key`): the
+    review Job's own `review_key` lets a human seat's failure signal through
+    too, since T35 must be able to say "the reviewer failed" for a human
+    seat's review exactly as it does for an AI seat's."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        filed = _ai_review_failure(
+            client,
+            info,
+            player="alice",
+            uid=info["seat_uids"]["alice"],
+            review_key=info["admin_key"],
+        )
+        assert filed.status_code == 200, filed.text
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 

@@ -129,6 +129,16 @@ class Assignment:
     own container and has no engine dependency of its own to compute it
     with. Empty for a fully supported deck, or when the read failed."""
 
+    review_key: str | None = None
+    """FD7-r1: a human seat's own review-only dispatch's credential
+    (`DispatchIn.review_key`, written by `k8s_seats.build_review_job` alone)
+    - this game's admin key, carried through unchanged onto
+    `POST .../ai-review` and `.../ai-review-failure`
+    (`post_ai_review`/`record_review_failure`), which is what
+    `app.declare_ai_review`'s AI-seat check accepts in place of
+    `archived.ai_players` membership for a seat that is, and will always be,
+    human. `None` for every ordinary match assignment."""
+
     @property
     def guide(self) -> DeckGuide | None:
         """The one guide this seat is playing from, if the classifier could
