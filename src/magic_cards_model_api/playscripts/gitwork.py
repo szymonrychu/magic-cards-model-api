@@ -259,9 +259,30 @@ def run(
     input: str | None = None,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """The one subprocess call. Never raises on a non-zero exit."""
+    """The one subprocess call. Never raises on a non-zero exit.
+
+    Pre-existing infra bug found while developing FD7, fixed here rather
+    than worked around: with no `input`, `subprocess.run` leaves `stdin`
+    unset, which means INHERITED from whatever this process's own stdin
+    happens to be. In a couple of hosting shapes that is a pipe nothing
+    ever closes, and a git subprocess that tries to read from it (a
+    prompt `GIT_TERMINAL_PROMPT`/`GIT_ASKPASS` did not suppress, or a
+    pager/credential helper's own edge case) then blocks forever - not on
+    network I/O, not in a loop, just waiting on a `read()` that will never
+    return. `Git`'s own docstring already promises "never prompting"; an
+    explicit `DEVNULL` is what actually makes that true regardless of what
+    this process's own stdin is wired to. `input` still gets its own real
+    pipe exactly as before - this only closes the door `input=None` left
+    open."""
     return subprocess.run(
-        argv, cwd=cwd, input=input, env=env, capture_output=True, text=True, check=False
+        argv,
+        cwd=cwd,
+        input=input,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        stdin=subprocess.DEVNULL if input is None else None,
     )
 
 
