@@ -31,7 +31,16 @@ target_metadata = metadata
 # assembles one from the POSTGRES_* components, which is how the Kubernetes
 # chart will pass CloudNativePG's Secret keys through.
 if os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_HOST"):
-    config.set_main_option("sqlalchemy.url", database_url_from_env())
+    # `%%`, not `%`: `set_main_option` stores the value through
+    # `configparser`, whose `BasicInterpolation` treats a lone `%` as the
+    # start of an interpolation reference and raises on anything else - which
+    # a percent-encoded URL (a password, or a query string like
+    # `options=-csearch_path%3Dtest_gw0%2Cpublic`) can easily contain.
+    # Doubling it here is exactly what interpolation undoes on the way back
+    # out (`get_main_option`/`get_section`, both used below), so nothing
+    # downstream ever sees the escaping - a URL with no `%` in it round-trips
+    # identically to before.
+    config.set_main_option("sqlalchemy.url", database_url_from_env().replace("%", "%%"))
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
