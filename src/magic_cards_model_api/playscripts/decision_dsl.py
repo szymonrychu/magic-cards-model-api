@@ -84,11 +84,15 @@ schema at all (its ordering is not one `Answer` field can carry), so it stays
 combat moves are, and fall back to `"decide:<kind>"` only when a card the
 row names cannot be resolved in the attached `state_view` (`put_on_top_or_bottom`
 needs no board data at all - `position` is written straight off the row's own
-`top` flag). A `decide` row whose own kind is one of the two structurally
-forbidden ones (`schema.FORBIDDEN_DECISION_KINDS`: `assign_combat_damage`,
-`mulligan`) reuses the plain `mulligan`/`decide:assign_combat_damage` label
-instead, so `unexpressible` never disagrees with itself about what a
-`mulligan` decision is, wherever in the ledger it shows up.
+`top` flag). A `decide` row whose own kind is one of the two this module's
+own `_FIXED_DECIDE_LABELS` names (`assign_combat_damage`, `mulligan`) reuses
+the plain `decide:assign_combat_damage`/`mulligan` label instead, so
+`unexpressible` never disagrees with itself about what one of those
+decisions is, wherever in the ledger it shows up - independent of the
+schema's own `FORBIDDEN_DECISION_KINDS`, which FD2 emptied (the schema now
+additionally accepts a plain accept-style `mulligan` answer too), because
+this conversion direction does not yet build either kind's richer shape
+(FD4).
 
 **Off-priority answers.** A `decide` row answered while this seat did not
 hold priority (`state_view["priority_holder"] != seat` - a decision raised
@@ -124,7 +128,6 @@ from .schema import (
     AMOUNT_DECISION_KINDS,
     CHOICE_DECISION_KINDS,
     COUNT_ZONES,
-    FORBIDDEN_DECISION_KINDS,
     MAX_ABILITY_INDEX,
     MAX_ATTACK_GROUPS,
     MAX_BLOCKS,
@@ -160,6 +163,24 @@ _MULLIGAN = "mulligan"
 _CONCEDE = "concede"
 _PASS = "pass"
 _PREGAME = "pregame"
+
+#: `_answer_for_decide`'s own fixed labels for the two `DecisionKind`s the
+#: schema does not let a generic `decide` conversion build straight off
+#: `detail` - `assign_combat_damage` needs its own `damage` policy field,
+#: never a bare `accept`, and this module has no board data here to build one
+#: from (FD4); `mulligan` gets its own move kind here too (`{kind: mulligan,
+#: keep, bottom}`), also FD4's to build. This mapping is local to this
+#: module's own ledger-to-play conversion and deliberately independent of
+#: `schema.FORBIDDEN_DECISION_KINDS` - FD2 emptied that tuple because the
+#: schema now additionally accepts a plain accept-style answer for `mulligan`
+#: too (all changes there stay additive), but this direction of conversion
+#: does not build either richer shape yet, so `unexpressible` must keep
+#: naming the same gap for these two kinds regardless of what the schema
+#: allows on the way in.
+_FIXED_DECIDE_LABELS = {
+    "mulligan": _MULLIGAN,
+    "assign_combat_damage": "decide:assign_combat_damage",
+}
 
 #: The ledger action -> this module's own canonical action-kind label, for
 #: every committing row `decision_rows` recognizes at all. A raw action not
@@ -686,13 +707,8 @@ def _answer_for_decide(
     the `unexpressible` label) - see the module docstring's finer-grained
     "not in the vocabulary" section for what each label means."""
     kind = str(decide_kind)
-    if kind in FORBIDDEN_DECISION_KINDS:
-        label = {
-            "declare_attackers": _ATTACK,
-            "declare_blockers": _BLOCK,
-            "mulligan": _MULLIGAN,
-        }.get(kind, kind)
-        return None, label
+    if kind in _FIXED_DECIDE_LABELS:
+        return None, _FIXED_DECIDE_LABELS[kind]
     if kind in _ACCEPT_KINDS:
         return {"decision": kind, "accept": bool(detail.get("accept"))}, None
     if kind in AMOUNT_DECISION_KINDS:

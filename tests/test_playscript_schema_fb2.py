@@ -249,7 +249,10 @@ def test_a_block_validates_with_every_field():
     assert block.blocker.count == 2 and block.attacker.ties == "any"
 
 
-def test_a_block_blocker_count_zero_is_bounds_exceeded():
+def test_a_block_blocker_count_zero_now_validates():
+    """FD2 item 6: `Pick.count` (which `BlockerPick` extends) now allows 0 -
+    "choose none" - so a block naming zero blockers is a legal, if pointless,
+    shape rather than a bound violation."""
     doc = play(
         moves=[
             {
@@ -258,9 +261,7 @@ def test_a_block_blocker_count_zero_is_bounds_exceeded():
             }
         ]
     )
-    assert codes(doc) == ["bounds-exceeded"]
-    with pytest.raises(ValidationError):
-        Play.model_validate(doc)
+    assert play_errors(doc) == []
 
 
 def test_a_block_attacker_takes_no_count():
@@ -483,7 +484,8 @@ def test_targets_beside_pick_is_answer_shape_mismatch():
         Play.model_validate(doc)
 
 
-def test_choose_targets_targets_is_bounded_one_to_six():
+def test_choose_targets_targets_is_bounded_zero_to_six():
+    """FD2 item 6: `targets` now allows 0 - "choose none"."""
     one = play(moves=[answer_move({"decision": "choose_targets", "targets": [{"player": "me"}]})])
     assert play_errors(one) == []
     six = play(
@@ -493,9 +495,7 @@ def test_choose_targets_targets_is_bounded_one_to_six():
     )
     assert play_errors(six) == []
     empty = play(moves=[answer_move({"decision": "choose_targets", "targets": []})])
-    assert codes(empty) == ["bounds-exceeded"]
-    with pytest.raises(ValidationError):
-        Play.model_validate(empty)
+    assert play_errors(empty) == []
     seven = play(
         moves=[
             answer_move(

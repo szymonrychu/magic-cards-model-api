@@ -203,10 +203,16 @@ def test_doc_names_the_decision_kinds_a_script_never_answers() -> None:
 
 
 def test_cast_move_line_carries_the_optional_cost_and_bounds() -> None:
+    from magic_cards_model_api.playscripts.schema import MAX_MODES, MAX_OPTIONAL_COSTS, MAX_X
+
     text = DOC.read_text()
     assert (
         f"`cast {{card: {{zone, select, prefer?: [0-{MAX_PREFER} select], ties?: any}}, "
-        f"cost?: <cast cost>, targets: [0-{MAX_TARGETS} <target>], mana?: auto, "
+        f"cost?: <cast cost>, face?: <selector>, modes?: [1-{MAX_MODES} {{text_has}}], "
+        f"x?: 0-{MAX_X}|max, shares?: [0-{MAX_TARGETS} int], "
+        f"optional_costs?: [1-{MAX_OPTIONAL_COSTS} {{text_has}}], sacrifice?: <Pick>, "
+        f"discard?: <Pick>, exile?: <Pick>, tap?: <Pick>, convoke?: <Pick>, delve?: <Pick>, "
+        f"improvise?: <Pick>, targets: [0-{MAX_TARGETS} <target>], mana?: auto, "
         f"answers: [0-{MAX_ANSWERS}]}}`"
     ) in text
     assert f"prefer?: [0-{MAX_PREFER} select]" in text
@@ -218,7 +224,7 @@ def test_o2_prefer_and_ties_are_on_play_land_activate_source_and_pick() -> None:
     assert (
         f"`activate {{source: {{zone, select, prefer?: [0-{MAX_PREFER} select], ties?: any}}"
     ) in text
-    assert (f"pick?: {{select, count?, prefer?: [0-{MAX_PREFER} select], ties?: any}}") in text
+    assert (f"pick?: {{select, count?: >=0, prefer?: [0-{MAX_PREFER} select], ties?: any}}") in text
     assert "ties?: any" in text
 
 
@@ -227,6 +233,7 @@ def test_activate_move_line_carries_targets_and_the_sacrifice_and_discard_choice
         f"`activate {{source: {{zone, select, prefer?: [0-{MAX_PREFER} select], ties?: any}}, "
         f"ability_text_has?: string, ability_index?: 0-15, targets: [0-{MAX_TARGETS} <target>], "
         f"sacrifice?: source|none|<sacrifice choice>, discard?: none|<discard choice>, "
+        f"exile?: <Pick>, x?: 0-30|max, color?: W|U|B|R|G|C, "
         f"answers: [0-{MAX_ANSWERS}]}}`"
     ) in DOC.read_text()
 
@@ -241,9 +248,22 @@ def test_activate_ability_index_bound_matches_the_schema() -> None:
 def test_doc_names_the_amount_decision_kinds_and_the_amount_field() -> None:
     assert _listed("- Amount decision kinds:") == list(AMOUNT_DECISION_KINDS)
     assert (
-        "amount?: >=0|max, choice?: string, pile_one?: bool, players?: [0-2 me|opponent], "
-        "top_order?: [0-4 select], position?: top|bottom, targets?: [1-6 <target>]}`"
+        "amount?: >=0|max, choice?: string, choice_from?: {zone, side, select, "
+        "prefer?: [0-4 select], ties?: any}, pile_one?: bool, players?: [0-2 me|opponent], "
+        "top_order?: [0-4 select], position?: top|bottom, targets?: [0-6 <target>], "
+        "order?: [1-6 select], damage?: {tiers: [0-6 select], lethal_first?: bool, "
+        "rest_to?: player|last_blocker}}`"
     ) in DOC.read_text()
+
+
+def test_doc_names_the_order_and_damage_decision_kinds() -> None:
+    from magic_cards_model_api.playscripts.schema import (
+        DAMAGE_DECISION_KINDS,
+        ORDER_DECISION_KINDS,
+    )
+
+    assert _listed("- Order decision kinds:") == list(ORDER_DECISION_KINDS)
+    assert _listed("- Damage decision kinds:") == list(DAMAGE_DECISION_KINDS)
 
 
 def test_doc_names_every_runner_exit_in_enum_order() -> None:
