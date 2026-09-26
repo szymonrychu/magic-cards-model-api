@@ -221,7 +221,8 @@ def run(
     seat: Seat,
     corpora: dict[tuple[str, str], dict[str, Any]],
     *,
-    script: str,
+    script: str = "",
+    body: dict[str, Any] | None = None,
     reasoning: str,
     opposing_archetype: str = WILDCARD,
     resume: str = "",
@@ -239,6 +240,18 @@ def run(
     rows this run posts - `mcp.run_script` sends "mcp", `mcp-seat script run`
     sends "cli", `playscripts.arming.arm` sends "armed".
 
+    **FD10 (a): exactly one of `script`/`body`.** `script` names a script
+    already in this seat's own corpus - registered ahead of time, or already
+    staged (`stage`, below, or an earlier call's own `body=`). `body` is an
+    inline play document this seat is writing right now, for a multi-step or
+    repetitive sequence it is facing (a mana loop, most often - see `stage`'s
+    own docstring and FD9's `repeat`): it is staged first (over FD5's own
+    route) and the freshly assigned id is run in this same call, so a caller
+    never has to sequence a stage-then-run itself. Naming both, or neither,
+    is refused with the same plain string every other malformed-argument
+    check in this function already returns - never a `{script_exit, ...}`
+    envelope, since no run was ever attempted.
+
     A **fresh** start (never a `resume`, which continues an already-started
     run under its own existing `run_id`) that names a `script` this process
     has an outstanding offer for (`_PENDING_OFFER_RUN_ID_KEY`, API-10) claims
@@ -247,6 +260,17 @@ def run(
     API-6/API-8's own pairing: without it, `report.offer_table` could never
     read a live run as anything but a decline of the very offer that
     proposed it, since nothing ever tied the two `run_id`s together."""
+    if bool(script) == bool(body):
+        return (
+            "run_script takes exactly one of `script` (a registered or already-staged "
+            "script's own id) or `body` (an inline play document, staged and run in "
+            "this same call) - never both, and never neither"
+        )
+    if body is not None:
+        staged = stage(seat, corpora, body=body, reasoning=reasoning)
+        if isinstance(staged, str) or "id" not in staged:
+            return staged
+        script = staged["id"]
     supplied = merged_inputs(opposing_archetype, inputs)
     if isinstance(supplied, str):
         return supplied
@@ -294,6 +318,63 @@ def run(
     exit_block = script_exit(result, _registered_moves(seat, corpora))
     _record_run(seat, corpora, script, state, exit_block, advise=seat.advise)
     return {"script_exit": exit_block, "state": state}
+
+
+#: The route `stage` posts to (FD5) - `records.stage_adhoc_script` wired
+#: through the same credential rule `PUT .../scripts` already applies (the
+#: uid itself, or the game's admin key), behind the same `SCRIPTS_ENABLED`
+#: kill switch.
+_ADHOC_STAGE_PATH = "/api/games/{game_id}/seats/{uid}/scripts/adhoc"
+
+
+def stage(
+    seat: Seat,
+    corpora: dict[tuple[str, str], dict[str, Any]],
+    *,
+    body: dict[str, Any],
+    reasoning: str,
+) -> dict[str, Any] | str:
+    """FD10 (a): stage `body` - an inline play document this seat wrote for a
+    multi-step or repetitive sequence it is facing right now (a mana loop,
+    say - FD9's `repeat` is exactly the move kind such a script reaches for)
+    - as one of this seat's own ad-hoc scripts for this game, without waiting
+    for the post-game admit. `mcp.stage_script` and `mcp-seat script stage`
+    both call this directly; `run`'s own `body=` argument calls it too, as
+    the first half of a stage-then-run in one call.
+
+    Posts `body`/`reasoning` to `records.stage_adhoc_script` over FD5's
+    `POST .../scripts/adhoc` route and returns exactly what it answers:
+    `{"id": ..., "warnings": [...]}` on a successful stage - `warnings` is
+    every static conflict the newly staged play has with a play already in
+    this seat's own corpus, reported so the seat can weigh it, never refusing
+    the stage on its own account (the no-autofire rule: the seat chooses
+    whether to run a conflicting script, nothing decides that for it). A
+    refusal comes back as `{"errors": [...]}` (every schema/lint `PlaysError`
+    `records.stage_adhoc_script` raised `InvalidScripts` with) when the
+    server named any, or a bare refusal string otherwise - the `dict | str`
+    split every other function here already returns.
+
+    On success, this process's own cached corpus for this seat
+    (`runtime._corpus`'s cache under `corpora`) is dropped, so the very next
+    `run`/`listing` call re-reads the corpus fresh rather than one that does
+    not have the freshly staged script yet - `run(body=...)`'s own
+    stage-then-run relies on exactly this to run the id it was just handed
+    back."""
+    game_id = seat.game_id()
+    answer = seat.call_json(
+        "POST",
+        _ADHOC_STAGE_PATH.format(game_id=game_id, uid=seat.uid),
+        {"play": body, "reasoning": reasoning},
+    )
+    if isinstance(answer, dict) and answer.get("allowed") is False:
+        errors = answer.get("errors")
+        if errors:
+            return {"errors": errors}
+        return str(answer.get("reason") or "staging the ad-hoc script was refused")
+    if not isinstance(answer, dict) or not isinstance(answer.get("id"), str):
+        return f"staging the ad-hoc script did not return an id: {answer!r}"
+    corpora.pop((game_id, seat.uid), None)
+    return {"id": answer["id"], "warnings": answer.get("warnings") or []}
 
 
 def script_exit(result: runtime.RunResult, moves: dict[str, int]) -> dict[str, Any]:

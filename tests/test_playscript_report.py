@@ -12,6 +12,7 @@ from typing import Any
 
 from magic_cards_model_api import audit
 from magic_cards_model_api.playscripts import report
+from magic_cards_model_api.records import SCRIPT_STAGED_ACTION
 
 FROG_ID = "5f0c3a52-2b44-4c55-8d1a-0f3f5d1e9a01"
 UNNAMED_ID = "9b8c816f-33af-4e64-a2c0-115cf73b37b4"
@@ -496,3 +497,142 @@ def test_a_no_change_or_admit_for_another_seat_does_not_close_this_seats_candida
     verdict = report.assess(records, "alice")
     assert len(verdict.open) == 1
     assert not verdict.satisfied
+
+
+# ======================================================================
+# FD10 (a): manual chains and ad-hoc scripts that ran are candidates too,
+# closed the same way an ordinary decision candidate is.
+# ======================================================================
+
+
+def staged(seq: int, script_id: str, *, seat: str = "alice") -> dict[str, Any]:
+    return row(
+        seq,
+        SCRIPT_STAGED_ACTION,
+        {"player": seat, "seat": seat, "id": script_id, "play": {}, "warnings": []},
+    )
+
+
+def test_a_manual_chain_is_a_candidate():
+    records = [move(seq, "activate") for seq in range(1, 5)]
+    candidates = report.manual_chain_candidates(records, "alice")
+    assert len(candidates) == 1
+    assert candidates[0].seqs == (1, 2, 3, 4)
+    assert candidates[0].id == report.decision_candidate_id(1)
+
+
+def test_manual_chain_candidates_join_assess_as_open():
+    records = [move(seq, "activate") for seq in range(1, 5)]
+    verdict = report.assess(records, "alice")
+    assert len(verdict.candidates) == 1
+    assert not verdict.satisfied
+
+
+def test_a_no_change_by_decision_closes_a_manual_chain_candidate_too():
+    records = [
+        *(move(seq, "activate") for seq in range(1, 5)),
+        plays_outcome(
+            5,
+            admitted=[],
+            no_change=[{"candidate": report.decision_candidate_id(1), "reason": "fine as is"}],
+        ),
+    ]
+    verdict = report.assess(records, "alice")
+    assert verdict.open == ()
+    assert verdict.satisfied
+
+
+def test_an_admit_closes_a_manual_chain_candidate_too():
+    """FD10 (a): "closed by an admit or a no-change" - the no-change half is
+    `test_a_no_change_by_decision_closes_a_manual_chain_candidate_too`,
+    above; this is the admit half. A `plays_outcome` admitting a real
+    `dsl_change` closes every open candidate for the seat, the manual-chain
+    one included, with no `no_change` entry naming its id at all."""
+    records = [
+        *(move(seq, "activate") for seq in range(1, 5)),
+        plays_outcome(
+            5,
+            admitted=[
+                {"dsl_change": True, "added": ["new-play"], "updated": [], "reprioritized": []}
+            ],
+        ),
+    ]
+    verdict = report.assess(records, "alice")
+    assert verdict.open == ()
+    assert verdict.satisfied
+
+
+def test_a_short_run_of_manual_rows_is_not_a_candidate():
+    records = [move(seq, "activate") for seq in range(1, 4)]
+    assert report.manual_chain_candidates(records, "alice") == ()
+
+
+def test_a_staged_and_run_adhoc_script_is_a_candidate():
+    records = [
+        staged(1, "adhoc-1-alice"),
+        started(2, "adhoc-1-alice", "run-x"),
+        script_row(3, audit.SCRIPT_RUN_ACTION, "adhoc-1-alice", "run-x", exit="resolved"),
+    ]
+    candidates = report.adhoc_script_candidates(records, "alice")
+    assert len(candidates) == 1
+    assert candidates[0].seqs == (1,)
+    assert candidates[0].dsl == {"id": "adhoc-1-alice"}
+    assert candidates[0].id == report.decision_candidate_id(1)
+
+
+def test_a_staged_but_never_run_adhoc_script_is_not_a_candidate():
+    records = [staged(1, "adhoc-1-alice")]
+    assert report.adhoc_script_candidates(records, "alice") == ()
+
+
+def test_adhoc_script_candidates_join_assess_and_are_closed_by_no_change():
+    records = [
+        staged(1, "adhoc-1-alice"),
+        started(2, "adhoc-1-alice", "run-x"),
+        script_row(3, audit.SCRIPT_RUN_ACTION, "adhoc-1-alice", "run-x", exit="resolved"),
+    ]
+    verdict = report.assess(records, "alice")
+    # `decision_dsl.decision_rows` also turns the `script_run_started` row
+    # itself into an ordinary `run_script` decision candidate - unrelated to,
+    # and coexisting with, the ad-hoc-script candidate this test is about;
+    # only the latter is asserted on by id, never the total count.
+    adhoc_candidate = next(c for c in verdict.candidates if c.action == "adhoc_script")
+    assert adhoc_candidate.seqs == (1,)
+    assert adhoc_candidate.id in {c.id for c in verdict.open}
+    assert not verdict.satisfied
+
+    closed = [
+        *records,
+        plays_outcome(
+            4,
+            admitted=[],
+            no_change=[{"candidate": report.decision_candidate_id(1), "reason": "fine as is"}],
+        ),
+    ]
+    verdict2 = report.assess(closed, "alice")
+    assert adhoc_candidate.id not in {c.id for c in verdict2.open}
+
+
+def test_adhoc_script_candidates_are_also_closed_by_an_admit():
+    """FD10 (a): the no-change half is the test right above this one; this
+    is the admit half, mirrored for the ad-hoc-script candidate the same
+    way `test_an_admit_closes_a_manual_chain_candidate_too` mirrors it for
+    the manual-chain one."""
+    records = [
+        staged(1, "adhoc-1-alice"),
+        started(2, "adhoc-1-alice", "run-x"),
+        script_row(3, audit.SCRIPT_RUN_ACTION, "adhoc-1-alice", "run-x", exit="resolved"),
+    ]
+    admitted = [
+        *records,
+        plays_outcome(
+            4,
+            admitted=[
+                {"dsl_change": True, "added": ["new-play"], "updated": [], "reprioritized": []}
+            ],
+        ),
+    ]
+    verdict = report.assess(admitted, "alice")
+    adhoc_candidate = next(c for c in verdict.candidates if c.action == "adhoc_script")
+    assert adhoc_candidate.id not in {c.id for c in verdict.open}
+    assert verdict.satisfied

@@ -50,7 +50,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from .report import DECLINED, PASSED_OVER, TAKEN, _offer_outcomes
+from ..audit import SCRIPT_RUN_ACTION, SCRIPT_RUN_STARTED_ACTION
+from ..records import ADHOC_SCRIPT_ID_PREFIX, SCRIPT_STAGED_ACTION
+from .report import DECLINED, PASSED_OVER, TAKEN, _offer_outcomes, _payload
 
 #: A thin public alias, per this task's own note: `report.py` is read and
 #: imported, not edited - `_offer_outcomes` stays private there, and this is
@@ -73,7 +75,25 @@ GAME_PLAY_STATS_FIELDS = (
     "reprioritized",
     "added_ids",
     "updated_ids",
+    "manual_calls",
+    "script_actions",
+    "adhoc_staged",
+    "adhoc_runs",
+    "manual_chains",
 )
+
+#: FD10 (c): a run of this many or more consecutive manual action rows by one
+#: seat, within one turn and step, with no opponent action between, is a
+#: manual chain - a candidate the post-game review owes a generalized
+#: `repeat` or multi-move play, or a `plays no-change`, exactly like an
+#: expressible decision (`playscripts.report.manual_chain_candidates`).
+MANUAL_CHAIN_MIN = 4
+
+#: The substring `runtime._suffixed` appends to every move a script run
+#: itself sends (`" | script <id>@<sha> ..."`) - `script_driven`'s second
+#: signal, for a chained/child run segment `_run_spans`' own start/finish
+#: pairing does not itself cover (see that function's own docstring).
+_SCRIPT_REASONING_MARKER = " | script "
 
 #: The per-play keys of an admitted entry (`admit._Landing`), each a list of
 #: play ids.
@@ -131,6 +151,160 @@ def _admitted_counts(
     return len(added_ids), len(updated_ids), reprioritized, added_ids, updated_ids
 
 
+def _run_spans(entries: list[Mapping[str, Any]], seat: str) -> list[range]:
+    """Mirrors `report._script_spans`'s own reading of a seat's run spans,
+    without that function's `game_id` filter: `script_driven` takes no
+    `game_id` of its own, since `game_play_stats`' whole contract is that its
+    `records` are already scoped to one game by the caller (see the module
+    docstring)."""
+    starts: dict[str, int] = {}
+    ends: dict[str, int] = {}
+    for record in entries:
+        payload = _payload(record)
+        action = payload.get("action")
+        if action not in (SCRIPT_RUN_STARTED_ACTION, SCRIPT_RUN_ACTION):
+            continue
+        detail = payload.get("detail") or {}
+        if detail.get("seat") != seat:
+            continue
+        seq = record.get("seq")
+        if not isinstance(seq, int):
+            continue
+        run_id = str(detail.get("run_id"))
+        if action == SCRIPT_RUN_STARTED_ACTION:
+            starts[run_id] = min(seq, starts.get(run_id, seq))
+            continue
+        low = detail.get("seq_start")
+        high = detail.get("seq_end")
+        starts[run_id] = min(
+            [seq, starts.get(run_id, seq), *([low] if isinstance(low, int) else [])]
+        )
+        ends[run_id] = max([seq, *([high] if isinstance(high, int) else [])])
+    return [range(starts[run_id], ends[run_id] + 1) for run_id in ends]
+
+
+def script_driven(entry: Mapping[str, Any], entries: Iterable[Mapping[str, Any]]) -> bool:
+    """Whether `entry` - one ledger row - was produced by a script run rather
+    than a manual MCP/CLI call: its own `reasoning` carries the runner's own
+    chain suffix (`runtime._suffixed`, `" | script <id>@<sha> ..."` -
+    `_SCRIPT_REASONING_MARKER`), the mark of a chained/child run segment
+    `_run_spans`' start/finish pairing alone does not cover, or its own `seq`
+    falls inside one of the acting seat's own run spans among `entries`
+    (`_run_spans`). The complement - manual - is every committing or refused
+    action row this is `False` for: `game_play_stats`' own `manual_calls`/
+    `manual_chains`, and FD4's G17 skip, both read this same test rather than
+    each keeping their own copy of "was this row inside a run window"."""
+    payload = _payload(entry)
+    detail = payload.get("detail") or {}
+    reasoning = payload.get("reasoning")
+    if not isinstance(reasoning, str):
+        reasoning = detail.get("reasoning")
+    if isinstance(reasoning, str) and _SCRIPT_REASONING_MARKER in reasoning:
+        return True
+    seq = entry.get("seq")
+    player = detail.get("player")
+    if not isinstance(seq, int) or not isinstance(player, str):
+        return False
+    return any(seq in span for span in _run_spans(list(entries), player))
+
+
+def _manual_and_script_counts(records: list[Mapping[str, Any]], seat: str) -> tuple[int, int]:
+    """FD10 (c): `manual_calls`/`script_actions` - `seat`'s own committing or
+    refused action rows (`detail.allowed` is `True` or `False`), split by
+    `script_driven`."""
+    manual = script = 0
+    for record in records:
+        payload = _payload(record)
+        detail = payload.get("detail") or {}
+        if detail.get("player") != seat or detail.get("allowed") not in (True, False):
+            continue
+        if script_driven(record, records):
+            script += 1
+        else:
+            manual += 1
+    return manual, script
+
+
+def _is_adhoc_script_id(script_id: Any) -> bool:
+    return isinstance(script_id, str) and script_id.startswith(ADHOC_SCRIPT_ID_PREFIX)
+
+
+def _adhoc_counts(records: list[Mapping[str, Any]], seat: str) -> tuple[int, int]:
+    """FD10 (c): `adhoc_staged` - `script_staged` rows this seat wrote in
+    this game - and `adhoc_runs` - `script_run` finish rows of one of this
+    seat's own ad-hoc scripts, told apart from a registered one by its id's
+    own `ADHOC_SCRIPT_ID_PREFIX` alone, with no second corpus lookup."""
+    staged = runs = 0
+    for record in records:
+        payload = _payload(record)
+        detail = payload.get("detail") or {}
+        if detail.get("seat") != seat:
+            continue
+        action = payload.get("action")
+        if action == SCRIPT_STAGED_ACTION:
+            staged += 1
+        elif action == SCRIPT_RUN_ACTION and _is_adhoc_script_id(detail.get("script_id")):
+            runs += 1
+    return staged, runs
+
+
+def _manual_chains(records: list[Mapping[str, Any]], seat: str) -> tuple[dict[str, Any], ...]:
+    """FD10 (c): every run of `MANUAL_CHAIN_MIN` or more consecutive manual
+    action rows `seat` made, within one turn and step, with no opponent
+    action between - `{seqs, kinds, turn, step}` each, oldest first.
+
+    Walked over the *whole* ledger, not `seat`'s own rows pre-filtered out:
+    an opponent's own committing or refused row breaks a run in progress (CR
+    608.2d's own turn-taking is what "no opponent action between" means),
+    and so does one of `seat`'s own rows that is itself script-driven - a
+    script call sitting between two manual ones is not itself part of a
+    "manual" run, whatever else surrounds it. A turn/step change also starts
+    a fresh run: `MANUAL_CHAIN_MIN` is judged "within one turn and step", so
+    a run spanning two never forms even with nothing between."""
+    chains: list[dict[str, Any]] = []
+    seqs: list[int] = []
+    kinds: list[str] = []
+    position: tuple[Any, Any] | None = None
+
+    def flush() -> None:
+        if len(seqs) >= MANUAL_CHAIN_MIN:
+            chains.append(
+                {
+                    "seqs": tuple(seqs),
+                    "kinds": tuple(kinds),
+                    "turn": position[0] if position else None,
+                    "step": position[1] if position else None,
+                }
+            )
+        seqs.clear()
+        kinds.clear()
+
+    for record in records:
+        payload = _payload(record)
+        detail = payload.get("detail") or {}
+        if detail.get("allowed") not in (True, False):
+            continue
+        seq = record.get("seq")
+        if not isinstance(seq, int):
+            continue
+        if detail.get("player") != seat:
+            flush()
+            position = None
+            continue
+        if script_driven(record, records):
+            flush()
+            position = None
+            continue
+        here = (payload.get("turn"), payload.get("step"))
+        if seqs and here != position:
+            flush()
+        position = here
+        seqs.append(seq)
+        kinds.append(str(payload.get("action")))
+    flush()
+    return tuple(chains)
+
+
 def game_play_stats(
     records: Iterable[Mapping[str, Any]],
     game_id: str,
@@ -141,9 +315,13 @@ def game_play_stats(
     """`seat`'s own per-game play statistics for `game_id` - see the module
     docstring for what each of `GAME_PLAY_STATS_FIELDS` counts and where it
     comes from."""
+    all_records = list(records)
     plays_total, plays_move_bearing, plays_advice = _corpus_counts(corpus)
-    offered, used, denied, passed_over = _offer_counts(records, game_id, seat)
+    offered, used, denied, passed_over = _offer_counts(all_records, game_id, seat)
     added, updated, reprioritized, added_ids, updated_ids = _admitted_counts(admitted)
+    manual_calls, script_actions = _manual_and_script_counts(all_records, seat)
+    adhoc_staged, adhoc_runs = _adhoc_counts(all_records, seat)
+    manual_chains = _manual_chains(all_records, seat)
     return {
         "plays_total": plays_total,
         "plays_move_bearing": plays_move_bearing,
@@ -157,4 +335,9 @@ def game_play_stats(
         "reprioritized": reprioritized,
         "added_ids": added_ids,
         "updated_ids": updated_ids,
+        "manual_calls": manual_calls,
+        "script_actions": script_actions,
+        "adhoc_staged": adhoc_staged,
+        "adhoc_runs": adhoc_runs,
+        "manual_chains": manual_chains,
     }

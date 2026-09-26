@@ -217,6 +217,61 @@ GUIDE_UPDATES_HEADING = "The guide updates this game owes, as the seat was given
 #: here measures against the prompt's own budget.
 DECISIONS_HEADING = "Decisions:"
 
+#: FD10: the heading over the manual-chains section - the owner's own
+#: evidence (finding seq 191: about 25 manual MCP calls hand-driving a mana
+#: loop) turned into a listed gap rather than left for the reviewer to spot
+#: by reading the ledger's raw rows. Sourced from `play_stats[player][
+#: "manual_chains"]` (`playscripts.stats._manual_chains`), never recomputed
+#: here.
+MANUAL_CHAINS_HEADING = "Manual chains (DSL gaps - prompt.py's own DSL-first rule names these):"
+
+#: FD10: the heading over the ad-hoc-scripts section - every script this
+#: seat staged mid-game (`records.stage_adhoc_script`) and then actually ran,
+#: sourced from `review_record["adhoc_scripts"][player]`
+#: (`magic_cards_model_api.review.adhoc_scripts_by_seat`).
+ADHOC_SCRIPTS_HEADING = "Ad-hoc scripts this seat staged and ran mid-game:"
+
+
+def _manual_chain_lines(chains: list[dict[str, Any]]) -> list[str]:
+    """FD10: one line per manual chain - a run of `MANUAL_CHAIN_MIN` or more
+    consecutive manual action rows this seat made, with no script and no
+    opponent action between, the exact shape a `repeat` loop or a
+    multi-move play should have covered instead. Each is a gap the DSL
+    submission ask is unconditional about, precisely like an ordinary
+    expressible decision: an admitted play or a `plays no-change --decision
+    <its first seq>`, never silently dropped."""
+    lines: list[str] = []
+    for chain in chains:
+        seqs = list(chain.get("seqs") or ())
+        if not seqs:
+            continue
+        kinds = ", ".join(_sanitize(str(kind)) for kind in (chain.get("kinds") or ()))
+        span = f"#{seqs[0]}" if len(seqs) == 1 else f"#{seqs[0]}-#{seqs[-1]}"
+        lines.append(
+            f"- decisions {span} ({len(seqs)} consecutive manual calls) "
+            f"[turn {chain.get('turn')} / {chain.get('step')}]: {kinds}"
+        )
+    return lines
+
+
+def _adhoc_script_lines(scripts: list[dict[str, Any]]) -> list[str]:
+    """FD10: one block per ad-hoc script this seat staged and then ran at
+    least once - its own staged reasoning and how each of its runs ended.
+    Owed the same as a manual chain: a generalized, admitted play, or a
+    `plays no-change --decision <the script_staged row's own seq>`."""
+    lines: list[str] = []
+    for script in scripts:
+        runs = script.get("runs") or []
+        exits = ", ".join(_sanitize(str(run.get("exit"))) for run in runs)
+        lines.append(
+            f"- {_sanitize(str(script.get('id')))} "
+            f"[turn {script.get('turn')} / {script.get('step')}] runs: {exits}"
+        )
+        reasoning = script.get("reasoning")
+        if reasoning:
+            lines.append(f"    reasoning: {_sanitize(str(reasoning))}")
+    return lines
+
 
 #: DR3, owner addon 1: the rule that sits directly under `DECISIONS_HEADING`,
 #: stated in the prompt itself rather than left for the reviewer to infer.
@@ -462,6 +517,29 @@ def review_prompt(
         lines.append(_decisions_perspective_note(assignment.player))
         lines.append("")
         lines.extend(_decision_lines(own_decisions, assignment.player))
+        lines.append("")
+
+    # FD10: manual chains and ad-hoc scripts are gaps too - rendered right
+    # alongside the Decisions section, before the ledger's own budget is
+    # measured, exactly like `own_decisions` above.
+    own_manual_chains = ((review_record.get("play_stats") or {}).get(assignment.player) or {}).get(
+        "manual_chains"
+    ) or []
+    if own_manual_chains:
+        lines.append(MANUAL_CHAINS_HEADING)
+        lines.append("")
+        lines.extend(_manual_chain_lines(list(own_manual_chains)))
+        lines.append("")
+
+    own_adhoc_scripts = [
+        script
+        for script in (review_record.get("adhoc_scripts") or {}).get(assignment.player) or []
+        if script.get("runs")
+    ]
+    if own_adhoc_scripts:
+        lines.append(ADHOC_SCRIPTS_HEADING)
+        lines.append("")
+        lines.extend(_adhoc_script_lines(own_adhoc_scripts))
         lines.append("")
 
     # The ledger is fitted into what is left of `PROMPT_BUDGET_CHARS` once
@@ -855,6 +933,16 @@ def _dsl_submission_ask(deck_slug: str, game_id: str, guides_dir: str) -> str:
         "DSL feature is `report_problem` category `dsl`, MCP tool friction you hit doing "
         "this work is category `ux`, and an engine or rules fault you hit is category "
         "`engine` - the same three categories named above.\n"
+        f"6. Every entry under {MANUAL_CHAINS_HEADING!r} and {ADHOC_SCRIPTS_HEADING!r} above, "
+        "when either section is present, is a gap owed exactly the same as an expressible "
+        "decision - a manual chain is a run of consecutive manual calls this seat's own DSL "
+        "should have covered with a `repeat` loop or a multi-move play, and an ad-hoc script "
+        "is one this seat already wrote and ran mid-game rather than wait for you. Each one "
+        "must become an admitted, generalized play (a `repeat` or a multi-move play covering "
+        "the whole sequence, never one move at a time) or a "
+        f"`{no_change_cmd}` naming its own first seq - never left unlisted "
+        "and never silently dropped. An ad-hoc script's own reasoning is a head start on "
+        "writing the generalized version: read it before you draft the play.\n"
         "\n" + _mcp_seat_invocation_note()
     )
 
