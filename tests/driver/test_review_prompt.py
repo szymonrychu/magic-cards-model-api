@@ -930,6 +930,12 @@ def test_the_review_prompt_states_the_guides_propose_scope() -> None:
     assert "straight to mtg-decks main" in text
     assert "pull request" not in text
     assert "awaiting_owner_review" not in text
+    # The retired owner-merge step (5037f83). A bare "by hand" is no longer
+    # checkable here - DR4's write bars legitimately say "played by hand" -
+    # so the phrase the old flow used is what stays banned.
+    assert "merges the pull request by hand" not in text
+    assert "merges the PR by hand" not in text
+    assert "not live until the owner" not in text
 
 
 def test_the_review_prompt_states_the_plays_admit_scope() -> None:
