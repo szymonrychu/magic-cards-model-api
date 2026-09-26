@@ -449,7 +449,11 @@ def test_dsl_coverage_aggregates_count_unexpressible_and_labels_by_kind():
     body = review.build_review(archived(players=("alice",)), entries)
     coverage = body["dsl_coverage"]
     assert coverage["pass"] == {"count": 1, "unexpressible": 0, "labels": []}
-    assert coverage["mulligan"] == {"count": 1, "unexpressible": 1, "labels": ["mulligan"]}
+    assert coverage["mulligan"] == {
+        "count": 1,
+        "unexpressible": 1,
+        "labels": ["mulligan:malformed"],
+    }
     assert coverage["concede"] == {"count": 1, "unexpressible": 1, "labels": ["concede"]}
 
 

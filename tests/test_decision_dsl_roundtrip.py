@@ -12,19 +12,22 @@ touched - see `scryfall.py`'s own module docstring for the tiers). No hand-
 written card data, no mocks, matching the api repo's own "ordinary practice"
 - a real board, real routes, real engine outcomes.
 
-**One card-naming choice this file cannot exercise for real**: `choose_a_
-quality` naming an actual card (Meddling Mage's own "name a nonland card"),
-as opposed to a quality like a colour (Utopia Sprawl) or a creature type
-(Cavern of Souls). No printing offering that specific ETB trigger exists in
-either the api's own fixture cache or the engine's bundled corpus, and
-adding one belongs to the engine repo (`magic-cards-model`), out of this
-task's own worktree. `tests/test_decision_dsl.py::
-test_decide_choose_a_quality_naming_a_card_gives_choice_from` is the
-authoritative, synthetic-row proof of that branch's own logic; this file's
-own `choose_a_quality` coverage (Utopia Sprawl, a colour) proves the kind as
-a whole converts, validates, lints and executes, and exercises G15's other
-branch - a quality that does *not* resolve to a card keeps the plain
-`choice`.
+**`choose_a_quality` naming an actual card** (review finding 5): Pithing
+Needle's own "As Pithing Needle enters, name a card" is a real printing in
+the engine's own bundled corpus (`magic_cards_model/data/printings/
+pithing_needle.json`, alongside Runed Halo/Disruptor Flute/Phyrexian
+Revoker's own `ChoiceKind.CARD_NAME` choices), and `test_group_3b_...`
+exercises it for real - casting it, naming a Grizzly Bears the board can
+actually see, and asserting the converted answer carries `choice_from`
+(never the printed name). `tests/test_decision_dsl.py::
+test_decide_choose_a_quality_naming_a_card_gives_choice_from` stays the
+synthetic-row proof of the same branch's own logic (Meddling Mage's own
+"name a nonland card" ETB trigger, which - unlike Pithing Needle's
+replacement-effect choice - genuinely has no printing in either fixture
+pool); this file's own `choose_a_quality` coverage (Utopia Sprawl's colour,
+`test_group_3_...`; Pithing Needle's card name, `test_group_3b_...`) proves
+the kind as a whole converts, validates, lints and executes both ways -
+G15's "does not resolve to a card" branch and its "does" branch alike.
 
 **Execution.** `runtime.run_script` (FD3) does not yet know `keyword_action`,
 `mulligan`, `repeat`, or the `order`/`damage`/`choice_from` answer fields -
@@ -38,6 +41,7 @@ FD2 and FD5 parts 1-4 give this module."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -454,23 +458,19 @@ def test_group_1_cast_play_land_activate_and_keyword_actions(
     targeted = [r for r in casts if r["dsl"]["moves"][0].get("targets")]
     assert len(targeted) >= 4  # shock, lunge, burst, stomp - already logged pre-FD5
 
-    # `x_value`/`optional_costs`/`keyword`/`convoke` are FD5 part 1's own
-    # job to add to the cast route's audit keys - today's `action_cast`
-    # logs only `card`/`from_zone`/`spell_face`/`targets`/`mana_sources`,
-    # so a real ledger row from this same cast carries none of them yet.
-    # `_add_cast_fields` is wired to read every one of them the moment FD5
-    # starts logging it (`tests/test_decision_dsl.py`'s own synthetic-row
-    # tests already prove that reading is correct); until then, this real
-    # X/kicker/convoke cast still converts, validates and lints clean off
-    # what is logged today - it just carries no `x`/`optional_costs`/
-    # `convoke` key yet.
-    assert all("x" not in r["dsl"]["moves"][0] for r in casts)
-    assert all("optional_costs" not in r["dsl"]["moves"][0] for r in casts)
-    assert all("convoke" not in r["dsl"]["moves"][0] for r in casts)
-    # Bonecrusher Giant (Stomp) is an Adventure card: the view has no
-    # per-face type_line for it (only transform/MDFC cards get one), so
-    # `face` is honestly left unset - see `_add_cast_fields`'s own
-    # docstring. The cast still converts, validates and lints clean.
+    # `x_value`/`optional_costs`/`convoke` (cast) and `sacrifice`/`color`
+    # (activate) are FD5 part 1's own job to add to the ledger - review
+    # finding 4: asserting their *absence* here locked in that gap instead
+    # of testing FD4's own requirement. `test_group_1b_...` below asserts
+    # the positive shape `xfail(strict=True)`, so this stays honest about
+    # what still does not work rather than quietly passing either way.
+    #
+    # Bonecrusher Giant (Stomp) is a genuinely different, permanent case:
+    # it is an Adventure card, and the view has no per-face `type_line` for
+    # an Adventure card at all (only transform/MDFC cards get one, and
+    # `_faces_view` does not break an Adventure card's own two faces out) -
+    # see `_add_cast_fields`'s own docstring. That gap is not FD5's to
+    # close, so it stays a plain (non-`xfail`) assertion.
     assert all("face" not in r["dsl"]["moves"][0] for r in casts)
 
     land_record = _one(decisions, "play_land")
@@ -482,13 +482,6 @@ def test_group_1_cast_play_land_activate_and_keyword_actions(
     for record in activates:
         play = _play_of(record)
         _lint_clean(play, tmp_path)
-    # `sacrificing`/`color` are FD5 part 1's own job for `action_activate`'s
-    # own audit keys too - not logged by the real route today (same
-    # reasoning as the cast fields above), so both activations here convert
-    # off `ability_index`/`targets` alone and carry neither key yet.
-    assert all("sacrifice" not in r["dsl"]["moves"][0] for r in activates)
-    assert all("color" not in r["dsl"]["moves"][0] for r in activates)
-
     for action in ("suspend", "plot", "foretell", "cycle", "equip", "crew"):
         record = _one(decisions, action)
         play = _play_of(record)
@@ -509,6 +502,160 @@ def test_group_1_cast_play_land_activate_and_keyword_actions(
     assert all(r["unexpressible"] is None for r in non_concede), [
         (r["action"], r["unexpressible"]) for r in non_concede if r["unexpressible"] is not None
     ]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Review finding 4: FD5 part 1 has not landed on api main - "
+        "action_cast logs only card/from_zone/spell_face/targets/"
+        "mana_sources, and action_activate only card_id/ability_index/"
+        "targets/mana_sources, so _add_cast_fields/_add_activate_fields "
+        "have no x_value/optional_costs/convoke/sacrificing/color to read "
+        "off a real ledger row yet. This is the requirement's own positive "
+        "shape (test_decision_dsl.py's synthetic-row tests already prove "
+        "_add_cast_fields/_add_activate_fields read it correctly once it "
+        "exists) - FD4 is not complete until FD5 lands these fields and "
+        "this test goes green on its own, with no code change here."
+    ),
+)
+def test_group_1b_cast_and_activate_rich_fields_once_fd5_logs_them(
+    client: TestClient, game: str
+) -> None:
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+
+    # X spell with a target: Postmortem Lunge on a graveyard bear.
+    for _ in range(3):
+        add_card(client, game_id, "Swamp", "alice", "battlefield")
+    add_card(client, game_id, "Grizzly Bears", "alice", "graveyard")
+    add_card(client, game_id, "Postmortem Lunge", "alice", "hand")
+    swamps = [c["id"] for c in state(client, game_id)["battlefield"] if c["name"] == "Swamp"]
+    bear = find(state(client, game_id)["graveyards"]["alice"], "Grizzly Bears")["id"]
+    lunge = find(state(client, game_id)["hands"]["alice"], "Postmortem Lunge")["id"]
+    client.post(
+        f"/api/games/{game_id}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": lunge,
+            "mana_sources": swamps,
+            "x_value": 2,
+            "targets": [bear],
+            "reasoning": REASONING,
+        },
+    )
+    client.post(f"/api/games/{game_id}/resolve-top")
+
+    # A kicked cast: Burst Lightning at bob (optional_costs).
+    for _ in range(5):
+        add_card(client, game_id, "Mountain", "alice", "battlefield")
+    add_card(client, game_id, "Burst Lightning", "alice", "hand")
+    burst_sources = [
+        c["id"]
+        for c in state(client, game_id)["battlefield"]
+        if c["name"] == "Mountain" and not c["tapped"]
+    ]
+    burst = find(state(client, game_id)["hands"]["alice"], "Burst Lightning")["id"]
+    client.post(
+        f"/api/games/{game_id}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": burst,
+            "mana_sources": burst_sources,
+            "targets": ["bob"],
+            "optional_costs": [{"keyword": "Kicker"}],
+            "reasoning": REASONING,
+        },
+    )
+    client.post(f"/api/games/{game_id}/resolve-top")
+
+    # Convoke: Conclave Tribunal, convoked by a Bear.
+    add_card(client, game_id, "Grizzly Bears", "alice", "battlefield")
+    convoke_bear = find(
+        [c for c in state(client, game_id)["battlefield"] if c["name"] == "Grizzly Bears"],
+        "Grizzly Bears",
+    )["id"]
+    client.patch(f"/api/games/{game_id}/cards/{convoke_bear}", json={"summoning_sick": False})
+    add_card(client, game_id, "Conclave Tribunal", "alice", "hand")
+    for _ in range(3):
+        add_card(client, game_id, "Plains", "alice", "battlefield")
+    plains = [
+        c["id"]
+        for c in state(client, game_id)["battlefield"]
+        if c["name"] == "Plains" and not c["tapped"]
+    ]
+    tribunal = find(state(client, game_id)["hands"]["alice"], "Conclave Tribunal")["id"]
+    client.post(
+        f"/api/games/{game_id}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": tribunal,
+            "mana_sources": plains,
+            "convoke": [{"card_id": convoke_bear}],
+            "reasoning": REASONING,
+        },
+    )
+    client.post(f"/api/games/{game_id}/resolve-top")
+
+    # Activate with a sacrifice cost and a target: Goblin Bombardment.
+    add_card(client, game_id, "Goblin Bombardment", "alice", "battlefield")
+    add_card(client, game_id, "Grizzly Bears", "alice", "battlefield")
+    bombardment = find(state(client, game_id)["battlefield"], "Goblin Bombardment")["id"]
+    fodder = [
+        c["id"]
+        for c in state(client, game_id)["battlefield"]
+        if c["name"] == "Grizzly Bears" and c["id"] != convoke_bear
+    ][0]
+    client.post(
+        f"/api/games/{game_id}/actions/activate",
+        json={
+            "player": "alice",
+            "card_id": bombardment,
+            "ability_index": 0,
+            "sacrificing": [fodder],
+            "targets": ["bob"],
+            "reasoning": REASONING,
+        },
+    )
+    client.post(f"/api/games/{game_id}/resolve-top")
+
+    # Activate with a mana-colour choice: Birds of Paradise.
+    add_card(client, game_id, "Birds of Paradise", "alice", "battlefield")
+    birds = find(state(client, game_id)["battlefield"], "Birds of Paradise")["id"]
+    client.patch(f"/api/games/{game_id}/cards/{birds}", json={"summoning_sick": False})
+    client.post(
+        f"/api/games/{game_id}/actions/activate",
+        json={
+            "player": "alice",
+            "card_id": birds,
+            "ability_index": 0,
+            "color": "G",
+            "reasoning": REASONING,
+        },
+    )
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    casts = [r for r in decisions if r["action"] == "cast"]
+    activates = [r for r in decisions if r["action"] == "activate"]
+
+    lunge_move = next(r["dsl"]["moves"][0] for r in casts if r["dsl"]["moves"][0].get("x") == 2)
+    assert lunge_move["x"] == 2
+    burst_move = next(
+        r["dsl"]["moves"][0] for r in casts if r["dsl"]["moves"][0].get("optional_costs")
+    )
+    assert burst_move["optional_costs"] == [{"text_has": "Kicker"}]
+    tribunal_move = next(r["dsl"]["moves"][0] for r in casts if r["dsl"]["moves"][0].get("convoke"))
+    assert tribunal_move["convoke"]["count"] == 1
+
+    sac_move = next(
+        r["dsl"]["moves"][0] for r in activates if r["dsl"]["moves"][0].get("sacrifice")
+    )
+    assert sac_move["sacrifice"]["count"] == 1
+    color_move = next(r["dsl"]["moves"][0] for r in activates if r["dsl"]["moves"][0].get("color"))
+    assert color_move["color"] == "G"
 
 
 # ===========================================================================
@@ -826,6 +973,78 @@ def test_group_3_scry_cleanup_discard_quality_and_choose_zero(
     assert discard_play["when"]["steps"] == ["cleanup"]
 
 
+def test_group_3b_choose_a_quality_naming_a_real_card_gives_choice_from(
+    client: TestClient, game: str, tmp_path: Path
+) -> None:
+    # Review finding 5: Pithing Needle's own "As Pithing Needle enters, name
+    # a card" (CR 614.12a's own `ChoiceKind.CARD_NAME`, `machines.
+    # replacement._choose_a_quality`) is a real printing, in the engine's
+    # own bundled corpus (`magic_cards_model/data/printings/pithing_needle.
+    # json`) exactly like Bonecrusher Giant/Burst Lightning/Postmortem
+    # Lunge/Urza's Saga already are elsewhere in this file - the module
+    # docstring's older claim that no such printing exists was wrong.
+    # `choice_from` needs the *named* string to itself resolve to a real
+    # card in the board this row's frame carries (`_choice_answer`), so a
+    # Grizzly Bears is put somewhere visible (alice's own hand) before it is
+    # named - naming a card nothing on the board matches would keep the
+    # plain `choice`, already covered by `test_group_3_...` above (Utopia
+    # Sprawl's colour) and by `tests/test_decision_dsl.py`'s own
+    # synthetic-row tests.
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    uids = seats_for(client, game_id)
+
+    add_card(client, game_id, "Grizzly Bears", "alice", "hand")
+    for _ in range(2):
+        add_card(client, game_id, "Mountain", "alice", "battlefield")
+    add_card(client, game_id, "Pithing Needle", "alice", "hand")
+    sources = [
+        c["id"]
+        for c in state(client, game_id)["battlefield"]
+        if c["name"] == "Mountain" and not c["tapped"]
+    ]
+    needle = find(state(client, game_id)["hands"]["alice"], "Pithing Needle")["id"]
+    cast_needle = client.post(
+        f"/api/games/{game_id}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": needle,
+            "mana_sources": sources,
+            "reasoning": REASONING,
+        },
+    )
+    assert cast_needle.json()["allowed"] is True, cast_needle.text
+    resolved = client.post(f"/api/games/{game_id}/resolve-top").json()
+    assert resolved["paused"] is True, resolved
+    named = client.post(
+        f"/api/games/{game_id}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "choice": "Grizzly Bears", "reasoning": REASONING},
+    )
+    assert named.json()["accepted"] is True, named.text
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    quality_records = [
+        r
+        for r in decisions
+        if r["action"] == "decide"
+        and r["dsl"]
+        and r["dsl"]["moves"][0].get("answers")
+        and r["dsl"]["moves"][0]["answers"][0]["decision"] == "choose_a_quality"
+    ]
+    assert len(quality_records) == 1, decisions
+    play = _play_of(quality_records[0])
+    _lint_clean(play, tmp_path)
+    answer = play["moves"][0]["answers"][0]
+    assert "choice_from" in answer
+    assert "choice" not in answer
+    assert "grizzly" not in json.dumps(answer).lower()
+    assert "bears" not in json.dumps(answer).lower()
+
+
 # ===========================================================================
 # Group 4: mulligan with bottom, and a CR 103.6 opening-hand action.
 # ===========================================================================
@@ -1078,3 +1297,665 @@ def test_a_converted_mulligan_move_executes_once_fd3_lands(
         assert result.finished is True, result.to_dict()
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+# -- review finding 3: activate/play_land/pass/combat declarations and every -----
+# -- decide answer kind each get their own execution assertion, real or ----------
+# -- xfail(strict) - never left with none at all ---------------------------------
+
+
+def test_a_converted_play_land_executes_to_the_same_outcome(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    add_card(client, game_id, "Forest", "alice", "hand")
+    forest = find(state(client, game_id)["hands"]["alice"], "Forest")["id"]
+    played = client.post(
+        f"/api/games/{game_id}/actions/play-land",
+        json={"player": "alice", "card_id": forest, "reasoning": REASONING},
+    )
+    assert played.json()["allowed"] is True, played.text
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    play = _play_of(_one(decisions, "play_land"))
+
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    )
+    game2 = second.json()["game_id"]
+    try:
+        add_card(client, game2, "Forest", "alice", "hand")
+        before = len(state(client, game2)["battlefield"])
+        result = _register_and_run(client, monkeypatch, game2, "alice", play)
+        assert result.finished is True, result.to_dict()
+        after = state(client, game2)["battlefield"]
+        assert len(after) == before + 1
+        assert any(c["name"] == "Forest" for c in after)
+    finally:
+        client.delete(f"/api/games/{game2}")
+
+
+def test_a_converted_activate_executes_to_the_same_outcome(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A plain `{T}: Add {G}.` mana ability - no sacrifice cost, no color
+    # choice, no target - none of `sacrificing`/`color` (FD5 part 1, review
+    # finding 4) is needed to convert or replay this one, so it proves the
+    # activate move's own execution wiring for real, on today's ledger.
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    add_card(client, game_id, "Forest", "alice", "battlefield")
+    forest = find(state(client, game_id)["battlefield"], "Forest")["id"]
+    activated = client.post(
+        f"/api/games/{game_id}/actions/activate",
+        json={
+            "player": "alice",
+            "card_id": forest,
+            "ability_index": 0,
+            "reasoning": REASONING,
+        },
+    )
+    assert activated.json()["allowed"] is True, activated.text
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    play = _play_of(_one(decisions, "activate"))
+
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    )
+    game2 = second.json()["game_id"]
+    try:
+        add_card(client, game2, "Forest", "alice", "battlefield")
+        result = _register_and_run(client, monkeypatch, game2, "alice", play)
+        assert result.finished is True, result.to_dict()
+        after = find(state(client, game2)["battlefield"], "Forest")
+        assert after["tapped"] is True
+    finally:
+        client.delete(f"/api/games/{game2}")
+
+
+def test_a_converted_pass_executes_to_the_same_outcome(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    passed = client.post(
+        f"/api/games/{game_id}/actions/pass-priority",
+        json={"player": "alice", "reasoning": REASONING},
+    )
+    assert passed.json()["allowed"] is True, passed.text
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    play = _play_of(_one(decisions, "pass"))
+
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    )
+    game2 = second.json()["game_id"]
+    try:
+        before = state(client, game2)["battlefield"]
+        result = _register_and_run(client, monkeypatch, game2, "alice", play)
+        assert result.finished is True, result.to_dict()
+        assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+        assert state(client, game2)["battlefield"] == before
+    finally:
+        client.delete(f"/api/games/{game2}")
+
+
+def test_a_converted_declare_attackers_executes_to_the_same_outcome(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    bear = a_bear_that_can_attack(client, game_id, "alice")
+    client.put(f"/api/games/{game_id}/step", json={"step": "beginning_of_combat"})
+    uids = seats_for(client, game_id)
+    client.post(
+        f"/api/games/{game_id}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
+    )
+    attacked = client.post(
+        f"/api/games/{game_id}/actions/attack",
+        params={"uid": uids["alice"]},
+        json={"attackers": [{"card_id": bear, "defender": "bob"}], "reasoning": REASONING},
+    )
+    assert attacked.json()["allowed"] is True, attacked.text
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    play = _play_of(_one(decisions, "declare_attackers"))
+
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    )
+    game2 = second.json()["game_id"]
+    try:
+        a_bear_that_can_attack(client, game2, "alice")
+        client.put(f"/api/games/{game2}/step", json={"step": "beginning_of_combat"})
+        uids2 = seats_for(client, game2)
+        client.post(
+            f"/api/games/{game2}/advance",
+            params={"uid": uids2["alice"]},
+            json={"player": "alice"},
+        )
+        result = _register_and_run(client, monkeypatch, game2, "alice", play)
+        assert result.finished is True, result.to_dict()
+        after = find(state(client, game2)["battlefield"], "Grizzly Bears")
+        assert after["tapped"] is True  # CR 508.1f - declared an attacker, no vigilance
+    finally:
+        client.delete(f"/api/games/{game2}")
+
+
+def test_a_converted_declare_blockers_executes_to_the_same_outcome(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    bear = a_bear_that_can_attack(client, game_id, "alice")
+    client.put(f"/api/games/{game_id}/step", json={"step": "beginning_of_combat"})
+    uids = seats_for(client, game_id)
+    client.post(
+        f"/api/games/{game_id}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
+    )
+    client.post(
+        f"/api/games/{game_id}/actions/attack",
+        params={"uid": uids["alice"]},
+        json={"attackers": [{"card_id": bear, "defender": "bob"}], "reasoning": REASONING},
+    )
+    client.post(
+        f"/api/games/{game_id}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
+    )
+    declined = client.post(
+        f"/api/games/{game_id}/decide",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "pairs": [], "reasoning": REASONING},
+    )
+    assert declined.json()["accepted"] is True, declined.text
+
+    _end_with_concede(client, game_id)
+    bob_decisions = _review_decisions(client, game_id, admin_key, "bob")
+    (block_record,) = [
+        r
+        for r in bob_decisions
+        if r["action"] == "decide"
+        and r["dsl"]
+        and r["dsl"]["moves"][0]["kind"] == "declare_blockers"
+    ]
+    play = _play_of(block_record)
+
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    )
+    game2 = second.json()["game_id"]
+    try:
+        bear2 = a_bear_that_can_attack(client, game2, "alice")
+        client.put(f"/api/games/{game2}/step", json={"step": "beginning_of_combat"})
+        uids2 = seats_for(client, game2)
+        # Alice's own attack is driven directly (not backgrounded) - it is
+        # what puts bob's own declare_blockers decision on the table at all,
+        # which `opponent_passes` alone could never do for her.
+        client.post(
+            f"/api/games/{game2}/advance",
+            params={"uid": uids2["alice"]},
+            json={"player": "alice"},
+        )
+        client.post(
+            f"/api/games/{game2}/actions/attack",
+            params={"uid": uids2["alice"]},
+            json={"attackers": [{"card_id": bear2, "defender": "bob"}], "reasoning": REASONING},
+        )
+        client.post(
+            f"/api/games/{game2}/advance",
+            params={"uid": uids2["alice"]},
+            json={"player": "alice"},
+        )
+        uid_bob = seat_uid(game2, "bob")
+        register(client, game2, uid_bob, play)
+        seats = wired(monkeypatch, game2)
+        seat, _hook = hooked_seat(seats, uid_bob)
+        with opponent_passes(game2, "alice"):
+            result = run_script(
+                seat, script_id=play["id"], reasoning=REASONING, corpora=seats.script_corpora
+            )
+        assert result.finished is True, result.to_dict()
+        assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    finally:
+        client.delete(f"/api/games/{game2}")
+
+
+def test_a_converted_scry_answer_executes_to_the_same_outcome(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    add_card(client, game_id, "Island", "alice", "battlefield")
+    add_card(client, game_id, "Preordain", "alice", "hand")
+    stock_library_top(client, game_id, "alice", ["Mountain", "Forest", "Grizzly Bears"])
+    island = find(state(client, game_id)["battlefield"], "Island")["id"]
+    preordain = find(state(client, game_id)["hands"]["alice"], "Preordain")["id"]
+    client.post(
+        f"/api/games/{game_id}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": preordain,
+            "mana_sources": [island],
+            "reasoning": REASONING,
+        },
+    )
+    client.post(f"/api/games/{game_id}/resolve-top")
+    uids = seats_for(client, game_id)
+    scryed = client.post(
+        f"/api/games/{game_id}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "moved": [], "top_order": [], "reasoning": REASONING},
+    )
+    assert scryed.json()["accepted"] is True, scryed.text
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    (scry_record,) = [
+        r
+        for r in decisions
+        if r["action"] == "decide"
+        and r["dsl"]
+        and r["dsl"]["moves"][0].get("answers")
+        and r["dsl"]["moves"][0]["answers"][0]["decision"] == "scry"
+    ]
+    play = _play_of(scry_record)
+
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    )
+    game2 = second.json()["game_id"]
+    admin_key2 = second.json()["admin_key"]
+    try:
+        add_card(client, game2, "Island", "alice", "battlefield")
+        add_card(client, game2, "Preordain", "alice", "hand")
+        stock_library_top(client, game2, "alice", ["Mountain", "Forest", "Grizzly Bears"])
+        island2 = find(state(client, game2, uid=admin_key2)["battlefield"], "Island")["id"]
+        preordain2 = find(state(client, game2, uid=admin_key2)["hands"]["alice"], "Preordain")["id"]
+        client.post(
+            f"/api/games/{game2}/actions/cast",
+            json={
+                "player": "alice",
+                "card_id": preordain2,
+                "mana_sources": [island2],
+                "reasoning": REASONING,
+            },
+        )
+        client.post(f"/api/games/{game2}/resolve-top")
+        result = _register_and_run(client, monkeypatch, game2, "alice", play)
+        assert result.finished is True, result.to_dict()
+        assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    finally:
+        client.delete(f"/api/games/{game2}")
+
+
+def test_a_converted_cleanup_discard_executes_to_the_same_outcome(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    stuff_hand(client, game_id, "alice", 8)  # over the 7-card maximum
+    paused = advance_into_cleanup(game_id)
+    assert paused is not None, "the discard should have asked, not defaulted silently"
+    uids = seats_for(client, game_id)
+    hand = state(client, game_id, uid=uids["alice"])["hands"]["alice"]
+    to_discard = [c["id"] for c in hand if c["name"] == "Mountain"][:1]
+    discarded = client.post(
+        f"/api/games/{game_id}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_ids": to_discard, "reasoning": REASONING},
+    )
+    assert discarded.json()["accepted"] is True, discarded.text
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    (discard_record,) = [
+        r
+        for r in decisions
+        if r["action"] == "decide"
+        and r["dsl"]
+        and r["dsl"]["moves"][0].get("answers")
+        and r["dsl"]["moves"][0]["answers"][0]["decision"] == "choose_cards"
+    ]
+    play = _play_of(discard_record)
+
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    )
+    game2 = second.json()["game_id"]
+    try:
+        stuff_hand(client, game2, "alice", 8)
+        paused2 = advance_into_cleanup(game2)
+        assert paused2 is not None
+        before = len(state(client, game2, uid=seat_uid(game2, "alice"))["hands"]["alice"])
+        result = _register_and_run(client, monkeypatch, game2, "alice", play)
+        assert result.finished is True, result.to_dict()
+        after = len(state(client, game2, uid=seat_uid(game2, "alice"))["hands"]["alice"])
+        assert after == before - 1
+    finally:
+        client.delete(f"/api/games/{game2}")
+
+
+def test_a_converted_choose_zero_answer_executes_to_the_same_outcome(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    add_card(client, game_id, "Island", "alice", "battlefield")
+    add_card(client, game_id, "Island", "alice", "battlefield")
+    add_card(client, game_id, "Contingency Plan", "alice", "hand")
+    stock_library_top(
+        client, game_id, "alice", ["Mountain", "Mountain", "Mountain", "Mountain", "Mountain"]
+    )
+    islands = [c["id"] for c in state(client, game_id)["battlefield"] if c["name"] == "Island"]
+    plan = find(state(client, game_id)["hands"]["alice"], "Contingency Plan")["id"]
+    client.post(
+        f"/api/games/{game_id}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": plan,
+            "mana_sources": islands,
+            "reasoning": REASONING,
+        },
+    )
+    client.post(f"/api/games/{game_id}/resolve-top")
+    uids = seats_for(client, game_id)
+    surveilled = client.post(
+        f"/api/games/{game_id}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "moved": [], "top_order": [], "reasoning": REASONING},
+    )
+    assert surveilled.json()["accepted"] is True, surveilled.text
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    (surveil_record,) = [
+        r
+        for r in decisions
+        if r["action"] == "decide"
+        and r["dsl"]
+        and r["dsl"]["moves"][0].get("answers")
+        and r["dsl"]["moves"][0]["answers"][0]["decision"] == "surveil"
+    ]
+    play = _play_of(surveil_record)
+
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    )
+    game2 = second.json()["game_id"]
+    admin_key2 = second.json()["admin_key"]
+    try:
+        add_card(client, game2, "Island", "alice", "battlefield")
+        add_card(client, game2, "Island", "alice", "battlefield")
+        add_card(client, game2, "Contingency Plan", "alice", "hand")
+        stock_library_top(
+            client, game2, "alice", ["Mountain", "Mountain", "Mountain", "Mountain", "Mountain"]
+        )
+        islands2 = [
+            c["id"]
+            for c in state(client, game2, uid=admin_key2)["battlefield"]
+            if c["name"] == "Island"
+        ]
+        plan2 = find(state(client, game2, uid=admin_key2)["hands"]["alice"], "Contingency Plan")[
+            "id"
+        ]
+        client.post(
+            f"/api/games/{game2}/actions/cast",
+            json={
+                "player": "alice",
+                "card_id": plan2,
+                "mana_sources": islands2,
+                "reasoning": REASONING,
+            },
+        )
+        client.post(f"/api/games/{game2}/resolve-top")
+        result = _register_and_run(client, monkeypatch, game2, "alice", play)
+        assert result.finished is True, result.to_dict()
+        assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    finally:
+        client.delete(f"/api/games/{game2}")
+
+
+def test_a_converted_choice_answer_executes_to_the_same_outcome(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    add_card(client, game_id, "Forest", "alice", "battlefield")
+    add_card(client, game_id, "Forest", "alice", "battlefield")
+    add_card(client, game_id, "Utopia Sprawl", "alice", "hand")
+    forests = [c["id"] for c in state(client, game_id)["battlefield"] if c["name"] == "Forest"]
+    sprawl = find(state(client, game_id)["hands"]["alice"], "Utopia Sprawl")["id"]
+    client.post(
+        f"/api/games/{game_id}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": sprawl,
+            "targets": [forests[0]],
+            "mana_sources": [forests[1]],
+            "reasoning": REASONING,
+        },
+    )
+    client.post(f"/api/games/{game_id}/resolve-top")
+    uids = seats_for(client, game_id)
+    quality = client.post(
+        f"/api/games/{game_id}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "choice": "G", "reasoning": REASONING},
+    )
+    assert quality.json()["accepted"] is True, quality.text
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    (quality_record,) = [
+        r
+        for r in decisions
+        if r["action"] == "decide"
+        and r["dsl"]
+        and r["dsl"]["moves"][0].get("answers")
+        and r["dsl"]["moves"][0]["answers"][0]["decision"] == "choose_a_quality"
+    ]
+    play = _play_of(quality_record)
+
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    )
+    game2 = second.json()["game_id"]
+    admin_key2 = second.json()["admin_key"]
+    try:
+        add_card(client, game2, "Forest", "alice", "battlefield")
+        add_card(client, game2, "Forest", "alice", "battlefield")
+        add_card(client, game2, "Utopia Sprawl", "alice", "hand")
+        forests2 = [
+            c["id"]
+            for c in state(client, game2, uid=admin_key2)["battlefield"]
+            if c["name"] == "Forest"
+        ]
+        sprawl2 = find(state(client, game2, uid=admin_key2)["hands"]["alice"], "Utopia Sprawl")[
+            "id"
+        ]
+        client.post(
+            f"/api/games/{game2}/actions/cast",
+            json={
+                "player": "alice",
+                "card_id": sprawl2,
+                "targets": [forests2[0]],
+                "mana_sources": [forests2[1]],
+                "reasoning": REASONING,
+            },
+        )
+        client.post(f"/api/games/{game2}/resolve-top")
+        result = _register_and_run(client, monkeypatch, game2, "alice", play)
+        assert result.finished is True, result.to_dict()
+        assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    finally:
+        client.delete(f"/api/games/{game2}")
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FD3: runtime.decide_body has no `order` branch yet - order_triggers "
+        "falls through to its own UNFORESEEN fallback"
+    ),
+)
+def test_a_converted_order_triggers_executes_once_fd3_lands(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    sagas_paused_on_their_chapter_triggers(client, game_id)
+    answer_everything(client, game_id, "alice")
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    (order_record,) = [
+        r
+        for r in decisions
+        if r["action"] == "decide"
+        and r["dsl"]
+        and r["dsl"]["moves"][0].get("answers")
+        and r["dsl"]["moves"][0]["answers"][0]["decision"] == "order_triggers"
+    ]
+    play = _play_of(order_record)
+
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    )
+    game2 = second.json()["game_id"]
+    try:
+        sagas_paused_on_their_chapter_triggers(client, game2)
+        result = _register_and_run(client, monkeypatch, game2, "alice", play)
+        assert result.finished is True, result.to_dict()
+        assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    finally:
+        client.delete(f"/api/games/{game2}")
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FD3: runtime.decide_body has no `damage` branch yet - "
+        "assign_combat_damage falls through to its own UNFORESEEN fallback"
+    ),
+)
+def test_a_converted_assign_combat_damage_executes_once_fd3_lands(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    harbingers = add_card(client, game_id, "Lupine Harbingers", "alice", "battlefield")["added"][
+        "card_id"
+    ]
+    bears_id = add_card(client, game_id, "Grizzly Bears", "bob", "battlefield")["added"]["card_id"]
+    mystic_id = add_card(client, game_id, "Elvish Mystic", "bob", "battlefield")["added"]["card_id"]
+    uids = seats_for(client, game_id)
+
+    client.put(f"/api/games/{game_id}/step", json={"step": "beginning_of_combat"})
+    client.post(
+        f"/api/games/{game_id}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
+    )
+    client.post(
+        f"/api/games/{game_id}/actions/attack",
+        params={"uid": uids["alice"]},
+        json={"attackers": [{"card_id": harbingers, "defender": "bob"}], "reasoning": REASONING},
+    )
+    client.post(
+        f"/api/games/{game_id}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
+    )
+    client.post(
+        f"/api/games/{game_id}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
+        json={
+            "player": "bob",
+            "blocks": [
+                {"blocker": bears_id, "blocked": harbingers},
+                {"blocker": mystic_id, "blocked": harbingers},
+            ],
+            "reasoning": REASONING,
+        },
+    )
+    client.post(
+        f"/api/games/{game_id}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
+    )
+    client.post(
+        f"/api/games/{game_id}/decide",
+        params={"uid": uids["alice"]},
+        json={
+            "player": "alice",
+            "damage": [
+                {"target": bears_id, "amount": 2},
+                {"target": mystic_id, "amount": 1},
+                {"target": "bob", "amount": 1},
+            ],
+            "reasoning": REASONING,
+        },
+    )
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "alice")
+    (damage_record,) = [
+        r
+        for r in decisions
+        if r["action"] == "decide"
+        and r["dsl"]
+        and r["dsl"]["moves"][0].get("answers")
+        and r["dsl"]["moves"][0]["answers"][0]["decision"] == "assign_combat_damage"
+    ]
+    play = _play_of(damage_record)
+
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    )
+    game2 = second.json()["game_id"]
+    try:
+        harbingers2 = add_card(client, game2, "Lupine Harbingers", "alice", "battlefield")["added"][
+            "card_id"
+        ]
+        add_card(client, game2, "Grizzly Bears", "bob", "battlefield")
+        add_card(client, game2, "Elvish Mystic", "bob", "battlefield")
+        client.put(f"/api/games/{game2}/step", json={"step": "beginning_of_combat"})
+        uids2 = seats_for(client, game2)
+        client.post(
+            f"/api/games/{game2}/advance", params={"uid": uids2["alice"]}, json={"player": "alice"}
+        )
+        client.post(
+            f"/api/games/{game2}/actions/attack",
+            params={"uid": uids2["alice"]},
+            json={
+                "attackers": [{"card_id": harbingers2, "defender": "bob"}],
+                "reasoning": REASONING,
+            },
+        )
+        result = _register_and_run(client, monkeypatch, game2, "alice", play)
+        assert result.finished is True, result.to_dict()
+        assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    finally:
+        client.delete(f"/api/games/{game2}")

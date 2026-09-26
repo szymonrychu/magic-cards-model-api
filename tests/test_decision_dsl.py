@@ -403,6 +403,160 @@ def test_cast_without_board_data_is_a_bare_empty_selector():
     assert move["card"]["zone"] == "hand"
 
 
+def test_cast_missing_from_pre_action_frame_resolves_via_post_action_frame():
+    # Review finding 1: a pass row with an empty hand carries the pre-action
+    # frame forward - the Bolt was drawn since. The cast row's own
+    # post-action frame (attached to itself) shows it on the stack; the
+    # converter must identify it there, never fall through to a silent
+    # `select: {}` that would match any card in the zone.
+    empty_hand_view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: []})
+    bolt_on_stack = kit.bolt(zone="stack", controller=SEAT)
+    stack_view = kit.state_view(SEAT, opponent=OPPONENT, stack=[bolt_on_stack], hands={SEAT: []})
+    entries = [
+        row(1, "pass_priority", state_view=empty_hand_view),
+        row(
+            2,
+            "cast",
+            card=str(bolt_on_stack["id"]),
+            from_zone="hand",
+            state_view=stack_view,
+        ),
+    ]
+    record = decision_rows(entries, SEAT)[-1]
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["card"]["select"] != {}
+    assert "instant" in move["card"]["select"].get("types_all", [])
+    # The true pre-action zone (`from_zone`) is used, never the post-action
+    # frame's own `stack`.
+    assert move["card"]["zone"] == "hand"
+
+
+def test_cast_missing_from_both_frames_is_unresolved():
+    empty_hand_view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: []})
+    entries = [
+        row(1, "pass_priority", state_view=empty_hand_view),
+        row(
+            2,
+            "cast",
+            card="00000000-0000-4000-8000-000000000404",
+            from_zone="hand",
+            state_view=empty_hand_view,
+        ),
+    ]
+    record = decision_rows(entries, SEAT)[-1]
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "cast:unresolved"
+
+
+def test_play_land_missing_from_pre_action_frame_resolves_via_post_action_frame():
+    empty_hand_view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: []})
+    forest_on_battlefield = kit.card("Forest", type_line="Basic Land — Forest", controller=SEAT)
+    post_view = kit.state_view(
+        SEAT, opponent=OPPONENT, battlefield=[forest_on_battlefield], hands={SEAT: []}
+    )
+    entries = [
+        row(1, "pass_priority", state_view=empty_hand_view),
+        row(
+            2,
+            "play_land",
+            card=str(forest_on_battlefield["id"]),
+            state_view=post_view,
+        ),
+    ]
+    record = decision_rows(entries, SEAT)[-1]
+    play = play_of(record)
+    select = play["moves"][0]["card"]["select"]
+    assert select != {}
+    assert "land" in select.get("types_all", [])
+
+
+def test_play_land_missing_from_both_frames_is_unresolved():
+    empty_hand_view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: []})
+    entries = [
+        row(1, "pass_priority", state_view=empty_hand_view),
+        row(
+            2,
+            "play_land",
+            card="00000000-0000-4000-8000-000000000404",
+            state_view=empty_hand_view,
+        ),
+    ]
+    record = decision_rows(entries, SEAT)[-1]
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "play_land:unresolved"
+
+
+def test_activate_missing_from_pre_action_frame_resolves_via_post_action_frame():
+    # Same treatment (review finding 6): a source missing from the
+    # carried-forward pre-action frame is identified off the row's own
+    # post-action frame, defaulting to `battlefield` - the ledger logs no
+    # zone hint for an activation at all, unlike a cast's own `from_zone`.
+    bare_view = kit.state_view(SEAT, opponent=OPPONENT)
+    fetch = kit.fetchland(zone="battlefield", controller=SEAT)
+    post_view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[fetch])
+    entries = [
+        row(1, "pass_priority", state_view=bare_view),
+        row(2, "activate", card_id=fetch["id"], ability_index=0, state_view=post_view),
+    ]
+    record = decision_rows(entries, SEAT)[-1]
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["source"]["zone"] == "battlefield"
+    assert move["source"]["select"] != {}
+
+
+def test_keyword_action_missing_from_pre_action_frame_resolves_via_post_action_frame():
+    bare_view = kit.state_view(SEAT, opponent=OPPONENT)
+    living_end = kit.card("Living End", type_line="Sorcery", controller=SEAT, zone="exile")
+    post_view = kit.state_view(SEAT, opponent=OPPONENT, exile=[living_end])
+    entries = [
+        row(1, "pass_priority", state_view=bare_view),
+        row(2, "suspend", card_id=living_end["id"], state_view=post_view),
+    ]
+    record = decision_rows(entries, SEAT)[-1]
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["card"]["zone"] == "hand"
+    assert move["card"]["select"] != {}
+
+
+# -- review fix: `activate`/`declare_attackers`/`declare_blockers` used to skip --
+# -- the `when is None` guard every other branch already has ---------------------
+
+
+def test_activate_with_an_unrepresentable_step_is_labelled_not_schema_invalid():
+    fetch = kit.fetchland(zone="battlefield", controller=SEAT)
+    view = _view_with_battlefield_card(fetch)
+    entries = [
+        row(
+            1,
+            "activate",
+            card_id=fetch["id"],
+            ability_index=0,
+            step="nonexistent_step",  # not one of `STEPS` - `_when` gives back `None`
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "activate:unrepresentable-step"
+
+
+def test_declare_attackers_with_an_unrepresentable_step_is_labelled_not_schema_invalid():
+    entries = [row(1, "attack", step="nonexistent_step", attackers=[])]
+    record = only(decision_rows(entries, SEAT))
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "declare_attackers:unrepresentable-step"
+
+
+def test_declare_blockers_with_an_unrepresentable_step_is_labelled_not_schema_invalid():
+    entries = [row(1, "declare_blockers", step="nonexistent_step", blocks=[])]
+    record = only(decision_rows(entries, SEAT))
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "declare_blockers:unrepresentable-step"
+
+
 def test_cast_with_board_data_builds_a_card_name_free_selector():
     # FD4 (a)/gap 1: the real ledger's own `detail["card"]` is the card's
     # UUID (`app.action_cast`'s own `card=req.card or str(req.card_id)`),
@@ -1096,7 +1250,7 @@ def test_decide_assign_combat_damage_unresolved_target_is_unexpressible():
         )
     )
     assert record["dsl"] is None
-    assert record["unexpressible"] == "decide:assign_combat_damage"
+    assert record["unexpressible"] == "decide:assign_combat_damage:unresolved"
 
 
 # -- FD4 (h)/G14: choose-zero answers ---------------------------------------------
