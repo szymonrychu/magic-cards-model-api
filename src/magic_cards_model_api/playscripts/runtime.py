@@ -312,6 +312,15 @@ class _Run:
     #: later move after the loop - `None` when no `repeat` has run yet in
     #: this run at all.
     iterations: int | None = None
+    #: FD3 finding 1: cumulative extra moves every `repeat` this run has
+    #: already completed contributed beyond the single top-level slot it
+    #: occupies in `move_index` - a completed repeat that sent
+    #: `repeat_moves_done` body moves only advances `move_index` by one, so
+    #: every later move's `moves_done = move_index + repeat_extra_done` is
+    #: what keeps counting those body moves once the script moves past the
+    #: loop, instead of a plain move resetting `moves_done` back down to its
+    #: own index.
+    repeat_extra_done: int = 0
 
     def token(self, elapsed_ms: int) -> dict[str, Any]:
         return {
@@ -339,6 +348,7 @@ class _Run:
                 "repeat_digest_before": self.repeat_digest_before,
                 "repeat_moves_done": self.repeat_moves_done,
                 "iterations": self.iterations,
+                "repeat_extra_done": self.repeat_extra_done,
             },
         }
 
@@ -369,6 +379,7 @@ class _Run:
             repeat_digest_before=chain.get("repeat_digest_before"),
             repeat_moves_done=int(chain.get("repeat_moves_done") or 0),
             iterations=chain.get("iterations"),
+            repeat_extra_done=int(chain.get("repeat_extra_done") or 0),
         )
 
 
@@ -880,7 +891,10 @@ def _moves(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None:
         stopped = _settle(ctx, run, play)
         if stopped is not None:
             return stopped
-        run.moves_done = run.move_index
+        # FD3 finding 1: `move_index` alone undercounts once a `repeat` this
+        # run already completed has sent more body moves than the single
+        # top-level slot it occupies - `repeat_extra_done` is that carry.
+        run.moves_done = run.move_index + run.repeat_extra_done
     while run.move_index < total:
         if ctx.time_up():
             raise _Unfinished
@@ -901,15 +915,18 @@ def _moves(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | None:
         # what "done" means, so `moves_done` counts it the moment `move_index`
         # advances - before `_settle` runs, so a stop mid-settle (ambiguous,
         # interrupted, unforeseen) still reports the move as sent and done.
+        # FD3 finding 1: `+ run.repeat_extra_done` keeps a prior `repeat`'s
+        # own body-move count intact instead of this plain move resetting
+        # `moves_done` back down to its own top-level index.
         if stopped is None:
-            run.moves_done = run.move_index
+            run.moves_done = run.move_index + run.repeat_extra_done
         else:
             return stopped
         if _needs_settle(move):
             stopped = _settle(ctx, run, play)
             if stopped is not None:
                 return stopped
-        run.moves_done = run.move_index
+        run.moves_done = run.move_index + run.repeat_extra_done
     return None
 
 
@@ -984,13 +1001,22 @@ def _exec_repeat(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit |
         # Read off `run.repeat_moves_done`/`.repeat_iteration` before
         # `end_loop` (below) ever resets either - the whole reason this and
         # `end_loop` are two separate calls, always made in that order.
-        run.moves_done = outer_index + run.repeat_moves_done
+        # `repeat_extra_done` folds in any earlier `repeat` this same run
+        # already completed (FD3 finding 1) - `outer_index` alone only ever
+        # accounts for the single top-level slot each one occupies.
+        run.moves_done = outer_index + run.repeat_extra_done + run.repeat_moves_done
         run.iterations = run.repeat_iteration
         if exit_out is not None:
             exit_out.iterations = run.repeat_iteration
         return exit_out
 
     def end_loop() -> None:
+        # FD3 finding 1: this repeat sent `repeat_moves_done` body moves but
+        # only ever advances `move_index` by the one slot below - carry the
+        # difference forward so every later move's `moves_done = move_index +
+        # repeat_extra_done` still counts them, instead of a plain move
+        # resetting `moves_done` back down to its own top-level index.
+        run.repeat_extra_done += run.repeat_moves_done - 1
         run.move_index = outer_index + 1
         run.answer_index = 0
         run.repeat_body_index = 0

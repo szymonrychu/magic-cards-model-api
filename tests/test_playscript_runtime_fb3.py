@@ -25,6 +25,7 @@ from conftest import add_card, force_turn_position, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
 from playscript_testkit import (
+    card_target,
     choice_from_answer,
     damage_answer,
     damage_policy,
@@ -32,6 +33,7 @@ from playscript_testkit import (
     mulligan_move,
     order_answer,
     pick,
+    player_target,
 )
 from test_playscript_runtime import (
     hooked_seat,
@@ -42,6 +44,7 @@ from test_playscript_runtime import (
     seat_uid,
     wired,
 )
+from test_playscript_runtime_repeat import remove_summoning_sickness
 
 from magic_cards_model_api import seatkit
 from magic_cards_model_api.playscripts import runtime
@@ -288,6 +291,7 @@ def test_a_convoke_cast_taps_the_chosen_creatures(
         )
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
     [body] = hook.posts("/actions/cast")
     assert len(body["convoke"]) == 2
     after = state(client, board)
@@ -326,6 +330,7 @@ def test_equip_attaches_to_the_chosen_creature(
         )
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
     [body] = hook.posts("/actions/equip")
     assert body["target"] == bear["id"]
 
@@ -385,6 +390,7 @@ def test_crew_taps_the_picked_creatures(
         )
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
     [body] = hook.posts("/actions/crew")
     assert body["crewing"] == [bear["id"]]
 
@@ -418,6 +424,7 @@ def test_cycle_discards_the_card_and_draws(
         )
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
     [body] = hook.posts("/actions/cycle")
     assert "card_id" in body
 
@@ -443,6 +450,7 @@ def test_plot_exiles_the_card(
         )
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
     assert hook.posts("/actions/plot")
     after = state(client, board)
     assert any(c["name"] == "Aloe Alchemist" for c in after["exile"])
@@ -468,6 +476,7 @@ def test_foretell_exiles_the_card_face_down(
         )
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
     assert hook.posts("/actions/foretell")
 
 
@@ -549,6 +558,7 @@ def test_a_mulligan_keep(client: TestClient, monkeypatch: pytest.MonkeyPatch) ->
     result = run_script(seat, script_id="keep", reasoning=REASONING, corpora=seats.script_corpora)
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
     [body] = hook.posts("/pregame/mulligan")
     assert body["take"] is False
     client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
@@ -573,6 +583,7 @@ def test_a_mulligan_take_then_keep_with_bottom(
 
     taken = run_script(seat, script_id="take", reasoning=REASONING, corpora=seats.script_corpora)
     assert taken.script_exit.exit is Exit.CHAIN_COMPLETE, taken.to_dict()
+    assert taken.script_exit.moves_done == 1, taken.to_dict()
     assert hook.posts("/pregame/mulligan")[-1]["take"] is True
 
     # Bob's own declaration is what resolves the round and puts alice back in
@@ -589,6 +600,7 @@ def test_a_mulligan_take_then_keep_with_bottom(
         seat, script_id="keep-bottom", reasoning=REASONING, corpora=seats.script_corpora
     )
     assert kept.script_exit.exit is Exit.CHAIN_COMPLETE, kept.to_dict()
+    assert kept.script_exit.moves_done == 1, kept.to_dict()
     posted = hook.posts("/pregame/mulligan")[-1]
     assert posted["take"] is False
     assert len(posted["bottom"]) == 1
@@ -713,6 +725,7 @@ def test_order_triggers_orders_by_tier(
         )
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
     [body] = hook.posts("/decide")
     assert sorted(body["order"]) == sorted(pending["cards"])
 
@@ -790,6 +803,7 @@ def test_combat_damage_lethal_first_then_tramples_to_the_player(
     result = run_script(seat, script_id="damage", reasoning=REASONING, corpora=seats.script_corpora)
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
     [body] = hook.posts("/decide")
     by_target = {entry["target"]: entry["amount"] for entry in body["damage"]}
     assert by_target[blocker_a] == 2
@@ -835,6 +849,7 @@ def test_choose_zero_sends_an_empty_pick(
         )
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
     [body] = hook.posts("/decide")
     assert body["card_ids"] == []
 
@@ -883,5 +898,816 @@ def test_choice_from_names_the_matched_card_in_the_opponents_graveyard(
         )
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
     [body] = hook.posts("/decide")
     assert body["choice"] == "Grizzly Bears"
+
+
+# -- review fix (FD3 findings 2/3): cast/activate field coverage, ambiguous/refused ---
+# -- paths for the new move kinds, and the unforeseen paths finding 2 named missing --
+
+
+# -- cast: modes --------------------------------------------------------------------
+
+
+def test_cast_modes_resolves_two_chosen_modes_by_phrase(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kolaghan's Command (CR 700.2 "choose two"): each mode named by a
+    phrase, resolved to its own printed number, in the order the script
+    gives them - never the mode needing a decision of its own (the discard
+    mode), which would make this a two-seat test for no reason."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "kommand",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Instant"]}},
+            "modes": [
+                {"text_has": "Return target creature card"},
+                {"text_has": "deals 2 damage to any target"},
+            ],
+            "targets": [
+                card_target({"types_all": ["Creature"]}, side="me", zone="graveyard"),
+                player_target("opponent"),
+            ],
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Kolaghan's Command", "alice", "hand")
+    bear = add_card(client, board, "Grizzly Bears", "alice", "graveyard")["added"]["card_id"]
+    add_card(client, board, "Swamp", "alice", "battlefield")
+    add_card(client, board, "Mountain", "alice", "battlefield")
+    add_card(client, board, "Forest", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="kommand", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
+    [body] = hook.posts("/actions/cast")
+    assert body["modes"] == [1, 4]
+    assert body["targets"] == [bear, "bob"]
+
+
+# -- cast: shares --------------------------------------------------------------------
+
+
+def test_cast_shares_divides_the_effect_among_targets(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Electrolyze (CR 601.2d): `shares` splits its divided damage across
+    `targets`, aligned by position - 1 to the creature, 1 to the player."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "electrolyze",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Instant"]}},
+            "targets": [
+                card_target({"types_all": ["Creature"]}, side="opponent"),
+                player_target("opponent"),
+            ],
+            "shares": [1, 1],
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Electrolyze", "alice", "hand")
+    bear = add_card(client, board, "Grizzly Bears", "bob", "battlefield")["added"]["card_id"]
+    add_card(client, board, "Island", "alice", "battlefield")
+    add_card(client, board, "Mountain", "alice", "battlefield")
+    add_card(client, board, "Forest", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="electrolyze", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/cast")
+    assert body["shares"] == [1, 1]
+    assert body["targets"] == [bear, "bob"]
+    after = state(client, board)
+    bob = next(p for p in after["players"] if p["username"] == "bob")
+    assert bob["life"] == 19
+
+
+# -- cast: sacrifice/discard/exile/tap cost-object picks -----------------------------
+
+
+def test_cast_sacrifice_cost_object_pick(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bone Splinters: "As an additional cost to cast this spell, sacrifice
+    a creature." - `sacrifice` is a Pick over the battlefield, not the
+    `"source"` keyword an activated ability's own cost uses."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "splinters",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Sorcery"]}},
+            "sacrifice": pick({"types_all": ["Creature"]}),
+            "targets": [card_target({"types_all": ["Creature"]}, side="opponent")],
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Bone Splinters", "alice", "hand")
+    bear = add_card(client, board, "Grizzly Bears", "alice", "battlefield")["added"]["card_id"]
+    target = add_card(client, board, "Runeclaw Bear", "bob", "battlefield")["added"]["card_id"]
+    add_card(client, board, "Swamp", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="splinters", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/cast")
+    assert body["sacrificing"] == [bear]
+    assert body["targets"] == [target]
+    after = state(client, board)
+    assert any(c["name"] == "Grizzly Bears" for c in after["graveyards"]["alice"])
+    assert any(c["name"] == "Runeclaw Bear" for c in after["graveyards"]["bob"])
+
+
+def test_cast_discard_cost_object_pick(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cathartic Reunion: "As an additional cost to cast this spell, discard
+    two cards." - `discard` always reads hand, never the ability's own
+    "source" shorthand."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "reunion",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Sorcery"]}},
+            "discard": pick({"types_all": ["Land"]}, count=2),
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Cathartic Reunion", "alice", "hand")
+    forest_a = add_card(client, board, "Forest", "alice", "hand")["added"]["card_id"]
+    forest_b = add_card(client, board, "Forest", "alice", "hand")["added"]["card_id"]
+    add_card(client, board, "Mountain", "alice", "battlefield")
+    add_card(client, board, "Swamp", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="reunion", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/cast")
+    assert sorted(body["discarding"]) == sorted([forest_a, forest_b])
+
+
+def test_cast_exile_cost_object_pick(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Abhorrent Oculus: "As an additional cost to cast this spell, exile
+    six cards from your graveyard." - `exile` on a cast reads the graveyard
+    (`EXILE_COST_ZONE`), the same footing `sacrifice`/`discard` are on."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "oculus",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Creature"]}},
+            "exile": pick({}, count=6),
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Abhorrent Oculus", "alice", "hand")
+    filler_ids = [
+        add_card(client, board, "Forest", "alice", "graveyard")["added"]["card_id"]
+        for _ in range(6)
+    ]
+    add_card(client, board, "Island", "alice", "battlefield")
+    add_card(client, board, "Swamp", "alice", "battlefield")
+    add_card(client, board, "Plains", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="oculus", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/cast")
+    assert sorted(body["exiling"]) == sorted(filler_ids)
+
+
+def test_cast_tap_cost_object_pick(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Swallow Whole: "As an additional cost to cast this spell, tap an
+    untapped creature you control." - `tap` on a cast reads the
+    battlefield, same as `sacrifice`."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "swallow",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Sorcery"]}},
+            "tap": pick({"types_all": ["Creature"]}),
+            "targets": [card_target({"types_all": ["Creature"], "tapped": True}, side="opponent")],
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Swallow Whole", "alice", "hand")
+    bear = add_card(client, board, "Grizzly Bears", "alice", "battlefield")["added"]["card_id"]
+    target = add_card(client, board, "Runeclaw Bear", "bob", "battlefield", tapped=True)["added"][
+        "card_id"
+    ]
+    add_card(client, board, "Plains", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="swallow", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/cast")
+    assert body["tapping"] == [bear]
+    assert body["targets"] == [target]
+
+
+# -- cast: delve / improvise ----------------------------------------------------------
+
+
+def test_cast_delve_reduces_the_generic_cost(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hooting Mandrills (CR 702.66a): 3 delved graveyard cards pay 3 of the
+    5 generic mana, so 3 Forests cover the rest ({2}{G})."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "mandrills",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Creature"]}},
+            "delve": pick({}, count=3),
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Hooting Mandrills", "alice", "hand")
+    filler_ids = [
+        add_card(client, board, "Island", "alice", "graveyard")["added"]["card_id"]
+        for _ in range(3)
+    ]
+    for _ in range(3):
+        add_card(client, board, "Forest", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="mandrills", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/cast")
+    assert sorted(body["delve"]) == sorted(filler_ids)
+
+
+def test_cast_improvise_taps_the_chosen_artifacts(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whir of Invention at X=2 (CR 702.126a): two artifacts improvise the
+    two generic mana, three Islands pay {U}{U}{U}."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "whir",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Instant"]}},
+            "x": 2,
+            "improvise": pick({"types_all": ["Artifact"]}, count=2),
+            "answers": [
+                {
+                    "decision": "choose_cards",
+                    "pick": {"select": {"types_all": ["Artifact"]}, "count": 1},
+                }
+            ],
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Whir of Invention", "alice", "hand")
+    art_a = add_card(client, board, "Ornithopter", "alice", "battlefield")["added"]["card_id"]
+    art_b = add_card(client, board, "Memnite", "alice", "battlefield")["added"]["card_id"]
+    add_card(client, board, "Ornithopter", "alice", "library")
+    for _ in range(3):
+        add_card(client, board, "Island", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="whir", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/cast")
+    assert body["x_value"] == 2
+    assert sorted(body["improvise"]) == sorted([art_a, art_b])
+
+
+# -- activate: exile/x/color ----------------------------------------------------------
+
+
+def test_activate_exile_cost_object_pick(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Psychic Frog: "Exile three cards from your graveyard: This creature
+    gains flying until end of turn." - no `{T}` in the cost, so summoning
+    sickness never gates it (CR 302.6)."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "frog",
+        {
+            "kind": "activate",
+            "source": {
+                "zone": "battlefield",
+                "select": {"types_all": ["Creature"], "subtypes_any": ["Frog"]},
+            },
+            "ability_text_has": "Exile three cards from your graveyard",
+            "exile": pick({}, count=3),
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Psychic Frog", "alice", "battlefield")
+    filler_ids = [
+        add_card(client, board, "Island", "alice", "graveyard")["added"]["card_id"]
+        for _ in range(3)
+    ]
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="frog", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/activate")
+    assert sorted(body["exiling"]) == sorted(filler_ids)
+
+
+def test_activate_x_resolves_the_chosen_amount(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mirror Entity: "{X}: ... base power and toughness X/X ..." (CR
+    118.6a) - a literal `x`, not `'max'` (already proven on `cast` above)."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "mirror",
+        {
+            "kind": "activate",
+            "source": {"zone": "battlefield", "select": {"types_all": ["Creature"]}},
+            "ability_index": 0,
+            "x": 2,
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Mirror Entity", "alice", "battlefield")
+    for _ in range(2):
+        add_card(client, board, "Plains", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="mirror", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/activate")
+    assert body["x_value"] == 2
+
+
+def test_activate_color_sends_the_chosen_color(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Birds of Paradise: "{T}: Add one mana of any color." - `color` names
+    which of those the request announces."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "birds",
+        {
+            "kind": "activate",
+            "source": {
+                "zone": "battlefield",
+                "select": {"types_all": ["Creature"], "subtypes_any": ["Bird"]},
+            },
+            "ability_index": 0,
+            "color": "R",
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Birds of Paradise", "alice", "battlefield")
+    remove_summoning_sickness(board, "Birds of Paradise")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="birds", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/activate")
+    assert body["color"] == "R"
+    after = state(client, board)
+    alice_player = next(p for p in after["players"] if p["username"] == "alice")
+    assert alice_player["mana_pool"]["floating"].get("R") == 1
+
+
+# -- ambiguous, beyond keyword_action --------------------------------------------------
+
+
+def test_a_cast_card_selector_tied_between_two_names_exits_ambiguous(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "cast-tie",
+        {"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Creature"]}}},
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Grizzly Bears", "alice", "hand")
+    add_card(client, board, "Runeclaw Bear", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="cast-tie", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.AMBIGUOUS, result.to_dict()
+    assert hook.posts("/actions/cast") == []
+
+
+def test_an_activate_source_selector_tied_between_two_names_exits_ambiguous(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "activate-tie",
+        {
+            "kind": "activate",
+            "source": {
+                "zone": "battlefield",
+                "select": {"types_all": ["Creature"], "subtypes_any": ["Elf"]},
+            },
+            "ability_index": 0,
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Elvish Mystic", "alice", "battlefield")
+    add_card(client, board, "Llanowar Elves", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="activate-tie", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.AMBIGUOUS, result.to_dict()
+    assert hook.posts("/actions/activate") == []
+
+
+# -- refused, with the engine's own text -----------------------------------------------
+
+
+def test_a_cast_with_insufficient_mana_is_refused_with_the_engines_text(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The selector picks its one candidate cleanly and the request is built
+    and sent - the engine itself refuses it (CR 601.2h), never the runner
+    pre-checking affordability on its own."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "cast-poor",
+        {"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Creature"]}}},
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Grizzly Bears", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="cast-poor", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.REFUSED, result.to_dict()
+    assert result.script_exit.refusal_source == "server"
+    assert result.script_exit.refusal
+    assert hook.posts("/actions/cast"), "the request must still have been sent and refused"
+
+
+def test_an_activate_on_a_summoning_sick_creature_is_refused_with_the_engines_text(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR 302.6: a `{T}` ability needs its source under continuous control
+    since the turn began - deliberately no `remove_summoning_sickness` call
+    here, so the engine itself is the one refusing it."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "activate-sick",
+        {
+            "kind": "activate",
+            "source": {"zone": "battlefield", "select": {"types_all": ["Creature"]}},
+            "ability_index": 0,
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Elvish Mystic", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="activate-sick", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.REFUSED, result.to_dict()
+    assert result.script_exit.refusal_source == "server"
+    assert hook.posts("/actions/activate"), "the request must still have been sent and refused"
+
+
+def test_an_equip_with_insufficient_mana_is_refused_with_the_engines_text(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "equip-poor",
+        keyword_action_move(
+            "equip",
+            {"subtypes_any": ["Equipment"]},
+            zone="battlefield",
+            target={"select": {"types_all": ["Creature"]}, "side": "me"},
+        ),
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Bonesplitter", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="equip-poor", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.REFUSED, result.to_dict()
+    assert result.script_exit.refusal_source == "server"
+    assert hook.posts("/actions/equip"), "the request must still have been sent and refused"
+
+
+# -- unforeseen: mulligan, order, damage, choice_from, crew, cycle ---------------------
+
+
+def test_a_mulligan_bottom_selector_matching_nothing_exits_unforeseen(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    info = boot_pregame(client, seed=SEED_WITH_A_LEYLINE_IN_ALICES_HAND)
+    game_id = info["game_id"]
+    alice = info["seat_uids"]["alice"]
+    bob = info["seat_uids"]["bob"]
+    register(
+        client,
+        game_id,
+        alice,
+        mulligan_script("take", False),
+        mulligan_script("keep-bottom-miss", True, bottom=pick({"types_all": ["Instant"]}, count=1)),
+    )
+    seats = wired(monkeypatch, game_id)
+    seat, hook = hooked_seat(seats, alice)
+
+    taken = run_script(seat, script_id="take", reasoning=REASONING, corpora=seats.script_corpora)
+    assert taken.script_exit.exit is Exit.CHAIN_COMPLETE, taken.to_dict()
+
+    response = client.post(
+        f"/api/games/{game_id}/pregame/mulligan",
+        params={"uid": bob},
+        json={"player": "bob", "take": False, "reasoning": "keep"},
+    )
+    assert response.status_code == 200, response.text
+
+    before = len(hook.posts("/pregame/mulligan"))
+    result = run_script(
+        seat, script_id="keep-bottom-miss", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert len(hook.posts("/pregame/mulligan")) == before
+    client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_order_triggers_answered_by_the_wrong_decision_exits_unforeseen(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The play's own `true` gate matches the real pending decision
+    (`order_triggers`) so the move is reached at all - it is the move's own
+    `answers` naming a different decision that this move never covers."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Bloodcurdler", "alice", "battlefield")
+    add_card(client, board, "Bloodcurdler", "alice", "battlefield")
+    client.put(f"/api/games/{board}/step", json={"step": "untap"})
+    response = client.post(
+        f"/api/games/{board}/advance", params={"uid": alice}, json={"player": "alice"}
+    )
+    assert response.status_code == 200, response.text
+    pending = state(client, board)["pending_decision"]
+    assert pending is not None and pending["kind"] == "order_triggers", pending
+    script = {
+        "schema_version": 1,
+        "id": "order-miss",
+        "name": "wrong answer",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "mine", "steps": ["upkeep"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [{"kind": "answer", "answers": [{"decision": "pay_life", "accept": True}]}],
+        "next": [],
+    }
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="order-miss", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert hook.posts("/decide") == []
+
+
+def test_assign_combat_damage_answered_by_the_wrong_decision_exits_unforeseen(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    bob = seat_uid(board, "bob")
+    add_card(client, board, "Charging Monstrosaur", "alice", "battlefield")
+    blocker = add_card(client, board, "Runeclaw Bear", "bob", "battlefield")["added"]["card_id"]
+    monstrosaur = [
+        c for c in state(client, board)["battlefield"] if c["name"] == "Charging Monstrosaur"
+    ][0]
+    client.put(f"/api/games/{board}/step", json={"step": "beginning_of_combat"})
+    response = client.post(
+        f"/api/games/{board}/advance", params={"uid": alice}, json={"player": "alice"}
+    )
+    assert response.json()["pending_decision"]["kind"] == "declare_attackers", response.json()
+    response = client.post(
+        f"/api/games/{board}/actions/attack",
+        json={
+            "attackers": [{"card_id": monstrosaur["id"], "defender": "bob"}],
+            "reasoning": "attack",
+        },
+        params={"uid": alice},
+    )
+    assert response.json().get("allowed") is True, response.json()
+    response = client.post(
+        f"/api/games/{board}/advance", params={"uid": alice}, json={"player": "alice"}
+    )
+    assert response.json()["pending_decision"]["kind"] == "declare_blockers", response.json()
+    response = client.post(
+        f"/api/games/{board}/actions/declare-blockers",
+        json={
+            "player": "bob",
+            "blocks": [{"blocker": blocker, "blocked": monstrosaur["id"]}],
+        },
+        params={"uid": bob},
+    )
+    assert response.json().get("allowed") is True, response.json()
+    response = client.post(
+        f"/api/games/{board}/advance", params={"uid": alice}, json={"player": "alice"}
+    )
+    pending = response.json()["pending_decision"]
+    assert pending is not None and pending["kind"] == "assign_combat_damage", response.json()
+
+    script = {
+        "schema_version": 1,
+        "id": "damage-miss",
+        "name": "wrong answer",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "mine", "steps": ["combat_damage"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [{"kind": "answer", "answers": [{"decision": "pay_life", "accept": True}]}],
+        "next": [],
+    }
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="damage-miss", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert hook.posts("/decide") == []
+
+
+def test_choice_from_selector_matching_nothing_exits_unforeseen(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Grizzly Bears", "bob", "graveyard")
+    add_card(client, board, "Meddling Mage", "alice", "hand")
+    add_card(client, board, "Plains", "alice", "battlefield")
+    add_card(client, board, "Island", "alice", "battlefield")
+    script = {
+        "schema_version": 1,
+        "id": "meddle-miss",
+        "name": "Meddling Mage",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [
+            {
+                "kind": "cast",
+                "card": {"zone": "hand", "select": {"types_all": ["Creature"]}},
+                "answers": [
+                    choice_from_answer("graveyard", "opponent", {"types_all": ["Sorcery"]})
+                ],
+            }
+        ],
+        "next": [],
+    }
+    register(client, board, alice, script)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="meddle-miss", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert hook.posts("/decide") == []
+
+
+def test_crew_with_no_matching_creature_exits_unforeseen(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "crew-miss",
+        keyword_action_move(
+            "crew",
+            {"subtypes_any": ["Vehicle"]},
+            zone="battlefield",
+            crew_with=pick({"subtypes_any": ["Wall"]}, count=1),
+        ),
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Smuggler's Copter", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="crew-miss", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert hook.posts("/actions/crew") == []
+
+
+def test_cycle_with_no_matching_card_exits_unforeseen(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "cycle-miss",
+        keyword_action_move("cycle", {"keywords_any": ["Flashback"]}, zone="hand"),
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Krosan Tusker", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="cycle-miss", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert hook.posts("/actions/cycle") == []

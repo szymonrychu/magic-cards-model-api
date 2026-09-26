@@ -161,6 +161,10 @@ def test_the_devoted_druid_loop_reaches_x8_in_one_run_script_call(
     assert len(activations) == 16, "8 iterations x 2 body moves"
     [cast] = hook.posts("/actions/cast")
     assert cast["x_value"] == 8
+    # FD3 finding 1: the 16 body moves the repeat sent must still be counted
+    # once the script goes on to send the plain `cast` move after it - not
+    # reset to the plain move's own top-level index (2).
+    assert result.script_exit.moves_done == 17, result.to_dict()
     # The seat's own visible surface made exactly one call for the whole
     # loop plus its cast - `run_script` itself, not one per activation.
     run_script_calls = [
