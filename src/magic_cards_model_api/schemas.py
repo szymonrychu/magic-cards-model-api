@@ -635,6 +635,14 @@ class PlaysOutcomeIn(RequestModel):
     for the human it watches (`role: advisor`). Never a controlled player's:
     CR 723.5 hands a controller in-game decisions, not the post-game record.
 
+    `role: reviewer` (review fix, gap 4/15) is the SAME seat uid filing a
+    SECOND time, for the post-game DR3 review rather than the handover
+    itself - `review.py`'s own `play_stats[seat]["reviewer"]` reads exactly
+    these rows apart from the handover's own (`app.declare_plays_outcome`
+    lets a seat uid file either `seat` or `reviewer`, and does not require
+    `player` be an AI seat for a `reviewer` row, since FD7 gap 15 gives a
+    human seat a review Job too).
+
     `state` is `complete` when the handover landed a DSL change or a
     no-change for every candidate, and `unfinished` otherwise, with
     `unfinished_reasons` saying why (nudged, timed out, an admit or propose
@@ -650,7 +658,7 @@ class PlaysOutcomeIn(RequestModel):
     uid: Stated
     """The filing credential - never recorded in the row."""
     player: Stated
-    role: Literal["seat", "advisor"]
+    role: Literal["seat", "advisor", "reviewer"]
     state: Literal["complete", "unfinished"]
     admitted: list[PlaysOutcomeAdmitted] = Field(default_factory=list)
     proposed: list[PlaysOutcomeProposed] = Field(default_factory=list)

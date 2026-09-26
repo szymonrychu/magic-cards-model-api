@@ -33,6 +33,7 @@ from guides_git_testkit import (
 from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG, play
 
 from magic_cards_model_api.playscripts import admit as admit_mod
+from magic_cards_model_api.playscripts import gitwork
 from magic_cards_model_api.playscripts.lint import check_report
 
 SHOCK = f"decks/{SLUG}/plays/fetch-untapped-shock.json"
@@ -1048,8 +1049,11 @@ def test_paths_scope_admit_to_only_the_caller_own_files_leaving_the_others_write
     assert result_a["added"] == ["writer-a"]
 
     # Writer B's own edit is untouched: still dirty, never swept into A's
-    # commit, and not reverted by anything A's admit did.
-    assert git(root, "status", "--porcelain") == f" M {SURVEIL}"
+    # commit, and not reverted by anything A's admit did. (`git()`'s own
+    # `.strip()` eats the leading space `--porcelain` gives an unstaged
+    # `M`, the same convention `test_priority_changes_only_the_priority_
+    # line_and_records_the_delta` already relies on.)
+    assert git(root, "status", "--porcelain") == f"M {SURVEIL}"
     assert json.loads((root / SURVEIL).read_text(encoding="utf-8"))["priority"] == b_doc["priority"]
 
     result_b = admit_mod.admit(root, SLUG, "game-b", paths=[SURVEIL])
@@ -1095,8 +1099,66 @@ def test_a_priority_journaled_by_a_different_role_is_not_swept_by_this_roles_adm
     # ...but the seat's own priority-only file is ALSO still dirty (its
     # tracked-by-seat change was never staged by the reviewer's own call,
     # since it was never part of `changed` at commit time - only its own
-    # untracked file was staged and committed).
-    assert git(root, "status", "--porcelain") == f" M {SHOCK}"
+    # untracked file was staged and committed). (`git()`'s own `.strip()`
+    # eats the leading space, as above.)
+    assert git(root, "status", "--porcelain") == f"M {SHOCK}"
+
+
+def test_a_role_that_nudged_a_priority_and_also_hand_edited_a_different_play_gets_both(
+    capsys, monkeypatch, root, bare
+):
+    """Review fix (gap 2): the journal used to narrow this role's own sweep
+    to exactly its `priority` lines the moment it had ANY of them, dropping
+    a second, untracked, hand-edited play by the SAME role - unreported and
+    left uncommitted forever, with the CLI's own no-`paths` call (the only
+    one production makes) having no other way to recover it."""
+    monkeypatch.setenv("MTG_ROLE", "seat")
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5", "--game-id", GAME)
+    doc = read_play(root, SURVEIL)
+    doc["intent"] = "Also this seat's own hand edit, no journal trace of its own."
+    (root / SURVEIL).write_text(dump(doc), encoding="utf-8")
+
+    result = admit_mod.admit(root, SLUG, GAME)
+
+    assert result["result"] == "admitted", result
+    assert set(result["updated"]) == {"fetch-surveil-land"}
+    assert set(result["reprioritized"]) == {"fetch-untapped-shock"}
+    assert git(root, "status", "--porcelain") == ""
+
+
+def test_another_roles_journaled_out_of_scope_file_does_not_block_this_admit(
+    capsys, monkeypatch, tmp_path, root, bare
+):
+    """Review fix (gap 9/10): a `guides propose` that left its own out-of-
+    scope file dirty (a `refused_content`/`conflict`, journaled under its
+    own role) must not refuse THIS caller's whole `plays admit` - two
+    writers sharing a checkout are meant not to block each other."""
+    monkeypatch.setenv("MTG_ROLE", "advisor")
+    notes = root / f"decks/{SLUG}/NOTES.md"
+    with notes.open("a", encoding="utf-8") as handle:
+        handle.write("- left dirty by a refused guides propose\n")
+    gitwork.append_journal_line(
+        root,
+        {
+            "ts": "2026-01-01T00:00:00Z",
+            "command": "propose",
+            "game_id": GAME,
+            "decks": [SLUG],
+            "role": "advisor",
+            "result": "refused_content",
+            "files": [f"decks/{SLUG}/NOTES.md"],
+        },
+    )
+    monkeypatch.setenv("MTG_ROLE", "seat")
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5", "--game-id", GAME)
+
+    result = admit_mod.admit(root, SLUG, GAME)
+
+    assert result["result"] == "admitted", result
+    assert result["reprioritized"] == ["fetch-untapped-shock"]
+    # The advisor's own out-of-scope file is exactly as it was - never
+    # staged, committed or reverted by this call.
+    assert git(root, "status", "--porcelain") == f"M {f'decks/{SLUG}/NOTES.md'}"
 
 
 def test_a_batch_with_one_conflicting_play_admits_the_clean_ones(capsys, tmp_path, isolated):

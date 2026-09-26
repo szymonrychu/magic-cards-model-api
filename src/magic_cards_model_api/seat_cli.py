@@ -1541,6 +1541,19 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _guides_target(admit, game=True)
+    admit.add_argument(
+        "--path",
+        dest="paths",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help=(
+            "a decks/*/plays/ path this call itself wrote (repeatable) - only these are "
+            "staged/committed, exactly as if the caller's own turn had journaled them; left "
+            "out, every dirty play the game's journal does not show a DIFFERENT role owns is "
+            "swept instead (the pre-FD7 behaviour)"
+        ),
+    )
 
     unchanged = plays_sub.add_parser(
         "no-change",
@@ -1668,7 +1681,11 @@ def run(argv: list[str] | None = None) -> int:
             frozenset({"recorded"}),
         )
     if args.command == "plays":
-        return _emit(playscripts_admit.admit(args.root, args.deck, args.game_id))
+        return _emit(
+            playscripts_admit.admit(
+                args.root, args.deck, args.game_id, paths=getattr(args, "paths", None)
+            )
+        )
     if args.command == "guides":
         return _emit(playscripts_guides.propose(args.root, args.deck, args.game_id))
     if not args.uid:

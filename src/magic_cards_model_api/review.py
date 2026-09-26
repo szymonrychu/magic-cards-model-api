@@ -313,9 +313,21 @@ def _decisions_and_play_stats(
     `plays_advice` (`corpora.get(seat)`) are handed to `game_play_stats`
     exactly once per seat, from whatever `corpora` this call itself was
     given - the caller's own read of the corpus, made when THIS review was
-    built, not a value carried over from an earlier one - so they are
-    "refreshed from the corpus at review time" by construction; there is no
-    second, staler corpus anywhere in this module for them to drift from."""
+    built, not a value carried over from an earlier one.
+
+    **Review fix.** That is refreshed on every call, but `corpora` itself
+    (`app._review_corpora` -> `store.scripts`) is registered once, at
+    dispatch, and never again (`mtg_agent.driver.app`'s own docstring) - so
+    a play THIS game's own handover admitted new is not in it, and calling
+    that "refreshed from the corpus at review time" was wrong: the corpus
+    this module is HANDED is stale, only the reading of it is fresh.
+    `plays_total` alone is corrected for this below, by adding every play
+    id an admitted entry's own `added` names that `corpus` does not already
+    have - the one fact provable without the play's own content, which this
+    module has no way to read. `plays_move_bearing`/`plays_advice` still
+    come from `corpus` alone: splitting a brand-new play on whether it
+    carries a move needs its actual document, which only `admit.py`'s own
+    checkout has."""
     if not players:
         return {}, {}
     entries_with_state = _entries_with_frame_views(entries, frame_views)
@@ -345,9 +357,30 @@ def _decisions_and_play_stats(
             )
         decisions[seat] = rows
         admitted = [entry for batch in admitted_by_seat[seat] for entry in batch]
-        seat_stats = stats.game_play_stats(
-            entries, game_id, seat, corpora.get(seat) or {}, admitted
-        )
+        corpus = corpora.get(seat) or {}
+        seat_stats = stats.game_play_stats(entries, game_id, seat, corpus, admitted)
+        # Review fix (gap 4): `corpus` is `app._review_corpora`'s read of
+        # `store.scripts` - registered once, at dispatch
+        # (`mtg_agent.driver.app`'s own docstring: "once, at dispatch.
+        # Nothing registers mid-game"), so a play THIS game's own handover
+        # admitted new never entered it and `plays_total` undercounts by
+        # exactly that many. `admit._landing`'s own `added` classification
+        # (a brand-new play file, whatever content it carries) is read
+        # straight off the one ledger row that fact was ever recorded in,
+        # never reimplemented - the same discipline `stats.py`'s own
+        # docstring states for `added`/`updated`/`reprioritized`. A play id
+        # `added` names that the dispatch-time corpus ALREADY had (an edge
+        # case: a file readded under the same id after being deleted and
+        # re-created within one game) is not double-counted, since only ids
+        # outside `corpus` are added.
+        new_ids = {
+            play_id
+            for entry in admitted
+            for play_id in entry.get("added") or ()
+            if play_id not in corpus
+        }
+        if new_ids:
+            seat_stats["plays_total"] += len(new_ids)
         reviewer_admitted = [entry for batch in reviewer_admitted_by_seat[seat] for entry in batch]
         reviewer_stats = stats.game_play_stats(
             entries, game_id, seat, corpora.get(seat) or {}, reviewer_admitted

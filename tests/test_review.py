@@ -490,6 +490,36 @@ def test_play_stats_counts_admitted_ids_across_two_plays_outcome_rows(
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
 
+def test_plays_total_is_refreshed_by_a_brand_new_play_this_games_own_admit_landed(
+    client: TestClient,
+) -> None:
+    """Review fix (gap 4): `plays_total` used to come only from the corpus
+    registered once at dispatch (`app._review_corpora`/`store.scripts`),
+    frozen before this game's own handover could ever land a new play file.
+    A play id an admitted entry's own `added` names, and that the
+    dispatch-time corpus never had, is one more play than dispatch ever
+    knew about however it reads it - `plays_total` counts it."""
+    from test_plays_outcome_route import _body, _post
+
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        before = _review(client, game_id, key=info["admin_key"]).json()
+        baseline = before["play_stats"]["bob"]["plays_total"]
+
+        response = _post(
+            client,
+            game_id,
+            _body(info, admitted=[{"sha": "a" * 40, "dsl_change": True, "added": ["play-new"]}]),
+        )
+        assert response.status_code == 200, response.text
+
+        after = _review(client, game_id, key=info["admin_key"]).json()
+        assert after["play_stats"]["bob"]["plays_total"] == baseline + 1
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
 def test_play_stats_counts_a_legacy_plays_outcome_body_without_crashing(
     client: TestClient,
 ) -> None:

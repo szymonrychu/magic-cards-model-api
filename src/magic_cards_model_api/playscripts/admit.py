@@ -37,19 +37,25 @@ first found each play, and survives `admit`. A larger step is refused as
 
 **FD7 gap 10: only this call's own dirty plays paths are staged**, never
 `git add -A` over the whole checkout - see `admit`'s own docstring for the
-three-tier `paths` fallback that decides which paths those are. Two writers
-sharing one checkout (the handover and the post-game reviewer, most often)
-can each have their own uncommitted edit sitting in the tree at once; this
-call stages and commits only its own, and a refusal - the file-outside-scope
-one, a gate failure, or a per-file conflict refusal - restores only the
-paths this call itself touched, leaving the other writer's own edit exactly
-as it was for its own later call.
+`paths` fallback that decides which paths those are (explicit `--path`, the
+CLI's own new flag, or every dirty play the journal does not show a
+DIFFERENT role owns). Two writers sharing one checkout (the handover and the
+post-game reviewer, most often) can each have their own uncommitted edit
+sitting in the tree at once; this call stages and commits only its own, and
+a refusal - the file-outside-scope one (itself scoped the same way: another
+role's own out-of-scope dirty file, journaled by ITS OWN command, is left
+alone rather than refusing this call's whole batch), a gate failure, or a
+per-file conflict refusal - restores only the paths this call itself
+touched, leaving the other writer's own edit exactly as it was for its own
+later call. The rebase this all runs inside (`_rebase`) is itself run with
+`--autostash`, so another writer's own dirty tracked file never even blocks
+the rebase step from starting.
 
 Before step 2, `admit` picks up the driver's evidence file for this game:
 `$MTG_EVIDENCE_DIR/<game_id>/<deck>.json`, when it exists and parses as
 JSON, is copied to `decks/<deck>/plays/evidence/<game_id>.json` and lands
 with the commit - one file per game, so two games' evidence never conflicts,
-and not a play (`_play_file` takes `decks/<deck>/plays/<id>.json` only), so
+and not a play (`play_file` takes `decks/<deck>/plays/<id>.json` only), so
 it is never linted or reprioritised. An admit carrying nothing but evidence
 is `admitted` with `dsl_change: false`.
 
@@ -118,7 +124,7 @@ def is_plays_path(path: str) -> bool:
     return len(parts) >= 4 and parts[0] == "decks" and parts[2] == "plays"
 
 
-def _play_file(path: str) -> bool:
+def play_file(path: str) -> bool:
     parts = path.split("/")
     return (
         is_plays_path(path)
@@ -282,14 +288,21 @@ def admit(
     call too, or landed half-finished. `paths` is the caller's own answer to
     "which of the dirty plays are mine": every path here that is actually
     dirty is staged, everything else in the tree is left exactly as it was
-    for its own writer's own later call. Left `None` (every caller before
-    this one, and `seat_cli`'s CLI, which passes none), the caller's own
-    journal answers instead - `MTG_ROLE`'s own prior `plays priority` lines
-    for this `game_id` (`gitwork.RESULTS_JOURNAL`, `role`-scoped, so one
-    writer's tracked nudge is never read as another's) - and only when that
-    journal names nothing at all does this fall back to the old "every dirty
-    play path", since a raw content edit carries no journal trace of its
-    own to recover."""
+    for its own writer's own later call. `seat_cli`'s own `--path` (review
+    fix: it did not exist before, so the CLI - production's only caller -
+    always passed `None` and this whole mechanism went untested end to end)
+    is how a real caller supplies it.
+
+    Left `None`, every dirty play path this game's journal does not show a
+    DIFFERENT role owning is swept instead - `MTG_ROLE`'s own prior lines,
+    over every command (`priority`, `admit`, `no_change`, and `guides
+    propose`'s own conflict or content refusal), never narrow this role's OWN
+    sweep the way an earlier version did (review fix, gap 2): a role that
+    journaled a priority nudge on one file and separately hand-edited
+    another, untracked, is still owed both, since there is no journal trace
+    to tell that second edit apart from a genuinely different writer's own
+    leftover - and a raw content edit never carries one of its own to
+    recover regardless of which role made it."""
     root = Path(root).resolve()
     return gitwork.run_journaled(
         root, "admit", game_id, [deck], lambda: (_admit(root, deck, game_id, paths), {})
@@ -398,7 +411,7 @@ def _landing(git: Git) -> _Landing:
         if not path:
             continue
         landing.files.append(path)
-        if not _play_file(path):
+        if not play_file(path):
             continue
         play_id = Path(path).stem
         if status == "A":
@@ -429,14 +442,27 @@ def _landing(git: Git) -> _Landing:
 
 
 def _journaled_paths_by_role(git: Git, game_id: str) -> dict[str, set[str]]:
-    """Every role's own prior `plays priority` lines for `game_id`, by path
-    - `{role: {path, ...}}` - the journal half of `admit`'s `paths` fallback
-    (see its own docstring). Every successful `priority_set` journals its
-    own `files: [<path>]` (`set_priority`'s own `body`) and its own `role`
-    (`gitwork.journal`'s own `MTG_ROLE`); a refused one journals no `files`
-    at all, so it is never mistaken for a path that role touched. Never
-    raises: an unreadable or missing journal is simply nothing found, same
-    as `gitwork.append_journal_line`'s own "never fail the command"."""
+    """Every role's own prior journaled `files`, by path - `{role: {path,
+    ...}}` - for THIS `game_id`, over every command (`priority`, `admit`,
+    `no_change`), not `priority` alone (review fix: a role that nudged a
+    priority on X and separately edited Y by hand had Y attributed to
+    nobody, because only `priority` lines were ever read here - `Y` then
+    fell to the "everything" tier every time, which is right when nothing
+    else claims it, but a role's OWN untracked edits must never be
+    mistaken for it having narrowed its own paths to X alone; see
+    `_own_paths`, which no longer branches on that). A `guides propose`
+    conflict or its own content refusal also journals its own `files` for its own
+    role - a guide edit left dirty in the shared checkout by a DIFFERENT
+    role is exactly the "another writer's own out-of-scope file" `_admit`'s
+    outside check must not block on (review fix, `_admit`'s own outside
+    check below).
+
+    Every successful/refused-with-files run journals its own `files` (see
+    each command's own `body`) and its own `role` (`gitwork.journal`'s own
+    `MTG_ROLE`); one with none journals nothing here, so it is never
+    mistaken for a path that role touched. Never raises: an unreadable or
+    missing journal is simply nothing found, same as `gitwork.
+    append_journal_line`'s own "never fail the command"."""
     by_role: dict[str, set[str]] = {}
     try:
         text = gitwork.journal_path(git.root).read_text(encoding="utf-8")
@@ -449,7 +475,7 @@ def _journaled_paths_by_role(git: Git, game_id: str) -> dict[str, set[str]]:
             continue
         if not isinstance(entry, dict):
             continue
-        if entry.get("game_id") != game_id or entry.get("command") != "priority":
+        if entry.get("game_id") != game_id:
             continue
         role = entry.get("role")
         if not isinstance(role, str):
@@ -460,27 +486,37 @@ def _journaled_paths_by_role(git: Git, game_id: str) -> dict[str, set[str]]:
     return by_role
 
 
+def _other_tracked(git: Git, game_id: str) -> set[str]:
+    """Every path the journal shows a role OTHER than `MTG_ROLE` touched,
+    for `game_id` - shared by `_own_paths`'s "everything" tier and
+    `_admit`'s outside-scope check, so both read "another writer's own
+    path" the same way."""
+    who = os.environ.get("MTG_ROLE", "").strip() or "seat"
+    by_role = _journaled_paths_by_role(git, game_id) if game_id else {}
+    return {path for role, paths_ in by_role.items() if role != who for path in paths_}
+
+
 def _own_paths(
     git: Git, game_id: str, changed: list[str], paths: Sequence[str] | None
 ) -> list[str]:
     """The paths THIS `admit` call stages - see `admit`'s own docstring for
-    the three-tier fallback (`paths`, then the journal, then everything).
+    the two-tier fallback (`paths`, or every dirty play path this game's
+    journal does not show another role tracking).
 
-    The journal tier is role-scoped both ways: this role's own tracked
-    paths are used when there are any, and otherwise the "everything" tier
-    still excludes whatever the journal shows ANOTHER role tracked for this
-    game - a priority nudge the seat journaled is never this reviewer's own
-    path to sweep up, even on a call that itself has nothing tracked at
-    all."""
+    Review fix (gap 2): the journal used to narrow this role's OWN paths to
+    exactly its `priority` lines the moment it had any at all, dropping any
+    OTHER dirty play this same role also edited by hand with no journal
+    trace of its own to recover (a raw content edit carries none). There is
+    no way to tell "this role's own second, untracked edit" apart from "a
+    DIFFERENT untracked writer's leftover edit" without a journal trace
+    either way, so both tiers now read alike: every dirty play path stands,
+    unless the journal shows a role OTHER than this one own it. A role's
+    own tracked paths are never excluded by this, since they are never
+    `_other_tracked`'s own answer for that same role."""
     if paths is not None:
         wanted = set(paths)
         return sorted(p for p in changed if p in wanted)
-    who = os.environ.get("MTG_ROLE", "").strip() or "seat"
-    by_role = _journaled_paths_by_role(git, game_id) if game_id else {}
-    own_tracked = by_role.get(who, set())
-    if own_tracked:
-        return sorted(p for p in changed if p in own_tracked)
-    other_tracked = {path for role, paths_ in by_role.items() if role != who for path in paths_}
+    other_tracked = _other_tracked(git, game_id)
     return sorted(p for p in changed if is_plays_path(p) and p not in other_tracked)
 
 
@@ -514,7 +550,22 @@ def _admit(
 
     changed = git.changed_paths()
     local = git.paths_between(UPSTREAM, "HEAD") if git.ahead(UPSTREAM) else []
-    outside = sorted(p for p in set(changed) | set(local) if not is_plays_path(p))
+    # Review fix (gap 9/10): an out-of-scope path the journal shows a role
+    # OTHER than this one owns (most often a `guides propose` `conflict` or
+    # content refusal that left its own file dirty with no rebase/merge
+    # state behind it) is that writer's own business, not this call's - the
+    # whole point of `paths`/the journal fallback is that two writers
+    # sharing a checkout do not block each other, and refusing this call's
+    # entire admit over a file it never touches and never will is exactly
+    # that block. Every OTHER dirty path outside `decks/*/plays/**` is
+    # still refused exactly as before: `changed`/`local`, not narrowed to
+    # `own`, because `own` (paths=None) is scoped to `is_plays_path` by
+    # construction and would make this refusal unreachable for the CLI's
+    # own, `paths`-less call - the one production actually makes.
+    other_tracked = _other_tracked(git, game_id)
+    outside = sorted(
+        p for p in set(changed) | set(local) if not is_plays_path(p) and p not in other_tracked
+    )
     if outside:
         raise Outcome(
             "refused",
@@ -602,7 +653,7 @@ def _priority_changes(git: Git, paths: list[str]) -> list[tuple[str, int, int]]:
     """(id, HEAD priority, working priority) for each play whose priority moved."""
     found = []
     for path in paths:
-        if not _play_file(path):
+        if not play_file(path):
             continue
         old = _priority_of(git.show(f"HEAD:{path}"))
         new = _priority_of(_read(git.root / path))
@@ -625,7 +676,7 @@ def _sync_deltas(git: Git, paths: list[str]) -> dict[str, Any]:
     base = git.out("merge-base", UPSTREAM, "HEAD").strip()
     deltas: dict[str, Any] = {}
     for path in paths:
-        if not _play_file(path):
+        if not play_file(path):
             continue
         old = _priority_of(git.show(f"{base}:{path}"))
         new = _priority_of(_read(git.root / path))
@@ -635,10 +686,48 @@ def _sync_deltas(git: Git, paths: list[str]) -> dict[str, Any]:
     return deltas
 
 
+def _rebase_in_progress(git: Git) -> bool:
+    """Whether a `rebase --continue`/`--skip`/`--abort` would find one:
+    `.git/rebase-merge` or `.git/rebase-apply` exists.
+
+    FD7 gap 9/10 review fix: `git rebase` itself checks for a clean working
+    tree BEFORE it creates either directory, so another writer's own
+    uncommitted, unstaged edit sitting elsewhere in the shared checkout
+    (D-1's whole reason this call stages only its own `paths`, never `-A`)
+    makes the very first `git rebase` fail with "You have unstaged
+    changes" - no conflict, no rebase state, nothing for `--skip` or
+    `--abort` to act on. `_rebase`'s own loop used to read that as "the
+    replayed commit came out empty" (no conflicted paths, nothing staged)
+    and call `git rebase --skip`, which itself fails ("no rebase in
+    progress") and returns to the same branch forever - an infinite loop
+    inside `checkout_lock`, holding the checkout for every other writer
+    (reproduced: 16+ minutes before this call, then a timeout kill)."""
+    return git.git_path("rebase-merge").exists() or git.git_path("rebase-apply").exists()
+
+
 def _rebase(git: Git, deltas: dict[str, Any]) -> None:
-    done = git.run("rebase", "-q", UPSTREAM)
+    # `--autostash`: the root fix, not just the loop guard below. Any OTHER
+    # writer's own tracked-file edit left dirty in this shared checkout
+    # (never swept by `_stage`, which only ever stages `own`) would
+    # otherwise make this very call fail before a rebase even starts - two
+    # writers are meant not to block each other (FD7 gap 10), and a rebase
+    # refusing outright over a file this call never touches is exactly
+    # that. `--autostash` stashes any dirty TRACKED changes (never
+    # untracked files, which never blocked a rebase to begin with),
+    # rebases HEAD - which does not carry that other file anyway, since it
+    # was never staged - and restores the stash unchanged the moment the
+    # rebase concludes, success or `--abort`, so the other writer's own
+    # edit is back exactly as it was for its own later call.
+    done = git.run("rebase", "-q", "--autostash", UPSTREAM)
     resolved: dict[str, tuple[int, int]] = {}
     while done.returncode != 0:
+        if not _rebase_in_progress(git):
+            # Not a conflict to resolve at all - the rebase itself never
+            # started (or ended abnormally outside the state files), so
+            # `--skip`/`--abort` have nothing to act on and must not be
+            # called: on a checkout with nothing in progress `--skip` just
+            # fails the same way again, forever (see `_rebase_in_progress`).
+            raise Outcome("error", f"git rebase failed: {tail(done, 10)}")
         conflicted = [
             p for p in git.out("diff", "--name-only", "--diff-filter=U").splitlines() if p
         ]
@@ -680,7 +769,7 @@ def _replay_priority(
     """Upstream's file with this change's other edits merged in and its
     priority moved by the recorded delta; None unless priority is all that
     conflicts."""
-    if not entry or not _play_file(path):
+    if not entry or not play_file(path):
         return None
     base, upstream, mine = (git.show(f":{stage}:{path}") for stage in (1, 2, 3))
     if base is None or upstream is None or mine is None:
@@ -781,7 +870,7 @@ def _conflicts(git: Git, rev: str, decks: list[str]) -> dict[tuple[Any, ...], Pl
             for path in (p for p in listed.split("\0") if p):
                 parts = path.split("/")
                 target = corpus / path
-                if _play_file(path) or (is_plays_path(path) and parts[3] == INPUTS_FILE):
+                if play_file(path) or (is_plays_path(path) and parts[3] == INPUTS_FILE):
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(git.show(f"{rev}:{path}") or "", encoding="utf-8")
                 elif len(parts) == 7 and parts[4:6] == ["domain3-matchup-threat", "matchups"]:

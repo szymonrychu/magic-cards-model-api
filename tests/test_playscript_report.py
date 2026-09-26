@@ -438,7 +438,12 @@ def test_an_admitted_play_closes_every_open_candidate():
     records = [
         decision_row(1, "pass_priority"),
         decision_row(2, "pass_priority", step="combat_damage"),
-        plays_outcome(3, admitted=[{"added": ["new-play"], "updated": [], "reprioritized": []}]),
+        plays_outcome(
+            3,
+            admitted=[
+                {"dsl_change": True, "added": ["new-play"], "updated": [], "reprioritized": []}
+            ],
+        ),
     ]
     verdict = report.assess(records, "alice")
     assert verdict.open == ()
@@ -447,6 +452,26 @@ def test_an_admitted_play_closes_every_open_candidate():
 
 def test_an_admit_carrying_nothing_admitted_closes_nothing():
     records = [decision_row(1, "pass_priority"), plays_outcome(2, admitted=[])]
+    verdict = report.assess(records, "alice")
+    assert len(verdict.open) == 1
+    assert not verdict.satisfied
+
+
+def test_a_reprioritization_only_admit_with_no_real_dsl_change_closes_nothing():
+    """Review fix: `admitted` non-empty is not by itself "development
+    happened" - a pure `plays priority` nudge (`dsl_change: False`, nothing
+    in `added`/`updated`) is not a DSL change, exactly the distinction
+    `mtg_agent.driver.handover.assess`'s own `dsl_change` already draws, and
+    must not silently close every open candidate in the game."""
+    records = [
+        decision_row(1, "pass_priority"),
+        plays_outcome(
+            2,
+            admitted=[
+                {"dsl_change": False, "added": [], "updated": [], "reprioritized": ["some-play"]}
+            ],
+        ),
+    ]
     verdict = report.assess(records, "alice")
     assert len(verdict.open) == 1
     assert not verdict.satisfied

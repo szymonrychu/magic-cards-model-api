@@ -253,34 +253,71 @@ def retire_game(game_id: str) -> dict[str, Any]:
     (`scripts/eval_report.py` reads them): nothing was invalidated or
     released, so both counts are 0 and `ai_seats_released` is `[]`, and the
     note names the runners left to finish. Recorded only when there is
-    something to say - a watcher stopped or a runner still finishing.
+    something to say - a watcher stopped, a runner still finishing, or a
+    human seat's own review Job started (`human_seat_reviews`).
+
+    **FD7 gap 15 wiring**: a human seat has no driver of its own to review
+    its own game while it is live, so this - the one place every natural
+    ending funnels through - is what starts its DR3 review Job
+    (`_start_human_seat_reviews`), kubernetes mode only, exactly like F1's
+    own follow-up. Previously nothing ever called `AiSeatRegistry.
+    start_review_followup` at all, so a human seat's game ending in
+    kubernetes mode never got one.
     """
     watcher_stopped = ai_pregame.stop(game_id)
     finishing = _finishing(game_id)
+    human_reviews = _start_human_seat_reviews(game_id)
     covered: dict[str, Any] = {
         "seats_invalidated": 0,
         "advisors_invalidated": 0,
         "watcher_stopped": watcher_stopped,
         "ai_seats_released": [],
         "post_game_work": finishing,
+        "human_seat_reviews": human_reviews,
     }
     if any(ai_seat.registry.mechanism(uid) for uid, _, _ in _runner_uids(game_id)):
         _arm_release_timer(game_id)
-    if not (watcher_stopped or finishing):
+    if not (watcher_stopped or finishing or human_reviews):
         return covered
     watcher = "stopped" if watcher_stopped else "was not running"
     left = ", ".join(finishing) or "none"
+    note = (
+        f"{RETIRE_REASON}: pregame watcher {watcher}; nothing released, "
+        f"left to finish post-game work [{left}]"
+    )
+    if human_reviews:
+        reviewed = ", ".join(sorted(r["player"] for r in human_reviews))
+        note += f"; started human-seat review job(s) [{reviewed}]"
     audit.record(
         game_id,
         RETIRE_ACTION,
         reason=RETIRE_REASON,
-        note=(
-            f"{RETIRE_REASON}: pregame watcher {watcher}; nothing released, "
-            f"left to finish post-game work [{left}]"
-        ),
+        note=note,
         **covered,
     )
     return covered
+
+
+def _start_human_seat_reviews(game_id: str) -> list[dict[str, Any]]:
+    """FD7 gap 15: start `AiSeatRegistry.start_review_followup` for every
+    HUMAN seat of `game_id` - kubernetes mode only, since that is the only
+    mode with a follow-up mechanism at all (`start_review_followup`'s own
+    docstring). A seat uid is "human" exactly the way `_release_runners`
+    already reads it: the registry holds nothing for a uid nobody ever
+    dispatched an AI runner for (`ai_seat.registry.mechanism(uid) is
+    None`) - never an advisor uid, since a buddy is not itself a seat
+    perspective to review. Idempotent: `start_review_followup` is itself
+    deduped by its own Job label, so a `retire_game` that somehow ran twice
+    for the same game costs nothing beyond a cluster read."""
+    if ai_seat.ai_seat_mode() != "kubernetes":
+        return []
+    started = []
+    for uid, player in store.seat_uids(game_id).items():
+        if ai_seat.registry.mechanism(uid) is not None:
+            continue
+        status = ai_seat.registry.start_review_followup(uid=uid, game_id=game_id, player=player)
+        started.append(status | {"player": player})
+    return started
 
 
 def _arm_release_timer(game_id: str, delay: float | None = None) -> None:

@@ -443,12 +443,19 @@ def decision_candidates(
 @dataclass(frozen=True)
 class Assessment:
     """`assess`'s own verdict: every candidate this seat faced, and which of
-    them are still `open` - closed by neither an admitted play (any
-    `plays_outcome` row of this seat's own that admitted at least one play,
-    the same "development happened this game" signal that already closes
-    every `development_candidates` line - see `mtg_agent.driver.handover.
-    assess`) nor a `plays no-change --decision <seq>` naming one of its own
-    `seqs`."""
+    them are still `open` - closed by neither an admitted play with a real
+    `dsl_change` (any `plays_outcome` row of this seat's own that admitted
+    at least one entry whose `dsl_change` is true, the same "development
+    happened this game" signal that already closes every
+    `development_candidates` line - see `mtg_agent.driver.handover.assess`)
+    nor a `plays no-change --decision <seq>` naming one of its own `seqs`.
+
+    Review fix: an `admitted` entry that is only a `plays priority` nudge
+    (`dsl_change: False`, nothing in `added`/`updated`) is not a DSL change
+    and must not count - `detail.get("admitted")` being a non-empty list is
+    not itself the signal; at least one of its entries must actually carry
+    `dsl_change: true`, exactly the distinction `handover.assess`'s own
+    `dsl_change` accumulator already draws."""
 
     candidates: tuple[DecisionCandidate, ...]
     open: tuple[DecisionCandidate, ...]
@@ -472,8 +479,10 @@ def assess(records: Iterable[Mapping[str, Any]], seat: str) -> Assessment:
         detail = payload.get("detail") or {}
         if detail.get("player") != seat:
             continue
-        if detail.get("admitted"):
-            any_admitted = True
+        for admitted_entry in detail.get("admitted") or ():
+            if isinstance(admitted_entry, Mapping) and admitted_entry.get("dsl_change"):
+                any_admitted = True
+                break
         for entry in detail.get("no_change") or ():
             if not isinstance(entry, Mapping):
                 continue

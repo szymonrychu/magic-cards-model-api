@@ -64,7 +64,7 @@ from typing import Any
 
 from mtg_agent.driver.guides import slugify
 
-from . import content_gate, gitwork
+from . import admit, content_gate, gitwork
 from .content_gate import CONTENT_REFUSED, Undecidable
 from .gitwork import (
     MAIN,
@@ -237,7 +237,7 @@ def _gates(git: Git, decks: list[str]) -> _Scope:
     for plan in scope.plans.values():
         if plan in changed:
             _check_plan(git, plan)
-    _check_content(git, changed, set(scope.plans.values()))
+    _check_content(git, changed, set(scope.plans.values()), decks)
     return scope
 
 
@@ -325,7 +325,7 @@ def _check_markers(git: Git, changed: Iterable[str]) -> None:
         )
 
 
-def _check_content(git: Git, changed: list[str], plans: set[str]) -> None:
+def _check_content(git: Git, changed: list[str], plans: set[str], decks: Iterable[str]) -> None:
     """Refuse a proposal whose ADDED text is about this system rather than
     about playing the deck, before anything is rendered, committed or pushed.
 
@@ -333,6 +333,14 @@ def _check_content(git: Git, changed: list[str], plans: set[str]) -> None:
     and a file the gate cannot read is `refused_content` too, with its own
     "could not decide" reason, rather than admitted unread. Nothing here
     writes: the seat's own text is left exactly as the seat wrote it.
+
+    FD7 gap 11 wiring: `known_play_ids` (`decks`' own corpus play ids at
+    HEAD) and `known_archetypes` (every corpus deck's own archetype name,
+    guided or stub) are `content_gate.system_problem_reasons`'s own two
+    context arguments - built and passed here, the one production caller,
+    so a backticked corpus play id and a matchup archetype name (`the Pod`)
+    actually pass in a real proposal rather than only in `content_gate`'s
+    own unit tests.
     """
     passages: list[str] = []
     for path in changed:
@@ -342,13 +350,55 @@ def _check_content(git: Git, changed: list[str], plans: set[str]) -> None:
             raise Outcome(
                 CONTENT_REFUSED, f"{path}: {content_gate.undecided_message(str(exc))}", files=[path]
             ) from None
-    reasons = content_gate.system_problem_reasons(passages)
+    reasons = content_gate.system_problem_reasons(
+        passages,
+        known_play_ids=_known_play_ids(git, decks),
+        known_archetypes=_known_archetype_names(git),
+    )
     if reasons:
         raise Outcome(
             CONTENT_REFUSED,
             content_gate.refusal_message(reasons),
             files=sorted(set(changed)),
         )
+
+
+def _known_play_ids(git: Git, decks: Iterable[str]) -> frozenset[str]:
+    """Every play id already in `decks`' own corpus at HEAD - the register
+    a guide note names one in ("land `fetch-untapped-shock` on their
+    upkeep"), read the same way `admit.play_file` scopes a play path
+    (`decks/<deck>/plays/<id>.json`, never `inputs.json` or an evidence
+    file)."""
+    ids: set[str] = set()
+    for deck in decks:
+        listed = git.out(
+            "ls-tree", "-r", "--name-only", "HEAD", "--", f"decks/{deck}/plays"
+        ).splitlines()
+        ids.update(Path(path).stem for path in listed if admit.play_file(path))
+    return frozenset(ids)
+
+
+def _known_archetype_names(git: Git) -> frozenset[str]:
+    """Every corpus deck's own archetype name (`archetype.json`'s
+    "archetype" field), guided or stub - a matchup note may name any deck
+    in the corpus as an opponent, not only the ones THIS proposal's own
+    `--deck`s matchup against, and a stub deck (an opponent archetype with
+    no guide of its own yet) is exactly how a rival like "the Pod" is
+    named at all."""
+    listed = git.out("ls-tree", "-r", "--name-only", "HEAD", "--", "decks").splitlines()
+    names: set[str] = set()
+    for path in listed:
+        parts = path.split("/")
+        if len(parts) != 3 or parts[2] != "archetype.json":
+            continue
+        try:
+            doc = json.loads(git.show(f"HEAD:{path}") or "{}")
+        except ValueError:
+            continue
+        archetype = doc.get("archetype") if isinstance(doc, dict) else None
+        if isinstance(archetype, str) and archetype.strip():
+            names.add(archetype.strip())
+    return frozenset(names)
 
 
 def _added_text(git: Git, path: str, is_plan: bool) -> list[str]:
