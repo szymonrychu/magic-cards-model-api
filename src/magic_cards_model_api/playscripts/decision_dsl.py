@@ -706,6 +706,11 @@ def _answer_for_decide(
         if not isinstance(choice, str) or not choice.strip():
             return None, f"decide:{kind}"
         return {"decision": kind, "choice": choice}, None
+    if kind == "put_into_hand_or_graveyard":
+        to_hand = detail.get("to_hand")
+        if not isinstance(to_hand, bool):
+            return None, f"decide:{kind}"
+        return {"decision": kind, "to_hand": to_hand}, None
     if kind == "choose_pile":
         pile_one = detail.get("pile_one")
         if not isinstance(pile_one, bool):

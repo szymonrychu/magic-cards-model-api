@@ -458,6 +458,15 @@ def test_decide_choose_a_mode_is_a_choice_answer():
     }
 
 
+def test_decide_put_into_hand_or_graveyard_is_a_to_hand_answer():
+    record = only(decision_rows([_decide(1, "put_into_hand_or_graveyard", to_hand=False)], SEAT))
+    play = play_of(record)
+    assert play["moves"][0]["answers"][0] == {
+        "decision": "put_into_hand_or_graveyard",
+        "to_hand": False,
+    }
+
+
 def test_decide_choose_pile_is_a_pile_one_answer():
     record = only(decision_rows([_decide(1, "choose_pile", pile_one=False)], SEAT))
     play = play_of(record)

@@ -511,6 +511,13 @@ def test_an_amount_question_pays_nothing():
     assert energy["energy_amount"] == 0
 
 
+def test_put_into_hand_or_graveyard_takes_the_hand():
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.PUT_INTO_HAND_OR_GRAVEYARD)), "alice"
+    )
+    assert body["to_hand"] is True
+
+
 def test_put_on_top_or_bottom_keeps_it_on_top():
     body = baseline_seat.decide_body(
         pending_view(_decision(DecisionKind.PUT_ON_TOP_OR_BOTTOM)), "alice"

@@ -175,7 +175,7 @@
     },
     "Answer": {
       "additionalProperties": false,
-      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; `choice` (O6) is taken only by\n`CHOICE_DECISION_KINDS`; `top_order`/`position` (FB2 A1) and `targets`\n(FB2 A2) are each taken only by their own decision kinds; every other\nkind takes `pick`, `accept`, `to_graveyard`, `to_bottom`, `pile_one` or\n`players`.",
+      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; `choice` (O6) is taken only by\n`CHOICE_DECISION_KINDS`; `top_order`/`position` (FB2 A1) and `targets`\n(FB2 A2) are each taken only by their own decision kinds; every other\nkind takes `pick`, `accept`, `to_graveyard`, `to_bottom`, `pile_one`,\n`to_hand` or `players`.",
       "properties": {
         "accept": {
           "default": null,
@@ -222,6 +222,7 @@
             "pay_life",
             "pay_life_amount",
             "pay_mana",
+            "put_into_hand_or_graveyard",
             "put_on_top_or_bottom",
             "scry",
             "surveil"
@@ -284,6 +285,11 @@
         "to_graveyard": {
           "$ref": "#/$defs/Selector",
           "default": null
+        },
+        "to_hand": {
+          "default": null,
+          "title": "To Hand",
+          "type": "boolean"
         },
         "top_order": {
           "default": null,
@@ -1259,6 +1265,7 @@
             "pay_life",
             "pay_life_amount",
             "pay_mana",
+            "put_into_hand_or_graveyard",
             "put_on_top_or_bottom",
             "scry",
             "surveil"

@@ -5378,6 +5378,17 @@
             "title": "Targets",
             "type": "array"
           },
+          "to_hand": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Hand"
+          },
           "top": {
             "anyOf": [
               {

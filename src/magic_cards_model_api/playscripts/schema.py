@@ -269,6 +269,7 @@ NON_AMOUNT_ANSWER_FIELDS = (
     "to_bottom",
     "choice",
     "pile_one",
+    "to_hand",
     "players",
     "top_order",
     "position",
@@ -854,8 +855,8 @@ class Answer(_Strict):
     decision takes `amount` alone; `choice` (O6) is taken only by
     `CHOICE_DECISION_KINDS`; `top_order`/`position` (FB2 A1) and `targets`
     (FB2 A2) are each taken only by their own decision kinds; every other
-    kind takes `pick`, `accept`, `to_graveyard`, `to_bottom`, `pile_one` or
-    `players`."""
+    kind takes `pick`, `accept`, `to_graveyard`, `to_bottom`, `pile_one`,
+    `to_hand` or `players`."""
 
     decision: DecisionKind
     pick: Pick = None
@@ -870,6 +871,10 @@ class Answer(_Strict):
     #: the same reason the api's own wire shape keeps it separate: a two-way
     #: pile choice is not a yes/no.
     pile_one: bool = None
+    #: `put_into_hand_or_graveyard`'s own answer (Dina's Guidance, CR 608.2d)
+    #: - `True` for the hand, `False` for the graveyard. Not `accept`, for
+    #: the same reason `pile_one` is not.
+    to_hand: bool = None
     #: `choose_players`'s own answer (CR 701.34a's own Proliferate player
     #: half) - which side(s) to choose among `pending_decision.players`,
     #: resolved to real usernames by `runtime.decide_body` the same way a

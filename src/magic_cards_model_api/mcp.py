@@ -2028,6 +2028,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         life_amount: int | None = None,
         choice: str = "",
         top: bool | None = None,
+        to_hand: bool | None = None,
         pile_one: bool | None = None,
         usernames: str = "",
         order: str = "",
@@ -2252,6 +2253,10 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
           the *targeted spell's owner* here, not Subtlety's controller
           (CR 108.3) - check it before answering, since in a two-player game
           it is easy to assume it is always the caster.
+        - `put_into_hand_or_graveyard` (Dina's Guidance's "put it into your
+          hand or graveyard", CR 608.2d): `to_hand` is `True` for your hand,
+          `False` for your graveyard. Not `accept` - a two-way zone choice,
+          not a yes/no.
         - `choose_pile` (CR 700.3's pile primitive - Liliana of the Veil's
           own `-6`, "Separate all permanents target player controls into two
           piles. That player sacrifices all permanents in the pile of their
@@ -2394,6 +2399,8 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             body["choice"] = choice
         if top is not None:
             body["top"] = top
+        if to_hand is not None:
+            body["to_hand"] = to_hand
         if pile_one is not None:
             body["pile_one"] = pile_one
         if usernames:

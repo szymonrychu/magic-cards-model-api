@@ -650,6 +650,7 @@ _DEFAULTED_KINDS = frozenset(
         "assign_combat_damage",
         "choose_pile",
         "choose_players",
+        "put_into_hand_or_graveyard",
     }
 )
 
@@ -714,6 +715,10 @@ def decide_body(pending: dict[str, Any], player: str) -> dict[str, Any]:
         body["life_amount"] = 0
     elif kind == "put_on_top_or_bottom":
         body["top"] = True
+    elif kind == "put_into_hand_or_graveyard":
+        # The hand, matching `machines/decisions.default_answer`'s own
+        # least-destructive default for this kind.
+        body["to_hand"] = True
     elif kind == "choose_pile":
         # CR 700.3's pile primitive - neither pile is more "destructive" than
         # the other (both name the same consequence), so this is

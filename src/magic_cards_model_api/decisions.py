@@ -233,6 +233,7 @@ ANSWERABLE_KINDS = frozenset(
         DecisionKind.CHOOSE_A_QUALITY,
         DecisionKind.CHOOSE_A_MODE,
         DecisionKind.PUT_ON_TOP_OR_BOTTOM,
+        DecisionKind.PUT_INTO_HAND_OR_GRAVEYARD,
         DecisionKind.MULLIGAN,
         DecisionKind.ORDER_TRIGGERS,
         DecisionKind.DECLARE_ATTACKERS,
@@ -267,6 +268,7 @@ ANSWER_FIELD_FOR_KIND: dict[DecisionKind, str] = {
     DecisionKind.MULLIGAN: "accept",
     DecisionKind.OPENING_HAND_ACTION: "accept",
     DecisionKind.PUT_ON_TOP_OR_BOTTOM: "accept",
+    DecisionKind.PUT_INTO_HAND_OR_GRAVEYARD: "accept",
     DecisionKind.PAY_ENERGY_AMOUNT: "amount",
     DecisionKind.PAY_LIFE_AMOUNT: "amount",
     DecisionKind.CHOOSE_CARDS: "card_ids",
@@ -303,6 +305,7 @@ assert set(ANSWER_FIELD_FOR_KIND) == set(DecisionKind)
 #: | `pay_energy_amount`/`pay_life_amount` | `amount` | `energy_amount`/`life_amount` |
 #: | `put_on_top_or_bottom` | `accept` | `top` |
 #: | `choose_pile` | `accept` | `pile_one` |
+#: | `put_into_hand_or_graveyard` | `accept` | `to_hand` |
 #: | `order_triggers` | `card_ids` | `order` |
 #: | `declare_attackers`/`declare_blockers` | `pairs` | `attackers`/`blocks`, on **another tool** |
 #:
@@ -328,6 +331,7 @@ TOOL_FIELD_FOR_KIND: dict[DecisionKind, str] = {
     DecisionKind.MULLIGAN: "accept",
     DecisionKind.OPENING_HAND_ACTION: "accept",
     DecisionKind.PUT_ON_TOP_OR_BOTTOM: "top",
+    DecisionKind.PUT_INTO_HAND_OR_GRAVEYARD: "to_hand",
     DecisionKind.PAY_ENERGY_AMOUNT: "energy_amount",
     DecisionKind.PAY_LIFE_AMOUNT: "life_amount",
     DecisionKind.CHOOSE_CARDS: "card_ids",
@@ -672,6 +676,8 @@ class PendingDecision:
             return "<true to take a mulligan, false to keep this hand>"
         if kind is DecisionKind.PUT_ON_TOP_OR_BOTTOM:
             return "<true for the top of the library, false for the bottom>"
+        if kind is DecisionKind.PUT_INTO_HAND_OR_GRAVEYARD:
+            return "<true for your hand, false for your graveyard>"
         if kind is DecisionKind.CHOOSE_PILE:
             # CR 700.3's pile primitive: `pending_decision.cards` is pile
             # one's own contents (the first player's division), so the
@@ -984,6 +990,19 @@ def top_or_bottom_answer(top: bool | None) -> bool:
     if top is None:
         raise ValueError("this decision needs a top-or-bottom answer ('top')")
     return top
+
+
+def hand_or_graveyard_answer(to_hand: bool | None) -> bool:
+    """A `decide` request body's `to_hand`, in the shape `Game.ask` expects
+    for `PUT_INTO_HAND_OR_GRAVEYARD` (Dina's Guidance's "put it into your
+    hand or graveyard", CR 608.2d) - a plain `bool`, `True` for the hand,
+    `False` for the graveyard. Refuses a missing answer, matching
+    `top_or_bottom_answer`; its own field, not `accept`, for the same reason
+    `top` is: a two-way zone choice, not a yes/no.
+    """
+    if to_hand is None:
+        raise ValueError("this decision needs a hand-or-graveyard answer ('to_hand')")
+    return to_hand
 
 
 def pile_answer(pile_one: bool | None) -> bool:
@@ -1427,6 +1446,11 @@ def validate_answer(decision: Decision, value: object) -> None:
     if decision.kind is DecisionKind.PUT_ON_TOP_OR_BOTTOM:
         if not isinstance(value, bool):
             raise ValueError(f"{decision.prompt}: needs a top-or-bottom bool answer")
+        return
+
+    if decision.kind is DecisionKind.PUT_INTO_HAND_OR_GRAVEYARD:
+        if not isinstance(value, bool):
+            raise ValueError(f"{decision.prompt}: needs a hand-or-graveyard bool answer")
         return
 
     if decision.kind is DecisionKind.CHOOSE_PILE:

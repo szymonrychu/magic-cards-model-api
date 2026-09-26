@@ -4636,6 +4636,14 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["top"] = req.top
+    elif kind is DecisionKind.PUT_INTO_HAND_OR_GRAVEYARD:
+        # Dina's Guidance's "put it into your hand or graveyard" (CR 608.2d):
+        # `True` for the hand, `False` for the graveyard.
+        try:
+            answer_value = decisions.hand_or_graveyard_answer(req.to_hand)
+        except ValueError as exc:
+            return refuse(str(exc), **detail)
+        detail["to_hand"] = req.to_hand
     elif kind is DecisionKind.CHOOSE_PILE:
         # CR 700.3's pile primitive - a plain boolean, the same shape
         # `PUT_ON_TOP_OR_BOTTOM` already is: `True` for pile one

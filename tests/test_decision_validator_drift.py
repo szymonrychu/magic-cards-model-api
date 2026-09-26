@@ -439,6 +439,17 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
         [True, False, "top", None],
     )
 
+    # Dina's Guidance's "put it into your hand or graveyard" (CR 608.2d): a
+    # plain boolean, the same shape `PUT_ON_TOP_OR_BOTTOM` above already is.
+    cases[DecisionKind.PUT_INTO_HAND_OR_GRAVEYARD] = (
+        Decision(
+            kind=DecisionKind.PUT_INTO_HAND_OR_GRAVEYARD,
+            player="alice",
+            prompt="put Grizzly Bears into your hand or graveyard",
+        ),
+        [True, False, "hand", None],
+    )
+
     # CR 700.3's pile primitive (Liliana of the Veil's own `-6`, Do or Die):
     # a plain boolean, the same shape `PUT_ON_TOP_OR_BOTTOM` above already
     # is - `cards` names pile one's own contents, so it carries real ids the

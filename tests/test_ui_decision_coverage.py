@@ -258,6 +258,7 @@ def test_every_ui_decision_kind_has_exactly_one_surface() -> None:
         "choose_a_quality",
         "choose_a_mode",
         "put_on_top_or_bottom",
+        "put_into_hand_or_graveyard",
         "choose_pile",
         "choose_players",
     }
@@ -278,6 +279,7 @@ _POPOVER_KINDS = {
     "choose_a_quality",
     "choose_a_mode",
     "put_on_top_or_bottom",
+    "put_into_hand_or_graveyard",
     "choose_pile",
 }
 

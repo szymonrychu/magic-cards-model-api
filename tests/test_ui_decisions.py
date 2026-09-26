@@ -94,6 +94,7 @@ def test_every_answerable_kind_has_a_view_model() -> None:
             "choose_a_quality",
             "choose_a_mode",
             "put_on_top_or_bottom",
+            "put_into_hand_or_graveyard",
             "choose_pile",
             "choose_players",
             "order_triggers",

@@ -1844,6 +1844,11 @@ def decide_body(
             item["to_bottom"], cards[0], present, untapped_mana=mana, hypo=hypo
         )
         return body
+    if kind == "put_into_hand_or_graveyard" and "to_hand" in item:
+        # Dina's Guidance's "put it into your hand or graveyard" (CR 608.2d):
+        # `True` for the hand, `False` for the graveyard.
+        body["to_hand"] = bool(item["to_hand"])
+        return body
     if kind == "choose_pile" and "pile_one" in item:
         # CR 700.3's pile primitive - a plain boolean, the same shape
         # `put_on_top_or_bottom` already is: `True` for pile one

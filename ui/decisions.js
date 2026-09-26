@@ -350,6 +350,20 @@ function topOrBottom(pending) {
   };
 }
 
+/** Dina's Guidance's "put it into your hand or graveyard" (CR 608.2d): a
+ * plain boolean, the same shape `topOrBottom` already is. */
+function handOrGraveyard(pending) {
+  return {
+    kind: pending.kind,
+    title: pending.source || pending.kind,
+    prompt: pending.prompt,
+    controls: [],
+    submit: { label: "Hand", enabled: true, answer: { to_hand: true } },
+    secondary: { label: "Graveyard", answer: { to_hand: false } },
+    remaining: null,
+  };
+}
+
 /** CR 700.3's pile primitive (Liliana of the Veil's own `-6`, Do or Die): a
  * plain boolean, the same shape `topOrBottom` already is - `pending.cards`
  * names pile one's own contents (the divider's earlier, separate
@@ -538,6 +552,7 @@ export const DECISION_KINDS = {
   choose_a_quality: choice,
   choose_a_mode: choice,
   put_on_top_or_bottom: topOrBottom,
+  put_into_hand_or_graveyard: handOrGraveyard,
   choose_pile: choosePile,
   choose_players: choosePlayers,
   order_triggers: orderTriggers,
@@ -611,6 +626,7 @@ const POPOVER_KINDS = new Set([
   "choose_a_quality",
   "choose_a_mode",
   "put_on_top_or_bottom",
+  "put_into_hand_or_graveyard",
   "choose_pile",
   "opening_hand_action",
 ]);

@@ -416,6 +416,13 @@
         {
           "default": null,
           "has_default": true,
+          "name": "to_hand",
+          "type": "bool | None",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
           "name": "pile_one",
           "type": "bool | None",
           "type_error": null

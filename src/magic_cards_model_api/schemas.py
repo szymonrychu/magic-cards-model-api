@@ -1636,6 +1636,11 @@ class DecideRequest(BoardRead):
     `pending_decision.player`. Not `accept`: this is a top/bottom choice, not
     a yes/no, even though both happen to be booleans. `None` (the default) is
     refused, matching `accept`/`choice`/`energy_amount`."""
+    to_hand: bool | None = None
+    """The `put_into_hand_or_graveyard` kind's answer (Dina's Guidance,
+    CR 608.2d) - `True` for the hand, `False` for the graveyard. Not
+    `accept`, the same reason `top` is not. `None` (the default) is refused,
+    matching `top`."""
     pile_one: bool | None = None
     """The `choose_pile` kind's answer (CR 700.3's pile primitive, Liliana of
     the Veil's own `-6`, Do or Die) - `True` for pile one

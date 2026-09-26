@@ -241,7 +241,8 @@ def test_activate_ability_index_bound_matches_the_schema() -> None:
 def test_doc_names_the_amount_decision_kinds_and_the_amount_field() -> None:
     assert _listed("- Amount decision kinds:") == list(AMOUNT_DECISION_KINDS)
     assert (
-        "amount?: >=0|max, choice?: string, pile_one?: bool, players?: [0-2 me|opponent], "
+        "amount?: >=0|max, choice?: string, pile_one?: bool, to_hand?: bool, "
+        "players?: [0-2 me|opponent], "
         "top_order?: [0-4 select], position?: top|bottom, targets?: [1-6 <target>]}`"
     ) in DOC.read_text()
 
