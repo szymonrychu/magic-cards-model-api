@@ -609,6 +609,18 @@ def run_review(
     (nothing to salvage from IT either) still raises `ReviewFailed`, exactly
     as the single-call version always did.
 
+    **On SUCCESS, both passes' text is kept (review fix, round 2 finding
+    1), not the plays pass's alone.** The first cut of this fix returned
+    only the plays pass's own stdout once it succeeded - correct only if
+    that pass's one buffered answer repeats the critique, which the real
+    `claude --print` CLI does not do: after a run of `mcp-seat` tool calls
+    its final answer is ordinarily a short submission summary ("filed 5
+    decisions..."), not the prose pass 1 already wrote. Filing that summary
+    alone silently dropped the actual critique on the common, SUCCESSFUL
+    path - the one time losing it was least excusable, and it also meant
+    Opus was paid twice to write prose that was then thrown away.
+    `_merge_prose_and_plays` below keeps both.
+
     `timeout`, when given, overrides `settings.review_timeout` for the
     PLAYS pass only - `wrapper.config.scaled_review_timeout` computes it
     from the reviewed game's own decision count (FD6 (3)), so a review with
@@ -634,11 +646,13 @@ def run_review(
     prose_text = _prose_pass(settings, capped_prompt, model, effort, mcp_config)
 
     try:
-        text = _plays_pass(settings, capped_prompt, model, effort, mcp_config, bound)
+        plays_text = _plays_pass(settings, capped_prompt, model, effort, mcp_config, bound)
     except ReviewFailed as exc:
         text = f"{prose_text}\n\n{_plays_phase_failed_note(exc)}" if prose_text else None
         if text is None:
             raise
+    else:
+        text = _merge_prose_and_plays(prose_text, plays_text)
 
     if truncated:
         text = f"{text}\n\n{REVIEW_TRUNCATED_NOTE}"
@@ -763,6 +777,35 @@ def _run_claude(
             else f"claude exited {result.returncode}"
         )
     return result.stdout.strip()
+
+
+#: Labels the plays pass's own closing text when `_merge_prose_and_plays`
+#: appends it after the prose pass's critique - so a reader (or `driver.
+#: review.parse_turning_points`, which only ever looks for its own
+#: `turning_points:` line) is never confused about which section is which,
+#: and a filed review's `turning_points:` line - written by the prose pass,
+#: per `_PROSE_PASS_PREAMBLE` - stays the only one `parse_turning_points`
+#: can find even though the plays pass's own text follows it in the same
+#: document.
+_PLAYS_PASS_LABEL = "--- pass 2 (DSL submission) closing text ---"
+
+
+def _merge_prose_and_plays(prose_text: str, plays_text: str) -> str:
+    """`run_review`'s own success-path merge (review fix, round 2 finding
+    1): the prose pass's critique and turning points first - what a
+    reviewer actually reads - then the plays pass's own closing text
+    labelled and appended after it - what it did with the tools, usually a
+    short submission summary, never a repeat of the critique. Either side
+    empty degrades to the other alone (the prose pass raises instead of
+    returning empty text in practice, but the plays pass's stdout can
+    legitimately be blank), rather than emitting a labelled section with
+    nothing under it."""
+    plays_text = plays_text.strip()
+    if not prose_text:
+        return plays_text
+    if not plays_text:
+        return prose_text
+    return f"{prose_text}\n\n{_PLAYS_PASS_LABEL}\n{plays_text}"
 
 
 def _plays_phase_failed_note(exc: ReviewFailed) -> str:

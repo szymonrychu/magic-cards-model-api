@@ -596,13 +596,21 @@ def test_the_drivers_client_timeout_outlasts_the_wrappers_own_bound() -> None:
 
 
 def test_run_review_returns_stripped_stdout_on_success(tmp_path: Path) -> None:
-    """`run_review` now makes two calls (the prose pass, then the plays
-    pass - see the FD6 (3) review-fix section below), both against this
-    same stub, so the assertion here is only the invariant true of BOTH:
-    `--print` is always present. The plays pass's own `--tools` value is
-    pinned by the dedicated argv tests above (`_captured`, no real
-    subprocess), and the prose pass's by
-    `test_run_review_prose_pass_gets_no_tools_at_all` below."""
+    """`run_review` makes two calls (the prose pass, then the plays pass -
+    see the FD6 (3) review-fix section below), both against this same stub,
+    so `--print` being present is an invariant true of BOTH. The plays
+    pass's own `--tools` value is pinned by the dedicated argv tests above
+    (`_captured`, no real subprocess), and the prose pass's by
+    `test_run_review_prose_pass_gets_no_tools_at_all` below.
+
+    Review fix, round 2 finding 1: on success, `run_review` keeps text from
+    BOTH passes rather than returning only the plays pass's own stdout - see
+    `test_run_review_keeps_the_prose_pass_text_even_when_the_plays_pass_
+    succeeds` below for why discarding the prose pass on the ordinary,
+    successful path is the bug this closes. The stub below still returns
+    identical text from both passes, so this test alone cannot tell a
+    "keep only one" implementation from a "keep both, they happen to
+    match" one - the dedicated test below is what actually pins the merge."""
     stub = _stub(
         tmp_path,
         """
@@ -613,7 +621,41 @@ def test_run_review_returns_stripped_stdout_on_success(tmp_path: Path) -> None:
     )
     settings = _settings(stub, tmp_path)
     text = run_review(settings, "critique this game", "claude-opus-5", "high")
-    assert text == "the review text"
+    assert "the review text" in text
+
+
+def test_run_review_keeps_the_prose_pass_text_even_when_the_plays_pass_succeeds(
+    tmp_path: Path,
+) -> None:
+    """Review fix, round 2 finding 1: the real `claude --print` CLI's one
+    buffered answer, after a run of `mcp-seat` tool calls, is ordinarily a
+    short submission summary ("filed 5 decisions...") - not a repeat of the
+    critique pass 1 already wrote. `run_review`'s success path used to
+    return the plays pass's own stdout ALONE, so a real review would file
+    that summary and silently lose the actual critique on the common,
+    successful path - the one time losing it was least excusable, since
+    nothing failed or timed out.
+
+    The stub below gives each pass genuinely different text (the plays pass
+    is told apart by its non-empty `--tools` flag, exactly like
+    `test_run_review_prose_pass_gets_no_tools_at_all` below tells them
+    apart), so this test fails outright under the old "plays text only"
+    behaviour rather than merely by coincidence."""
+    stub = _stub(
+        tmp_path,
+        """
+        import sys
+        tools = sys.argv[sys.argv.index("--tools") + 1]
+        if tools:
+            print("filed 5 decisions; no further findings")
+        else:
+            print("the critique: turn 3 should have held up the removal spell")
+        """,
+    )
+    settings = _settings(stub, tmp_path)
+    text = run_review(settings, "critique this game", "claude-opus-5", "high")
+    assert "the critique: turn 3 should have held up the removal spell" in text
+    assert "filed 5 decisions; no further findings" in text
 
 
 def test_run_review_raises_on_a_nonzero_exit(tmp_path: Path) -> None:
@@ -847,7 +889,12 @@ def test_run_review_never_marks_truncation_for_an_ordinary_prompt(tmp_path: Path
     )
     settings = _settings(stub, tmp_path)
     text = run_review(settings, "an ordinary prompt", "m", "high")
-    assert text == "the review text"
+    # Both passes' text is kept (review fix, round 2 finding 1) - this stub
+    # answers identically for both, so "in" rather than "==" is what proves
+    # neither pass's text was silently dropped without over-pinning the
+    # exact merged shape, which `test_run_review_keeps_the_prose_pass_text_
+    # even_when_the_plays_pass_succeeds` already does.
+    assert "the review text" in text
     assert "review_truncated" not in text
 
 
@@ -901,7 +948,16 @@ def test_run_review_sends_a_200k_prompt_on_stdin_byte_for_byte(tmp_path: Path) -
     entirely and copies stdin to stdout, so this only passes if the prompt
     actually arrives on stdin: on Linux (`MAX_ARG_STRLEN` = 131072 bytes)
     unchanged code raises `OSError` E2BIG trying to put a 200KB prompt into
-    one argv element, which `run_review` turns into `ReviewFailed`."""
+    one argv element, which `run_review` turns into `ReviewFailed`.
+
+    Both passes get the SAME `cat`-like stub, so each echoes back exactly
+    what it was given on stdin: the plays pass gets the capped prompt
+    verbatim (no preamble - `_PROSE_PASS_PREAMBLE` is prepended to the prose
+    pass's stdin only), and the prose pass gets that preamble plus the same
+    prompt. Review fix, round 2 finding 1 keeps both passes' text, so the
+    byte-for-byte assertion below is against the PLAYS pass's own section of
+    the merged text - the one this test already existed to pin - not the
+    whole merged string."""
     script = tmp_path / "fake-claude"
     script.write_text("#!/bin/sh\ncat\n")
     script.chmod(0o755)
@@ -910,8 +966,10 @@ def test_run_review_sends_a_200k_prompt_on_stdin_byte_for_byte(tmp_path: Path) -
 
     text = run_review(settings, prompt, "m", "high")
 
-    assert text == oneshot._capped(prompt).strip()
-    assert text == prompt  # well under MAX_PROMPT_CHARS, so `_capped` is a no-op
+    prose_part, _, plays_part = text.partition(f"\n\n{oneshot._PLAYS_PASS_LABEL}\n")
+    assert plays_part == oneshot._capped(prompt).strip()
+    assert plays_part == prompt  # well under MAX_PROMPT_CHARS, so `_capped` is a no-op
+    assert prose_part == f"{oneshot._PROSE_PASS_PREAMBLE}{prompt}".strip()
 
 
 def test_argv_never_carries_a_200k_prompt_or_exceeds_max_arg_strlen(tmp_path: Path) -> None:

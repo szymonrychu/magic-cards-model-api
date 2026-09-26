@@ -114,7 +114,38 @@ def test_the_rules_researcher_model_is_its_own_setting():
 def test_review_timeout_scaling_defaults():
     s = Settings.from_env({})
     assert s.review_timeout_per_decision == 6.0
-    assert s.review_timeout_max == 10800.0
+    assert s.review_timeout_max == 4800.0
+
+
+# Review fix, round 2 finding 2: `driver.app.REVIEW_HTTP_TIMEOUT_MAX` is a
+# FIXED constant, computed once (at import time) from the wrapper's DEFAULT
+# `Settings` at an assumed 200-decision ceiling, since the driver runs in a
+# separate container and cannot read a live decision count into a module
+# constant. Before this fix, `review_timeout_max` (10800.0) let the plays
+# pass keep growing past that 200-decision assumption for another ~1000
+# decisions (up to a 1200-decision asymptote) before ITS OWN cap ever
+# engaged - so a real game anywhere in that range (400 decisions was the
+# reported case: 3600 + 400*6 = 6000s of plays-pass budget, worse than the
+# driver was ever told to wait for) ran past the driver's own client
+# timeout, which had already given up and filed `ai_review_failed`,
+# discarding the whole response - prose included - even though the wrapper
+# would have finished within its own bound. `review_timeout_max` now caps
+# the plays pass at EXACTLY what 200 decisions' worth of scaling already
+# produces (`review_timeout` + 200 * `review_timeout_per_decision` = 3600 +
+# 1200 = 4800), so `scaled_review_timeout`/`scaled_review_wall_time` can
+# never exceed what the driver's own fixed ceiling already assumes,
+# regardless of how large the real game's own decision count is - the two
+# sides' bounds are the same number now, not two independently chosen ones
+# that used to drift apart above 200 decisions.
+def test_review_timeout_max_default_never_lets_scaling_outgrow_the_driver_ceiling():
+    s = Settings.from_env({})
+    two_hundred_decisions_worth = s.review_timeout + 200 * s.review_timeout_per_decision
+    assert s.review_timeout_max == two_hundred_decisions_worth
+    # However large the real decision count, the plays pass is bounded at
+    # exactly the same ceiling - never higher, so a driver sized for 200
+    # decisions' worth of waiting is never caught out by a bigger game.
+    assert scaled_review_timeout(s, 400) == s.review_timeout_max
+    assert scaled_review_timeout(s, 100_000) == s.review_timeout_max
 
 
 def test_review_timeout_scaling_env_overrides():

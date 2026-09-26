@@ -181,23 +181,31 @@ def _uncapped_review_http_timeout(decision_count: int) -> float:
     return scaled_review_wall_time(_WRAPPER_DEFAULTS, decision_count) + REVIEW_HTTP_HEADROOM
 
 
-#: The ceiling `review_http_timeout` never crosses, chosen so the fixed
-#: bounds derived from it below (`RETIRE_REVIEW_JOIN_TIMEOUT`, and
-#: `handover.PRESTOP_WAIT_SECONDS`/the Job's `terminationGracePeriodSeconds`
-#: over that) can move by a bounded, deliberate amount rather than needing
-#: to cover the wrapper's own theoretical worst case
-#: (`Settings.review_timeout_max`, up to 10800s of PLAYS-pass budget alone,
-#: reachable only past roughly 1200 decisions). 200 decisions is already
-#: twenty times the ~10-decision point where this bug bites (see the finding
-#: this fixes), and staying at this ceiling keeps `POSTGAME_RELEASE_SECONDS`
-#: (`magic_cards_model_api.lobby`) inside roughly half of the seat Job's own
-#: `activeDeadlineSeconds` - reaching the wrapper's full theoretical ceiling
-#: would need a much larger bump to the Job's own total budget, which is a
-#: cluster-capacity call for the owner, not something this fix reaches for.
-#: A game past this ceiling still gets `_uncapped_review_http_timeout`'s
-#: (smaller) clamped value - `review_http_timeout` below never returns more
-#: than this - so its own review is simply bounded at the same ceiling every
-#: other large game already shares, rather than growing without limit.
+#: The ceiling `review_http_timeout` never crosses, chosen at 200 decisions
+#: so the fixed bounds derived from it below (`RETIRE_REVIEW_JOIN_TIMEOUT`,
+#: and `handover.PRESTOP_WAIT_SECONDS`/the Job's own
+#: `terminationGracePeriodSeconds` over that) move by a bounded, deliberate
+#: amount rather than needing to grow without limit.
+#:
+#: **Review fix, round 2 finding 2: this 200-decision assumption is no
+#: longer just a driver-side choice, it is also `wrapper.config.Settings.
+#: review_timeout_max`'s own default** (`review_timeout` + 200 *
+#: `review_timeout_per_decision` = 3600 + 1200 = 4800, plus the prose pass
+#: and this headroom here) - the wrapper's OWN plays-pass scaling
+#: (`scaled_review_timeout`/`scaled_review_wall_time`) is capped at exactly
+#: this same 200-decision point, so it can never grow past what this
+#: constant already waits for, however large the real game's decision count
+#: is. Before that alignment, the wrapper kept scaling for another ~1000
+#: decisions (up to its OWN, independently-sized 1200-decision asymptote)
+#: past this ceiling, so a real game in that gap (400 decisions was the
+#: reported case) ran past this timeout while the wrapper was still
+#: correctly working - the driver gave up and filed `ai_review_failed`,
+#: losing the whole response, prose included, to a client timeout rather
+#: than any real failure. Moving THIS constant's own decision count instead
+#: would need a much larger bump to the Job's own total termination budget,
+#: which is not what this fix reaches for - `wrapper.config.review_timeout_
+#: max`'s own docstring is the one to change (together with this constant's
+#: `200`) if that ever needs to move.
 REVIEW_HTTP_TIMEOUT_MAX = _uncapped_review_http_timeout(200)
 
 

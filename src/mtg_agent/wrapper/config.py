@@ -122,7 +122,31 @@ class Settings:
     #: The ceiling `scaled_review_timeout` never crosses, however large the
     #: decision count - a runaway game must still fail in bounded time
     #: rather than the review timeout growing without limit.
-    review_timeout_max: float = 10800.0
+    #:
+    #: **4800.0 (review fix, round 2 finding 2), not an independently chosen
+    #: number.** `driver.app.REVIEW_HTTP_TIMEOUT_MAX` is a fixed constant the
+    #: driver computes once, at import time, from THIS module's defaults at
+    #: an assumed 200-decision ceiling (`review_timeout + 200 *
+    #: review_timeout_per_decision` = 3600 + 1200 = 4800) - it runs in a
+    #: separate container with no live decision count and no access to this
+    #: process's env, so it cannot compute a per-request ceiling the way
+    #: `scaled_review_timeout` does. The old default (10800.0) let THIS
+    #: side's own scaling keep growing for another ~1000 decisions (up to a
+    #: 1200-decision asymptote) past that 200-decision assumption before its
+    #: own cap ever engaged, so a real game anywhere in that gap (400
+    #: decisions was the reported case: 3600 + 400*6 = 6000s of plays-pass
+    #: budget) ran past the driver's own client timeout - which had already
+    #: given up and filed `ai_review_failed`, discarding the whole response,
+    #: prose included, even though the wrapper would have finished within
+    #: its own bound. Setting this to exactly what 200 decisions' worth of
+    #: scaling already produces makes the two sides' ceilings the same
+    #: number rather than two independently chosen ones that drift apart
+    #: above 200 decisions - `scaled_review_timeout`/`scaled_review_wall_
+    #: time` can now never exceed what the driver already waits for, no
+    #: matter how large the real game's decision count is.
+    #: `tests/wrapper/test_config.py` pins this alignment; move it only
+    #: together with `driver.app`'s own 200-decision assumption.
+    review_timeout_max: float = 4800.0
     #: FD6 (3) review fix: the budget for `run_review`'s own prose-only
     #: first pass (no tools at all - see `oneshot.run_review`'s own
     #: docstring for why the prose critique now runs as a separate call
@@ -185,7 +209,7 @@ class Settings:
             turn_timeout=_float(env, "TURN_TIMEOUT_SECONDS", 1800.0),
             review_timeout=_float(env, "REVIEW_TIMEOUT_SECONDS", 3600.0),
             review_timeout_per_decision=_float(env, "REVIEW_TIMEOUT_PER_DECISION_SECONDS", 6.0),
-            review_timeout_max=_float(env, "REVIEW_TIMEOUT_MAX_SECONDS", 10800.0),
+            review_timeout_max=_float(env, "REVIEW_TIMEOUT_MAX_SECONDS", 4800.0),
             review_prose_timeout=_float(env, "REVIEW_PROSE_TIMEOUT_SECONDS", 300.0),
             boot_timeout=_float(env, "BOOT_TIMEOUT_SECONDS", 60.0),
             submit_delay=_float(env, "SUBMIT_DELAY_SECONDS", 0.4),
