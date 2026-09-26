@@ -387,6 +387,24 @@ def test_the_review_returns_decisions_and_play_stats_for_a_played_game(
                 assert isinstance(stats[field], int), (seat, field)
             assert stats["added_ids"] == []
             assert stats["updated_ids"] == []
+            # FD7 gap 4: every seat's own play_stats carries a "reviewer"
+            # breakdown, zero when nothing was filed under that role.
+            assert stats["reviewer"] == {
+                "added": 0,
+                "updated": 0,
+                "reprioritized": 0,
+                "added_ids": [],
+                "updated_ids": [],
+            }
+
+        # FD7 gap 4: `dsl_coverage` is the per-kind aggregate across every
+        # seat's own decisions - present whether or not anything is fully
+        # expressible yet.
+        coverage = body["dsl_coverage"]
+        assert coverage["play_land"]["count"] >= 1
+        assert coverage["play_land"]["unexpressible"] == 0
+        assert coverage["concede"]["unexpressible"] == coverage["concede"]["count"]
+        assert coverage["concede"]["labels"] == ["concede"]
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 

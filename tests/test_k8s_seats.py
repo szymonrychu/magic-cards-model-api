@@ -1774,3 +1774,104 @@ def test_reconcile_deletes_a_followup_job_once_its_game_is_gone() -> None:
     report = seats.reconcile(lambda: set())
     assert "mtg-followup-g1-u1" in report["deleted"]
     assert batch.jobs == {}
+
+
+# ---- FD7 gap 15: the human-seat review Job ------------------------------------
+#
+# The only Job path reaching a fresh pod for a game that has already ended
+# (the same guides clone, push credentials, `mode: followup`) - see
+# `k8s_seats.build_review_job`'s own docstring for exactly what this runs
+# today and what is still missing to make it a real DR3 review. Labelled and
+# tracked on its own (`LABEL_REVIEW`), never as F1's own follow-up.
+
+
+def _review_job() -> dict:
+    return k8s_seats.build_review_job(
+        K8sSettings.from_env(ENV),
+        game_id="g1",
+        uid="u1",
+        player="carol",
+        agent=AgentSettings.review_default(),
+    )
+
+
+def test_the_review_job_is_its_own_job_labelled_and_named_on_its_own() -> None:
+    job = _review_job()
+    assert job["metadata"]["name"] == k8s_seats.review_job_name("g1", "u1")
+    assert job["metadata"]["name"] == "mtg-review-g1-u1"
+    labels = {
+        "app.kubernetes.io/name": "mtg-agent",
+        "mtg/game-id": "g1",
+        k8s_seats.LABEL_REVIEW: "u1",
+    }
+    assert job["metadata"]["labels"] == labels
+    assert job["spec"]["template"]["metadata"]["labels"] == labels
+    assert k8s_seats.LABEL_FOLLOWUP not in job["metadata"]["labels"]
+    assert k8s_seats.LABEL_SEAT not in job["metadata"]["labels"]
+    assert _leftover_placeholders(job) == []
+
+
+def test_the_review_job_runs_opus_as_the_human_seats_own_credential() -> None:
+    from mtg_agent.driver.app import DispatchIn
+
+    job = _review_job()
+    agent_env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
+    assert agent_env["MODEL"] == AgentSettings.review_default().model == "claude-opus-5"
+    assert agent_env["MTG_ROLE"] == "seat"
+    driver_env = {e["name"]: e.get("value") for e in _container(job, "driver")["env"]}
+    assert driver_env["SEAT_UID"] == "u1"
+    parsed = DispatchIn.model_validate_json(driver_env["DRIVER_ASSIGNMENT_JSON"])
+    assert (parsed.uid, parsed.player, parsed.role, parsed.mode) == (
+        "u1",
+        "carol",
+        "seat",
+        "followup",
+    )
+    assert parsed.followup is not None
+    assert parsed.followup["candidates"] == {"plays": [], "lines": []}
+    assert parsed.followup["unfinished_reasons"] == []
+
+
+def _start_review(seats: K8sSeats) -> dict:
+    return seats.start_review_followup(
+        uid="u1", game_id="g1", player="carol", agent=AgentSettings.review_default()
+    )
+
+
+def test_a_review_job_is_created_once_and_deduped_by_its_own_label() -> None:
+    seats, batch, _ = make()
+    first = _start_review(seats)
+    assert first["state"] == "scheduled" and first["job"] == "mtg-review-g1-u1"
+    assert first["mechanism"] == "kubernetes"
+    other = K8sSeats(K8sSettings.from_env(ENV), batch, FakeCore(), FakeDriverHttp({}))
+    again = other.start_review_followup(
+        uid="u1", game_id="g1", player="carol", agent=AgentSettings.review_default()
+    )
+    assert again["state"] == "exists" and again["job"] == first["job"]
+    assert batch.creates == 1
+
+
+def test_review_followup_running_reads_the_job_from_the_cluster() -> None:
+    seats, batch, _ = make()
+    assert seats.review_followup_running("u1") is False
+    _start_review(seats)
+    assert seats.review_followup_running("u1") is True
+    batch.jobs["mtg-review-g1-u1"].status.succeeded = 1
+    assert seats.review_followup_running("u1") is False
+
+
+def test_release_review_followup_deletes_the_review_job_only() -> None:
+    seats, batch, _ = make()
+    _start_review(seats)
+    _start_followup(seats)
+    assert seats.release_review_followup("u1") == {"deleted": ["mtg-review-g1-u1"]}
+    assert "mtg-followup-g1-u1" in batch.jobs
+    assert "mtg-review-g1-u1" not in batch.jobs
+
+
+def test_reconcile_deletes_a_review_job_once_its_game_is_gone() -> None:
+    seats, batch, _ = make()
+    _start_review(seats)
+    report = seats.reconcile(lambda: set())
+    assert "mtg-review-g1-u1" in report["deleted"]
+    assert batch.jobs == {}

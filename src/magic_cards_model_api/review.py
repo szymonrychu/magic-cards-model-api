@@ -181,6 +181,7 @@ def build_review(
         "viewer": viewer,
         "decisions": decisions,
         "play_stats": play_stats,
+        "dsl_coverage": dsl_coverage(decisions),
     }
 
 
@@ -268,6 +269,24 @@ def _board_by_perspective(
     return boards
 
 
+#: The keys of `game_play_stats`' own answer that mean something under
+#: `play_stats[seat]["reviewer"]` (FD7 gap 4): what the reviewer's own
+#: `plays_outcome` rows admitted, classified exactly as `admit._landing`
+#: classifies any handover's. `offered`/`used`/`denied`/`passed_over` and
+#: `plays_total`/`plays_move_bearing`/`plays_advice` are dropped from that
+#: sub-object - they are the seat's own script-offer and corpus counts, not
+#: something a reviewer's own admits have a second, competing version of.
+_REVIEWER_STATS_FIELDS = ("added", "updated", "reprioritized", "added_ids", "updated_ids")
+
+#: FD7 gap 4: the role a `plays_outcome` row's own `detail["role"]` carries
+#: when it was filed by the post-game reviewer's own driver rather than by
+#: the seat (`"seat"`) or its advisor (`"advisor"`) - `gitwork.REVIEWER_ROLE`
+#: restated here rather than imported, since this module owns no dependency
+#: on `playscripts.gitwork` otherwise and the string is part of the ledger's
+#: own vocabulary (`PlaysOutcomeIn.role`), not that module's internal detail.
+REVIEWER_ROLE = "reviewer"
+
+
 def _decisions_and_play_stats(
     game_id: str,
     entries: list[dict[str, Any]],
@@ -281,18 +300,38 @@ def _decisions_and_play_stats(
     `viewer` may see - `None` (the admin key, by the time this module ever
     sees it - see `app._review_access`) sees every seat, a seat name sees
     only its own, the identical rule `visibility.hides_script_run` already
-    applies to that seat's own script-run rows."""
+    applies to that seat's own script-run rows.
+
+    **FD7 gap 4.** Every `plays_outcome` row for a seat already counted in
+    its own `added`/`updated`/`reprioritized` totals, whatever `role` filed
+    it - that was already true before this method changed, since the totals
+    never read `role` at all. What is new is `play_stats[seat]["reviewer"]`:
+    the SAME classification, over only the rows this seat's own reviewer
+    filed (`detail["role"] == REVIEWER_ROLE`), so a reader can see how much
+    of a seat's own totals the reviewer contributed without having to
+    subtract anything by hand. `plays_total`/`plays_move_bearing`/
+    `plays_advice` (`corpora.get(seat)`) are handed to `game_play_stats`
+    exactly once per seat, from whatever `corpora` this call itself was
+    given - the caller's own read of the corpus, made when THIS review was
+    built, not a value carried over from an earlier one - so they are
+    "refreshed from the corpus at review time" by construction; there is no
+    second, staler corpus anywhere in this module for them to drift from."""
     if not players:
         return {}, {}
     entries_with_state = _entries_with_frame_views(entries, frame_views)
     admitted_by_seat: dict[str, list[dict[str, Any]]] = {player: [] for player in players}
+    reviewer_admitted_by_seat: dict[str, list[dict[str, Any]]] = {player: [] for player in players}
     for entry in entries:
         if entry["action"] != PLAYS_OUTCOME_ACTION:
             continue
         detail = entry.get("detail") or {}
         player = detail.get("player")
-        if player in admitted_by_seat:
-            admitted_by_seat[player].append(detail.get("admitted") or [])
+        if player not in admitted_by_seat:
+            continue
+        batch = detail.get("admitted") or []
+        admitted_by_seat[player].append(batch)
+        if detail.get("role") == REVIEWER_ROLE:
+            reviewer_admitted_by_seat[player].append(batch)
     decisions: dict[str, list[dict[str, Any]]] = {}
     play_stats: dict[str, dict[str, Any]] = {}
     for seat in players:
@@ -306,10 +345,48 @@ def _decisions_and_play_stats(
             )
         decisions[seat] = rows
         admitted = [entry for batch in admitted_by_seat[seat] for entry in batch]
-        play_stats[seat] = stats.game_play_stats(
+        seat_stats = stats.game_play_stats(
             entries, game_id, seat, corpora.get(seat) or {}, admitted
         )
+        reviewer_admitted = [entry for batch in reviewer_admitted_by_seat[seat] for entry in batch]
+        reviewer_stats = stats.game_play_stats(
+            entries, game_id, seat, corpora.get(seat) or {}, reviewer_admitted
+        )
+        seat_stats["reviewer"] = {key: reviewer_stats[key] for key in _REVIEWER_STATS_FIELDS}
+        play_stats[seat] = seat_stats
     return decisions, play_stats
+
+
+def dsl_coverage(decisions: Mapping[str, list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
+    """`{kind: {count, unexpressible, labels}}` across every seat's own
+    `decisions` (DR2's per-seat list `_decisions_and_play_stats` already
+    built - `action`/`unexpressible` are that same function's own fields,
+    read here rather than recomputed).
+
+    `count` is how many decisions of that kind this game had, across every
+    seat `decisions` carries; `unexpressible` is how many of them could not
+    become a play at all (`row["unexpressible"] is not None`); `labels` is
+    the distinct non-null `unexpressible` reasons seen for that kind,
+    sorted, so a kind's own gap is named without walking `decisions` a
+    second time. A game with no decisions at all is `{}`, never a missing
+    key on some caller's own expected shape.
+
+    Public (FD7 gap 4) so FD5's ops endpoint can call it once per game and
+    fold the answers together into one coverage report across every game -
+    this function itself is scoped to one game's own `decisions`."""
+    coverage: dict[str, dict[str, Any]] = {}
+    for rows in decisions.values():
+        for row in rows:
+            kind = row.get("action")
+            if kind is None:
+                continue
+            entry = coverage.setdefault(kind, {"count": 0, "unexpressible": 0, "labels": set()})
+            entry["count"] += 1
+            label = row.get("unexpressible")
+            if label is not None:
+                entry["unexpressible"] += 1
+                entry["labels"].add(label)
+    return {kind: {**entry, "labels": sorted(entry["labels"])} for kind, entry in coverage.items()}
 
 
 def _ai_review_failures(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:

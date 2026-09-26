@@ -318,3 +318,156 @@ def test_the_evidence_record_round_trips_into_the_evidence_table(tmp_path):
     table = report.evidence_table(tmp_path, "dimir-frog")
 
     assert line_of(table, "frog-attack") == "frog-attack | 1 | 1 | 0 | 0 | 1 | 1"
+
+
+# ======================================================================
+# FD7 (1): decision candidates - every expressible decision `seat` faced is
+# owed a play or a `plays no-change --decision <seq>`, deduped by its
+# generalized DSL (`decision_dsl.decision_rows`' own `dsl`), never only the
+# old declined-offers-plus-repeated-hand-lines set (`development_candidates`,
+# unchanged above and still read by `app._followup_payload`). `assess`
+# reports which of them are still open.
+# ======================================================================
+
+
+def decision_row(
+    seq: int,
+    action: str,
+    *,
+    player: str = "alice",
+    turn: int = 3,
+    step: str = "precombat_main",
+    active_player: str = "alice",
+    **detail: Any,
+) -> dict[str, Any]:
+    """A ledger row shaped for `decision_dsl.decision_rows` (`turn`/`step`/
+    `active_player` top-level, as `audit.entries()` writes them) - matching
+    `tests/test_decision_dsl.py`'s own `row()`, not this file's `row()`,
+    which never carries `step`/`active_player` and so never yields a
+    `dsl` for anything but the vocabulary gaps."""
+    return {
+        "seq": seq,
+        "action": action,
+        "detail": {"player": player, "allowed": True, **detail},
+        "turn": turn,
+        "step": step,
+        "active_player": active_player,
+    }
+
+
+def plays_outcome(seq: int, player: str = "alice", **detail: Any) -> dict[str, Any]:
+    return {
+        "seq": seq,
+        "action": audit.PLAYS_OUTCOME_ACTION,
+        "detail": {"player": player, **detail},
+        "turn": 3,
+    }
+
+
+def test_every_expressible_decision_is_a_candidate():
+    records = [
+        decision_row(1, "pass_priority"),
+        decision_row(2, "pass_priority", step="combat_damage"),
+    ]
+    candidates = report.decision_candidates(records, "alice")
+    assert {c.seqs for c in candidates} == {(1,), (2,)}
+
+
+def test_repeated_identical_decisions_are_one_candidate_deduped_by_generalized_dsl():
+    records = [decision_row(1, "pass_priority"), decision_row(2, "pass_priority")]
+    candidates = report.decision_candidates(records, "alice")
+    assert len(candidates) == 1
+    assert candidates[0].seqs == (1, 2)
+    assert candidates[0].id == report.decision_candidate_id(1)
+
+
+def test_an_unexpressible_decision_is_never_a_candidate():
+    records = [decision_row(1, "mulligan_declared", keep=True), decision_row(2, "concede")]
+    assert report.decision_candidates(records, "alice") == ()
+
+
+def test_a_different_seats_decisions_are_not_this_seats_candidates():
+    records = [decision_row(1, "pass_priority", player="bob", active_player="bob")]
+    assert report.decision_candidates(records, "alice") == ()
+
+
+def test_assess_reports_every_candidate_as_open_with_nothing_in_the_ledger():
+    records = [
+        decision_row(1, "pass_priority"),
+        decision_row(2, "pass_priority", step="combat_damage"),
+    ]
+    verdict = report.assess(records, "alice")
+    assert len(verdict.candidates) == 2
+    assert {c.id for c in verdict.open} == {c.id for c in verdict.candidates}
+    assert not verdict.satisfied
+
+
+def test_a_no_change_by_decision_closes_only_its_own_candidate():
+    records = [
+        decision_row(1, "pass_priority"),
+        decision_row(2, "pass_priority", step="combat_damage"),
+        plays_outcome(
+            3,
+            admitted=[],
+            no_change=[{"candidate": report.decision_candidate_id(1), "reason": "fine as is"}],
+        ),
+    ]
+    verdict = report.assess(records, "alice")
+    assert len(verdict.candidates) == 2
+    assert [c.seqs for c in verdict.open] == [(2,)]
+    assert not verdict.satisfied
+
+
+def test_a_no_change_closes_every_seq_of_its_own_group():
+    records = [
+        decision_row(1, "pass_priority"),
+        decision_row(2, "pass_priority"),
+        plays_outcome(
+            3,
+            admitted=[],
+            no_change=[{"candidate": report.decision_candidate_id(1), "reason": "fine as is"}],
+        ),
+    ]
+    verdict = report.assess(records, "alice")
+    assert len(verdict.candidates) == 1
+    assert verdict.open == ()
+    assert verdict.satisfied
+
+
+def test_an_admitted_play_closes_every_open_candidate():
+    records = [
+        decision_row(1, "pass_priority"),
+        decision_row(2, "pass_priority", step="combat_damage"),
+        plays_outcome(3, admitted=[{"added": ["new-play"], "updated": [], "reprioritized": []}]),
+    ]
+    verdict = report.assess(records, "alice")
+    assert verdict.open == ()
+    assert verdict.satisfied
+
+
+def test_an_admit_carrying_nothing_admitted_closes_nothing():
+    records = [decision_row(1, "pass_priority"), plays_outcome(2, admitted=[])]
+    verdict = report.assess(records, "alice")
+    assert len(verdict.open) == 1
+    assert not verdict.satisfied
+
+
+def test_no_decisions_is_satisfied_with_nothing_open():
+    verdict = report.assess([], "alice")
+    assert verdict.candidates == ()
+    assert verdict.open == ()
+    assert verdict.satisfied
+
+
+def test_a_no_change_or_admit_for_another_seat_does_not_close_this_seats_candidate():
+    records = [
+        decision_row(1, "pass_priority"),
+        plays_outcome(
+            2,
+            player="bob",
+            admitted=[{"added": ["new-play"], "updated": [], "reprioritized": []}],
+        ),
+    ]
+    verdict = report.assess(records, "alice")
+    assert len(verdict.open) == 1
+    assert not verdict.satisfied

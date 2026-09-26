@@ -3019,6 +3019,21 @@ class ReviewDecision(BaseModel):
     unexpressible: str | None = None
 
 
+class ReviewerPlayStats(BaseModel):
+    """FD7 gap 4: the same `added`/`updated`/`reprioritized` classification
+    `ReviewPlayStats` carries for a seat's own totals, over only the
+    `plays_outcome` rows the post-game reviewer filed (`detail["role"] ==
+    "reviewer"`) - `review.py`'s own `_REVIEWER_STATS_FIELDS`. Zero fields
+    and empty id lists, never a missing key, when the reviewer filed
+    nothing under this seat at all."""
+
+    added: int = 0
+    updated: int = 0
+    reprioritized: int = 0
+    added_ids: list[str] = Field(default_factory=list)
+    updated_ids: list[str] = Field(default_factory=list)
+
+
 class ReviewPlayStats(BaseModel):
     """One seat's per-game play-script statistics (DR2,
     `playscripts.stats.game_play_stats`): its registered corpus size, split
@@ -3039,6 +3054,22 @@ class ReviewPlayStats(BaseModel):
     reprioritized: int = 0
     added_ids: list[str] = Field(default_factory=list)
     updated_ids: list[str] = Field(default_factory=list)
+    reviewer: ReviewerPlayStats = Field(default_factory=ReviewerPlayStats)
+    """FD7 gap 4: this seat's own totals above already include whatever the
+    reviewer admitted, whichever role filed it - this is the same admits,
+    counted again on their own, so a reader can see how much of the totals
+    the reviewer itself contributed without subtracting by hand."""
+
+
+class ReviewDslCoverage(BaseModel):
+    """FD7 gap 4: one decision kind's own DSL coverage for a game
+    (`review.dsl_coverage`) - `count` decisions of this kind, `unexpressible`
+    of them that could not become a play at all, and the distinct
+    `unexpressible` reasons (`labels`) seen for it."""
+
+    count: int = 0
+    unexpressible: int = 0
+    labels: list[str] = Field(default_factory=list)
 
 
 class GameReviewResponse(BaseModel):
@@ -3111,6 +3142,11 @@ class GameReviewResponse(BaseModel):
     """DR2: one `ReviewPlayStats` per seat named in `decisions` - the same
     per-seat visibility rule, computed whether or not that seat's
     `decisions` list happens to be empty."""
+    dsl_coverage: dict[str, ReviewDslCoverage] = Field(default_factory=dict)
+    """FD7 gap 4 (`review.dsl_coverage`): `{kind: {count, unexpressible,
+    labels}}` across every seat's own `decisions` this `viewer` may see -
+    empty for a game with none. FD5's ops endpoint calls the same function
+    once per game to aggregate this across every game."""
 
 
 class DeleteGameResponse(BaseModel):

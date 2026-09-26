@@ -971,6 +971,44 @@ class AiSeatRegistry:
         except Exception:  # noqa: BLE001 - unknown, and the caller says what that means
             return None
 
+    def start_review_followup(self, *, uid: str, game_id: str, player: str) -> dict[str, Any]:
+        """FD7 gap 15: schedule the human seat `uid`'s own post-game review
+        Job (`k8s_seats.build_review_job` - see its own docstring for
+        exactly what it runs today and what is still missing).
+
+        **Kubernetes mode only, exactly like F1's own follow-up**: a review
+        needs a pod of its own with a fresh /guides clone and the same push
+        credentials, which only a kubernetes Job has. In `compose` (or any
+        other mode) this answers `state: unavailable` with the reason - a
+        human seat never gets an automatic review outside kubernetes,
+        because compose mode has no follow-up mechanism at all for ANY
+        seat, human or AI. Never raises: a cluster that refuses answers
+        `state: failed`."""
+        mode = ai_seat_mode()
+        if mode != "kubernetes":
+            return {
+                "uid": uid,
+                "mechanism": None,
+                "state": "unavailable",
+                "reason": (
+                    f"AI_SEAT_MODE={mode}: a human seat's own post-game review runs only as a "
+                    "kubernetes Job, with a /guides clone of its own - compose mode has no "
+                    "follow-up mechanism at all, for a human seat or an AI one"
+                ),
+            }
+        try:
+            status = k8s_seats.get().start_review_followup(
+                uid=uid, game_id=game_id, player=player, agent=AgentSettings.review_default()
+            )
+        except Exception as exc:  # noqa: BLE001 - report, never raise
+            return {
+                "uid": uid,
+                "mechanism": "kubernetes",
+                "state": "failed",
+                "reason": f"kubernetes review scheduling failed: {exc}",
+            }
+        return status
+
     def mechanism(self, uid: str) -> str | None:
         """What this registry holds for `uid` - `subprocess`, `wrapper` or
         `kubernetes` - or `None` when it holds nothing `release` would let go

@@ -23,11 +23,27 @@ first found each play, and survives `admit`. A larger step is refused as
    run with `python3` because the agent image has no mise (`gate_failed`,
    fail closed when the script is missing);
 5. ratchets conflicts: a play-conflict or next-conflict warning present after
-   the change and not before it is refused (`conflict_regression`);
+   the change and not before it is refused per file (FD7 gap 9,
+   `_drop_conflicting_plays`) - a batch's own clean plays still land, the
+   culprits are reverted out of the commit and named, with their reason, in
+   `refused_files`. The ratchet's own detection is unchanged; only what a
+   caller with several own files gets back is. It still fails the whole
+   batch closed (`conflict_regression`) when a culprit is not itself part of
+   this diff, or when nothing would survive dropping the culprits;
 6. pushes `HEAD:main`, never forced; a non-fast-forward goes back to 3, at
    most three pushes. After the third the commit is soft-reset, the change
    is left uncommitted on the newest upstream, and the result is `error`
    with `retryable: true`: run the same command again.
+
+**FD7 gap 10: only this call's own dirty plays paths are staged**, never
+`git add -A` over the whole checkout - see `admit`'s own docstring for the
+three-tier `paths` fallback that decides which paths those are. Two writers
+sharing one checkout (the handover and the post-game reviewer, most often)
+can each have their own uncommitted edit sitting in the tree at once; this
+call stages and commits only its own, and a refusal - the file-outside-scope
+one, a gate failure, or a per-file conflict refusal - restores only the
+paths this call itself touched, leaving the other writer's own edit exactly
+as it was for its own later call.
 
 Before step 2, `admit` picks up the driver's evidence file for this game:
 `$MTG_EVIDENCE_DIR/<game_id>/<deck>.json`, when it exists and parses as
@@ -59,6 +75,7 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +98,7 @@ from .gitwork import (
 )
 from .inputs import INPUTS_FILE
 from .lint import CardIndex, PlaysWarning, check_deck
+from .report import decision_candidate_id
 
 #: Where the driver drops each game's evidence record for `admit` to pick up
 #: (`<dir>/<game_id>/<deck>.json`), set on the agent container.
@@ -243,7 +261,9 @@ def _set_priority(
 # -- plays admit ----------
 
 
-def admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
+def admit(
+    root: Path, deck: str, game_id: str, *, paths: Sequence[str] | None = None
+) -> dict[str, Any]:
     """One admit, with the checkout held exclusively for the whole of it.
 
     D-1: `_admit`'s fetch-and-rebase-and-push sequence shares the index,
@@ -251,10 +271,28 @@ def admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
     a second committer arriving inside it corrupts the sequence rather than
     merely losing a race. `gitwork.checkout_lock` is what makes "one writer
     in this checkout at a time" true across processes - the handover turn's
-    subagents and the reviewer's own write channel included."""
+    subagents and the reviewer's own write channel included.
+
+    **FD7 gap 10: `paths` scopes what THIS call stages.** Two writers can
+    each have their own uncommitted edit sitting in the SAME shared checkout
+    at once (D-1's own reason this whole function is written the way it
+    is), and `git add -A` used to sweep both into whichever one called
+    `admit` first - so a file the OTHER writer's edit had already left
+    behind (refused, or simply not yet ready) rode along and failed this
+    call too, or landed half-finished. `paths` is the caller's own answer to
+    "which of the dirty plays are mine": every path here that is actually
+    dirty is staged, everything else in the tree is left exactly as it was
+    for its own writer's own later call. Left `None` (every caller before
+    this one, and `seat_cli`'s CLI, which passes none), the caller's own
+    journal answers instead - `MTG_ROLE`'s own prior `plays priority` lines
+    for this `game_id` (`gitwork.RESULTS_JOURNAL`, `role`-scoped, so one
+    writer's tracked nudge is never read as another's) - and only when that
+    journal names nothing at all does this fall back to the old "every dirty
+    play path", since a raw content edit carries no journal trace of its
+    own to recover."""
     root = Path(root).resolve()
     return gitwork.run_journaled(
-        root, "admit", game_id, [deck], lambda: (_admit(root, deck, game_id), {})
+        root, "admit", game_id, [deck], lambda: (_admit(root, deck, game_id, paths), {})
     )
 
 
@@ -266,13 +304,24 @@ def no_change(
     play: str | None,
     line: str | None,
     reason: str,
+    decision: int | None = None,
 ) -> dict[str, Any]:
     """`plays no-change`: record why one candidate needs no DSL change.
 
-    A candidate is a play the seat declined or passed over, or a line it
-    played by hand more than once; the handover must land a DSL change or
-    say, once per candidate, why none is due. Nothing in the checkout
-    changes - the journal line is the whole effect."""
+    A candidate is a play the seat declined or passed over, a line it played
+    by hand more than once, or (FD7) an expressible decision named by its own
+    ledger `seq` (`--decision`, `report.decision_candidate_id` - one
+    no-change closes every occurrence `report.assess` grouped with it, since
+    they all share the same generalized play). The handover must land a DSL
+    change or say, once per candidate, why none is due. Nothing in the
+    checkout changes - the journal line is the whole effect.
+
+    `--decision`'s journal entry is written under the key `candidate`
+    (`report.decision_candidate_id(decision)`), not `decision` - the key
+    `mtg_agent.driver.handover.assess` already reads as its own third
+    fallback (`entry.get("play") or entry.get("line") or entry.get(
+    "candidate")`), so a decision no-change reaches a filed `plays_outcome`
+    row's `no_change` list exactly like the older two candidate kinds do."""
     root = Path(root).resolve()
 
     def body() -> tuple[dict[str, Any], dict[str, Any]]:
@@ -286,11 +335,15 @@ def no_change(
             if not line.strip():
                 raise Outcome("refused", "--line names the hand-played line; it is empty")
             candidate["line"] = line.strip()
+        if decision is not None:
+            candidate["candidate"] = decision_candidate_id(decision)
         if len(candidate) != 1:
-            raise Outcome("refused", "name exactly one candidate: --play ID or --line TEXT")
+            raise Outcome(
+                "refused", "name exactly one candidate: --play ID, --line TEXT or --decision SEQ"
+            )
         if not reason.strip():
             raise Outcome("refused", "--reason says why no change is due; it is empty")
-        named = candidate.get("play") or candidate.get("line")
+        named = candidate.get("play") or candidate.get("line") or candidate.get("candidate")
         done = result("recorded", f"no change for {named}: {reason.strip()}", **candidate)
         return done, {**candidate, "reason": reason.strip()}
 
@@ -375,7 +428,65 @@ def _landing(git: Git) -> _Landing:
     return landing
 
 
-def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
+def _journaled_paths_by_role(git: Git, game_id: str) -> dict[str, set[str]]:
+    """Every role's own prior `plays priority` lines for `game_id`, by path
+    - `{role: {path, ...}}` - the journal half of `admit`'s `paths` fallback
+    (see its own docstring). Every successful `priority_set` journals its
+    own `files: [<path>]` (`set_priority`'s own `body`) and its own `role`
+    (`gitwork.journal`'s own `MTG_ROLE`); a refused one journals no `files`
+    at all, so it is never mistaken for a path that role touched. Never
+    raises: an unreadable or missing journal is simply nothing found, same
+    as `gitwork.append_journal_line`'s own "never fail the command"."""
+    by_role: dict[str, set[str]] = {}
+    try:
+        text = gitwork.journal_path(git.root).read_text(encoding="utf-8")
+    except OSError:
+        return by_role
+    for line in text.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("game_id") != game_id or entry.get("command") != "priority":
+            continue
+        role = entry.get("role")
+        if not isinstance(role, str):
+            continue
+        for path in entry.get("files") or ():
+            if isinstance(path, str):
+                by_role.setdefault(role, set()).add(path)
+    return by_role
+
+
+def _own_paths(
+    git: Git, game_id: str, changed: list[str], paths: Sequence[str] | None
+) -> list[str]:
+    """The paths THIS `admit` call stages - see `admit`'s own docstring for
+    the three-tier fallback (`paths`, then the journal, then everything).
+
+    The journal tier is role-scoped both ways: this role's own tracked
+    paths are used when there are any, and otherwise the "everything" tier
+    still excludes whatever the journal shows ANOTHER role tracked for this
+    game - a priority nudge the seat journaled is never this reviewer's own
+    path to sweep up, even on a call that itself has nothing tracked at
+    all."""
+    if paths is not None:
+        wanted = set(paths)
+        return sorted(p for p in changed if p in wanted)
+    who = os.environ.get("MTG_ROLE", "").strip() or "seat"
+    by_role = _journaled_paths_by_role(git, game_id) if game_id else {}
+    own_tracked = by_role.get(who, set())
+    if own_tracked:
+        return sorted(p for p in changed if p in own_tracked)
+    other_tracked = {path for role, paths_ in by_role.items() if role != who for path in paths_}
+    return sorted(p for p in changed if is_plays_path(p) and p not in other_tracked)
+
+
+def _admit(
+    root: Path, deck: str, game_id: str, paths: Sequence[str] | None = None
+) -> dict[str, Any]:
     check_name("deck", deck)
     check_name("game id", game_id)
     git = Git(root, identity(deck))
@@ -394,8 +505,15 @@ def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
     evidence = _pick_up_evidence(root, deck, game_id)
     if evidence is not None:
         changed = git.changed_paths()
-    picked = {"evidence": evidence} if evidence is not None and evidence in changed else {}
-    if not changed and not local:
+    own = _own_paths(git, game_id, changed, paths)
+    if evidence is not None and evidence in changed and evidence not in own:
+        # Evidence is `admit`'s own mechanism, game-id-scoped by construction
+        # (`decks/<deck>/plays/evidence/<game_id>.json`), never another
+        # writer's file to leave behind - always this call's own, whichever
+        # tier picked `own` from.
+        own = sorted({*own, evidence})
+    picked = {"evidence": evidence} if evidence is not None and evidence in own else {}
+    if not own and not local:
         _save_deltas(git, {})
         return result(
             "nothing_to_admit",
@@ -407,31 +525,35 @@ def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
             **picked,
         )
 
-    deltas = _sync_deltas(git, sorted(set(changed) | set(local)))
+    deltas = _sync_deltas(git, sorted(set(own) | set(local)))
     committed = False
-    if changed:
-        priorities = _priority_changes(git, changed)
-        # No pathspec: `outside` above already refused any change beyond
-        # decks/*/plays/**, and a pathspec-restricted `add -A -- <path>`
-        # fails with "did not match any files" for a play retired with
-        # `git rm` (fully gone from both tree and index, so no path is left
-        # to match) - a plain `add -A` stages it, and everything else, the
-        # same way `git add -A` always has.
-        git.out("add", "-A")
+    if own:
+        priorities = _priority_changes(git, own)
+        # A pathspec, not `-A`: FD7 gap 10 - `outside` above already refused
+        # any change beyond decks/*/plays/**, but the working tree can still
+        # hold ANOTHER writer's own dirty plays paths, which `own` has
+        # already excluded and which must stay exactly as they are.
+        git.out("add", "--", *own)
         message = commit_message(f"Plays: {deck} after game {game_id}", game_id, priorities)
         git.out("commit", "-q", "--no-verify", "-F", "-", input=message)
         committed = True
 
+    refused_files: list[dict[str, Any]] = []
     for _ in range(PUSH_ATTEMPTS):
         git.fetch()
         _rebase(git, deltas)
         try:
             _gate(git)
-            _ratchet(git)
         except Outcome:
             if committed:
                 # The change goes back to the index, on the new upstream, for
                 # the agent to fix and admit again as one commit.
+                git.out("reset", "-q", "--soft", "HEAD~1")
+            raise
+        try:
+            refused_files = _drop_conflicting_plays(git, deck, committed)
+        except Outcome:
+            if committed:
                 git.out("reset", "-q", "--soft", "HEAD~1")
             raise
         landing = _landing(git)
@@ -446,6 +568,7 @@ def _admit(root: Path, deck: str, game_id: str) -> dict[str, Any]:
                 added=landing.added,
                 updated=landing.updated,
                 reprioritized=landing.reprioritized,
+                refused_files=refused_files,
                 **picked,
             )
 
@@ -661,23 +784,107 @@ def _conflicts(git: Git, rev: str, decks: list[str]) -> dict[tuple[Any, ...], Pl
     return found
 
 
-def _ratchet(git: Git) -> None:
+def _new_conflicts(git: Git) -> list[PlaysWarning]:
+    """Every conflict warning present at `HEAD` and not at `UPSTREAM`, over
+    every deck this change touches - the ratchet's own detection, unchanged
+    by FD7: only what a caller does with the answer changed (`_ratchet`
+    below, and `_drop_conflicting_plays`)."""
     decks = sorted(
         {p.split("/")[1] for p in git.paths_between(UPSTREAM, "HEAD") if is_plays_path(p)}
     )
     if not decks:
-        return
+        return []
     before = _conflicts(git, UPSTREAM, decks)
     after = _conflicts(git, "HEAD", decks)
-    new = [after[key] for key in sorted(set(after) - set(before))]
-    if not new:
-        return
+    return [after[key] for key in sorted(set(after) - set(before))]
+
+
+def _conflict_dict(warning: PlaysWarning) -> dict[str, Any]:
+    return {
+        "code": warning.code,
+        "path": warning.path,
+        "plays": warning.plays,
+        "message": warning.message,
+    }
+
+
+def _regression_outcome(new: list[PlaysWarning], *, refused: Sequence[str] = ()) -> Outcome:
     named = "; ".join(f"{w.code} {' / '.join(w.plays)}" for w in new)
-    raise Outcome(
+    also = f", even after refusing {', '.join(sorted(refused))}" if refused else ""
+    return Outcome(
         "conflict_regression",
-        f"this change introduces {len(new)} play conflict(s) that were not there before "
+        f"this change introduces {len(new)} play conflict(s) that were not there before{also} "
         f"({named}): {REGRESSION_ADVICE}",
-        new_conflicts=[
-            {"code": w.code, "path": w.path, "plays": w.plays, "message": w.message} for w in new
-        ],
+        new_conflicts=[_conflict_dict(w) for w in new],
     )
+
+
+def _ratchet(git: Git) -> None:
+    """The old, whole-batch caller: still exactly what it always raised,
+    over the whole diff, unchanged - kept for anything that still wants an
+    all-or-nothing ratchet rather than `_drop_conflicting_plays`'s per-file
+    one (nothing in this codebase does any more; `_admit` uses the latter)."""
+    new = _new_conflicts(git)
+    if new:
+        raise _regression_outcome(new)
+
+
+def _drop_conflicting_plays(git: Git, deck: str, committed: bool) -> list[dict[str, Any]]:
+    """FD7 gap 9: a batch with one conflicting play admits the clean ones.
+
+    `_new_conflicts` is unchanged - what changes is what happens with a
+    non-empty answer. A play id a new conflict names is a culprit only when
+    it is itself part of THIS commit's own diff (`touched`, this `deck`'s
+    changed paths between `UPSTREAM` and `HEAD`): a conflict naming a
+    pre-existing, untouched play alongside a fresh one is not something
+    reverting our own file leaves any better, so that still fails the whole
+    batch closed, exactly as before (every existing `conflict_regression`
+    test, all of which touch exactly one play, is unaffected).
+
+    Every culprit that IS part of this diff is reverted out of it
+    (`_restore_path`) and reported as `{"path", "reason"}`; the commit is
+    amended to the reduced diff, and `_new_conflicts` runs once more to
+    confirm the drop actually cleared it (a conflict a single file's own
+    revert cannot resolve - e.g. it recurs between two of this batch's own
+    surviving files - still fails closed, naming what refusing the culprits
+    already found was not enough)."""
+    new = _new_conflicts(git)
+    if not new:
+        return []
+    touched = {
+        Path(p).stem: p
+        for p in git.paths_between(UPSTREAM, "HEAD")
+        if is_plays_path(p) and p.split("/")[1] == deck
+    }
+    culprits: dict[str, list[str]] = {}
+    for warning in new:
+        for play_id in warning.plays:
+            if play_id in touched:
+                culprits.setdefault(play_id, []).append(warning.message)
+    survivors = sorted(set(touched) - set(culprits))
+    if not culprits or not survivors:
+        raise _regression_outcome(new)
+
+    for play_id in sorted(culprits):
+        _restore_path(git, touched[play_id])
+    message = git.out("log", "-1", "--format=%B")
+    git.out("commit", "-q", "--amend", "--no-verify", "-F", "-", input=message)
+
+    remaining = _new_conflicts(git)
+    if remaining:
+        raise _regression_outcome(remaining, refused=culprits)
+    return [
+        {"path": touched[play_id], "reason": "; ".join(dict.fromkeys(reasons))}
+        for play_id, reasons in sorted(culprits.items())
+    ]
+
+
+def _restore_path(git: Git, path: str) -> None:
+    """Undo `path`'s own change against `UPSTREAM`: its content there when
+    it had any, or removed outright when it did not exist there at all -
+    FD7's "a refusal restores only those paths", scoped to this one."""
+    if git.show(f"{UPSTREAM}:{path}") is not None:
+        git.out("checkout", UPSTREAM, "--", path)
+        git.out("add", "--", path)
+    else:
+        git.out("rm", "-f", "-q", "--", path)

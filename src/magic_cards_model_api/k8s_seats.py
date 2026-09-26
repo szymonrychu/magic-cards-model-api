@@ -101,6 +101,14 @@ _JOB_PREFIX = {ROLE_SEAT: "mtg-seat", ROLE_ADVISOR: "mtg-buddy"}
 #: as the seat itself. It is also the label the follow-up is deduped by.
 LABEL_FOLLOWUP = "mtg/followup-of"
 
+#: FD7 gap 15: a human seat's post-game review Job carries this label
+#: instead of `LABEL_FOLLOWUP` - a human seat has no registered corpus and
+#: no unfinished handover, so its post-game Job is never F1's own, and must
+#: never be swept up, deduped or released as if it were one. See
+#: `build_review_job`'s own docstring for exactly what this Job runs today,
+#: and what is still missing to make it a real review.
+LABEL_REVIEW = "mtg/review-of"
+
 #: A seat's (or buddy's) Job deadline: the whole match plus its post-game
 #: work. The runaway-match backstop `lobby.POSTGAME_RELEASE_SECONDS` sits
 #: inside.
@@ -174,6 +182,13 @@ def followup_job_name(game_id: str, uid: str) -> str:
     """The follow-up Job's name for `uid`'s handover in `game_id`:
     `mtg-followup-<game>-<uid>`, one per (game, uid) by construction."""
     return f"mtg-followup-{game_id[:8]}-{uid[:8]}"
+
+
+def review_job_name(game_id: str, uid: str) -> str:
+    """The human-seat review Job's name for `uid` in `game_id`:
+    `mtg-review-<game>-<uid>`, one per (game, uid) by construction - see
+    `build_review_job`."""
+    return f"mtg-review-{game_id[:8]}-{uid[:8]}"
 
 
 def job_name(game_id: str, uid: str, role: str = ROLE_SEAT) -> str:
@@ -414,6 +429,72 @@ def build_followup_job(
         "mtg/model": agent.model,
         "mtg/effort": agent.effort,
         "mtg/followup": "the DSL development an unfinished handover left open",
+    }
+    job["spec"]["template"]["metadata"]["labels"] = labels
+    return job
+
+
+def build_review_job(
+    settings: K8sSettings, *, game_id: str, uid: str, player: str, agent: AgentSettings
+) -> dict[str, Any]:
+    """FD7 gap 15: a game with a human seat gets an automatic post-game
+    review only in kubernetes mode, and only through this Job - no driver
+    ever ran for the human's own perspective while the game was live, so
+    there is no handover to leave unfinished and F1's own trigger (an
+    `unfinished` `plays_outcome` row, `lobby.schedule_followup`) never fires
+    for one.
+
+    **What this actually runs, and the gap left open.** The only Job path
+    reaching a fresh pod (the deck's guides clone, the same push
+    credentials, `mtg-reviewer` identity) for a game that has ALREADY ended
+    is `mode: "followup"` - `driver/app.py`'s `DispatchIn.mode` is a closed
+    `Literal["play", "followup"]`, and the ordinary `mode: "play"` path
+    reads the LIVE game state first, which 404s once the game is
+    soft-deleted. That mode runs `driver/prompt.py`'s `followup_turn`: a
+    bounded turn that finishes an unfinished handover's own DSL
+    development, never a narrative AI review declaration (DR3). A human
+    seat has nothing registered and nothing already admitted for that turn
+    to redo, so this dispatch is the closest thing this repo can reach
+    today - the right pod, the right credentials, the right guides clone -
+    and not yet the review this gap actually asks for.
+
+    Making it declare a real review needs a third `DispatchIn.mode` and a
+    matching prompt in `driver/app.py`/`driver/prompt.py`, both outside this
+    task's edit rights (its own notes name them explicitly). This function,
+    `K8sSeats.start_review_followup` and `AiSeatRegistry.
+    start_review_followup` are the half of this gap that is NOT blocked by
+    that: scheduling, deduping and releasing the Job by its own label
+    (`LABEL_REVIEW`, never `LABEL_FOLLOWUP` - a human seat's Job must not be
+    mistaken for, or clash with, F1's own), ready for that prompt the moment
+    it exists."""
+    followup_payload: dict[str, Any] = {
+        "outcome": "the game is over; this is the human seat's own post-game review",
+        "unfinished_reasons": [],
+        "candidates": {"plays": [], "lines": []},
+    }
+    labels = {LABEL_APP: APP_LABEL_VALUE, LABEL_GAME: game_id, LABEL_REVIEW: uid}
+    values = _seat_job_values(
+        game_id=game_id,
+        uid=uid,
+        player=player,
+        api_url=settings.api_url,
+        mcp_url=settings.mcp_url,
+        agent=agent,
+        agent_image=settings.agent_image,
+        api_image=settings.api_image,
+        guides_ref=settings.guides_ref,
+        role=ROLE_SEAT,
+        followup=followup_payload,
+    )
+    job = render_seat_job_template(_load_seat_job_template(settings.job_template_path), values)
+    job["metadata"]["name"] = review_job_name(game_id, uid)
+    job["metadata"]["namespace"] = settings.namespace
+    job["metadata"]["labels"] = labels
+    job["metadata"]["annotations"] = {
+        "mtg/player": player,
+        "mtg/model": agent.model,
+        "mtg/effort": agent.effort,
+        "mtg/review": "the human seat's own post-game review - it never had a driver of its own",
     }
     job["spec"]["template"]["metadata"]["labels"] = labels
     return job
@@ -892,6 +973,70 @@ class K8sSeats:
             except ApiException as exc:
                 if exc.status != 404:
                     logger.warning("could not delete follow-up job %s: %s", job.metadata.name, exc)
+                    continue
+            deleted.append(job.metadata.name)
+        return {"deleted": deleted}
+
+    # -- FD7 gap 15: the human-seat review Job -------------------------------
+    def _review_jobs(self, uid: str) -> list[Any]:
+        """Every review Job of `uid` in the cluster - the same read-from-the-
+        cluster, filter-on-the-label shape `_followup_jobs` uses, over
+        `LABEL_REVIEW` instead."""
+        jobs = self.batch.list_namespaced_job(
+            self.settings.namespace, label_selector=f"{LABEL_REVIEW}={uid}"
+        ).items
+        return [job for job in jobs if (job.metadata.labels or {}).get(LABEL_REVIEW) == uid]
+
+    def start_review_followup(
+        self, *, uid: str, game_id: str, player: str, agent: AgentSettings
+    ) -> dict[str, Any]:
+        """Create `uid`'s one human-seat review Job (`build_review_job`),
+        unless the cluster already holds one for this game: deduped by
+        `LABEL_REVIEW`, and a 409 AlreadyExists on the deterministic name
+        reads the same. The answer's `state` is `scheduled` or `exists`. A
+        create failure raises, for the registry to report."""
+        name = review_job_name(game_id, uid)
+        base = {
+            "uid": uid,
+            "mechanism": "kubernetes",
+            "job": name,
+            "game_id": game_id,
+            "player": player,
+        }
+        if any(
+            (job.metadata.labels or {}).get(LABEL_GAME) == game_id for job in self._review_jobs(uid)
+        ):
+            return {**base, "state": "exists"}
+        body = build_review_job(self.settings, game_id=game_id, uid=uid, player=player, agent=agent)
+        try:
+            self.batch.create_namespaced_job(self.settings.namespace, body=body)
+        except ApiException as exc:
+            if exc.status != 409:
+                raise
+            return {**base, "state": "exists"}
+        logger.info("review job %s created for %s", name, player)
+        return {**base, "state": "scheduled"}
+
+    def review_followup_running(self, uid: str) -> bool:
+        """Whether a human-seat review Job of `uid` is still in the cluster
+        and has not run to an end. Raises when the cluster cannot be read -
+        the caller decides what an unknown answer means."""
+        return any(not _job_finished(job) for job in self._review_jobs(uid))
+
+    def release_review_followup(self, uid: str) -> dict[str, Any]:
+        """Delete every human-seat review Job of `uid` - the same shape
+        `release_followup` deletes F1's own by, over `_review_jobs`."""
+        deleted: list[str] = []
+        for job in self._review_jobs(uid):
+            try:
+                self.batch.delete_namespaced_job(
+                    job.metadata.name,
+                    self.settings.namespace,
+                    body=k8s_client.V1DeleteOptions(propagation_policy="Background"),
+                )
+            except ApiException as exc:
+                if exc.status != 404:
+                    logger.warning("could not delete review job %s: %s", job.metadata.name, exc)
                     continue
             deleted.append(job.metadata.name)
         return {"deleted": deleted}

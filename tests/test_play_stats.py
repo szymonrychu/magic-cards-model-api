@@ -12,8 +12,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from magic_cards_model_api import audit
+from magic_cards_model_api import audit, review
 from magic_cards_model_api.playscripts import stats
+from magic_cards_model_api.repository import ArchivedGame
 
 GAME = "g1"
 SEAT = "alice"
@@ -318,3 +319,142 @@ def test_a_full_game_adds_up():
         "added_ids": ("new-play",),
         "updated_ids": ("frog-attack",),
     }
+
+
+# ======================================================================
+# FD7 (5): reviewer `plays_outcome` rows are counted in `play_stats`'
+# totals AND separately (gap 4), `plays_total` reflects whatever corpus the
+# caller hands `build_review` at review time, and `dsl_coverage` aggregates
+# `{kind: {count, unexpressible, labels}}` across a game's own decisions.
+#
+# `review.build_review` is exercised directly, `game=None` and no frame
+# views - the same undecodable-branch shape `test_review.py`'s own
+# `test_an_undecodable_game_with_no_recorded_ending_says_so_rather_than_
+# guessing` builds by hand, here with a synthetic `plays_outcome` row no HTTP
+# route can currently post (`schemas.PlaysOutcomeIn.role` is `seat`/`advisor`
+# only - the driver side of filing a reviewer's own row is FD6/FD5's, this
+# is only what `review.py` does with one once it exists in the ledger).
+# ======================================================================
+
+
+def decision(
+    seq, action, *, player="alice", turn=3, step="precombat_main", active_player="alice", **detail
+):
+    return {
+        "seq": seq,
+        "action": action,
+        "detail": {"player": player, "allowed": True, **detail},
+        "turn": turn,
+        "step": step,
+        "active_player": active_player,
+    }
+
+
+def plays_outcome_row(seq, player="alice", **detail):
+    return {
+        "seq": seq,
+        "action": audit.PLAYS_OUTCOME_ACTION,
+        "detail": {"player": player, **detail},
+        "turn": 3,
+    }
+
+
+def archived(players=("alice", "bob"), game_id="g1"):
+    return ArchivedGame(
+        game_id=game_id,
+        game=None,
+        admin_key="k",
+        seat_uids={f"u-{p}": p for p in players},
+        created_at="2026-01-01T00:00:00+00:00",
+        deleted_at="2026-01-01T00:05:00+00:00",
+        unloadable=None,
+    )
+
+
+def added(play_id: str) -> dict[str, Any]:
+    return {"added": [play_id], "updated": [], "reprioritized": []}
+
+
+def test_reviewer_plays_outcome_rows_count_in_the_totals_and_separately():
+    entries = [
+        plays_outcome_row(1, player="alice", role="seat", admitted=[added("seat-play")]),
+        plays_outcome_row(2, player="alice", role="reviewer", admitted=[added("reviewer-play")]),
+    ]
+    body = review.build_review(archived(), entries)
+    stats = body["play_stats"]["alice"]
+    assert stats["added"] == 2
+    assert sorted(stats["added_ids"]) == ["reviewer-play", "seat-play"]
+    assert stats["reviewer"]["added"] == 1
+    assert stats["reviewer"]["added_ids"] == ("reviewer-play",)
+
+
+def test_a_seat_with_no_reviewer_rows_gets_reviewer_zeros_not_a_missing_key():
+    entries = [plays_outcome_row(1, player="alice", role="seat", admitted=[added("seat-play")])]
+    body = review.build_review(archived(), entries)
+    stats = body["play_stats"]["alice"]
+    assert stats["reviewer"] == {
+        "added": 0,
+        "updated": 0,
+        "reprioritized": 0,
+        "added_ids": (),
+        "updated_ids": (),
+    }
+
+
+def test_a_role_less_legacy_row_is_never_counted_as_a_reviewer_row():
+    """Every row before FD7 carries no `role` at all - `_decisions_and_
+    play_stats` must not mistake that absence for `"reviewer"`."""
+    entries = [plays_outcome_row(1, player="alice", admitted=[added("legacy-play")])]
+    body = review.build_review(archived(), entries)
+    stats = body["play_stats"]["alice"]
+    assert stats["added"] == 1
+    assert stats["reviewer"]["added"] == 0
+
+
+def test_a_reviewer_row_for_another_seat_is_not_counted_here():
+    entries = [plays_outcome_row(1, player="bob", role="reviewer", admitted=[added("bobs-play")])]
+    body = review.build_review(archived(), entries)
+    assert body["play_stats"]["alice"]["reviewer"]["added"] == 0
+    assert body["play_stats"]["bob"]["reviewer"]["added"] == 1
+
+
+def test_plays_total_reflects_the_corpus_handed_to_build_review_at_review_time():
+    corpus = {"p1": {"moves": [{"kind": "pass"}]}, "p2": {"moves": []}}
+    body = review.build_review(archived(players=("alice",)), [], corpora={"alice": corpus})
+    stats = body["play_stats"]["alice"]
+    assert stats["plays_total"] == 2
+    assert stats["plays_move_bearing"] == 1
+    assert stats["plays_advice"] == 1
+
+
+# -- dsl_coverage -------------------------------------------------------------
+
+
+def test_dsl_coverage_aggregates_count_unexpressible_and_labels_by_kind():
+    entries = [
+        decision(1, "pass_priority"),
+        decision(2, "mulligan_declared", keep=True),
+        decision(3, "concede"),
+    ]
+    body = review.build_review(archived(players=("alice",)), entries)
+    coverage = body["dsl_coverage"]
+    assert coverage["pass"] == {"count": 1, "unexpressible": 0, "labels": []}
+    assert coverage["mulligan"] == {"count": 1, "unexpressible": 1, "labels": ["mulligan"]}
+    assert coverage["concede"] == {"count": 1, "unexpressible": 1, "labels": ["concede"]}
+
+
+def test_dsl_coverage_is_empty_for_a_game_with_no_decisions():
+    body = review.build_review(archived(players=("alice",)), [])
+    assert body["dsl_coverage"] == {}
+
+
+def test_dsl_coverage_is_public_and_callable_on_the_decisions_dict_directly():
+    """FD5 exposes this across games through an ops endpoint; it must not
+    need a whole `build_review` call to be useful there."""
+    decisions = {
+        "alice": [
+            decision(1, "pass_priority")["detail"] | {"action": "pass", "unexpressible": None}
+        ]
+    }
+    coverage = review.dsl_coverage(decisions)
+    assert coverage == {"pass": {"count": 1, "unexpressible": 0, "labels": []}}

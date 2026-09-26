@@ -46,7 +46,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..audit import SCRIPT_RUN_ACTION, SCRIPT_RUN_OFFERED_ACTION, SCRIPT_RUN_STARTED_ACTION
+from ..audit import (
+    PLAYS_OUTCOME_ACTION,
+    SCRIPT_RUN_ACTION,
+    SCRIPT_RUN_OFFERED_ACTION,
+    SCRIPT_RUN_STARTED_ACTION,
+)
+from . import decision_dsl
 
 #: The most a table may take, in UTF-8 bytes.
 TABLE_LIMIT_BYTES = 4096
@@ -351,6 +357,136 @@ def _offer_outcomes(records: Iterable[Mapping[str, Any]], game_id: str, seat: st
         reasoning_display = reasoning if reasoning else _NO_REASONING
         paired.append((offer, DECLINED, action_name, reasoning_display))
     return paired
+
+
+# -- FD7 (1): decision candidates - every expressible decision is owed -----------
+# a play or a `plays no-change --decision <seq>`, deduped by generalized DSL.
+#
+# `development_candidates`, above, stays exactly as it was (`app.
+# _followup_payload` still reads it): the old candidate set was only declined
+# or passed-over script offers, plus a hand-played line repeated
+# `HAND_PLAYED_REPEAT` times. That undercounts on purpose - a single-use
+# attack, block, decide or pass was never owed anything. `decision_candidates`
+# is the fuller set: every decision `decision_dsl.decision_rows` could
+# express at all (`row["dsl"] is not None`), one candidate per distinct
+# generalized shape - two decisions whose `dsl` (the exact play
+# `decision_rows` would write, card names never among its fields) is
+# byte-for-byte identical need only one answer between them, since admitting
+# or declining a play answers every decision it would have applied to alike.
+
+#: The prefix a decision candidate's own id is built from - `plays no-change
+#: --decision <seq>` posts this as the `no_change` entry's `candidate` (the
+#: same free-form field `--play`/`--line` already write there), so
+#: `assess` and a filed `plays_outcome` row agree on what closes it. Chosen
+#: to collide with neither a play id (`check_name` refuses a `:`) nor a
+#: hand-played line (an operator's own words, unlikely to start this way).
+DECISION_CANDIDATE_PREFIX = "decision:"
+
+
+def decision_candidate_id(seq: Any) -> str:
+    """The id `plays no-change --decision <seq>` closes: stable for a given
+    `seq`, so a candidate grouping several occurrences together is always
+    named by its first (oldest, hence stable across a game in progress)."""
+    return f"{DECISION_CANDIDATE_PREFIX}{seq}"
+
+
+@dataclass(frozen=True)
+class DecisionCandidate:
+    """One expressible decision `seat` faced, generalized: `action` is
+    `decision_dsl`'s own action-kind label, `dsl` is the exact generalized
+    play every one of `seqs` converts to, and `seqs` is every occurrence,
+    oldest first. `id` is what closes it (`decision_candidate_id` of its
+    oldest occurrence)."""
+
+    action: str
+    dsl: Mapping[str, Any]
+    seqs: tuple[int, ...]
+
+    @property
+    def id(self) -> str:
+        return decision_candidate_id(self.seqs[0])
+
+
+def decision_candidates(
+    records: Iterable[Mapping[str, Any]], seat: str
+) -> tuple[DecisionCandidate, ...]:
+    """Every expressible decision `seat` faced, in `records` (one game's own
+    ledger, unfiltered by `game_id` for the same reason `decision_dsl.
+    decision_rows` itself takes none: its caller has already scoped it),
+    deduped by generalized DSL - see the section docstring above."""
+    all_records = list(records)
+    rows = decision_dsl.decision_rows(all_records, seat)
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for decision in rows:
+        dsl = decision.get("dsl")
+        seq = decision.get("seq")
+        if dsl is None or seq is None:
+            continue
+        key = json.dumps(dsl, sort_keys=True, default=str)
+        if key not in grouped:
+            order.append(key)
+        grouped.setdefault(key, []).append(decision)
+    candidates = []
+    for key in order:
+        group = sorted(grouped[key], key=lambda d: d["seq"])
+        candidates.append(
+            DecisionCandidate(
+                action=group[0]["action"],
+                dsl=group[0]["dsl"],
+                seqs=tuple(d["seq"] for d in group),
+            )
+        )
+    return tuple(candidates)
+
+
+@dataclass(frozen=True)
+class Assessment:
+    """`assess`'s own verdict: every candidate this seat faced, and which of
+    them are still `open` - closed by neither an admitted play (any
+    `plays_outcome` row of this seat's own that admitted at least one play,
+    the same "development happened this game" signal that already closes
+    every `development_candidates` line - see `mtg_agent.driver.handover.
+    assess`) nor a `plays no-change --decision <seq>` naming one of its own
+    `seqs`."""
+
+    candidates: tuple[DecisionCandidate, ...]
+    open: tuple[DecisionCandidate, ...]
+
+    @property
+    def satisfied(self) -> bool:
+        return not self.open
+
+
+def assess(records: Iterable[Mapping[str, Any]], seat: str) -> Assessment:
+    """Every expressible decision `seat` faced, closed or open - see
+    `Assessment`'s own docstring for exactly what closes one."""
+    all_records = list(records)
+    candidates = decision_candidates(all_records, seat)
+    closed_ids: set[str] = set()
+    any_admitted = False
+    for record in all_records:
+        payload = _payload(record)
+        if payload.get("action") != PLAYS_OUTCOME_ACTION:
+            continue
+        detail = payload.get("detail") or {}
+        if detail.get("player") != seat:
+            continue
+        if detail.get("admitted"):
+            any_admitted = True
+        for entry in detail.get("no_change") or ():
+            if not isinstance(entry, Mapping):
+                continue
+            candidate_id = entry.get("candidate")
+            if isinstance(candidate_id, str):
+                closed_ids.add(candidate_id)
+    open_candidates = tuple(
+        candidate
+        for candidate in candidates
+        if not any_admitted
+        and not any(decision_candidate_id(seq) in closed_ids for seq in candidate.seqs)
+    )
+    return Assessment(candidates=candidates, open=open_candidates)
 
 
 # -- D2b: the post-game development tables ---------------------------------------
