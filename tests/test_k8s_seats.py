@@ -1778,11 +1778,11 @@ def test_reconcile_deletes_a_followup_job_once_its_game_is_gone() -> None:
 
 # ---- FD7 gap 15: the human-seat review Job ------------------------------------
 #
-# The only Job path reaching a fresh pod for a game that has already ended
-# (the same guides clone, push credentials, `mode: followup`) - see
-# `k8s_seats.build_review_job`'s own docstring for exactly what this runs
-# today and what is still missing to make it a real DR3 review. Labelled and
-# tracked on its own (`LABEL_REVIEW`), never as F1's own follow-up.
+# The Job path reaching a fresh pod for a game that has already ended (the
+# same guides clone, push credentials, `mode: review`) - a real DR3 review
+# declaration (`driver/app.py`'s `assign_review`), not F1's DSL-development
+# follow-up turn. Labelled and tracked on its own (`LABEL_REVIEW`), never as
+# F1's own follow-up.
 
 
 def _review_job() -> dict:
@@ -1825,11 +1825,11 @@ def test_the_review_job_runs_opus_as_the_human_seats_own_credential() -> None:
         "u1",
         "carol",
         "seat",
-        "followup",
+        "review",
     )
-    assert parsed.followup is not None
-    assert parsed.followup["candidates"] == {"plays": [], "lines": []}
-    assert parsed.followup["unfinished_reasons"] == []
+    # `assign_review` reads its deck from the lobby, not from a payload: no
+    # `followup` body is built for a review dispatch at all.
+    assert parsed.followup is None
 
 
 def _start_review(seats: K8sSeats) -> dict:

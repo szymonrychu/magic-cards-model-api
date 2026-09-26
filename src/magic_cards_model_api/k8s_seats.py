@@ -251,6 +251,7 @@ def _seat_job_values(
     guides_ref: str,
     role: str = ROLE_SEAT,
     followup: Mapping[str, Any] | None = None,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     assignment: dict[str, Any] = {
         "uid": uid,
@@ -271,6 +272,12 @@ def _seat_job_values(
         # the same byte-identical reason as `role` above.
         assignment["mode"] = "followup"
         assignment["followup"] = dict(followup)
+    elif mode is not None:
+        # FD7 gap 15: the driver's `mode: "review"` - a review-only dispatch
+        # that reads its deck from the lobby, not from a payload
+        # (`driver/app.py`'s `assign_review`), so no `followup` key is ever
+        # written for it.
+        assignment["mode"] = mode
     return {
         "__GAME_ID__": game_id,
         "__SEAT_UID__": uid,
@@ -289,7 +296,9 @@ def _seat_job_values(
         "__MTG_ROLE__": role,
         "__MTG_GAME_ID__": game_id,
         "__ACTIVE_DEADLINE_SECONDS__": (
-            SEAT_ACTIVE_DEADLINE_SECONDS if followup is None else FOLLOWUP_ACTIVE_DEADLINE_SECONDS
+            SEAT_ACTIVE_DEADLINE_SECONDS
+            if followup is None and mode is None
+            else FOLLOWUP_ACTIVE_DEADLINE_SECONDS
         ),
     }
 
@@ -437,41 +446,25 @@ def build_followup_job(
 def build_review_job(
     settings: K8sSettings, *, game_id: str, uid: str, player: str, agent: AgentSettings
 ) -> dict[str, Any]:
-    """FD7 gap 15: a game with a human seat gets an automatic post-game
-    review only in kubernetes mode, and only through this Job - no driver
-    ever ran for the human's own perspective while the game was live, so
-    there is no handover to leave unfinished and F1's own trigger (an
-    `unfinished` `plays_outcome` row, `lobby.schedule_followup`) never fires
-    for one.
+    """FD7 gap 15 (parity item 15), completed: a game with a human seat gets
+    an automatic post-game review only in kubernetes mode, and only through
+    this Job - no driver ever ran for the human's own perspective while the
+    game was live, so there is no handover to leave unfinished and F1's own
+    trigger (an `unfinished` `plays_outcome` row, `lobby.schedule_followup`)
+    never fires for one.
 
-    **What this actually runs, and the gap left open.** The only Job path
-    reaching a fresh pod (the deck's guides clone, the same push
-    credentials, `mtg-reviewer` identity) for a game that has ALREADY ended
-    is `mode: "followup"` - `driver/app.py`'s `DispatchIn.mode` is a closed
-    `Literal["play", "followup"]`, and the ordinary `mode: "play"` path
-    reads the LIVE game state first, which 404s once the game is
-    soft-deleted. That mode runs `driver/prompt.py`'s `followup_turn`: a
-    bounded turn that finishes an unfinished handover's own DSL
-    development, never a narrative AI review declaration (DR3). A human
-    seat has nothing registered and nothing already admitted for that turn
-    to redo, so this dispatch is the closest thing this repo can reach
-    today - the right pod, the right credentials, the right guides clone -
-    and not yet the review this gap actually asks for.
+    Dispatches `mode: "review"` - `driver/app.py`'s third `DispatchIn.mode`,
+    `assign_review` - the fresh pod (the deck's guides clone, the same push
+    credentials, `mtg-reviewer` identity) this Job already reached, running
+    the real DR3 narrative review declaration (`post_ai_review`: the review
+    record, the wrapper's `/v1/review`, `POST .../ai-review`) instead of
+    `mode: "followup"`'s bounded DSL-development turn, which had nothing of
+    a human seat's to redo. `assign_review` reads its own deck from the
+    lobby, not from a payload, so no `followup` body is built here at all.
 
-    Making it declare a real review needs a third `DispatchIn.mode` and a
-    matching prompt in `driver/app.py`/`driver/prompt.py`, both outside this
-    task's edit rights (its own notes name them explicitly). This function,
-    `K8sSeats.start_review_followup` and `AiSeatRegistry.
-    start_review_followup` are the half of this gap that is NOT blocked by
-    that: scheduling, deduping and releasing the Job by its own label
+    Scheduling, deduping and releasing this Job is by its own label
     (`LABEL_REVIEW`, never `LABEL_FOLLOWUP` - a human seat's Job must not be
-    mistaken for, or clash with, F1's own), ready for that prompt the moment
-    it exists."""
-    followup_payload: dict[str, Any] = {
-        "outcome": "the game is over; this is the human seat's own post-game review",
-        "unfinished_reasons": [],
-        "candidates": {"plays": [], "lines": []},
-    }
+    mistaken for, or clash with, F1's own)."""
     labels = {LABEL_APP: APP_LABEL_VALUE, LABEL_GAME: game_id, LABEL_REVIEW: uid}
     values = _seat_job_values(
         game_id=game_id,
@@ -484,7 +477,7 @@ def build_review_job(
         api_image=settings.api_image,
         guides_ref=settings.guides_ref,
         role=ROLE_SEAT,
-        followup=followup_payload,
+        mode="review",
     )
     job = render_seat_job_template(_load_seat_job_template(settings.job_template_path), values)
     job["metadata"]["name"] = review_job_name(game_id, uid)

@@ -972,9 +972,10 @@ class AiSeatRegistry:
             return None
 
     def start_review_followup(self, *, uid: str, game_id: str, player: str) -> dict[str, Any]:
-        """FD7 gap 15: schedule the human seat `uid`'s own post-game review
-        Job (`k8s_seats.build_review_job` - see its own docstring for
-        exactly what it runs today and what is still missing).
+        """FD7 gap 15 (parity item 15), completed: schedule the human seat
+        `uid`'s own post-game review Job (`k8s_seats.build_review_job`,
+        `mode: "review"` - a real DR3 narrative review declaration, not a
+        DSL-development follow-up turn).
 
         **Kubernetes mode only, exactly like F1's own follow-up**: a review
         needs a pod of its own with a fresh /guides clone and the same push
