@@ -1244,7 +1244,7 @@ def test_the_buddy_gets_the_same_twenty_four_tools(client: TestClient, game: str
     }
 
     assert names == committed
-    assert len(names) == 24, "19 plus run_script, list_scripts, equip, stage_advice and stage_script"
+    assert len(names) == 24, "19 plus run_script, list_scripts, equip, stage_advice, stage_script"
 
 
 def test_the_cast_tool_proposes_for_an_advisor_and_casts_for_a_seat(
