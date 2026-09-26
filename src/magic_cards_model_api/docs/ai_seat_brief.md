@@ -442,6 +442,62 @@ When plays conflict, resolve it by extending conditions, never by priority
 alone. Pass inputs, such as the opposing archetype or your preferences,
 explicitly.
 
+**DSL-first: write and run a play-script for any multi-step or repetitive
+sequence you are facing, rather than chaining manual calls one at a time.**
+`script stage` (`stage_script`) writes one inline, mid-game, for this game
+alone - it is not saved to your corpus for next time, only staged; `script
+run --body-file ...` (`run_script(body=...)`) does the same and runs it in
+one call. Keep manual calls for one-off decisions that are not worth writing
+a script for. A loop - most often a mana loop, tapping and untapping the
+same permanents to reach an X target or a floating-mana threshold - is the
+`repeat` move (`{{kind: repeat, moves, until, max_iterations}}`): it re-reads
+the board before every iteration and stops the moment `until` holds or
+`max_iterations` is reached, which a hand-played sequence of the same calls
+cannot do for you. You always choose to run a script - nothing here runs one
+for you.
+
+A worked example: a Devoted Druid + Vizier of Remedies mana loop, written
+with selectors, never card names -
+
+    {{
+      "kind": "repeat",
+      "moves": [
+        {{
+          "kind": "activate",
+          "source": {{
+            "zone": "battlefield",
+            "select": {{
+              "types_all": ["Creature"],
+              "colors_any": ["G"],
+              "oracle_has": "Remove a -1/-1 counter"
+            }}
+          }},
+          "ability_text_has": "Add {{G}}{{G}}"
+        }},
+        {{
+          "kind": "activate",
+          "source": {{
+            "zone": "battlefield",
+            "select": {{
+              "types_all": ["Creature"],
+              "colors_any": ["G"],
+              "oracle_has": "Remove a -1/-1 counter"
+            }}
+          }},
+          "ability_text_has": "Remove a -1/-1 counter from this creature: Untap it"
+        }}
+      ],
+      "until": [{{"kind": "mana_pool", "color": "G", "op": ">=", "n": 8}}],
+      "max_iterations": 20
+    }}
+
+`select` finds the creature by its printed characteristics, never by name;
+each move's own `ability_text_has` names the one ability that move
+activates, exactly as `ability_text_has` on a card selector does. `until`
+stops the loop the moment your green floating mana reaches the target -
+here, enough to cast whatever `{{X}}` spell prompted the loop - rather than
+you counting activations by hand.
+
 Your deck's play scripts were registered with the game server when your seat
 was dispatched, and they do not change for the rest of the game: a new play,
 or a sharper condition on an old one, is written after the game, with the

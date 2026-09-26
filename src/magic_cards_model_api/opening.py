@@ -290,6 +290,10 @@ def declare_mulligan(
         bottom_chosen=chose_bottom,
         step=step.value,
         reasoning=reasoning,
+        # FD5 (4): a committing row - this declaration always lands (a
+        # refusal raises before this call and is never reached), so it reads
+        # the same as every other action route's own commitment marker.
+        allowed=True,
     )
     return {"declared": take, "step": step.value, "pregame": pregame_view(game, game_id)}
 
@@ -314,7 +318,13 @@ def take_opening_hand_action(
         raise
     assert game.turn is not None
     audit.record(
-        game_id, "opening_hand_action", player=username, card=name, live=True, reasoning=reasoning
+        game_id,
+        "opening_hand_action",
+        player=username,
+        card=name,
+        live=True,
+        reasoning=reasoning,
+        allowed=True,  # FD5 (4): a committing row.
     )
     return {"taken": name, "step": game.turn.step.value, "pregame": pregame_view(game, game_id)}
 
@@ -368,6 +378,7 @@ def finish_opening_hand_actions(
             automatic=automatic,
             reason=reason,
             reasoning=reasoning,
+            allowed=True,  # FD5 (4): a committing row.
         )
         result: dict[str, Any] = {"step": step.value, "pregame": pregame_view(game, game_id)}
         crossed = engine_api.settle_priorityless_steps(game)

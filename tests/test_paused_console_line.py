@@ -62,14 +62,20 @@ def test_the_paused_console_line_names_who_and_what_it_paused_on(client, game):
 
 
 def test_a_genuine_paused_row_persists_the_pending_decisions_player_and_kind(client, game):
-    """Assert on the real shape of a genuine `allowed=None`/`paused=True`
+    """Assert on the real shape of a genuine `allowed=True`/`paused=True`
     row, not a hand-built restatement of it - the row this test reads is the
-    one `crack_the_strand`'s real pass-priority call actually wrote."""
+    one `crack_the_strand`'s real pass-priority call actually wrote.
+
+    FD5 (3): a paused row is recorded as a *committing* row - `allowed:
+    True` - since the command ran far enough to be asked a real question.
+    The HTTP response's own `allowed: None` is untouched (see
+    `test_pause_slot_clobber.py`); only the persisted ledger row changed
+    shape."""
     paused = crack_the_strand(client, game)
     pending = paused["pending_decision"]
 
     entry = entry_for(client, game, "pass_priority")
-    assert entry["detail"]["allowed"] is None, entry
+    assert entry["detail"]["allowed"] is True, entry
     assert entry["detail"]["paused"] is True, entry
     assert entry["detail"]["paused_on"]["player"] == pending["player"], entry
     assert entry["detail"]["paused_on"]["kind"] == pending["kind"], entry

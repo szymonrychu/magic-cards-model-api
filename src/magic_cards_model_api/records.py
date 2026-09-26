@@ -47,6 +47,7 @@ import threading
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -497,8 +498,9 @@ _GIVEN_FIELDS = ("from_zone", "ability_index")
 
 
 #: The board an action was taken on - `(game_id, turn number, step, first-
-#: strike damage step)` - for the row this request records (`audit.record`'s
-#: `turn`/`step`/`phase`).
+#: strike damage step, active player, priority holder, pre-action frame seq)`
+#: - for the row this request records (`audit.record`'s `turn`/`step`/
+#: `phase`/`active_player`/`priority_holder`/`pre_action_frame`).
 #:
 #: A ContextVar for the reason `_OFFERED` is one. `audit.record` used to read
 #: the store *after* the action had committed, so a pass that ended the
@@ -513,32 +515,62 @@ _GIVEN_FIELDS = ("from_zone", "ability_index")
 #: row logged during the first one apart from the second - `audit.record`
 #: reads this back through `serialize.step_position_of` to name the row
 #: `"first_strike_damage"` when it belongs to the first.
-_ACTION_BOARD: ContextVar[tuple[str, int | None, Step | None, bool] | None] = ContextVar(
-    "action_board", default=None
-)
+#:
+#: **FD5 (2)**: the fifth and sixth elements are `active_player`/`priority_
+#: holder` read off this same *pre-action* board, not the post-action one
+#: `audit.record` used to stamp them from - a pass that ends a turn used to
+#: read back `active_player` as the *next* player's turn, which is wrong for
+#: the row that ended the previous one (G1, G16). The seventh is the game's
+#: own `store.max_record_seq(game_id)` at the moment just before this
+#: action's own row is appended - the `seq` of the last row already on the
+#: ledger, which (whenever it is non-zero) is also the `seq` a converter can
+#: read `record_state` at for the board this action was taken *on*, so it
+#: never has to fall back to this row's own (post-action) frame. The eighth
+#: is `None` unless that seventh element is `0` (the very first row a game
+#: ever gets, with no earlier frame to reference at all), in which case it is
+#: this same pre-action `game`'s own `serialize.snapshot` - attached here,
+#: from the real pre-action board, rather than recomputed later from
+#: whatever `audit.record` finds in the store by then.
+_ACTION_BOARD: ContextVar[
+    tuple[str, int | None, Step | None, bool, str | None, str | None, int, dict[str, Any] | None]
+    | None
+] = ContextVar("action_board", default=None)
 
 
 def note_action_board(game_id: str, game: Game) -> None:
     """Remember `game` as the board this request's action is taken on."""
+    from .serialize import snapshot  # lazy: keep records.py's module import light
+    from .store import store  # lazy: records.py keeps every store import lazy
+
     turn = game.turn
+    pre_seq = store.max_record_seq(game_id)
     _ACTION_BOARD.set(
         (
             game_id,
             turn.turn_number if turn else None,
             turn.step if turn else None,
             game.is_first_strike_damage_step,
+            turn.players[turn.active_index] if turn else None,
+            game.priority.holder if game.priority is not None else None,
+            pre_seq,
+            snapshot(game) if not pre_seq else None,
         )
     )
 
 
-def action_board(game_id: str) -> tuple[int | None, Step | None, bool] | None:
-    """`(turn number, step, first-strike damage step)` of the board `note_
-    action_board` named for this game in this request, or `None` when nothing
-    was noted."""
+def action_board(
+    game_id: str,
+) -> (
+    tuple[int | None, Step | None, bool, str | None, str | None, int, dict[str, Any] | None] | None
+):
+    """`(turn number, step, first-strike damage step, active player,
+    priority holder, pre-action frame seq, pre-action state fallback)` of the
+    board `note_action_board` named for this game in this request, or `None`
+    when nothing was noted."""
     noted = _ACTION_BOARD.get()
     if noted is None or noted[0] != game_id:
         return None
-    return noted[1], noted[2], noted[3]
+    return noted[1], noted[2], noted[3], noted[4], noted[5], noted[6], noted[7]
 
 
 def note_offered_action(kind: str, payload: Any, legal_before: LegalActionsBefore | None) -> None:
@@ -824,6 +856,47 @@ def require_scripts_enabled(what: str) -> None:
         raise ScriptsDisabled(what)
 
 
+# -- FD5 (6): the operator/ops token --------------------------------------
+#
+# Every existing "admin" credential in this codebase (`store.admin_key`,
+# `store.is_admin`) is per-game: a game's own creator gets a key that opens
+# that one game and nothing else. `GET /api/ops/dsl-coverage` needs the
+# opposite - a credential that reads *across every game* - and there is no
+# such thing anywhere in this codebase to reuse (checked: `decks_api.py`,
+# `app.py`'s `_presents_admin_key`, `lobby.py`). So this is a new one,
+# env-configured the same way `SCRIPTS_ENABLED` already is
+# (`deploy/k8s/50-deployment.yaml`, `deploy/k8s/10-secret.template.yaml`) -
+# never a values-file env name, per this project's own binding convention.
+
+#: The operator's cross-game ops token, published on the API Deployment from
+#: the `mtg-ops` Secret's own `OPS_TOKEN` key. Unset (the default on a
+#: deployment nobody has configured this for) refuses every caller, rather
+#: than falling open - see `authorized_ops_caller`.
+OPS_TOKEN_ENV = "OPS_TOKEN"
+
+
+def ops_token_configured(env: Mapping[str, str] | None = None) -> str | None:
+    """This deployment's own `OPS_TOKEN`, or `None` when nothing is
+    configured - read per call, like `scripts_enabled`, so a test can set it
+    for one request without restarting anything."""
+    env = os.environ if env is None else env
+    token = env.get(OPS_TOKEN_ENV)
+    return token if token else None
+
+
+def authorized_ops_caller(presented: str | None, env: Mapping[str, str] | None = None) -> bool:
+    """Whether `presented` is this deployment's own configured `OPS_TOKEN`.
+
+    Fails closed both ways: an unset `OPS_TOKEN` (nobody has configured this
+    endpoint yet) refuses every caller rather than accepting any token or,
+    worse, none at all, and a caller presenting nothing is never compared
+    against an empty string standing in for "no token" - `ops_token_
+    configured` already turns an empty env value into `None` for exactly
+    that reason."""
+    configured = ops_token_configured(env)
+    return configured is not None and presented is not None and presented == configured
+
+
 class InvalidScripts(Exception):
     """Raised when a registered corpus holds a script `playscripts.schema`
     refuses. `app.py` answers 422 with `code: invalid_scripts` and `errors`,
@@ -1020,9 +1093,18 @@ def stage_adhoc_script(
         raise KeyError(f"no game {game_id}")
     corpus = store.scripts(game_id, uid) or {
         "deck_slug": "",
-        "guides_revision": None,
+        "guides_revision": "",
         "scripts": [],
         "inputs": [],
+        # FD5 (7): a seat may stage an ad-hoc script before it has ever
+        # registered a corpus through `PUT .../scripts` at all - this is
+        # the corpus that first `store.register_scripts` call then creates,
+        # and it must satisfy the exact same shape `read_scripts`'
+        # `ScriptsCorpusResponse` requires (`guides_revision`/
+        # `registered_at` both real strings), or a seat's very next `GET`
+        # of its own corpus 500s instead of reading its own freshly staged
+        # script back.
+        "registered_at": datetime.now(UTC).isoformat(),
     }
     docs = [doc for doc in corpus.get("scripts") or [] if isinstance(doc, dict)]
     existing_ids = _adhoc_ids(docs)

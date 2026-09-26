@@ -948,6 +948,14 @@ class PostgresRepository:
             rows = conn.execute(select(games.c.id).where(games.c.archived_at.is_(None))).all()
         return [row[0] for row in rows]
 
+    def ids_since(self, since: str | None) -> list[str]:
+        query = select(games.c.id).order_by(games.c.created_at)
+        if since is not None:
+            query = query.where(games.c.created_at >= datetime.fromisoformat(since))
+        with self._engine.connect() as conn:
+            rows = conn.execute(query).all()
+        return [row[0] for row in rows]
+
     @contextmanager
     def locked(self, game_id: str) -> Iterator[Game]:
         lock = self._lock_for(game_id)

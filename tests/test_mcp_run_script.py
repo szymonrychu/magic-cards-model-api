@@ -22,7 +22,7 @@ import pytest
 from conftest import add_card, force_turn_position, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
-from test_cast_cost_choices import answer
+from test_cast_cost_choices import answer, text_of
 from test_mcp_input_required import call_tool, wired
 from test_playscript_runtime import (
     PREFERENCE,
@@ -75,6 +75,90 @@ def run(server: Any, uid: str, script: str, **extra: Any) -> dict[str, Any]:
 
 def listing(server: Any, uid: str, **extra: Any) -> dict[str, Any]:
     return answer(call_tool(server, "list_scripts", {"player_uid": uid, **extra}))
+
+
+# -- FD5 (7): run_script(body=...) - stage and run in one call -----------------
+
+
+def test_naming_both_script_and_body_is_refused(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    _, server = server_for(client, monkeypatch, board)
+    result = call_tool(
+        server,
+        "run_script",
+        {
+            "player_uid": alice,
+            "script": "drop",
+            "body": land_script("inline"),
+            "reasoning": REASONING,
+        },
+    )
+    text = text_of(result)
+    assert "exactly one of" in text, text
+
+
+def test_naming_neither_script_nor_body_is_refused(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    _, server = server_for(client, monkeypatch, board)
+    result = call_tool(server, "run_script", {"player_uid": alice, "reasoning": REASONING})
+    text = text_of(result)
+    assert "exactly one of" in text, text
+
+
+def test_an_inline_body_stages_and_runs_in_one_call(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FD5 (7): `body` is staged over `POST .../scripts/adhoc`
+    (`script_tools.stage`) and the freshly assigned id is run in the same
+    call - a seat never has to sequence a stage then a run itself."""
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    _, server = server_for(client, monkeypatch, board)
+
+    payload = answer(
+        call_tool(
+            server,
+            "run_script",
+            {
+                "player_uid": alice,
+                "body": land_script("inline"),
+                "reasoning": REASONING,
+            },
+        )
+    )
+
+    assert payload["script_exit"]["exit"] == "chain_complete", payload["script_exit"]
+    assert payload["script_exit"]["script"].startswith("adhoc-"), payload["script_exit"]
+    assert [card["name"] for card in state(client, board)["battlefield"]] == ["Island"]
+    # The staged script now lives in alice's own corpus (registered by
+    # `stage_adhoc_script`), so this run shows up as an ordinary `finish`
+    # row against that freshly assigned id.
+    assert [row["exit"] for row in finished(board)] == ["chain_complete"]
+
+
+def test_stage_script_then_run_it_by_id(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    add_card(client, board, "Island", "alice", "hand")
+    _, server = server_for(client, monkeypatch, board)
+
+    staged = answer(
+        call_tool(
+            server,
+            "stage_script",
+            {"player_uid": alice, "body": land_script("inline"), "reasoning": REASONING},
+        )
+    )
+    assert staged["id"].startswith("adhoc-"), staged
+    assert staged["warnings"] == []
+
+    payload = run(server, alice, staged["id"])
+    assert payload["script_exit"]["exit"] == "chain_complete", payload["script_exit"]
 
 
 # -- the answer's shape ---------------------------------------------------------

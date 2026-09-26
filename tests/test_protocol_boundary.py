@@ -356,11 +356,11 @@ def test_seatkit_21_names_the_pre_bump_behaviour() -> None:
         assert term in paragraph, f"the seatkit-21 paragraph does not name {term}"
 
 
-def test_seatkit_24_is_the_current_version() -> None:
-    """EC3's optional costs: `OptionalCostChoice.cost` and the Bargain,
-    Collect evidence and Reveal keywords moved the cast request's shape."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-24"
-    assert seatkit.PROTOCOL_VERSION == "seatkit-24"
+def test_seatkit_25_is_the_current_version() -> None:
+    """FD5: two new special-action tools (`turn_face_up`/`bring_companion`)
+    and `run_script(body=...)`/`stage_script` moved the tool surface."""
+    assert protocol.PROTOCOL_VERSION == "seatkit-25"
+    assert seatkit.PROTOCOL_VERSION == "seatkit-25"
 
 
 def test_seatkit_24_names_the_optional_cost_additions() -> None:

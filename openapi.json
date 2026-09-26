@@ -1723,6 +1723,49 @@
         "title": "AdditionalCostOption",
         "type": "object"
       },
+      "AdhocScriptRequest": {
+        "additionalProperties": false,
+        "description": "`POST /api/games/{game_id}/seats/{uid}/scripts/adhoc` (FD5 (7)): a\nmid-game ad-hoc play script `uid` wrote and wants staged into its own\ncorpus - `records.stage_adhoc_script`. Judged exactly like a registered\ncorpus's own script (`playscripts.lint.check_play`), plus a static\nconflict check against the corpus it lands in - a conflict is a\n`warning` on a successful stage, never a refusal.",
+        "properties": {
+          "play": {
+            "additionalProperties": true,
+            "title": "Play",
+            "type": "object"
+          },
+          "reasoning": {
+            "title": "Reasoning",
+            "type": "string"
+          }
+        },
+        "required": [
+          "play",
+          "reasoning"
+        ],
+        "title": "AdhocScriptRequest",
+        "type": "object"
+      },
+      "AdhocScriptResponse": {
+        "description": "`POST .../scripts/adhoc`'s answer on a successful stage.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "AdhocScriptResponse",
+        "type": "object"
+      },
       "AdvanceRequest": {
         "additionalProperties": false,
         "description": "Who is advancing the turn - required, unlike `ActorRequest`, because\n`Game.advance` now authorizes the call against the active player (or\ntheir controller, CR 723.5) rather than merely logging who asked.",
@@ -4461,6 +4504,70 @@
         "title": "CombatView",
         "type": "object"
       },
+      "CompanionRequest": {
+        "additionalProperties": false,
+        "description": "FD5 (5)/FD1: CR 116.2g - pay {3} to put your chosen companion from\noutside the game into your hand. Names no card: `Player.companion_id`\nis set once at deck load (CR 702.139a already checked), so there is\nnothing here to choose between.",
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
+          "mana_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ManaSource"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Sources"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          }
+        },
+        "required": [
+          "player"
+        ],
+        "title": "CompanionRequest",
+        "type": "object"
+      },
       "Component": {
         "enum": [
           "token",
@@ -6182,6 +6289,17 @@
       "GameReviewResponse": {
         "description": "`GET /api/games/{game_id}/review` - post-game only, and never open.",
         "properties": {
+          "adhoc_scripts": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "title": "Adhoc Scripts",
+            "type": "object"
+          },
           "advice": {
             "items": {
               "$ref": "#/components/schemas/ReviewAdvice"
@@ -8937,6 +9055,98 @@
           "because"
         ],
         "title": "OpponentPrediction",
+        "type": "object"
+      },
+      "OpsDslCoverageResponse": {
+        "description": "`GET /api/ops/dsl-coverage` (FD5 (6)): per-game and aggregated DSL\ncoverage across every game since `since`, using FD7's `review.\ndsl_coverage` - what makes prod coverage measurable without a per-game\nadmin key. Behind `records.authorized_ops_caller`'s own env-configured\n`OPS_TOKEN`.",
+        "properties": {
+          "aggregated": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReviewDslCoverage"
+            },
+            "title": "Aggregated",
+            "type": "object"
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/OpsGameDslCoverage"
+            },
+            "title": "Games",
+            "type": "array"
+          },
+          "handover_admits": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Handover Admits",
+            "type": "object"
+          },
+          "reviewer_admits": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Reviewer Admits",
+            "type": "object"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          }
+        },
+        "title": "OpsDslCoverageResponse",
+        "type": "object"
+      },
+      "OpsGameDslCoverage": {
+        "description": "One game's own DSL coverage and handover/reviewer admit counts, as\n`GET /api/ops/dsl-coverage` (FD5 (6)) reports it per game.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "dsl_coverage": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReviewDslCoverage"
+            },
+            "title": "Dsl Coverage",
+            "type": "object"
+          },
+          "game_id": {
+            "title": "Game Id",
+            "type": "string"
+          },
+          "handover_admits": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Handover Admits",
+            "type": "object"
+          },
+          "reviewer_admits": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Reviewer Admits",
+            "type": "object"
+          }
+        },
+        "required": [
+          "game_id"
+        ],
+        "title": "OpsGameDslCoverage",
         "type": "object"
       },
       "OptionalCostChoice": {
@@ -12541,10 +12751,33 @@
             "title": "Added Ids",
             "type": "array"
           },
+          "adhoc_runs": {
+            "default": 0,
+            "title": "Adhoc Runs",
+            "type": "integer"
+          },
+          "adhoc_staged": {
+            "default": 0,
+            "title": "Adhoc Staged",
+            "type": "integer"
+          },
           "denied": {
             "default": 0,
             "title": "Denied",
             "type": "integer"
+          },
+          "manual_calls": {
+            "default": 0,
+            "title": "Manual Calls",
+            "type": "integer"
+          },
+          "manual_chains": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Manual Chains",
+            "type": "array"
           },
           "offered": {
             "default": 0,
@@ -12578,6 +12811,11 @@
           },
           "reviewer": {
             "$ref": "#/components/schemas/ReviewerPlayStats"
+          },
+          "script_actions": {
+            "default": 0,
+            "title": "Script Actions",
+            "type": "integer"
           },
           "updated": {
             "default": 0,
@@ -15073,6 +15311,87 @@
         "title": "TargetingProfileView",
         "type": "object"
       },
+      "TurnFaceUpRequest": {
+        "additionalProperties": false,
+        "description": "FD5 (5)/FD1: CR 702.37e/701.40b-d - turn a face-down permanent (a\nmorph, megamorph, disguise, or manifested permanent) face up, paying\nwhatever cost that reveals.",
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
+          "mana_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ManaSource"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Sources"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "procedure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Procedure"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          }
+        },
+        "required": [
+          "player",
+          "card_id"
+        ],
+        "title": "TurnFaceUpRequest",
+        "type": "object"
+      },
       "UnreadableModeView": {
         "description": "One mode of a modal spell the engine cannot read into an effect -\n`action_rows.legal_action_rows`, from the reading\n`effects.resolve_modal_spell` records a `ModeNotice` for.",
         "properties": {
@@ -15923,6 +16242,72 @@
         "summary": "Action Cast"
       }
     },
+    "/api/games/{game_id}/actions/companion": {
+      "post": {
+        "description": "FD5 (5)/FD1: CR 116.2g - pay {3} to bring your chosen companion from\noutside the game into your hand.",
+        "operationId": "action_companion_api_games__game_id__actions_companion_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompanionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionOutcome"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Action Companion"
+      }
+    },
     "/api/games/{game_id}/actions/concede": {
       "post": {
         "description": "Concede (CR 104.3a). A player may do this at any time, and leaves the\ngame immediately - there is no priority check and nothing to refuse, which\nis why this takes no `Outcome` the way the other actions do. `Game.concede`\nasks nothing of its own, but this still goes through the pause machinery\nlike every other command, on the chance a state-based check it triggers\never does (a legend rule, a leaves-the-battlefield trigger's targets).",
@@ -16613,6 +16998,72 @@
           }
         },
         "summary": "Action Target"
+      }
+    },
+    "/api/games/{game_id}/actions/turn-face-up": {
+      "post": {
+        "description": "FD5 (5)/FD1: CR 702.37e/701.40b-d - turn a face-down permanent (a\nmorph, megamorph, disguise, or manifested permanent) face up, paying\nwhatever cost that reveals.",
+        "operationId": "action_turn_face_up_api_games__game_id__actions_turn_face_up_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TurnFaceUpRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionOutcome"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Action Turn Face Up"
       }
     },
     "/api/games/{game_id}/advance": {
@@ -18653,6 +19104,65 @@
         "summary": "Register Scripts"
       }
     },
+    "/api/games/{game_id}/seats/{uid}/scripts/adhoc": {
+      "post": {
+        "description": "FD5 (7): stage a mid-game ad-hoc play script under `uid`'s own\ncorpus (`records.stage_adhoc_script`) - a play written and staged\nwithout registering it into the corpus `PUT .../scripts` builds first,\nfor a multi-step or repetitive sequence a seat is facing right now\n(FD9's `repeat` covers the loop itself).\n\n**The credential is the driver's own**, exactly `register_scripts`'\nown rule: `?uid=` equal to the path's `{uid}`, or this game's admin key.\nAnything else is a 404, confirming nothing about whether that uid or\ngame exists.\n\n**Behind the kill switch**: with `SCRIPTS_ENABLED` off this refuses\nwith `code: scripts_disabled`. **Every refusal is `code: invalid_\nscripts`** with each `PlaysError` - a malformed play, a card-name-ban\nhit, a conflict with the corpus... - `records.stage_adhoc_script`'s\nown docstring has the rest.",
+        "operationId": "stage_adhoc_script_api_games__game_id__seats__uid__scripts_adhoc_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "uid",
+            "required": true,
+            "schema": {
+              "title": "Uid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdhocScriptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdhocScriptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stage Adhoc Script"
+      }
+    },
     "/api/games/{game_id}/state-based-actions": {
       "post": {
         "description": "Check and perform this game's state-based actions right now.\n\nThe body is optional and carries only who asked (`player`) and why\n(`reasoning`) - the same shape `resolve-top` takes. Nobody *takes* a\nstate-based action, the game performs them; but somebody asked for this\ncheck, and once an agent seat can ask, it owes the same stated reason it\nowes for every other move it makes. Called with no body at all (the\nharness's own poke) there is no seat to hold to anything, and nothing is\nrequired.\n\nBefore T10's audit this route took no body at all, which left two\ndocuments wrong about it - `README.md` said it took an optional\n`reasoning` and `MEMORY.md` said it was gated. Giving it the body they\nboth described was cheaper, and more honest, than editing them to\ndescribe a hole.",
@@ -19180,6 +19690,79 @@
         "tags": [
           "lobby"
         ]
+      }
+    },
+    "/api/ops/dsl-coverage": {
+      "get": {
+        "description": "FD5 (6): per-game and aggregated `playscripts` DSL coverage across\nevery game since `since` (an ISO 8601 timestamp; omitted reads every\ngame this store has ever held), using the same `review.dsl_coverage`\nfunction `GET /api/games/{id}/review` already calls once per game -\n`{kind: {count, unexpressible, labels}}` - folded together here across\nevery finished game, plus each game's own reviewer/handover admit\ncounts (`_admit_totals`).\n\nThis is what makes prod coverage measurable without a per-game admin\nkey: every existing \"admin\" credential in this codebase is scoped to\none game (`store.admin_key`), and there is no cross-game listing route\nthat reads past the soft delete the way this one has to (most finished\ngames are archived, not live, by the time anyone asks) - see `store.\nids_since`'s own docstring.\n\nBehind `key`, checked against this deployment's own `OPS_TOKEN`\n(`records.authorized_ops_caller`) - an env-configured operator\ncredential, never a per-game one, and refused (404, naming no game and\nconfirming nothing) for any caller that does not present it, including\nan unconfigured deployment (`OPS_TOKEN` unset refuses everyone rather\nthan falling open).\n\n`limit` bounds how many games (oldest-first, per `ids_since`) this one\ncall will build a full review for - each one is real ledger work, and\nthis route is meant for a periodic operator sweep, not a hot path.",
+        "operationId": "ops_dsl_coverage_api_ops_dsl_coverage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsDslCoverageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ops Dsl Coverage"
       }
     },
     "/api/seats/{uid}": {

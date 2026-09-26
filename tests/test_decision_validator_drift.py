@@ -32,6 +32,7 @@ board without corrupting it.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -120,12 +121,44 @@ def board(client: TestClient, game: str) -> dict[str, Any]:
         if decision.kind is DecisionKind.ORDER_TRIGGERS
     ]
     assert asked, "the advance should have put CR 603.3b's ordering to alice"
+    dredge_id = _dredge_card_in_graveyard(game, "alice")
     return {
         "library_ids": library_ids,
         "bears_id": bears_id,
         "triggers": triggers,
         "trigger_prompt": asked[-1].prompt,
+        "dredge_id": dredge_id,
     }
+
+
+def _dredge_card_in_graveyard(game_id: str, player: str) -> UUID:
+    """FD5 (5): a synthetic dredge-2 card, staged directly in `player`'s
+    graveyard - `test_decision_kinds.py`'s own helper of the same name, in
+    the same shape (no real dredge printing is cached under `tests/
+    fixtures/scryfall/`, and this repo permits a test double for an
+    API-level route test, unlike `magic-cards-model`'s own no-mocks rule).
+    Given its own `Decision.cards` here, this is what lets `DREDGE`'s case
+    below exercise a candidate BOTH validators actually accept - the
+    engine's own `why_cannot_dredge` recheck, which `validate_answer` does
+    not replicate (it never touches a live `Game`), refuses anything else,
+    however honestly `decision.cards` would have listed it."""
+    import json as _json
+
+    from magic_cards_model.models import Card, CardState, Zone
+
+    raw = _json.loads(
+        (Path(__file__).parent / "fixtures" / "scryfall" / "grizzly_bears.json").read_text()
+    )
+    raw["name"] = "FD5 Drift Dredge Bears"
+    raw["oracle_text"] = "Dredge 2"
+    raw["keywords"] = [*raw.get("keywords", []), "Dredge"]
+    raw["id"] = str(uuid4())
+    raw["oracle_id"] = str(uuid4())
+    card = Card.model_validate(raw)
+    engine_game = _game(game_id)
+    state_obj = CardState(card=card, zone=Zone.GRAVEYARD, controller=player, owner=player)
+    engine_game.player(player).zones[Zone.GRAVEYARD].append(state_obj)
+    return state_obj.id
 
 
 def _game(game_id: str) -> Game:
@@ -340,6 +373,43 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
             (library_ids[0], library_ids[1]),
             (library_ids[0],),
             (library_ids[0], stray_id),
+            ["not", "a", "tuple"],
+        ],
+    )
+
+    dredge_id = board["dredge_id"]
+    cases[DecisionKind.DREDGE] = (
+        # FD5 (5): CR 702.52a - at most one of the offered graveyard cards
+        # replaces a draw; the empty tuple declines (draw normally).
+        # `dredge_id` is a real, currently-eligible dredge card (staged in
+        # alice's own graveyard) - the engine's own extra `why_cannot_dredge`
+        # recheck at answer time (`models/game.py`) accepts it exactly the
+        # way `validate_answer`'s plain membership check does, so this is a
+        # true positive both sides agree on.
+        #
+        # No stray-id candidate here, unlike `CHOOSE_CARDS`'s own case just
+        # above: the engine's dredge branch resolves the id with `find_by_
+        # id` before it ever reads `decision.cards` ("... is not a card"),
+        # while `validate_answer` - like every other kind here, and by
+        # design (its own docstring: it never touches a live `Game`) -
+        # checks offered membership first ("cannot dredge a card that was
+        # not offered"). Both refuse a stray id, so the two never disagree
+        # on accept/reject, but they refuse it in genuinely different words
+        # for a reason outside `validate_answer`'s own architecture to
+        # close (it would need a live board lookup no other kind's check
+        # here has either) - a real, narrow exception this file's own
+        # accept/reject assertion still exercises via the over-cap and
+        # malformed-type cases below, which do produce identical wording.
+        Decision(
+            kind=DecisionKind.DREDGE,
+            player="alice",
+            prompt="dredge test",
+            cards=(dredge_id,),
+        ),
+        [
+            (dredge_id,),
+            (),
+            (dredge_id, dredge_id),
             ["not", "a", "tuple"],
         ],
     )

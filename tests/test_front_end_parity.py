@@ -356,7 +356,18 @@ def test_every_hold_by_default_tool_says_so_in_its_own_docstring():
     defaults = hold_defaults()
     assert defaults, "no MCP tool exposes hold_priority - the introspection is wrong"
     holds = {name for name, default in defaults.items() if default is True}
-    assert holds == {"play_land", "suspend", "plot", "foretell", "cycle"}, holds
+    assert holds == {
+        "play_land",
+        "suspend",
+        "plot",
+        "foretell",
+        "cycle",
+        # FD5 (5): turn_face_up/bring_companion are CR 116.2 special
+        # actions too - CR 116.3 gives priority back after either, so both
+        # hold by default like every other special action tool above.
+        "turn_face_up",
+        "bring_companion",
+    }, holds
 
     for name in sorted(defaults):
         docstring = inspect.getdoc(_tool_functions(build_a_server()).get(name)) or ""

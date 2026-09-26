@@ -94,6 +94,7 @@ from .schemas import (
     ActivateRequest,
     AdvanceRequest,
     CastRequest,
+    CompanionRequest,
     ConcedeRequest,
     CrewRequest,
     CycleRequest,
@@ -101,6 +102,7 @@ from .schemas import (
     PassPriorityRequest,
     PlayLandRequest,
     SpecialActionRequest,
+    TurnFaceUpRequest,
 )
 
 logger = logging.getLogger("mcm.commands")
@@ -208,6 +210,14 @@ def _run_foretell(game: Game, payload: dict[str, Any]) -> Any:
 
 def _run_cycle(game: Game, payload: dict[str, Any]) -> Any:
     return engine_api.cycle_card(game, CycleRequest.model_validate(payload))
+
+
+def _run_turn_face_up(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.turn_face_up(game, TurnFaceUpRequest.model_validate(payload))
+
+
+def _run_companion(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.bring_companion_to_hand(game, CompanionRequest.model_validate(payload))
 
 
 def _run_crew(game: Game, payload: dict[str, Any]) -> Any:
@@ -507,6 +517,8 @@ COMMAND_HANDLERS: dict[str, Callable[[Game, dict[str, Any]], Any]] = {
     "cycle": _run_cycle,
     "crew": _run_crew,
     "equip": _run_equip,
+    "turn_face_up": _run_turn_face_up,
+    "companion": _run_companion,
     "concede": _run_concede,
     "pass_priority": _run_pass_priority,
     "advance": _run_advance,
@@ -908,6 +920,8 @@ ANNOUNCING_KINDS = frozenset(
         "plot",
         "foretell",
         "play_land",
+        "turn_face_up",
+        "companion",
     }
 )
 

@@ -125,6 +125,47 @@
       ]
     },
     {
+      "docstring_first_line": "FD5 (5)/FD1: CR 116.2g - pay {3} to put your chosen companion from",
+      "name": "bring_companion",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
       "docstring_first_line": "Cast a spell. Most casts are from your hand, and need nothing",
       "name": "cast",
       "parameters": [
@@ -1183,6 +1224,61 @@
           "default": null,
           "has_default": false,
           "name": "card",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "FD5 (5)/FD1: CR 702.37e/701.40b-d - turn a face-down permanent you",
+      "name": "turn_face_up",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card_id",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "procedure",
           "type": "str",
           "type_error": null
         },

@@ -680,6 +680,20 @@ class GameRepository(Protocol):
         """Every game id currently held."""
         ...
 
+    def ids_since(self, since: str | None) -> list[str]:
+        """FD5 (6): every game id this store has ever held, **archived
+        included** - unlike `ids()`, which is `live-only by design (a
+        lobby's own listing has no use for a game nobody can open any
+        more). `since` is an ISO 8601 timestamp, compared against each
+        game's own `created_at`; `None` returns every id. Ascending by
+        `created_at`, so a paged ops caller reads oldest-first.
+
+        This is what lets `GET /api/ops/dsl-coverage` measure prod coverage
+        without a per-game admin key: nearly every game worth measuring has
+        already ended (and so is archived, not live) by the time anyone
+        asks."""
+        ...
+
     def locked(self, game_id: str) -> AbstractContextManager[Game]:
         """Hold this game's mutation lock for the duration of the `with`
         block, yielding the `Game`. Raises `KeyError` for an unknown game
@@ -1446,3 +1460,14 @@ class InMemoryRepository:
     def ids(self) -> list[str]:
         with self._lock:
             return list(self._games)
+
+    def ids_since(self, since: str | None) -> list[str]:
+        with self._lock:
+            candidates = set(self._games) | set(self._archived)
+            matching = [
+                game_id
+                for game_id in candidates
+                if since is None
+                or ((created := self._created_at.get(game_id)) is not None and created >= since)
+            ]
+            return sorted(matching, key=lambda game_id: self._created_at.get(game_id) or "")

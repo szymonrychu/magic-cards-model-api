@@ -439,9 +439,33 @@ def record(
     )
     # The step the action was taken in, not the one the committed board has
     # moved on to since (`records.note_action_board`, battle 3 B3-11).
+    #
+    # FD5 (2): `active_player`/`priority_holder` are likewise read off the
+    # *pre*-action board when one was noted, not recomputed from `game`
+    # (which by now may be the *post*-action state) - a pass that ends a
+    # turn must still say whose turn it was when the pass was made, not the
+    # next player's. `pre_action_frame` is the previous row's own `seq`
+    # (`0` reads as "none yet"), and `pre_state` is this row's own
+    # best-effort snapshot of the pre-action board, attached only when there
+    # is no earlier frame at all - so a converter reading this row never has
+    # to fall back to reading the *post*-action board (G1, G16).
+    pre_action_frame: int | None = None
+    pre_state: dict[str, Any] | None = None
     noted = action_board(game_id)
     if noted is not None:
-        turn_number, step, first_strike_damage_step = noted
+        (
+            turn_number,
+            step,
+            first_strike_damage_step,
+            active_player,
+            priority_holder,
+            pre_seq,
+            noted_pre_state,
+        ) = noted
+        if pre_seq:
+            pre_action_frame = pre_seq
+        else:
+            pre_state = noted_pre_state
     payload = {
         "ts": datetime.now(UTC).isoformat(),
         "action": action,
@@ -467,6 +491,12 @@ def record(
         "priority_holder": priority_holder,
         "turns_taken": turns_taken,
         "reasoning": reasoning,
+        # FD5 (2): the pre-action frame this row's own action was taken
+        # against - the previous row's `seq` whenever one exists, or (only
+        # for a game's very first row) this row's own `pre_state` snapshot
+        # of the pre-action board. Exactly one of the two is ever set.
+        "pre_action_frame": pre_action_frame,
+        "pre_state": pre_state,
         # Two keys, written from one object or not at all: the actions
         # and the single seat they belong to. `visibility.redact_log_
         # entry` reads `legal_actions_for` to decide who may see them -
@@ -539,6 +569,8 @@ _UNRECORDED_DEFAULTS: dict[str, Any] = {
     "reasoning": None,
     "legal_actions_before": None,
     "legal_actions_for": None,
+    "pre_action_frame": None,
+    "pre_state": None,
 }
 
 
@@ -681,19 +713,28 @@ def _console_line(entry: dict[str, Any]) -> str:
         line += f" | resolved {detail['resolved']}: {did}"
     if "allowed" in detail:
         allowed = detail["allowed"]
-        if allowed is True:
+        # FD5 (3): a paused row is `allowed: True` now (it is a committing
+        # row - the command ran far enough to be asked a real question), so
+        # `paused` is checked first and wins over the plain "-> allowed"
+        # line. The `allowed is None` arm stays underneath for a row
+        # recorded before this change, which still carries the old shape.
+        if detail.get("paused"):
+            # `paused_on` is the pending decision's own `{player, kind}` -
+            # whose choice this is and what it is about - threaded in by
+            # every PAUSED caller precisely so this line can say what it
+            # paused *on* rather than just that it paused.
+            paused_on = detail.get("paused_on") or {}
+            who_decides = paused_on.get("player") or "?"
+            kind = paused_on.get("kind") or "?"
+            line += f" -> paused: waiting on {who_decides}'s {kind} decision"
+        elif allowed is True:
             line += " -> allowed"
         elif allowed is False:
             line += f" -> refused: {detail.get('reason')}"
         else:
-            # `allowed` is tri-state (True/False/None) - `None` means the
-            # command paused waiting on a decision, which is not a refusal
-            # and must never be folded into that arm (`detail.get("reason")`
-            # is `None` for a pause, since nothing was refused). `paused_on`
-            # is the pending decision's own `{player, kind}` - whose choice
-            # this is and what it is about - threaded in by every PAUSED
-            # caller precisely so this line can say what it paused *on*
-            # rather than just that it paused.
+            # A legacy row: `allowed is None` with no `paused` flag at all
+            # predates even the original paused shape - nothing more is
+            # known about it than that nothing was refused.
             paused_on = detail.get("paused_on") or {}
             who_decides = paused_on.get("player") or "?"
             kind = paused_on.get("kind") or "?"

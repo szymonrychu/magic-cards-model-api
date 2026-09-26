@@ -1933,6 +1933,103 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
 
     @server.tool()
     @_guarded(seats)
+    def turn_face_up(
+        player_uid: str,
+        card_id: str,
+        procedure: str = "",
+        mana_sources: str = "",
+        dry_run: bool = False,
+        hold_priority: bool = True,
+        reasoning: str = "",
+        ctx: Context | None = None,
+    ) -> str | InputRequiredResult:
+        """FD5 (5)/FD1: CR 702.37e/701.40b-d - turn a face-down permanent you
+        control (a morph, megamorph, disguise, or manifested permanent) face
+        up, paying whatever cost that reveals. `card_id` is the permanent's
+        own id (from your board, even face down). `procedure` is CR
+        701.40c-d's own choice between the manifest and morph/disguise
+        procedures, for a permanent that is both manifested and carries
+        morph or disguise; leave it empty for every other case. `mana_sources`
+        is comma-separated source ids; leave it empty to offer all your
+        untapped mana sources.
+
+        HOLDS PRIORITY BY DEFAULT, like every other special action (CR 116.3):
+        this does not use the stack (CR 116.1), so there is nothing to release
+        priority for. Pass `hold_priority=false` only when you really do want
+        to hand priority over. See `cast`'s docstring for the answer's shape."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        state = seat.fetch_state()
+        body: dict[str, Any] = {"player": seat.player, "card_id": card_id, "dry_run": dry_run}
+        if procedure:
+            body["procedure"] = procedure
+        sources = seat.sources_or_all(mana_sources, state)
+        if sources:
+            body["mana_sources"] = sources
+        if reasoning:
+            body["reasoning"] = reasoning
+        if dry_run:
+            return seat.call("POST", f"/api/games/{seat.game_id()}/actions/turn-face-up", body)
+
+        def perform() -> Any:
+            return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/turn-face-up", body)
+
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
+
+    @server.tool()
+    @_guarded(seats)
+    def bring_companion(
+        player_uid: str,
+        mana_sources: str = "",
+        dry_run: bool = False,
+        hold_priority: bool = True,
+        reasoning: str = "",
+        ctx: Context | None = None,
+    ) -> str | InputRequiredResult:
+        """FD5 (5)/FD1: CR 116.2g - pay {3} to put your chosen companion from
+        outside the game into your hand, once per game, any time you have
+        priority with the stack empty during your own main phase. Names no
+        card: your companion was chosen at deck load and there is nothing
+        here to choose between. `mana_sources` is comma-separated source
+        ids; leave it empty to offer all your untapped mana sources.
+
+        HOLDS PRIORITY BY DEFAULT, like every other special action (CR 116.3):
+        this does not use the stack (CR 116.1), so there is nothing to release
+        priority for. Pass `hold_priority=false` only when you really do want
+        to hand priority over. See `cast`'s docstring for the answer's shape."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        state = seat.fetch_state()
+        body: dict[str, Any] = {"player": seat.player, "dry_run": dry_run}
+        sources = seat.sources_or_all(mana_sources, state)
+        if sources:
+            body["mana_sources"] = sources
+        if reasoning:
+            body["reasoning"] = reasoning
+        if dry_run:
+            return seat.call("POST", f"/api/games/{seat.game_id()}/actions/companion", body)
+
+        def perform() -> Any:
+            return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/companion", body)
+
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
+
+    @server.tool()
+    @_guarded(seats)
     def declare_attackers(
         player_uid: str,
         attackers: str,
@@ -2702,7 +2799,14 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         `opposing_archetype` and `inputs` mean what they mean for
         `run_script`. Never mandatory - left empty (the default), this call
         behaves exactly as it always has. Refused outright to an advisor, same
-        as this whole tool."""
+        as this whole tool.
+
+        DSL-first: arm a script for any multi-step or repetitive sequence
+        you can see coming on this run - a mana loop reaches for FD9's
+        `repeat` move inside the script itself - rather than planning to
+        chain the same manual calls by hand once you get there. You still
+        choose to run whatever it judges applicable (`run_script`); arming
+        only judges, never fires one for you."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -2768,6 +2872,13 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
     ) -> str | InputRequiredResult:
         """Run one of your registered play scripts: its moves, in order, and
         the one `next` script that applies after them.
+
+        DSL-first: write and run a play-script for any multi-step or
+        repetitive sequence you are facing, rather than chaining manual
+        calls one at a time - `repeat` (FD9) is the move kind for a loop, a
+        mana loop most often, run to a target or a threshold instead of
+        counted by hand. Keep manual calls for one-off decisions. You
+        always choose to run a script; nothing here runs one for you.
 
         `script` is the script's `id` - a registered one, or one you staged
         with `stage_script`. Or give `body` instead: an inline play document
@@ -2849,6 +2960,11 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         admit - for a multi-step or repetitive sequence you are facing right
         now (a mana loop, say - a `repeat` move).
 
+        DSL-first: write and stage a script for exactly that kind of
+        sequence rather than chaining manual calls one at a time - keep
+        manual calls for one-off decisions. Staging never runs anything;
+        you always choose `run_script` yourself afterward.
+
         `body` is one play document, in the same format as a registered
         script's. Its `id` is replaced with a fresh one. `reasoning`: why you
         are scripting this now, in your own words. It is recorded for the
@@ -2888,7 +3004,12 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
 
         `opposing_archetype` and `inputs` mean what they mean for
         `run_script`, so a listing shows what a run with the same ones would
-        find."""
+        find.
+
+        DSL-first: check here before chaining manual calls for a multi-step
+        or repetitive sequence - a script (or `stage_script`, for one this
+        board is facing right now) is the reach for that, manual calls are
+        for one-off decisions."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT

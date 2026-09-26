@@ -69,8 +69,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from conftest import add_card, find, life_of, state
+from conftest import add_card, find, force_turn_position, life_of, state
 from fastapi.testclient import TestClient
+from magic_cards_model.machines import Step
+from magic_cards_model.models import Card, CardState, Zone
 
 from magic_cards_model_api import decisions
 from magic_cards_model_api.main import app
@@ -2625,3 +2627,92 @@ def test_a_stale_generation_from_the_mcp_tool_is_refused_by_generation(client, g
     )
     assert f"that answer names generation {stale}" in text, text
     assert "no pending decision for you" not in text
+
+
+# -- FD5 (5)/FD1: dredge, answered through /decide ---------------------------
+
+
+def _dredge_card_in_graveyard(game_id: str, player: str) -> str:
+    """A synthetic dredge-2 card, staged directly in `player`'s graveyard -
+    same "clone a real printing, patch in the one keyword line, give it a
+    fresh id" test-double pattern `test_special_actions.py`'s own morph
+    fixture uses, and for the same reason: no dredge printing is cached
+    under `tests/fixtures/scryfall/` and there is no network access to fetch
+    one."""
+    from uuid import uuid4
+
+    raw = json.loads(
+        (Path(__file__).parent / "fixtures" / "scryfall" / "grizzly_bears.json").read_text()
+    )
+    raw["name"] = "FD5 Test Dredge Bears"
+    raw["oracle_text"] = "Dredge 2"
+    raw["keywords"] = [*raw.get("keywords", []), "Dredge"]
+    raw["id"] = str(uuid4())
+    raw["oracle_id"] = str(uuid4())
+    card = Card.model_validate(raw)
+    game = store.get(game_id)
+    assert game is not None
+    state_obj = CardState(card=card, zone=Zone.GRAVEYARD, controller=player, owner=player)
+    game.player(player).zones[Zone.GRAVEYARD].append(state_obj)
+    return str(state_obj.id)
+
+
+def test_dredging_replaces_a_draw_and_is_answered_through_decide(client, game):
+    add_card(client, game, "Forest", "alice", "library")
+    add_card(client, game, "Forest", "alice", "library")
+    add_card(client, game, "Forest", "alice", "library")
+    dredge_id = _dredge_card_in_graveyard(game, "alice")
+    library_before = len(store.get(game).player("alice").library)
+
+    game_obj = store.get(game)
+    game_obj.turn.turn_number += 1  # CR 103.7a: the first turn skips the draw step
+    uid = seats_for(client, game)["alice"]
+    force_turn_position(game, Step.UPKEEP, "alice")
+    advanced = client.post(
+        f"/api/games/{game}/advance", params={"uid": uid}, json={"player": "alice"}
+    ).json()
+    assert advanced.get("paused") is True, advanced
+    pending = advanced["pending_decision"]
+    assert pending["kind"] == "dredge", pending
+    assert dredge_id in pending["cards"], pending
+
+    answered = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uid},
+        json={"player": "alice", "card_ids": [dredge_id]},
+    )
+    body = answered.json()
+    assert body.get("allowed") is not False, body
+
+    after_game = store.get(game)
+    alice = after_game.player("alice")
+    assert dredge_id in [str(c.id) for c in alice.hand]
+    assert len(alice.library) == library_before - 2, "two cards milled, none drawn"
+
+
+def test_declining_a_dredge_draws_normally(client, game):
+    add_card(client, game, "Forest", "alice", "library")
+    add_card(client, game, "Forest", "alice", "library")
+    dredge_id = _dredge_card_in_graveyard(game, "alice")
+
+    game_obj = store.get(game)
+    game_obj.turn.turn_number += 1  # CR 103.7a: the first turn skips the draw step
+    uid = seats_for(client, game)["alice"]
+    force_turn_position(game, Step.UPKEEP, "alice")
+    advanced = client.post(
+        f"/api/games/{game}/advance", params={"uid": uid}, json={"player": "alice"}
+    ).json()
+    assert advanced.get("paused") is True, advanced
+
+    answered = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uid},
+        json={"player": "alice", "card_ids": []},
+    )
+    body = answered.json()
+    assert body.get("allowed") is not False, body
+
+    after_game = store.get(game)
+    alice = after_game.player("alice")
+    assert dredge_id not in [str(c.id) for c in alice.hand]
+    assert any(str(c.id) == dredge_id for c in alice.graveyard)

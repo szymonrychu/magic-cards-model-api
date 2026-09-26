@@ -877,6 +877,35 @@ class ScriptsCorpusResponse(BaseModel):
     registered_at: str
 
 
+class AdhocScriptRequest(RequestModel):
+    """`POST /api/games/{game_id}/seats/{uid}/scripts/adhoc` (FD5 (7)): a
+    mid-game ad-hoc play script `uid` wrote and wants staged into its own
+    corpus - `records.stage_adhoc_script`. Judged exactly like a registered
+    corpus's own script (`playscripts.lint.check_play`), plus a static
+    conflict check against the corpus it lands in - a conflict is a
+    `warning` on a successful stage, never a refusal."""
+
+    play: dict[str, Any]
+    """One inline `Play` document - the same shape `PUT .../scripts`
+    validates each of `scripts` against."""
+    reasoning: str
+    """Why this sequence is worth writing as a script rather than chaining
+    manual calls - required the same way every committing action's own
+    `reasoning` is (`records.require_reasoning`)."""
+
+
+class AdhocScriptResponse(BaseModel):
+    """`POST .../scripts/adhoc`'s answer on a successful stage."""
+
+    id: str
+    """The assigned `adhoc-<n>-<uid>` id - what `run_script`/`stage_script`
+    and the CLI's `script run`/`script stage` name this play by afterward."""
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+    """Static conflicts with a play already in this uid's own corpus, one
+    `PlaysError`-shaped entry each - not a refusal (see the request's own
+    docstring)."""
+
+
 class ScriptRunIn(RequestModel):
     """`POST /api/games/{game_id}/script-runs` - one script run, reported by
     the runner at its `start` and again at its `finish`, or one offer of a
@@ -1381,6 +1410,38 @@ class SpecialActionRequest(BoardRead):
     reasoning: str | None = None
     """T10: required for an agent seat (`records.require_reasoning`),
     optional for a human one."""
+
+
+class TurnFaceUpRequest(BoardRead):
+    """FD5 (5)/FD1: CR 702.37e/701.40b-d - turn a face-down permanent (a
+    morph, megamorph, disguise, or manifested permanent) face up, paying
+    whatever cost that reveals."""
+
+    player: str
+    card_id: UUID
+    procedure: str | None = None
+    """CR 701.40c-d's own choice between the manifest and morph/disguise
+    procedures - only meaningful for a permanent that is both manifested and
+    carries a morph or disguise ability; `None` for every other case, the
+    engine's own default (`Game.why_cannot_turn_face_up_as`/
+    `begin_turning_face_up`/`turn_face_up`)."""
+    mana_sources: list[UUID | ManaSource] | None = None
+    dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat, optional for a human one."""
+
+
+class CompanionRequest(BoardRead):
+    """FD5 (5)/FD1: CR 116.2g - pay {3} to put your chosen companion from
+    outside the game into your hand. Names no card: `Player.companion_id`
+    is set once at deck load (CR 702.139a already checked), so there is
+    nothing here to choose between."""
+
+    player: str
+    mana_sources: list[UUID | ManaSource] | None = None
+    dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat, optional for a human one."""
 
 
 class TargetRequest(RequestModel):
@@ -3084,6 +3145,27 @@ class ReviewPlayStats(BaseModel):
     reviewer admitted, whichever role filed it - this is the same admits,
     counted again on their own, so a reader can see how much of the totals
     the reviewer itself contributed without subtracting by hand."""
+    manual_calls: int = 0
+    """FD10 (c): this seat's own committing or refused rows that were not
+    part of a play-script run (`playscripts.stats.game_play_stats`) - the
+    complement of `script_actions`."""
+    script_actions: int = 0
+    """FD10 (c): this seat's own committing or refused rows that a
+    `run_script` call drove, identified by `runtime`'s own reasoning suffix
+    or `report._run_spans`' start/finish pairing."""
+    adhoc_staged: int = 0
+    """FD10 (c): `script_staged` rows this seat wrote this game
+    (`records.stage_adhoc_script`) - a mid-game play written and staged
+    without registering it into the seat's own corpus first."""
+    adhoc_runs: int = 0
+    """FD10 (c): `script_run` finish rows of one of this seat's own staged
+    ids."""
+    manual_chains: list[dict[str, Any]] = Field(default_factory=list)
+    """FD10 (c): every run of `playscripts.stats.MANUAL_CHAIN_MIN` or more
+    consecutive manual action rows this seat made, within one turn and step
+    with no opponent action between - `{seqs, kinds, turn, step}` each,
+    oldest first. A candidate the post-game review owes a generalized
+    `repeat`/multi-move play, or a `plays no-change`."""
 
 
 class ReviewDslCoverage(BaseModel):
@@ -3172,6 +3254,47 @@ class GameReviewResponse(BaseModel):
     labels}}` across every seat's own `decisions` this `viewer` may see -
     empty for a game with none. FD5's ops endpoint calls the same function
     once per game to aggregate this across every game."""
+    adhoc_scripts: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    """FD5 (7)/FD10 (a) (`review.adhoc_scripts_by_seat`): every mid-game
+    ad-hoc script one of this review's seats staged (`records.
+    stage_adhoc_script`), keyed by seat and scoped to whichever seat
+    `viewer` may see - each `{id, staged_at, turn, step, play, reasoning,
+    warnings, runs}`, `runs` the `script_run` finish rows the ledger
+    recorded of it. Left `dict[str, Any]` per entry, like `entries`, for the
+    same reason."""
+
+
+class OpsGameDslCoverage(BaseModel):
+    """One game's own DSL coverage and handover/reviewer admit counts, as
+    `GET /api/ops/dsl-coverage` (FD5 (6)) reports it per game."""
+
+    game_id: str
+    created_at: str | None = None
+    dsl_coverage: dict[str, ReviewDslCoverage] = Field(default_factory=dict)
+    handover_admits: dict[str, int] = Field(default_factory=dict)
+    """`{added, updated, reprioritized}`, summed across every seat's own
+    `ReviewPlayStats` for this game - every handover admit, whichever role
+    filed it."""
+    reviewer_admits: dict[str, int] = Field(default_factory=dict)
+    """Same three keys, summed across every seat's own `ReviewPlayStats.
+    reviewer` instead - the subset of `handover_admits` the post-game
+    reviewer itself filed."""
+
+
+class OpsDslCoverageResponse(BaseModel):
+    """`GET /api/ops/dsl-coverage` (FD5 (6)): per-game and aggregated DSL
+    coverage across every game since `since`, using FD7's `review.
+    dsl_coverage` - what makes prod coverage measurable without a per-game
+    admin key. Behind `records.authorized_ops_caller`'s own env-configured
+    `OPS_TOKEN`."""
+
+    since: str | None = None
+    games: list[OpsGameDslCoverage] = Field(default_factory=list)
+    aggregated: dict[str, ReviewDslCoverage] = Field(default_factory=dict)
+    """The same `{kind: {count, unexpressible, labels}}` shape as one game's
+    own `dsl_coverage`, folded across every game in `games`."""
+    handover_admits: dict[str, int] = Field(default_factory=dict)
+    reviewer_admits: dict[str, int] = Field(default_factory=dict)
 
 
 class DeleteGameResponse(BaseModel):

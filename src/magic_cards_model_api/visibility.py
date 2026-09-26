@@ -804,6 +804,11 @@ def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any] | 
     if isinstance(viewer, str):  # a real seat - not admin, not "nobody"
         if entry.get("snapshot"):
             entry["snapshot"] = redact_snapshot(entry["snapshot"], viewer)
+        # FD5 (2): `pre_state` is the same shape as `snapshot` (a game's very
+        # first row only, when there is no earlier frame to reference
+        # instead) - the same hidden zones, so it is filtered the same way.
+        if entry.get("pre_state"):
+            entry["pre_state"] = redact_snapshot(entry["pre_state"], viewer)
         detail = entry.get("detail") or {}
         zone = detail.get("zone") or detail.get("to_zone")
         owner = detail.get("player") or detail.get("controller")
