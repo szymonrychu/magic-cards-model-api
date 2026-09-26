@@ -1633,27 +1633,32 @@ class Play(_Strict):
 
     @model_validator(mode="after")
     def _pass_last_and_combat_first(self) -> Play:
+        """A combat move (`declare_attackers`/`declare_blockers`) must be the
+        *play's* first move, and a play carries at most one. A repeat's own
+        body-index-0 does not by itself satisfy that - the repeat move
+        carrying it must itself be the play's move 0, and no second combat
+        move may sit anywhere else in the play, top-level or nested."""
         last_index = len(self.moves) - 1
+        combat_moves: list[tuple[bool, DeclareAttackersMove | DeclareBlockersMove]] = []
         for index, move in enumerate(self.moves):
             if isinstance(move, PassMove) and index != last_index:
                 raise PydanticCustomError("pass_not_last", "'pass' must be the last move of moves")
-            if isinstance(move, DeclareAttackersMove | DeclareBlockersMove) and index != 0:
-                raise PydanticCustomError(
-                    "combat_move_not_first",
-                    "'{kind}' must be the first move of moves",
-                    {"kind": move.kind},
-                )
+            if isinstance(move, DeclareAttackersMove | DeclareBlockersMove):
+                combat_moves.append((index == 0, move))
             if isinstance(move, RepeatMove):
                 for body_index, body_move in enumerate(move.moves):
-                    if (
-                        isinstance(body_move, DeclareAttackersMove | DeclareBlockersMove)
-                        and body_index != 0
-                    ):
-                        raise PydanticCustomError(
-                            "combat_move_not_first",
-                            "'{kind}' must be the first move of moves",
-                            {"kind": body_move.kind},
-                        )
+                    if isinstance(body_move, DeclareAttackersMove | DeclareBlockersMove):
+                        combat_moves.append((index == 0 and body_index == 0, body_move))
+        if combat_moves and (len(combat_moves) > 1 or not combat_moves[0][0]):
+            _, offending = next(
+                ((is_first, move) for is_first, move in combat_moves if not is_first),
+                combat_moves[0],
+            )
+            raise PydanticCustomError(
+                "combat_move_not_first",
+                "'{kind}' must be the first move of moves",
+                {"kind": offending.kind},
+            )
         return self
 
     @model_validator(mode="after")

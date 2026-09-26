@@ -200,6 +200,38 @@ def test_repeat_body_combat_move_first_in_the_body_validates():
     assert play_errors(doc) == []
 
 
+def test_repeat_combat_move_must_be_the_plays_first_move_not_just_the_bodys():
+    """A repeat whose body opens with a combat move still has to be the
+    *play's* first move, not merely body_index 0 within itself - a combat
+    move sitting behind an earlier top-level move is exactly as illegal as
+    one sitting behind an earlier body move."""
+    doc = play(
+        moves=[
+            activate_move(),
+            repeat_move(moves=[{"kind": "declare_attackers", "attackers": []}]),
+        ],
+    )
+    assert codes(doc) == ["combat-move-not-first"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_at_most_one_combat_move_per_play_across_top_level_and_repeat_body():
+    """A play may carry at most one combat move total (per the spec's own
+    'at most one per play'): a top-level `declare_attackers` plus a second
+    combat move nested in a later repeat's body is two, not one, even
+    though each individually sits at its own container's index 0."""
+    doc = play(
+        moves=[
+            {"kind": "declare_attackers", "attackers": []},
+            repeat_move(moves=[{"kind": "declare_blockers", "blocks": []}]),
+        ],
+    )
+    assert codes(doc) == ["combat-move-not-first"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
 # -- until: 1-MAX_CONDITIONS conditions of the existing kinds -----------------
 
 
