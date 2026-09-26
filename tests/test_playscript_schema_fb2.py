@@ -249,10 +249,7 @@ def test_a_block_validates_with_every_field():
     assert block.blocker.count == 2 and block.attacker.ties == "any"
 
 
-def test_a_block_blocker_count_zero_now_validates():
-    """FD2 item 6: `Pick.count` (which `BlockerPick` extends) now allows 0 -
-    "choose none" - so a block naming zero blockers is a legal, if pointless,
-    shape rather than a bound violation."""
+def test_a_block_blocker_count_zero_is_bounds_exceeded():
     doc = play(
         moves=[
             {
@@ -261,7 +258,9 @@ def test_a_block_blocker_count_zero_now_validates():
             }
         ]
     )
-    assert play_errors(doc) == []
+    assert codes(doc) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
 
 
 def test_a_block_attacker_takes_no_count():

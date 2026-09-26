@@ -280,7 +280,7 @@
           "type": "array"
         },
         "pick": {
-          "$ref": "#/$defs/Pick",
+          "$ref": "#/$defs/AnswerPick",
           "default": null
         },
         "pile_one": {
@@ -375,6 +375,41 @@
         "answers"
       ],
       "title": "AnswerMove",
+      "type": "object"
+    },
+    "AnswerPick": {
+      "additionalProperties": false,
+      "description": "`Answer.pick`. FD2: 0 is a legal count here - \"choose none\" - alongside\nthe decision's own default (left out) and any positive count. Every other\nPick (costs, blocks, crew) still names at least one object.",
+      "properties": {
+        "count": {
+          "default": null,
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "ties": {
+          "const": "any",
+          "default": null,
+          "title": "Ties",
+          "type": "string"
+        }
+      },
+      "required": [
+        "select"
+      ],
+      "title": "AnswerPick",
       "type": "object"
     },
     "AttackGroup": {
@@ -484,7 +519,7 @@
       "properties": {
         "count": {
           "default": null,
-          "minimum": 0,
+          "minimum": 1,
           "title": "Count",
           "type": "integer"
         },
@@ -1176,7 +1211,7 @@
       "properties": {
         "count": {
           "default": null,
-          "minimum": 0,
+          "minimum": 1,
           "title": "Count",
           "type": "integer"
         },
@@ -1603,7 +1638,7 @@
       "properties": {
         "count": {
           "default": null,
-          "minimum": 0,
+          "minimum": 1,
           "title": "Count",
           "type": "integer"
         },
@@ -1714,7 +1749,7 @@
       "properties": {
         "count": {
           "default": null,
-          "minimum": 0,
+          "minimum": 1,
           "title": "Count",
           "type": "integer"
         },

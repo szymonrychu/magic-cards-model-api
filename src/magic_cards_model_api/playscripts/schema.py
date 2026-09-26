@@ -887,11 +887,17 @@ class DamagePolicy(_Strict):
 
 class Pick(_Strict):
     select: Selector
-    #: FD2: 0 is a legal count - "choose none" - alongside the cost's own
-    #: default (left out) and any positive count.
-    count: Annotated[int, Field(ge=0)] = None
+    count: Annotated[int, Field(ge=1)] = None
     prefer: Prefer = None
     ties: Ties = None
+
+
+class AnswerPick(Pick):
+    """`Answer.pick`. FD2: 0 is a legal count here - "choose none" - alongside
+    the decision's own default (left out) and any positive count. Every other
+    Pick (costs, blocks, crew) still names at least one object."""
+
+    count: Annotated[int, Field(ge=0)] = None
 
 
 def _amount_tag(value: Any) -> str:
@@ -1060,7 +1066,7 @@ class Answer(_Strict):
     `players`."""
 
     decision: DecisionKind
-    pick: Pick = None
+    pick: AnswerPick = None
     accept: bool = None
     to_graveyard: Selector = None
     to_bottom: Selector = None

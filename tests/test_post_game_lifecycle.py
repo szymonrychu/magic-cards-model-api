@@ -157,7 +157,10 @@ def test_a_natural_game_over_starts_the_human_seats_review_job_in_kubernetes_mod
     fresh_registry._dispatched[bob] = {"mechanism": "kubernetes"}
     calls: list[tuple[str, str, str]] = []
 
-    def fake_start_review_followup(*, uid: str, game_id: str, player: str) -> dict[str, Any]:
+    def fake_start_review_followup(
+        *, uid: str, game_id: str, player: str, review_key: str
+    ) -> dict[str, Any]:
+        assert review_key
         calls.append((uid, game_id, player))
         return {"uid": uid, "mechanism": "kubernetes", "state": "scheduled"}
 
