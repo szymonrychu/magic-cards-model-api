@@ -617,12 +617,13 @@ def test_every_operand_kind_validates_on_both_sides(operand):
     assert play_errors(doc) == []
 
 
-def test_operand_kinds_are_exactly_seven():
+def test_operand_kinds_are_exactly_eight():
     assert OPERAND_KINDS == (
         "count",
         "zone_size",
         "life",
         "untapped_mana",
+        "mana_pool",
         "power_sum",
         "toughness_sum",
         "n",

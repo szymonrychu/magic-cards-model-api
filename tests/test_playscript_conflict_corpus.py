@@ -36,7 +36,12 @@ from magic_cards_model_api.playscripts.lint import (
 )
 
 CORPUS_PATH = Path(__file__).resolve().parent / "fixtures" / "conflict_corpus.json"
-CORPUS_SHA256 = "65fbf5ee5f86d217e06775735a8d0faf27c4a5af90db933c66de0753c2de5a8b"
+#: FD9 item 2: two cases added, pinning the move-selector dimension reading a
+#: `repeat`'s own first body move as the play's first move
+#: (`repeat-move-selector-different-zones`,
+#: `repeat-move-selector-overlapping-types-still-conflict`). Print in FD9's
+#: report for FD8's round-3 mirror update.
+CORPUS_SHA256 = "0c2653b9a11d61a2af4f491c06680fd04fe6368cf137a224a62fe327a8ee9d79"
 CORPUS = json.loads(CORPUS_PATH.read_text(encoding="utf-8"))
 CATALOG = input_catalog(CORPUS["inputs"], CORPUS["matchup_keys"])
 CASES = CORPUS["cases"]

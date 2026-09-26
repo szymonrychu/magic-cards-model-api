@@ -53,7 +53,7 @@ def test_both_worked_examples_validate():
         assert model.id == example["id"]
 
 
-def test_the_vocabulary_is_closed_at_eleven_conditions_and_nine_moves():
+def test_the_vocabulary_is_closed_at_twelve_conditions_and_ten_moves():
     assert CONDITION_KINDS == (
         "count",
         "zone_size",
@@ -61,6 +61,7 @@ def test_the_vocabulary_is_closed_at_eleven_conditions_and_nine_moves():
         "stack_top",
         "land_drop_available",
         "untapped_mana",
+        "mana_pool",
         "turn",
         "input",
         "pending_decision",
@@ -77,6 +78,7 @@ def test_the_vocabulary_is_closed_at_eleven_conditions_and_nine_moves():
         "declare_blockers",
         "keyword_action",
         "mulligan",
+        "repeat",
     )
 
 
@@ -124,6 +126,10 @@ def test_the_error_codes_are_the_shared_contract_in_order():
         "use-combat-move",
         "answer-decision-mismatch",
         "mulligan-wrong-step",
+        "repeat-nested",
+        "repeat-pass-in-body",
+        "repeat-bound",
+        "repeat-empty-until",
     )
 
 
@@ -404,11 +410,15 @@ def _property_names(schema: Any) -> set[str]:
 def test_no_field_anywhere_iterates_mulligans_or_concedes():
     """FB2 gives `attackers` (M2) and `blocks` (M3) real, legitimate field
     names - a bounded list declared once per play, never an iteration
-    primitive - so they are dropped from this forbidden set; `attack`,
-    `block`/`blockers`, `mulligan`, `concede` and every `LOOP_LIKE` word stay
-    forbidden as field names anywhere in the schema."""
+    primitive - so they are dropped from this forbidden set. FD9 gives
+    `repeat`/`until` real, legitimate field names too - a bounded,
+    `max_iterations`-capped construct, never an open-ended loop primitive -
+    so they are dropped the same way. `attack`, `block`/`blockers`,
+    `mulligan`, `concede` and every other `LOOP_LIKE` word (`times`, `loop`,
+    `while`, `iterations`, `for_each`, `each`, `again`) stay forbidden as
+    field names anywhere in the schema."""
     names = _property_names(Play.model_json_schema())
-    forbidden = set(LOOP_LIKE) | {
+    forbidden = (set(LOOP_LIKE) - {"repeat", "until"}) | {
         "attack",
         "block",
         "blockers",

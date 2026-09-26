@@ -89,9 +89,16 @@ def test_codes_and_warning_codes_are_the_shared_contract():
         "use-combat-move",
         "answer-decision-mismatch",
     )
-    assert CODES[30:32] == ("mulligan-wrong-step", "never-applicable")
-    assert len(CODES) == 32
-    assert WARNING_CODES == ("play-conflict", "next-conflict")
+    assert CODES[30:36] == (
+        "mulligan-wrong-step",
+        "repeat-nested",
+        "repeat-pass-in-body",
+        "repeat-bound",
+        "repeat-empty-until",
+        "never-applicable",
+    )
+    assert len(CODES) == 36
+    assert WARNING_CODES == ("play-conflict", "next-conflict", "repeat-until-static")
     assert EXCLUSIVITY_DIMENSIONS == (
         "whose_turn",
         "steps",

@@ -373,6 +373,87 @@ def test_untapped_mana_counts_untapped_mana_sources_i_control():
     assert seen({"kind": "untapped_mana", "op": ">=", "n": 99}, view) == 1
 
 
+# -- mana_pool (FD9) ------------------------------------------------------------
+
+
+def with_mana_pool(view: dict[str, Any], **floating_by_player: dict[str, int]) -> dict[str, Any]:
+    """`view` with each named player's own `mana_pool.floating` set - the
+    shape `serialize._mana_pool_view` emits, trimmed to the one field
+    `mana_pool` reads. A player not named here carries no `mana_pool` key at
+    all, the same as a snapshot recorded before the field existed."""
+    for player in view["players"]:
+        if player["username"] in floating_by_player:
+            player["mana_pool"] = {"floating": dict(floating_by_player[player["username"]])}
+    return view
+
+
+def mana_pool_condition(op: str, n: int, *, color: str | None = None) -> dict[str, Any]:
+    condition: dict[str, Any] = {"kind": "mana_pool", "op": op, "n": n}
+    if color is not None:
+        condition["color"] = color
+    return condition
+
+
+def test_mana_pool_reads_the_viewers_own_floating_total_across_every_color():
+    view = with_mana_pool(state_view(), alice={"G": 5, "C": 1})
+    assert seen(mana_pool_condition(">=", 0), view) == 6
+    assert holds(mana_pool_condition(">=", 6), view)
+    assert not holds(mana_pool_condition(">=", 7), view)
+
+
+def test_mana_pool_narrowed_to_one_color_reads_only_that_colors_count():
+    view = with_mana_pool(state_view(), alice={"G": 5, "C": 1})
+    assert seen(mana_pool_condition(">=", 0, color="G"), view) == 5
+    assert seen(mana_pool_condition(">=", 0, color="U"), view) == 0
+    assert holds(mana_pool_condition("==", 5, color="G"), view)
+    assert not holds(mana_pool_condition("==", 5, color="C"), view)
+
+
+def test_mana_pool_with_no_mana_pool_key_at_all_reads_zero():
+    """A player the view carries no `mana_pool` for at all (a snapshot
+    recorded before the field existed) reads as an empty pool, never an
+    error - the same fail-open-to-zero reading `untapped_mana`'s own
+    `_mana_options` gives an absent source."""
+    view = state_view()
+    assert seen(mana_pool_condition(">=", 0), view) == 0
+    assert not holds(mana_pool_condition(">=", 1), view)
+
+
+def test_mana_pool_reads_the_devoted_druid_loops_own_x_target():
+    """The owner's own worked example: the loop's `until` reaches X=8 the
+    same way finding seq 191's manual line eventually did, but expressed as
+    one condition instead of counting 25 manual activations by hand."""
+    view = with_mana_pool(state_view(), alice={"G": 7})
+    assert not holds(mana_pool_condition(">=", 8, color="G"), view)
+    view = with_mana_pool(state_view(), alice={"G": 8})
+    assert holds(mana_pool_condition(">=", 8, color="G"), view)
+
+
+def test_mana_pool_compare_operand_reads_the_named_side_and_color():
+    view = with_mana_pool(state_view(), alice={"G": 5}, bob={"R": 2})
+    left_me = {
+        "kind": "compare",
+        "left": {"of": "mana_pool", "side": "me"},
+        "op": ">=",
+        "right": {"of": "n", "n": 5},
+    }
+    left_opponent = {
+        "kind": "compare",
+        "left": {"of": "mana_pool", "side": "opponent", "color": "R"},
+        "op": "==",
+        "right": {"of": "n", "n": 2},
+    }
+    assert holds(left_me, view)
+    assert holds(left_opponent, view)
+    not_matching = {
+        "kind": "compare",
+        "left": {"of": "mana_pool", "side": "opponent", "color": "G"},
+        "op": ">",
+        "right": {"of": "n", "n": 0},
+    }
+    assert not holds(not_matching, view)
+
+
 # -- turn ---------------------------------------------------------------------
 
 

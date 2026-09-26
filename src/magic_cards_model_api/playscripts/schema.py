@@ -47,6 +47,29 @@ only through the new `damage` field. `concede` was never in the vocabulary
 and still is not: it is not a `DecisionKind` the engine ever pends, and no
 move kind is ever named `concede`.
 
+FD9's additions (2026-09-26), also additive, still `schema_version` 1: a
+tenth move kind, `repeat {moves, until, max_iterations, stop_when_refused?}`
+(owner: "DSL is meant to fix missing repeat-until loops"). `moves` is 1-3 of
+the existing move kinds, none of them `repeat` (`repeat-nested`) or `pass`
+(`repeat-pass-in-body`) - a loop's own body commits real moves and exits
+through `until`, `max_iterations` or a refusal, never through releasing
+priority. `until` is 1-8 conditions of the existing kinds (an empty list is
+`repeat-empty-until`), judged fresh against a freshly read board before every
+iteration, so an `until` that already holds runs the loop zero times.
+`max_iterations` is required, 1-40 (missing or out of range is
+`repeat-bound`) - the loop's own hard stop, independent of whatever `until`
+alone would leave unbounded. `stop_when_refused` (default false) turns an
+engine refusal mid-loop into a normal end of the loop rather than a run
+failure. A `repeat` counts as one move toward `MAX_MOVES`/`MAX_MOVES_PER_RUN`;
+its own iterations are bounded only by `max_iterations`. A twelfth condition
+kind, `mana_pool` (and matching `compare` operand), reads the viewer's own
+floating mana pool - `untapped_mana` counts untapped SOURCES, never the pool
+itself, so it cannot express a loop's own mana target (the Devoted Druid +
+Vizier of Remedies loop, finding seq 191, needed roughly 25 manual MCP calls
+for exactly this reason). The runtime that actually executes a `repeat` is
+FD3 part 7's, in `playscripts/runtime.py`; this schema only shapes and lints
+the construct.
+
 FB2's B4 additions (2026-09-24), all additive over the shipped v1 vocabulary:
 `pass` (CR 117.3d, must be the play's last move - `pass-not-last`),
 `declare_attackers`/`declare_blockers` (CR 508.1/509.1, must be the play's
@@ -170,6 +193,15 @@ MAX_X = 30
 #: `Answer.damage`'s own `tiers` (FD2): one entry per ordered blocker tier,
 #: the same fan-out `DeclareBlockersMove.blocks` gets.
 MAX_DAMAGE_TIERS = MAX_BLOCKS
+#: `RepeatMove.moves` (FD9): a loop's own body - small on purpose, the same
+#: reasoning `MAX_MOVES` already gives a play: a line long enough to need more
+#: than a handful of steps per iteration is a script design smell, not a
+#: bound this construct should relax.
+MAX_REPEAT_BODY = 3
+#: `RepeatMove.max_iterations` (FD9): the loop's own hard stop, comfortably
+#: above any printed mana-loop or ping-down target while still finite - the
+#: bound that keeps a runaway `until` from ever looping forever.
+MAX_REPEAT_ITERATIONS = 40
 #: `ActivateMove.color` (FD2): the six colour letters `ActivateRequest.color`
 #: accepts.
 COLOR_LETTERS_CLOSED = ("W", "U", "B", "R", "G", "C")
@@ -217,6 +249,7 @@ CONDITION_KINDS = (
     "stack_top",
     "land_drop_available",
     "untapped_mana",
+    "mana_pool",
     "turn",
     "input",
     "pending_decision",
@@ -233,12 +266,22 @@ MOVE_KINDS = (
     "declare_blockers",
     "keyword_action",
     "mulligan",
+    "repeat",
 )
-#: `compare`'s own `Operand.of` vocabulary (FB2 C2) - purely descriptive here,
-#: the way `CONDITION_KINDS`/`MOVE_KINDS` are: each operand class carries its
-#: own `Literal["..."]` `of` value, this tuple is what the doc and drift
-#: tests pin against.
-OPERAND_KINDS = ("count", "zone_size", "life", "untapped_mana", "power_sum", "toughness_sum", "n")
+#: `compare`'s own `Operand.of` vocabulary (FB2 C2, FD9's `mana_pool` added) -
+#: purely descriptive here, the way `CONDITION_KINDS`/`MOVE_KINDS` are: each
+#: operand class carries its own `Literal["..."]` `of` value, this tuple is
+#: what the doc and drift tests pin against.
+OPERAND_KINDS = (
+    "count",
+    "zone_size",
+    "life",
+    "untapped_mana",
+    "mana_pool",
+    "power_sum",
+    "toughness_sum",
+    "n",
+)
 #: The two decision kinds FB2 moved out of `answers[]` into their own move
 #: kinds (`declare_attackers`/`declare_blockers`, M2/M3). An answer item still
 #: naming one is refused with `use-combat-move`, not `forbidden-kind` -
@@ -408,6 +451,10 @@ CODES = (
     "use-combat-move",
     "answer-decision-mismatch",
     "mulligan-wrong-step",
+    "repeat-nested",
+    "repeat-pass-in-body",
+    "repeat-bound",
+    "repeat-empty-until",
 )
 
 
@@ -649,6 +696,22 @@ class UntappedManaCondition(_Strict):
     n: AtLeastZero
 
 
+class ManaPoolCondition(_Strict):
+    """FD9: the viewer's own floating mana pool (`ManaPoolView.floating`,
+    CR 106.4) - the mana already produced by mana abilities and not yet
+    spent, on the same footing `untapped_mana` is on (always the viewer's
+    own, never a `side`). `untapped_mana` counts untapped SOURCES, never this
+    pool, so it cannot express a repeat-until loop's own mana target (the
+    Devoted Druid + Vizier of Remedies loop, finding seq 191). `color` (FD2's
+    `Color`) narrows to one coloured symbol's own count; left out, `n`
+    compares the pool's total across every color, `{C}` included."""
+
+    kind: Literal["mana_pool"]
+    color: Color = None
+    op: Op
+    n: AtLeastZero
+
+
 class TurnCondition(_Strict):
     """The viewer's own `own_turns_taken` op `n`: how many of their own
     turns they have begun (`TurnMachine.own_turns_taken`, CR 500.7 extra
@@ -735,6 +798,16 @@ class UntappedManaOperand(_Strict):
     side: Literal["me", "opponent"]
 
 
+class ManaPoolOperand(_Strict):
+    """`compare`'s own `mana_pool` operand (FD9): the same read
+    `ManaPoolCondition` gives, on a named `side` - `untapped_mana`'s own
+    operand footing (`UntappedManaOperand`)."""
+
+    of: Literal["mana_pool"]
+    side: Literal["me", "opponent"]
+    color: Color = None
+
+
 class PowerSumOperand(_Strict):
     """The summed power of `side`'s battlefield permanents matching `select`
     - covers "their board's power beats my life" without a bespoke condition
@@ -772,6 +845,7 @@ Operand = Annotated[
     | ZoneSizeOperand
     | LifeOperand
     | UntappedManaOperand
+    | ManaPoolOperand
     | PowerSumOperand
     | ToughnessSumOperand
     | NOperand,
@@ -803,6 +877,7 @@ LeafCondition = Annotated[
     | StackTopCondition
     | LandDropCondition
     | UntappedManaCondition
+    | ManaPoolCondition
     | TurnCondition
     | InputCondition
     | PendingDecisionCondition
@@ -831,6 +906,7 @@ Condition = Annotated[
     | StackTopCondition
     | LandDropCondition
     | UntappedManaCondition
+    | ManaPoolCondition
     | TurnCondition
     | InputCondition
     | PendingDecisionCondition
@@ -1401,6 +1477,72 @@ class MulliganMove(_Strict):
     bottom: Pick = None
 
 
+class RepeatMove(_Strict):
+    """FD9: repeat `moves` (1-`MAX_REPEAT_BODY` of the existing move kinds,
+    none of them `repeat` itself - `repeat-nested` - or `pass` -
+    `repeat-pass-in-body`: a loop's body commits real moves and exits through
+    `until`, `max_iterations` or a refusal, never by releasing priority)
+    until every one of `until`'s 1-`MAX_CONDITIONS` conditions holds -
+    `repeat-empty-until` when the list is empty. `until` is judged fresh
+    against a freshly read board before every iteration, so an `until` that
+    already holds runs the loop zero times. `max_iterations` is required,
+    1-`MAX_REPEAT_ITERATIONS` (missing or out of range is `repeat-bound`):
+    the loop's own hard stop, distinct from whatever `until` alone would
+    leave unbounded. `stop_when_refused` (default false) turns an engine
+    refusal mid-loop into a normal end of the loop instead of a run failure.
+    Counts once toward `MAX_MOVES`/`MAX_MOVES_PER_RUN`; its own iterations
+    are bounded only by `max_iterations`. The runtime that actually drives
+    the loop (each iteration's board re-read, the no-progress guard, the
+    resume token) is FD3 part 7's, in `playscripts.runtime` - see the spec's
+    own 'Repeat' section for its exact stop rules."""
+
+    kind: Literal["repeat"]
+    moves: list[Move] = Field(min_length=1, max_length=MAX_REPEAT_BODY)
+    until: list[Condition] = Field(max_length=MAX_CONDITIONS)
+    max_iterations: int = None
+    stop_when_refused: bool = False
+
+    @model_validator(mode="after")
+    def _body_excludes_repeat_and_pass(self) -> RepeatMove:
+        for move in self.moves:
+            if isinstance(move, RepeatMove):
+                raise PydanticCustomError(
+                    "repeat_nested",
+                    "a repeat's own moves may not contain another repeat; nesting is refused",
+                )
+            if isinstance(move, PassMove):
+                raise PydanticCustomError(
+                    "repeat_pass_in_body",
+                    "a repeat's own moves may not contain pass; the loop exits through "
+                    "until, max_iterations or a refusal, never by releasing priority",
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _until_is_not_empty(self) -> RepeatMove:
+        if not self.until:
+            raise PydanticCustomError(
+                "repeat_empty_until",
+                "until names at least one condition; an empty until can never stop the loop",
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _max_iterations_is_bounded(self) -> RepeatMove:
+        value = self.max_iterations
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not (1 <= value <= MAX_REPEAT_ITERATIONS)
+        ):
+            raise PydanticCustomError(
+                "repeat_bound",
+                "max_iterations is required, an integer from 1 to {max}",
+                {"max": MAX_REPEAT_ITERATIONS},
+            )
+        return self
+
+
 Move = Annotated[
     ActivateMove
     | CastMove
@@ -1410,9 +1552,11 @@ Move = Annotated[
     | DeclareAttackersMove
     | DeclareBlockersMove
     | KeywordActionMove
-    | MulliganMove,
+    | MulliganMove
+    | RepeatMove,
     Field(discriminator="kind"),
 ]
+RepeatMove.model_rebuild()
 
 
 # -- the play ----------------------------------------------------------------
@@ -1549,6 +1693,7 @@ _ITEM_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "moves": TypeAdapter(Move),
     "true": TypeAdapter(Condition),
     "false": TypeAdapter(Condition),
+    "until": TypeAdapter(Condition),
     "conditions": TypeAdapter(LeafCondition),
     "answers": TypeAdapter(Answer),
     "next": TypeAdapter(NonBlank),
@@ -1593,6 +1738,10 @@ _CUSTOM_CODES = {
     "use_combat_move": "use-combat-move",
     "answer_decision_mismatch": "answer-decision-mismatch",
     "mulligan_wrong_step": "mulligan-wrong-step",
+    "repeat_nested": "repeat-nested",
+    "repeat_pass_in_body": "repeat-pass-in-body",
+    "repeat_empty_until": "repeat-empty-until",
+    "repeat_bound": "repeat-bound",
 }
 #: A value outside a closed Literal, by the field it is in.
 _LITERAL_CODES = {"decision": "unknown-decision-kind", "cost": "unknown-cast-cost"}

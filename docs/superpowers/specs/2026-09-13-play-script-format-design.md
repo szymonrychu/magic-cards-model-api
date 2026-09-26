@@ -65,9 +65,10 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   matches a card whose color set is empty (CR 105.2c, "A colorless object has
   no color"), a devoid Eldrazi included, and never a colored card.
 - Colors: `white`, `blue`, `black`, `red`, `green`, `colorless`
-- Condition kinds (11): `count`, `zone_size`, `life`, `stack_top`, `land_drop_available`, `untapped_mana`, `turn`, `input`, `pending_decision`, `compare`, `all_of`
+- Condition kinds (12): `count`, `zone_size`, `life`, `stack_top`, `land_drop_available`, `untapped_mana`, `mana_pool`, `turn`, `input`, `pending_decision`, `compare`, `all_of`
   (an `in`/`not_in` value list holds 0-32 values; `pending_decision`, `compare`
-  and `all_of` are FB2 additions - see their own subsections below).
+  and `all_of` are FB2 additions, `mana_pool` is an FD9 addition - see their
+  own subsections below).
 
 ### `note`
 
@@ -124,6 +125,22 @@ make right now from untapped sources, not the number of sources:
   Island are 2; an Island and Mystic Gate
   are 2; Captivating Cave and an Island are 2.
 
+### `mana_pool` (FD9)
+
+`{kind: mana_pool, color?, op, n}` compares `n` with the viewer's own
+floating mana pool (`ManaPoolView.floating`, CR 106.4) - the mana already
+produced by mana abilities and not yet spent, never re-derived. `color`
+narrows to one coloured symbol's own count (the same `W`/`U`/`B`/`R`/`G`/`C`
+vocabulary `activate.color` uses); left out, `n` compares the total across
+every color. This is the condition the owner's own example asks for
+("DSL is meant to fix missing repeat-until loops"): `untapped_mana` counts
+untapped SOURCES, never the pool itself, so it cannot express "keep looping
+until my floating pool holds X" at all - a Devoted Druid + Vizier of
+Remedies mana loop (finding seq 191, roughly 25 manual MCP calls to reach
+X=8) has no other way to say its own stop condition. It is also a `compare`
+operand (`{of: mana_pool, side, color?}`, below) on the same footing
+`untapped_mana`'s own operand is on.
+
 ### `turn`
 
 `{kind: turn, op, n}` compares `n` with the viewer's own `own_turns_taken` -
@@ -167,13 +184,15 @@ of its own. `Operand` is discriminated on `of`:
   named here, never `any`.
 - `{of: life, side: me|opponent}`
 - `{of: untapped_mana, side: me|opponent}`
+- `{of: mana_pool, side: me|opponent, color?}` (FD9) - the same read
+  `mana_pool` gives, on a named `side`.
 - `{of: power_sum, select, side}` - the summed power of `side`'s battlefield
   permanents matching `select`.
 - `{of: toughness_sum, select, side}` - the same reading `power_sum` gives,
   for toughness.
 - `{of: n, n: <int>}` - a plain literal, read off nothing.
 
-- Operand kinds: `count`, `zone_size`, `life`, `untapped_mana`, `power_sum`, `toughness_sum`, `n`
+- Operand kinds: `count`, `zone_size`, `life`, `untapped_mana`, `mana_pool`, `power_sum`, `toughness_sum`, `n`
 
 ### `all_of` (FB2 C3)
 
@@ -527,8 +546,8 @@ four-word vocabulary further.
 
 ## Moves
 
-Move kinds (9), each with `answers: [0-3]` (an `answer` move needs 1-3;
-`pass` and `mulligan` have no `answers` field at all):
+Move kinds (10), each with `answers: [0-3]` (an `answer` move needs 1-3;
+`pass`, `mulligan` and `repeat` have no `answers` field at all):
 
 - `activate {source: {zone, select, prefer?: [0-4 select], ties?: any}, ability_text_has?: string, ability_index?: 0-15, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, discard?: none|<discard choice>, exile?: <Pick>, x?: 0-30|max, color?: W|U|B|R|G|C, answers: [0-3]}` - names its ability by exactly one of `ability_text_has` (a phrase) or `ability_index` (FB2 M4, the card's own ability list index); both or neither is `activate-ability-ref`. FD2 adds `exile` (a Pick, the same footing `sacrifice`/`discard` are on), `x` (CR 107.3a's X, announced as the activation begins) and `color` (which coloured symbol a multi-colour mana ability covers).
 - `cast {card: {zone, select, prefer?: [0-4 select], ties?: any}, cost?: <cast cost>, face?: <selector>, modes?: [1-5 {text_has}], x?: 0-30|max, shares?: [0-6 int], optional_costs?: [1-4 {text_has}], sacrifice?: <Pick>, discard?: <Pick>, exile?: <Pick>, tap?: <Pick>, convoke?: <Pick>, delve?: <Pick>, improvise?: <Pick>, targets: [0-6 <target>], mana?: auto, answers: [0-3]}` - FD2 adds every field after `cost`: `face` names a split/Adventure/MDFC spell face by type or text phrase, never a card name; `modes` (CR 700.2a) and `optional_costs` (CR 118.8) each name 1-5/1-4 choices by phrase; `x` is CR 107.3a's X; `shares` (CR 601.2d) divides a divided effect among `targets`, aligned by position; the cost-object `sacrifice`/`discard`/`exile`/`tap` Picks pay a printed additional cost naming one of those, and `convoke`/`delve`/`improvise` (CR 702.51a/702.66a/702.126a) are Picks too.
@@ -539,12 +558,13 @@ Move kinds (9), each with `answers: [0-3]` (an `answer` move needs 1-3;
 - `declare_blockers {blocks: [0-6 Block]}` (FB2 M3, CR 509.1), `Block {blocker: {select, count?: >=0, prefer?: [0-4 select], ties?: any}, attacker: {select, prefer?: [0-4 select], ties?: any}}` - `blocks: []` declares no blocks.
 - `keyword_action {action: suspend|plot|foretell|cycle|equip|crew|turn_face_up|companion, card: {zone, select, prefer?: [0-4 select], ties?: any}, target?: <CardTarget>, crew_with?: <Pick>, answers: [0-3]}` (FD2) - one shape for the six existing keyword-action routes and FD5's two new ones; `target` names the creature an `equip` attaches to, `crew_with` the creatures a `crew` action taps to pay its cost.
 - `mulligan {keep: bool, bottom?: <Pick>}` (FD2, CR 103.5) - `keep` false takes a mulligan; a seat that keeps after already mulliganing owes CR 103.5's bottoming, named by `bottom` (left out, the engine's own default). Valid only when `when.steps` is exactly `["mulligan"]`, otherwise `mulligan-wrong-step`.
+- `repeat {moves: [1-3 move], until: [1-8 condition], max_iterations: 1-40, stop_when_refused?: bool = false}` (FD9) - see the "Repeat" section below for the full grammar and stop rules.
 
 `declare_attackers` and `declare_blockers` must each be the first move of the
 play, otherwise `combat-move-not-first`, and a play carries at most one of
 them (a second combat move can never also be first).
 
-- Move kinds: `activate`, `cast`, `play_land`, `answer`, `pass`, `declare_attackers`, `declare_blockers`, `keyword_action`, `mulligan`
+- Move kinds: `activate`, `cast`, `play_land`, `answer`, `pass`, `declare_attackers`, `declare_blockers`, `keyword_action`, `mulligan`, `repeat`
 
 A target is `{select, side, prefer?: [0-4 select], ties?: any, zone?:
 battlefield|stack|graveyard|exile}` (a card or permanent matching `select`,
@@ -728,6 +748,155 @@ required - the priority gate every other move needs does not apply, because
 answering a decision already paused mid-resolution is not itself an action
 that needs priority. The answer's own `decision` must equal the condition's,
 otherwise `answer-decision-mismatch`.
+
+## Repeat (FD9)
+
+Owner, verbatim: "DSL is meant to fix missing repeat-until loops. Instruct
+agents to generate DSLs instead of manually calling MCPs." A `repeat` move
+repeats a small step sequence until a condition holds, a hard iteration
+count is reached, or a resource guard hits - the shape finding seq 191
+needed and the format had no way to say: a seat spent roughly 25 manual MCP
+calls hand-driving a Devoted Druid + Vizier of Remedies mana loop to reach
+an X of 8, one activation at a time, because the play-script format had no
+repeat construct at all.
+
+### Grammar
+
+`{kind: repeat, moves: [1-3 move], until: [1-8 condition], max_iterations:
+1-40, stop_when_refused?: bool = false}`. `moves` is 1-`MAX_REPEAT_BODY` (3)
+of the loop's own body, drawn from the same move kinds every other `moves`
+entry is, except `repeat` itself (`repeat-nested` - no nesting) and `pass`
+(`repeat-pass-in-body` - a loop's own body commits real moves and exits
+through `until`, `max_iterations` or a refusal, never by releasing
+priority). `until` is 1-`MAX_CONDITIONS` (8) conditions of the existing
+kinds - the loop stops once every one of them holds - and an empty list is
+`repeat-empty-until`. `max_iterations` is required, an integer 1-40
+(`MAX_REPEAT_ITERATIONS`); missing or out of range is `repeat-bound`, since
+FD9 requires every loop to say up front how many iterations it is willing to
+run, independent of whatever `until` alone would leave unbounded.
+`stop_when_refused` (default false) is described under "Stop rules" below.
+Every per-move rule that already applies to a play's own top-level `moves` -
+the card-name ban, the selector rules, `phrase-too-narrow` (with the
+`ability_index` exemption) and the answer-shape rules - applies to a
+repeat's own body moves the same way, at whatever nesting a body move sits
+at (`moves[i].moves[j]`).
+
+A `repeat` counts as one move toward `MAX_MOVES`/`MAX_MOVES_PER_RUN`; its own
+iterations are bounded only by `max_iterations`, never by the play's own
+move cap.
+
+### `until` is judged fresh, before every iteration
+
+`until` is judged against a freshly read board before every iteration, the
+same way a play's own `true`/`false` are judged against the board a run
+starts from - so an `until` that already holds when the loop is first
+reached runs the loop zero times, and every iteration after the first
+re-reads the board rather than reasoning about it from what the previous
+iteration is expected to have done.
+
+### Stop rules (FD3 part 7 implements these exactly)
+
+The runtime that actually drives a `repeat` (each iteration's board re-read,
+the no-progress guard, the resume token) is FD3 part 7's, in
+`playscripts.runtime` - not this schema task. This section names every stop
+rule that runtime implements, so the two never drift:
+
+- `until` met (including on the loop's own first judgement, zero iterations
+  run): the script continues with the move after the `repeat`.
+- `max_iterations` reached with `until` still unmet: `unforeseen`, with
+  `stop_reason` `repeat_bound`.
+- An iteration whose moves were all accepted but that changed nothing on the
+  board (a digest over zones, tapped state, counters, life and mana pool):
+  `unforeseen`, with `stop_reason` `repeat_no_progress` - the guard against a
+  loop that keeps "succeeding" at doing nothing.
+- An engine refusal mid-loop: `refused`, carrying the engine's own text - or,
+  with `stop_when_refused: true`, a normal end of the loop instead, and the
+  script continues with the move after the `repeat`.
+- A pending decision the body's own `answers` do not cover: handed back as
+  `input_required`, resumable into the same loop - the agent answers it and
+  resumes exactly where the loop left off, rather than the loop failing
+  outright the way an unanswered decision would end an ordinary move.
+- A priority change the loop does not own (an opponent's action, an object
+  on the stack the loop is not itself resolving, priority passing to another
+  player): `interrupted`.
+- The run's own time cap, mid-loop: the resume token carries the repeat's
+  own move index, iteration count and body position, and a resumed run
+  continues the same loop from there, never restarting it.
+
+### Worked examples (selectors only, no card names)
+
+Devoted Druid + Vizier of Remedies (devoted-combo, finding seq 191): with
+Vizier of Remedies' own replacement effect live ("that many -1/-1 counters
+minus one"), Devoted Druid's own "put a -1/-1 counter on this creature:
+untap this creature" ability costs zero counters, so the mana ability and
+the untap ability repeat for free:
+
+```json
+{
+  "kind": "repeat",
+  "moves": [
+    {"kind": "activate", "source": {"zone": "battlefield", "select": {"types_all": ["Creature"], "subtypes_any": ["Elf"], "tapped": false}}, "ability_index": 0},
+    {"kind": "activate", "source": {"zone": "battlefield", "select": {"types_all": ["Creature"], "subtypes_any": ["Elf"]}}, "ability_index": 1}
+  ],
+  "until": [{"kind": "mana_pool", "color": "G", "op": ">=", "n": 8}],
+  "max_iterations": 10
+}
+```
+
+One `run_script` call in place of the roughly 25 manual MCP calls finding
+seq 191 needed to reach the same X of 8.
+
+Walking Ballista (eldrazi-tron, prison-tron): a resource-guard loop adds
+counters while untapped mana allows, then a second loop removes them to ping
+down small creatures until none remain - "while an opponent has" a target,
+the same shape the owner's own untapped-blockers example gives
+(`until: count battlefield side opponent types_all [Creature] tapped false
+== 0`):
+
+```json
+{
+  "kind": "repeat",
+  "moves": [
+    {"kind": "activate", "source": {"zone": "battlefield", "select": {"types_all": ["Artifact", "Creature"], "subtypes_any": ["Construct"]}}, "ability_index": 0}
+  ],
+  "until": [{"kind": "untapped_mana", "op": "<", "n": 4}],
+  "max_iterations": 8
+}
+```
+
+```json
+{
+  "kind": "repeat",
+  "moves": [
+    {"kind": "activate", "source": {"zone": "battlefield", "select": {"types_all": ["Artifact", "Creature"], "subtypes_any": ["Construct"]}}, "ability_index": 1, "targets": [{"select": {"types_all": ["Creature"], "toughness": {"op": "==", "n": 1}}, "side": "opponent"}]}
+  ],
+  "until": [{"kind": "count", "zone": "battlefield", "side": "opponent", "op": "==", "n": 0, "select": {"types_all": ["Creature"], "toughness": {"op": "==", "n": 1}}}],
+  "max_iterations": 15
+}
+```
+
+The first loop's own resource guard is `untapped_mana` itself, the condition
+the format already had; the second is the "while an opponent has" shape,
+over toughness rather than tapped state, proving the pattern generalizes
+past the owner's own worked example.
+
+### `repeat-until-static`
+
+A warning, never a failing error: raised when a `repeat`'s own `until` reads
+only `turn`/`input` conditions - nothing its own body could ever change - so
+the loop either stops on its first judgement, before the body ever runs, or
+never stops short of `max_iterations` or a refusal. A script author writing
+a fixed-count loop bounded by `max_iterations` alone is a legitimate use
+this warning still flags, since it never fails the gate.
+
+### Conflicts: a repeat's first body move is the play's first move
+
+FD2's move-selector conflict dimension reads a `repeat`'s own first body
+move as the play's first move for exclusivity purposes: the runtime sends
+that body move first, the same way an ordinary play's first move is sent
+first, so a `repeat` play and a plain play of the same first move conflict
+when their selectors overlap and are exclusive when the same rule
+(`_move_selectors_disjoint`) already proves them disjoint.
 
 ## Advice-only plays
 
@@ -1053,6 +1222,14 @@ could have named either kind at all. The same deploy-order consequence holds:
 this api's `main` reaches a live deploy before FD8's mtg-decks mirror update
 pushes a play naming any of FD2's vocabulary.
 
+FD9 (2026-09-26) keeps `schema_version` at 1 the same way: a tenth move kind
+(`repeat`) and a twelfth condition kind (`mana_pool`, plus its own `compare`
+operand) are each a new discriminated value, never a change to an existing
+kind's meaning, so every play already committed stays valid unchanged. The
+same deploy-order consequence holds again: this api's `main` reaches a live
+deploy before FD8's round-3 mtg-decks mirror update (part 4) pushes a play
+naming `repeat` or `mana_pool`.
+
 ## Migration: `note` becomes required later
 
 `note` lands optional (API-1): every play already committed validates
@@ -1070,11 +1247,12 @@ requirement; there is no date fixed for that step today.
 
 ## Not in the vocabulary
 
-Concede, and any iteration field. (FB2 2026-09-24: attacking, blocking and
-passing moved out of this list - `pass`/`declare_attackers`/
-`declare_blockers` are now real move kinds, M1-M3 above. FD2 2026-09-26:
-mulligan and assign-combat-damage moved out too - `mulligan` is a real move
-kind and a plain `accept` answer, and `assign_combat_damage` is answered
-through `damage`. `concede` stays out permanently: it is not a `DecisionKind`
-the engine ever pends, it ends the game, and a script must never be the thing
-that ends a game.)
+Concede. (FB2 2026-09-24: attacking, blocking and passing moved out of this
+list - `pass`/`declare_attackers`/`declare_blockers` are now real move
+kinds, M1-M3 above. FD2 2026-09-26: mulligan and assign-combat-damage moved
+out too - `mulligan` is a real move kind and a plain `accept` answer, and
+`assign_combat_damage` is answered through `damage`. FD9 2026-09-26:
+iteration moved out too - `repeat` is now a real move kind, bounded by
+`until`, `max_iterations` and a resource guard, never unbounded. `concede`
+stays out permanently: it is not a `DecisionKind` the engine ever pends, it
+ends the game, and a script must never be the thing that ends a game.)

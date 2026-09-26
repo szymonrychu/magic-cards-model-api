@@ -3751,6 +3751,156 @@
           }
         ]
       }
+    },
+    {
+      "name": "repeat-move-selector-different-zones",
+      "verdict": "exclusive",
+      "dimension": "move_selector",
+      "proven_by": [
+        "move_selector"
+      ],
+      "note": "FD9 item 2: a repeat's own first body move is read as the play's first move - a card is in exactly one zone at a time, so an activate sourced from the battlefield inside a repeat and a plain cast from hand are exclusive the same way two plain plays with those selectors already are.",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "repeat",
+            "moves": [
+              {
+                "kind": "activate",
+                "source": {
+                  "zone": "battlefield",
+                  "select": {}
+                },
+                "ability_index": 0
+              }
+            ],
+            "until": [
+              {
+                "kind": "untapped_mana",
+                "op": ">=",
+                "n": 99
+              }
+            ],
+            "max_iterations": 5
+          }
+        ]
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "cast",
+            "card": {
+              "zone": "hand",
+              "select": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "repeat-move-selector-overlapping-types-still-conflict",
+      "verdict": "conflicting",
+      "dimension": "move_selector",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "pending_decision"
+      ],
+      "note": "FD9 item 2: types_any: [Instant, Creature] and types_all: [Creature] are not disjoint - a Creature could match either - so a repeat whose first body move casts one and a plain play that casts the other still conflict, the same negative case FD2 item 7b already proves for two plain plays.",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "repeat",
+            "moves": [
+              {
+                "kind": "cast",
+                "card": {
+                  "zone": "hand",
+                  "select": {
+                    "types_any": [
+                      "Instant",
+                      "Creature"
+                    ]
+                  }
+                }
+              }
+            ],
+            "until": [
+              {
+                "kind": "untapped_mana",
+                "op": ">=",
+                "n": 99
+              }
+            ],
+            "max_iterations": 5
+          }
+        ]
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [],
+        "moves": [
+          {
+            "kind": "cast",
+            "card": {
+              "zone": "hand",
+              "select": {
+                "types_all": [
+                  "Creature"
+                ]
+              }
+            }
+          }
+        ]
+      }
     }
   ]
 }

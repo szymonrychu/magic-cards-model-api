@@ -279,6 +279,24 @@ def test_doc_names_the_closed_color_vocabulary() -> None:
     assert _listed("- Colors:") == list(COLOR_LETTERS)
 
 
+def test_doc_defines_mana_pool() -> None:
+    text = DOC.read_text()
+    assert "`mana_pool`" in text
+    section = text.split("### `mana_pool` (FD9)", 1)[1].split("\n## ", 1)[0]
+    for phrase in (
+        "ManaPoolView.floating",
+        "CR 106.4",
+        "color",
+        "untapped_mana",
+        "untapped SOURCES",
+        "floating pool",
+        "finding seq 191",
+        "X=8",
+        "compare",
+    ):
+        assert phrase in section, phrase
+
+
 def test_doc_defines_the_untapped_mana_counting_rule() -> None:
     text = DOC.read_text()
     for phrase in (
@@ -389,6 +407,119 @@ def test_doc_describes_the_review_loop() -> None:
         "No probability",
     ):
         assert phrase in section or phrase.lower() in section.lower()
+
+
+def _flat(section: str) -> str:
+    """`section` with runs of whitespace (including the line wraps a prose
+    paragraph carries) collapsed to single spaces, so a pinned phrase can
+    span a line break without the test caring where the doc happens to wrap
+    it."""
+    return " ".join(section.split())
+
+
+def _section(text: str, marker: str) -> str:
+    return text.split(marker, 1)[1].split("\n## ", 1)[0]
+
+
+def test_doc_defines_repeat_grammar_and_bounds() -> None:
+    from magic_cards_model_api.playscripts.schema import MAX_REPEAT_BODY, MAX_REPEAT_ITERATIONS
+
+    text = DOC.read_text()
+    assert "## Repeat (FD9)" in text
+    section = _flat(_section(text, "## Repeat (FD9)"))
+    for phrase in (
+        "DSL is meant to fix missing repeat-until loops.",
+        "Instruct agents to generate DSLs instead of manually calling MCPs.",
+        "finding seq 191",
+        f"moves: [1-{MAX_REPEAT_BODY} move]",
+        "until: [1-8 condition]",
+        f"max_iterations: 1-{MAX_REPEAT_ITERATIONS}",
+        "stop_when_refused?: bool = false",
+        "repeat-nested",
+        "repeat-pass-in-body",
+        "repeat-empty-until",
+        "repeat-bound",
+        "MAX_MOVES",
+        "MAX_MOVES_PER_RUN",
+        "phrase-too-narrow",
+        "ability_index",
+    ):
+        assert phrase in section, phrase
+
+
+def test_doc_says_until_is_judged_fresh_and_zero_iterations() -> None:
+    text = DOC.read_text()
+    section = _flat(_section(text, "### `until` is judged fresh, before every iteration"))
+    for phrase in ("freshly read board", "zero iterations", "re-reads the board"):
+        assert phrase in section
+
+
+def test_doc_names_every_repeat_stop_rule_exactly() -> None:
+    text = DOC.read_text()
+    section = _flat(_section(text, "### Stop rules (FD3 part 7 implements these exactly)"))
+    for phrase in (
+        "the script continues with the move after the `repeat`",
+        "`unforeseen`, with `stop_reason` `repeat_bound`",
+        "`unforeseen`, with `stop_reason` `repeat_no_progress`",
+        "`refused`, carrying the engine's own text",
+        "`stop_when_refused: true`",
+        "`input_required`, resumable into the same loop",
+        "`interrupted`",
+        "resume token",
+        "continues the same loop",
+    ):
+        assert phrase in section, phrase
+
+
+def test_doc_gives_the_devoted_druid_and_walking_ballista_repeat_examples() -> None:
+    text = DOC.read_text()
+    raw_section = _section(text, "### Worked examples (selectors only, no card names)")
+    section = _flat(raw_section)
+    for phrase in (
+        "Devoted Druid",
+        "Vizier of Remedies",
+        "devoted-combo",
+        "Walking Ballista",
+        "eldrazi-tron",
+        "prison-tron",
+        '"kind": "mana_pool"',
+        '"kind": "untapped_mana"',
+        "resource-guard",
+    ):
+        assert phrase in section, phrase
+    for name in ("Devoted Druid", "Vizier of Remedies", "Walking Ballista"):
+        assert f'"{name}"' not in raw_section, (
+            f"{name!r} must appear only in prose, never inside a JSON selector"
+        )
+
+
+def test_doc_defines_repeat_until_static() -> None:
+    text = DOC.read_text()
+    section = _flat(_section(text, "### `repeat-until-static`"))
+    for phrase in ("warning", "never a failing error", "turn", "input", "max_iterations"):
+        assert phrase in section
+
+
+def test_doc_extends_the_move_selector_conflict_dimension_to_repeat() -> None:
+    text = DOC.read_text()
+    section = _flat(
+        _section(text, "### Conflicts: a repeat's first body move is the play's first move")
+    )
+    for phrase in ("move-selector", "first body move", "_move_selectors_disjoint"):
+        assert phrase in section
+
+
+def test_doc_states_iteration_left_the_not_in_the_vocabulary_list() -> None:
+    text = DOC.read_text()
+    section = _flat(text.split("## Not in the vocabulary", 1)[1])
+    assert "Concede." in section
+    assert "iteration moved out" in section
+    assert "`repeat` is now a real move kind" in section
+
+
+def test_doc_states_fd9_keeps_schema_version_1() -> None:
+    text = DOC.read_text()
+    assert "FD9 (2026-09-26) keeps `schema_version` at 1" in text
 
 
 def test_doc_describes_the_note_migration() -> None:

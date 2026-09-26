@@ -20,6 +20,12 @@ information by construction:
   `own_turns_taken` - how many of their own turns they have begun, extra
   turns included, CR 500.7 - 0 in the pregame, never null) read the public
   board.
+- `mana_pool` (FD9) reads the viewer's own floating mana pool
+  (`ManaPoolView.floating`, CR 106.4) - `n` compares the total across every
+  color when `color` is left out, or one coloured symbol's own count when
+  named. Unlike `untapped_mana`, which counts untapped SOURCES, this reads
+  the pool a mana ability has already filled, so a `repeat` loop can stop
+  once it reaches a target the loop itself built up.
 - `input` reads the caller's `inputs`. A missing required input makes the
   script unevaluable (`needs_input`); a missing optional one does not hold.
   Every supplied input is first checked against the catalog: a name it does
@@ -410,6 +416,17 @@ def _player(view: dict[str, Any], name: str) -> dict[str, Any]:
     return next((p for p in view.get("players") or [] if p["username"] == name), {})
 
 
+def mana_pool(view: dict[str, Any], name: str, color: str | None = None) -> int:
+    """FD9: `name`'s own floating mana pool (`ManaPoolView.floating`, CR
+    106.4) - the total across every color when `color` is left out, or one
+    coloured symbol's own count when named. 0 for a player the view carries
+    no `mana_pool` for (a snapshot recorded before the field existed)."""
+    floating = (_player(view, name).get("mana_pool") or {}).get("floating") or {}
+    if color is None:
+        return sum(floating.values())
+    return floating.get(color, 0)
+
+
 def _side_sum(view: dict[str, Any], viewer: str, side: str, read: Any) -> int | float | None:
     """`read(name)` summed over every player `side` resolves to (`_names`) -
     always one player in the 1v1 games this DSL targets today, so this
@@ -445,6 +462,10 @@ def _operand_value(
         )
     if of == "untapped_mana":
         return _side_sum(view, viewer, operand["side"], lambda name: untapped_mana(view, name))
+    if of == "mana_pool":
+        return _side_sum(
+            view, viewer, operand["side"], lambda name: mana_pool(view, name, operand.get("color"))
+        )
     if of in ("power_sum", "toughness_sum"):
         field = "power" if of == "power_sum" else "toughness"
         names = _names(view, viewer, operand["side"])
@@ -530,6 +551,9 @@ def _check(
         return available is condition["value"], available, None
     if kind == "untapped_mana":
         seen = untapped_mana(view, viewer)
+        return compare(seen, condition["op"], condition["n"]), seen, None
+    if kind == "mana_pool":
+        seen = mana_pool(view, viewer, condition.get("color"))
         return compare(seen, condition["op"], condition["n"]), seen, None
     if kind == "turn":
         seen = _player(view, viewer).get("own_turns_taken")
