@@ -469,10 +469,10 @@ with selectors, never card names -
             "select": {{
               "types_all": ["Creature"],
               "colors_any": ["G"],
-              "oracle_has": "Remove a -1/-1 counter"
+              "oracle_has": "Put a -1/-1 counter on this creature: Untap this creature"
             }}
           }},
-          "ability_text_has": "Add {{G}}{{G}}"
+          "ability_text_has": "Add {{G}}"
         }},
         {{
           "kind": "activate",
@@ -481,10 +481,10 @@ with selectors, never card names -
             "select": {{
               "types_all": ["Creature"],
               "colors_any": ["G"],
-              "oracle_has": "Remove a -1/-1 counter"
+              "oracle_has": "Put a -1/-1 counter on this creature: Untap this creature"
             }}
           }},
-          "ability_text_has": "Remove a -1/-1 counter from this creature: Untap it"
+          "ability_text_has": "Put a -1/-1 counter on this creature: Untap this creature"
         }}
       ],
       "until": [{{"kind": "mana_pool", "color": "G", "op": ">=", "n": 8}}],
@@ -493,10 +493,12 @@ with selectors, never card names -
 
 `select` finds the creature by its printed characteristics, never by name;
 each move's own `ability_text_has` names the one ability that move
-activates, exactly as `ability_text_has` on a card selector does. `until`
-stops the loop the moment your green floating mana reaches the target -
-here, enough to cast whatever `{{X}}` spell prompted the loop - rather than
-you counting activations by hand.
+activates, exactly as `ability_text_has` on a card selector does - here, the
+tap-for-mana ability, then the untap ability whose -1/-1 counter cost a
+Vizier of Remedies on your side reduces to zero. `until` stops the loop the
+moment your green floating mana reaches the target - here, enough to cast
+whatever `{{X}}` spell prompted the loop - rather than you counting
+activations by hand.
 
 Your deck's play scripts were registered with the game server when your seat
 was dispatched, and they do not change for the rest of the game: a new play,

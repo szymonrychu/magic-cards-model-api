@@ -396,6 +396,25 @@ def test_the_api_publishes_the_scripts_kill_switch_defaulting_to_on() -> None:
     assert env["SCRIPTS_ENABLED"] == {"name": "SCRIPTS_ENABLED", "value": "true"}
 
 
+def test_the_api_publishes_ops_token_from_the_mtg_ops_secret() -> None:
+    """`records.authorized_ops_caller` fails closed when `OPS_TOKEN` is unset,
+    which is exactly what a deployment nobody has configured this for looks
+    like - unless the Deployment actually wires it up from a Secret. Without
+    this, `/api/ops/dsl-coverage` refuses every caller in prod forever, no
+    matter how the operator tries to configure it, because nothing publishes
+    the env var in the first place. `optional: true` so a namespace that has
+    not created `mtg-ops` yet still starts the Pod (the route just stays
+    refused, per `authorized_ops_caller`'s own fail-closed default)."""
+    docs = rendered()
+    deploy = by_name(docs, "Deployment", "mtg-stack")
+    env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["OPS_TOKEN"]["valueFrom"]["secretKeyRef"] == {
+        "name": "mtg-ops",
+        "key": "OPS_TOKEN",
+        "optional": True,
+    }
+
+
 # ------------------------------------------------- the login stays alive mid-game --
 #
 # Production, 2026-09-14: oauth2-proxy logged `expiry:168h0m0s refresh:disabled`
