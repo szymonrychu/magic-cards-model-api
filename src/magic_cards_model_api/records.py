@@ -52,7 +52,7 @@ from uuid import UUID
 
 from magic_cards_model.machines import Step, TurnMachine
 from magic_cards_model.machines.decisions import PendingDecision
-from magic_cards_model.models import CardState, Game
+from magic_cards_model.models import CardState, Game, Zone
 
 from .action_rows import legal_action_rows
 from .alternative_cost_names import normalise
@@ -879,6 +879,203 @@ def inputs_errors(inputs: list[Any]) -> list[dict[str, str]]:
 
     problems = inputs_problems({"schema_version": SCHEMA_VERSION, "inputs": inputs})
     return [PlaysError("malformed-inputs", "inputs", problem).to_dict() for problem in problems]
+
+
+# -- FD10 (a): mid-game ad-hoc scripts --------------------------------------
+#
+# A seat facing a multi-step or repetitive sequence right now (a mana loop,
+# say) does not have to wait for the post-game admit to get a play-script for
+# it: `stage_adhoc_script` lets it write one inline and appends it to its own
+# registered corpus immediately, under a freshly minted id nothing else could
+# already hold. `script_tools.stage`/`run(body=...)` are the client-side
+# callers (an MCP `stage_script` tool and `mcp-seat script stage` both reach
+# this through FD5's `POST .../scripts/adhoc` route); this function is the
+# one place the mechanics live.
+
+#: The ledger action `stage_adhoc_script` writes for every successful stage -
+#: never for a refused one, which changed nothing. `review.
+#: adhoc_scripts_by_seat` reads it back for the post-game review, and
+#: `playscripts.report.adhoc_script_candidates` turns a staged script that
+#: actually ran into a decision candidate the review must close.
+SCRIPT_STAGED_ACTION = "script_staged"
+
+#: The prefix every ad-hoc script's own assigned id carries -
+#: `adhoc-<n>-<uid>`. Read back, prefix-only, by `playscripts.stats.
+#: _is_adhoc_script_id` and `playscripts.report.adhoc_script_candidates` to
+#: tell an ad-hoc run from a registered one by its `script_id` alone, without
+#: a second lookup against the corpus.
+ADHOC_SCRIPT_ID_PREFIX = "adhoc-"
+
+#: How many ad-hoc scripts one seat may stage in one game. A seat writing a
+#: fresh one-off script for every board it meets is not generalizing
+#: anything, and nothing caps the seat's own registered corpus otherwise -
+#: this is that bound.
+MAX_ADHOC_SCRIPTS = 32
+
+
+def _adhoc_ids(scripts: list[Any]) -> set[str]:
+    return {
+        doc["id"] for doc in scripts if isinstance(doc, dict) and isinstance(doc.get("id"), str)
+    }
+
+
+def _next_adhoc_id(existing_ids: set[str], uid: str) -> str:
+    """The lowest-numbered `adhoc-<n>-<uid>` not already in `existing_ids` -
+    every id this uid's own corpus already holds, registered or ad-hoc, so a
+    freshly assigned id can never collide with, or silently replace, one that
+    is already there."""
+    n = 1
+    while True:
+        candidate = f"{ADHOC_SCRIPT_ID_PREFIX}{n}-{uid}"
+        if candidate not in existing_ids:
+            return candidate
+        n += 1
+
+
+def _card_index_for_game(game: Game) -> Any:
+    """A `playscripts.lint.CardIndex` built from every card this game itself
+    already knows about - both players' libraries, hands and graveyards, plus
+    every shared zone (battlefield, stack, exile, command) - rather than a
+    guides checkout's `meta/card-data.json`, which the game server has no
+    mount of (fb3-parity.md item 13). This is real Scryfall data all the
+    same: every `Card` the engine holds was itself loaded from a printing, so
+    the card-name ban and the phrase rules read the exact same oracle text
+    and type line `lint.CardIndex.load` would have read from the file - just
+    scoped to the cards actually in this game rather than a whole cached set."""
+    from .playscripts.lint import CardIndex
+
+    cards: dict[str, Any] = {}
+
+    def _add(state: Any) -> None:
+        if not isinstance(state, CardState):
+            return
+        card = state.card
+        cards.setdefault(card.name, {"oracle_text": card.oracle_text, "type_line": card.type_line})
+
+    for player in game.players:
+        for zone in (Zone.LIBRARY, Zone.HAND, Zone.GRAVEYARD):
+            for state in player.cards_in(zone):
+                _add(state)
+    for states in game.shared_zones.values():
+        for state in states:
+            _add(state)
+    return CardIndex(cards)
+
+
+def stage_adhoc_script(
+    game_id: str, uid: str, play: dict[str, Any], reasoning: str
+) -> dict[str, Any]:
+    """Stage `play` - an inline play document `uid` wrote for a multi-step or
+    repetitive sequence it is facing right now - as one of its own ad-hoc
+    scripts for `game_id`. Returns `{"id": ..., "warnings": [...]}` on
+    success; raises `InvalidScripts` with the same `PlaysError` shape
+    `PUT .../scripts` already refuses a corpus with, or `ScriptsDisabled`
+    behind the kill switch.
+
+    **Validation is exactly `PUT .../scripts`' own, plus one more.**
+    `lint.check_play` is `script_errors`' own schema.Play validation
+    (`play_errors`) plus the id, card-name and phrase rules `plays check`
+    applies to a deck's own files - run here over a `CardIndex` built from
+    this game's own cards (`_card_index_for_game`), since the game server has
+    no guides checkout to read `meta/card-data.json` from. On top of that, a
+    conflict with a play already in `uid`'s own registered corpus
+    (`script_tools.static_conflicts`) is reported as a `warning` alongside a
+    successful stage, never a refusal: `plays check`'s conflict ratchet is a
+    pre-admit gate over a deck's committed files, but here the seat is
+    choosing whether to run this script at all (the no-autofire rule), so a
+    foreseeable conflict is exactly the kind of thing worth telling it about
+    without taking that choice away.
+
+    **The stored play stays pure schema.Play.** `schema.Play` forbids unknown
+    keys (`_Strict`, `extra="forbid"`), and `runtime._normalised` re-validates
+    every registered doc the moment a seat runs or lists it - so the id,
+    reasoning, staging position and lint warnings this call itself observes
+    are never written onto the doc that goes into `corpus["scripts"]` (that
+    would make the very first `run_script`/`list_scripts` call refuse the
+    script for carrying fields no schema declares). They live on the
+    `script_staged` ledger row instead, which is exactly where `review.
+    adhoc_scripts_by_seat` reads them back from for the post-game review -
+    the doc itself carries only what `id.startswith(ADHOC_SCRIPT_ID_PREFIX)`
+    already tells any reader: that it is one of this seat's own ad-hoc plays.
+
+    **The read-append-write is `register_scripts`' own, run again here** -
+    `store.scripts`, append, `store.register_scripts` - not a new repository
+    method: an ad-hoc script is stored exactly where a registered one is, and
+    the corpus a seat's very next `run_script`/`list_scripts` call reads back
+    already has it, with no second round trip.
+
+    Capped at `MAX_ADHOC_SCRIPTS` per seat per game, counted by the id prefix
+    alone (`_adhoc_ids`/`ADHOC_SCRIPT_ID_PREFIX`) - a cap this call itself can
+    enforce reads no new repository state.
+    """
+    from . import audit
+    from .playscripts import lint
+    from .playscripts.script_tools import static_conflicts
+    from .store import player_for_advisor_uid, store
+
+    require_scripts_enabled("staging an ad-hoc script")
+    require_reasoning(game_id, uid, reasoning)
+    game = store.get(game_id)
+    if game is None:
+        raise KeyError(f"no game {game_id}")
+    corpus = store.scripts(game_id, uid) or {
+        "deck_slug": "",
+        "guides_revision": None,
+        "scripts": [],
+        "inputs": [],
+    }
+    docs = [doc for doc in corpus.get("scripts") or [] if isinstance(doc, dict)]
+    existing_ids = _adhoc_ids(docs)
+    adhoc_count = sum(1 for doc_id in existing_ids if doc_id.startswith(ADHOC_SCRIPT_ID_PREFIX))
+    if adhoc_count >= MAX_ADHOC_SCRIPTS:
+        raise InvalidScripts(
+            [
+                {
+                    "code": "too-many-adhoc-scripts",
+                    "path": "play",
+                    "message": (
+                        f"{uid} has already staged {adhoc_count} ad-hoc scripts in "
+                        f"{game_id}, the cap ({MAX_ADHOC_SCRIPTS})"
+                    ),
+                }
+            ]
+        )
+
+    stem = play.get("id") if isinstance(play, dict) and isinstance(play.get("id"), str) else "adhoc"
+    cards = _card_index_for_game(game)
+    errors = lint.check_play(play, stem, "play", cards)
+    if errors:
+        raise InvalidScripts([error.to_dict() for error in errors])
+
+    assigned_id = _next_adhoc_id(existing_ids, uid)
+    staged_play = {**play, "id": assigned_id}
+    warnings = [
+        warning.to_dict()
+        for warning in static_conflicts(
+            [*docs, staged_play],
+            list(corpus.get("inputs") or []),
+            str(corpus.get("deck_slug") or ""),
+        )
+        if assigned_id in warning.plays
+    ]
+    store.register_scripts(game_id, uid, {**corpus, "scripts": [*docs, staged_play]})
+    # `seat`/`player` on a script-run row are the seat's own *username*
+    # (`script_tools.run`'s own `"seat": seat.player`), never the uid this
+    # function is otherwise keyed on - `review.py`, `playscripts.report` and
+    # `playscripts.stats` all read this row back by username, exactly as
+    # every other script-run row already is.
+    seat_name = store.player_for_uid(game_id, uid) or player_for_advisor_uid(game_id, uid) or uid
+    audit.record(
+        game_id,
+        SCRIPT_STAGED_ACTION,
+        reasoning=reasoning,
+        player=seat_name,
+        seat=seat_name,
+        id=assigned_id,
+        play=play,
+        warnings=warnings,
+    )
+    return {"id": assigned_id, "warnings": warnings}
 
 
 class UnknownScript(Exception):

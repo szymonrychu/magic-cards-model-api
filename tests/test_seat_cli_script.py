@@ -525,3 +525,152 @@ def test_plays_priority_refuses_loudly_with_neither_flag_nor_env(monkeypatch, ca
     out = printed(capsys)
     assert out["result"] == "refused"
     assert "game-id" in out["message"] or "MTG_GAME_ID" in out["message"]
+
+
+# ======================================================================
+# FD10 (a): `mcp-seat script stage --file PATH|-` and `script run
+# --body-file PATH|-`, mirroring the MCP tools' own `stage_script`/
+# `run_script(body=...)` arguments. FD5's `POST .../scripts/adhoc` route
+# does not exist yet (FD5 part 7), so these tests fake `script_tools.stage`
+# itself rather than going through a real HTTP round trip to it - exactly
+# the same substitution `tests/test_seat_cli_script.py`'s own
+# `test_plays_priority_refuses_loudly_with_neither_flag_nor_env` already
+# makes for `playscripts_admit.set_priority`.
+# ======================================================================
+
+
+def test_script_stage_reads_the_file_and_prints_id_and_warnings(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
+) -> None:
+    wire(monkeypatch)
+    alice = seat_uid(board, "alice")
+    calls: list[tuple[str, dict[str, Any], str]] = []
+
+    def fake_stage(seat, corpora, *, body, reasoning):
+        calls.append((seat.uid, body, reasoning))
+        return {"id": "adhoc-1-x", "warnings": []}
+
+    monkeypatch.setattr(seat_cli.script_tools, "stage", fake_stage)
+
+    body = {"schema_version": 1, "id": "whatever", "moves": []}
+    path = tmp_path / "play.json"
+    path.write_text(json.dumps(body))
+
+    assert cli(board, alice, "stage", "--file", str(path)) == 0
+    assert printed(capsys) == {"id": "adhoc-1-x", "warnings": []}
+    assert calls == [(alice, body, REASONING)]
+
+
+def test_script_stage_reads_the_body_from_stdin_with_a_dash(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    wire(monkeypatch)
+    alice = seat_uid(board, "alice")
+    body = {"schema_version": 1, "id": "whatever", "moves": []}
+
+    def fake_stage(seat, corpora, *, body, reasoning):
+        return {"id": "adhoc-1-x", "warnings": []}
+
+    monkeypatch.setattr(seat_cli.script_tools, "stage", fake_stage)
+    monkeypatch.setattr(seat_cli.sys, "stdin", __import__("io").StringIO(json.dumps(body)))
+
+    assert cli(board, alice, "stage", "--file", "-") == 0
+    assert printed(capsys) == {"id": "adhoc-1-x", "warnings": []}
+
+
+def test_script_stage_prints_errors_and_fails_on_a_refusal(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
+) -> None:
+    wire(monkeypatch)
+    alice = seat_uid(board, "alice")
+
+    def fake_stage(seat, corpora, *, body, reasoning):
+        return {"errors": [{"code": "card-name-in-field", "path": "play", "message": "no"}]}
+
+    monkeypatch.setattr(seat_cli.script_tools, "stage", fake_stage)
+    path = tmp_path / "play.json"
+    path.write_text(json.dumps({"schema_version": 1, "id": "x", "moves": []}))
+
+    assert cli(board, alice, "stage", "--file", str(path)) == 1
+    out = printed(capsys)
+    assert out["errors"][0]["code"] == "card-name-in-field"
+
+
+def test_script_stage_refuses_invalid_json_without_calling_stage(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
+) -> None:
+    wire(monkeypatch)
+    alice = seat_uid(board, "alice")
+
+    def never(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("stage ran with a body that was never valid JSON")
+
+    monkeypatch.setattr(seat_cli.script_tools, "stage", never)
+    path = tmp_path / "play.json"
+    path.write_text("not json")
+
+    assert cli(board, alice, "stage", "--file", str(path)) == 1
+    out = capsys.readouterr().out
+    assert "not valid JSON" in out
+
+
+def test_script_run_with_body_file_stages_and_runs_in_one_call(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
+) -> None:
+    wire(monkeypatch)
+    alice = seat_uid(board, "alice")
+    body = {"schema_version": 1, "id": "whatever", "moves": []}
+
+    stage_calls: list[Any] = []
+
+    def fake_stage(seat, corpora, *, body, reasoning):
+        stage_calls.append(body)
+        return {"id": "adhoc-1-x", "warnings": []}
+
+    run_calls: list[str] = []
+
+    def fake_run_script(seat, *, script_id, **kwargs):
+        run_calls.append(script_id)
+        return runtime.RunResult(
+            finished=True,
+            script_exit=runtime.ScriptExit(
+                exit=runtime.Exit.CHAIN_COMPLETE, script_id=script_id, moves_done=2, moves_total=2
+            ),
+            state={"pending_decision": None, "battlefield": []},
+        )
+
+    monkeypatch.setattr(seat_cli.script_tools, "stage", fake_stage)
+    monkeypatch.setattr(runtime, "run_script", fake_run_script)
+    path = tmp_path / "play.json"
+    path.write_text(json.dumps(body))
+
+    assert cli(board, alice, "run", "--body-file", str(path)) == 0
+    out = printed(capsys)
+    assert out["script_exit"]["script"] == "adhoc-1-x"
+    assert out["script_exit"]["moves_done"] == 2
+    assert stage_calls == [body]
+    assert run_calls == ["adhoc-1-x"]
+
+
+def test_script_run_refuses_both_positional_script_and_body_file(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
+) -> None:
+    wire(monkeypatch)
+    alice = seat_uid(board, "alice")
+    path = tmp_path / "play.json"
+    path.write_text(json.dumps({"schema_version": 1, "id": "x", "moves": []}))
+
+    assert cli(board, alice, "run", "drop", "--body-file", str(path)) == 1
+    out = capsys.readouterr().out
+    assert "exactly one" in out
+
+
+def test_script_run_refuses_neither_positional_script_nor_body_file(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    wire(monkeypatch)
+    alice = seat_uid(board, "alice")
+
+    assert cli(board, alice, "run") == 1
+    out = capsys.readouterr().out
+    assert "body-file" in out

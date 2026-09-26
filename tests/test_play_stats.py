@@ -96,6 +96,11 @@ ZERO_STATS = {
     "reprioritized": 0,
     "added_ids": (),
     "updated_ids": (),
+    "manual_calls": 0,
+    "script_actions": 0,
+    "adhoc_staged": 0,
+    "adhoc_runs": 0,
+    "manual_chains": (),
 }
 
 
@@ -318,6 +323,11 @@ def test_a_full_game_adds_up():
         "reprioritized": 0,
         "added_ids": ("new-play",),
         "updated_ids": ("frog-attack",),
+        "manual_calls": 1,
+        "script_actions": 0,
+        "adhoc_staged": 0,
+        "adhoc_runs": 0,
+        "manual_chains": (),
     }
 
 
@@ -446,6 +456,151 @@ def test_dsl_coverage_aggregates_count_unexpressible_and_labels_by_kind():
 def test_dsl_coverage_is_empty_for_a_game_with_no_decisions():
     body = review.build_review(archived(players=("alice",)), [])
     assert body["dsl_coverage"] == {}
+
+
+# ======================================================================
+# FD10 (c): `manual_calls`/`script_actions` (manual vs script-driven action
+# rows), `adhoc_staged`/`adhoc_runs`, and `manual_chains` (a run of
+# `MANUAL_CHAIN_MIN` or more consecutive manual rows, within one turn and
+# step, with no opponent action between).
+# ======================================================================
+
+from magic_cards_model_api.records import SCRIPT_STAGED_ACTION  # noqa: E402
+
+
+def script_driven_move(seq: int, *, seat: str = SEAT, allowed: bool | None = True, **extra: Any):
+    """A committing/refused row `seat` made *through a script run* - carries
+    the runner's own reasoning suffix (`runtime._suffixed`)."""
+    return move(
+        seq,
+        "activate",
+        seat=seat,
+        allowed=allowed,
+        reasoning="r | script loop@abcdef01 move 1/1 (activate)",
+        **extra,
+    )
+
+
+def staged_row(seq: int, script_id: str, *, seat: str = SEAT) -> dict[str, Any]:
+    return row(
+        seq,
+        SCRIPT_STAGED_ACTION,
+        {"player": seat, "seat": seat, "id": script_id, "play": {}, "warnings": []},
+    )
+
+
+def test_manual_and_script_driven_counts_split_a_mixed_ledger():
+    records = [move(1, "cast", card="a"), script_driven_move(2), move(3, "activate")]
+    result = stats.game_play_stats(records, GAME, SEAT, corpus=[], admitted=[])
+    assert result["manual_calls"] == 2
+    assert result["script_actions"] == 1
+
+
+def test_manual_calls_ignores_other_seats_and_non_action_rows():
+    records = [
+        move(1, "cast", seat="bob"),
+        offered(2, "fetch-shock", "run-a"),
+        move(3, "cast", allowed=False),
+    ]
+    result = stats.game_play_stats(records, GAME, SEAT, corpus=[], admitted=[])
+    assert result["manual_calls"] == 1
+    assert result["script_actions"] == 0
+
+
+def test_script_driven_public_helper_reads_the_run_window_too():
+    records = [
+        started(1, "fetch-shock", "run-a"),
+        move(2, "cast", card="a"),
+        script_row(
+            3, audit.SCRIPT_RUN_ACTION, "fetch-shock", "run-a", exit="resolved", moves_done=1
+        ),
+        move(4, "cast", card="b"),
+    ]
+    assert stats.script_driven(records[1], records) is True
+    # Outside every run's own span (before the start, or after the finish):
+    # never script-driven off the window alone.
+    assert stats.script_driven(records[3], records) is False
+
+
+def test_adhoc_staged_and_adhoc_runs_are_counted_by_id_prefix_alone():
+    records = [
+        staged_row(1, "adhoc-1-alice"),
+        started(2, "adhoc-1-alice", "run-x"),
+        script_row(
+            3, audit.SCRIPT_RUN_ACTION, "adhoc-1-alice", "run-x", exit="resolved", moves_done=2
+        ),
+        # A registered (non-adhoc) run must never count toward `adhoc_runs`.
+        started(4, "fetch-shock", "run-y"),
+        script_row(5, audit.SCRIPT_RUN_ACTION, "fetch-shock", "run-y", exit="resolved"),
+    ]
+    result = stats.game_play_stats(records, GAME, SEAT, corpus=[], admitted=[])
+    assert result["adhoc_staged"] == 1
+    assert result["adhoc_runs"] == 1
+
+
+def test_three_manual_rows_are_not_yet_a_chain():
+    records = [move(seq, "activate") for seq in range(1, 4)]
+    result = stats.game_play_stats(records, GAME, SEAT, corpus=[], admitted=[])
+    assert result["manual_chains"] == ()
+
+
+def test_four_consecutive_manual_rows_form_one_chain():
+    records = [move(seq, "activate") for seq in range(1, 5)]
+    result = stats.game_play_stats(records, GAME, SEAT, corpus=[], admitted=[])
+    assert result["manual_chains"] == (
+        {
+            "seqs": (1, 2, 3, 4),
+            "kinds": ("activate", "activate", "activate", "activate"),
+            "turn": 3,
+            "step": None,
+        },
+    )
+
+
+def test_a_chain_broken_by_an_opponent_action_splits_into_two_runs():
+    records = [
+        move(1, "activate"),
+        move(2, "activate"),
+        move(3, "activate", seat="bob"),
+        move(4, "activate"),
+        move(5, "activate"),
+        move(6, "activate"),
+        move(7, "activate"),
+    ]
+    result = stats.game_play_stats(records, GAME, SEAT, corpus=[], admitted=[])
+    # The first run (seqs 1, 2) never reaches `MANUAL_CHAIN_MIN` and is
+    # dropped; only the second (4-7, four rows) survives as a chain.
+    assert result["manual_chains"] == (
+        {"seqs": (4, 5, 6, 7), "kinds": ("activate",) * 4, "turn": 3, "step": None},
+    )
+
+
+def test_a_script_driven_row_between_two_manual_ones_breaks_the_chain():
+    records = [
+        move(1, "activate"),
+        move(2, "activate"),
+        script_driven_move(3),
+        move(4, "activate"),
+        move(5, "activate"),
+    ]
+    result = stats.game_play_stats(records, GAME, SEAT, corpus=[], admitted=[])
+    assert result["manual_chains"] == ()
+
+
+def test_finding_seq_191_shape_25_manual_activations_in_one_step_is_one_chain_of_25():
+    """The evidence FD9/FD10 are built on: local game 3, finding seq 191, a
+    seat spent about 25 MCP calls hand-driving a mana loop to reach X=8. A
+    synthetic replay of that shape - 25 consecutive manual activations, one
+    turn and step - must read back as exactly one chain of 25, not several
+    smaller ones or none at all."""
+    records = [move(seq, "activate") for seq in range(1, 26)]
+    result = stats.game_play_stats(records, GAME, SEAT, corpus=[], admitted=[])
+    assert len(result["manual_chains"]) == 1
+    chain = result["manual_chains"][0]
+    assert chain["seqs"] == tuple(range(1, 26))
+    assert chain["kinds"] == ("activate",) * 25
+    assert chain["turn"] == 3
+    assert chain["step"] is None
 
 
 def test_dsl_coverage_is_public_and_callable_on_the_decisions_dict_directly():
