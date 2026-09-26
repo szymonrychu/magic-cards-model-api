@@ -3392,3 +3392,10 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
 - 2026-09-26 mtg-decks 80f313c: cap tests removed/inverted in test_check_plays, tron active-cap test and the boros `<= MAX_PLAYS` dropped - valid, owner cap removal (the vacuous `or True` wildcard assert is the weakened item, fixed in this audit).
 - 2026-09-26 mtg-decks 19ad1e6: FB2 vocabulary mirror (codes 22->28, combat steps accepted, use-combat-move, corpus SHA) - valid, mirrors the api.
 - 2026-09-26 mtg-decks a6a0485: `power` selector key added to the judgement harness - valid, FC8 mirror (the two re-pinned counts in the same commit are weakened items, fixed in this audit).
+- 2026-09-26 sos integration (api) tests/test_decision_kinds.py test_the_two_field_tables_genuinely_differ: APPROVE - adds put_into_hand_or_graveyard (answer field accept vs tool field to_hand) to the pinned differing set; decisions.py prose table updated to match.
+- 2026-09-26 sos integration (api) tests/test_playscript_format_doc.py test_doc_names_the_amount_decision_kinds_and_the_amount_field: APPROVE - pinned doc signature only gains "to_hand?: bool"; every prior field still asserted.
+- 2026-09-26 sos integration (api) tests/test_ui_decision_coverage.py test_every_ui_decision_kind_has_exactly_one_surface: APPROVE - adds the new kind to the UI kind set and _POPOVER_KINDS; nothing removed.
+- 2026-09-26 sos integration (api) tests/test_ui_decision_popover.py SMALL: APPROVE - adds one Dina's Guidance fixture for the new kind; existing entries kept.
+- 2026-09-26 sos integration (api) tests/test_ui_decision_popover.py EXPECTED_BODIES: APPROVE - adds put_into_hand_or_graveyard -> [{to_hand: true}, {to_hand: false}] for the Hand/Graveyard buttons; existing entries kept.
+- 2026-09-26 sos integration (api) tests/test_ui_decision_window.py SMALL: APPROVE - adds one small fixture for the new kind; existing entries kept.
+- 2026-09-26 sos integration (api) tests/test_ui_decisions.py test_every_answerable_kind_has_a_view_model: APPROVE - adds the new kind to the answerable-kind set; nothing removed.
