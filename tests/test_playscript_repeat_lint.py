@@ -222,9 +222,7 @@ def test_repeat_first_body_move_and_a_plain_play_are_exclusive_on_disjoint_selec
         ]
     }
     b_fragment = {
-        "moves": [
-            {"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Creature"]}}}
-        ]
+        "moves": [{"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Creature"]}}}]
     }
     assert exclusivity(a_fragment, b_fragment, {}) == ["move_selector"]
     assert exclusivity(b_fragment, a_fragment, {}) == ["move_selector"]

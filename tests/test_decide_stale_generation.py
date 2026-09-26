@@ -50,18 +50,14 @@ def flooded_strand_decision(client: TestClient, game_id: str, alice: str) -> dic
     """A real `choose_cards` decision (Flooded Strand's fetch, CR 701.23a),
     the exact kind `test_advance_refusals.py` already drives - paused,
     waiting on which land to find, with a real `generation`."""
-    strand = add_card(client, game_id, "Flooded Strand", "alice", "battlefield")["added"][
-        "card_id"
-    ]
+    strand = add_card(client, game_id, "Flooded Strand", "alice", "battlefield")["added"]["card_id"]
     add_card(client, game_id, "Plains", "alice", "library")
     activated = client.post(
         f"/api/games/{game_id}/actions/activate",
         json={"player": "alice", "card_id": strand},
     ).json()
     assert activated["allowed"] is True, activated
-    resolved = client.post(
-        f"/api/games/{game_id}/resolve-top", params={"uid": alice}
-    ).json()
+    resolved = client.post(f"/api/games/{game_id}/resolve-top", params={"uid": alice}).json()
     assert resolved["paused"] is True, resolved
     pending = resolved["pending_decision"]
     assert pending["kind"] == "choose_cards"

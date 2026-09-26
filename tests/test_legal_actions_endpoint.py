@@ -255,9 +255,7 @@ def test_legal_actions_before_is_unaffected_by_not_now(client, game, admin_key):
 
     log = client.get(f"/api/games/{game}/log", params={"uid": admin_key}).json()["log"]
     passes = [
-        e
-        for e in log
-        if e["action"] == "pass_priority" and e["detail"].get("player") == "alice"
+        e for e in log if e["action"] == "pass_priority" and e["detail"].get("player") == "alice"
     ]
     assert passes
     entry = passes[-1]
