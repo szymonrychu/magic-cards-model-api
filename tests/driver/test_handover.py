@@ -243,16 +243,17 @@ def test_a_natural_end_reflects_then_posts_then_hands_over_then_retires(world, e
 def test_the_budget_fits_a_handover_that_develops_through_subagents():
     """Game 16a9cf8f: the boros seat's own handover (two subagents, admits,
     a guides proposal) ran out a 510 s budget at 508 s. The budget is now
-    28 minutes, nudged at 23, inside the driver preStop's 5460 s (DR3: raised
-    to also outlast `driver.app.RETIRE_REVIEW_JOIN_TIMEOUT`); only the
+    28 minutes, nudged at 23, inside the driver preStop's 7350 s (review fix
+    round 1: raised again to also outlast `driver.app.
+    RETIRE_REVIEW_JOIN_TIMEOUT`'s own decision-count-aware raise); only the
     409 retry keeps its 120 s bound, since an interrupted turn ends in 20 s."""
     assert handover.HANDOVER_BUDGET_SECONDS == 1680.0
     assert handover.NUDGE_AFTER_SECONDS == 1380.0
     assert handover.HANDOVER_PUSH_BUDGET_SECONDS == 120.0
-    assert handover.HANDOVER_BUDGET_SECONDS < handover.PRESTOP_WAIT_SECONDS == 5460.0
+    assert handover.HANDOVER_BUDGET_SECONDS < handover.PRESTOP_WAIT_SECONDS == 7350.0
 
 
-def test_the_prestop_module_waits_5460_seconds_by_default(tmp_path):
+def test_the_prestop_module_waits_7350_seconds_by_default(tmp_path):
     now = [0.0]
 
     def sleep(seconds: float) -> None:
@@ -263,7 +264,7 @@ def test_the_prestop_module_waits_5460_seconds_by_default(tmp_path):
 
     env = {"DRIVER_WORKSPACE": str(tmp_path), "HTTP_ADDR": ":8090"}
     assert handover.main([], env=env, post=unreachable, clock=lambda: now[0], sleep=sleep) == 0
-    assert 5460 <= now[0] < 5462
+    assert 7350 <= now[0] < 7352
 
 
 def test_one_push_now_nudge_goes_out_at_1380_seconds(world, clock):

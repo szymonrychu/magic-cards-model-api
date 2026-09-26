@@ -197,11 +197,11 @@ services:
       - agent-guides:/guides
       - ./memory:/workspace/memory
     restart: unless-stopped
-    # Mirrors k8s `terminationGracePeriodSeconds: 5520` (deploy/seat-job.yaml):
+    # Mirrors k8s `terminationGracePeriodSeconds: 7410` (deploy/seat-job.yaml, review fix round 1):
     # room for the agent's own handover wait (game end or `/release`) before
     # compose sends SIGKILL. A plain `docker compose stop` still runs no
     # handover of its own - see the README.
-    stop_grace_period: 92m
+    stop_grace_period: 7410s
 
   driver:
     platform: ${DOCKER_PLATFORM:-linux/amd64}
@@ -234,11 +234,11 @@ services:
     volumes:
       - agent-guides:/guides:ro
       - ./memory:/workspace/memory
-    # Mirrors k8s `terminationGracePeriodSeconds: 5520` (deploy/seat-job.yaml):
+    # Mirrors k8s `terminationGracePeriodSeconds: 7410` (deploy/seat-job.yaml, review fix round 1):
     # room for the driver's own handover wait (game end or `/release`) before
     # compose sends SIGKILL. A plain `docker compose stop` still runs no
     # handover of its own - see the README.
-    stop_grace_period: 92m
+    stop_grace_period: 7410s
 
 secrets:
   # Sourced from the MTG_DECKS_GH_PAT environment variable (loaded from .env

@@ -18,7 +18,7 @@ from typing import Any
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from .config import Settings
+from .config import Settings, scaled_review_timeout
 from .oneshot import ReviewFailed, run_review
 from .probe import ProbeUnavailableError
 from .session import BusyError, DeadError, Manager, NotReadyError
@@ -26,14 +26,21 @@ from .session import BusyError, DeadError, Manager, NotReadyError
 log = logging.getLogger("wrapper.api")
 
 #: `review_runner`'s shape (`api.py`'s own default is `oneshot.run_review`) -
-#: `(settings, prompt, model, effort) -> text`, raising `ReviewFailed` on
-#: any failure. A parameter rather than a hardcoded call so tests substitute
-#: a fake and never spawn a real `claude` subprocess (see
-#: `tests/wrapper/test_api.py`'s `review_wired` fixture) - which matters
-#: more now than it did: the real runner works this container's own
+#: `(settings, prompt, model, effort, *, timeout=None) -> text`, raising
+#: `ReviewFailed` on any failure. A parameter rather than a hardcoded call
+#: so tests substitute a fake and never spawn a real `claude` subprocess
+#: (see `tests/wrapper/test_api.py`'s `review_wired` fixture) - which
+#: matters more now than it did: the real runner works this container's own
 #: workspace, HOME and `/guides` checkout, so a test that reached it would
 #: not merely be slow, it would commit.
-ReviewRunner = Callable[[Settings, str, str, str], str]
+#:
+#: FD6 (3): `timeout` is keyword-only and optional so every runner written
+#: before it existed - a plain `(settings, prompt, model, effort)` fake -
+#: still satisfies this type as long as it also accepts `**kwargs` (the
+#: typing.Callable protocol cannot express "and accepts one more optional
+#: kwarg", so this comment is the contract `post_review` actually relies
+#: on: every real or fake runner it is given must accept `timeout=`).
+ReviewRunner = Callable[..., str]
 
 
 class MessageIn(BaseModel):
@@ -59,6 +66,13 @@ class ReviewIn(BaseModel):
     prompt: str = ""
     model: str = ""
     effort: str = ""
+    #: FD6 (3): how many decisions the reviewed game's own review record
+    #: carries, so this route can scale the review's own timeout
+    #: (`wrapper.config.scaled_review_timeout`) rather than holding every
+    #: game to the same flat `Settings.review_timeout`. 0 (every caller
+    #: before this existed) means "unknown or nothing to review", which
+    #: `scaled_review_timeout` reads as "use the flat timeout unchanged".
+    decision_count: int = 0
 
 
 class SessionIn(BaseModel):
@@ -220,7 +234,13 @@ def build_public_app(
         if not body.prompt.strip():
             raise HTTPException(status_code=400, detail="prompt is required")
         try:
-            text = review_runner(settings, body.prompt, body.model, body.effort)
+            text = review_runner(
+                settings,
+                body.prompt,
+                body.model,
+                body.effort,
+                timeout=scaled_review_timeout(settings, body.decision_count),
+            )
         except ReviewFailed as exc:
             # Greppable prefix, logged before the 502 is raised: an operator
             # reading this container's own logs sees exactly why the review

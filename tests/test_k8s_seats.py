@@ -1291,13 +1291,22 @@ def test_the_token_is_never_an_env_var_on_any_container(role: str) -> None:
 
 
 @pytest.mark.parametrize("role", ROLES)
-def test_the_agent_carries_its_role_game_and_git_identity(role: str) -> None:
+def test_the_agent_carries_its_role_and_game(role: str) -> None:
     job = _build_role(role)
     env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
     assert env["MTG_ROLE"] == role
     assert env["MTG_GAME_ID"] == "g1"
-    assert env["GIT_COMMITTER_NAME"] == "mtg-agent"
-    assert env["GIT_COMMITTER_EMAIL"] == "mtg-agent@mtg-trainer.invalid"
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_the_agent_carries_no_dead_git_committer_vars(role: str) -> None:
+    """FD6 (5), fb3-parity.md item 10: `gitwork.identity` sets the COMMITTER
+    from `MTG_ROLE` regardless of these two - dead config, dropped from the
+    manifest and from `wrapper.oneshot.PASSED_THROUGH`."""
+    job = _build_role(role)
+    env = {e["name"]: e.get("value") for e in _container(job, "agent")["env"]}
+    assert "GIT_COMMITTER_NAME" not in env
+    assert "GIT_COMMITTER_EMAIL" not in env
 
 
 @pytest.mark.parametrize("role", ROLES)
@@ -1333,23 +1342,24 @@ def test_role_and_game_id_reach_the_agent_through_their_own_placeholders() -> No
 
 @pytest.mark.parametrize("role", ROLES)
 def test_the_pod_gives_both_containers_time_to_hand_over(role: str) -> None:
-    """5520 s of grace, sized for a handover that develops scripts and guides
+    """7410 s of grace, sized for a handover that develops scripts and guides
     through subagents (game 16a9cf8f ran out a 510 s budget doing exactly
     that) AND for `retire`'s join on the post-game AI review thread after it
-    (DR3): the driver's preStop waits 5460 of it for the handover, the
-    agent's waits up to 5480 for that marker, so both finish inside the
+    (review fix round 1: decision-count aware now, up from DR3's flat
+    bound): the driver's preStop waits 7350 of it for the handover, the
+    agent's waits up to 7370 for that marker, so both finish inside the
     grace."""
     job = _build_role(role)
-    assert _pod(job)["terminationGracePeriodSeconds"] == 5520
+    assert _pod(job)["terminationGracePeriodSeconds"] == 7410
     driver_stop = _container(job, "driver")["lifecycle"]["preStop"]["exec"]["command"]
-    assert driver_stop == ["python", "-m", "mtg_agent.driver.handover", "--wait", "5460"]
+    assert driver_stop == ["python", "-m", "mtg_agent.driver.handover", "--wait", "7350"]
     agent_stop = _container(job, "agent")["lifecycle"]["preStop"]["exec"]["command"]
     assert agent_stop == [
         "python",
         "-m",
         "mtg_agent.wrapper.handover_wait",
         "--wait",
-        "5480",
+        "7370",
     ]
 
 
@@ -1388,7 +1398,7 @@ def test_the_role_job_still_validates_as_a_batch_v1_job(role: str) -> None:
     assert _leftover_placeholders(job) == []
     parsed = k8s_client.ApiClient()._ApiClient__deserialize(job, k8s_client.V1Job)
     spec = parsed.spec.template.spec
-    assert spec.termination_grace_period_seconds == 5520
+    assert spec.termination_grace_period_seconds == 7410
     agent = next(c for c in spec.containers if c.name == "agent")
     assert agent.lifecycle.pre_stop._exec.command[2] == "mtg_agent.wrapper.handover_wait"
 

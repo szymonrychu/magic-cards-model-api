@@ -218,7 +218,7 @@ TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --sho
 ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
 docker buildx build \
   --file Dockerfile.agent \
-  --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION:-latest}" \
+  --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION:-2.1.282}" \
   --build-arg "AGENT_UID=${AGENT_UID:-1000}" \
   --build-arg "AGENT_GID=${AGENT_GID:-1000}" \
   --label "pl.szymonrichert.engine-revision=${ENGINE_TAG}" \
@@ -251,7 +251,7 @@ TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --sho
 ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
 docker buildx build --platform "${DOCKER_PLATFORM:-linux/amd64}" \
   --file Dockerfile.agent \
-  --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION:-latest}" \
+  --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION:-2.1.282}" \
   --build-arg "AGENT_UID=${AGENT_UID:-1000}" \
   --build-arg "AGENT_GID=${AGENT_GID:-1000}" \
   --label "pl.szymonrichert.engine-revision=${ENGINE_TAG}" \

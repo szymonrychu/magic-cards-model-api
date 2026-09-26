@@ -441,3 +441,14 @@ def test_cookie_refresh_is_not_combined_with_a_minimal_session_cookie() -> None:
     assert "OAUTH2_PROXY_COOKIE_REFRESH" in env
     minimal = env.get("OAUTH2_PROXY_SESSION_COOKIE_MINIMAL", {}).get("value", "false")
     assert minimal.lower() != "true"
+
+
+def test_seat_job_carries_no_dead_git_committer_vars() -> None:
+    """FD6 (5), fb3-parity.md item 10: `gitwork.identity` overrides the
+    COMMITTER from `MTG_ROLE`, so `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL`
+    in the agent container's env never took effect - dead config, dropped
+    from the manifest (and from `wrapper.oneshot.PASSED_THROUGH`, which
+    would otherwise still forward it to the review one-shot for nothing)."""
+    text = (ROOT / "deploy/seat-job.yaml").read_text()
+    assert "GIT_COMMITTER_NAME" not in text
+    assert "GIT_COMMITTER_EMAIL" not in text

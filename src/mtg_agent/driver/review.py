@@ -369,8 +369,9 @@ def review_prompt(
     **Bounded, and the bound says so.** `MAX_LEDGER_ROWS` and
     `MAX_LEDGER_CHARS` keep the newest rows and declare in the prompt how
     many earlier ones were dropped, so the reviewer never mistakes a window
-    for the whole game and `wrapper.oneshot._capped`'s silent 200_000
-    character guillotine is never reached.
+    for the whole game and `wrapper.oneshot._capped`'s own 230_000 character
+    guillotine (FD6 (2): cuts the front, keeps the tail, and marks the
+    filed review `review_truncated` when it fires) is never reached.
 
     **FC2: `guides_dir` names the exact `mcp-seat ... --root` the reviewer
     must run.** Defaults to `_default_guides_dir()` (the driver's own real
@@ -467,8 +468,8 @@ def review_prompt(
     # everything else is rendered, rather than added on top of it: the
     # reflection and the declarations have no length bound of their own, so
     # a fixed ledger budget alone could still walk the whole prompt into
-    # `oneshot._capped`'s silent guillotine. Measured against what is
-    # already built plus what is still to come.
+    # `oneshot._capped`'s own guillotine. Measured against what is already
+    # built plus what is still to come.
     after_game = notes_routing_after_game(assignment)
     # API-13: rendered here, ahead of the ledger's own budget, for the same
     # reason `after_game` is - both are instruction text this call knows the
@@ -701,12 +702,19 @@ def _ask(player: str, opponent: str, deck_slug: str, game_id: str, guides_dir: s
         "and each was still the wrong play - so a matching plan never excuses "
         "a play that one of the six categories above flags.\n"
         "\n"
-        "Report findings, not an essay: at most eight of them, one finding per "
-        "line, each naming the turn, the card, one of the seven category names "
-        "above, and what should have happened instead. Say nothing at all "
-        "about a turn that carried no misplay. Then close with at most three "
-        "sentences on what the declared plans and their outcomes show about "
-        "this seat's reads on the board.\n"
+        "Report PROSE FINDINGS, not an essay: at most eight of them, one finding "
+        "per line, each naming the turn, the card, one of the seven category "
+        "names above, and what should have happened instead. Say nothing at "
+        "all about a turn that carried no misplay. Then close with at most "
+        "three sentences on what the declared plans and their outcomes show "
+        "about this seat's reads on the board. This cap, and this silence "
+        "rule, describe the prose findings above only - the DSL submission "
+        "below is a separate, unconditional job, owed for every expressible "
+        "decision whether or not that decision carried a misplay. Write out "
+        "this whole critique - the findings and turning points below - "
+        "BEFORE you run any `mcp-seat` command: a review that runs out of "
+        "time partway through the DSL submission still keeps its written "
+        "analysis this way, rather than losing it to the same timeout.\n"
         "\n"
         + _dsl_submission_ask(deck_slug, game_id, guides_dir)
         + "\n\n"
@@ -739,6 +747,40 @@ def _mcp_seat_invocation_note() -> str:
     )
 
 
+#: FD6 (1): the DSL's own vocabulary, named for the reviewer rather than
+#: left implicit in the shapes `_decision_block`/`_decision_group_block`
+#: happen to print. Today's list, from `docs/superpowers/specs/2026-09-13-
+#: play-script-format-design.md` as it stands before FD2 lands - FD2 adds
+#: cast parameters (face/modes/x/shares/optional_costs), keyword actions,
+#: mulligan/pregame answers, `order`/`damage`/`choice_from` and the rest of
+#: its new vocabulary, and extending THIS tuple is the one place that
+#: growth needs to land for the ask to state it.
+EXPRESSIBLE_MOVE_VOCABULARY: tuple[str, ...] = (
+    "cast",
+    "play_land",
+    "activate",
+    "declare_attackers",
+    "declare_blockers",
+    "pass",
+    "decide",
+)
+
+
+#: What `plays no-change --decision` is shown with in the ask - FD7's
+#: command (`seat_cli.py`, not this task's file): `--decision <seq>` in
+#: place of `--play`/`--line`, so a decision that is already properly
+#: covered, or one that is expressible but genuinely earns no change, is
+#: still closed rather than left silently open.
+_DECISION_NO_CHANGE_REASON = '"<why this decision needs no DSL change>"'
+
+
+def _decision_no_change_command(deck_slug: str, game_id: str, guides_dir: str) -> str:
+    return (
+        f"mcp-seat plays no-change --decision <seq> --reason {_DECISION_NO_CHANGE_REASON} "
+        f"--deck {deck_slug} --game-id {game_id} --root {guides_dir}"
+    )
+
+
 def _dsl_submission_ask(deck_slug: str, game_id: str, guides_dir: str) -> str:
     """DR3, requirement (2): what the review must do with this game's own
     `Decisions` section, in the exact order the requirement names - (a)-(e)
@@ -760,13 +802,22 @@ def _dsl_submission_ask(deck_slug: str, game_id: str, guides_dir: str) -> str:
     propose_cmd = (
         f"mcp-seat guides propose --deck {deck_slug} --game-id {game_id} --root {guides_dir}"
     )
+    no_change_cmd = _decision_no_change_command(deck_slug, game_id, guides_dir)
+    vocabulary = ", ".join(f"`{word}`" for word in EXPRESSIBLE_MOVE_VOCABULARY)
     return (
-        "Beyond the misplay review above, submit DSL for every decision this seat made "
-        "this game, using the Decisions section you were given earlier, in this order:\n"
+        "Beyond the misplay review above, submit DSL for every EXPRESSIBLE decision this seat "
+        "made this game, using the Decisions section you were given earlier, in this order. "
+        f"The DSL's own vocabulary today is {vocabulary} plus the decide answers - a decision "
+        "outside that vocabulary is `unexpressible` in its own row and owes nothing here:\n"
         "\n"
-        "1. SUBMIT ONE GENERALIZED PLAY PER DECISION: for every decision in the Decisions "
-        "section, refine a play it already matches, or draft one it does not, merged and "
-        "deduplicated into the deck's existing corpus rather than filed beside it. Run "
+        "1. SUBMIT ONE GENERALIZED PLAY PER DECISION, OR CLOSE IT WITH NO-CHANGE: for every "
+        "expressible decision in the Decisions section, either refine a play it already "
+        "matches, or draft one it does not, merged and deduplicated into the deck's existing "
+        "corpus rather than filed beside it - or, when the decision is already properly "
+        f"covered and genuinely earns no change, record `{no_change_cmd}` "
+        "instead, once per decision, naming its own seq. Every expressible decision is owed "
+        "one of the two - admit or no-change - never silence, whether or not that decision "
+        "carried a misplay. Run "
         f"`{check_cmd}` before you write anything and again after, so what you land "
         "is checked against the corpus both before your own change and after it, then land "
         f"the result with `{admit_cmd}`. Where a decision's own move cannot be "
@@ -790,10 +841,16 @@ def _dsl_submission_ask(deck_slug: str, game_id: str, guides_dir: str) -> str:
         "seat should have declined it.\n"
         "4. Every decision you properly generalize into a play also goes into the deck's "
         f"guide through `{propose_cmd}` - the play and the guide sentence "
-        "describing it land together, never one without the other. If a guide write is "
-        "refused by a content-gate bound, merge the sentence into an existing NOTES.md line "
-        "or matchup note instead of dropping it, and say in this critique's own text that "
-        "you merged it and why.\n"
+        "describing it land together, never one without the other. `play_plan` is capped at "
+        "80 words; keep the sentence inside that or it is refused on length alone. The content "
+        "gate also refuses guide prose that reads as being about the system rather than the "
+        "game - naming the api, http, mcp-seat's own commands, a timeout, a container or pod, "
+        "a stack trace, a source file or path, a `--flag` or a `key=value`, or a backticked "
+        "code identifier - write about the game, not the tooling, and file a system problem "
+        "with `report_problem` instead. If a guide write is refused by a content-gate bound "
+        "or the 80-word cap, merge the sentence into an existing NOTES.md line or matchup note "
+        "instead of dropping it, and say in this critique's own text that you merged it and "
+        "why.\n"
         "5. Nothing from this section goes into a play or a guide sentence itself: a missing "
         "DSL feature is `report_problem` category `dsl`, MCP tool friction you hit doing "
         "this work is category `ux`, and an engine or rules fault you hit is category "
@@ -994,27 +1051,126 @@ def _decision_json(value: Any) -> str:
     return _sanitize(json.dumps(value, separators=(",", ":"), sort_keys=True))
 
 
-def _decision_block(decision: dict[str, Any], seat: str, *, include_board: bool) -> str:
-    """One `Decisions` entry - see `DECISIONS_HEADING`'s own docstring for
-    where `board` comes from and why it is the only field `_decision_lines`
-    is ever allowed to drop."""
-    lines = [
-        f"- decision #{decision.get('seq')} [turn {decision.get('turn')} / "
-        f"{decision.get('step')}] {_sanitize(str(decision.get('action') or '?'))}"
-    ]
-    dsl = decision.get("dsl")
-    unexpressible = decision.get("unexpressible")
+def _board_diff(prev: Any, curr: Any) -> Any:
+    """FD6 (2): `curr` reduced to only what changed since `prev` - a
+    shallow key comparison, so a nested value that changed at all is shown
+    in full rather than diffed further (simple, and a reviewer reading one
+    changed key never has to reconstruct a nested patch by hand). Removed
+    keys are named under `_removed` so a board that shrank (a card left the
+    field this seat could see) still says so.
+
+    `curr` is returned unchanged - the whole board, not a diff - when
+    either side is not a plain mapping: the first decision in the game
+    (`prev` is `None`) has nothing to diff against, and a board shape this
+    cannot diff safely is shown whole rather than silently wrong."""
+    if not isinstance(prev, dict) or not isinstance(curr, dict):
+        return curr
+    changed = {key: value for key, value in curr.items() if key not in prev or prev[key] != value}
+    removed = sorted(key for key in prev if key not in curr)
+    if removed:
+        changed = {**changed, "_removed": removed}
+    return changed
+
+
+def _reasoning_text(decision: dict[str, Any]) -> str:
+    reasoning = decision.get("reasoning")
+    return _sanitize(str(reasoning)) if reasoning else "(none given)"
+
+
+def _grouped_reasoning(entries: list[tuple[int, str]]) -> str:
+    """FD6 (2): every seq's own reasoning, deduplicated by its TEXT rather
+    than repeated once per seq - a long run of identical passes usually
+    also carries identical reasoning ("nothing to do"), and repeating that
+    sentence once per seq is exactly the bulk grouping exists to remove.
+    A seq whose reasoning genuinely differs from the rest of its group
+    still gets its own bucket, so no seq's own words are lost, only the
+    repetition."""
+    buckets: dict[str, list[int]] = {}
+    for seq, text in entries:
+        buckets.setdefault(text, []).append(seq)
+    if len(buckets) == 1:
+        (text,) = buckets
+        return text
+    return "; ".join(
+        f"{text} (#{', #'.join(str(seq) for seq in seqs)})" for text, seqs in buckets.items()
+    )
+
+
+def _decision_groups(decisions: list[dict[str, Any]], seat: str) -> list[dict[str, Any]]:
+    """FD6 (2): `decisions`, in seq order, grouped by identical generalized
+    DSL (or identical `unexpressible` label) into first-seen order - a long
+    run of decisions sharing one DSL, a game's own passes chief among them
+    (measured: 83% of a real game's decisions - fb3-measure.md), collapses
+    into ONE entry naming every seq it covers, rather than one entry per
+    seq. Each decision's own board is first diffed against the board of the
+    decision immediately before it IN THE ORIGINAL SEQUENCE (never the
+    group's own previous member), so a decision whose generalization
+    genuinely differs from its predecessor still carries a real diff even
+    though it is the first (or only) member of its own group."""
+    groups: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    prev_board: Any = None
+    for decision in decisions:
+        perspectives = decision.get("board_by_perspective")
+        board = perspectives.get(seat) if isinstance(perspectives, dict) else None
+        board_diff = _board_diff(prev_board, board) if board is not None else None
+        if board is not None:
+            prev_board = board
+        dsl = decision.get("dsl")
+        unexpressible = decision.get("unexpressible")
+        key = f"dsl:{_decision_json(dsl)}" if dsl is not None else f"unexpressible:{unexpressible}"
+        seq = decision.get("seq")
+        if key not in groups:
+            groups[key] = {
+                "dsl": dsl,
+                "unexpressible": unexpressible,
+                "action": decision.get("action"),
+                "turn": decision.get("turn"),
+                "step": decision.get("step"),
+                "seqs": [],
+                "reasoning": [],
+                "board_diff": None,
+            }
+            order.append(key)
+        entry = groups[key]
+        entry["seqs"].append(seq)
+        entry["reasoning"].append((seq, _reasoning_text(decision)))
+        # The most recent member's own diff wins - a multi-member group's
+        # board is never shown at all (see `_decision_group_block`), so
+        # this only ever matters for the group's eventual single-member
+        # rendering path.
+        entry["board_diff"] = board_diff
+    return [groups[key] for key in order]
+
+
+def _decision_group_block(group: dict[str, Any], *, include_board: bool) -> str:
+    """One `Decisions` entry for a group `_decision_groups` built - a
+    single decision when nothing else shared its generalized DSL, or a
+    deduplicated run of identical ones. See `DECISIONS_HEADING`'s own
+    docstring for where `board` comes from; `include_board` is FALSE for
+    every multi-member group regardless of budget (there is no one board to
+    show for N different moments the deck treats identically), and can also
+    be forced false for a single-member group over `MAX_DECISIONS_CHARS`,
+    exactly as `_decision_lines`'s own budget loop always could."""
+    seqs = group["seqs"]
+    ids = ", ".join(f"#{seq}" for seq in seqs)
+    if len(seqs) > 1:
+        head = f"- decisions {ids} ({len(seqs)} identical, deduplicated) " + _sanitize(
+            str(group.get("action") or "?")
+        )
+    else:
+        head = f"- decision {ids} [turn {group.get('turn')} / {group.get('step')}] " + _sanitize(
+            str(group.get("action") or "?")
+        )
+    lines = [head]
+    dsl = group["dsl"]
     if dsl is not None:
         lines.append(f"    dsl: {_decision_json(dsl)}")
     else:
-        lines.append(f"    unexpressible: {_sanitize(str(unexpressible))}")
-    reasoning = decision.get("reasoning")
-    lines.append(f"    reasoning: {_sanitize(str(reasoning)) if reasoning else '(none given)'}")
-    if include_board:
-        perspectives = decision.get("board_by_perspective")
-        board = perspectives.get(seat) if isinstance(perspectives, dict) else None
-        if board is not None:
-            lines.append(f"    board: {_decision_json(board)}")
+        lines.append(f"    unexpressible: {_sanitize(str(group['unexpressible']))}")
+    lines.append(f"    reasoning: {_grouped_reasoning(group['reasoning'])}")
+    if include_board and len(seqs) == 1 and group.get("board_diff") is not None:
+        lines.append(f"    board: {_decision_json(group['board_diff'])}")
     return "\n".join(lines)
 
 
@@ -1025,35 +1181,45 @@ def _decision_lines(
     `MAX_DECISIONS_CHARS`'s own docstring for why this is a fixed slice
     rather than a remainder the way `_ledger_lines`'s budget is.
 
-    **Only `board` is ever dropped, oldest decision first.** Every
-    decision's own `dsl`/`unexpressible` and `reasoning` are kept in full
-    for every decision, always - the DR3 requirement this exists to satisfy
-    is explicit that neither is ever dropped, so unlike `_ledger_lines`
-    (which drops whole ROWS to hold its bound) this can only shed a board at
-    a time. A game with unusually long `reasoning` on every decision can
-    still end up over `budget` with every board already gone - accepted,
-    the same way `_ledger_lines`'s own row-and-char caps do not perfectly
-    bound a pathological game either, and `wrapper.oneshot._capped`'s own
-    guillotine is the backstop of last resort for both."""
+    **FD6 (2): grouped first, budget-trimmed second.** `_decision_groups`
+    collapses every run of decisions sharing one generalized DSL (a game's
+    own passes chief among them) into one entry naming every seq it covers,
+    with boards diffed against the immediately preceding decision rather
+    than sent whole - the fix for gen gap 5, where a 100+ decision game
+    dropped nearly every board and, past ~400 decisions, blew the whole
+    prompt past `wrapper.oneshot.MAX_PROMPT_CHARS` and lost the ask itself
+    to that guillotine's silent tail-cut. Only `board` is ever dropped after
+    that, oldest single-member group first, exactly as before - every
+    group's own `dsl`/`unexpressible` and every seq's own `reasoning` are
+    kept in full, always. A game with unusually long `reasoning` on every
+    decision can still end up over `budget` with every board already gone -
+    accepted, the same way `_ledger_lines`'s own row-and-char caps do not
+    perfectly bound a pathological game either, and
+    `wrapper.oneshot._capped`'s own front-cutting guillotine (FD6 (2)) is
+    the backstop of last resort for both, and no longer drops the ask when
+    it fires."""
     if not decisions:
         return []
-    blocks = [_decision_block(decision, seat, include_board=True) for decision in decisions]
+    groups = _decision_groups(decisions, seat)
+    blocks = [_decision_group_block(group, include_board=True) for group in groups]
     total = sum(len(block) + 1 for block in blocks)
-    dropped = 0
+    dropped = sum(1 for group in groups if len(group["seqs"]) > 1)
     index = 0
     while total > budget and index < len(blocks):
-        stripped = _decision_block(decisions[index], seat, include_board=False)
-        if len(stripped) < len(blocks[index]):
-            total -= len(blocks[index]) - len(stripped)
-            blocks[index] = stripped
-            dropped += 1
+        if len(groups[index]["seqs"]) == 1:
+            stripped = _decision_group_block(groups[index], include_board=False)
+            if len(stripped) < len(blocks[index]):
+                total -= len(blocks[index]) - len(stripped)
+                blocks[index] = stripped
+                dropped += 1
         index += 1
     lines: list[str] = []
     if dropped:
         lines.append(
             f"[{dropped} board(s) omitted from the decisions below to keep this prompt "
-            "bounded, oldest decision first; every decision's own dsl/unexpressible and "
-            "reasoning are kept in full regardless.]"
+            "bounded - deduplicated groups first, then the oldest remaining single decision; "
+            "every decision's own dsl/unexpressible and reasoning are kept in full regardless, "
+            "and every seq is named.]"
         )
     lines.extend(blocks)
     return lines

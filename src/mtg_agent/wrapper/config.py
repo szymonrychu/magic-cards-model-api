@@ -111,6 +111,52 @@ class Settings:
     #: `POST /v1/review`) and `RETIRE_REVIEW_JOIN_TIMEOUT` over that, both
     #: pinned by a test against this number.
     review_timeout: float = 3600.0
+    #: FD6 (3): how many extra seconds `scaled_review_timeout` adds to
+    #: `review_timeout` for each decision the reviewed game's own review
+    #: record carries - a game with hundreds of decisions submits many more
+    #: `mcp-seat plays check`/`plays admit`/`no-change` round trips than the
+    #: flat timeout above was ever sized for, and this scales with the count
+    #: instead of needing the flat number re-guessed upward again next time a
+    #: game's own decision count grows.
+    review_timeout_per_decision: float = 6.0
+    #: The ceiling `scaled_review_timeout` never crosses, however large the
+    #: decision count - a runaway game must still fail in bounded time
+    #: rather than the review timeout growing without limit.
+    #:
+    #: **4800.0 (review fix, round 2 finding 2), not an independently chosen
+    #: number.** `driver.app.REVIEW_HTTP_TIMEOUT_MAX` is a fixed constant the
+    #: driver computes once, at import time, from THIS module's defaults at
+    #: an assumed 200-decision ceiling (`review_timeout + 200 *
+    #: review_timeout_per_decision` = 3600 + 1200 = 4800) - it runs in a
+    #: separate container with no live decision count and no access to this
+    #: process's env, so it cannot compute a per-request ceiling the way
+    #: `scaled_review_timeout` does. The old default (10800.0) let THIS
+    #: side's own scaling keep growing for another ~1000 decisions (up to a
+    #: 1200-decision asymptote) past that 200-decision assumption before its
+    #: own cap ever engaged, so a real game anywhere in that gap (400
+    #: decisions was the reported case: 3600 + 400*6 = 6000s of plays-pass
+    #: budget) ran past the driver's own client timeout - which had already
+    #: given up and filed `ai_review_failed`, discarding the whole response,
+    #: prose included, even though the wrapper would have finished within
+    #: its own bound. Setting this to exactly what 200 decisions' worth of
+    #: scaling already produces makes the two sides' ceilings the same
+    #: number rather than two independently chosen ones that drift apart
+    #: above 200 decisions - `scaled_review_timeout`/`scaled_review_wall_
+    #: time` can now never exceed what the driver already waits for, no
+    #: matter how large the real game's decision count is.
+    #: `tests/wrapper/test_config.py` pins this alignment; move it only
+    #: together with `driver.app`'s own 200-decision assumption.
+    review_timeout_max: float = 4800.0
+    #: FD6 (3) review fix: the budget for `run_review`'s own prose-only
+    #: first pass (no tools at all - see `oneshot.run_review`'s own
+    #: docstring for why the prose critique now runs as a separate call
+    #: before the tool-using DSL submission pass). Fixed, not scaled by
+    #: decision count like `review_timeout_per_decision` above: the prose
+    #: pass makes no `mcp-seat` round trips regardless of how many decisions
+    #: the game carries (its own output is capped at eight findings plus a
+    #: turning-points line), so its cost is reading a longer prompt, not
+    #: waiting on more tool calls. 300s is generous headroom for that alone.
+    review_prose_timeout: float = 300.0
     boot_timeout: float = 60.0
     submit_delay: float = 0.4
     #: How long an interrupted turn gets to end on its own before the wrapper
@@ -162,6 +208,9 @@ class Settings:
             hook_command=_str(env, "HOOK_COMMAND", "cc-stop-hook"),
             turn_timeout=_float(env, "TURN_TIMEOUT_SECONDS", 1800.0),
             review_timeout=_float(env, "REVIEW_TIMEOUT_SECONDS", 3600.0),
+            review_timeout_per_decision=_float(env, "REVIEW_TIMEOUT_PER_DECISION_SECONDS", 6.0),
+            review_timeout_max=_float(env, "REVIEW_TIMEOUT_MAX_SECONDS", 4800.0),
+            review_prose_timeout=_float(env, "REVIEW_PROSE_TIMEOUT_SECONDS", 300.0),
             boot_timeout=_float(env, "BOOT_TIMEOUT_SECONDS", 60.0),
             submit_delay=_float(env, "SUBMIT_DELAY_SECONDS", 0.4),
             interrupt_settle=_float(env, "INTERRUPT_SETTLE_SECONDS", 20.0),
@@ -194,3 +243,36 @@ class Settings:
         if resume:
             args.append("--continue")
         return args
+
+
+def scaled_review_timeout(settings: Settings, decision_count: int) -> float:
+    """`settings.review_timeout` extended by `settings.review_timeout_per_
+    decision` for every decision the reviewed game's own review record
+    carries, capped at `settings.review_timeout_max` (FD6 (3)).
+
+    A `decision_count` of 0 or less (unknown, or a game with nothing to
+    review) returns the flat `review_timeout` unchanged - the same value
+    every caller got before this existed, so a caller that cannot yet supply
+    a real count degrades to the old behaviour rather than to a wrong one."""
+    if decision_count <= 0:
+        return settings.review_timeout
+    scaled = settings.review_timeout + decision_count * settings.review_timeout_per_decision
+    return min(scaled, settings.review_timeout_max)
+
+
+def scaled_review_wall_time(settings: Settings, decision_count: int) -> float:
+    """`run_review`'s own worst-case wall-clock time for one `POST
+    /v1/review` call at `decision_count` (review fix, round 1 finding 1):
+    the prose-only first pass's own fixed budget
+    (`settings.review_prose_timeout` - it makes no tool round trips, so it
+    does not scale with `decision_count`) plus the plays pass's scaled
+    bound (`scaled_review_timeout` above).
+
+    `driver.app.review_http_timeout` is the reason this exists as its own
+    function rather than being inlined there: the driver runs in a separate
+    container and cannot read the wrapper's own `Settings` (it has no
+    access to that env), so it mirrors this exact formula against the
+    wrapper's DEFAULTS instead of guessing at a live value it cannot see -
+    a change to either side's formula has to change both, and a shared
+    function is what keeps that from drifting apart silently."""
+    return settings.review_prose_timeout + scaled_review_timeout(settings, decision_count)

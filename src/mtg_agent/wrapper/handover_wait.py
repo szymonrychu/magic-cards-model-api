@@ -28,8 +28,10 @@ MARKER_PATH = Path("/driver-workspace") / MARKER_NAME
 
 #: The agent preStop's wait in the seat Job, and the cap on how long a SIGTERM
 #: keeps the PTY open: past the driver preStop's `PRESTOP_WAIT_SECONDS`
-#: (5460 s, DR3), inside the Job's `terminationGracePeriodSeconds` (5520 s).
-DEFAULT_WAIT_SECONDS = 5480.0
+#: (7350 s, review fix round 1 - moved up from 5460s with
+#: `driver.app.RETIRE_REVIEW_JOIN_TIMEOUT`'s own decision-count-aware raise),
+#: inside the Job's `terminationGracePeriodSeconds` (7410 s).
+DEFAULT_WAIT_SECONDS = 7370.0
 
 
 def hold_until_handover(

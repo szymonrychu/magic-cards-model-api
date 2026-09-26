@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mtg_agent.wrapper.config import Settings
+from mtg_agent.wrapper.config import Settings, scaled_review_timeout, scaled_review_wall_time
 
 
 def test_defaults_when_env_is_empty():
@@ -103,3 +103,118 @@ def test_the_rules_researcher_model_is_its_own_setting():
     s = Settings.from_env({"MODEL": "opus", "RULES_RESEARCHER_MODEL": "haiku"})
     assert s.model == "opus"
     assert s.rules_researcher_model == "haiku"
+
+
+# FD6 (3): the review timeout scales with the decision count a game's own
+# review record carries, within a bound this module owns - a game with
+# hundreds of decisions runs many more `mcp-seat` round trips than the flat
+# `review_timeout` was ever sized for (see that field's own docstring).
+
+
+def test_review_timeout_scaling_defaults():
+    s = Settings.from_env({})
+    assert s.review_timeout_per_decision == 6.0
+    assert s.review_timeout_max == 4800.0
+
+
+# Review fix, round 2 finding 2: `driver.app.REVIEW_HTTP_TIMEOUT_MAX` is a
+# FIXED constant, computed once (at import time) from the wrapper's DEFAULT
+# `Settings` at an assumed 200-decision ceiling, since the driver runs in a
+# separate container and cannot read a live decision count into a module
+# constant. Before this fix, `review_timeout_max` (10800.0) let the plays
+# pass keep growing past that 200-decision assumption for another ~1000
+# decisions (up to a 1200-decision asymptote) before ITS OWN cap ever
+# engaged - so a real game anywhere in that range (400 decisions was the
+# reported case: 3600 + 400*6 = 6000s of plays-pass budget, worse than the
+# driver was ever told to wait for) ran past the driver's own client
+# timeout, which had already given up and filed `ai_review_failed`,
+# discarding the whole response - prose included - even though the wrapper
+# would have finished within its own bound. `review_timeout_max` now caps
+# the plays pass at EXACTLY what 200 decisions' worth of scaling already
+# produces (`review_timeout` + 200 * `review_timeout_per_decision` = 3600 +
+# 1200 = 4800), so `scaled_review_timeout`/`scaled_review_wall_time` can
+# never exceed what the driver's own fixed ceiling already assumes,
+# regardless of how large the real game's own decision count is - the two
+# sides' bounds are the same number now, not two independently chosen ones
+# that used to drift apart above 200 decisions.
+def test_review_timeout_max_default_never_lets_scaling_outgrow_the_driver_ceiling():
+    s = Settings.from_env({})
+    two_hundred_decisions_worth = s.review_timeout + 200 * s.review_timeout_per_decision
+    assert s.review_timeout_max == two_hundred_decisions_worth
+    # However large the real decision count, the plays pass is bounded at
+    # exactly the same ceiling - never higher, so a driver sized for 200
+    # decisions' worth of waiting is never caught out by a bigger game.
+    assert scaled_review_timeout(s, 400) == s.review_timeout_max
+    assert scaled_review_timeout(s, 100_000) == s.review_timeout_max
+
+
+def test_review_timeout_scaling_env_overrides():
+    s = Settings.from_env(
+        {
+            "REVIEW_TIMEOUT_PER_DECISION_SECONDS": "10",
+            "REVIEW_TIMEOUT_MAX_SECONDS": "9000",
+        }
+    )
+    assert s.review_timeout_per_decision == 10.0
+    assert s.review_timeout_max == 9000.0
+
+
+def test_scaled_review_timeout_is_the_flat_timeout_with_no_decisions():
+    s = Settings.from_env({})
+    assert scaled_review_timeout(s, 0) == s.review_timeout
+    assert scaled_review_timeout(s, -5) == s.review_timeout
+
+
+def test_scaled_review_timeout_grows_with_decision_count():
+    s = Settings.from_env(
+        {"REVIEW_TIMEOUT_SECONDS": "3600", "REVIEW_TIMEOUT_PER_DECISION_SECONDS": "6"}
+    )
+    assert scaled_review_timeout(s, 50) == 3600.0 + 50 * 6.0
+
+
+def test_scaled_review_timeout_never_exceeds_the_configured_bound():
+    s = Settings.from_env(
+        {
+            "REVIEW_TIMEOUT_SECONDS": "3600",
+            "REVIEW_TIMEOUT_PER_DECISION_SECONDS": "100",
+            "REVIEW_TIMEOUT_MAX_SECONDS": "5000",
+        }
+    )
+    assert scaled_review_timeout(s, 1000) == 5000.0
+
+
+# Review fix, round 1 finding 1: `driver.app.review_http_timeout` has to
+# mirror this exact formula against the wrapper's own defaults (it runs in a
+# separate container and cannot read the wrapper's env) - a shared function
+# is what keeps the two from drifting apart the way `REVIEW_HTTP_TIMEOUT`
+# already had, fixed while `scaled_review_timeout` grew underneath it.
+
+
+def test_review_prose_timeout_default_and_override():
+    assert Settings.from_env({}).review_prose_timeout == 300.0
+    s = Settings.from_env({"REVIEW_PROSE_TIMEOUT_SECONDS": "120"})
+    assert s.review_prose_timeout == 120.0
+
+
+def test_scaled_review_wall_time_is_the_prose_budget_plus_the_scaled_timeout():
+    s = Settings.from_env(
+        {
+            "REVIEW_TIMEOUT_SECONDS": "3600",
+            "REVIEW_TIMEOUT_PER_DECISION_SECONDS": "6",
+            "REVIEW_PROSE_TIMEOUT_SECONDS": "300",
+        }
+    )
+    assert scaled_review_wall_time(s, 0) == 300.0 + 3600.0
+    assert scaled_review_wall_time(s, 50) == 300.0 + 3600.0 + 50 * 6.0
+
+
+def test_scaled_review_wall_time_is_capped_by_review_timeout_max_too():
+    s = Settings.from_env(
+        {
+            "REVIEW_TIMEOUT_SECONDS": "3600",
+            "REVIEW_TIMEOUT_PER_DECISION_SECONDS": "100",
+            "REVIEW_TIMEOUT_MAX_SECONDS": "5000",
+            "REVIEW_PROSE_TIMEOUT_SECONDS": "300",
+        }
+    )
+    assert scaled_review_wall_time(s, 1000) == 300.0 + 5000.0

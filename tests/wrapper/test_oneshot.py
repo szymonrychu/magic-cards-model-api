@@ -487,6 +487,16 @@ def test_the_variables_mcp_seat_reads_are_named_through(
     assert env["WORKSPACE"] == str(settings.workspace)
 
 
+def test_git_committer_vars_are_not_passed_through() -> None:
+    """FD6 (5), fb3-parity.md item 10: `gitwork.identity` sets the COMMITTER
+    from `MTG_ROLE`, so `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` in this
+    process's own environment never took effect - dead config, dropped from
+    the allowlist along with `deploy/seat-job.yaml`'s now-removed env
+    entries for them."""
+    assert "GIT_COMMITTER_NAME" not in oneshot.PASSED_THROUGH
+    assert "GIT_COMMITTER_EMAIL" not in oneshot.PASSED_THROUGH
+
+
 def test_nothing_for_the_retired_github_rest_path_is_passed_through() -> None:
     """Guide edits and play admits push straight to main through git's own
     credential helper; nothing reads a GitHub API host, a repository name or
@@ -586,19 +596,66 @@ def test_the_drivers_client_timeout_outlasts_the_wrappers_own_bound() -> None:
 
 
 def test_run_review_returns_stripped_stdout_on_success(tmp_path: Path) -> None:
+    """`run_review` makes two calls (the prose pass, then the plays pass -
+    see the FD6 (3) review-fix section below), both against this same stub,
+    so `--print` being present is an invariant true of BOTH. The plays
+    pass's own `--tools` value is pinned by the dedicated argv tests above
+    (`_captured`, no real subprocess), and the prose pass's by
+    `test_run_review_prose_pass_gets_no_tools_at_all` below.
+
+    Review fix, round 2 finding 1: on success, `run_review` keeps text from
+    BOTH passes rather than returning only the plays pass's own stdout - see
+    `test_run_review_keeps_the_prose_pass_text_even_when_the_plays_pass_
+    succeeds` below for why discarding the prose pass on the ordinary,
+    successful path is the bug this closes. The stub below still returns
+    identical text from both passes, so this test alone cannot tell a
+    "keep only one" implementation from a "keep both, they happen to
+    match" one - the dedicated test below is what actually pins the merge."""
     stub = _stub(
         tmp_path,
         """
         import sys
         assert sys.argv[1] == "--print"
-        # The allowlist really arrives as one non-empty argv element.
-        assert sys.argv[sys.argv.index("--tools") + 1].split(",")[0] == "Read"
         print("  the review text  \\n")
         """,
     )
     settings = _settings(stub, tmp_path)
     text = run_review(settings, "critique this game", "claude-opus-5", "high")
-    assert text == "the review text"
+    assert "the review text" in text
+
+
+def test_run_review_keeps_the_prose_pass_text_even_when_the_plays_pass_succeeds(
+    tmp_path: Path,
+) -> None:
+    """Review fix, round 2 finding 1: the real `claude --print` CLI's one
+    buffered answer, after a run of `mcp-seat` tool calls, is ordinarily a
+    short submission summary ("filed 5 decisions...") - not a repeat of the
+    critique pass 1 already wrote. `run_review`'s success path used to
+    return the plays pass's own stdout ALONE, so a real review would file
+    that summary and silently lose the actual critique on the common,
+    successful path - the one time losing it was least excusable, since
+    nothing failed or timed out.
+
+    The stub below gives each pass genuinely different text (the plays pass
+    is told apart by its non-empty `--tools` flag, exactly like
+    `test_run_review_prose_pass_gets_no_tools_at_all` below tells them
+    apart), so this test fails outright under the old "plays text only"
+    behaviour rather than merely by coincidence."""
+    stub = _stub(
+        tmp_path,
+        """
+        import sys
+        tools = sys.argv[sys.argv.index("--tools") + 1]
+        if tools:
+            print("filed 5 decisions; no further findings")
+        else:
+            print("the critique: turn 3 should have held up the removal spell")
+        """,
+    )
+    settings = _settings(stub, tmp_path)
+    text = run_review(settings, "critique this game", "claude-opus-5", "high")
+    assert "the critique: turn 3 should have held up the removal spell" in text
+    assert "filed 5 decisions; no further findings" in text
 
 
 def test_run_review_raises_on_a_nonzero_exit(tmp_path: Path) -> None:
@@ -644,6 +701,201 @@ def test_run_review_raises_on_timeout(tmp_path: Path) -> None:
     settings = _settings(stub, tmp_path, REVIEW_TIMEOUT_SECONDS="0.1")
     with pytest.raises(ReviewFailed, match="did not finish within 0.1s"):
         run_review(settings, "x", "m", "high")
+
+
+# ---------------------------------------------------------------------------
+# FD6 (3): a timeout that already wrote prose loses no text
+# ---------------------------------------------------------------------------
+
+
+def test_run_review_salvages_partial_text_written_before_a_timeout(tmp_path: Path) -> None:
+    """The ask (`driver.review._ask`) now tells Opus to write its whole
+    critique before it touches `mcp-seat` at all - so a timeout that kills
+    the process partway through the DSL submission phase must not throw
+    away prose that was already written and flushed. `subprocess.run`'s own
+    `TimeoutExpired` carries whatever the killed process had already
+    written (`Popen.communicate`'s own behaviour), and this is the one place
+    that has to use it rather than discard it."""
+    stub = _stub(
+        tmp_path,
+        """
+        import sys, time
+        sys.stdout.write("the critique text, written before the tools ran\\n")
+        sys.stdout.flush()
+        time.sleep(5)
+        """,
+    )
+    settings = _settings(stub, tmp_path, REVIEW_TIMEOUT_SECONDS="0.3")
+    text = run_review(settings, "x", "m", "high")
+    assert "the critique text, written before the tools ran" in text
+    assert "review_timed_out" in text
+
+
+def test_run_review_files_prose_from_a_toolless_pass_even_when_the_plays_pass_buffers_everything(
+    tmp_path: Path,
+) -> None:
+    """Review fix, round 1 finding 2: the salvage test above stubs a
+    `claude` that writes and flushes its prose BEFORE it sleeps past its
+    timeout - which is not how the real CLI behaves. `claude --print`'s
+    default (non-streaming) text output holds its ENTIRE answer in memory
+    and writes it in one block right before the process would exit
+    normally, so a real process killed mid-tool-call has NOTHING sitting in
+    the stdout pipe for `subprocess.TimeoutExpired.stdout` to salvage - the
+    prompt's own instruction to "write the whole critique before you touch
+    mcp-seat" describes an ORDER inside the transcript, not a guarantee
+    about what is flushed to this process's stdout before a kill.
+
+    The stub below reproduces that: given no tools at all (the prose-only
+    first pass `run_review` must now make) it prints its answer immediately,
+    exactly like a real `claude --print` call with nothing to wait on; given
+    ANY tools (the plays pass) it buffers everything and sleeps past its own
+    bound, so `TimeoutExpired.stdout` comes back empty - the realistic
+    failure this finding is about. `run_review` must still return the prose
+    pass's own text rather than raising `ReviewFailed`, because that pass
+    already completed and its own text was never at risk from the plays
+    pass's own timeout."""
+    stub = _stub(
+        tmp_path,
+        """
+        import sys, time
+        tools = sys.argv[sys.argv.index("--tools") + 1]
+        if tools:
+            # The plays pass: buffers its whole answer and never gets there.
+            time.sleep(5)
+        else:
+            print("the prose findings, from the tool-less first pass")
+        """,
+    )
+    settings = _settings(stub, tmp_path, REVIEW_TIMEOUT_SECONDS="0.3")
+    text = run_review(settings, "x", "m", "high")
+    assert "the prose findings, from the tool-less first pass" in text
+    assert "review_timed_out" in text
+
+
+def test_run_review_prose_pass_gets_no_tools_at_all(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The guarantee behind the fix above is structural, not a prompt
+    request: the prose-only first pass cannot run any `mcp-seat` command
+    even if it tried, because `--tools`/`--allowedTools` name none at all."""
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+        return _Completed()
+
+    monkeypatch.setattr(oneshot.subprocess, "run", fake_run)
+    settings = _settings("claude", tmp_path)
+    run_review(settings, "critique this game", "claude-opus-5", "high")
+
+    assert len(calls) == 2, "the prose pass and the plays pass are two separate calls"
+    prose_argv, plays_argv = calls
+    assert _flag(prose_argv, "--tools") == ""
+    assert _flag(prose_argv, "--allowedTools") == ""
+    assert _flag(plays_argv, "--tools") == ",".join(oneshot.REVIEW_TOOLS)
+
+
+def test_run_review_still_raises_when_a_timeout_leaves_no_partial_text(tmp_path: Path) -> None:
+    """The existing failure path, unchanged: a process that never wrote
+    anything before it was killed has nothing to salvage, so this stays a
+    `ReviewFailed` exactly as it always was."""
+    stub = _stub(tmp_path, "import time; time.sleep(5)")
+    settings = _settings(stub, tmp_path, REVIEW_TIMEOUT_SECONDS="0.1")
+    with pytest.raises(ReviewFailed, match="did not finish within 0.1s"):
+        run_review(settings, "x", "m", "high")
+
+
+def test_run_review_accepts_a_timeout_override_above_the_settings_default(
+    tmp_path: Path,
+) -> None:
+    """FD6 (3): `scaled_review_timeout` (`wrapper.config`) computes a bound
+    above the flat `Settings.review_timeout` for a game with many
+    decisions - `run_review` must actually use it, not silently fall back
+    to the flat one."""
+    stub = _stub(tmp_path, "import time; time.sleep(0.3)")
+    settings = _settings(stub, tmp_path, REVIEW_TIMEOUT_SECONDS="0.1")
+    with pytest.raises(ReviewFailed):
+        run_review(settings, "x", "m", "high")
+    # The same process finishes fine once an explicit override raises the
+    # bound past its own runtime.
+    text = run_review(settings, "x", "m", "high", timeout=5.0)
+    assert text == ""
+
+
+def test_run_review_timeout_override_is_used_by_subprocess_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen = _captured(monkeypatch, tmp_path, REVIEW_TIMEOUT_SECONDS="12.0")
+    assert seen["timeout"] == 12.0
+
+    def fake_run(argv, **kwargs):
+        seen2["timeout"] = kwargs["timeout"]
+        return _Completed()
+
+    seen2: dict[str, Any] = {}
+    monkeypatch.setattr(oneshot.subprocess, "run", fake_run)
+    settings = _settings("claude", tmp_path, REVIEW_TIMEOUT_SECONDS="12.0")
+    run_review(settings, "critique this game", "claude-opus-5", "high", timeout=999.0)
+    assert seen2["timeout"] == 999.0
+
+
+# ---------------------------------------------------------------------------
+# FD6 (2): `_capped` cuts the FRONT, keeps the TAIL, and marks a truncation
+# ---------------------------------------------------------------------------
+
+
+def test_capped_is_a_no_op_under_the_ceiling() -> None:
+    prompt = "y" * (oneshot.MAX_PROMPT_CHARS - 1)
+    assert oneshot._capped(prompt) == prompt
+
+
+def test_capped_keeps_the_tail_and_drops_the_front_when_over_budget() -> None:
+    """The old behaviour (`prompt[:MAX_PROMPT_CHARS]`) silently dropped the
+    ask and the write bars, which `driver.review.review_prompt` always
+    appends LAST - the tail is exactly what a reviewer needs to act, and the
+    ledger/decisions material it cuts instead sits at the front."""
+    tail = "TAIL-MARKER-" + "z" * 500
+    prompt = ("x" * (oneshot.MAX_PROMPT_CHARS + 50_000)) + "\n" + tail
+    capped = oneshot._capped(prompt)
+    assert capped.endswith(tail)
+    assert len(capped) <= oneshot.MAX_PROMPT_CHARS + 200
+    assert "truncated" in capped
+
+
+def test_run_review_marks_the_filed_review_when_the_prompt_was_capped(tmp_path: Path) -> None:
+    stub = _stub(
+        tmp_path,
+        """
+        import sys
+        sys.stdin.read()
+        print("the review text")
+        """,
+    )
+    settings = _settings(stub, tmp_path)
+    huge = "x" * (oneshot.MAX_PROMPT_CHARS + 10_000)
+    text = run_review(settings, huge, "m", "high")
+    assert "the review text" in text
+    assert "review_truncated" in text
+
+
+def test_run_review_never_marks_truncation_for_an_ordinary_prompt(tmp_path: Path) -> None:
+    stub = _stub(
+        tmp_path,
+        """
+        import sys
+        sys.stdin.read()
+        print("the review text")
+        """,
+    )
+    settings = _settings(stub, tmp_path)
+    text = run_review(settings, "an ordinary prompt", "m", "high")
+    # Both passes' text is kept (review fix, round 2 finding 1) - this stub
+    # answers identically for both, so "in" rather than "==" is what proves
+    # neither pass's text was silently dropped without over-pinning the
+    # exact merged shape, which `test_run_review_keeps_the_prose_pass_text_
+    # even_when_the_plays_pass_succeeds` already does.
+    assert "the review text" in text
+    assert "review_truncated" not in text
 
 
 def test_run_review_raises_on_an_unexecutable_binary(tmp_path: Path) -> None:
@@ -696,7 +948,16 @@ def test_run_review_sends_a_200k_prompt_on_stdin_byte_for_byte(tmp_path: Path) -
     entirely and copies stdin to stdout, so this only passes if the prompt
     actually arrives on stdin: on Linux (`MAX_ARG_STRLEN` = 131072 bytes)
     unchanged code raises `OSError` E2BIG trying to put a 200KB prompt into
-    one argv element, which `run_review` turns into `ReviewFailed`."""
+    one argv element, which `run_review` turns into `ReviewFailed`.
+
+    Both passes get the SAME `cat`-like stub, so each echoes back exactly
+    what it was given on stdin: the plays pass gets the capped prompt
+    verbatim (no preamble - `_PROSE_PASS_PREAMBLE` is prepended to the prose
+    pass's stdin only), and the prose pass gets that preamble plus the same
+    prompt. Review fix, round 2 finding 1 keeps both passes' text, so the
+    byte-for-byte assertion below is against the PLAYS pass's own section of
+    the merged text - the one this test already existed to pin - not the
+    whole merged string."""
     script = tmp_path / "fake-claude"
     script.write_text("#!/bin/sh\ncat\n")
     script.chmod(0o755)
@@ -705,8 +966,10 @@ def test_run_review_sends_a_200k_prompt_on_stdin_byte_for_byte(tmp_path: Path) -
 
     text = run_review(settings, prompt, "m", "high")
 
-    assert text == oneshot._capped(prompt).strip()
-    assert text == prompt  # well under MAX_PROMPT_CHARS, so `_capped` is a no-op
+    prose_part, _, plays_part = text.partition(f"\n\n{oneshot._PLAYS_PASS_LABEL}\n")
+    assert plays_part == oneshot._capped(prompt).strip()
+    assert plays_part == prompt  # well under MAX_PROMPT_CHARS, so `_capped` is a no-op
+    assert prose_part == f"{oneshot._PROSE_PASS_PREAMBLE}{prompt}".strip()
 
 
 def test_argv_never_carries_a_200k_prompt_or_exceeds_max_arg_strlen(tmp_path: Path) -> None:
