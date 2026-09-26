@@ -115,7 +115,7 @@ def test_declare_attackers_without_board_data_is_unexpressible_attack():
         )
     )
     assert record["dsl"] is None
-    assert record["unexpressible"] == "attack"
+    assert record["unexpressible"] == "declare_attackers:unresolved"
 
 
 def test_declare_blockers_without_board_data_is_unexpressible_block():
@@ -137,7 +137,7 @@ def test_declare_blockers_without_board_data_is_unexpressible_block():
         )
     )
     assert record["dsl"] is None
-    assert record["unexpressible"] == "block"
+    assert record["unexpressible"] == "declare_blockers:unresolved"
 
 
 def test_mulligan_declared_keep_gives_a_mulligan_move():
@@ -160,7 +160,7 @@ def test_mulligan_declared_take_gives_keep_false():
 def test_mulligan_declared_without_a_bool_take_is_unexpressible_mulligan():
     record = only(decision_rows([row(1, "mulligan_declared", take=None)], SEAT))
     assert record["dsl"] is None
-    assert record["unexpressible"] == "mulligan"
+    assert record["unexpressible"] == "mulligan:malformed"
 
 
 def test_concede_is_unexpressible_concede():
@@ -504,7 +504,7 @@ def test_activate_with_index_exceeding_bound_and_no_text_is_unresolved():
     entries = [row(1, "activate", card_id=exotic["id"], ability_index=99, state_view=view)]
     record = only(decision_rows(entries, SEAT))
     assert record["dsl"] is None
-    assert record["unexpressible"] == "activate:no-ability-reference"
+    assert record["unexpressible"] == "activate:unresolved-ability"
 
 
 # -- decide/answer ---------------------------------------------------------------
@@ -573,7 +573,7 @@ def test_decide_surveil_with_cards_moved_is_unexpressible():
         decision_rows([_decide(1, "surveil", moved=["00000000-0000-4000-8000-000000000009"])], SEAT)
     )
     assert record["dsl"] is None
-    assert record["unexpressible"] == "decide:surveil"
+    assert record["unexpressible"] == "decide:surveil:unresolved"
 
 
 def test_decide_choose_cards_is_unexpressible_needs_a_selector():
@@ -583,10 +583,14 @@ def test_decide_choose_cards_is_unexpressible_needs_a_selector():
         )
     )
     assert record["dsl"] is None
-    assert record["unexpressible"] == "decide:choose_cards"
+    assert record["unexpressible"] == "decide:choose_cards:unresolved"
 
 
-def test_decide_order_triggers_is_unexpressible():
+def test_decide_order_triggers_with_no_order_field_is_malformed():
+    # No `order` field at all (unlike `test_decide_order_triggers_unresolved_
+    # is_unexpressible` below, which has one naming an id nothing resolves) -
+    # a genuinely different failure reason, `:malformed` rather than
+    # `:unresolved`.
     record = only(
         decision_rows(
             [_decide(1, "order_triggers", card_ids=["00000000-0000-4000-8000-000000000009"])],
@@ -594,7 +598,7 @@ def test_decide_order_triggers_is_unexpressible():
         )
     )
     assert record["dsl"] is None
-    assert record["unexpressible"] == "decide:order_triggers"
+    assert record["unexpressible"] == "decide:order_triggers:malformed"
 
 
 def test_decide_put_on_top_or_bottom_gives_a_position_answer_needing_no_board_data():
@@ -773,7 +777,7 @@ def test_decide_declare_attackers_unresolved_pairs_is_the_attack_fallback():
         )
     )
     assert record["dsl"] is None
-    assert record["unexpressible"] == "attack"
+    assert record["unexpressible"] == "declare_attackers:unresolved"
 
 
 def test_decide_declare_blockers_pairs_becomes_a_declare_blockers_move():
@@ -827,7 +831,7 @@ def test_decide_mulligan_gives_a_plain_accept_answer():
 def test_decide_mulligan_without_a_bool_accept_is_unexpressible():
     record = only(decision_rows([_decide(1, "mulligan", accept=None)], SEAT))
     assert record["dsl"] is None
-    assert record["unexpressible"] == "decide:mulligan"
+    assert record["unexpressible"] == "decide:mulligan:malformed"
 
 
 # -- compact_board ---------------------------------------------------------------
@@ -1056,7 +1060,7 @@ def test_decide_order_triggers_gives_an_order():
 def test_decide_order_triggers_unresolved_is_unexpressible():
     record = only(decision_rows([_decide(1, "order_triggers", order=["nope"])], SEAT))
     assert record["dsl"] is None
-    assert record["unexpressible"] == "decide:order_triggers"
+    assert record["unexpressible"] == "decide:order_triggers:unresolved"
 
 
 def test_decide_assign_combat_damage_gives_a_damage_policy_with_rest_to_player():
@@ -1336,7 +1340,7 @@ def test_fold_stops_when_the_decide_cannot_be_resolved():
     cast_record, decide_record = out
     assert cast_record["dsl"]["moves"][0].get("answers", []) == []
     assert decide_record["dsl"] is None
-    assert decide_record["unexpressible"] == "decide:choose_targets"
+    assert decide_record["unexpressible"] == "decide:choose_targets:unresolved"
 
 
 def test_a_move_that_did_not_pause_never_opens_a_fold():

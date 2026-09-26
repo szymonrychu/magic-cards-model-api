@@ -20,9 +20,16 @@ except `run_script` (see its own section below), which is a fixed shape of
 its own rather than a `Play`. FD4 closes every converter gap this module used
 to leave open: `concede` is the only decision that stays unexpressible on
 purpose (CR 104.3a lets a player concede at any time, and a script must never
-end the game); everything else this module cannot resolve is labelled
-`unresolved` (a card, target or crew member genuinely could not be found in
-the board this row carries) rather than a vaguer "not built yet" label.
+end the game). Every other label this module writes now carries its own
+reason as a `:`-joined suffix, so `unexpressible` alone always says why:
+`:unresolved` (a card, target or crew member genuinely could not be found in
+the board this row carries), `:malformed` (the row's own data is missing or
+the wrong shape to answer from at all - reachable only from a hand-built or
+corrupted row, never a real route's own logging), `:too-many` (the row names
+more objects than the schema's own bound for that field allows),
+`:unrepresentable-step` (the row's own step/active-player is not one `when`
+can name at all - a pregame or pass-through step, say), and `:unsupported`
+(a `DecisionKind` this module has no branch for whatsoever).
 
 **Row shape.** One entry is `audit.entries()`'s own shape: `seq`, `action`,
 `detail` (the route's own per-action fields, keyed by `player`), and
@@ -60,6 +67,22 @@ began against. `decision_rows` walks `entries` tracking exactly that: the
 last state view (and the last `active_player`, FD4 (i)/G16) any prior row
 carried, used for every card lookup and every `whose_turn` judgement this
 row's own conversion makes - never the row's own post-action frame.
+
+This carried-forward frame is still only an approximation of a genuine
+pre-action attachment: it is exactly right whenever every intervening row up
+to this one also carries its own frame, but an event with no ledger row of
+its own (a draw, say) between the nearest earlier frame and this row is
+invisible to it. Review finding 6: there is, today, no explicit pre-action
+frame or pre-action `active_player` field for this module to read instead -
+`audit.record` stamps neither, so there is nothing yet for a defensive read
+to find (the same posture `_add_cast_fields`/`_add_activate_fields` already
+take with FD5's other not-yet-logged fields). What this module *can* do
+without that field, and now does, is treat the carried-forward frame as a
+first attempt rather than the only one: a card missing from it for this
+row's own move is looked up a second time in the row's own post-action frame
+purely to identify it (`_cast_or_play_land`/`_activate`/`_keyword_action`),
+closing the practical gap that carrying only the pre-action frame forward
+left open, without needing FD5 to land first.
 
 **Board.** `compact_board` (below) turns one `GameStateView`-shaped dict -
 what `GET /review/frames/{seq}` hands back for a row that has a recorded
@@ -99,8 +122,8 @@ routes' own `attackers`/`blocks` shape first (`_combat_pairs_detail`) -
 there is no second, weaker mapping for the `/decide` path. Without a
 `state_view` that resolves every card an entry names, or with more distinct
 groups than the schema's own `MAX_ATTACK_GROUPS`/`MAX_BLOCKS`, the row falls
-back to the plain `"attack"`/`"block"` label - never a half-built move
-standing in for one it could not finish honestly.
+back to `"declare_attackers:unresolved"`/`"declare_blockers:unresolved"` -
+never a half-built move standing in for one it could not finish honestly.
 
 **Keyword-action routes (FD4 (d)).** `suspend`, `plot`, `foretell`, `cycle`,
 `equip` and `crew` (six existing routes) and `turn_face_up`/`companion`
@@ -147,8 +170,10 @@ ability, in the row's own declared order) and `assign_combat_damage` (FD4
 declared assignment order and whose `rest_to` is `"player"` exactly when the
 row assigned anything to the defending player past its blockers) are all
 built from board data the same way the combat moves are, and fall back to
-`"decide:<kind>"` only when a card or target the row names cannot be
-resolved in the attached (pre-action) board. `choose_a_quality`/
+`"decide:<kind>:unresolved"` when a card or target the row names cannot be
+resolved in the attached (pre-action) board (`:malformed`/`:too-many` for
+the row's own data being absent, mis-shaped or over a schema bound - see
+each answer builder's own docstring). `choose_a_quality`/
 `choose_a_mode` (O6) answer with `choice` (a literal string) unless the
 kind is `choose_a_quality` and the chosen string itself resolves to a real
 card in the board (FD4 (h)/G15 - Meddling Mage's own "name a card", as
@@ -247,12 +272,19 @@ COMPACT_BOARD_CHARS = 600
 #: docstring.
 _PASS_ACTION = "pass_priority"
 
-#: `unexpressible` labels for the two vocabulary gaps this module reaches
-#: directly off a row's own action, plus the two combat-declaration
-#: fallbacks. `concede` is the spec's own word; the rest are this module's.
-_ATTACK = "attack"
-_BLOCK = "block"
-_MULLIGAN = "mulligan"
+#: `unexpressible` labels for the two combat-declaration fallbacks and the
+#: one row-level fallback below, plus `concede` - `_CONCEDE` is the spec's
+#: own word; the rest are this module's, and, per review finding 2, every
+#: one of them now carries its own reason as a suffix rather than a bare
+#: word: `:unresolved` (a card/target the row names could not be found in
+#: the board attached to it), `:malformed` (the row's own data is missing or
+#: the wrong shape to answer from at all - never reachable from a real
+#: route's own logging, only from a hand-built or corrupted row), and
+#: `:too-many` (the row names more objects than the schema's own bound for
+#: that field allows).
+_ATTACK = "declare_attackers:unresolved"
+_BLOCK = "declare_blockers:unresolved"
+_MULLIGAN = "mulligan:malformed"
 _CONCEDE = "concede"
 
 #: The ledger action -> this module's own canonical action-kind label, for
@@ -583,19 +615,42 @@ def _card_selector(card: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _cast_or_play_land(
-    kind: str, detail: Mapping[str, Any], state_view: Mapping[str, Any] | None
-) -> dict[str, Any]:
-    found = _find_card_by_ref(state_view, detail.get("card"))
+    kind: str,
+    detail: Mapping[str, Any],
+    state_view: Mapping[str, Any] | None,
+    post_state_view: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """A `CastMove`/`PlayLandMove`, or `(None, "<kind>:unresolved")` - review
+    finding 1: a card genuinely absent from the pre-action frame (drawn, or
+    otherwise entered play, since the nearest earlier row's own frame - see
+    the module docstring's own "pre-action frame" section) used to fall
+    through to a bare `select: {}` unconditionally, matching *any* card in
+    the zone rather than honestly failing. `select: {}` now stays reserved
+    for the one case the docstring always meant it for - no `state_view` at
+    all attached to this row, so there is nothing to look the card up in
+    either way. With a pre-action frame attached but missing this specific
+    card, this row's own post-action frame (where the card, already cast or
+    played, is certainly present) is tried next, purely to identify it - its
+    true pre-action zone is then read off the row's own logged `from_zone`
+    rather than the post-action frame's (which would read back as `stack`
+    for a cast). A card absent from both frames is `unresolved`."""
+    ref = detail.get("card")
+    pre_found = _find_card_by_ref(state_view, ref)
+    found = pre_found
+    if found is None and state_view is not None:
+        found = _find_card_by_ref(post_state_view, ref)
+        if found is None:
+            return None, f"{kind}:unresolved"
     select = _card_selector(found[0]) if found is not None else {}
     if kind == "cast":
-        zone = found[1] if found is not None else str(detail.get("from_zone") or "hand")
+        zone = pre_found[1] if pre_found is not None else str(detail.get("from_zone") or "hand")
         if zone not in COUNT_ZONES:
             zone = "hand"
         move: dict[str, Any] = {"kind": "cast", "card": {"zone": zone, "select": select}}
         _add_cast_fields(move, detail, state_view)
     else:
         move = {"kind": "play_land", "card": {"select": select}}
-    return move
+    return move, None
 
 
 def _face_selector(
@@ -730,20 +785,35 @@ def _pick_from_ids(ids: Any, state_view: Mapping[str, Any] | None) -> dict[str, 
 
 
 def _activate(
-    detail: Mapping[str, Any], state_view: Mapping[str, Any] | None
+    detail: Mapping[str, Any],
+    state_view: Mapping[str, Any] | None,
+    post_state_view: Mapping[str, Any] | None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """An `ActivateMove` for this row, or `(None, label)` when there is no
     honest one to write. With no board data at all there is no `source` to
     select and no ability to name either way - `activate:unresolved`, never
     a bare empty selector the way `cast`/`play_land` fall back to (a
     `source` naming nothing is not "whichever permanent", it is no
-    permanent). With the card found, FD4 (c)/G7 prefers `ability_index`
+    permanent). A pre-action frame attached but missing this specific source
+    (review finding 6 - an intervening draw/trigger the carried-forward
+    frame never saw) is resolved the same way `_cast_or_play_land` now does:
+    identified off this row's own post-action frame instead of failing
+    outright. Its true pre-action zone is unknown then (`action_activate`
+    logs no zone hint at all, unlike a cast's own `from_zone`), so it
+    defaults to `battlefield` - CR 602.1's own overwhelmingly common case,
+    and already this function's own default for any zone `COUNT_ZONES`
+    cannot name. With the card found, FD4 (c)/G7 prefers `ability_index`
     (FB2's own footing, exempt from the lint's `phrase-too-narrow` since
     FD2) over `ability_text_has` whenever a usable index is on the row at
     all - a hand-written oracle-text phrase is only as safe as knowing it is
     shared by at least three cards, which this module, with no card catalog
     of its own, cannot verify; the numeric index carries no such risk."""
-    found = _find_card_by_ref(state_view, detail.get("card_id") or detail.get("card"))
+    ref = detail.get("card_id") or detail.get("card")
+    found = _find_card_by_ref(state_view, ref)
+    if found is None and state_view is not None:
+        post_found = _find_card_by_ref(post_state_view, ref)
+        if post_found is not None:
+            found = (post_found[0], "battlefield")
     if found is None:
         return None, "activate:unresolved"
     card, zone = found
@@ -766,7 +836,7 @@ def _activate(
         if isinstance(text, str) and text.strip():
             move["ability_text_has"] = text
         else:
-            return None, "activate:no-ability-reference"
+            return None, "activate:unresolved-ability"
     _add_activate_fields(move, detail, state_view)
     return move, None
 
@@ -796,13 +866,27 @@ def _add_activate_fields(
 
 
 def _keyword_action(
-    action: str, detail: Mapping[str, Any], seat: str, state_view: Mapping[str, Any] | None
+    action: str,
+    detail: Mapping[str, Any],
+    seat: str,
+    state_view: Mapping[str, Any] | None,
+    post_state_view: Mapping[str, Any] | None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """FD4 (d): one `KeywordActionMove` for any of the eight routes
     `KEYWORD_ACTIONS` names - card-name-free the same way every other move
-    here is, `target`/`crew_with` resolved the same way."""
+    here is, `target`/`crew_with` resolved the same way. A card missing from
+    the pre-action frame falls back to identifying it off the post-action
+    one first (review finding 6, the same treatment `_cast_or_play_land`/
+    `_activate` give their own card lookups) - its pre-action zone then
+    defaults to `hand`, this function's own existing default for a zone
+    `COUNT_ZONES` cannot name (every one of these eight routes originates
+    from hand)."""
     card_ref = detail.get("card_id") if detail.get("card_id") is not None else detail.get("card")
     found = _find_card_by_ref(state_view, card_ref)
+    if found is None and state_view is not None:
+        post_found = _find_card_by_ref(post_state_view, card_ref)
+        if post_found is not None:
+            found = (post_found[0], "hand")
     if found is None:
         return None, f"{action}:unresolved"
     card, zone = found
@@ -1022,26 +1106,28 @@ def _scry_or_surveil_answer(
     named card resolved in `state_view`, and `top_order` at or under
     `MAX_TOP_ORDER` tiers (one card's own selector per tier, in the order
     the row itself gives - the finest-grained honest reading of a fixed
-    permutation), or this is `(None, "decide:<kind>")`."""
+    permutation), or this is `(None, "decide:<kind>:<reason>")` - `malformed`
+    when `moved` itself is not a list, `too-many` when `top_order` overruns
+    `MAX_TOP_ORDER`, `unresolved` when a named card cannot be found."""
     moved = detail.get("moved")
     top_order = detail.get("top_order")
     if not isinstance(moved, list):
-        return None, f"decide:{kind}"
+        return None, f"decide:{kind}:malformed"
     if not moved and not top_order:
         return {"decision": kind}, None
     answer: dict[str, Any] = {"decision": kind}
     if moved:
         moved_found = [_find_card(state_view, card_id, None) for card_id in moved]
         if any(found is None for found in moved_found):
-            return None, f"decide:{kind}"
+            return None, f"decide:{kind}:unresolved"
         field = "to_bottom" if kind == "scry" else "to_graveyard"
         answer[field] = _selector_for_cards([found[0] for found in moved_found])
     if top_order:
         if len(top_order) > MAX_TOP_ORDER:
-            return None, f"decide:{kind}"
+            return None, f"decide:{kind}:too-many"
         order_found = [_find_card(state_view, card_id, None) for card_id in top_order]
         if any(found is None for found in order_found):
-            return None, f"decide:{kind}"
+            return None, f"decide:{kind}:unresolved"
         answer["top_order"] = [_card_selector(found[0]) for found in order_found]
     return answer, None
 
@@ -1054,16 +1140,17 @@ def _choose_cards_answer(
     in `state_view` and merged into one selector, `count` the number chosen.
     FD4 (h)/G14: an empty `card_ids` is a legal "choose none",
     `{"select": {}, "count": 0}`, needing no board data - `(None,
-    "decide:choose_cards")` only when the ids are present but any one of
-    them cannot be resolved."""
+    "decide:choose_cards:malformed")` when the field itself is not a list,
+    `(None, "decide:choose_cards:unresolved")` when the ids are present but
+    any one of them cannot be resolved."""
     card_ids = detail.get("card_ids")
     if not isinstance(card_ids, list):
-        return None, "decide:choose_cards"
+        return None, "decide:choose_cards:malformed"
     if not card_ids:
         return {"decision": "choose_cards", "pick": {"select": {}, "count": 0}}, None
     found = [_find_card(state_view, card_id, None) for card_id in card_ids]
     if any(entry is None for entry in found):
-        return None, "decide:choose_cards"
+        return None, "decide:choose_cards:unresolved"
     cards = [entry[0] for entry in found if entry is not None]
     return {
         "decision": "choose_cards",
@@ -1077,18 +1164,21 @@ def _choose_targets_answer(
     """A `targets` answer (FB2 A2) for a `choose_targets` row's own
     `targets` tokens - card or player, `_target_for_token` each. FD4
     (h)/G14: an empty list is a legal "choose none", needing no board data -
-    `(None, "decide:choose_targets")` only when the tokens exceed
-    `MAX_TARGETS` or any one of them cannot be resolved."""
+    `(None, "decide:choose_targets:malformed")` when the field is not a
+    list, `:too-many` over `MAX_TARGETS`, `:unresolved` when any one token
+    cannot be resolved."""
     tokens = detail.get("targets")
-    if not isinstance(tokens, list) or len(tokens) > MAX_TARGETS:
-        return None, "decide:choose_targets"
+    if not isinstance(tokens, list):
+        return None, "decide:choose_targets:malformed"
+    if len(tokens) > MAX_TARGETS:
+        return None, "decide:choose_targets:too-many"
     if not tokens:
         return {"decision": "choose_targets", "targets": []}, None
     targets: list[dict[str, Any]] = []
     for token in tokens:
         target = _target_for_token(str(token), seat, state_view)
         if target is None:
-            return None, "decide:choose_targets"
+            return None, "decide:choose_targets:unresolved"
         targets.append(target)
     return {"decision": "choose_targets", "targets": targets}, None
 
@@ -1101,13 +1191,17 @@ def _order_triggers_answer(
     (`Answer.order`'s own docstring: the first tier goes on the stack first
     and so resolves last; this module writes the tiers in exactly the order
     the row's own `order` list gives, which is that same stack-order
-    convention already)."""
+    convention already). `malformed` when `order` is missing, not a list, or
+    empty; `too-many` over `MAX_ORDER`; `unresolved` when a named ability's
+    own card cannot be found."""
     order_ids = detail.get("order")
-    if not isinstance(order_ids, list) or not order_ids or len(order_ids) > MAX_ORDER:
-        return None, "decide:order_triggers"
+    if not isinstance(order_ids, list) or not order_ids:
+        return None, "decide:order_triggers:malformed"
+    if len(order_ids) > MAX_ORDER:
+        return None, "decide:order_triggers:too-many"
     found = [_find_card(state_view, ability_id, None) for ability_id in order_ids]
     if any(entry is None for entry in found):
-        return None, "decide:order_triggers"
+        return None, "decide:order_triggers:unresolved"
     return {
         "decision": "order_triggers",
         "order": [_card_selector(entry[0]) for entry in found if entry is not None],
@@ -1125,31 +1219,33 @@ def _assign_combat_damage_answer(
     otherwise, the schema's own default. `lethal_first` is left out too -
     this module has no board data proving whether every earlier tier's own
     lethal amount was actually assigned first, and the schema's own default
-    is CR 510.1c's own order regardless."""
+    is CR 510.1c's own order regardless. `malformed` when `damage` is
+    missing, not a list, empty, or holds a badly-shaped entry; `unresolved`
+    when a named target cannot be found; `too-many` over `MAX_DAMAGE_TIERS`."""
     entries = detail.get("damage")
     if not isinstance(entries, list) or not entries:
-        return None, "decide:assign_combat_damage"
+        return None, "decide:assign_combat_damage:malformed"
     tiers: list[dict[str, Any]] = []
     rest_to: str | None = None
     for item in entries:
         if not isinstance(item, Mapping):
-            return None, "decide:assign_combat_damage"
+            return None, "decide:assign_combat_damage:malformed"
         amount = item.get("amount")
         if not isinstance(amount, int) or isinstance(amount, bool):
-            return None, "decide:assign_combat_damage"
+            return None, "decide:assign_combat_damage:malformed"
         if amount <= 0:
             continue
         target = _defender_for_token(str(item.get("target")), state_view)
         if target is _UNRESOLVED:
-            return None, "decide:assign_combat_damage"
+            return None, "decide:assign_combat_damage:unresolved"
         if target is None:
             rest_to = "player"
             continue
         tiers.append(target["select"])
     if not tiers and rest_to is None:
-        return None, "decide:assign_combat_damage"
+        return None, "decide:assign_combat_damage:malformed"
     if len(tiers) > MAX_DAMAGE_TIERS:
-        return None, "decide:assign_combat_damage"
+        return None, "decide:assign_combat_damage:too-many"
     policy: dict[str, Any] = {"tiers": tiers}
     if rest_to is not None:
         policy["rest_to"] = rest_to
@@ -1168,7 +1264,7 @@ def _choice_answer(
     `choice`, unchanged."""
     choice = detail.get("choice")
     if not isinstance(choice, str) or not choice.strip():
-        return None, f"decide:{kind}"
+        return None, f"decide:{kind}:malformed"
     if kind == "choose_a_quality":
         found = _find_card(state_view, None, choice)
         if found is not None:
@@ -1200,7 +1296,7 @@ def _answer_for_decide(
         field = _AMOUNT_FIELD.get(kind)
         amount = detail.get(field) if field else None
         if not isinstance(amount, int) or isinstance(amount, bool):
-            return None, f"decide:{kind}"
+            return None, f"decide:{kind}:malformed"
         return {"decision": kind, "amount": amount}, None
     if kind in CHOICE_DECISION_KINDS:
         return _choice_answer(kind, detail, seat, state_view)
@@ -1212,12 +1308,12 @@ def _answer_for_decide(
     if kind == "choose_pile":
         pile_one = detail.get("pile_one")
         if not isinstance(pile_one, bool):
-            return None, f"decide:{kind}"
+            return None, f"decide:{kind}:malformed"
         return {"decision": kind, "pile_one": pile_one}, None
     if kind == "put_on_top_or_bottom":
         top = detail.get("top")
         if not isinstance(top, bool):
-            return None, f"decide:{kind}"
+            return None, f"decide:{kind}:malformed"
         return {"decision": kind, "position": "top" if top else "bottom"}, None
     if kind in ("surveil", "scry"):
         return _scry_or_surveil_answer(kind, detail, state_view)
@@ -1228,14 +1324,14 @@ def _answer_for_decide(
     if kind == "choose_players":
         usernames = detail.get("usernames")
         if not isinstance(usernames, list):
-            return None, f"decide:{kind}"
+            return None, f"decide:{kind}:malformed"
         players = sorted({"me" if name == seat else "opponent" for name in usernames})
         return {"decision": kind, "players": players}, None
     if kind == "order_triggers":
         return _order_triggers_answer(detail, state_view)
     if kind == "assign_combat_damage":
         return _assign_combat_damage_answer(detail, state_view)
-    return None, f"decide:{kind}"
+    return None, f"decide:{kind}:unsupported"
 
 
 def _pregame_decide_play(decide_kind: str, detail: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -1337,50 +1433,61 @@ def _convert(
     if kind in ("cast", "play_land"):
         when = _when(seat, active_player, step)
         if when is None:
-            return None, "step", None
-        move = _cast_or_play_land(kind, detail, state_view)
-        return _play(f"decision-{kind}", when, [move]), None, None
-    if kind == "activate":
-        move, label = _activate(detail, state_view)
+            return None, f"{kind}:unrepresentable-step", None
+        move, label = _cast_or_play_land(kind, detail, state_view, post_state_view)
         if move is None:
             return None, label, None
-        return _play("decision-activate", _when(seat, active_player, step), [move]), None, None
+        return _play(f"decision-{kind}", when, [move]), None, None
+    if kind == "activate":
+        # Review fix: this branch used to build the play straight off
+        # `_when`'s own result with no None check at all - unlike every
+        # other branch here - so a row whose step the vocabulary cannot
+        # represent silently produced a schema-invalid `when: None` Play
+        # reported as expressible (`unexpressible: None`).
+        when = _when(seat, active_player, step)
+        if when is None:
+            return None, "activate:unrepresentable-step", None
+        move, label = _activate(detail, state_view, post_state_view)
+        if move is None:
+            return None, label, None
+        return _play("decision-activate", when, [move]), None, None
     if kind in KEYWORD_ACTIONS:
-        move, label = _keyword_action(kind, detail, seat, state_view)
+        move, label = _keyword_action(kind, detail, seat, state_view, post_state_view)
         if move is None:
             return None, label, None
         when = _when(seat, active_player, step)
         if when is None:
-            return None, "step", None
+            return None, f"{kind}:unrepresentable-step", None
         return _play(f"decision-{kind}", when, [move]), None, None
     if kind == "pass":
         when = _when(seat, active_player, step)
         if when is None:
-            return None, "step", None
+            return None, "pass:unrepresentable-step", None
         return _play("decision-pass", when, [{"kind": "pass"}]), None, None
     if kind == "declare_attackers":
+        # Review fix: same missing-`when`-check bug as `activate` above.
+        when = _when(seat, active_player, step)
+        if when is None:
+            return None, "declare_attackers:unrepresentable-step", None
         move = _declare_attackers(detail, state_view)
         if move is None:
             return None, _ATTACK, None
-        return (
-            _play("decision-declare-attackers", _when(seat, active_player, step), [move]),
-            None,
-            None,
-        )
+        return _play("decision-declare-attackers", when, [move]), None, None
     if kind == "declare_blockers":
+        when = _when(seat, active_player, step)
+        if when is None:
+            return None, "declare_blockers:unrepresentable-step", None
         move = _declare_blockers(detail, state_view)
         if move is None:
             return None, _BLOCK, None
-        return (
-            _play("decision-declare-blockers", _when(seat, active_player, step), [move]),
-            None,
-            None,
-        )
+        return _play("decision-declare-blockers", when, [move]), None, None
     if kind == "decide":
         decide_kind = str(detail.get("kind"))
         if decide_kind in _PREGAME_DECIDE_STEPS:
             play = _pregame_decide_play(decide_kind, detail)
-            return (play, None, None) if play is not None else (None, f"decide:{decide_kind}", None)
+            if play is not None:
+                return play, None, None
+            return None, f"decide:{decide_kind}:malformed", None
         if decide_kind in _COMBAT_DECIDE_KINDS:
             combat_detail = _combat_pairs_detail(decide_kind, detail)
             fallback = _ATTACK if decide_kind == "declare_attackers" else _BLOCK
@@ -1394,7 +1501,7 @@ def _convert(
                 return None, fallback, fold_target
             when = _when(seat, active_player, step)
             if when is None:
-                return None, "step", fold_target
+                return None, f"{decide_kind}:unrepresentable-step", fold_target
             play = _play(f"decision-{decide_kind.replace('_', '-')}", when, [move])
             play["true"] = [{"kind": "pending_decision", "decision": decide_kind}]
             return play, None, fold_target
@@ -1408,12 +1515,12 @@ def _convert(
             return copy.deepcopy(fold_target["dsl"]), None, fold_target
         when = _when(seat, active_player, step)
         if when is None:
-            return None, "step", None
+            return None, f"decide:{decide_kind}:unrepresentable-step", None
         move = {"kind": "answer", "answers": [answer]}
         play = _play("decision-decide", when, [move])
         play["true"] = [{"kind": "pending_decision", "decision": decide_kind}]
         return play, None, None
-    return None, kind, None
+    return None, f"{kind}:unsupported", None
 
 
 # -- compact_board ----------------------------------------------------------------
