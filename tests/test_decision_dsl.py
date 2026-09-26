@@ -140,8 +140,25 @@ def test_declare_blockers_without_board_data_is_unexpressible_block():
     assert record["unexpressible"] == "block"
 
 
-def test_mulligan_is_unexpressible_mulligan():
-    record = only(decision_rows([row(1, "mulligan_declared", take="keep")], SEAT))
+def test_mulligan_declared_keep_gives_a_mulligan_move():
+    # FD4 (h)/G4: `take=False` (keeping the hand) is the `mulligan` move's
+    # own inverse, `keep=True`; `bottom` is left out, the engine's own
+    # default - this row names only whether a bottoming happened, never
+    # which cards it chose.
+    record = only(decision_rows([row(1, "mulligan_declared", take=False)], SEAT))
+    play = play_of(record)
+    assert play["when"] == {"whose_turn": "either", "steps": ["mulligan"], "stack": "empty"}
+    assert play["moves"] == [{"kind": "mulligan", "keep": True}]
+
+
+def test_mulligan_declared_take_gives_keep_false():
+    record = only(decision_rows([row(1, "mulligan_declared", take=True)], SEAT))
+    play = play_of(record)
+    assert play["moves"] == [{"kind": "mulligan", "keep": False}]
+
+
+def test_mulligan_declared_without_a_bool_take_is_unexpressible_mulligan():
+    record = only(decision_rows([row(1, "mulligan_declared", take=None)], SEAT))
     assert record["dsl"] is None
     assert record["unexpressible"] == "mulligan"
 
@@ -157,28 +174,41 @@ def test_concede_is_unexpressible_concede():
     assert record["reasoning"] == "the board is lost"
 
 
-def test_opening_hand_action_is_unexpressible_pregame():
-    # CR 103.6 has no turn/step at all - the real ledger row (`opening.py`)
-    # never stamps one, so no `when` block can be built without inventing
-    # one - see the module docstring.
+def test_opening_hand_action_gives_a_plain_accept_answer():
+    # FD4 (h)/G4: CR 103.6 has no turn/step at all - `opening.py`'s own row
+    # never stamps one - so `when` is built straight from the schema-only
+    # `pregame_actions` step rather than the row's own (absent) position.
+    # This module does not attempt to say *which* card the row acted on.
     record = only(
         decision_rows(
             [row(1, "opening_hand_action", step="pregame_actions", card="Leyline of the Void")],
             SEAT,
         )
     )
-    assert record["dsl"] is None
-    assert record["unexpressible"] == "pregame"
+    play = play_of(record)
+    assert play["when"] == {
+        "whose_turn": "either",
+        "steps": ["pregame_actions"],
+        "stack": "empty",
+    }
+    assert play["moves"] == [
+        {"kind": "answer", "answers": [{"decision": "opening_hand_action", "accept": True}]}
+    ]
+    assert play["true"] == [{"kind": "pending_decision", "decision": "opening_hand_action"}]
 
 
-def test_every_still_unexpressible_kind_this_module_can_produce():
+def test_only_concede_stays_unexpressible_by_design():
+    # FD4: `concede` is the one decision this module reaches that stays
+    # unexpressible on purpose - CR 104.3a lets a player concede at any
+    # time, and a script must never end the game. Every other kind this
+    # module reaches directly off a row's own action is now expressible.
     entries = [
-        row(1, "mulligan_declared"),
+        row(1, "mulligan_declared", take=False),
         row(2, "concede"),
         row(3, "opening_hand_action", step="pregame_actions"),
     ]
     kinds = {r["unexpressible"] for r in decision_rows(entries, SEAT)}
-    assert kinds == {"mulligan", "concede", "pregame"}
+    assert kinds == {None, "concede"}
 
 
 # -- pass: FB2's M1 --------------------------------------------------------------
@@ -374,11 +404,13 @@ def test_cast_without_board_data_is_a_bare_empty_selector():
 
 
 def test_cast_with_board_data_builds_a_card_name_free_selector():
+    # FD4 (a)/gap 1: the real ledger's own `detail["card"]` is the card's
+    # UUID (`app.action_cast`'s own `card=req.card or str(req.card_id)`),
+    # never a separate `card_id` key - a UUID-shaped `card` value, looked up
+    # as an id, is exactly what a real row carries.
     bolt = kit.bolt(zone="hand", controller=SEAT)
     view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]})
-    entries = [
-        row(1, "cast", card_id=bolt["id"], card="Lightning Bolt", from_zone="hand", state_view=view)
-    ]
+    entries = [row(1, "cast", card=str(bolt["id"]), from_zone="hand", state_view=view)]
     record = only(decision_rows(entries, SEAT))
     play = play_of(record)
     select = play["moves"][0]["card"]["select"]
@@ -387,10 +419,21 @@ def test_cast_with_board_data_builds_a_card_name_free_selector():
     assert "instant" in select.get("types_all", [])
 
 
+def test_cast_id_lookup_falls_back_to_a_name_when_no_id_matches():
+    # A row whose `card` field genuinely names a card (never both alongside
+    # a real id on the same row) still resolves - id is only tried first.
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]})
+    entries = [row(1, "cast", card=bolt["name"], from_zone="hand", state_view=view)]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    assert "instant" in play["moves"][0]["card"]["select"].get("types_all", [])
+
+
 def test_play_land_with_board_data_builds_a_land_selector():
     fetch = kit.fetchland(zone="hand", controller=SEAT)
     view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [fetch]})
-    entries = [row(1, "play_land", card=fetch["name"], state_view=view)]
+    entries = [row(1, "play_land", card=str(fetch["id"]), state_view=view)]
     record = only(decision_rows(entries, SEAT))
     play = play_of(record)
     move = play["moves"][0]
@@ -400,14 +443,21 @@ def test_play_land_with_board_data_builds_a_land_selector():
     assert "land" in move["card"]["select"].get("types_all", [])
 
 
-def test_activate_without_board_data_is_unexpressible_missing_ability_text():
+def test_activate_without_board_data_is_unexpressible_unresolved():
+    # FD4 (c): the misnamed `activate:no-ability-text` becomes
+    # `activate:unresolved`, used only when the card itself cannot be found
+    # at all - with no board data, that is every activate row.
     entries = [row(1, "activate", card_id="00000000-0000-4000-8000-000000000001", ability_index=0)]
     record = only(decision_rows(entries, SEAT))
     assert record["dsl"] is None
-    assert record["unexpressible"] == "activate:no-ability-text"
+    assert record["unexpressible"] == "activate:unresolved"
 
 
-def test_activate_with_board_data_uses_the_real_ability_text_as_a_phrase():
+def test_activate_with_board_data_prefers_ability_index_over_text():
+    # FD4 (c)/G7: `ability_index` is used whenever it is a valid index at
+    # all - exempt from the lint's `phrase-too-narrow` since FD2, unlike a
+    # hand-written oracle-text phrase this module cannot itself prove is
+    # shared by three or more cards.
     fetch = kit.fetchland(zone="battlefield", controller=SEAT)
     view = _view_with_battlefield_card(fetch)
     entries = [
@@ -423,8 +473,38 @@ def test_activate_with_board_data_uses_the_real_ability_text_as_a_phrase():
     play = play_of(record)
     move = play["moves"][0]
     assert move["kind"] == "activate"
-    assert move["ability_text_has"] == kit.FETCH_TEXT
+    assert move["ability_index"] == 0
+    assert "ability_text_has" not in move
     assert move["source"]["zone"] == "battlefield"
+
+
+def test_activate_falls_back_to_ability_text_when_index_exceeds_the_schema_bound():
+    # `MAX_ABILITY_INDEX` (15) comfortably covers every real card's own
+    # ability list, so this is a pathological fixture rather than a
+    # realistic row - but the fallback still has to hold for one.
+    many_abilities = tuple(f"filler {n}" for n in range(16)) + (kit.FETCH_TEXT,)
+    exotic = kit.card("Exotic", type_line="Land", controller=SEAT, abilities=many_abilities)
+    view = _view_with_battlefield_card(exotic)
+    entries = [row(1, "activate", card_id=exotic["id"], ability_index=16, state_view=view)]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["ability_text_has"] == kit.FETCH_TEXT
+    assert "ability_index" not in move
+
+
+def test_activate_with_index_exceeding_bound_and_no_text_is_unresolved():
+    exotic = kit.card(
+        "Exotic",
+        type_line="Land",
+        controller=SEAT,
+        abilities=tuple(f"filler {n}" for n in range(17)),
+    )
+    view = _view_with_battlefield_card(exotic)
+    entries = [row(1, "activate", card_id=exotic["id"], ability_index=99, state_view=view)]
+    record = only(decision_rows(entries, SEAT))
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "activate:no-ability-reference"
 
 
 # -- decide/answer ---------------------------------------------------------------
@@ -610,7 +690,7 @@ def test_decide_choose_targets_card_target_resolves_side_and_zone():
     assert target["zone"] == "graveyard"
 
 
-# -- off-priority answers: a standalone pending_decision -------------------------
+# -- every decide row names its own pending decision (FD4 (f)) ------------------
 
 
 def test_decide_answered_off_priority_gives_a_pending_decision_condition():
@@ -622,12 +702,15 @@ def test_decide_answered_off_priority_gives_a_pending_decision_condition():
     assert play["moves"][0]["answers"][0] == {"decision": "may", "accept": True}
 
 
-def test_decide_answered_with_priority_carries_no_pending_decision_condition():
+def test_decide_answered_with_priority_also_carries_the_pending_decision_condition():
+    # FD4 (f): unconditional now - a standalone answer play only ever runs
+    # as a direct answer to a decision already on the table, regardless of
+    # whether the seat happened to hold priority when it answered.
     view = kit.state_view(SEAT, opponent=OPPONENT)
     view["priority_holder"] = SEAT
     record = only(decision_rows([_decide(1, "may", accept=True, state_view=view)], SEAT))
     play = play_of(record)
-    assert play["true"] == []
+    assert play["true"] == [{"kind": "pending_decision", "decision": "may"}]
 
 
 # -- activate: FB2's M4 ability_index fallback ------------------------------------
@@ -649,21 +732,102 @@ def test_activate_with_blank_ability_text_uses_ability_index():
     assert "ability_text_has" not in move
 
 
-def test_decide_declare_attackers_is_a_decide_kind_gap():
-    """FB2's B4 (magic-cards-model-api schema.py) narrowed
-    FORBIDDEN_DECISION_KINDS to assign_combat_damage/mulligan only:
-    declare_attackers/declare_blockers now get their own move kinds instead
-    of being refused outright, so a `decide`-shaped declare_attackers row is
-    no longer one of the five closed "not in the vocabulary" labels - it
-    falls to the generic decide-kind gap label like any other DecisionKind
-    this module does not yet convert."""
+def test_decide_declare_attackers_empty_pairs_gives_a_no_attackers_move():
+    # FD4 (g): `/decide`'s own `pairs` route becomes the same
+    # `declare_attackers` move the dedicated `actions/attack` route gives -
+    # an empty list needs no board data, same as the dedicated route's own.
     record = only(decision_rows([_decide(1, "declare_attackers", pairs=[])], SEAT))
-    assert record["unexpressible"] == "decide:declare_attackers"
+    play = play_of(record)
+    assert play["moves"] == [{"kind": "declare_attackers", "attackers": []}]
+    assert play["true"] == [{"kind": "pending_decision", "decision": "declare_attackers"}]
 
 
-def test_decide_mulligan_reuses_the_mulligan_label():
+def test_decide_declare_attackers_pairs_resolves_the_same_way_the_dedicated_route_does():
+    bear = _attacker()
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[bear])
+    record = only(
+        decision_rows(
+            [
+                _decide(
+                    1,
+                    "declare_attackers",
+                    pairs=[{"creature": bear["id"], "defender": OPPONENT}],
+                    state_view=view,
+                )
+            ],
+            SEAT,
+        )
+    )
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["kind"] == "declare_attackers"
+    assert move["attackers"][0]["count"] == 1
+    assert "defender" not in move["attackers"][0]
+
+
+def test_decide_declare_attackers_unresolved_pairs_is_the_attack_fallback():
+    record = only(
+        decision_rows(
+            [_decide(1, "declare_attackers", pairs=[{"creature": "nope", "defender": OPPONENT}])],
+            SEAT,
+        )
+    )
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "attack"
+
+
+def test_decide_declare_blockers_pairs_becomes_a_declare_blockers_move():
+    bear = _attacker(controller=OPPONENT)
+    blocker = _attacker()
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[bear, blocker])
+    record = only(
+        decision_rows(
+            [
+                _decide(
+                    1,
+                    "declare_blockers",
+                    pairs=[{"creature": blocker["id"], "defender": bear["id"]}],
+                    state_view=view,
+                )
+            ],
+            SEAT,
+        )
+    )
+    play = play_of(record)
+    assert play["moves"] == [
+        {
+            "kind": "declare_blockers",
+            "blocks": [
+                {
+                    "blocker": {
+                        "select": play["moves"][0]["blocks"][0]["blocker"]["select"],
+                        "count": 1,
+                    },
+                    "attacker": {"select": play["moves"][0]["blocks"][0]["attacker"]["select"]},
+                }
+            ],
+        }
+    ]
+
+
+def test_decide_mulligan_gives_a_plain_accept_answer():
+    # FD4 (h)/G4: the engine's own pregame `decide` flow for mulligan (as
+    # opposed to `mulligan_declared`'s own dedicated action row) answers
+    # with a plain `accept` bool, the same footing `may`/`pay_life` stand
+    # on - built from the schema-only `mulligan` step since this row, like
+    # every pregame decision, carries no `turn`/`step` of its own.
     record = only(decision_rows([_decide(1, "mulligan", accept=True)], SEAT))
-    assert record["unexpressible"] == "mulligan"
+    play = play_of(record)
+    assert play["when"] == {"whose_turn": "either", "steps": ["mulligan"], "stack": "empty"}
+    assert play["moves"] == [
+        {"kind": "answer", "answers": [{"decision": "mulligan", "accept": True}]}
+    ]
+
+
+def test_decide_mulligan_without_a_bool_accept_is_unexpressible():
+    record = only(decision_rows([_decide(1, "mulligan", accept=None)], SEAT))
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "decide:mulligan"
 
 
 # -- compact_board ---------------------------------------------------------------
@@ -755,3 +919,471 @@ def test_compact_board_trims_graveyard_and_exile_detail_before_life_or_lands():
     assert board["players"][SEAT]["lands"] == {"untapped": 0, "total": 0}
     # graveyard/exile were the first thing cut
     assert "graveyard" not in board["players"][SEAT]
+
+
+# -- FD4 (b)/G1/G16: the pre-action frame ----------------------------------------
+
+
+def test_cast_reads_the_pre_action_frame_not_the_rows_own_post_action_one():
+    # The card is in hand in the *earlier* row's own frame, and already on
+    # the stack in the cast row's own (post-action) frame - the zone must
+    # come from the earlier one.
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    pre_view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]})
+    on_stack = dict(bolt, zone="stack")
+    post_view = kit.state_view(SEAT, opponent=OPPONENT, stack=[on_stack])
+    entries = [
+        row(1, "pass_priority", state_view=pre_view),
+        row(2, "cast", card=str(bolt["id"]), from_zone="hand", state_view=post_view),
+    ]
+    out = decision_rows(entries, SEAT)
+    cast_record = out[1]
+    play = play_of(cast_record)
+    assert play["moves"][0]["card"]["zone"] == "hand"
+
+
+def test_activate_off_zone_reads_the_pre_action_zone():
+    # A channel-style activation from hand: the card has already left hand
+    # by the time the row's own (post-action) frame is taken, but the
+    # source's zone must read as it stood before the activation.
+    channel_card = kit.card("Channeler", type_line="Creature", controller=SEAT, abilities=("cost",))
+    pre_view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [channel_card]})
+    post_view = kit.state_view(SEAT, opponent=OPPONENT, exile=[dict(channel_card, zone="exile")])
+    entries = [
+        row(1, "pass_priority", state_view=pre_view),
+        row(2, "activate", card_id=channel_card["id"], ability_index=0, state_view=post_view),
+    ]
+    out = decision_rows(entries, SEAT)
+    play = play_of(out[1])
+    assert play["moves"][0]["source"]["zone"] == "hand"
+
+
+def test_pass_whose_turn_reads_the_pre_action_active_player():
+    # FD4 (i)/G16: a pass that ends the turn must not read back as having
+    # been made on the turn it produced.
+    entries = [
+        row(1, "cast", card="irrelevant", active_player=SEAT),
+        row(2, "pass_priority", active_player=OPPONENT),
+    ]
+    out = decision_rows(entries, SEAT)
+    play = play_of(out[1])
+    assert play["when"]["whose_turn"] == "mine"
+
+
+# -- FD4 (d): keyword-action routes -----------------------------------------------
+
+
+def test_suspend_gives_a_keyword_action_move():
+    spell = kit.card("Spell", type_line="Instant", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [spell]})
+    record = only(decision_rows([row(1, "suspend", card=str(spell["id"]), state_view=view)], SEAT))
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move == {
+        "kind": "keyword_action",
+        "action": "suspend",
+        "card": {"zone": "hand", "select": move["card"]["select"]},
+    }
+    assert "instant" in move["card"]["select"].get("types_all", [])
+
+
+def test_suspend_unresolved_card_is_unresolved():
+    record = only(decision_rows([row(1, "suspend", card="nope")], SEAT))
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "suspend:unresolved"
+
+
+def test_equip_gives_a_target_creature():
+    equipment = kit.card("Sword", type_line="Artifact — Equipment", controller=SEAT)
+    creature = kit.creature("Bear", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[equipment, creature])
+    entries = [
+        row(1, "equip", card_id=str(equipment["id"]), target=str(creature["id"]), state_view=view)
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["action"] == "equip"
+    assert move["target"]["side"] == "me"
+
+
+def test_equip_unresolved_target_is_unresolved_target():
+    equipment = kit.card("Sword", type_line="Artifact — Equipment", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[equipment])
+    entries = [row(1, "equip", card_id=str(equipment["id"]), target="nope", state_view=view)]
+    record = only(decision_rows(entries, SEAT))
+    assert record["unexpressible"] == "equip:unresolved-target"
+
+
+def test_crew_gives_a_crew_with_pick():
+    vehicle = kit.card("Ship", type_line="Artifact — Vehicle", controller=SEAT)
+    crewer = kit.creature("Bear", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[vehicle, crewer])
+    entries = [
+        row(
+            1,
+            "crew",
+            card_id=str(vehicle["id"]),
+            crewing=[str(crewer["id"])],
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["action"] == "crew"
+    assert move["crew_with"]["count"] == 1
+
+
+# -- FD4 (h)/G10/G11: order_triggers and assign_combat_damage --------------------
+
+
+def test_decide_order_triggers_gives_an_order():
+    one = kit.creature("Trigger One", controller=SEAT)
+    two = kit.creature("Trigger Two", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[one, two])
+    record = only(
+        decision_rows(
+            [_decide(1, "order_triggers", order=[one["id"], two["id"]], state_view=view)], SEAT
+        )
+    )
+    play = play_of(record)
+    answer = play["moves"][0]["answers"][0]
+    assert answer["decision"] == "order_triggers"
+    assert len(answer["order"]) == 2
+
+
+def test_decide_order_triggers_unresolved_is_unexpressible():
+    record = only(decision_rows([_decide(1, "order_triggers", order=["nope"])], SEAT))
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "decide:order_triggers"
+
+
+def test_decide_assign_combat_damage_gives_a_damage_policy_with_rest_to_player():
+    blocker = kit.creature("Blocker", controller=OPPONENT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[blocker])
+    damage = [{"target": blocker["id"], "amount": 2}, {"target": OPPONENT, "amount": 1}]
+    record = only(
+        decision_rows([_decide(1, "assign_combat_damage", damage=damage, state_view=view)], SEAT)
+    )
+    play = play_of(record)
+    answer = play["moves"][0]["answers"][0]
+    assert answer["decision"] == "assign_combat_damage"
+    assert len(answer["damage"]["tiers"]) == 1
+    assert answer["damage"]["rest_to"] == "player"
+
+
+def test_decide_assign_combat_damage_without_trample_has_no_rest_to():
+    blocker = kit.creature("Blocker", controller=OPPONENT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[blocker])
+    damage = [{"target": blocker["id"], "amount": 2}]
+    record = only(
+        decision_rows([_decide(1, "assign_combat_damage", damage=damage, state_view=view)], SEAT)
+    )
+    play = play_of(record)
+    answer = play["moves"][0]["answers"][0]
+    assert "rest_to" not in answer["damage"]
+
+
+def test_decide_assign_combat_damage_unresolved_target_is_unexpressible():
+    record = only(
+        decision_rows(
+            [_decide(1, "assign_combat_damage", damage=[{"target": "nope", "amount": 1}])], SEAT
+        )
+    )
+    assert record["dsl"] is None
+    assert record["unexpressible"] == "decide:assign_combat_damage"
+
+
+# -- FD4 (h)/G14: choose-zero answers ---------------------------------------------
+
+
+def test_decide_choose_cards_empty_is_a_choose_zero_pick():
+    record = only(decision_rows([_decide(1, "choose_cards", card_ids=[])], SEAT))
+    play = play_of(record)
+    assert play["moves"][0]["answers"][0] == {
+        "decision": "choose_cards",
+        "pick": {"select": {}, "count": 0},
+    }
+
+
+def test_decide_choose_targets_empty_is_a_choose_zero_targets():
+    record = only(decision_rows([_decide(1, "choose_targets", targets=[])], SEAT))
+    play = play_of(record)
+    assert play["moves"][0]["answers"][0] == {"decision": "choose_targets", "targets": []}
+
+
+def test_decide_choose_players_empty_is_a_choose_zero_players():
+    record = only(decision_rows([_decide(1, "choose_players", usernames=[])], SEAT))
+    play = play_of(record)
+    assert play["moves"][0]["answers"][0] == {"decision": "choose_players", "players": []}
+
+
+# -- FD4 (h)/G15: choice_from naming a card ---------------------------------------
+
+
+def test_decide_choose_a_quality_naming_a_card_gives_choice_from():
+    named = kit.creature("Meddling Target", controller=OPPONENT, zone="hand")
+    view = kit.state_view(SEAT, opponent=OPPONENT, known={"hand": []}, hands={OPPONENT: [named]})
+    record = only(
+        decision_rows([_decide(1, "choose_a_quality", choice=named["name"], state_view=view)], SEAT)
+    )
+    play = play_of(record)
+    answer = play["moves"][0]["answers"][0]
+    assert answer["decision"] == "choose_a_quality"
+    assert "choice_from" in answer
+    assert "choice" not in answer
+    assert answer["choice_from"]["side"] == "opponent"
+
+
+def test_decide_choose_a_quality_not_naming_a_card_keeps_plain_choice():
+    record = only(decision_rows([_decide(1, "choose_a_quality", choice="Merfolk")], SEAT))
+    play = play_of(record)
+    answer = play["moves"][0]["answers"][0]
+    assert answer == {"decision": "choose_a_quality", "choice": "Merfolk"}
+
+
+def test_decide_choose_a_mode_never_gets_choice_from():
+    named = kit.creature("Some Card", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[named])
+    record = only(
+        decision_rows([_decide(1, "choose_a_mode", choice=named["name"], state_view=view)], SEAT)
+    )
+    play = play_of(record)
+    answer = play["moves"][0]["answers"][0]
+    assert answer == {"decision": "choose_a_mode", "choice": named["name"]}
+
+
+# -- FD4 (c): cast/activate rich fields (read from FD5's future logging) --------
+
+
+def test_cast_reads_x_and_targets_when_the_row_carries_them():
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]})
+    entries = [
+        row(
+            1,
+            "cast",
+            card=str(bolt["id"]),
+            from_zone="hand",
+            x_value=3,
+            targets=[OPPONENT],
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["x"] == 3
+    assert move["targets"] == [{"player": "opponent"}]
+
+
+def test_cast_reads_keyword_cost_and_optional_costs():
+    # `optional_costs` is logged as `OptionalCostChoice` dicts
+    # (`{"keyword": "Kicker", ...}`), never bare strings - `modes` is a list
+    # of mode *indices* with no board-view text to resolve them against, so
+    # it is never emitted at all (see `_add_cast_fields`'s own docstring).
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]})
+    entries = [
+        row(
+            1,
+            "cast",
+            card=str(bolt["id"]),
+            from_zone="hand",
+            keyword="Flashback",
+            modes=[0, 1],
+            optional_costs=[{"keyword": "Kicker", "times": 1}],
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["cost"] == "flashback"
+    assert "modes" not in move
+    assert move["optional_costs"] == [{"text_has": "Kicker"}]
+
+
+def test_cast_alternative_cost_gives_the_printed_cost():
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]})
+    entries = [
+        row(
+            1,
+            "cast",
+            card=str(bolt["id"]),
+            from_zone="hand",
+            alternative_cost=0,
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    assert play["moves"][0]["cost"] == "printed"
+
+
+def test_cast_reads_convoke_pick_from_convoke_choices():
+    # `CastRequest.convoke` is a list of `{"card_id": ..., "color": ...}`
+    # dicts, one per creature tapped - never a bare id list.
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    helper = kit.creature("Helper", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]}, battlefield=[helper])
+    entries = [
+        row(
+            1,
+            "cast",
+            card=str(bolt["id"]),
+            from_zone="hand",
+            convoke=[{"card_id": helper["id"], "color": "G"}],
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    assert play["moves"][0]["convoke"]["count"] == 1
+
+
+def test_cast_reads_sacrificing_discarding_exiling_tapping_as_cost_object_picks():
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    fodder = kit.creature("Fodder", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]}, battlefield=[fodder])
+    entries = [
+        row(
+            1,
+            "cast",
+            card=str(bolt["id"]),
+            from_zone="hand",
+            sacrificing=[fodder["id"]],
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    assert play["moves"][0]["sacrifice"]["count"] == 1
+
+
+def test_activate_reads_sacrificing_pick_and_color():
+    # `ActivateRequest` logs `sacrificing`, not `sacrifice` - the ledger's
+    # own field name, not the DSL's `ActivateMove.sacrifice` field name.
+    fetch = kit.fetchland(zone="battlefield", controller=SEAT)
+    other = kit.card("Other Land", type_line="Land", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[fetch, other])
+    entries = [
+        row(
+            1,
+            "activate",
+            card_id=fetch["id"],
+            ability_index=0,
+            sacrificing=[other["id"]],
+            color="R",
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["sacrifice"]["count"] == 1
+    assert move["color"] == "R"
+
+
+# -- FD4 (e): a paused row still converts, committing like any other ------------
+
+
+def test_paused_cast_still_converts_like_an_ordinary_committing_row():
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]})
+    entries = [row(1, "cast", card=str(bolt["id"]), from_zone="hand", paused=True, state_view=view)]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    assert play["moves"][0]["kind"] == "cast"
+
+
+# -- FD4 (f)/G2: folding a decide into the preceding move's own object ----------
+
+
+def test_decide_resolving_a_paused_casts_own_targets_folds_into_it():
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]})
+    entries = [
+        row(1, "cast", card=str(bolt["id"]), from_zone="hand", paused=True, state_view=view),
+        row(2, "decide", kind="choose_targets", targets=[OPPONENT], state_view=view),
+    ]
+    out = decision_rows(entries, SEAT)
+    cast_record, decide_record = out
+    cast_play = play_of(cast_record)
+    decide_play = play_of(decide_record)
+    assert cast_play["moves"][0]["kind"] == "cast"
+    assert cast_play["moves"][0]["answers"] == [
+        {"decision": "choose_targets", "targets": [{"player": "opponent"}]}
+    ]
+    # Both rows now show the same, enriched play - a dedup-by-DSL reader
+    # (report.py) treats them as the one decision they always were.
+    assert decide_play == cast_play
+
+
+def test_fold_stops_when_the_decide_cannot_be_resolved():
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]})
+    entries = [
+        row(1, "cast", card=str(bolt["id"]), from_zone="hand", paused=True, state_view=view),
+        # Names a card id that resolves in neither this row's own frame nor
+        # (via the fold) the cast's earlier one - genuinely unresolvable,
+        # unlike the choose-zero case.
+        row(2, "decide", kind="choose_targets", targets=["00000000-0000-4000-8000-000000009999"]),
+    ]
+    out = decision_rows(entries, SEAT)
+    cast_record, decide_record = out
+    assert cast_record["dsl"]["moves"][0].get("answers", []) == []
+    assert decide_record["dsl"] is None
+    assert decide_record["unexpressible"] == "decide:choose_targets"
+
+
+def test_a_move_that_did_not_pause_never_opens_a_fold():
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]})
+    entries = [
+        row(1, "cast", card=str(bolt["id"]), from_zone="hand", state_view=view),
+        row(2, "decide", kind="choose_targets", targets=[OPPONENT], state_view=view),
+    ]
+    out = decision_rows(entries, SEAT)
+    cast_record, decide_record = out
+    assert cast_record["dsl"]["moves"][0].get("answers", []) == []
+    assert decide_record["dsl"]["moves"][0]["answers"][0]["decision"] == "choose_targets"
+    # The decide got its own standalone play, distinct from the cast's.
+    assert decide_record["dsl"] != cast_record["dsl"]
+
+
+# -- FD4 (j)/G17: a script-driven row is not counted twice -----------------------
+
+
+def test_a_row_inside_a_run_scripts_span_is_skipped():
+    from magic_cards_model_api.audit import SCRIPT_RUN_ACTION, SCRIPT_RUN_STARTED_ACTION
+
+    entries = [
+        row(1, SCRIPT_RUN_STARTED_ACTION, run_id="r1", script_id="p1", seat=SEAT),
+        row(2, "pass_priority"),  # sent by the script, inside its own span
+        row(
+            3,
+            SCRIPT_RUN_ACTION,
+            run_id="r1",
+            seq_start=1,
+            seq_end=3,
+            exit="chain_complete",
+            seat=SEAT,
+        ),
+    ]
+    out = decision_rows(entries, SEAT)
+    actions = [r["action"] for r in out]
+    # The finish row (`script_run`) is not itself one of `_ACTION_KIND`'s
+    # recognized kinds - only the started row ever becomes its own
+    # `run_script` record; the manual `pass` inside its span is skipped.
+    assert actions == ["run_script"]
+
+
+def test_a_row_with_the_runner_reasoning_suffix_is_skipped_even_outside_a_span():
+    entries = [
+        row(1, "pass_priority", reasoning="the plan | script p1@abc123 move 1/1 (pass)"),
+    ]
+    out = decision_rows(entries, SEAT)
+    assert out == []
