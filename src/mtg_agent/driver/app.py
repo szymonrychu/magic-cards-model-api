@@ -357,18 +357,33 @@ class DispatchIn(BaseModel):
     Defaulted, so a dispatch body written before roles existed - and
     `k8s_seats`' own `DRIVER_ASSIGNMENT_JSON`, which writes the key only for
     a non-default role - reads back as a seat, unchanged."""
-    mode: Literal["play", "followup"] = "play"
-    """`play` (a match: turn 0, the game, the reflection, the handover) or
+    mode: Literal["play", "followup", "review"] = "play"
+    """`play` (a match: turn 0, the game, the reflection, the handover),
     `followup` - F1's one bounded DSL-development turn for a handover that
-    ended unfinished (`assign_followup`). Defaulted, and written by
-    `k8s_seats` only on a follow-up Job, so every other payload reads as a
-    match, unchanged."""
+    ended unfinished (`assign_followup`) - or `review` (FD7 gap 15): a
+    review-only dispatch that declares the DR3 post-game AI review for a
+    seat that never played this game through a driver of its own, a human
+    seat (`assign_review`, written by `k8s_seats.build_review_job`). No
+    turn is ever pushed for `review`: the deck comes from the lobby's own
+    seat data, not from `followup` below, and `retire`'s existing
+    `consider_ai_review`/`post_ai_review` path does the rest. Defaulted, and
+    written by `k8s_seats` only on a follow-up or review Job, so every other
+    payload reads as a match, unchanged."""
     followup: dict | None = None
     """A follow-up's payload, built by the api from the ledger when it
     scheduled the Job: `deck`, `decklist`, `opponent`, `opponent_decklist`,
     `opponent_identification`, `outcome`, `run_table`, `offers`,
     `hand_played`, `candidates` (`{plays, lines}`) and
     `unfinished_reasons`."""
+    review_key: str | None = None
+    """FD7-r1: a `mode: "review"` dispatch's own credential - this game's
+    admin key, written only by `k8s_seats.build_review_job` (never by an
+    ordinary seat's own dispatch). `assign_review` carries it onto
+    `Assignment.review_key`, and `post_ai_review`/`record_review_failure`
+    forward it unchanged onto `POST .../ai-review` and
+    `.../ai-review-failure` - the field `app.declare_ai_review`'s AI-seat
+    check accepts in place of `archived.ai_players` membership for a seat
+    that is, and will always be, human. `None` for every other mode."""
 
 
 class HandoverIn(BaseModel):
@@ -842,6 +857,7 @@ def build_app(
                         "stage": stage,
                         "reason": reason,
                         "invoked": invoked,
+                        "review_key": assignment.review_key,
                     },
                 )
             if response.status_code >= 400:
@@ -1067,6 +1083,7 @@ def build_app(
                         "uid": assignment.uid,
                         "text": review_text,
                         "turning_points": turning_points,
+                        "review_key": assignment.review_key,
                     },
                 )
             if response.status_code >= 400:
@@ -1857,9 +1874,12 @@ def build_app(
         the startup hook that self-dispatches a per-game Job's own match
         from `DRIVER_ASSIGNMENT_JSON` - one code path either way. A
         `mode: "followup"` body is F1's follow-up, not a match
-        (`assign_followup`)."""
+        (`assign_followup`); a `mode: "review"` body is FD7 gap 15's
+        review-only dispatch, also not a match (`assign_review`)."""
         if body.mode == "followup":
             return assign_followup(body)
+        if body.mode == "review":
+            return assign_review(body)
         with lock:
             existing = current["assignment"]
             if existing is not None and existing.uid == body.uid:
@@ -2156,6 +2176,76 @@ def build_app(
             ours = current["assignment"] is assignment
         if ours:
             retire(assignment)
+
+    def assign_review(body: DispatchIn) -> dict:
+        """FD7 gap 15, completed: a review-only dispatch that declares the
+        DR3 post-game AI review for a seat that never played this game
+        through a driver of its own - a human seat, whose only path here is
+        `k8s_seats.build_review_job`.
+
+        No turn 0 and no reflection: a human played the match, not this
+        agent, so there is nothing for turn 0 to say and nothing for a
+        reflection to check. The deck comes straight from the lobby's own
+        seat data (`seat_decklist`, the same best-effort lookup `assign`'s
+        own match path uses) rather than from `body.followup` - there is no
+        ledger entry recording a driver dispatch for a human uid to build a
+        follow-up payload from, so `DispatchIn.followup` is not read here at
+        all.
+
+        `retire` does the rest, on a background thread exactly like a
+        follow-up's: it calls `consider_ai_review` with an empty reflection
+        text - the same shape its own bare `path="retire"` call already uses
+        for a match that ended before its reflection turn ran, so
+        `post_ai_review`'s review-record/prompt/generate/file chain runs
+        completely unchanged - joins that review (bounded by
+        `RETIRE_REVIEW_JOIN_TIMEOUT`), tears the agent container down, and
+        (kubernetes mode) ends this one-shot pod."""
+        with lock:
+            existing = current["assignment"]
+            if existing is not None:
+                if existing.uid == body.uid and existing.game_id == body.game_id:
+                    return {"mode": "review", "alreadyRunning": True}
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"this agent is already working on game {existing.game_id}",
+                )
+        decklist = parse_decklist(seat_decklist(body.game_id, body.uid, body.player))
+        identified = library.identify(decklist)
+        assignment = Assignment(
+            game_id=body.game_id,
+            uid=body.uid,
+            player=body.player,
+            opponent="",
+            api_base=body.api_base or settings.game_api,
+            decklist=decklist,
+            identification=identified,
+            guides_revision=guides_revision(settings.guides_root),
+            agent=body.agent,
+            role=body.role,
+            stub_decks=tuple(library.stub_decks()),
+            review_key=body.review_key,
+        )
+        with lock:
+            if current["assignment"] is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"this agent is already working on game {current['assignment'].game_id}",
+                )
+            clear_locked()
+            current.update(assignment=assignment, reflected=True, pending=False)
+        settings.workspace.mkdir(parents=True, exist_ok=True)
+        sync_agent_settings(body.agent)
+        log.info(
+            "review-only dispatch for game %s (%s, %s): deck=%s",
+            assignment.game_id,
+            assignment.player,
+            assignment.role,
+            assignment.deck_slug,
+        )
+        threading.Thread(
+            target=retire, args=(assignment,), daemon=True, name="driver-review-only"
+        ).start()
+        return {"mode": "review", "deck": assignment.deck_slug, "pending": True}
 
     def assign_followup(body: DispatchIn) -> dict:
         """Take F1's follow-up: build the assignment from the payload the api

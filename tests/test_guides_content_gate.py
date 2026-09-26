@@ -962,3 +962,91 @@ def test_the_file_path_refusal_is_reached_before_the_content_gate_runs(
     rc, result, _, _ = propose(capsys, root)
 
     assert (rc, result["result"]) == (1, "refused"), result
+
+
+# ======================================================================
+# FD7 (4): three more false positives, decided explicitly, and two real
+# exclusions (a corpus play id in backticks, a matchup's own archetype name)
+# that need context the gate did not used to take. The final refused-pattern
+# list is exported for FD6's prompt.
+# ======================================================================
+
+
+def test_a_backticked_corpus_play_id_passes_when_named_known():
+    text = "See `fetch-untapped-shock` for how this line plays out."
+    assert (
+        content_gate.system_problem_reasons([text], known_play_ids=["fetch-untapped-shock"]) == []
+    )
+
+
+def test_a_backticked_id_shaped_string_still_refuses_when_not_a_known_play_id():
+    text = "See `fetch-untapped-shock` for how this line plays out."
+    reasons = content_gate.system_problem_reasons([text])
+    assert reasons and "backticks" in reasons[0]
+
+
+def test_a_backticked_known_play_id_still_refuses_a_different_rule_on_the_same_line():
+    text = "See `fetch-untapped-shock`; the api returned a 422 for it."
+    reasons = content_gate.system_problem_reasons([text], known_play_ids=["fetch-untapped-shock"])
+    assert reasons and "names the api" in reasons[0]
+
+
+def test_an_archetype_name_from_the_matchup_passes():
+    assert (
+        content_gate.system_problem_reasons(
+            ["Board around the Pod's combo turn."], known_archetypes=["Pod"]
+        )
+        == []
+    )
+
+
+def test_the_bare_plural_pods_still_refuses_even_with_a_pod_archetype_known():
+    """The archetype exception is narrow: it excuses the phrase naming the
+    deck, never the ordinary Kubernetes plural that happens to collide."""
+    reasons = content_gate.system_problem_reasons(
+        ["The pods restarted mid-game."], known_archetypes=["Pod"]
+    )
+    assert reasons and "names the pod" in reasons[0]
+
+
+def test_an_unknown_archetype_name_still_refuses():
+    assert content_gate.system_problem_reasons(["Board around the Pod's combo turn."]) != []
+
+
+def test_life_equals_a_number_is_ordinary_magic_notation():
+    assert content_gate.system_problem_reasons(["Hold removal until life=5."]) == []
+    assert content_gate.system_problem_reasons(["at life = 5 they stabilize"]) == []
+
+
+def test_regression_alone_is_no_longer_a_system_problem():
+    assert content_gate.system_problem_reasons(["No regression in this boarding plan."]) == []
+
+
+def test_regression_with_a_qualifier_still_refuses():
+    reasons = content_gate.system_problem_reasons(["This change causes a conflict regression."])
+    assert reasons and "names a regression" in reasons[0]
+
+
+def test_a_decks_notes_reference_is_not_a_source_tree_path():
+    assert (
+        content_gate.system_problem_reasons(
+            ["See decks/rakdos-midrange/NOTES.md for how they sequence."]
+        )
+        == []
+    )
+
+
+def test_a_real_source_path_still_refuses():
+    reasons = content_gate.system_problem_reasons(
+        ["See scripts/render_guides.py for the renderer."]
+    )
+    assert reasons and "names a path into a source tree" in reasons[0]
+
+
+def test_the_refused_categories_are_exported_for_fd6s_prompt():
+    assert isinstance(content_gate.REFUSED_CATEGORIES, tuple)
+    assert "names a regression" in content_gate.REFUSED_CATEGORIES
+    assert "names the api" in content_gate.REFUSED_CATEGORIES
+    assert "quotes a code identifier in backticks" in content_gate.REFUSED_CATEGORIES
+    # No duplicates: FD6 prints this whole, so it must already read clean.
+    assert len(content_gate.REFUSED_CATEGORIES) == len(set(content_gate.REFUSED_CATEGORIES))

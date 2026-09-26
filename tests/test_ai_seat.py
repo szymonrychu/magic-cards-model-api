@@ -353,6 +353,84 @@ def test_kubernetes_why_gone_carries_the_kubernetes_status_reason(
     assert "missing" in reason and job_name("g-k8s", "u-k8s") in reason
 
 
+# -- FD7 gap 15: the human-seat review Job ------------------------------------
+#
+# A human seat never has a driver of its own while the game is live, so it
+# never gets a normal `AiSeatRegistry.start`. `start_review_followup` is the
+# post-game path that reaches one anyway, kubernetes-only - see
+# `k8s_seats.build_review_job`'s own docstring for exactly what it dispatches
+# today and what is still missing to make it a real DR3 review.
+
+
+def test_kubernetes_start_review_followup_creates_the_review_job(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    from magic_cards_model_api.k8s_seats import review_job_name
+
+    status = fresh_registry.start_review_followup(uid="u-human", game_id="g-1", player="carol")
+
+    assert status["mechanism"] == "kubernetes"
+    assert status["state"] == "scheduled"
+    assert review_job_name("g-1", "u-human") in kubernetes_mode.jobs
+
+
+def test_kubernetes_start_review_followup_is_deduped_by_its_own_label(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    first = fresh_registry.start_review_followup(uid="u-human", game_id="g-1", player="carol")
+    again = fresh_registry.start_review_followup(uid="u-human", game_id="g-1", player="carol")
+    assert (first["state"], again["state"]) == ("scheduled", "exists")
+    assert kubernetes_mode.creates == 1
+
+
+def test_kubernetes_start_review_followup_create_failure_reports_never_raises(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    kubernetes_mode.create_error = RuntimeError("kubelet is down")
+    status = fresh_registry.start_review_followup(uid="u-human", game_id="g-1", player="carol")
+    assert status["mechanism"] == "kubernetes"
+    assert status["state"] == "failed"
+    assert "kubelet is down" in status["reason"]
+
+
+def test_kubernetes_start_review_followup_forwards_its_review_key(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FD7-r1: `lobby._start_human_seat_reviews` reads this game's admin key
+    and hands it through as `review_key` - `AiSeatRegistry.
+    start_review_followup` must carry it to `K8sSeats.start_review_followup`
+    unchanged, since that is the only place it reaches the Job's own
+    assignment (`k8s_seats.build_review_job`) and, through it, the
+    `app.declare_ai_review` gate a human seat's review must pass."""
+    from magic_cards_model_api import k8s_seats
+
+    calls: list[dict] = []
+    real = k8s_seats.K8sSeats.start_review_followup
+
+    def recording(self, **kwargs):
+        calls.append(kwargs)
+        return real(self, **kwargs)
+
+    monkeypatch.setattr(k8s_seats.K8sSeats, "start_review_followup", recording)
+    fresh_registry.start_review_followup(
+        uid="u-human", game_id="g-1", player="carol", review_key="g1-admin-key"
+    )
+    assert calls and calls[0]["review_key"] == "g1-admin-key"
+
+
+def test_review_followup_is_never_available_outside_kubernetes_mode(
+    fresh_registry: ai_seat.AiSeatRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A human seat never gets an automatic review in compose mode: compose
+    has no follow-up mechanism at all, for a human seat or an AI one - the
+    reason says so rather than leaving the caller to guess."""
+    monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
+    status = fresh_registry.start_review_followup(uid="u-human", game_id="g-1", player="carol")
+    assert status["mechanism"] is None
+    assert status["state"] == "unavailable"
+    assert "compose" in status["reason"] and "follow-up mechanism" in status["reason"]
+
+
 # -- wrapper mode: per-seat driver routing (DR7) -----------------------------
 #
 # `AI_SEAT_MODE=wrapper` normally dispatches every AI seat to the single

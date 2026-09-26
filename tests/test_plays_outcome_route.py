@@ -239,6 +239,75 @@ def test_the_wrong_role_for_the_credential_is_a_400(client: TestClient) -> None:
         _end(client, info)
 
 
+def test_an_ai_seats_reviewer_row_is_recorded_and_counted(client: TestClient) -> None:
+    """Review fix (gap 4/8): the seat's own uid may file a SECOND row, as
+    `role: reviewer`, for the post-game DR3 review - counted apart from the
+    handover's own totals (`review.py`'s own `play_stats[seat]["reviewer"]`
+    - `test_review.py` covers the counting itself; this covers the row
+    actually being accepted)."""
+    info = _played_out(client)
+    try:
+        handover = _post(client, info["game_id"], _body(info, role="seat"))
+        assert handover.status_code == 200, handover.text
+        review_row = _post(
+            client,
+            info["game_id"],
+            _body(info, role="reviewer", admitted=[{"sha": "c" * 40, "dsl_change": True}]),
+        )
+        assert review_row.status_code == 200, review_row.text
+        rows = _outcomes(client, info)
+        assert [r["detail"]["role"] for r in rows] == ["seat", "reviewer"]
+    finally:
+        _end(client, info)
+
+
+def test_a_human_seats_reviewer_row_is_accepted_though_it_is_not_an_ai_seat(
+    client: TestClient,
+) -> None:
+    """FD7 gap 15: a human seat gets a review Job too, so its own uid may
+    file `role: reviewer` even though `test_a_human_seat_is_refused` already
+    covers that its own `role: seat` (a handover) never can."""
+    info = _played_out(client)
+    try:
+        response = _post(client, info["game_id"], _body(info, player="alice", role="reviewer"))
+        assert response.status_code == 200, response.text
+        [row] = _outcomes(client, info)
+        assert (row["detail"]["player"], row["detail"]["role"]) == ("alice", "reviewer")
+    finally:
+        _end(client, info)
+
+
+def test_an_advisor_uid_never_files_a_reviewer_row(client: TestClient) -> None:
+    info = _played_out(client)
+    game_id = info["game_id"]
+    store.register_advisors(game_id, {"buddy-uid": Advisor(player="alice")})
+    try:
+        response = _post(
+            client, game_id, _body(info, player="alice", uid="buddy-uid", role="reviewer")
+        )
+        assert response.status_code == 400, response.text
+        assert _outcomes(client, info) == []
+    finally:
+        _end(client, info)
+
+
+def test_a_reviewer_row_never_schedules_the_f1_followup(client: TestClient) -> None:
+    """A `reviewer` row is the DR3 review, not the handover's own
+    development step, whatever `state`/`unfinished_reasons` it happens to
+    carry - it must never schedule F1's own follow-up Job."""
+    info = _played_out(client)
+    try:
+        response = _post(
+            client,
+            info["game_id"],
+            _body(info, role="reviewer", state="unfinished", unfinished_reasons=["x"]),
+        )
+        assert response.status_code == 200, response.text
+        assert "followup" not in response.json()
+    finally:
+        _end(client, info)
+
+
 def test_an_advisor_files_for_the_human_it_watches(client: TestClient) -> None:
     info = _played_out(client)
     game_id = info["game_id"]
@@ -275,7 +344,7 @@ def test_the_body_is_strict(client: TestClient) -> None:
     try:
         for bad in (
             _body(info, state="done"),
-            _body(info, role="reviewer"),
+            _body(info, role="not-a-role"),
             _body(info, proposed=[{}]),
             _body(info, admitted=[{"sha": "a"}]),
             _body(info, no_change=[{"candidate": "x", "reason": "  "}]),

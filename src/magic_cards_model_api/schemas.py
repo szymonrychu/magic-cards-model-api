@@ -500,6 +500,18 @@ class AiReviewIn(RequestModel):
     ...]}` - the reviewer's own opinion, keyed by seat, never validated
     beyond being JSON-shaped: this is a critique's parsed opinion, not a
     fact `visibility.redact_log_entry` or anything else needs to check."""
+    review_key: str | None = None
+    """FD7 gap 15: the human-seat review Job's own credential - this game's
+    admin key, minted at creation and handed only to whoever created the
+    game, never to an ordinary seat. `app.declare_ai_review`'s AI-seat check
+    (`archived.ai_players`) has nothing to match for a human seat, since a
+    human is never registered as one; presenting the admin key here, which
+    `k8s_seats.build_review_job` carries in the Job's own assignment and
+    nowhere else, is what proves this POST is the sanctioned review
+    dispatch rather than the seat writing its own words into this route
+    directly - the forgery `AiReviewIn`'s `uid` field already documents.
+    `None` for an AI seat's own driver, which needs nothing beyond
+    `archived.ai_players` membership."""
 
 
 class AiReviewResponse(BaseModel):
@@ -553,6 +565,11 @@ class AiReviewFailureIn(RequestModel):
     description of an answer it could not use."""
     invoked: bool
     """Whether the reviewer itself was ever asked."""
+    review_key: str | None = None
+    """Gated exactly like `AiReviewIn.review_key` beside it - the human-seat
+    review Job's own credential, this game's admin key, for the same reason:
+    T35's failure signal must reach the ledger for a human seat's review
+    exactly as it does for an AI seat's."""
 
 
 class AiReviewFailureResponse(BaseModel):
@@ -635,6 +652,14 @@ class PlaysOutcomeIn(RequestModel):
     for the human it watches (`role: advisor`). Never a controlled player's:
     CR 723.5 hands a controller in-game decisions, not the post-game record.
 
+    `role: reviewer` (review fix, gap 4/15) is the SAME seat uid filing a
+    SECOND time, for the post-game DR3 review rather than the handover
+    itself - `review.py`'s own `play_stats[seat]["reviewer"]` reads exactly
+    these rows apart from the handover's own (`app.declare_plays_outcome`
+    lets a seat uid file either `seat` or `reviewer`, and does not require
+    `player` be an AI seat for a `reviewer` row, since FD7 gap 15 gives a
+    human seat a review Job too).
+
     `state` is `complete` when the handover landed a DSL change or a
     no-change for every candidate, and `unfinished` otherwise, with
     `unfinished_reasons` saying why (nudged, timed out, an admit or propose
@@ -650,7 +675,7 @@ class PlaysOutcomeIn(RequestModel):
     uid: Stated
     """The filing credential - never recorded in the row."""
     player: Stated
-    role: Literal["seat", "advisor"]
+    role: Literal["seat", "advisor", "reviewer"]
     state: Literal["complete", "unfinished"]
     admitted: list[PlaysOutcomeAdmitted] = Field(default_factory=list)
     proposed: list[PlaysOutcomeProposed] = Field(default_factory=list)
@@ -3019,6 +3044,21 @@ class ReviewDecision(BaseModel):
     unexpressible: str | None = None
 
 
+class ReviewerPlayStats(BaseModel):
+    """FD7 gap 4: the same `added`/`updated`/`reprioritized` classification
+    `ReviewPlayStats` carries for a seat's own totals, over only the
+    `plays_outcome` rows the post-game reviewer filed (`detail["role"] ==
+    "reviewer"`) - `review.py`'s own `_REVIEWER_STATS_FIELDS`. Zero fields
+    and empty id lists, never a missing key, when the reviewer filed
+    nothing under this seat at all."""
+
+    added: int = 0
+    updated: int = 0
+    reprioritized: int = 0
+    added_ids: list[str] = Field(default_factory=list)
+    updated_ids: list[str] = Field(default_factory=list)
+
+
 class ReviewPlayStats(BaseModel):
     """One seat's per-game play-script statistics (DR2,
     `playscripts.stats.game_play_stats`): its registered corpus size, split
@@ -3039,6 +3079,22 @@ class ReviewPlayStats(BaseModel):
     reprioritized: int = 0
     added_ids: list[str] = Field(default_factory=list)
     updated_ids: list[str] = Field(default_factory=list)
+    reviewer: ReviewerPlayStats = Field(default_factory=ReviewerPlayStats)
+    """FD7 gap 4: this seat's own totals above already include whatever the
+    reviewer admitted, whichever role filed it - this is the same admits,
+    counted again on their own, so a reader can see how much of the totals
+    the reviewer itself contributed without subtracting by hand."""
+
+
+class ReviewDslCoverage(BaseModel):
+    """FD7 gap 4: one decision kind's own DSL coverage for a game
+    (`review.dsl_coverage`) - `count` decisions of this kind, `unexpressible`
+    of them that could not become a play at all, and the distinct
+    `unexpressible` reasons (`labels`) seen for it."""
+
+    count: int = 0
+    unexpressible: int = 0
+    labels: list[str] = Field(default_factory=list)
 
 
 class GameReviewResponse(BaseModel):
@@ -3111,6 +3167,11 @@ class GameReviewResponse(BaseModel):
     """DR2: one `ReviewPlayStats` per seat named in `decisions` - the same
     per-seat visibility rule, computed whether or not that seat's
     `decisions` list happens to be empty."""
+    dsl_coverage: dict[str, ReviewDslCoverage] = Field(default_factory=dict)
+    """FD7 gap 4 (`review.dsl_coverage`): `{kind: {count, unexpressible,
+    labels}}` across every seat's own `decisions` this `viewer` may see -
+    empty for a game with none. FD5's ops endpoint calls the same function
+    once per game to aggregate this across every game."""
 
 
 class DeleteGameResponse(BaseModel):

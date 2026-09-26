@@ -365,3 +365,163 @@ def test_script_list_takes_the_archetype_flag_and_input(
     assert printed(capsys)["applicable"] == ["frog-only"]
     assert cli(board, alice, "list", "--input", "opposing_archetype=dimir-frog") == 0
     assert printed(capsys)["applicable"] == ["frog-only"]
+
+
+# ======================================================================
+# FD7 (2): `plays no-change --decision` and `plays priority --game-id`.
+#
+# Both are offline commands (no `--uid`, no game, no API - see this module's
+# own docstring and `seat_cli.build_parser`'s "plays" help), so these wire
+# `seat_cli.run` straight to a monkeypatched `playscripts_admit`, the way the
+# rest of this file drives `mcp.py` through a real game: proof of the CLI's
+# own argument wiring, not a second copy of `admit.py`'s own git-checkout
+# tests (`tests/test_plays_admit.py`).
+# ======================================================================
+
+
+def test_plays_no_change_by_decision_forwards_the_seq(monkeypatch, capsys, tmp_path):
+    captured: dict[str, Any] = {}
+
+    def fake_no_change(root, deck, game_id, *, play, line, reason, decision=None):
+        captured.update(
+            root=root,
+            deck=deck,
+            game_id=game_id,
+            play=play,
+            line=line,
+            reason=reason,
+            decision=decision,
+        )
+        return {"result": "recorded", "message": "ok", "candidate": f"decision:{decision}"}
+
+    monkeypatch.setattr(seat_cli.playscripts_admit, "no_change", fake_no_change)
+
+    rc = seat_cli.run(
+        [
+            "plays",
+            "no-change",
+            "--decision",
+            "42",
+            "--reason",
+            "fine as is",
+            "--deck",
+            "dimir-frog",
+            "--game-id",
+            "g1",
+            "--root",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 0
+    assert captured["decision"] == 42
+    assert captured["play"] is None and captured["line"] is None
+    assert printed(capsys)["candidate"] == "decision:42"
+
+
+def test_plays_no_change_still_takes_play_or_line_exclusively_of_decision(capsys, tmp_path):
+    with pytest.raises(SystemExit):
+        seat_cli.run(
+            [
+                "plays",
+                "no-change",
+                "--play",
+                "fetch-shock",
+                "--decision",
+                "1",
+                "--reason",
+                "x",
+                "--deck",
+                "dimir-frog",
+                "--game-id",
+                "g1",
+                "--root",
+                str(tmp_path),
+            ]
+        )
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+def test_plays_priority_forwards_an_explicit_game_id(monkeypatch, capsys, tmp_path):
+    captured: dict[str, Any] = {}
+
+    def fake_set_priority(root, deck, play_id, *, delta, value, game_id):
+        captured.update(game_id=game_id)
+        return {"result": "priority_set", "message": "ok", "id": play_id, "old": 50, "new": 55}
+
+    monkeypatch.setattr(seat_cli.playscripts_admit, "set_priority", fake_set_priority)
+
+    rc = seat_cli.run(
+        [
+            "plays",
+            "priority",
+            "some-play",
+            "--delta",
+            "5",
+            "--game-id",
+            "g-explicit",
+            "--deck",
+            "dimir-frog",
+            "--root",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 0
+    assert captured["game_id"] == "g-explicit"
+
+
+def test_plays_priority_falls_back_to_mtg_game_id_env(monkeypatch, capsys, tmp_path):
+    captured: dict[str, Any] = {}
+    monkeypatch.setenv("MTG_GAME_ID", "g-env")
+
+    def fake_set_priority(root, deck, play_id, *, delta, value, game_id):
+        captured.update(game_id=game_id)
+        return {"result": "priority_set", "message": "ok", "id": play_id, "old": 50, "new": 55}
+
+    monkeypatch.setattr(seat_cli.playscripts_admit, "set_priority", fake_set_priority)
+
+    rc = seat_cli.run(
+        [
+            "plays",
+            "priority",
+            "some-play",
+            "--delta",
+            "5",
+            "--deck",
+            "dimir-frog",
+            "--root",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 0
+    assert captured["game_id"] == "g-env"
+
+
+def test_plays_priority_refuses_loudly_with_neither_flag_nor_env(monkeypatch, capsys, tmp_path):
+    monkeypatch.delenv("MTG_GAME_ID", raising=False)
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("set_priority ran with no game id resolved")
+
+    monkeypatch.setattr(seat_cli.playscripts_admit, "set_priority", never)
+
+    rc = seat_cli.run(
+        [
+            "plays",
+            "priority",
+            "some-play",
+            "--delta",
+            "5",
+            "--deck",
+            "dimir-frog",
+            "--root",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 1
+    out = printed(capsys)
+    assert out["result"] == "refused"
+    assert "game-id" in out["message"] or "MTG_GAME_ID" in out["message"]

@@ -93,6 +93,12 @@ class Undecidable(Exception):
 #: pattern out of them and a comment next to a literal regex would drift.
 _DEPLOY_QUALIFIERS = r"cluster|pod|container|k8s|kubernetes|helm|rollout|redeploy|failed|prod"
 _EXCEPTION_QUALIFIERS = r"raised|threw|thrown|unhandled|uncaught"
+#: FD7: "regression" alone is ordinary English about a plan or a board state
+#: not moving backward ("no regression in this line"), so it is narrowed the
+#: same way `deployment`/`exception` already are - flagged only alongside a
+#: qualifier that puts it in this system's own sense (the conflict ratchet's
+#: own `conflict_regression`, a CI/test/lint regression, or a code change).
+_REGRESSION_QUALIFIERS = r"conflict|admit|gate|lint|check|ci|test|software|code"
 
 _TERMS: tuple[tuple[str, str], ...] = (
     (r"\bapis?\b", "names the api"),
@@ -130,7 +136,11 @@ _TERMS: tuple[tuple[str, str], ...] = (
     (r"\bservers?\b|\bbackend\b|\bfrontend\b", "names a service"),
     (r"\bwebsockets?\b", "names the websocket"),
     (r"\bjson\b|\byamls?\b", "names a serialisation format"),
-    (r"\bregressions?\b", "names a regression"),
+    (
+        rf"\b(?:{_REGRESSION_QUALIFIERS})\b[^\n]*\bregressions?\b"
+        rf"|\bregressions?\b[^\n]*\b(?:{_REGRESSION_QUALIFIERS})\b",
+        "names a regression",
+    ),
     (r"\bcrashed?\b|\bcrashes\b|\bcrash logs?\b", "names a crash"),
     (r"\berror (?:messages?|codes?)\b|\breturned an error\b", "names an error the software gave"),
 )
@@ -142,18 +152,31 @@ _SHAPES: tuple[tuple[str, str], ...] = (
     (r"(?<![\w-])--[a-z][a-z0-9-]*\b", "names a command-line flag"),
     (
         # A single-letter x/y/z (Magic's own X-spell notation, case either
-        # way: "X=1", "x = 2") followed by `=` and a digit is excluded - that
-        # is how a deck's guide writes an X value, not a parameter. Every
-        # multi-character identifier is still caught, single letter or not.
-        r"\b(?!(?:x|y|z)\s*=\s*\d)[a-z_][a-z0-9_]*\s*=\s*(?:true|false|none|null|\d|\"|'|`)",
+        # way: "X=1", "x = 2"), or `life` (a life-total threshold, "at
+        # life=5"), followed by `=` and a digit is excluded - that is how a
+        # deck's guide writes an X value or a life total, not a parameter.
+        # Every multi-character identifier but `life` is still caught.
+        r"\b(?!(?:x|y|z|life)\s*=\s*\d)[a-z_][a-z0-9_]*\s*=\s*(?:true|false|none|null|\d|\"|'|`)",
         "names a parameter and the value to set it to",
     ),
     (r"`[^`\n]*[_/(){}\[\]=:.$*\-][^`\n]*`", "quotes a code identifier in backticks"),
     (
-        r"\b(?:src|tests|scripts|docs|contract|decks|meta)/[\w./-]+",
+        # FD7: `decks/` dropped from this list - it is the guides corpus
+        # itself (NOTES.md, plays, a matchup's own boarding plan), never a
+        # path into the SOFTWARE's source tree, so a note that points at
+        # another deck's guide ("decks/rakdos-midrange/NOTES.md") is play
+        # content, not a system problem.
+        r"\b(?:src|tests|scripts|docs|contract|meta)/[\w./-]+",
         "names a path into a source tree",
     ),
-    (r"\b[\w-]+\.(?:py|json|ya?ml|toml|md|sh|ts|js|lock)\b", "names a source file"),
+    (
+        # FD7: `NOTES.md` bare is excluded - it is always a deck's OWN guide
+        # file (`decks/<deck>/NOTES.md`), the one file this whole gate exists
+        # to leave alone, never a system doc. Every other filename, `.md`
+        # included (`README.md`, `CLAUDE.md`), still names a source file.
+        r"\b(?!notes\.md\b)[\w-]+\.(?:py|json|ya?ml|toml|md|sh|ts|js|lock)\b",
+        "names a source file",
+    ),
     (
         r"\bplays (?:admit|check|priority)\b|\bguides propose\b|\bmise run\b",
         "names one of this system's own commands",
@@ -169,6 +192,12 @@ _SHAPES: tuple[tuple[str, str], ...] = (
 _RULES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
     (re.compile(pattern, re.IGNORECASE), why) for pattern, why in (*_TERMS, *_SHAPES)
 )
+
+#: FD7: the final list of reasons this gate can refuse for, deduplicated in
+#: rule order - exported so FD6's review prompt can state, in the seat's own
+#: words, what the content gate refuses without repeating the categories by
+#: hand and drifting from this module's own rules.
+REFUSED_CATEGORIES: tuple[str, ...] = tuple(dict.fromkeys(why for _, why in _RULES))
 
 
 def added_lines(before: str | None, after: str) -> list[str]:
@@ -243,15 +272,53 @@ def _strings_within(value: Any, where: str) -> list[str]:
     raise Undecidable(f"{where} holds a value this gate cannot read as text")
 
 
-def system_problem_reasons(passages: Iterable[str]) -> list[str]:
+def _excused(matched: str, play_ids: frozenset[str], archetypes: frozenset[str]) -> bool:
+    """FD7: two matches this gate now reads as context, not as a violation.
+
+    A backticked identifier is excused when the text between the backticks
+    is, verbatim, one of `known_play_ids` - a real play in the corpus, which
+    is exactly the register a guide-sentence review names one in ("land
+    `fetch-untapped-shock` on their upkeep"). A phrase is excused when,
+    lowercased, it is one of `known_archetypes` (bare, or "the <archetype>")
+    - a matchup's own opposing deck name, which collides with this gate's
+    system vocabulary by accident (`pod`/`the pod`, "engine", "stack") and is
+    the deck being discussed, not a Kubernetes pod. Neither excuses the OTHER
+    rule that still matches the same line - only the one rule this specific
+    match belongs to."""
+    text = matched.strip()
+    if text.startswith("`") and text.endswith("`") and text[1:-1].strip().casefold() in play_ids:
+        return True
+    return text.casefold() in archetypes
+
+
+def system_problem_reasons(
+    passages: Iterable[str],
+    *,
+    known_play_ids: Iterable[str] = (),
+    known_archetypes: Iterable[str] = (),
+) -> list[str]:
     """One reason per passage that reads as a system problem, quoting what it
     read and saying which rule read it that way. Empty means the gate found
-    nothing - which is not the same as the text being proven play content."""
+    nothing - which is not the same as the text being proven play content.
+
+    `known_play_ids` (a deck's own corpus play ids) and `known_archetypes`
+    (the matchup's own archetype names) are optional context a caller may
+    have and this gate did not used to take - see `_excused` for exactly
+    what each excuses. Neither changes a passage that trips a DIFFERENT rule
+    for a reason unrelated to either: the loop below moves on to the next
+    rule rather than skipping the whole passage."""
+    play_ids = frozenset(pid.strip().casefold() for pid in known_play_ids if str(pid).strip())
+    archetypes = frozenset(
+        name.strip().casefold() for name in known_archetypes if str(name).strip()
+    )
+    archetypes |= frozenset(f"the {name}" for name in archetypes)
     reasons: list[str] = []
     for passage in passages:
         for rule, why in _RULES:
             found = rule.search(passage)
             if found is None:
+                continue
+            if _excused(found.group(0), play_ids, archetypes):
                 continue
             reasons.append(f'"{_excerpt(passage)}" - {why} ("{found.group(0).strip()}")')
             break

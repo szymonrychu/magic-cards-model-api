@@ -142,6 +142,62 @@ def test_a_natural_game_over_leaves_the_buddy_running_too(
     assert "alice:subprocess" in retirements(booted["game_id"])[0]["note"]
 
 
+def test_a_natural_game_over_starts_the_human_seats_review_job_in_kubernetes_mode(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    """FD7 gap 15 wiring: `retire_game` is the one place every natural
+    ending funnels through, so it is what starts a human seat's own DR3
+    review Job - kubernetes mode only, and never for a seat the registry
+    already holds a runner for (bob is never started here, but the
+    registry is made to hold one for him anyway, standing in for an AI
+    seat that was)."""
+    monkeypatch.setenv("AI_SEAT_MODE", "kubernetes")
+    booted = boot(client)
+    bob = booted["seat_uids"]["bob"]
+    fresh_registry._dispatched[bob] = {"mechanism": "kubernetes"}
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_start_review_followup(*, uid: str, game_id: str, player: str) -> dict[str, Any]:
+        calls.append((uid, game_id, player))
+        return {"uid": uid, "mechanism": "kubernetes", "state": "scheduled"}
+
+    monkeypatch.setattr(fresh_registry, "start_review_followup", fake_start_review_followup)
+
+    concede(client, booted)
+
+    assert calls == [(booted["seat_uids"]["alice"], booted["game_id"], "alice")]
+    [retired] = retirements(booted["game_id"])
+    assert retired["human_seat_reviews"] == [
+        {
+            "uid": booted["seat_uids"]["alice"],
+            "mechanism": "kubernetes",
+            "state": "scheduled",
+            "player": "alice",
+        }
+    ]
+    assert "started human-seat review job(s) [alice]" in retired["note"]
+
+
+def test_a_natural_game_over_never_starts_a_human_review_outside_kubernetes_mode(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    """Compose (and every other non-kubernetes mode) has no follow-up
+    mechanism at all, for a human seat or an AI one."""
+    calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        fresh_registry,
+        "start_review_followup",
+        lambda **kwargs: calls.append(kwargs) or {},
+    )
+    booted = boot(client)
+
+    concede(client, booted)
+
+    assert calls == []
+    [retired] = retirements(booted["game_id"])
+    assert retired["human_seat_reviews"] == []
+
+
 def test_the_seat_uids_stay_valid_after_a_natural_game_over(client: TestClient) -> None:
     booted = boot(client)
     concede(client, booted)

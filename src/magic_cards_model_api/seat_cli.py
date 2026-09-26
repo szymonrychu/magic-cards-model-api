@@ -99,6 +99,7 @@ from .playscripts import guides_propose as playscripts_guides
 from .playscripts import lint as playscripts_lint
 from .playscripts import script_tools
 from .playscripts.gitwork import GUIDES_ROOT, SUCCESS
+from .playscripts.gitwork import result as gitwork_result
 from .seatkit import (
     AUTOPASS_STEPS,
     AUTOPASS_WHOSE_TURN,
@@ -1532,22 +1533,50 @@ def build_parser() -> argparse.ArgumentParser:
             "prints admitted | refused | conflict | gate_failed | conflict_regression | "
             "error (retryable: main moved under 3 pushes, the change is left uncommitted - run "
             "it again) | nothing_to_admit; an admitted or nothing_to_admit result also carries "
-            "added/updated/reprioritized play-id lists (written into the results journal too)"
+            "added/updated/reprioritized play-id lists (written into the results journal too). "
+            "Only this call's own dirty plays paths are staged - another writer's own "
+            "uncommitted edit in the same checkout is left alone - and a batch with one "
+            "conflicting play still admits the clean ones, naming each refused file and its "
+            "reason in refused_files rather than refusing the whole batch"
         ),
     )
     _guides_target(admit, game=True)
+    admit.add_argument(
+        "--path",
+        dest="paths",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help=(
+            "a decks/*/plays/ path this call itself wrote (repeatable) - only these are "
+            "staged/committed, exactly as if the caller's own turn had journaled them; left "
+            "out, every dirty play the game's journal does not show a DIFFERENT role owns is "
+            "swept instead (the pre-FD7 behaviour)"
+        ),
+    )
 
     unchanged = plays_sub.add_parser(
         "no-change",
         help=(
             "record, for one post-game candidate - a play you declined or passed over "
-            "(--play), or a line you played by hand (--line) - why it needs no DSL change; "
-            "changes nothing in the checkout, prints recorded | refused"
+            "(--play), a line you played by hand (--line), or an expressible decision by its "
+            "ledger seq (--decision, `GET .../review`'s own `decisions[seat][*].seq`) - why it "
+            "needs no DSL change; changes nothing in the checkout, prints recorded | refused"
         ),
     )
     candidate = unchanged.add_mutually_exclusive_group(required=True)
     candidate.add_argument("--play", metavar="ID", help="the play's id, its file stem")
     candidate.add_argument("--line", metavar="TEXT", help="the hand-played line, in your words")
+    candidate.add_argument(
+        "--decision",
+        metavar="SEQ",
+        type=int,
+        help=(
+            "the decision's own ledger seq - every expressible decision (playscripts.report."
+            "assess) is owed this or an admitted play, one no-change closing every occurrence "
+            "of the same generalized play"
+        ),
+    )
     unchanged.add_argument(
         "--reason", required=True, help="why this candidate needs no change to the plays"
     )
@@ -1614,6 +1643,19 @@ def run(argv: list[str] | None = None) -> int:
         # Offline by design: a lint over files, so no uid, no API, no seat.
         return playscripts_lint.run_cli(args.root, args.deck or None, as_json=args.json)
     if args.command == "plays" and args.plays_command == "priority":
+        game_id = args.game_id or os.environ.get("MTG_GAME_ID", "").strip()
+        if not game_id:
+            # Parity 4: a priority moved with neither `--game-id` nor
+            # MTG_GAME_ID set used to fall back to `None` silently, which
+            # skips the per-game 5-point bound outright rather than
+            # refusing to move a priority nothing can be bounded against.
+            return _emit(
+                gitwork_result(
+                    "refused",
+                    "plays priority needs a game id for its per-game bound: pass --game-id or "
+                    "set MTG_GAME_ID",
+                )
+            )
         return _emit(
             playscripts_admit.set_priority(
                 args.root,
@@ -1621,7 +1663,7 @@ def run(argv: list[str] | None = None) -> int:
                 args.play_id,
                 delta=args.delta,
                 value=args.set_to,
-                game_id=args.game_id or os.environ.get("MTG_GAME_ID", "").strip() or None,
+                game_id=game_id,
             ),
             frozenset({"priority_set"}),
         )
@@ -1633,12 +1675,17 @@ def run(argv: list[str] | None = None) -> int:
                 args.game_id,
                 play=args.play,
                 line=args.line,
+                decision=args.decision,
                 reason=args.reason,
             ),
             frozenset({"recorded"}),
         )
     if args.command == "plays":
-        return _emit(playscripts_admit.admit(args.root, args.deck, args.game_id))
+        return _emit(
+            playscripts_admit.admit(
+                args.root, args.deck, args.game_id, paths=getattr(args, "paths", None)
+            )
+        )
     if args.command == "guides":
         return _emit(playscripts_guides.propose(args.root, args.deck, args.game_id))
     if not args.uid:
