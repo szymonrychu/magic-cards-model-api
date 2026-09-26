@@ -102,11 +102,17 @@ pass-only plays are not covered, and still conflict the ordinary way) and
 `move_selector` (FD2 item 7b: the two plays' first moves' own card lookups -
 `cast`/`play_land`'s `card`, `activate`/`keyword_action`'s `source`/`card` -
 provably cannot match the same object: a different, determinate zone, or a
-disjoint non-empty `types_all`/`types_any` or `keywords_any` set. This is the
-same closed-world, symbolic reading of a play's own declared fields every
-other dimension here already gives - not a card-database lookup, so a real
-land creature such as Dryad Arbor is outside its model, on the same footing
-`numeric_range`'s independence assumption already is). A `false`
+`types_all`/`types_any` set that names only a non-permanent type (Instant or
+Sorcery) against one naming a permanent type. This is the same closed-world,
+symbolic reading of a play's own declared fields every other dimension here
+already gives - not a card-database lookup, so a real land creature such as
+Dryad Arbor is outside its model, on the same footing `numeric_range`'s
+independence assumption already is. A plain disjoint `types_all`/`types_any`
+set proves nothing beyond that one pairing - an artifact type and a creature
+type both matching one object, an artifact creature, is the ordinary case,
+not the exception - and a disjoint `keywords_any` set proves nothing at all,
+since nothing stops one object from carrying both keywords at once: Flying
+and Trample coexist on plenty of real creatures). A `false`
 condition is negated before the input and numeric checks. A selector's `missing_from` is
 never a dimension of its own: it is part of the normalized condition, its
 `zones` a set like every scalar list, so selectors that differ only in it are
@@ -172,15 +178,15 @@ EXCLUSIVITY_DIMENSIONS = (
 #: (`Instant`/`Sorcery`) and one naming a permanent type never coincide on one
 #: card, by CR 300.1's own type list and how every printed card is templated -
 #: an instant or sorcery is never also a creature, artifact, enchantment,
-#: land, planeswalker, battle or kindred card. `_move_selectors_disjoint`
-#: below trusts a plain disjoint `types_all`/`types_any` set beyond this pair
-#: too (an ordinary "different card types" reading of item 7b), the same
-#: closed-world reading `numeric_range`/`true_false` already give a play's own
-#: declared conditions elsewhere in this file - not a proof against every
-#: real printed card (Dryad Arbor is a land creature), but a play naming two
-#: disjoint type sets is asking for two different cards in the overwhelming
-#: case, and the rule is symbolic, not a database lookup, on the same footing
-#: the rest of `exclusivity` already is.
+#: land, planeswalker, battle or kindred card. This is the ONLY type pairing
+#: `_move_selectors_disjoint` below trusts: a plain disjoint `types_all`/
+#: `types_any` set beyond this one pairing proves nothing (an artifact type
+#: and a creature type both matching one object - an artifact creature - is
+#: the ordinary case, not the exception), and a disjoint `keywords_any` set
+#: proves nothing either (nothing stops one object from carrying both
+#: keywords, Flying and Trample included, at once). Reviewed and narrowed
+#: 2026-09-26: an earlier version of this rule treated any disjoint
+#: `types_all`/`types_any` or `keywords_any` set as proof, which is unsound.
 
 MAX_CHAIN = 3
 PHRASE_MIN_CARDS = 3
@@ -808,16 +814,49 @@ def _selector_word_set(select: dict[str, Any], *keys: str) -> frozenset[str]:
     return frozenset(words)
 
 
+#: CR 300.1's non-permanent types. An Instant or Sorcery card is never also
+#: a permanent, on any printed card - the only type-set pairing this module
+#: can prove disjoint for every card, not just the cached ones.
+_NONPERMANENT_TYPES = frozenset({"Instant", "Sorcery"})
+#: CR 300.1's permanent types. Two of THESE overlapping (an Artifact
+#: `types_all` selector and a Creature one) is the ordinary case - an
+#: artifact creature - so a disjoint permanent/permanent pairing is never
+#: itself proof of anything.
+_PERMANENT_TYPES = frozenset(
+    {"Artifact", "Battle", "Creature", "Enchantment", "Land", "Planeswalker", "Kindred"}
+)
+
+
+def _types_provably_disjoint(types_a: frozenset[str], types_b: frozenset[str]) -> bool:
+    """`True` only for the one type-set pairing CR 300.1's own list proves
+    disjoint on every printed card: one selector names only non-permanent
+    types (Instant/Sorcery) and the other names at least one permanent type.
+    Any other disjoint pairing - two different permanent types included -
+    proves nothing, since a single object routinely carries more than one
+    type (an artifact creature matches both `types_all: [Artifact]` and
+    `types_all: [Creature]`)."""
+    if not types_a or not types_b:
+        return False
+    a_nonpermanent_only = types_a <= _NONPERMANENT_TYPES
+    b_nonpermanent_only = types_b <= _NONPERMANENT_TYPES
+    if a_nonpermanent_only and (types_b & _PERMANENT_TYPES):
+        return True
+    return bool(b_nonpermanent_only and (types_a & _PERMANENT_TYPES))
+
+
 def _move_selectors_disjoint(a: dict[str, Any], b: dict[str, Any]) -> bool:
     """FD2 item 7b: this play's and `b`'s first moves' own card lookups
     provably cannot match the same object - a different, determinate zone (a
-    card is in exactly one zone at a time), a disjoint non-empty type set
-    (`types_all`/`types_any` together), or a disjoint non-empty
-    `keywords_any` set. `False` (proves nothing) whenever either play's first
-    move has no card lookup at all, or the two share no such dimension -
-    never a false positive against an overlapping selector, only ever a
-    positive where the two name characteristics that cannot both be true of
-    one card at once."""
+    card is in exactly one zone at a time), or a `types_all`/`types_any` set
+    naming only non-permanent types (Instant/Sorcery) against one naming a
+    permanent type (see `_types_provably_disjoint`). A plain disjoint type
+    set beyond that one pairing, and any `keywords_any` set no matter how it
+    compares, prove nothing: an object can carry more than one permanent
+    type or more than one keyword at once. `False` (proves nothing) whenever
+    either play's first move has no card lookup at all, or the two share no
+    provable dimension - never a false positive against an overlapping
+    selector, only ever a positive where the two name characteristics that
+    cannot both be true of one card at once."""
     lookup_a, lookup_b = _first_move_lookup(a), _first_move_lookup(b)
     if lookup_a is None or lookup_b is None:
         return False
@@ -827,11 +866,7 @@ def _move_selectors_disjoint(a: dict[str, Any], b: dict[str, Any]) -> bool:
         return True
     types_a = _selector_word_set(select_a, "types_all", "types_any")
     types_b = _selector_word_set(select_b, "types_all", "types_any")
-    if types_a and types_b and not types_a & types_b:
-        return True
-    keywords_a = _selector_word_set(select_a, "keywords_any")
-    keywords_b = _selector_word_set(select_b, "keywords_any")
-    return bool(keywords_a and keywords_b and not keywords_a & keywords_b)
+    return _types_provably_disjoint(types_a, types_b)
 
 
 def exclusivity(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -> list[str]:

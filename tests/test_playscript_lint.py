@@ -803,6 +803,57 @@ def test_two_plays_whose_selectors_overlap_still_conflict(root):
     assert exclusivity(a_fragment, b_fragment, {}) == []
 
 
+def test_two_permanent_type_sets_never_prove_move_selector_disjoint(root):
+    """Review finding (FD2 7b): an artifact creature matches both a
+    types_all: [Artifact] selector and a types_all: [Creature] one, so two
+    disjoint PERMANENT type sets never prove the plays' targets cannot
+    coincide - only a non-permanent type (Instant/Sorcery) against a
+    permanent one is provable."""
+    a_fragment = {
+        "moves": [{"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Artifact"]}}}]
+    }
+    b_fragment = {
+        "moves": [{"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Creature"]}}}]
+    }
+    assert exclusivity(a_fragment, b_fragment, {}) == []
+
+
+def test_disjoint_keywords_any_never_proves_move_selector_disjoint(root):
+    """Review finding (FD2 7b): a creature can carry both Flying and Trample
+    at once, so a disjoint keywords_any set never proves the two selectors'
+    targets cannot coincide."""
+    a_fragment = {
+        "moves": [
+            {
+                "kind": "cast",
+                "card": {"zone": "hand", "select": {"keywords_any": ["Flying"]}},
+            }
+        ]
+    }
+    b_fragment = {
+        "moves": [
+            {
+                "kind": "cast",
+                "card": {"zone": "hand", "select": {"keywords_any": ["Trample"]}},
+            }
+        ]
+    }
+    assert exclusivity(a_fragment, b_fragment, {}) == []
+
+
+def test_nonpermanent_type_against_permanent_type_still_proves_move_selector(root):
+    """The one type pairing CR 300.1's list can prove disjoint for every
+    printed card: Instant/Sorcery (never permanents) against a permanent
+    type - this must stay provable after narrowing the rule."""
+    a_fragment = {
+        "moves": [{"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Instant"]}}}]
+    }
+    b_fragment = {
+        "moves": [{"kind": "cast", "card": {"zone": "hand", "select": {"types_all": ["Creature"]}}}]
+    }
+    assert exclusivity(a_fragment, b_fragment, {}) == ["move_selector"]
+
+
 def test_pass_only_never_conflicts_with_a_move_bearing_play(root):
     """FD2 item 7b: a play whose only move is `pass` is a fallback."""
     put(root, play(id="a", moves=[{"kind": "pass"}]))
