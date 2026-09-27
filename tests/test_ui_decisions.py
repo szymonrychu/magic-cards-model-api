@@ -52,6 +52,17 @@ SCRY = {
     "kept_label": "top",
 }
 MULLIGAN = {**MAY, "kind": "mulligan", "prompt": "take a mulligan?", "source": None}
+# FD5 (5)/FD1: CR 702.52a's own replacement question - at most one of
+# `pending.cards` (every graveyard card whose dredge is satisfiable now),
+# built the same way `chooseCardsOptions`-backed fixtures above are.
+DREDGE = {
+    **MAY,
+    "kind": "dredge",
+    "prompt": "Dredge Stinkweed Imp instead of drawing?",
+    "source": "Stinkweed Imp",
+    "cards": ["gy1", "gy2"],
+    "card_labels": ["Stinkweed Imp", "Golgari Grave-Troll"],
+}
 QUALITY = {**MAY, "kind": "choose_a_quality", "prompt": "Choose a card name"}
 # CR 510.1c, 702.19b: a 6-power trampler blocked by two creatures, so 2 and 3
 # damage are each blocker's own lethal (`lethal_damage`, aligned with
@@ -98,6 +109,7 @@ def test_every_answerable_kind_has_a_view_model() -> None:
             "choose_players",
             "order_triggers",
             "assign_combat_damage",
+            "dredge",
         ]
     )
 
@@ -133,6 +145,37 @@ def test_mulligan_means_mulligan() -> None:
     assert vm["submit"]["answer"] == {"accept": True}
     assert vm["secondary"]["label"] == "Keep"
     assert vm["secondary"]["answer"] == {"accept": False}
+
+
+def test_dredge_declines_and_draws_normally_with_none_chosen() -> None:
+    """No card ticked is CR 702.52a's own "you may instead" declined: the
+    submit button reads "Draw normally", it is always legal (0 <= 1), it
+    answers the empty `card_ids` `/decide` accepts, and there is nothing to
+    fall back to so `secondary` is absent."""
+    vm = run_module("decisions.js", "m.viewModel(p, {})", p=DREDGE)
+    assert vm["submit"]["label"] == "Draw normally"
+    assert vm["submit"]["enabled"] is True
+    assert vm["submit"]["answer"] == {"card_ids": []}
+    assert vm["secondary"] is None
+
+
+def test_dredge_replaces_the_draw_with_one_chosen_card() -> None:
+    """One card ticked flips the submit button to "Dredge" and its answer to
+    that one id; "Draw normally" becomes the secondary, so declining is still
+    one click away after having ticked a card."""
+    vm = run_module("decisions.js", "m.viewModel(p, { card_ids: ['gy1'] })", p=DREDGE)
+    assert vm["submit"]["label"] == "Dredge"
+    assert vm["submit"]["enabled"] is True
+    assert vm["submit"]["answer"] == {"card_ids": ["gy1"]}
+    assert vm["secondary"] == {"label": "Draw normally", "answer": {"card_ids": []}}
+
+
+def test_dredge_is_capped_at_one_card() -> None:
+    """CR 702.52a replaces a single draw with a single dredge - two cards
+    ticked is never a legal answer, so the submit button must disable rather
+    than let the browser post a `card_ids` `/decide`'s validator refuses."""
+    vm = run_module("decisions.js", "m.viewModel(p, { card_ids: ['gy1', 'gy2'] })", p=DREDGE)
+    assert vm["submit"]["enabled"] is False
 
 
 def test_an_open_quality_choice_offers_free_text() -> None:
