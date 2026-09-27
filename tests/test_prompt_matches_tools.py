@@ -139,6 +139,10 @@ NON_TOOL_VOCABULARY = {
     "scripts_run",
     "record_refusal",
     "resume",
+    # FD9's `repeat` move: how many iterations its loop ran, on
+    # `ScriptExit`/`RunResult` and rendered in `script_exit` - answer shape,
+    # never a tool or a parameter
+    "iterations",
     # `list_scripts`'s listing and its conflict entries - answer shape too
     # (`opposing_archetype` is also a parameter, echoed back as asserted)
     "opposing_archetype",
