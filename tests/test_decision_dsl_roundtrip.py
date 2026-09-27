@@ -1889,16 +1889,6 @@ def test_a_converted_order_triggers_executes_once_fd3_lands(
         client.delete(f"/api/games/{game2}")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Replay setup, not runtime: runtime.decide_body's `damage` branch "
-        "exists, but the second game only declares alice's attack - bob never "
-        "declares his two blocks there, so no assign_combat_damage decision "
-        "ever comes up and the run suspends (finished=False) on bob's "
-        "declare_blockers"
-    ),
-)
 def test_a_converted_assign_combat_damage_executes_once_fd3_lands(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1974,8 +1964,12 @@ def test_a_converted_assign_combat_damage_executes_once_fd3_lands(
         harbingers2 = add_card(client, game2, "Lupine Harbingers", "alice", "battlefield")["added"][
             "card_id"
         ]
-        add_card(client, game2, "Grizzly Bears", "bob", "battlefield")
-        add_card(client, game2, "Elvish Mystic", "bob", "battlefield")
+        bears2_id = add_card(client, game2, "Grizzly Bears", "bob", "battlefield")["added"][
+            "card_id"
+        ]
+        mystic2_id = add_card(client, game2, "Elvish Mystic", "bob", "battlefield")["added"][
+            "card_id"
+        ]
         client.put(f"/api/games/{game2}/step", json={"step": "beginning_of_combat"})
         uids2 = seats_for(client, game2)
         client.post(
@@ -1988,6 +1982,24 @@ def test_a_converted_assign_combat_damage_executes_once_fd3_lands(
                 "attackers": [{"card_id": harbingers2, "defender": "bob"}],
                 "reasoning": REASONING,
             },
+        )
+        client.post(
+            f"/api/games/{game2}/advance", params={"uid": uids2["alice"]}, json={"player": "alice"}
+        )
+        client.post(
+            f"/api/games/{game2}/actions/declare-blockers",
+            params={"uid": uids2["bob"]},
+            json={
+                "player": "bob",
+                "blocks": [
+                    {"blocker": bears2_id, "blocked": harbingers2},
+                    {"blocker": mystic2_id, "blocked": harbingers2},
+                ],
+                "reasoning": REASONING,
+            },
+        )
+        client.post(
+            f"/api/games/{game2}/advance", params={"uid": uids2["alice"]}, json={"player": "alice"}
         )
         result = _register_and_run(client, monkeypatch, game2, "alice", play)
         assert result.finished is True, result.to_dict()
