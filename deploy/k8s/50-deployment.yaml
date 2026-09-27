@@ -137,6 +137,13 @@ spec:
               value: medium
             - name: AGENT_NAMESPACE
               value: mtg-engine
+            # This stack's identity (`k8s_seats.LABEL_INSTANCE`): stamped on
+            # every seat Job it creates, and the only Jobs its reconcile will
+            # ever delete - another process pointed at this namespace can no
+            # longer reap this stack's seats, nor this stack another's.
+            # Required: kubernetes mode refuses to start without it.
+            - name: MTG_STACK_INSTANCE_ID
+              value: mtg-engine.mtg-stack
             - name: AGENT_IMAGE
               value: harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__
             - name: API_IMAGE

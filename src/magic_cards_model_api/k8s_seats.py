@@ -45,6 +45,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -77,6 +78,40 @@ LABEL_SEAT = "mtg/seat-uid"
 #: Anthropic API.
 LABEL_ROLE = "mtg/role"
 APP_LABEL_VALUE = "mtg-agent"
+
+#: Which api stack created this Job, valued with `K8sSettings.instance_id`.
+#: `reconcile` only ever deletes Jobs carrying its own stack's value, so a
+#: second process pointed at the same namespace - another deployment, or a
+#: laptop - can never reap the seats of a stack it does not own (2026-09-27:
+#: a test run on a laptop whose kubeconfig context was prod killed a live
+#: game's seat exactly that way).
+#:
+#: Transition rule for Jobs created before this label existed: reconcile
+#: never deletes an unlabelled Job. It is not leaked forever - every Job
+#: carries `activeDeadlineSeconds` (`SEAT_ACTIVE_DEADLINE_SECONDS`, at most
+#: 4h) and `ttlSecondsAfterFinished: 600` (`deploy/seat-job.yaml`), so the
+#: last unlabelled Job is gone at most ~4h10m after the first deploy of this
+#: change, and `release()` still deletes a seat's own Job by name.
+LABEL_INSTANCE = "mtg/stack-instance"
+
+#: The env var naming this stack's instance id. Required by `get()`.
+INSTANCE_ENV = "MTG_STACK_INSTANCE_ID"
+
+#: The explicit opt-in to build a client from a kubeconfig rather than the
+#: pod's own service account. Only the exact value "1" opts in; without it
+#: `get()` refuses to run outside a cluster instead of silently reaching
+#: whatever cluster the caller's current kubeconfig context points at.
+OUT_OF_CLUSTER_ENV = "MTG_K8S_OUT_OF_CLUSTER"
+
+#: A Kubernetes label value: at most 63 characters, alphanumerics plus
+#: `-_.`, starting and ending alphanumeric.
+_LABEL_VALUE = re.compile(r"^([A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?)?$")
+
+
+class ClusterAccessRefused(RuntimeError):
+    """`get()` will not build a Kubernetes client: not in a cluster and not
+    explicitly opted in, or no stack instance id to scope its Jobs by."""
+
 
 #: What a runner is: a seat that plays, or an advisor (B5's buddy) that
 #: reads one seat's own view and proposes. Defined here, of all places,
@@ -156,6 +191,10 @@ class K8sSettings:
     #: recorded in the guides volume and ends up in the agent's briefing and
     #: in the game's plan file (`mtg_agent/driver/revision.py`).
     guides_ref: str = "main"
+    #: This stack's identity, stamped on every Job it creates as
+    #: `LABEL_INSTANCE` and the only Jobs its `reconcile` will delete. Empty
+    #: means "owns nothing": such a `K8sSeats` reaps no Job at all.
+    instance_id: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> K8sSettings:
@@ -175,7 +214,23 @@ class K8sSettings:
                 "API_IMAGE", "harbor.szymonrichert.pl/containers/magic-cards-model-api:latest"
             ),
             guides_ref=value("GUIDES_REF", "main"),
+            instance_id=_instance_id(env),
         )
+
+    def labels(self, **labels: str) -> dict[str, str]:
+        """A Job's identity labels: `LABEL_APP`, this stack's
+        `LABEL_INSTANCE` when it has one, then `labels`."""
+        out = {LABEL_APP: APP_LABEL_VALUE}
+        if self.instance_id:
+            out[LABEL_INSTANCE] = self.instance_id
+        return out | labels
+
+
+def _instance_id(env: Mapping[str, str]) -> str:
+    value = (env.get(INSTANCE_ENV) or "").strip()
+    if not _LABEL_VALUE.match(value):
+        raise ValueError(f"{INSTANCE_ENV}={value!r} is not a valid Kubernetes label value")
+    return value
 
 
 def followup_job_name(game_id: str, uid: str) -> str:
@@ -364,7 +419,7 @@ def build_job(
     agent container as `MTG_ROLE` through `__MTG_ROLE__`.
     """
     name = job_name(game_id, uid, role)
-    labels = {LABEL_APP: APP_LABEL_VALUE, LABEL_GAME: game_id, LABEL_SEAT: uid}
+    labels = settings.labels(**{LABEL_GAME: game_id, LABEL_SEAT: uid})
     if role != ROLE_SEAT:
         labels[LABEL_ROLE] = role
     values = _seat_job_values(
@@ -422,7 +477,7 @@ def build_followup_job(
       reconcile deletes it the moment its game is forgotten or ended;
     - `activeDeadlineSeconds` is `FOLLOWUP_ACTIVE_DEADLINE_SECONDS`.
     """
-    labels = {LABEL_APP: APP_LABEL_VALUE, LABEL_GAME: game_id, LABEL_FOLLOWUP: uid}
+    labels = settings.labels(**{LABEL_GAME: game_id, LABEL_FOLLOWUP: uid})
     if role != ROLE_SEAT:
         labels[LABEL_ROLE] = role
     values = _seat_job_values(
@@ -489,7 +544,7 @@ def build_review_job(
     in `archived.ai_players`. The admin key is minted once per game and
     handed only to whoever created it, never to a seat, so presenting it
     here is what proves this Job, and not the seat, is filing."""
-    labels = {LABEL_APP: APP_LABEL_VALUE, LABEL_GAME: game_id, LABEL_REVIEW: uid}
+    labels = settings.labels(**{LABEL_GAME: game_id, LABEL_REVIEW: uid})
     values = _seat_job_values(
         game_id=game_id,
         uid=uid,
@@ -1100,13 +1155,23 @@ class K8sSeats:
                 "reconcile: live-game id query failed; refusing to delete any Job: %s", exc
             )
             return {"deleted": [], "missing": []}
-        jobs = self.batch.list_namespaced_job(
-            self.settings.namespace, label_selector=f"{LABEL_APP}={APP_LABEL_VALUE}"
-        ).items
+        instance = self.settings.instance_id
+        if instance:
+            jobs = self.batch.list_namespaced_job(
+                self.settings.namespace,
+                label_selector=f"{LABEL_APP}={APP_LABEL_VALUE},{LABEL_INSTANCE}={instance}",
+            ).items
+        else:
+            jobs = []
         present = {job.metadata.name for job in jobs}
         deleted: list[str] = []
         for job in jobs:
-            game_id = (job.metadata.labels or {}).get(LABEL_GAME)
+            labels = job.metadata.labels or {}
+            # Filtered here as well as in the selector: a lister that
+            # ignores the selector must not widen what this stack reaps.
+            if labels.get(LABEL_INSTANCE) != instance or labels.get(LABEL_APP) != APP_LABEL_VALUE:
+                continue
+            game_id = labels.get(LABEL_GAME)
             if game_id not in live_ids:
                 try:
                     self.batch.delete_namespaced_job(
@@ -1243,11 +1308,13 @@ def get() -> K8sSeats:
     with _lock:
         if _seats is not None:
             return _seats
-        try:
-            k8s_config.load_incluster_config()
-        except k8s_config.ConfigException:
-            k8s_config.load_kube_config()
         settings = K8sSettings.from_env(os.environ)
+        if not settings.instance_id:
+            raise ClusterAccessRefused(
+                f"{INSTANCE_ENV} is not set: a stack with no instance id cannot tell its own "
+                "seat Jobs from another stack's, so it will not run in kubernetes mode"
+            )
+        _load_cluster_config()
         seats = K8sSeats(settings, k8s_client.BatchV1Api(), k8s_client.CoreV1Api())
         from .store import store  # lazy: store imports nothing from here
 
@@ -1261,6 +1328,26 @@ def get() -> K8sSeats:
             )
         _seats = seats
         return _seats
+
+
+def _load_cluster_config() -> None:
+    """The pod's own service account, or - only with `OUT_OF_CLUSTER_ENV=1`
+    set explicitly - the caller's kubeconfig. Never a silent fallback: a
+    process that is not in a cluster and did not opt in is refused, so no
+    stray run (a test, a script, a dev server) can reach whatever cluster
+    the current kubeconfig context happens to point at."""
+    try:
+        k8s_config.load_incluster_config()
+        return
+    except k8s_config.ConfigException as exc:
+        if os.environ.get(OUT_OF_CLUSTER_ENV) != "1":
+            raise ClusterAccessRefused(
+                "AI_SEAT_MODE=kubernetes outside a cluster: no in-cluster service account "
+                f"({exc}). Set {OUT_OF_CLUSTER_ENV}=1 to use the current kubeconfig context "
+                "on purpose."
+            ) from exc
+    logger.warning("%s=1: using the kubeconfig's current context", OUT_OF_CLUSTER_ENV)
+    k8s_config.load_kube_config()
 
 
 def set_for_tests(seats: K8sSeats | None) -> None:

@@ -752,6 +752,23 @@ it -
 `activeDeadlineSeconds`/`ttlSecondsAfterFinished` on each Job are the whole
 backstop.
 
+`MTG_STACK_INSTANCE_ID` (required in kubernetes mode) is this stack's
+identity. Every Job it creates carries it as the `mtg/stack-instance` label,
+and reconcile deletes only the Jobs that carry its own value, so no other
+process can reap this stack's seats. The transition rule for Jobs created
+before the label existed: reconcile never deletes them. They still expire,
+because each one's `activeDeadlineSeconds` (at most 4h) and
+`ttlSecondsAfterFinished` bound it, and `release()` still deletes a seat's
+Job by name.
+
+Kubernetes mode builds its client only from the pod's in-cluster service
+account. There is no silent fallback to a kubeconfig any more: running
+outside a cluster needs `MTG_K8S_OUT_OF_CLUSTER=1` set on purpose, and then
+it uses the current kubeconfig context. Nothing in this repo sets that
+opt-in, not compose (which runs `wrapper` mode), not scripts and not tests.
+The 2026-09-27 incident is why: a test run on a laptop whose context was
+prod reconciled a live game's seat away.
+
 ### The follow-up DSL-development Job
 
 A seat's (or buddy's) handover that ends `unfinished` gets one more Job:

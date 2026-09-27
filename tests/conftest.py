@@ -4,7 +4,9 @@ in tests/fixtures/scryfall - the network is never touched."""
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ["MCM_CACHE_DIR"] = str(Path(__file__).parent / "fixtures" / "scryfall")
 
@@ -235,6 +237,79 @@ def _harness_credential(request: pytest.FixtureRequest, monkeypatch: pytest.Monk
         return original(self, method, url, **kwargs)
 
     monkeypatch.setattr(TestClient, "request", request_with_harness_credential)
+
+
+def _no_cluster(*args: object, **kwargs: object) -> None:
+    raise RuntimeError(
+        "the test suite never reaches a Kubernetes cluster - install a fake with "
+        "k8s_seats.set_for_tests(...)"
+    )
+
+
+class _NoClusterBatch:
+    """An empty in-memory stand-in for `BatchV1Api`: the default seat
+    backend every test gets, so a test that switches to
+    `AI_SEAT_MODE=kubernetes` without installing its own fake schedules
+    into nothing rather than into whatever cluster the machine can reach."""
+
+    def __init__(self) -> None:
+        self.jobs: dict[str, SimpleNamespace] = {}
+
+    def create_namespaced_job(self, namespace: str, body: dict) -> SimpleNamespace:
+        name = body["metadata"]["name"]
+        self.jobs[name] = SimpleNamespace(
+            metadata=SimpleNamespace(name=name, labels=body["metadata"]["labels"]),
+            status=SimpleNamespace(active=1, succeeded=0, failed=0),
+        )
+        return self.jobs[name]
+
+    def list_namespaced_job(self, namespace: str, label_selector: str | None = None, **kw):
+        return SimpleNamespace(items=list(self.jobs.values()))
+
+    def delete_namespaced_job(self, name: str, namespace: str, body: object = None) -> None:
+        self.jobs.pop(name, None)
+
+
+class _NoClusterCore:
+    def list_namespaced_pod(self, namespace: str, label_selector: str | None = None, **kw):
+        return SimpleNamespace(items=[])
+
+
+@pytest.fixture(autouse=True)
+def _no_real_cluster(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """2026-09-27: a test set `AI_SEAT_MODE=kubernetes` without stubbing
+    `k8s_seats.get`, which then loaded the laptop's kubeconfig - prod - and
+    reconciled a live game's seat Job away. Three independent lines now:
+    every kubernetes config loader raises, `KUBECONFIG` points nowhere, and
+    `get()` hands out an in-memory fake backend unless a test installs its
+    own."""
+    import kubernetes.config as k8s_config
+    from kubernetes.config import incluster_config, kube_config
+
+    from magic_cards_model_api import k8s_seats
+
+    monkeypatch.setenv("KUBECONFIG", "/nonexistent")
+    monkeypatch.delenv(k8s_seats.OUT_OF_CLUSTER_ENV, raising=False)
+    monkeypatch.setenv(k8s_seats.INSTANCE_ENV, "pytest")
+    for module in (k8s_config, kube_config):
+        for name in (
+            "load_kube_config",
+            "load_kube_config_from_dict",
+            "new_client_from_config",
+            "new_client_from_config_dict",
+            "load_config",
+        ):
+            if hasattr(module, name):
+                monkeypatch.setattr(module, name, _no_cluster)
+    for module in (k8s_config, incluster_config):
+        monkeypatch.setattr(module, "load_incluster_config", _no_cluster)
+    k8s_seats.set_for_tests(
+        k8s_seats.K8sSeats(
+            k8s_seats.K8sSettings(instance_id="pytest"), _NoClusterBatch(), _NoClusterCore()
+        )
+    )
+    yield
+    k8s_seats.set_for_tests(None)
 
 
 @pytest.fixture(autouse=True)

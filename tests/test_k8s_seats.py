@@ -29,6 +29,7 @@ ENV = {
     "AGENT_NAMESPACE": "mtg-engine",
     "API_SERVICE_URL": "http://mtg-stack.mtg-engine.svc.cluster.local:8000",
     "MCP_SERVICE_URL": "http://mtg-mcp.mtg-engine.svc.cluster.local:8080/mcp",
+    "MTG_STACK_INSTANCE_ID": "test-stack",
 }
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -129,6 +130,7 @@ def test_the_substituted_values_appear_where_expected() -> None:
     assert meta["namespace"] == "mtg-engine"
     assert meta["labels"] == {
         "app.kubernetes.io/name": "mtg-agent",
+        "mtg/stack-instance": "test-stack",
         "mtg/game-id": "g1",
         "mtg/seat-uid": "u1",
     }
@@ -1458,6 +1460,7 @@ def test_the_advisor_job_is_named_and_labelled_as_a_buddy() -> None:
     assert meta["name"] == "mtg-buddy-g1-a1"
     assert meta["labels"] == {
         "app.kubernetes.io/name": "mtg-agent",
+        "mtg/stack-instance": "test-stack",
         "mtg/game-id": "g1",
         "mtg/seat-uid": "a1",
         "mtg/role": "advisor",
@@ -1686,6 +1689,7 @@ def test_the_followup_job_is_its_own_job_bounded_by_its_own_deadline() -> None:
     assert job["metadata"]["name"] == "mtg-followup-g1-u1"
     labels = {
         "app.kubernetes.io/name": "mtg-agent",
+        "mtg/stack-instance": "test-stack",
         "mtg/game-id": "g1",
         k8s_seats.LABEL_FOLLOWUP: "u1",
     }
@@ -1811,6 +1815,7 @@ def test_the_review_job_is_its_own_job_labelled_and_named_on_its_own() -> None:
     assert job["metadata"]["name"] == "mtg-review-g1-u1"
     labels = {
         "app.kubernetes.io/name": "mtg-agent",
+        "mtg/stack-instance": "test-stack",
         "mtg/game-id": "g1",
         k8s_seats.LABEL_REVIEW: "u1",
     }

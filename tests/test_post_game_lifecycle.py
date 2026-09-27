@@ -26,6 +26,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from magic_cards_model_api import ai_pregame, ai_seat, audit, k8s_seats, lobby
+from tests.test_k8s_seats import ENV, FakeBatch, FakeCore, FakeDriverHttp
 
 LEGAL_DECK = "52 Mountain\n4 Grizzly Bears\n4 Lightning Bolt"
 LEGAL_DECK_B = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
@@ -152,7 +153,13 @@ def test_a_natural_game_over_starts_the_human_seats_review_job_in_kubernetes_mod
     registry is made to hold one for him anyway, standing in for an AI
     seat that was)."""
     monkeypatch.setenv("AI_SEAT_MODE", "kubernetes")
+    batch = FakeBatch()
+    fake_seats = k8s_seats.K8sSeats(
+        k8s_seats.K8sSettings.from_env(ENV), batch, FakeCore(), FakeDriverHttp({})
+    )
+    monkeypatch.setattr(k8s_seats, "get", lambda: fake_seats)
     booted = boot(client)
+    assert list(batch.jobs) == [k8s_seats.job_name(booted["game_id"], booted["seat_uids"]["bob"])]
     bob = booted["seat_uids"]["bob"]
     fresh_registry._dispatched[bob] = {"mechanism": "kubernetes"}
     calls: list[tuple[str, str, str]] = []
