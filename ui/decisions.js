@@ -178,6 +178,39 @@ function chooseCards(pending, draft) {
   };
 }
 
+/**
+ * FD5 (5)/FD1: CR 702.52a's own replacement question - at most one of
+ * `pending.cards` (every graveyard card whose dredge is satisfiable right
+ * now), or none at all to draw normally. Built on `chooseCardsOptions` the
+ * same way `chooseCards` is, but never reads `pending.amount`/`.exact`: the
+ * engine's own `Decision` for this kind carries neither (dredge is a
+ * replacement effect, not a `CHOOSE_CARDS` sizing question) and its route
+ * caps the answer at one card itself (`app.py`'s `card_ids_answer`), so the
+ * view model fixes the "at most one, zero always legal" shape directly
+ * rather than trust fields the engine never stamps for this kind.
+ */
+function dredge(pending, draft) {
+  const chosen = draft.card_ids || [];
+  const options = chooseCardsOptions(pending).map((o) => ({
+    ...o,
+    selected: chosen.includes(o.id),
+    disabled: false,
+  }));
+  return {
+    kind: pending.kind,
+    title: pending.source || "Dredge",
+    prompt: pending.prompt,
+    controls: [{ type: "options", items: options, multi: true }],
+    submit: {
+      label: chosen.length ? "Dredge" : "Draw normally",
+      enabled: chosen.length <= 1,
+      answer: { card_ids: chosen },
+    },
+    secondary: chosen.length ? { label: "Draw normally", answer: { card_ids: [] } } : null,
+    remaining: null,
+  };
+}
+
 function targetsAffordance(pending) {
   return {
     targets_anything: true,
@@ -542,6 +575,7 @@ export const DECISION_KINDS = {
   choose_players: choosePlayers,
   order_triggers: orderTriggers,
   assign_combat_damage: assignDamage,
+  dredge: dredge,
 };
 
 export function viewModel(pending, draft) {

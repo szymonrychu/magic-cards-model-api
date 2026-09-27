@@ -650,6 +650,7 @@ _DEFAULTED_KINDS = frozenset(
         "assign_combat_damage",
         "choose_pile",
         "choose_players",
+        "dredge",
     }
 )
 
@@ -742,6 +743,11 @@ def decide_body(pending: dict[str, Any], player: str) -> dict[str, Any]:
         body["choice"] = options[0] if options else str(pending.get("source") or "baseline")
     elif kind == "assign_combat_damage":
         body["damage"] = _combat_damage_answer(pending)
+    elif kind == "dredge":
+        # CR 702.52a's "you may instead": nobody choosing means declining and
+        # drawing normally, the same "leave the more ordinary outcome alone"
+        # posture `scry`/`surveil` already take above.
+        body["card_ids"] = []
     else:  # pragma: no cover - `test_every_answerable_decision_kind_has_a_default_body`
         raise ValueError(f"the baseline has no default answer for a {kind!r} decision")
     return body

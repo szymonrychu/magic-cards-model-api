@@ -736,7 +736,7 @@ instead - a script never answers them as a decision either, but the refusal
 names the real fix: use the `declare_attackers`/`declare_blockers` move
 (M2/M3 above), not an answer item.
 
-- Decision kinds: `assign_combat_damage`, `choose_a_mode`, `choose_a_quality`, `choose_cards`, `choose_pile`, `choose_players`, `choose_targets`, `declare_attackers`, `declare_blockers`, `may`, `mulligan`, `opening_hand_action`, `order_triggers`, `pay_energy`, `pay_energy_amount`, `pay_life`, `pay_life_amount`, `pay_mana`, `put_on_top_or_bottom`, `scry`, `surveil`
+- Decision kinds: `assign_combat_damage`, `choose_a_mode`, `choose_a_quality`, `choose_cards`, `choose_pile`, `choose_players`, `choose_targets`, `declare_attackers`, `declare_blockers`, `dredge`, `may`, `mulligan`, `opening_hand_action`, `order_triggers`, `pay_energy`, `pay_energy_amount`, `pay_life`, `pay_life_amount`, `pay_mana`, `put_on_top_or_bottom`, `scry`, `surveil`
 - Never answered:
 
 ### D2: the standalone pending-decision answer

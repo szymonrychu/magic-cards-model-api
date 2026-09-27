@@ -4672,6 +4672,7 @@ def stage_adhoc_script(
         raise KeyError("that credential does not stage a script under that uid")
     if store.player_for_uid(game_id, uid) is None and player_for_advisor_uid(game_id, uid) is None:
         raise KeyError(f"no seat or advisor {uid} in this game")
+    records.require_reasoning(game_id, uid, req.reasoning)
     return records.stage_adhoc_script(game_id, uid, req.play, req.reasoning)
 
 
