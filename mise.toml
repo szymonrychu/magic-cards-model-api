@@ -79,6 +79,16 @@ run = "uv run alembic upgrade head"
 description = "Run the full suite against real postgres (T9): brings up docker compose's `postgres` locally, or uses MCM_TEST_DATABASE_URL as-is when it is already set (CI's service container). Always exercises the postgres-backed tests - fails loudly rather than skip if it cannot reach a database."
 run = """
 set -eu
+# scripts/compose_env.py: a worktree checkout (same basename as the main
+# checkout everywhere) otherwise derives docker compose's SAME default
+# project name as the main checkout - see that module's docstring for the
+# shared-volume password corruption this caused for real. COMPOSE_PROJECT_NAME
+# keeps every docker compose invocation below isolated per checkout;
+# POSTGRES_HOST_PORT is 5432 for the main checkout (unchanged) and an
+# ephemeral (0) host port for a worktree, whose actual bound port is read
+# back below rather than assumed.
+eval "$(uv run python scripts/compose_env.py)"
+export COMPOSE_PROJECT_NAME POSTGRES_HOST_PORT
 if [ -z "${MCM_TEST_DATABASE_URL:-}" ]; then
   # `docker compose` interpolates every service's variables even when only
   # `postgres` is targeted - `game`/`agent`/`driver` require MTG_DECKS
@@ -88,6 +98,15 @@ if [ -z "${MCM_TEST_DATABASE_URL:-}" ]; then
   POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
   export POSTGRES_PASSWORD
   docker compose up -d postgres
+  # A worktree's postgres (COMPOSE_PROJECT_NAME suffixed off the main
+  # checkout's) is throwaway - a fresh ephemeral-port container/volume per
+  # run, never the main checkout's own long-lived one - so it is torn down
+  # here on every exit path (pass, fail, or Ctrl-C) rather than left running.
+  # The main checkout's own postgres is untouched: no trap, same as before.
+  if [ "$COMPOSE_PROJECT_NAME" != "magic-cards-model-api" ]; then
+    cleanup_worktree_postgres() { docker compose down -v postgres >/dev/null 2>&1 || true; }
+    trap cleanup_worktree_postgres EXIT
+  fi
   ready=0
   for _ in $(seq 1 60); do
     # -h 127.0.0.1 on purpose: alembic below connects over TCP, so that is what
@@ -103,7 +122,10 @@ if [ -z "${MCM_TEST_DATABASE_URL:-}" ]; then
     echo "test:pg: postgres never became ready (pg_isready kept failing for 60s) - refusing to silently skip the postgres suite" >&2
     exit 1
   fi
-  export MCM_TEST_DATABASE_URL="postgresql+psycopg://${POSTGRES_USER:-mtg}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB:-mtg}"
+  # Never assume :5432 - POSTGRES_HOST_PORT may be 0 (ephemeral) for a
+  # worktree, so the ACTUAL bound host port is read back from compose itself.
+  actual_port="$(docker compose port postgres 5432 | sed 's/.*://')"
+  export MCM_TEST_DATABASE_URL="postgresql+psycopg://${POSTGRES_USER:-mtg}:${POSTGRES_PASSWORD}@localhost:${actual_port}/${POSTGRES_DB:-mtg}"
 fi
 DATABASE_URL="$MCM_TEST_DATABASE_URL" uv run alembic upgrade head
 # MCM_REQUIRE_POSTGRES_TESTS=1 turns a missing/unreachable database into a
@@ -129,6 +151,11 @@ description = "Play N seeded games of the agent seat against the zero-LLM baseli
 # from meaning "10 games played and nothing recorded".
 run = """
 set -eu
+# See test:pg's own comment on the matching line: keeps this task's docker
+# compose invocations isolated per checkout instead of colliding on the same
+# project name every worktree's basename otherwise produces.
+eval "$(uv run python scripts/compose_env.py)"
+export COMPOSE_PROJECT_NAME POSTGRES_HOST_PORT
 if [ -z "${DATABASE_URL:-}" ]; then
   # `docker compose` interpolates every service's variables even when only
   # `postgres` is targeted - `game`/`agent`/`driver` require MTG_DECKS - so a
@@ -152,7 +179,9 @@ if [ -z "${DATABASE_URL:-}" ]; then
     echo "eval:gauntlet: postgres never became ready (pg_isready kept failing for 60s) - refusing to run a gauntlet whose ledger nothing could read" >&2
     exit 1
   fi
-  export DATABASE_URL="postgresql+psycopg://${POSTGRES_USER:-mtg}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB:-mtg}"
+  # Never assume :5432 - see test:pg's own comment on the matching line.
+  actual_port="$(docker compose port postgres 5432 | sed 's/.*://')"
+  export DATABASE_URL="postgresql+psycopg://${POSTGRES_USER:-mtg}:${POSTGRES_PASSWORD}@localhost:${actual_port}/${POSTGRES_DB:-mtg}"
 fi
 uv run alembic upgrade head
 uv run python scripts/eval_gauntlet.py "$@"
@@ -162,6 +191,10 @@ uv run python scripts/eval_gauntlet.py "$@"
 description = "Bring up postgres + game + continuous agent + driver"
 run = """
 set -eu
+# See test:pg's own comment on the matching line: isolates this stack's
+# project name (and postgres host port) per checkout.
+eval "$(uv run python scripts/compose_env.py)"
+export COMPOSE_PROJECT_NAME POSTGRES_HOST_PORT
 POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
 export POSTGRES_PASSWORD
 docker compose up --build
@@ -171,6 +204,8 @@ docker compose up --build
 description = "Stop the compose stack. Pass -v to drop the postgres and cache volumes."
 run = """
 set -eu
+eval "$(uv run python scripts/compose_env.py)"
+export COMPOSE_PROJECT_NAME POSTGRES_HOST_PORT
 POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
 export POSTGRES_PASSWORD
 export MTG_DECKS="${MTG_DECKS:-/tmp}"
@@ -181,6 +216,8 @@ docker compose down "$@"
 description = "Bring up the Opus-vs-Opus stack (DR7): postgres + game + two agent/driver pairs, one per seat, routed by DRIVER_URLS."
 run = """
 set -eu
+eval "$(uv run python scripts/compose_env.py)"
+export COMPOSE_PROJECT_NAME POSTGRES_HOST_PORT
 POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
 export POSTGRES_PASSWORD
 docker compose -f docker-compose.aivai.yml up --build
@@ -190,6 +227,8 @@ docker compose -f docker-compose.aivai.yml up --build
 description = "Stop the Opus-vs-Opus stack. Pass -v to drop the postgres, cache and guides volumes."
 run = """
 set -eu
+eval "$(uv run python scripts/compose_env.py)"
+export COMPOSE_PROJECT_NAME POSTGRES_HOST_PORT
 POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
 export POSTGRES_PASSWORD
 export MTG_DECKS="${MTG_DECKS:-/tmp}"

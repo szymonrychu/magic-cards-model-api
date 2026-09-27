@@ -37,7 +37,13 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?}
       - POSTGRES_DB=${POSTGRES_DB:-mtg}
     ports:
-      - "5432:5432"
+      # POSTGRES_HOST_PORT defaults to 5432 (unchanged) for the main
+      # checkout; scripts/compose_env.py exports 0 (an OS-assigned ephemeral
+      # port) for a worktree checkout, so a worktree's own postgres never
+      # fights the main checkout's for the fixed host port. Callers that
+      # bring this service up read the ACTUAL bound port back with
+      # `docker compose port postgres 5432` rather than assuming :5432.
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

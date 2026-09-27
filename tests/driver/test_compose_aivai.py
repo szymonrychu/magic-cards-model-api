@@ -42,6 +42,14 @@ def test_the_single_seat_compose_file_is_unchanged() -> None:
     }
 
 
+def test_the_aivai_postgres_host_port_is_overridable_not_hardcoded(compose) -> None:
+    """Same reasoning as docker-compose.yml's own postgres service: a
+    worktree checkout needs an ephemeral host port, not a fixed :5432."""
+    ports = [str(p) for p in compose["services"]["postgres"]["ports"]]
+    assert any("POSTGRES_HOST_PORT" in p and p.endswith(":5432") for p in ports), ports
+    assert "5432:5432" not in ports
+
+
 def test_the_aivai_file_has_two_of_every_wrapper_mode_service(compose) -> None:
     assert set(compose["services"]) == {
         "postgres",

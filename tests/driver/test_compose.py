@@ -50,6 +50,16 @@ def test_the_game_serves_8000_and_can_read_the_guides(compose):
     assert any("/guides" in str(v) for v in game["volumes"])
 
 
+def test_postgres_host_port_is_overridable_not_hardcoded(compose):
+    """A worktree checkout's postgres must be able to bind an ephemeral host
+    port (scripts/compose_env.py exports POSTGRES_HOST_PORT=0 for it) rather
+    than fighting the main checkout's own postgres for the fixed :5432 - see
+    that module's own docstring."""
+    ports = [str(p) for p in compose["services"]["postgres"]["ports"]]
+    assert any("POSTGRES_HOST_PORT" in p and p.endswith(":5432") for p in ports), ports
+    assert "5432:5432" not in ports
+
+
 def test_the_agent_guides_volume_is_writable_and_is_not_a_bind_of_mtg_decks(compose):
     """A15: the agent commits guide changes (`~/.gitconfig`'s credential
     helper, `bootstrap.write_gitconfig`), so its `/guides` must be writable -

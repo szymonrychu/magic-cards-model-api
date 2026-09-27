@@ -53,6 +53,18 @@ def test_test_pg_task_fails_loudly_if_postgres_never_comes_up() -> None:
     assert "exit 1" in run
 
 
+def test_test_pg_task_tears_down_a_worktrees_own_throwaway_postgres() -> None:
+    """A worktree's postgres is its own throwaway project (COMPOSE_PROJECT_NAME
+    suffixed off the main checkout's) - it must clean itself up rather than
+    accumulate a fresh container/volume on every `test:pg` run. The main
+    checkout's own long-lived postgres (COMPOSE_PROJECT_NAME unchanged) must
+    never be torn down by this task."""
+    run = _mise()["tasks"]["test:pg"]["run"]
+    assert "trap" in run
+    assert "docker compose down -v postgres" in run
+    assert '"$COMPOSE_PROJECT_NAME" != "magic-cards-model-api"' in run
+
+
 # -- eval:gauntlet (P5) ------------------------------------------------------
 #
 # The measuring stick has to be one command, or it is not a measuring stick -
@@ -157,3 +169,44 @@ def test_the_aivai_compose_down_task_forwards_its_own_arguments() -> None:
 def test_the_aivai_compose_down_task_defaults_mtg_decks_like_the_single_seat_one() -> None:
     run = _mise()["tasks"]["compose:aivai:down"]["run"]
     assert 'MTG_DECKS="${MTG_DECKS:-/tmp}"' in run
+
+
+# -- per-checkout compose isolation -------------------------------------------
+#
+# Every git worktree checkout of this repo shares the SAME basename
+# (`magic-cards-model-api`), which is docker compose's own default project
+# name - so without an explicit override, a worktree's `docker compose up`
+# attaches to the main checkout's own project: same volume, same container,
+# but scripts/postgres-password.sh reads a per-checkout password. See
+# scripts/compose_env.py's own docstring for the corruption that caused for
+# real. Every task that invokes `docker compose` must run that derivation and
+# export its result before touching compose.
+
+_COMPOSE_TASKS = [
+    "test:pg",
+    "eval:gauntlet",
+    "compose",
+    "compose:down",
+    "compose:aivai",
+    "compose:aivai:down",
+]
+
+
+def test_every_compose_invoking_task_derives_and_exports_the_project_name() -> None:
+    mise = _mise()
+    for task in _COMPOSE_TASKS:
+        run = mise["tasks"][task]["run"]
+        assert "scripts/compose_env.py" in run, task
+        assert "export COMPOSE_PROJECT_NAME POSTGRES_HOST_PORT" in run, task
+
+
+def test_postgres_bring_up_tasks_read_back_the_actual_bound_port() -> None:
+    """`test:pg`/`eval:gauntlet` bring postgres up themselves and must never
+    hardcode `:5432` in the connection string they build - POSTGRES_HOST_PORT
+    is ephemeral (0) for a worktree, so the ACTUAL bound port has to be read
+    back from compose."""
+    mise = _mise()
+    for task in ("test:pg", "eval:gauntlet"):
+        run = mise["tasks"][task]["run"]
+        assert "docker compose port postgres 5432" in run, task
+        assert "localhost:5432" not in run, task
