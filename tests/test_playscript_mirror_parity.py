@@ -2,12 +2,8 @@
 the api's own vocabulary constants verbatim - `CAST_COSTS`, `STEPS`, move
 kinds, decision kinds, the amount-answer field set and the shared bounds.
 Skipped outright when the mtg-decks checkout is not present (this repo does
-not depend on it); marked `xfail(strict=True)` otherwise, because the mirror
-is known to be behind today (missing emerge/prowl/sneak/spectacle/surge/
-web-slinging in its own `CAST_COSTS`, missing `first_strike_damage` in its
-own `STEPS`, and missing every FD2 addition this task's own vocabulary just
-added) - FD8 brings it into parity and removes this marker in the same
-landing, or the merger does when FD8 lands."""
+not depend on it). FD8 (mtg-decks a120e3f) brought the mirror into parity, so
+this now asserts parity outright rather than expecting failure."""
 
 from __future__ import annotations
 
@@ -35,7 +31,6 @@ def _load_mirror() -> ModuleType:
     return module
 
 
-@pytest.mark.xfail(strict=True, reason="FD8 mirror")
 def test_the_mirror_matches_the_api_schemas_vocabulary_and_bounds() -> None:
     mirror = _load_mirror()
     problems: list[str] = []
@@ -62,24 +57,16 @@ def test_the_mirror_matches_the_api_schemas_vocabulary_and_bounds() -> None:
     )
     check("POSITION_DECISION_KINDS", mirror.POSITION_DECISION_KINDS, schema.POSITION_DECISION_KINDS)
     check("TARGETS_DECISION_KINDS", mirror.TARGETS_DECISION_KINDS, schema.TARGETS_DECISION_KINDS)
-    # FD2's own new dimensions - present on the api side now, and only on the
-    # mirror once FD8 lands.
-    check(
-        "ORDER_DECISION_KINDS",
-        getattr(mirror, "ORDER_DECISION_KINDS", ()),
-        schema.ORDER_DECISION_KINDS,
-    )
-    check(
-        "DAMAGE_DECISION_KINDS",
-        getattr(mirror, "DAMAGE_DECISION_KINDS", ()),
-        schema.DAMAGE_DECISION_KINDS,
-    )
+    # FD2's own new dimensions - mirrored since FD8, so these are plain
+    # attribute access rather than a missing-attribute fallback.
+    check("ORDER_DECISION_KINDS", mirror.ORDER_DECISION_KINDS, schema.ORDER_DECISION_KINDS)
+    check("DAMAGE_DECISION_KINDS", mirror.DAMAGE_DECISION_KINDS, schema.DAMAGE_DECISION_KINDS)
     check(
         "CHOICE_FROM_DECISION_KINDS",
-        getattr(mirror, "CHOICE_FROM_DECISION_KINDS", ()),
+        mirror.CHOICE_FROM_DECISION_KINDS,
         schema.CHOICE_FROM_DECISION_KINDS,
     )
-    check("KEYWORD_ACTIONS", getattr(mirror, "KEYWORD_ACTIONS", ()), schema.KEYWORD_ACTIONS)
+    check("KEYWORD_ACTIONS", mirror.KEYWORD_ACTIONS, schema.KEYWORD_ACTIONS)
 
     for name in (
         "MAX_TARGETS",
