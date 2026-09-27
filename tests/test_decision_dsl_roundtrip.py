@@ -29,15 +29,10 @@ pool); this file's own `choose_a_quality` coverage (Utopia Sprawl's colour,
 the kind as a whole converts, validates, lints and executes both ways -
 G15's "does not resolve to a card" branch and its "does" branch alike.
 
-**Execution.** `runtime.run_script` (FD3) does not yet know `keyword_action`,
-`mulligan`, `repeat`, or the `order`/`damage`/`choice_from` answer fields -
-every one of those falls through `_move_request`'s own last branch (the
-`play_land` case) today, so running one of those converted plays through the
-real runner does the wrong thing, or nothing honest at all. Those execution
-assertions are written now, watched failing for exactly that reason, and
-marked `xfail(strict=True)` until FD3 lands; conversion, `schema.play_errors`
-and lint are never behind that marker - those three already have everything
-FD2 and FD5 parts 1-4 give this module."""
+**Execution.** Every converted play here is also run through the real
+`runtime.run_script` (FD3). The one execution assertion still marked
+`xfail(strict=True)` says why on its own marker; conversion,
+`schema.play_errors` and lint are never behind that marker."""
 
 from __future__ import annotations
 
@@ -462,8 +457,7 @@ def test_group_1_cast_play_land_activate_and_keyword_actions(
     # (activate) are FD5 part 1's own job to add to the ledger - review
     # finding 4: asserting their *absence* here locked in that gap instead
     # of testing FD4's own requirement. `test_group_1b_...` below asserts
-    # the positive shape `xfail(strict=True)`, so this stays honest about
-    # what still does not work rather than quietly passing either way.
+    # the positive shape.
     #
     # Bonecrusher Giant (Stomp) is a genuinely different, permanent case:
     # it is an Adventure card, and the view has no per-face `type_line` for
@@ -504,21 +498,6 @@ def test_group_1_cast_play_land_activate_and_keyword_actions(
     ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Review finding 4: FD5 part 1 has not landed on api main - "
-        "action_cast logs only card/from_zone/spell_face/targets/"
-        "mana_sources, and action_activate only card_id/ability_index/"
-        "targets/mana_sources, so _add_cast_fields/_add_activate_fields "
-        "have no x_value/optional_costs/convoke/sacrificing/color to read "
-        "off a real ledger row yet. This is the requirement's own positive "
-        "shape (test_decision_dsl.py's synthetic-row tests already prove "
-        "_add_cast_fields/_add_activate_fields read it correctly once it "
-        "exists) - FD4 is not complete until FD5 lands these fields and "
-        "this test goes green on its own, with no code change here."
-    ),
-)
 def test_group_1b_cast_and_activate_rich_fields_once_fd5_logs_them(
     client: TestClient, game: str
 ) -> None:
@@ -1050,17 +1029,6 @@ def test_group_3b_choose_a_quality_naming_a_real_card_gives_choice_from(
 # ===========================================================================
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FD5 part 4: opening.py's mulligan_declared/opening_hand_action rows "
-        "carry no `allowed` key yet, so decision_rows' own committing filter "
-        "(`detail.get('allowed') is not True`) drops them before conversion "
-        "ever runs - _mulligan_declared_play/_opening_hand_action_play are "
-        "fully implemented and unit-tested (test_decision_dsl.py) against "
-        "the row shape FD5 part 4 will produce."
-    ),
-)
 def test_group_4_mulligan_with_bottom_and_opening_hand_action(
     client: TestClient, tmp_path: Path
 ) -> None:
@@ -1211,10 +1179,6 @@ def test_a_converted_cast_with_targets_executes_to_the_same_outcome(
         client.delete(f"/api/games/{game2}")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="FD3: runtime.py's _move_request has no keyword_action branch yet",
-)
 def test_a_converted_suspend_executes_once_fd3_lands(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1257,10 +1221,6 @@ def test_a_converted_suspend_executes_once_fd3_lands(
         client.delete(f"/api/games/{game2}")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="FD3: runtime.py has no mulligan-move executor yet",
-)
 def test_a_converted_mulligan_move_executes_once_fd3_lands(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1268,10 +1228,9 @@ def test_a_converted_mulligan_move_executes_once_fd3_lands(
     a plain keep (`tests/test_decision_dsl.py::
     test_mulligan_declared_keep_gives_a_mulligan_move` proves this is what a
     real `mulligan_declared` row converts to). Built directly rather than
-    read back from a live game's own review, since FD5 part 4 has not yet
-    made that row reach `decisions` at all (see the xfail'd
-    `test_group_4_mulligan_with_bottom_and_opening_hand_action` above) - this
-    test's own point is the *runtime* gap, not that one."""
+    read back from a live game's own review, so this test's own point stays
+    the runtime executor alone (`test_group_4_mulligan_with_bottom_and_
+    opening_hand_action` above covers the live row)."""
     play = {
         "schema_version": 1,
         "id": "decision-mulligan",
@@ -1895,13 +1854,6 @@ def test_a_converted_choice_answer_executes_to_the_same_outcome(
         client.delete(f"/api/games/{game2}")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FD3: runtime.decide_body has no `order` branch yet - order_triggers "
-        "falls through to its own UNFORESEEN fallback"
-    ),
-)
 def test_a_converted_order_triggers_executes_once_fd3_lands(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1940,8 +1892,11 @@ def test_a_converted_order_triggers_executes_once_fd3_lands(
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "FD3: runtime.decide_body has no `damage` branch yet - "
-        "assign_combat_damage falls through to its own UNFORESEEN fallback"
+        "Replay setup, not runtime: runtime.decide_body's `damage` branch "
+        "exists, but the second game only declares alice's attack - bob never "
+        "declares his two blocks there, so no assign_combat_damage decision "
+        "ever comes up and the run suspends (finished=False) on bob's "
+        "declare_blockers"
     ),
 )
 def test_a_converted_assign_combat_damage_executes_once_fd3_lands(
