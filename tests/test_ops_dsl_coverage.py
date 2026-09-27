@@ -39,7 +39,12 @@ def test_ops_dsl_coverage_reads_a_finished_game_with_no_per_game_admin_key(
     info = _played_out(client)
     game_id = info["game_id"]
     try:
-        response = client.get("/api/ops/dsl-coverage", params={"key": "the-real-token"})
+        # The route reads oldest-first and stops at `limit` (default 200); in a
+        # shared test store other tests' games come first, so read them all.
+        every_game = len(store.ids_since(None))
+        response = client.get(
+            "/api/ops/dsl-coverage", params={"key": "the-real-token", "limit": every_game}
+        )
         assert response.status_code == 200, response.text
         body = response.json()
 
