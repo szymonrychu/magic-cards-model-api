@@ -168,10 +168,13 @@ def cancel_probe(ctx: Any) -> Callable[[], bool]:
 #: with that state echoed, and every SDK gives up past 10 rounds
 #: (`DEFAULT_INPUT_REQUIRED_MAX_ROUNDS` in the python SDK, `maxRounds` in the
 #: typescript SDK Claude Code runs, a hard constant in csharp and go; Claude
-#: Code exposes no setting to raise it). 8 keeps two rounds of margin under
-#: that cap for a client that counts its first answer or its last retry
-#: differently.
-INPUT_REQUIRED_MAX_ROUNDS = 8
+#: Code exposes no setting to raise it). Since a retry can never carry an
+#: answer, each extra round is pure latency - Claude Code's driver sleeps
+#: 250ms before every state-only retry (measured in its 2.1.283 bundle), so
+#: the earlier value 8 cost ~1.75s per decision-bearing call. 1 keeps the
+#: distinct `input_required` shape on the first answer and returns plain
+#: text on the very first retry.
+INPUT_REQUIRED_MAX_ROUNDS = 1
 
 #: The key `_tool_result` stamps into `request_state` to count those rounds;
 #: the client echoes it back byte-exact on each retry and it never reaches

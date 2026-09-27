@@ -101,6 +101,14 @@ def test_the_round_cap_sits_below_every_sdk_clients_own():
     assert 1 <= INPUT_REQUIRED_MAX_ROUNDS < client_driver.DEFAULT_INPUT_REQUIRED_MAX_ROUNDS
 
 
+def test_the_round_cap_is_one_round():
+    """One `input_required` round, then plain text on the first retry: a
+    retry can never carry an answer (we send no `input_requests`), so every
+    extra round is only the client's backoff sleep (250ms each in Claude
+    Code's driver) spent before the seat sees its decision."""
+    assert INPUT_REQUIRED_MAX_ROUNDS == 1
+
+
 def test_retry_rounds_are_counted_and_end_in_plain_text_without_rerunning_the_action(
     client, game, monkeypatch
 ):
