@@ -124,6 +124,15 @@ def test_done_is_written_only_after_the_subagent_result_is_in(tmp_path, monkeypa
         assert status["state"] == "done"
         assert status["turnId"] == turn_id
 
+        # The driver writes the marker first and logs "handover ...: done"
+        # right after, so the log line can trail the marker by a moment.
+        def done_logged():
+            return any(
+                m.startswith("handover ") and m.endswith(": done")
+                for m in (record.getMessage() for record in caplog.records)
+            )
+
+        wait_for(done_logged)
         messages = [record.getMessage() for record in caplog.records]
         finished = next(i for i, m in enumerate(messages) if "background tasks finished" in m)
         marked = next(
