@@ -327,6 +327,107 @@ def test_a_plain_permanent_without_the_equipment_flag_never_offers_equip():
     assert call("m.abilityMenuItems(plan, card)", plan=plan, card=card) == []
 
 
+def test_a_room_menu_offers_unlock_for_each_locked_door_named_by_the_row():
+    """CR 709.5e/709.5j: Unholy Annex // Ritual Chamber has no printed
+    activated ability at all (unlock is not one, the same reason equip is
+    not - `app.js`'s `openPermanentMenu` reads `door` off the engine's own
+    legal-actions answer rather than off the card), so with both halves
+    still locked the menu offers one Unlock item per door, each carrying
+    that door's own name on both its key and its `match` - the field
+    `matchesAction` needs to tell two `unlock_door` rows on the same card
+    apart."""
+    plan = {
+        "kind": "menu",
+        "abilities": [],
+        "vehicle": False,
+        "doors": ["Unholy Annex", "Ritual Chamber"],
+    }
+    card = {"id": "rm1", "name": "Unholy Annex // Ritual Chamber", "abilities": []}
+    assert call("m.abilityMenuItems(plan, card)", plan=plan, card=card) == [
+        {
+            "key": "unlock:Unholy Annex",
+            "label": "Unlock Unholy Annex",
+            "sublabel": "",
+            "match": {
+                "card_id": "rm1",
+                "kind": "unlock_door",
+                "ability_index": None,
+                "door": "Unholy Annex",
+            },
+        },
+        {
+            "key": "unlock:Ritual Chamber",
+            "label": "Unlock Ritual Chamber",
+            "sublabel": "",
+            "match": {
+                "card_id": "rm1",
+                "kind": "unlock_door",
+                "ability_index": None,
+                "door": "Ritual Chamber",
+            },
+        },
+    ]
+
+
+def test_a_room_with_one_locked_door_offers_just_that_one():
+    plan = {"kind": "menu", "abilities": [], "vehicle": False, "doors": ["Ritual Chamber"]}
+    card = {"id": "rm1", "name": "Unholy Annex // Ritual Chamber", "abilities": []}
+    items = call("m.abilityMenuItems(plan, card)", plan=plan, card=card)
+    assert [i["key"] for i in items] == ["unlock:Ritual Chamber"]
+
+
+def test_a_plain_permanent_with_no_doors_field_never_offers_unlock():
+    plan = {"kind": "menu", "abilities": [], "vehicle": False}
+    card = {"id": "pw1", "name": "Test Planeswalker", "abilities": []}
+    assert call("m.abilityMenuItems(plan, card)", plan=plan, card=card) == []
+
+
+def test_two_unlock_door_rows_on_one_room_are_told_apart_by_their_own_door():
+    """The same collision `matchesAction`'s own docstring already argues for
+    a split card's two cast rows: without comparing `door`, either
+    `unlock_door` row would enrich BOTH menu items, so an unaffordable
+    Ritual Chamber could grey out the (perfectly legal) Unholy Annex item
+    too."""
+    items = [
+        {
+            "key": "unlock:Unholy Annex",
+            "label": "Unlock Unholy Annex",
+            "sublabel": "",
+            "match": {
+                "card_id": "rm1",
+                "kind": "unlock_door",
+                "ability_index": None,
+                "door": "Unholy Annex",
+            },
+        },
+        {
+            "key": "unlock:Ritual Chamber",
+            "label": "Unlock Ritual Chamber",
+            "sublabel": "",
+            "match": {
+                "card_id": "rm1",
+                "kind": "unlock_door",
+                "ability_index": None,
+                "door": "Ritual Chamber",
+            },
+        },
+    ]
+    rows = [
+        {
+            "kind": "unlock_door",
+            "card_id": "rm1",
+            "ability_index": None,
+            "door": "Ritual Chamber",
+            "affordable": "no",
+            "unaffordable_reason": "not enough mana: needs {3}{B}{B}",
+        },
+    ]
+    assert call("m.enrichItems(items, rows)", items=items, rows=rows) == [
+        items[0],
+        {**items[1], "disabled": True, "sublabel": "not enough mana: needs {3}{B}{B}"},
+    ]
+
+
 def test_parse_candidate_line_splits_the_id_from_the_display_name():
     """`affordances.candidate_line`'s own format:
     `"<uuid> <name> (<zone>, <controller>)"` - the id is the first

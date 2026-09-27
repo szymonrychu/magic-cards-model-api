@@ -325,7 +325,9 @@ export function permissionMenuItems(permission) {
  * the ability's own index (not its position in this list - a permanent can
  * offer ability 0 and ability 2 with nothing offerable between them), then
  * Equip (CR 702.6a) for an Equipment the engine's own legal-actions answer
- * currently offers it on, then Crew last for a Vehicle.
+ * currently offers it on, then Crew for a Vehicle, then Unlock <door>
+ * (CR 709.5e) for each locked door of a Room the engine's own legal-actions
+ * answer still offers.
  *
  * A one-ability permanent's plan is `{kind: "activate", abilityIndex}` and
  * names no list at all, because the click it comes from used to activate
@@ -345,7 +347,14 @@ export function permissionMenuItems(permission) {
  * (`action_rows.legal_action_rows`), so the item must not be offered at all
  * outside a main phase - `app.js`'s `openPermanentMenu` sets this flag from
  * that answer, never from the card alone. The match names `ability_index:
- * null`, the same shape `action_rows.is_equip_row` requires of the row. */
+ * null`, the same shape `action_rows.is_equip_row` requires of the row.
+ *
+ * `plan.doors` is the same idea again, for CR 709.5e: which of a Room's own
+ * printed halves are still locked is board state (`locked_doors`), not
+ * something the type line alone says, and a locked half's own `door` name is
+ * exactly what `POST .../actions/unlock-door` needs, so it rides both the
+ * item's key and its `match` - a Room with both halves locked gets two
+ * items, one per door, told apart by `door` alone (`matchesAction`). */
 export function abilityMenuItems(plan, card) {
   const cardId = card && card.id;
   const abilities = plan.kind === "activate" ? soleAbility(plan, card) : plan.abilities || [];
@@ -358,6 +367,16 @@ export function abilityMenuItems(plan, card) {
     );
   }
   if (plan.vehicle) items.push(item("crew", "Crew"));
+  for (const door of plan.doors || []) {
+    items.push(
+      item(
+        `unlock:${door}`,
+        `Unlock ${door}`,
+        "",
+        cardId ? { card_id: cardId, kind: "unlock_door", ability_index: null, door } : null
+      )
+    );
+  }
   return items;
 }
 
@@ -531,14 +550,16 @@ function unreadableModeNotices(modes) {
 /** The fields that identify one `Action`: which card, which entry point,
  * and - where the engine emits more than one row for the same pair - which
  * ability, which cast face (CR 709.3/CR 715.3, Wear // Tear is two `cast`
- * rows on one card) or which land face (CR 712.12). Everything else on the
- * row (its rule, its cost, its target slots) describes the action rather
- * than naming it.
+ * rows on one card), which land face (CR 712.12), or which locked door
+ * (CR 709.5e/709.5j - a Room with both halves locked is two `unlock_door`
+ * rows on one card). Everything else on the row (its rule, its cost, its
+ * target slots) describes the action rather than naming it.
  *
- * An item that names no face matches only a row that names none, which is
- * what keeps a split card's two options from both reading the other half's
- * affordability. A single-faced card's rows and items name neither, so they
- * pair exactly as they always did. */
+ * An item that names no face (or no door) matches only a row that names
+ * none, which is what keeps a split card's two options - or a Room's two
+ * doors - from both reading the other's affordability. A single-faced
+ * card's rows and items name neither, so they pair exactly as they always
+ * did. */
 function matchesAction(match, action) {
   if (!match || !action) return false;
   return (
@@ -546,7 +567,8 @@ function matchesAction(match, action) {
     match.kind === action.kind &&
     (match.ability_index ?? null) === (action.ability_index ?? null) &&
     (match.spell_face ?? null) === (action.spell_face ?? null) &&
-    (match.land_face ?? null) === (action.land_face ?? null)
+    (match.land_face ?? null) === (action.land_face ?? null) &&
+    (match.door ?? null) === (action.door ?? null)
   );
 }
 

@@ -471,12 +471,22 @@ export function planPermanentClick(card, app, state) {
   // single-ability auto-activate; `openPermanentMenu` decides whether Equip
   // actually appears in it, from the engine's own legal-actions answer.
   const equipment = /\bequipment\b/i.test(card.type_line || "");
-  if (!abilities.length && !vehicle && !equipment) {
+  // CR 709.5e: whether a Room has any locked door left to unlock is board
+  // state (which halves are already unlocked), never derivable from the
+  // printed type line alone - the same reason Equip's own flag routes to
+  // `openPermanentMenu` rather than deciding here. This only routes a Room
+  // permanent to the menu; `openPermanentMenu` decides which doors (if any)
+  // actually appear in it, from the engine's own legal-actions answer.
+  const room = /\broom\b/i.test(card.type_line || "");
+  if (!abilities.length && !vehicle && !equipment && !room) {
     return { kind: "none", reason: `${card.name} has no activated abilities` };
   }
-  if (abilities.length === 1 && !vehicle && !equipment) return { kind: "activate", abilityIndex: 0 };
+  if (abilities.length === 1 && !vehicle && !equipment && !room) {
+    return { kind: "activate", abilityIndex: 0 };
+  }
   const menu = { kind: "menu", abilities, vehicle };
   if (equipment) menu.equipment = true;
+  if (room) menu.room = true;
   return menu;
 }
 
@@ -1261,11 +1271,12 @@ async function onPermanentImpl(card, event) {
     if (plan.reason) toast(plan.reason);
     return;
   }
-  // An Equipment's menu cannot open from local state alone (see
+  // An Equipment's or a Room's menu cannot open from local state alone (see
   // `planPermanentClick`'s own comment) - it has to ask the engine whether
-  // Equip is legal right now before it can say whether the item belongs in
-  // the menu at all, not merely whether to grey it out.
-  if (plan.kind === "menu" && plan.equipment) {
+  // Equip, or CR 709.5e's unlock, is legal right now before it can say
+  // whether the item belongs in the menu at all, not merely whether to grey
+  // it out.
+  if (plan.kind === "menu" && (plan.equipment || plan.room)) {
     return openPermanentMenu(card, event, plan);
   }
   // `activate` and `menu` alike: `abilityMenuItems` reads the one ability an
@@ -1278,19 +1289,22 @@ async function onPermanentImpl(card, event) {
 }
 export const onPermanent = guardReplay(onPermanentImpl);
 
-/** The menu for an Equipment permanent (`planPermanentClick`'s `equipment`
- * flag): unlike every other action click, this one has to ask the engine
- * BEFORE opening anything, rather than opening from local state and
- * enriching afterwards (`enrichActionMenu`'s own pattern). Equip's CR 702.6a
- * "activate only as a sorcery" timing makes the engine drop the row
- * entirely outside a main phase (`action_rows.legal_action_rows`) rather
- * than mark it unaffordable, and `menus.js`'s `enrichItems` only ever
- * disables a row it can already see - so an item added unconditionally and
- * enriched afterwards would sit there, enabled, offering an action the
- * engine never listed at all. One `candidates=true` legal-actions read
- * settles both questions at once: whether Equip belongs in the menu, and,
- * if so, which creatures it may legally attach to - so `beginEquip` never
- * has to ask again.
+/** The menu for an Equipment or a Room permanent (`planPermanentClick`'s
+ * `equipment`/`room` flags): unlike every other action click, this one has
+ * to ask the engine BEFORE opening anything, rather than opening from local
+ * state and enriching afterwards (`enrichActionMenu`'s own pattern). Equip's
+ * CR 702.6a "activate only as a sorcery" timing makes the engine drop the
+ * row entirely outside a main phase (`action_rows.legal_action_rows`)
+ * rather than mark it unaffordable, and CR 709.5e's unlock is the same
+ * shape - the door is dropped once already unlocked, or outside a main
+ * phase with an empty stack (`why_cannot_unlock_door`) - and `menus.js`'s
+ * `enrichItems` only ever disables a row it can already see, so an item
+ * added unconditionally and enriched afterwards would sit there, enabled,
+ * offering an action the engine never listed at all. One `candidates=true`
+ * legal-actions read settles both questions at once: whether Equip belongs
+ * in the menu (and, if so, which creatures it may legally attach to, so
+ * `beginEquip` never has to ask again), and which of a Room's own locked
+ * doors (`Action.door`, zero, one or two) are still there to unlock.
  *
  * The anchor is resolved before the read, not after, for the reason
  * `openActionMenu`'s own comment gives: the browser nulls `event.
@@ -1315,14 +1329,24 @@ async function openPermanentMenu(card, event, plan) {
   }
   const rows = (answer && answer.actions) || [];
   const equipRow = rows.find((row) => row.card_id === card.id && row.kind === "equip");
+  // CR 709.5e/709.5j: `locked_doors` names each of a Room's still-locked
+  // halves by its own printed name, so a Room with both halves locked can
+  // carry two `unlock_door` rows for the same card - `door` is what tells
+  // them apart (`menus.abilityMenuItems`, `matchesAction`).
+  const doors = rows
+    .filter((row) => row.card_id === card.id && row.kind === "unlock_door")
+    .map((row) => row.door);
   const items = M.enrichItems(
-    M.abilityMenuItems({ ...plan, equipment: Boolean(equipRow) }, card),
+    M.abilityMenuItems({ ...plan, equipment: Boolean(equipRow), doors }, card),
     rows
   );
   if (!items.length) return;
   openCardMenuAt(anchor, card, items, (key) => {
     if (key === "crew") return beginCrew(card);
     if (key === "equip") return beginEquip(anchor, card, equipRow, answer.last_seq);
+    if (key.startsWith("unlock:")) {
+      return fireUnlockDoor(card, key.slice("unlock:".length), answer.last_seq);
+    }
     if (key.startsWith("activate:")) return beginActivate(card, Number(key.slice("activate:".length)));
   });
 }
@@ -1368,6 +1392,33 @@ export async function fireEquip(card, targetId, expectedSeq) {
   // Equip has no ribbon panel of its own to carry a per-action hold tick, so
   // this follows the stops panel's standing default, as `fire()` does when
   // nothing overrides it.
+  await afterStackAction(res, holdsPriority(null));
+  await refresh();
+}
+
+/** `POST .../actions/unlock-door` (CR 709.5e/709.5j) - the route the api,
+ * the CLI and the MCP server already share (`schemas.UnlockDoorRequest`).
+ * `door` names the locked half by its own printed name, exactly as the
+ * matching legal-actions row's `door` (`menus.abilityMenuItems`'s
+ * `Unlock <door>` item). `expectedSeq` is `fireEquip`'s own staleness guard
+ * - the `last_seq` the menu's own legal-actions read carried. No
+ * `mana_sources`: the engine's own `payment.pay()` auto-taps the rest,
+ * exactly as `fireEquip`/`cycle` already leave it to. */
+export async function fireUnlockDoor(card, door, expectedSeq) {
+  hidePopover();
+  store.set({ pendingRelease: null });
+  const body = { player: you(), card_id: card.id, door };
+  if (expectedSeq !== undefined && expectedSeq !== null) body.expected_seq = expectedSeq;
+  const res = await send("POST", gamePath("actions/unlock-door"), body);
+  if (res === null) return;
+  if (refused(res)) {
+    toast(res.reason);
+    return;
+  }
+  // CR 116.2m: a special action, so it never uses the stack - `afterStackAction`
+  // still handles it correctly (no `paused`, no owed pass beyond the standing
+  // default), the same generic shape `fireEquip`'s own comment already reads
+  // this function through even though equipping IS an activation.
   await afterStackAction(res, holdsPriority(null));
   await refresh();
 }

@@ -1483,6 +1483,32 @@ def _equip_row(target_line: str = "bears1 Grizzly Bears (battlefield, alice)") -
     }
 
 
+ROOM = {
+    "id": "rm1",
+    "name": "Unholy Annex // Ritual Chamber",
+    "type_line": "Enchantment - Room // Enchantment - Room",
+    "zone": "battlefield",
+    "controller": "alice",
+    "abilities": [],
+}
+
+
+def _unlock_door_row(door: str = "Ritual Chamber", cost: str = "{3}{B}{B}") -> dict:
+    """CR 709.5e/709.5j's engine-provided row, shaped exactly as `GET .../
+    legal-actions?candidates=true` serves it (`action_rows.legal_action_
+    rows`, `schemas.ActionRow`) - `ability_index: None`, the same shape
+    `is_equip_row` requires of its own row."""
+    return {
+        "card_id": "rm1",
+        "kind": "unlock_door",
+        "ability_index": None,
+        "rule": "CR 709.5e",
+        "door": door,
+        "cost": cost,
+        "affordable": "yes",
+    }
+
+
 def base_app(**overrides: Any) -> dict:
     return {"action": None, "decisionDraft": {}, **overrides}
 
@@ -1736,6 +1762,21 @@ def test_an_equipment_with_no_abilities_still_routes_to_a_menu() -> None:
         state=base_state(),
     )
     assert plan == {"kind": "menu", "abilities": [], "vehicle": False, "equipment": True}
+
+
+def test_a_room_with_no_abilities_still_routes_to_a_menu() -> None:
+    """CR 709.5e: a Room's own halves carry no activated ability of their
+    own for unlocking - the same reason Equip's flag has to exist - and
+    whether either half is still locked is board state, so `openPermanentMenu`
+    answers that from the engine rather than the card, exactly as it already
+    does for `equipment`. This planner only routes the click there."""
+    plan = run_app(
+        "m.planPermanentClick(room, app, state)",
+        room=ROOM,
+        app=base_app(),
+        state=base_state(),
+    )
+    assert plan == {"kind": "menu", "abilities": [], "vehicle": False, "room": True}
 
 
 def test_a_vehicle_with_an_ability_also_menus_rather_than_auto_activating() -> None:
@@ -3479,6 +3520,205 @@ def test_an_equip_refusal_shows_the_engines_reason() -> None:
         state=_click_state(battlefield=[EQUIPMENT, ATTACKING_CREATURE]),
         equipment=EQUIPMENT,
         equipRow=_equip_row(),
+        reason=reason,
+    )
+    assert result["toastHidden"] is False
+    assert result["toast"] == reason
+
+
+# -- unlock a Room's door (CR 709.5e/709.5j): offer, post, refuse -------------
+#
+# The same shape Equip's own block above argues for, and for the same
+# reason: whether either half of a Room is still locked cannot be read off
+# the card alone (`planPermanentClick`'s `room` flag), so `openPermanentMenu`
+# asks the engine before deciding whether an Unlock item belongs in the menu
+# at all. Unlock differs from Equip in needing no second, target-picking
+# popover - the door is already named on the row - so a click on the item
+# posts the route directly, the same one-step shape `cycle`'s own item takes.
+
+
+def test_unlock_door_is_offered_when_the_legal_actions_row_exists() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("legal-actions")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ actions: [doorRow], last_seq: 7 }),
+              });
+            }
+            return null;
+          };
+          await m.onPermanent(room, { currentTarget: anchor });
+          return {
+            labels: options().map((o) => o.label),
+            hidden: globalThis.__popover.hidden,
+          };
+        """,
+        state=_click_state(battlefield=[ROOM]),
+        room=ROOM,
+        doorRow=_unlock_door_row(),
+    )
+    assert result["hidden"] is False
+    assert result["labels"] == ["Unlock Ritual Chamber"]
+
+
+def test_a_room_with_both_halves_still_locked_offers_both_doors() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("legal-actions")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ actions: [door1, door2], last_seq: 7 }),
+              });
+            }
+            return null;
+          };
+          await m.onPermanent(room, { currentTarget: anchor });
+          return { labels: options().map((o) => o.label) };
+        """,
+        state=_click_state(battlefield=[ROOM]),
+        room=ROOM,
+        door1=_unlock_door_row("Unholy Annex", "{2}{B}"),
+        door2=_unlock_door_row("Ritual Chamber", "{3}{B}{B}"),
+    )
+    assert result["labels"] == ["Unlock Unholy Annex", "Unlock Ritual Chamber"]
+
+
+def test_unlock_door_is_not_offered_once_both_doors_are_already_unlocked() -> None:
+    """CR 709.5c/709.5e: `locked_doors` names only the halves still locked,
+    so a fully-unlocked Room's legal-actions answer carries no `unlock_door`
+    row at all - the same "row dropped, not disabled" shape Equip's own
+    timing restriction takes. The menu must stay just as silent: no popover,
+    no option, and no engine request made on the player's behalf beyond the
+    one read that answered this."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("legal-actions")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ actions: [], last_seq: 7 }),
+              });
+            }
+            return null;
+          };
+          await m.onPermanent(room, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            posts: globalThis.__calls.filter((c) => c.method === "POST"),
+          };
+        """,
+        state=_click_state(battlefield=[ROOM]),
+        room=ROOM,
+    )
+    assert result["hidden"] is True
+    assert result["options"] == 0
+    assert result["posts"] == []
+
+
+def test_picking_unlock_posts_the_route_with_the_door_and_expected_seq() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("legal-actions")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ actions: [doorRow], last_seq: 7 }),
+              });
+            }
+            if (method === "POST" && path.includes("actions/unlock-door")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ allowed: true, cost: "{3}{B}{B}" }),
+              });
+            }
+            return null;
+          };
+          await m.onPermanent(room, { currentTarget: anchor });
+          options()[0].click(); // "Unlock Ritual Chamber" - no second popover, unlike Equip
+          await settle();
+          return { calls: globalThis.__calls };
+        """,
+        state=_click_state(battlefield=[ROOM]),
+        room=ROOM,
+        doorRow=_unlock_door_row(),
+    )
+    posts = [
+        c for c in result["calls"] if c["method"] == "POST" and "actions/unlock-door" in c["path"]
+    ]
+    assert len(posts) == 1, result["calls"]
+    assert posts[0]["body"] == {
+        "player": "alice",
+        "card_id": "rm1",
+        "door": "Ritual Chamber",
+        "expected_seq": 7,
+    }
+
+
+def test_picking_one_of_two_doors_names_only_that_one() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("legal-actions")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ actions: [door1, door2], last_seq: 9 }),
+              });
+            }
+            if (method === "POST" && path.includes("actions/unlock-door")) {
+              return Promise.resolve({ ok: true, json: async () => ({ allowed: true }) });
+            }
+            return null;
+          };
+          await m.onPermanent(room, { currentTarget: anchor });
+          options()[1].click(); // "Unlock Ritual Chamber", the second item
+          await settle();
+          return { calls: globalThis.__calls };
+        """,
+        state=_click_state(battlefield=[ROOM]),
+        room=ROOM,
+        door1=_unlock_door_row("Unholy Annex", "{2}{B}"),
+        door2=_unlock_door_row("Ritual Chamber", "{3}{B}{B}"),
+    )
+    posts = [
+        c for c in result["calls"] if c["method"] == "POST" and "actions/unlock-door" in c["path"]
+    ]
+    assert len(posts) == 1, result["calls"]
+    assert posts[0]["body"] == {
+        "player": "alice",
+        "card_id": "rm1",
+        "door": "Ritual Chamber",
+        "expected_seq": 9,
+    }
+
+
+def test_an_unlock_door_refusal_shows_the_engines_reason() -> None:
+    reason = "Ritual Chamber is already unlocked (CR 709.5j)"
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("legal-actions")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ actions: [doorRow], last_seq: 7 }),
+              });
+            }
+            if (method === "POST" && path.includes("actions/unlock-door")) {
+              return Promise.resolve({ ok: true, json: async () => ({ allowed: false, reason }) });
+            }
+            return null;
+          };
+          await m.onPermanent(room, { currentTarget: anchor });
+          options()[0].click();
+          await settle();
+          return { toast: globalThis.__toast.textContent, toastHidden: globalThis.__toast.hidden };
+        """,
+        state=_click_state(battlefield=[ROOM]),
+        room=ROOM,
+        doorRow=_unlock_door_row(),
         reason=reason,
     )
     assert result["toastHidden"] is False
