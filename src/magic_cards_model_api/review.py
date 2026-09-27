@@ -108,6 +108,7 @@ def build_review(
     viewer: str | None = None,
     frame_views: Mapping[int, Mapping[str, Any]] | None = None,
     corpora: Mapping[str, Mapping[str, Any] | None] | None = None,
+    with_boards: bool = True,
 ) -> dict[str, Any]:
     """The review of one finished (or ended) game.
 
@@ -140,6 +141,11 @@ def build_review(
     carries `board`/`board_by_perspective: None` throughout and `play_stats`
     counts a corpus of zero - this module still makes no store call of its
     own to get either.
+
+    `with_boards=False` (OM1) builds every decision's `board`/
+    `board_by_perspective` as `None` - for the ops coverage sweep, which
+    reads `dsl_coverage`/`play_stats` alone; `frame_views` still feed each
+    row's conversion exactly as they otherwise would.
     """
     game = archived.game
     ending = ending_of(entries)
@@ -168,6 +174,7 @@ def build_review(
         viewer=viewer,
         frame_views=frame_views or {},
         corpora=corpora or {},
+        with_boards=with_boards,
     )
     return {
         "game_id": archived.game_id,
@@ -298,6 +305,7 @@ def _decisions_and_play_stats(
     viewer: str | None,
     frame_views: Mapping[int, Mapping[str, Any]],
     corpora: Mapping[str, Mapping[str, Any] | None],
+    with_boards: bool = True,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
     """`decisions`/`play_stats`, one entry per seat in `players` that
     `viewer` may see - `None` (the admin key, by the time this module ever
@@ -352,9 +360,9 @@ def _decisions_and_play_stats(
     for seat in players:
         if viewer is not None and viewer != seat:
             continue
-        rows = decision_dsl.decision_rows(entries_with_state, seat)
+        rows = decision_dsl.decision_rows(entries_with_state, seat, with_boards=with_boards)
         for row in rows:
-            state_view = frame_views.get(row["seq"])
+            state_view = frame_views.get(row["seq"]) if with_boards else None
             row["board_by_perspective"] = (
                 _board_by_perspective(state_view, players) if state_view is not None else None
             )

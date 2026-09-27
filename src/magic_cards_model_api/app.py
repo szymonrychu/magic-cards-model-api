@@ -9,6 +9,8 @@ one origin.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import mimetypes
 import os
@@ -51,6 +53,7 @@ from . import (
     protocol,
     records,
     review,
+    review_cache,
     scryfall,
     serialize,
     symbology,
@@ -1903,27 +1906,92 @@ def game_review(game_id: str, uid: str | None = None, key: str | None = None) ->
     # for a row written before the field existed - same helper, same reason,
     # as `game_log` above (`audit.normalize_problem_category`).
     ledger = [audit.normalize_problem_category(entry) for entry in ledger]
-    # R2: which of this review's own (already filtered) rows also have an
-    # exact engine state recorded - `[]` on a `reconstructed` review (there
-    # is no `archived.game` to have been read back from when any of those
-    # rows were written, so nothing before the schema bump was ever
-    # `put_record_state`-able) and on any older game nothing ever recorded a
-    # state for. Computed here, not inside `review.py`, so that module reads
-    # no store at all (see `review.build_review`'s own docstring).
-    exact_frames: list[int] = []
-    if archived.game is not None:
-        ledger_seqs = {entry["seq"] for entry in ledger}
-        exact_frames = sorted(seq for seq in store.record_state_seqs(game_id) if seq in ledger_seqs)
-    frame_views = _review_frame_views(game_id, exact_frames)
-    corpora = _review_corpora(game_id, archived, list(archived.seat_uids.values()))
-    return review.build_review(
-        archived,
-        ledger,
-        exact_frames=exact_frames,
-        viewer=viewer if isinstance(viewer, str) else None,
-        frame_views=frame_views,
-        corpora=corpora,
+    seat = viewer if isinstance(viewer, str) else None
+    # OM1: one build per game at a time (the second caller waits, then reads
+    # the first one's payload), cached under a fingerprint of everything the
+    # payload is built from - see `review_cache`.
+    with _REVIEW_CACHE.building(game_id):
+        exact_frames = _exact_frames(game_id, archived, ledger)
+        corpora = _review_corpora(game_id, archived, list(archived.seat_uids.values()))
+        version = _review_version(archived, ledger, exact_frames, corpora)
+        cached = _REVIEW_CACHE.get(game_id, seat, version)
+        if cached is not None:
+            return cached
+        built = review.build_review(
+            archived,
+            ledger,
+            exact_frames=exact_frames,
+            viewer=seat,
+            frame_views=_review_frame_views(game_id, exact_frames),
+            corpora=corpora,
+        )
+        _REVIEW_CACHE.put(game_id, seat, version, built)
+        return built
+
+
+#: OM1: the per-game build lock and the finished-review LRU `game_review`
+#: reads through.
+_REVIEW_CACHE = review_cache.ReviewCache()
+
+
+def clear_review_cache() -> None:
+    """Forget every cached review - for a test that must see a fresh build."""
+    _REVIEW_CACHE.clear()
+
+
+def _exact_frames(game_id: str, archived: ArchivedGame, ledger: list[dict[str, Any]]) -> list[int]:
+    """R2: which of this review's own (already filtered) rows also have an
+    exact engine state recorded - `[]` on a `reconstructed` review (there is
+    no `archived.game` to have been read back from when any of those rows
+    were written, so nothing before the schema bump was ever
+    `put_record_state`-able) and on any older game nothing ever recorded a
+    state for. Computed here, not inside `review.py`, so that module reads
+    no store at all (see `review.build_review`'s own docstring)."""
+    if archived.game is None:
+        return []
+    ledger_seqs = {entry["seq"] for entry in ledger}
+    return sorted(seq for seq in store.record_state_seqs(game_id) if seq in ledger_seqs)
+
+
+def _review_version(
+    archived: ArchivedGame,
+    ledger: list[dict[str, Any]],
+    exact_frames: list[int],
+    corpora: Mapping[str, Any],
+) -> str:
+    """OM1: a digest of every input `review.build_review` reads, so a cached
+    review is served only while none of them changed - a row appended or
+    filled in, a state recorded, the game ended, a corpus registered. Hashed
+    row by row rather than dumped whole, so a long ledger is never one big
+    string in memory."""
+    game = archived.game
+    digest = hashlib.blake2b(digest_size=16)
+
+    def feed(value: Any) -> None:
+        digest.update(json.dumps(value, sort_keys=True, default=str).encode())
+
+    feed(
+        [
+            archived.game_id,
+            archived.created_at,
+            archived.deleted_at,
+            archived.unloadable,
+            archived.seat_uids,
+            exact_frames,
+            corpora,
+            None
+            if game is None
+            else [
+                [player.username for player in game.players],
+                game.is_over,
+                game.winner,
+                game.drawn,
+            ],
+        ]
     )
+    for entry in ledger:
+        feed(entry)
+    return digest.hexdigest()
 
 
 def _review_frame_views(game_id: str, exact_frames: list[int]) -> dict[int, dict[str, Any]]:
@@ -1935,13 +2003,19 @@ def _review_frame_views(game_id: str, exact_frames: list[int]) -> dict[int, dict
     than one per decision. Skips whatever that batched read itself skips (an
     unrecorded or undecodable `seq` - see its own docstring); the review
     still renders, with `board`/`board_by_perspective: None` for those rows
-    only."""
+    only.
+
+    OM1: that read yields one decoded `Game` at a time, and each is dropped
+    as soon as its board view exists - only the small views accumulate,
+    never the states (~1.7 MB of heap each; all of a 250-decision game's at
+    once was the prod OOM)."""
     if not exact_frames:
         return {}
-    games_by_seq = store.record_states_for_seqs(game_id, exact_frames)
-    return {
-        seq: serialize.frame_view(game, game_id, you=None) for seq, game in games_by_seq.items()
-    }
+    views: dict[int, dict[str, Any]] = {}
+    for seq, game in store.record_states_for_seqs(game_id, exact_frames):
+        views[seq] = serialize.frame_view(game, game_id, you=None)
+        del game
+    return views
 
 
 def _review_corpora(
@@ -2022,20 +2096,41 @@ def _ops_game_review(game_id: str) -> dict[str, Any] | None:
     ledger = entries if entries is not None else audit.entries(game_id)
     ledger = [entry for entry in ledger if not visibility.hides_script_run(entry, visibility.ADMIN)]
     ledger = [audit.normalize_problem_category(entry) for entry in ledger]
-    exact_frames: list[int] = []
-    if archived.game is not None:
-        ledger_seqs = {entry["seq"] for entry in ledger}
-        exact_frames = sorted(seq for seq in store.record_state_seqs(game_id) if seq in ledger_seqs)
-    frame_views = _review_frame_views(game_id, exact_frames)
+    exact_frames = _exact_frames(game_id, archived, ledger)
     corpora = _review_corpora(game_id, archived, list(archived.seat_uids.values()))
     return review.build_review(
         archived,
         ledger,
         exact_frames=exact_frames,
         viewer=None,
-        frame_views=frame_views,
+        frame_views=_coverage_frame_views(game_id, archived, ledger, exact_frames),
         corpora=corpora,
+        with_boards=False,
     )
+
+
+def _coverage_frame_views(
+    game_id: str, archived: ArchivedGame, ledger: list[dict[str, Any]], exact_frames: list[int]
+) -> dict[int, dict[str, Any]]:
+    """OM1: only the frames coverage's conversions actually read
+    (`decision_dsl.frame_seqs_read`), streamed like `_review_frame_views`
+    and never turned into a board. A frame that turns out undecodable is
+    dropped from what is `available` and the needed set recomputed - the
+    conversion then falls back to an earlier frame exactly as it does when
+    every frame is attached - until nothing new is needed."""
+    if archived.game is None or not exact_frames:
+        return {}
+    players = [player.username for player in archived.game.players]
+    available = set(exact_frames)
+    views: dict[int, dict[str, Any]] = {}
+    while True:
+        needed = decision_dsl.frame_seqs_read(ledger, players, available)
+        missing = sorted(needed - views.keys())
+        if not missing:
+            return views
+        read = _review_frame_views(game_id, missing)
+        views.update(read)
+        available -= set(missing) - read.keys()
 
 
 def _admit_totals(play_stats: Mapping[str, Any], *, reviewer: bool) -> dict[str, int]:

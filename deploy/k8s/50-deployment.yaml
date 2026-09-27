@@ -180,6 +180,12 @@ spec:
               value: http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp
             - name: MAX_LIVE_GAMES
               value: "12"
+            # glibc gives every threadpool thread its own malloc arena and
+            # keeps each one's freed high-water mark as RSS, so one heavy
+            # request left the process near its peak for good - the
+            # amplifier behind the 2026-09-27 OOMs. Two arenas cap that.
+            - name: MALLOC_ARENA_MAX
+              value: "2"
             # The browser re-reads the game, long-polls its log, and re-reads
             # the AI seat's status every ~1.2s. Successful reads of those
             # routes, and of the healthcheck, are kept out of uvicorn's access
@@ -280,11 +286,14 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           resources:
-            # A uvicorn app serving one game. Conservative on purpose: requests are
-            # what the scheduler reserves, limits are where it gets throttled/OOMed.
+            # A uvicorn app serving the lobby's games. Requests are what the
+            # scheduler reserves, limits are where it gets throttled/OOMed. 512Mi
+            # is the measured steady state of a live game (350-400 MB); the 1Gi
+            # limit stays - a long game's review now streams its recorded
+            # states instead of decoding them all at once (OM1).
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 512Mi
             limits:
               cpu: "1"
               memory: 1Gi

@@ -194,6 +194,10 @@ class VersionConflict(Exception):
         self.current_game = current_game
 
 
+#: Rows `record_states_for_seqs` fetches per server-side cursor round - each
+#: a ~30 kB compressed blob, so a batch is under 1 MB however long the game.
+_RECORD_STATE_BATCH = 16
+
 # ---------------------------------------------------------------------------
 # Decision / PendingDecision <-> JSON, driven by each dataclass's own fields
 # and type annotations - see the module docstring for why.
@@ -840,27 +844,31 @@ class PostgresRepository:
             return None
         return decode_record_state(game_id, bytes(row[0]))
 
-    def record_states_for_seqs(self, game_id: str, seqs: Iterable[int]) -> dict[int, Game]:
-        """One `SELECT ... WHERE game_id = :id AND seq IN (...)` for every
-        wanted `seq` - the batched sibling `record_state`'s own protocol
-        docstring describes. A row whose blob will not decode is skipped
-        rather than raised, same as the in-memory implementation."""
+    def record_states_for_seqs(
+        self, game_id: str, seqs: Iterable[int]
+    ) -> Iterator[tuple[int, Game]]:
+        """One `SELECT ... WHERE game_id = :id AND seq IN (...) ORDER BY seq`
+        for every wanted `seq` - the batched sibling `record_state`'s own
+        protocol docstring describes - read through a server-side cursor
+        (`yield_per`) so neither the rows nor their decoded states are ever
+        all in memory at once (OM1): each blob is decoded only when the
+        caller asks for the next state. A row whose blob will not decode is
+        skipped rather than raised, same as the in-memory implementation."""
         wanted = sorted(set(seqs))
         if not wanted:
-            return {}
+            return
         with self._engine.connect() as conn:
-            rows = conn.execute(
-                select(record_states.c.seq, record_states.c.state).where(
-                    record_states.c.game_id == game_id, record_states.c.seq.in_(wanted)
-                )
-            ).all()
-        out: dict[int, Game] = {}
-        for seq, blob in rows:
-            try:
-                out[int(seq)] = decode_record_state(game_id, bytes(blob))
-            except GameUnloadable:
-                continue
-        return out
+            rows = conn.execution_options(yield_per=_RECORD_STATE_BATCH).execute(
+                select(record_states.c.seq, record_states.c.state)
+                .where(record_states.c.game_id == game_id, record_states.c.seq.in_(wanted))
+                .order_by(record_states.c.seq.asc())
+            )
+            for seq, blob in rows:
+                try:
+                    game = decode_record_state(game_id, bytes(blob))
+                except GameUnloadable:
+                    continue
+                yield int(seq), game
 
     def delete(self, game_id: str) -> bool:
         """The soft delete: stamp `archived_at` rather than issue a

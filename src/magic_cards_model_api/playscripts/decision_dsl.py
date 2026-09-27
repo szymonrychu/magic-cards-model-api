@@ -386,10 +386,17 @@ def _is_script_driven(entry: Mapping[str, Any], rows: Sequence[Mapping[str, Any]
     return script_driven(entry, rows)
 
 
-def decision_rows(entries: Iterable[Mapping[str, Any]], seat: str) -> list[dict[str, Any]]:
+def decision_rows(
+    entries: Iterable[Mapping[str, Any]], seat: str, *, with_boards: bool = True
+) -> list[dict[str, Any]]:
     """Every committing row of `seat` in `entries`, converted - see the
     module docstring for the record shape, the pre-action frame every card
-    lookup and `whose_turn` judgement reads, and what `unexpressible` means."""
+    lookup and `whose_turn` judgement reads, and what `unexpressible` means.
+
+    `with_boards=False` leaves every record's `board` `None` without ever
+    calling `compact_board` - for a caller that reads only `action`/`dsl`/
+    `unexpressible` (the ops coverage sweep, OM1); the conversion itself
+    still reads every frame it would otherwise."""
     rows = list(entries)
     out: list[dict[str, Any]] = []
     pre_state_view: Mapping[str, Any] | None = None
@@ -513,7 +520,9 @@ def decision_rows(entries: Iterable[Mapping[str, Any]], seat: str) -> list[dict[
         turn = _top(payload, detail, "turn")
         step = _top(payload, detail, "step")
         reasoning = _top(payload, detail, "reasoning")
-        board = compact_board(row_state_view) if row_state_view is not None else None
+        board = (
+            compact_board(row_state_view) if with_boards and row_state_view is not None else None
+        )
 
         if kind == "run_script":
             dsl = _run_script_dsl(rows, index, detail)
@@ -551,6 +560,54 @@ def decision_rows(entries: Iterable[Mapping[str, Any]], seat: str) -> list[dict[
             elif kind != "decide":
                 fold_target = None
     return out
+
+
+def frame_seqs_read(
+    entries: Iterable[Mapping[str, Any]], seats: Iterable[str], recorded: Iterable[int]
+) -> set[int]:
+    """The `seq`s whose `state_view` `decision_rows(entries, seat)` actually
+    reads for some seat in `seats`, given that exactly the rows in
+    `recorded` carry one (OM1): each converted row's own frame (its
+    `post_state_view`) and the frame it converts against - the row its
+    `pre_action_frame` names, or, without one, the nearest earlier row with
+    a frame (its own when there is none). Every other recorded state is
+    read by nothing but a `board`, so a caller that asks for none
+    (`with_boards=False`) can leave it encoded; attaching only these
+    frames converts every row exactly as attaching all of them does.
+
+    Walks `entries` with `decision_rows`' own pointer rules and its own
+    filters (committing kind, the seat's own row, `allowed`, not
+    script-driven; a `run_script` row reads no frame at all), kept beside
+    it so the two cannot drift apart unnoticed."""
+    rows = list(entries)
+    wanted_seats = set(seats)
+    available = set(recorded)
+    seen: set[Any] = set()
+    nearest: Any = None
+    read: set[int] = set()
+    for entry in rows:
+        payload = _payload(entry)
+        kind = _ACTION_KIND.get(str(payload.get("action")))
+        row_seq = payload.get("seq", entry.get("seq"))
+        explicit_pre_frame = payload.get("pre_action_frame")
+        if isinstance(payload.get("pre_state"), Mapping):
+            pre = None
+        elif explicit_pre_frame and explicit_pre_frame in seen:
+            pre = explicit_pre_frame
+        else:
+            pre = nearest if nearest is not None else row_seq
+        seen.add(row_seq)
+        if row_seq in available:
+            nearest = row_seq
+        if kind is None or kind == "run_script":
+            continue
+        detail = payload.get("detail") or {}
+        if detail.get("player") not in wanted_seats and detail.get("seat") not in wanted_seats:
+            continue
+        if detail.get("allowed") is not True or _is_script_driven(entry, rows):
+            continue
+        read |= {row_seq, pre} & available
+    return read
 
 
 # -- run_script -----------------------------------------------------------------

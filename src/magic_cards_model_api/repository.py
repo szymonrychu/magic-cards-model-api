@@ -605,12 +605,21 @@ class GameRepository(Protocol):
         """
         ...
 
-    def record_states_for_seqs(self, game_id: str, seqs: Iterable[int]) -> dict[int, Game]:
+    def record_states_for_seqs(
+        self, game_id: str, seqs: Iterable[int]
+    ) -> Iterator[tuple[int, Game]]:
         """Every recorded state for `game_id` at one of `seqs`, decoded, in
         one round trip - `record_state`'s own batched sibling (DR2): a
         post-game review builds a board for every decision a seat made, and
         reading one `seq` at a time would cost it one round trip per
         decision rather than one for the whole game.
+
+        **Yields `(seq, Game)` one at a time, ascending by `seq`, decoding
+        each blob only when the caller asks for it** (OM1). A decoded `Game`
+        is ~1.7 MB of heap against a ~30 kB blob, so a 250-decision game held
+        decoded all at once was ~430 MB for one review - the prod OOM. The
+        caller turns each state into what it needs and drops it before
+        asking for the next.
 
         Deliberately not named `record_states` - that identifier is the
         table's own (`db.py`), and `tests/test_review_frames.py`'s
@@ -620,9 +629,9 @@ class GameRepository(Protocol):
 
         `seqs` with no `state` row for `game_id` are silently missing from
         the answer - the same "unknown seq" case `record_state` answers
-        `None` for, just folded into one dict rather than raised or
-        defaulted per key. **A blob this build cannot decode
-        (`GameUnloadable`) is skipped, never raised**: unlike `record_state`,
+        `None` for, just never yielded rather than raised or defaulted.
+        **A blob this build cannot decode (`GameUnloadable`) is skipped,
+        never raised**: unlike `record_state`,
         whose single-frame route can 409 with the decoder's own reason, a
         batched read backs a whole review, and one corrupted row must not
         take down every other decision's board with it - the caller sees
@@ -1439,23 +1448,24 @@ class InMemoryRepository:
             return None
         return decode_record_state(game_id, blob)
 
-    def record_states_for_seqs(self, game_id: str, seqs: Iterable[int]) -> dict[int, Game]:
+    def record_states_for_seqs(
+        self, game_id: str, seqs: Iterable[int]
+    ) -> Iterator[tuple[int, Game]]:
         wanted = set(seqs)
         if not wanted:
-            return {}
+            return
         with self._lock:
-            blobs = {
-                seq: blob
+            blobs = sorted(
+                (seq, blob)
                 for seq, blob in self._record_states.get(game_id, {}).items()
                 if seq in wanted
-            }
-        out: dict[int, Game] = {}
-        for seq, blob in blobs.items():
+            )
+        for seq, blob in blobs:
             try:
-                out[seq] = decode_record_state(game_id, blob)
+                game = decode_record_state(game_id, blob)
             except GameUnloadable:
                 continue
-        return out
+            yield seq, game
 
     def ids(self) -> list[str]:
         with self._lock:

@@ -19,17 +19,27 @@ before it ever read the records that outlived it.
 
 from __future__ import annotations
 
+import importlib
+import threading
+import time
+from collections.abc import Callable
+from contextlib import nullcontext
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from playscript_testkit import FETCH_SHOCK, SLUG
+from postgres_store_testkit import postgres_store
 from test_unloadable_games import engine_refusal
 from test_unloadable_games import unloadable as unloadable  # noqa: PLC0414 - a fixture, re-exported
 from ui_node import requires_node, run_module
 
-from magic_cards_model_api import audit, review
-from magic_cards_model_api.repository import Advisor, ArchivedGame
+from magic_cards_model_api import audit, repository, repository_postgres, review, serialize
+from magic_cards_model_api.repository import Advisor, ArchivedGame, GameUnloadable
+from magic_cards_model_api.review_cache import ReviewCache
 from magic_cards_model_api.store import store
+
+app_module = importlib.import_module("magic_cards_model_api.app")
 
 PLAN: dict[str, Any] = {
     "board_read": "she is at 4 with no blockers and one card in hand",
@@ -2005,3 +2015,175 @@ def test_the_opponents_review_omits_the_script_run_rows(client: TestClient) -> N
             ], params
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+# ---------------------------------------------------------------------------
+# OM1: the streamed review is the eager one, byte for byte, and built once
+# ---------------------------------------------------------------------------
+
+
+def _clear_review_cache() -> None:
+    app_module.clear_review_cache()
+
+
+def _eager_frame_views(game_id: str, exact_frames: list[int]) -> dict[int, dict[str, Any]]:
+    """The pre-OM1 `app._review_frame_views`, kept here as the reference the
+    streamed one must match: every recorded state decoded up front, held as
+    one `seq -> Game` dict, and only then turned into board views. Reads one
+    `seq` at a time through `store.record_state`, which never changed, so
+    this reference does not share a line of code with what it checks."""
+    games = {}
+    for seq in exact_frames:
+        try:
+            game = store.record_state(game_id, seq)
+        except GameUnloadable:
+            continue
+        if game is not None:
+            games[seq] = game
+    return {seq: serialize.frame_view(game, game_id, you=None) for seq, game in games.items()}
+
+
+def _long_game(client: TestClient) -> dict[str, Any]:
+    from test_review_memory import long_recorded_game
+
+    return long_recorded_game(client, states=40)
+
+
+_EQUALITY_GAMES: dict[str, Callable[[TestClient], dict[str, Any]]] = {
+    "played_out": _played_out,
+    "script_run": lambda client: _advised_run_then_the_real_move(client)[0],
+    "real_decks_40_states": _long_game,
+}
+
+
+@pytest.mark.parametrize("backend", ["in_memory", "postgres"])
+@pytest.mark.parametrize("build", list(_EQUALITY_GAMES.values()), ids=list(_EQUALITY_GAMES))
+def test_the_streamed_review_is_byte_identical_to_the_eager_one(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    build: Callable[[TestClient], dict[str, Any]],
+    backend: str,
+) -> None:
+    """OM1: decoding one recorded state at a time changes the review's peak
+    memory, never its content - for the admin key and for each seat, on
+    both stores (postgres streams through a server-side cursor)."""
+    with postgres_store(monkeypatch) if backend == "postgres" else nullcontext():
+        _assert_streamed_matches_eager(client, monkeypatch, build)
+
+
+def _assert_streamed_matches_eager(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    build: Callable[[TestClient], dict[str, Any]],
+) -> None:
+    info = build(client)
+    game_id = info["game_id"]
+    credentials = [{"key": info["admin_key"]}] + [
+        {"uid": uid} for uid in info["seat_uids"].values()
+    ]
+    _clear_review_cache()
+    streamed = [_review(client, game_id, **params) for params in credentials]
+    assert all(response.status_code == 200 for response in streamed), streamed[0].text
+    assert len(streamed[0].json()["exact_frames"]) > 1, "a multi-state game"
+
+    _clear_review_cache()
+    monkeypatch.setattr(app_module, "_review_frame_views", _eager_frame_views)
+    eager = [_review(client, game_id, **params) for params in credentials]
+
+    for new, old in zip(streamed, eager, strict=True):
+        assert new.content == old.content
+
+
+def _count_decodes(monkeypatch: pytest.MonkeyPatch, hold: float = 0.0) -> list[int]:
+    """Every `decode_record_state` either store makes, counted - and, with
+    `hold`, slowed so a concurrent caller is certain to overlap the build."""
+    decoded: list[int] = []
+    for module in (repository, repository_postgres):
+        original = module.decode_record_state
+
+        def counted(game_id: str, blob: bytes, _original: Any = original) -> Any:
+            decoded.append(1)
+            if hold:
+                time.sleep(hold)
+            return _original(game_id, blob)
+
+        monkeypatch.setattr(module, "decode_record_state", counted)
+    return decoded
+
+
+def test_two_concurrent_reviews_of_one_game_decode_its_states_once(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OM1: the orchestrator's poll and a seat's review session overlapping
+    on one game must not each rebuild it - a per-game lock makes the second
+    caller wait for the first, then read the finished payload."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    key = info["admin_key"]
+    frames = len(_review(client, game_id, key=key).json()["exact_frames"])
+    assert frames > 1
+    _clear_review_cache()
+    decoded = _count_decodes(monkeypatch, hold=0.05)
+
+    barrier = threading.Barrier(2)
+    results: list[Any] = [None, None]
+
+    def call(slot: int) -> None:
+        barrier.wait()
+        results[slot] = app_module.game_review(game_id, uid=None, key=key)
+
+    threads = [threading.Thread(target=call, args=(slot,)) for slot in (0, 1)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert results[0] is not None and results[0] == results[1]
+    assert len(decoded) == frames, f"{len(decoded)} decodes for {frames} recorded states"
+
+
+def test_a_review_is_rebuilt_once_the_games_record_grows(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OM1's cache never serves a stale review: a row appended after the
+    first read (a post-game report, a reviewer's own row) shows up on the
+    next one."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    key = info["admin_key"]
+    first = _review(client, game_id, key=key).json()
+    decoded = _count_decodes(monkeypatch)
+    again = _review(client, game_id, key=key).json()
+    assert again == first
+    assert decoded == [], "an unchanged game is served from the cache"
+
+    seq = audit.record(game_id, "post_game_note", player="bob", note="late row")
+    grown = _review(client, game_id, key=key).json()
+    assert seq in [entry["seq"] for entry in grown["entries"]]
+    assert decoded, "a grown record is rebuilt, not served stale"
+
+
+def test_the_review_cache_evicts_the_least_recently_used_past_its_bound() -> None:
+    cache = ReviewCache(max_entries=2)
+    cache.put("a", None, "v1", {"game": "a"})
+    cache.put("b", "bob", "v1", {"game": "b"})
+    assert cache.get("a", None, "v1") == {"game": "a"}
+    cache.put("c", None, "v1", {"game": "c"})
+    assert len(cache) == 2
+    assert cache.get("b", "bob", "v1") is None, "b was the least recently read"
+    assert cache.get("a", None, "v1") == {"game": "a"}
+    assert cache.get("c", None, "v1") == {"game": "c"}
+
+
+def test_the_review_cache_misses_on_another_version_or_viewer() -> None:
+    cache = ReviewCache()
+    cache.put("a", None, "v1", {"viewer": "admin"})
+    assert cache.get("a", None, "v2") is None
+    assert cache.get("a", "bob", "v1") is None
+
+
+def test_the_review_cache_drops_a_games_build_lock_once_nobody_holds_it() -> None:
+    cache = ReviewCache()
+    with cache.building("a"):
+        assert cache.in_flight() == 1
+    assert cache.in_flight() == 0

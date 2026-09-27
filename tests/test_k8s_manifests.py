@@ -471,3 +471,21 @@ def test_seat_job_carries_no_dead_git_committer_vars() -> None:
     text = (ROOT / "deploy/seat-job.yaml").read_text()
     assert "GIT_COMMITTER_NAME" not in text
     assert "GIT_COMMITTER_EMAIL" not in text
+
+
+def test_the_api_caps_glibc_malloc_arenas() -> None:
+    """OM1: a threadpool of sync routes gives glibc one malloc arena per
+    thread, and each keeps its freed high-water mark as RSS - the prod OOM's
+    amplifier. `MALLOC_ARENA_MAX=2` caps that retention."""
+    env = _api_env()
+    assert env["MALLOC_ARENA_MAX"] == {"name": "MALLOC_ARENA_MAX", "value": "2"}
+
+
+def test_the_api_requests_its_realistic_steady_state_and_keeps_the_1gi_limit() -> None:
+    """OM1: a live game sits at 350-400 MB, so the request reserves 512Mi;
+    the limit stays 1Gi - the review OOM was fixed in code, not by scaling."""
+    docs = rendered()
+    deploy = by_name(docs, "Deployment", "mtg-stack")
+    (game,) = deploy["spec"]["template"]["spec"]["containers"]
+    assert game["resources"]["requests"]["memory"] == "512Mi"
+    assert game["resources"]["limits"]["memory"] == "1Gi"
