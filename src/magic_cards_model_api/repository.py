@@ -1462,10 +1462,12 @@ class InMemoryRepository:
             )
         for seq, blob in blobs:
             try:
-                game = decode_record_state(game_id, blob)
+                decoded = [(seq, decode_record_state(game_id, blob))]
             except GameUnloadable:
                 continue
-            yield seq, game
+            # Popped, never bound: a local would keep this state alive in
+            # the suspended frame until the next one is asked for.
+            yield decoded.pop()
 
     def ids(self) -> list[str]:
         with self._lock:

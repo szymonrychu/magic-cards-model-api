@@ -865,10 +865,12 @@ class PostgresRepository:
             )
             for seq, blob in rows:
                 try:
-                    game = decode_record_state(game_id, bytes(blob))
+                    decoded = [(int(seq), decode_record_state(game_id, bytes(blob)))]
                 except GameUnloadable:
                     continue
-                yield int(seq), game
+                # Popped, never bound: a local would keep this state alive
+                # in the suspended frame until the next one is asked for.
+                yield decoded.pop()
 
     def delete(self, game_id: str) -> bool:
         """The soft delete: stamp `archived_at` rather than issue a

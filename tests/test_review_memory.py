@@ -98,8 +98,19 @@ def long_recorded_game(client: TestClient, states: int = STATES) -> dict[str, An
 
 
 def _peak_of(call: Any) -> tuple[Any, int]:
-    """`call()`'s result and the peak Python allocation it added."""
+    """`call()`'s result and the peak Python allocation it added.
+
+    Measured with full (generation 2) collections switched off. A decoded
+    `Game` is cyclic (its players and continuous effects point back at it),
+    so dropping it frees nothing until the cyclic collector reaches its
+    generation - and a long-lived process (prod, or an xdist worker deep in
+    the suite) runs full collections rarely, because CPython defers them
+    until a quarter of its long-lived heap is new. Solo, a lucky full
+    collection hid that; this makes the measurement that of a warm process,
+    whatever ran before."""
     gc.collect()
+    thresholds = gc.get_threshold()
+    gc.set_threshold(thresholds[0], thresholds[1], 10**9)
     tracemalloc.start()
     try:
         base, _ = tracemalloc.get_traced_memory()
@@ -108,6 +119,7 @@ def _peak_of(call: Any) -> tuple[Any, int]:
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
+        gc.set_threshold(*thresholds)
     return result, peak - base
 
 

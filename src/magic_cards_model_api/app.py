@@ -9,12 +9,15 @@ one origin.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import logging
 import mimetypes
 import os
-from collections.abc import Mapping, Sequence
+import threading
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -2012,10 +2015,53 @@ def _review_frame_views(game_id: str, exact_frames: list[int]) -> dict[int, dict
     if not exact_frames:
         return {}
     views: dict[int, dict[str, Any]] = {}
-    for seq, game in store.record_states_for_seqs(game_id, exact_frames):
-        views[seq] = serialize.frame_view(game, game_id, you=None)
-        del game
-    return views
+    states = iter(store.record_states_for_seqs(game_id, exact_frames))
+    while True:
+        with _one_state_at_a_time():
+            item = next(states, None)
+            if item is None:
+                return views
+            seq, game = item
+            views[seq] = serialize.frame_view(game, game_id, you=None)
+            del item, game
+
+
+_GC_PAUSE_LOCK = threading.Lock()
+#: [how many `_one_state_at_a_time` blocks are open, whether automatic
+#: collection was on when the first of them opened].
+_GC_PAUSE = [0, False]
+
+
+@contextmanager
+def _one_state_at_a_time() -> Iterator[None]:
+    """OM1: free one decoded state before the next is read.
+
+    A decoded `Game` is cyclic (its players and continuous effects point
+    back at it), so `del` alone frees nothing: it waits for the cyclic
+    collector, and the thousands of objects a decode allocates trigger young
+    collections that promote the still-live state to generation 2 - which a
+    long-lived process collects rarely (CPython defers a full collection
+    until a quarter of its long-lived heap is new). Streaming then bought
+    nothing: prod-like runs measured +226 MB for a 250-state review.
+
+    So automatic collection is paused for the block - nothing allocated in
+    it is promoted - and a generation-0 collection on the way out frees the
+    dropped state. That scan covers only what is young, so it stays cheap
+    however large the heap. Nesting and concurrent callers share one pause;
+    the last one out restores collection as the first one found it."""
+    with _GC_PAUSE_LOCK:
+        if _GC_PAUSE[0] == 0:
+            _GC_PAUSE[1] = gc.isenabled()
+            gc.disable()
+        _GC_PAUSE[0] += 1
+    try:
+        yield
+    finally:
+        gc.collect(0)
+        with _GC_PAUSE_LOCK:
+            _GC_PAUSE[0] -= 1
+            if _GC_PAUSE[0] == 0 and _GC_PAUSE[1]:
+                gc.enable()
 
 
 def _review_corpora(
