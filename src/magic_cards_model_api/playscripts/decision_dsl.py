@@ -57,32 +57,55 @@ turned face up) must instead be searched for in the board as it stood right
 *before* this action ran, or a cast reads back as being played from the
 stack it just moved onto, and an off-zone activation (channel from hand, a
 graveyard ability) reads its own source as already having left the zone its
-cost just moved it out of. Rather than waiting on FD5 to stamp that frame
-explicitly, this module derives it itself: ledger rows arrive in the game's
-own chronological order, one action resolves fully (audited) before the next
-one is even attempted (CR 116/117's own turn-based-action discipline, and
-the store's own single paused-command slot - see the fold, below), so the
-nearest *earlier* row's own frame **is** the exact board this row's action
-began against. `decision_rows` walks `entries` tracking exactly that: the
-last state view (and the last `active_player`, FD4 (i)/G16) any prior row
-carried, used for every card lookup and every `whose_turn` judgement this
-row's own conversion makes - never the row's own post-action frame.
+cost just moved it out of.
+
+**FD4-r1/G1: FD5's own pointer, preferred when it is there.** FD5 stamps two
+fields for exactly this: `pre_action_frame`, the exact `seq` of the row this
+action was taken against, and `pre_state`, this row's own best-effort
+snapshot of the pre-action board, attached only when there is no earlier
+frame at all (a game's very first row) - exactly one of the two is ever set.
+`decision_rows` keeps every row's own `state_view`/`active_player` in
+`by_seq`, keyed by `seq`, so a `pre_action_frame` is resolved by exact lookup
+rather than re-derived. This is exact where the fallback below is only an
+approximation, and it is checked first.
+
+**The carried-forward fallback**, read when neither FD5 field is on the row
+(an older row, or a game recorded before FD5 landed): ledger rows arrive in
+the game's own chronological order, one action resolves fully (audited)
+before the next one is even attempted (CR 116/117's own turn-based-action
+discipline, and the store's own single paused-command slot - see the fold,
+below), so the nearest *earlier* row's own frame **is**, in the ordinary
+case, the exact board this row's action began against. `decision_rows` walks
+`entries` tracking exactly that: the last state view any prior row carried,
+used for every card lookup this row's own conversion makes - never the row's
+own post-action frame.
 
 This carried-forward frame is still only an approximation of a genuine
 pre-action attachment: it is exactly right whenever every intervening row up
 to this one also carries its own frame, but an event with no ledger row of
 its own (a draw, say) between the nearest earlier frame and this row is
-invisible to it. Review finding 6: there is, today, no explicit pre-action
-frame or pre-action `active_player` field for this module to read instead -
-`audit.record` stamps neither, so there is nothing yet for a defensive read
-to find (the same posture `_add_cast_fields`/`_add_activate_fields` already
-take with FD5's other not-yet-logged fields). What this module *can* do
-without that field, and now does, is treat the carried-forward frame as a
-first attempt rather than the only one: a card missing from it for this
-row's own move is looked up a second time in the row's own post-action frame
-purely to identify it (`_cast_or_play_land`/`_activate`/`_keyword_action`),
-closing the practical gap that carrying only the pre-action frame forward
-left open, without needing FD5 to land first.
+invisible to it - exactly the gap FD5's exact `pre_action_frame` pointer
+closes once a row carries one. What this module can do without it is treat
+the carried-forward frame as a first attempt rather than the only one: a
+card missing from it for this row's own move is looked up a second time in
+the row's own post-action frame purely to identify it
+(`_cast_or_play_land`/`_activate`/`_keyword_action`), closing the practical
+gap that carrying only the pre-action frame forward left open.
+
+**`active_player` is not read the same way.** Unlike a card's zone,
+`active_player` is already correct on every row's *own* field except one
+kind: CR 117.4 lets a `pass` end the very step (and sometimes the turn) it
+was made in, so a `pass` row's own `active_player` can read as the turn it
+*produced*, never the one it was actually taken during - every other kind
+(a cast, an activate, a decide, a keyword action, a declaration) never
+changes whose turn it is, so its own value is already exactly right and is
+read directly, not overridden by a carried-forward value from a row that
+might belong to the other player entirely (FD4-r1/G16: seat B's own first
+action of B's brand new turn used to be misread as "theirs", because the
+carried-forward approximation used to apply to every kind uniformly, not
+only to `pass`). FD5's `pre_action_frame`/`pre_state`, when present, still
+take priority even for `active_player` - the referenced row's own value is
+exact regardless of kind.
 
 **Board.** `compact_board` (below) turns one `GameStateView`-shaped dict -
 what `GET /review/frames/{seq}` hands back for a row that has a recorded
@@ -211,10 +234,13 @@ answer, and any row that is not itself a `decide` (a fresh action, this
 seat's or the opponent's) ends it.
 
 **Whose turn (FD4 (i)/G16).** `_when`'s `whose_turn` reads the *pre-action*
-`active_player` (the same running frame the card lookups above read), not
-the row's own post-action value - a `pass` that ends the turn would
-otherwise read back as having been made on the turn it *produced*, not the
-one it was actually taken during.
+`active_player` computed above - FD5's exact pointer when the row carries
+one, or, for a `pass` (the only kind whose own action can change it), the
+carried-forward value, never the row's own post-action value: a `pass` that
+ends the turn would otherwise read back as having been made on the turn it
+*produced*, not the one it was actually taken during. Every other kind reads
+its own field directly - see "`active_player` is not read the same way"
+above.
 
 **Script-driven rows are not counted twice (FD4 (j)/G17).** A row this
 seat's own script run already produced - `stats.script_driven`'s own test,
@@ -363,6 +389,14 @@ def decision_rows(entries: Iterable[Mapping[str, Any]], seat: str) -> list[dict[
     out: list[dict[str, Any]] = []
     pre_state_view: Mapping[str, Any] | None = None
     pre_active_player: Any = None
+    #: Every row's own `state_view`/`active_player` seen so far, keyed by its
+    #: own `seq` - FD4-r1/G16: FD5's `pre_action_frame` names a row's own
+    #: `seq` directly, so a later row can point at the *exact* row its
+    #: action was taken against instead of trusting "the nearest earlier
+    #: row", which a gap (an intervening event with no ledger row of its
+    #: own) could get wrong. Never popped: `pre_action_frame` only ever
+    #: points backward, so this only ever grows.
+    by_seq: dict[Any, dict[str, Any]] = {}
     #: The most recent record still open to a fold (FD4 (f)/G2) - the record
     #: dict itself, appended to `out` by reference, so mutating its own
     #: `dsl` in place is visible to every caller already holding `out`.
@@ -374,24 +408,68 @@ def decision_rows(entries: Iterable[Mapping[str, Any]], seat: str) -> list[dict[
         kind = _ACTION_KIND.get(str(raw_action))
         row_state_view = entry.get("state_view")
         row_state_view = row_state_view if isinstance(row_state_view, Mapping) else None
+        row_active_player = payload.get("active_player")
+        row_seq = payload.get("seq", entry.get("seq"))
 
         # The pre-action frame/active_player this row's own conversion
-        # reads - the nearest *earlier* row's own value when one exists
-        # (captured before this row's own values fold into the running
-        # trackers below, so a row already converted is never read against
-        # a frame its own action produced). The very first row a game (or a
-        # hand-built single-row fixture) ever carries has no earlier row at
-        # all to read instead, so it falls back to its own value - the only
-        # honest reading available, and the one every existing test fixture
-        # that attaches its own `state_view` to the one row it builds
-        # already assumes.
-        row_active_player = payload.get("active_player")
-        pre_state = pre_state_view if pre_state_view is not None else row_state_view
-        pre_active = pre_active_player if pre_active_player is not None else row_active_player
+        # reads. FD5 (G1/G16) may stamp the row itself with one of two
+        # explicit pointers, checked first because both are exact where the
+        # fallback below is only an approximation: `pre_state` is this row's
+        # own best-effort snapshot of the pre-action board, attached only
+        # when there is no earlier frame at all (a game's very first row);
+        # `pre_action_frame` is the exact `seq` of the row this action was
+        # taken against, read back out of `by_seq` below - the row that
+        # named it, never re-derived. `0`/`None` both read as "not named".
+        explicit_pre_state = payload.get("pre_state")
+        explicit_pre_state = explicit_pre_state if isinstance(explicit_pre_state, Mapping) else None
+        explicit_pre_frame = payload.get("pre_action_frame")
+        referenced = by_seq.get(explicit_pre_frame) if explicit_pre_frame else None
+
+        if explicit_pre_state is not None:
+            pre_state = explicit_pre_state
+            pre_active = explicit_pre_state.get("active_player", row_active_player)
+        elif referenced is not None:
+            pre_state = referenced.get("state_view")
+            pre_active = referenced.get("active_player")
+        else:
+            # No explicit FD5 pointer (yet) - the carried-forward
+            # approximation: the nearest *earlier* row's own value
+            # (captured before this row's own values fold into the running
+            # trackers below, so a row already converted is never read
+            # against a frame its own action produced). `state_view` is
+            # always read this way regardless of kind - every committing
+            # row's own frame already includes its own action's effect, so
+            # it is never this row's own pre-action board, whatever the
+            # kind. `active_player`, in contrast, is only ever wrong on the
+            # row whose own action can change it: CR 117.4 lets a `pass`
+            # end the very step (and so, sometimes, the turn) it was made
+            # in, and that row's own `active_player` then reads as the turn
+            # it *produced*, not the one it was actually taken during - a
+            # cast/activate/decide/keyword-action/declaration never changes
+            # whose turn it is, so every other kind's own value is already
+            # exactly right and must not be overridden by a stale carried
+            # value (FD4-r1: seat B's own first action of B's new turn was
+            # misread as "theirs" this way). The very first row a game (or a
+            # hand-built single-row fixture) ever carries has no earlier row
+            # at all to read instead, so both fall back to their own value -
+            # the only honest reading available, and the one every existing
+            # test fixture that attaches its own `state_view` to the one row
+            # it builds already assumes.
+            pre_state = pre_state_view if pre_state_view is not None else row_state_view
+            if kind == "pass":
+                pre_active = (
+                    pre_active_player if pre_active_player is not None else row_active_player
+                )
+            else:
+                pre_active = (
+                    row_active_player if row_active_player is not None else pre_active_player
+                )
+
         if row_state_view is not None:
             pre_state_view = row_state_view
         if row_active_player is not None:
             pre_active_player = row_active_player
+        by_seq[row_seq] = {"state_view": row_state_view, "active_player": row_active_player}
 
         if kind is None:
             continue

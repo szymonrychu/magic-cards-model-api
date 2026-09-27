@@ -1381,6 +1381,86 @@ def test_a_converted_activate_executes_to_the_same_outcome(
         client.delete(f"/api/games/{game2}")
 
 
+def _pass_priority_to(client: TestClient, game_id: str, active: str) -> None:
+    """Pass priority for real, seat by seat, until `active` holds it in one
+    of their own main phases (CR 505.1a/b - the only steps a land can be
+    played in, which is all this helper's own caller needs) - answering any
+    `declare_attackers`/`declare_blockers` pause met on the way with an
+    empty (always legal) declaration, exactly like `advance_into_cleanup`
+    does. Polls the *live*
+    board (`GET .../state`), never the ledger: a ledger row's own `step` is
+    the pre-action step and its own `active_player` can be the post-action
+    one (exactly the split G16 is about), so a row that itself ends a turn
+    can read `step="end_step", active_player=active` simultaneously and stop
+    this loop one iteration too early. Used only by FD4-r1's own
+    turn-boundary test below; every other test in this file that needs to
+    cross a turn plays through `advance_into_cleanup` instead, which this
+    module already imports."""
+    for _ in range(200):
+        board = state(client, game_id)
+        if board["active_player"] == active and board["step"] in (
+            "precombat_main",
+            "postcombat_main",
+        ):
+            return
+        holder = board.get("priority_holder") or "alice"
+        response = client.post(
+            f"/api/games/{game_id}/actions/pass-priority",
+            json={"player": holder, "reasoning": REASONING},
+        )
+        body = response.json()
+        pending = body.get("pending_decision") if body.get("paused") else None
+        if pending is None:
+            continue
+        if pending["kind"] == "declare_attackers":
+            uid = seats_for(client, game_id)[pending["player"]]
+            client.post(
+                f"/api/games/{game_id}/actions/attack",
+                params={"uid": uid},
+                json={"attackers": [], "reasoning": REASONING},
+            )
+        elif pending["kind"] == "declare_blockers":
+            uid = seats_for(client, game_id)[pending["player"]]
+            client.post(
+                f"/api/games/{game_id}/actions/declare-blockers",
+                params={"uid": uid},
+                json={"player": pending["player"], "blocks": [], "reasoning": REASONING},
+            )
+        else:  # pragma: no cover - not reached on this bare board
+            raise AssertionError(f"unexpected pending decision: {body}")
+    raise AssertionError(f"never reached {active}'s own turn")  # pragma: no cover
+
+
+def test_own_first_action_of_a_new_turn_reads_whose_turn_mine(
+    client: TestClient, game: str
+) -> None:
+    """FD4-r1/G16: over a *real* ledger (`GET .../review`'s own production
+    path, not a hand-built row), bob's own first action of his brand new
+    turn reads `when.whose_turn == "mine"` - the carried-forward
+    `active_player` approximation used to apply uniformly to every action
+    kind rather than only to the `pass` whose own action can change it, and
+    would misread this `play_land` as "theirs" instead."""
+    from conftest import _ADMIN_KEYS
+
+    game_id = game
+    admin_key = _ADMIN_KEYS[game_id]
+    stock_libraries(client, game_id, cards=10)
+    add_card(client, game_id, "Forest", "bob", "hand")
+
+    _pass_priority_to(client, game_id, "bob")
+    forest = find(state(client, game_id)["hands"]["bob"], "Forest")["id"]
+    played_land = client.post(
+        f"/api/games/{game_id}/actions/play-land",
+        json={"player": "bob", "card_id": forest, "reasoning": REASONING},
+    )
+    assert played_land.json()["allowed"] is True, played_land.text
+
+    _end_with_concede(client, game_id)
+    decisions = _review_decisions(client, game_id, admin_key, "bob")
+    play = _play_of(_one(decisions, "play_land"))
+    assert play["when"]["whose_turn"] == "mine"
+
+
 def test_a_converted_pass_executes_to_the_same_outcome(
     client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

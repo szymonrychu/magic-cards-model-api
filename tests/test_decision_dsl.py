@@ -31,6 +31,8 @@ def row(
     active_player: str = SEAT,
     reasoning: str | None = "because",
     state_view: dict[str, Any] | None = None,
+    pre_action_frame: int | None = None,
+    pre_state: dict[str, Any] | None = None,
     **detail: Any,
 ) -> dict[str, Any]:
     """One ledger entry, shaped like `audit.entries()`: `detail` never
@@ -38,7 +40,11 @@ def row(
     `active_player` - see `audit.record`'s own payload) - `decision_dsl`
     reads it from there. `state_view` is DR1's own optional per-row
     attachment (DR2 wires it from `GET /review/frames/{seq}`): a
-    `GameStateView`-shaped dict this row's move can be read against."""
+    `GameStateView`-shaped dict this row's move can be read against.
+    `pre_action_frame`/`pre_state` are FD5's own two pointers (FD4-r1/G1,
+    G16) - exactly one is ever set on a real row: `pre_action_frame` names
+    an earlier row's own `seq`, `pre_state` is this row's own best-effort
+    pre-action snapshot (only ever set on a game's first row)."""
     return {
         "seq": seq,
         "action": action,
@@ -48,6 +54,8 @@ def row(
         "active_player": active_player,
         "reasoning": reasoning,
         "state_view": state_view,
+        "pre_action_frame": pre_action_frame,
+        "pre_state": pre_state,
     }
 
 
@@ -1126,6 +1134,71 @@ def test_pass_whose_turn_reads_the_pre_action_active_player():
     out = decision_rows(entries, SEAT)
     play = play_of(out[1])
     assert play["when"]["whose_turn"] == "mine"
+
+
+def test_own_first_action_of_a_new_turn_reads_mine_not_theirs():
+    # FD4-r1/G16: the carry-forward approximation used to blindly reuse the
+    # *previous* row's own `active_player` for every kind, not only for the
+    # one kind (`pass`) whose own action can actually change it. That is
+    # wrong the moment the previous row belongs to the *other* player and
+    # the turn has already turned over to this seat: row 1 is the opponent's
+    # own action, still on their turn; row 2 is this seat's own first action
+    # of its brand new turn, and its own `active_player` (SEAT) is already
+    # correct - it must not be overridden by the stale carried-forward value
+    # from row 1.
+    entries = [
+        row(1, "cast", card="irrelevant", player=OPPONENT, active_player=OPPONENT),
+        row(2, "cast", card="irrelevant2", player=SEAT, active_player=SEAT),
+    ]
+    out = decision_rows(entries, SEAT)
+    play = play_of(only(out))
+    assert play["when"]["whose_turn"] == "mine"
+
+
+def test_own_pass_that_ends_the_opponents_turn_still_reads_theirs():
+    # The `pass` special case still applies even when the row *before* it
+    # belongs to the opponent, not this seat: this seat's own pass ends the
+    # opponent's turn, so its own `active_player` field already reads as
+    # this seat (the newly active player) - `pass` is the one kind whose own
+    # action can change `active_player`, so the pre-flip, carried-forward
+    # value (the opponent, from row 1) must still be used for it.
+    entries = [
+        row(1, "cast", card="irrelevant", player=OPPONENT, active_player=OPPONENT),
+        row(2, "pass_priority", player=SEAT, active_player=SEAT),
+    ]
+    out = decision_rows(entries, SEAT)
+    play = play_of(only(out))
+    assert play["when"]["whose_turn"] == "theirs"
+
+
+def test_pre_action_frame_is_resolved_by_exact_seq_not_by_the_nearest_row():
+    # FD4-r1/G1/G16: once FD5 stamps `pre_action_frame`, it is an *exact*
+    # pointer at the row this action was taken against, read back out of
+    # this row's own recorded values - not re-derived by walking backward.
+    # Point row 3 at row 1's own seq, skipping the intervening row 2, whose
+    # own value (if it were used instead) would give the wrong answer.
+    entries = [
+        row(1, "cast", card="irrelevant", player=OPPONENT, active_player=OPPONENT),
+        row(2, "cast", card="irrelevant2", player=OPPONENT, active_player=SEAT),
+        row(3, "cast", card="irrelevant3", player=SEAT, active_player=SEAT, pre_action_frame=1),
+    ]
+    out = decision_rows(entries, SEAT)
+    play = play_of(only(out))
+    assert play["when"]["whose_turn"] == "theirs"
+
+
+def test_pre_state_is_used_directly_when_the_row_carries_one():
+    # FD5 attaches `pre_state` only on a game's very first row (no earlier
+    # frame exists at all) - used directly for both the card lookup and
+    # `active_player`, rather than falling back to this row's own
+    # (identical, here) post-action `state_view`.
+    bolt = kit.bolt(zone="hand", controller=SEAT)
+    pre_view = kit.state_view(SEAT, opponent=OPPONENT, hands={SEAT: [bolt]}, active=OPPONENT)
+    entries = [row(1, "cast", card=str(bolt["id"]), active_player=SEAT, pre_state=pre_view)]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    assert "instant" in play["moves"][0]["card"]["select"].get("types_all", [])
+    assert play["when"]["whose_turn"] == "theirs"
 
 
 # -- FD4 (d): keyword-action routes -----------------------------------------------
