@@ -9162,7 +9162,7 @@
       },
       "OptionalCostChoice": {
         "additionalProperties": false,
-        "description": "One optional cost a cast pays (`CastRequest.optional_costs`).\n\n`keyword` is the cost's own keyword, case-insensitively: `Kicker` and\n`Multikicker` (CR 702.33a/c, `Casting.pay_kicker`), `Replicate`\n(CR 702.56a, `Casting.pay_replicate`), `Offspring` (CR 702.175a,\n`Casting.pay_offspring`), `Blight` (CR 701.68a's \"you may blight N\",\n`Casting.pay_blight`), `Gift` (CR 702.174a, `Casting.pay_gift`),\n`Entwine` (CR 702.42a, `Casting.choose_modes(entwined=True)` - name every\nmode in `modes` too), `Escalate` (CR 702.120a, `Casting.pay_escalate` -\ncharged for every mode beyond the first whether or not it is named; name\nit to hand over the objects a non-mana escalate cost takes) and\n`Harmonize` (CR 702.180a/b, `Casting.pay_harmonize` - the creature a\n`keyword: Harmonize` cast taps to reduce its cost) and `Pay life`\n(CR 601.2b, the life half of a \"pay N life or pay {M}\" additional cost,\n`Casting.paying_life_for_additional_cost`), `Bargain` (CR 702.166a,\n`Casting.pay_bargain` - name the sacrificed permanent in `choosing`),\n`Collect evidence` (CR 701.59a, `Casting.collect_evidence` - the cards in\n`choosing`, or left for the payment to pick) and `Reveal` (CR 701.20a,\n`Casting.reveal_for_cost` - the revealed card in `choosing`) - every\noptional cost choice the engine charges.",
+        "description": "One optional cost a cast pays (`CastRequest.optional_costs`).\n\n`keyword` is the cost's own keyword, case-insensitively: `Kicker` and\n`Multikicker` (CR 702.33a/c, `Casting.pay_kicker`), `Replicate`\n(CR 702.56a, `Casting.pay_replicate`), `Offspring` (CR 702.175a,\n`Casting.pay_offspring`), `Blight` (CR 701.68a's \"you may blight N\",\n`Casting.pay_blight`), `Gift` (CR 702.174a, `Casting.pay_gift`),\n`Entwine` (CR 702.42a, `Casting.choose_modes(entwined=True)` - name every\nmode in `modes` too), `Escalate` (CR 702.120a, `Casting.pay_escalate` -\ncharged for every mode beyond the first whether or not it is named; name\nit to hand over the objects a non-mana escalate cost takes) and\n`Harmonize` (CR 702.180a/b, `Casting.pay_harmonize` - the creature a\n`keyword: Harmonize` cast taps to reduce its cost) and `Pay life`\n(CR 601.2b, the life half of a \"pay N life or pay {M}\" additional cost,\n`Casting.paying_life_for_additional_cost`), `Bargain` (CR 702.166a,\n`Casting.pay_bargain` - name the sacrificed permanent in `choosing`),\n`Collect evidence` (CR 701.59a, `Casting.collect_evidence` - the cards in\n`choosing`, or left for the payment to pick) and `Reveal` (CR 701.20a,\n`Casting.reveal_for_cost` - the revealed card in `choosing`) and `Behold`\n(CR 701.4a's \"you may choose a creature type and behold N creatures of\nthat type\", `Casting.behold_chosen_type_for_cost` - the type in\n`creature_type`, the beheld creatures in `choosing`) - every optional cost\nchoice the engine charges.",
         "properties": {
           "choosing": {
             "anyOf": [
@@ -9189,6 +9189,17 @@
               }
             ],
             "title": "Cost"
+          },
+          "creature_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creature Type"
           },
           "keyword": {
             "title": "Keyword",

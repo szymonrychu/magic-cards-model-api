@@ -846,3 +846,62 @@ def test_the_one_parser_reads_a_kicker_cost_and_a_two_word_keyword():
         {"keyword": "Kicker", "cost": "{W}"},
         {"keyword": "Collect evidence"},
     ]
+
+
+# -- a chosen creature type, beheld (Celestial Reunion) -------------------------
+#
+# CR 118.8b + CR 701.4a: "As an additional cost to cast this spell, you may
+# choose a creature type and behold two creatures of that type." The type is
+# the seat's own choice (CR 607.2d's "the chosen type" reads it back at
+# resolution), so the announcement carries it alongside the beheld creatures.
+
+
+def test_celestial_reunion_row_offers_its_behold(client, game):
+    add_card(client, game, "Celestial Reunion", "alice", "hand")
+    behold = offer(cast_row(client, game, "Celestial Reunion"), "Behold")
+    assert behold["rule"] == "CR 701.4a"
+    assert behold["understood"] is True
+
+
+def test_beholding_two_goblins_of_the_named_type(client, game):
+    sources = lands(client, game, "Forest", 2)
+    add_card(client, game, "Goblin Guide", "alice", "battlefield")
+    add_card(client, game, "Goblin Guide", "alice", "battlefield")
+    goblins = [c["id"] for c in state(client, game)["battlefield"] if c["name"] == "Goblin Guide"]
+    add_card(client, game, "Celestial Reunion", "alice", "hand")
+    card = hand_card(client, game, "Celestial Reunion")["id"]
+    body = cast(
+        client,
+        game,
+        card,
+        x_value=1,
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Behold", "creature_type": "Goblin", "choosing": goblins}],
+    )
+    assert body["allowed"] is True, body
+    record = _record(game, _spell_on_stack(client, game, "Celestial Reunion"))
+    assert record.behold_chosen_type_paid
+    assert record.chosen_creature_type == "goblin"
+
+
+def test_behold_needs_the_creature_type_named(client, game):
+    sources = lands(client, game, "Forest", 2)
+    add_card(client, game, "Goblin Guide", "alice", "battlefield")
+    add_card(client, game, "Goblin Guide", "alice", "battlefield")
+    goblins = [c["id"] for c in state(client, game)["battlefield"] if c["name"] == "Goblin Guide"]
+    add_card(client, game, "Celestial Reunion", "alice", "hand")
+    card = hand_card(client, game, "Celestial Reunion")["id"]
+    response = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": card,
+            "x_value": 1,
+            "mana_sources": sources,
+            "optional_costs": [{"keyword": "Behold", "choosing": goblins}],
+            "dry_run": True,
+        },
+    )
+    body = response.json()
+    assert body.get("allowed") is not True, body
+    assert "creature_type" in json.dumps(body), body

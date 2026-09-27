@@ -1294,8 +1294,11 @@ class OptionalCostChoice(RequestModel):
     `Casting.pay_bargain` - name the sacrificed permanent in `choosing`),
     `Collect evidence` (CR 701.59a, `Casting.collect_evidence` - the cards in
     `choosing`, or left for the payment to pick) and `Reveal` (CR 701.20a,
-    `Casting.reveal_for_cost` - the revealed card in `choosing`) - every
-    optional cost choice the engine charges."""
+    `Casting.reveal_for_cost` - the revealed card in `choosing`) and `Behold`
+    (CR 701.4a's "you may choose a creature type and behold N creatures of
+    that type", `Casting.behold_chosen_type_for_cost` - the type in
+    `creature_type`, the beheld creatures in `choosing`) - every optional cost
+    choice the engine charges."""
 
     keyword: str
     cost: str | None = None
@@ -1314,6 +1317,9 @@ class OptionalCostChoice(RequestModel):
     at most one creature harmonize taps."""
     opponent: str | None = None
     """The opponent a gift is promised to (CR 702.174a)."""
+    creature_type: str | None = None
+    """The creature type a `Behold` names (CR 607.2d's "choose a creature
+    type"), which "the chosen type" reads back at resolution."""
 
 
 class ConvokeChoice(RequestModel):

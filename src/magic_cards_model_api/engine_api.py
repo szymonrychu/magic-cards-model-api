@@ -937,8 +937,10 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
     multikicker (CR 702.33a/c) through `pay_kicker` (with `cost` naming one of
     two printed kicker costs, CR 702.33b), bargain (CR 702.166a,
     `pay_bargain`), a printed "you may collect evidence N" (CR 701.59a,
-    `collect_evidence`) and "you may reveal a ... card" (CR 701.20a,
-    `reveal_for_cost`), replicate (CR 702.56a),
+    `collect_evidence`), "you may reveal a ... card" (CR 701.20a,
+    `reveal_for_cost`) and "you may choose a creature type and behold N
+    creatures of that type" (CR 701.4a, `behold_chosen_type_for_cost`),
+    replicate (CR 702.56a),
     offspring (CR 702.175a), blight (CR 701.68a), gift (CR 702.174a) and
     harmonize's "tapping up to one untapped creature you control"
     (CR 702.180a/b, `pay_harmonize`, which refuses unless the cast was
@@ -977,6 +979,14 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
                     "name exactly that card's id in choosing"
                 )
             casting.reveal_for_cost(chosen[0])
+        elif keyword == "behold":
+            _paid_once(choice, "the chosen type is beheld once for this cost (CR 701.4a)")
+            if not choice.creature_type:
+                raise ValueError(
+                    "this behold names a creature type first (CR 118.8b, CR 701.4a) - "
+                    "name it in creature_type, and the beheld creatures' ids in choosing"
+                )
+            casting.behold_chosen_type_for_cost(choice.creature_type, chosen)
         elif keyword == "replicate":
             casting.pay_replicate(choice.times, choosing=chosen)
         elif keyword == "offspring":
@@ -1028,7 +1038,8 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
             raise ValueError(
                 f"{choice.keyword} is not an optional cost this engine pays (CR 601.2b): "
                 "name one of Kicker, Multikicker, Replicate, Offspring, Blight, Gift, "
-                "Bargain, Collect evidence, Reveal, Entwine, Escalate, Harmonize or Pay life"
+                "Bargain, Collect evidence, Reveal, Behold, Entwine, Escalate, Harmonize or "
+                "Pay life"
             )
     return mode_costs
 
