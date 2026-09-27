@@ -639,6 +639,7 @@ _DEFAULTED_KINDS = frozenset(
         "opening_hand_action",
         "pay_energy_amount",
         "pay_life_amount",
+        "choose_an_amount",
         "put_on_top_or_bottom",
         "order_triggers",
         "choose_cards",
@@ -714,6 +715,11 @@ def decide_body(pending: dict[str, Any], player: str) -> dict[str, Any]:
         body["energy_amount"] = 0
     elif kind == "pay_life_amount":
         body["life_amount"] = 0
+    elif kind == "choose_an_amount":
+        # `machines/decisions.default_answer`'s own "up to N always permits
+        # choosing none" branch - CR 608.2d, the same least-committal 0
+        # `pay_energy_amount`/`pay_life_amount` already default to above.
+        body["amount"] = 0
     elif kind == "put_on_top_or_bottom":
         body["top"] = True
     elif kind == "put_into_hand_or_graveyard":

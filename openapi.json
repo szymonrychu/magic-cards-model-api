@@ -5404,6 +5404,17 @@
             ],
             "title": "Accept"
           },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
           "card_ids": {
             "items": {
               "type": "string"

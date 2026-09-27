@@ -1305,6 +1305,7 @@ SMALL = [
     {**BASE, "kind": "pay_mana", "source": "Small pay_mana"},
     {**BASE, "kind": "pay_energy_amount", "amount": 3, "source": "Small pay_energy_amount"},
     {**BASE, "kind": "pay_life_amount", "amount": 3, "source": "Small pay_life_amount"},
+    {**BASE, "kind": "choose_an_amount", "amount": 3, "source": "Small choose_an_amount"},
     {
         **BASE,
         "kind": "choose_a_quality",

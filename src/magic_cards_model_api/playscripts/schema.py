@@ -368,7 +368,9 @@ FORBIDDEN_DECISION_KINDS = ()
 #: The decision kinds answered with a number rather than yes/no or cards: the
 #: kinds `decisions.ANSWER_FIELD_FOR_KIND` answers on the engine's `amount`
 #: field (`pay_energy_amount`, `pay_life_amount` - an integer from 0 up to the
-#: decision's own `amount`, the payer's energy or life). Their answer item
+#: decision's own `amount`, the payer's energy or life; `choose_an_amount` -
+#: that same shape with nothing paid, "put up to N counters" and any other
+#: CR 608.2d "choose an amount" with no cost attached). Their answer item
 #: carries `amount` and nothing else.
 AMOUNT_DECISION_KINDS = tuple(
     sorted(kind.value for kind, field in ANSWER_FIELD_FOR_KIND.items() if field == "amount")

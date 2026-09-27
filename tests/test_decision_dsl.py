@@ -689,6 +689,12 @@ def test_decide_pay_life_amount_is_an_amount_answer():
     assert play["moves"][0]["answers"][0] == {"decision": "pay_life_amount", "amount": 2}
 
 
+def test_decide_choose_an_amount_is_an_amount_answer():
+    record = only(decision_rows([_decide(1, "choose_an_amount", amount=2)], SEAT))
+    play = play_of(record)
+    assert play["moves"][0]["answers"][0] == {"decision": "choose_an_amount", "amount": 2}
+
+
 def test_decide_choose_a_mode_is_a_choice_answer():
     record = only(
         decision_rows([_decide(1, "choose_a_mode", choice="Destroy target creature")], SEAT)

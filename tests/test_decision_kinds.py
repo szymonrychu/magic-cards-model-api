@@ -1032,6 +1032,133 @@ def test_pay_life_amount_rejects_paying_more_life_than_the_player_has(client, ga
     assert life_of(final, "alice") == 20, "an illegal payment is never taken, and 0 paid nothing"
 
 
+# -- choose_an_amount: "put up to N counters" with no cost attached (CR 608.2d) --
+
+
+def stock_clockwork_steed(client: TestClient, game_id: str) -> dict[str, Any]:
+    """alice's Clockwork Steed - added straight to the battlefield, which
+    never fires CR 614.12's "enters with four +1/+0 counters" replacement
+    (that is a real casting/ETB event this harness's raw board-building
+    skips), so it starts with none rather than already at its own cap -
+    plus three untapped Forests to pay the ability's own `{X}` (CR 107.3a's
+    announced X is generic mana, not a color the land's basic type would
+    need to match). Summoning sickness is cleared by name (CR 302.6, CR
+    508.1a): the ability's own `{T}` in its cost is a creature's tap
+    ability, which summoning sickness would otherwise forbid."""
+    add_card(client, game_id, "Clockwork Steed", "alice", "battlefield")
+    add_card(client, game_id, "Forest", "alice", "battlefield")
+    add_card(client, game_id, "Forest", "alice", "battlefield")
+    add_card(client, game_id, "Forest", "alice", "battlefield")
+    board = state(client, game_id)
+    steed = find(board["battlefield"], "Clockwork Steed")
+    client.patch(f"/api/games/{game_id}/cards/{steed['id']}", json={"summoning_sick": False})
+    return {
+        "steed_id": steed["id"],
+        "forests": [c["id"] for c in board["battlefield"] if c["name"] == "Forest"],
+    }
+
+
+def activate_steed(
+    client: TestClient, game_id: str, rig: dict[str, Any], x_value: int, sources: int
+) -> dict[str, Any]:
+    """Activate Clockwork Steed's `{X}, {T}` ability for `x_value`, paying
+    with `sources` of its own untapped Forests, then resolve it - the call
+    that pauses on the ability's own `choose_an_amount` question."""
+    response = client.post(
+        f"/api/games/{game_id}/actions/activate",
+        json={
+            "player": "alice",
+            "card_id": rig["steed_id"],
+            "ability_index": 0,
+            "x_value": x_value,
+            "mana_sources": rig["forests"][:sources],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["allowed"] is True, response.text
+    return resolve_top(game_id)
+
+
+def test_choose_an_amount_answers_zero_the_ceiling_and_above_the_ceiling(client, game):
+    """Clockwork Steed: "{X}, {T}: Put up to X +1/+0 counters on this
+    creature. This ability can't cause the total number of +1/+0 counters
+    on this creature to be greater than four." (Scryfall ruling, 2008-10-01:
+    "you can choose to put fewer than X +1/+0 counters on it") is the
+    engine's own worked example for `choose_an_amount` (CR 608.2d) -
+    `pay_energy_amount`/`pay_life_amount`'s own shape with nothing paid: an
+    `int` from 0 up to whatever ceiling this question offers, not a resource
+    spent to get there. The ceiling here is `min(announced X, room left
+    under the printed cap)`, computed by the engine and handed over as
+    `pending_decision.amount`.
+
+    Proves the whole round trip through this api: an amount above the
+    ceiling is refused with the engine's own reason and leaves the decision
+    standing, the ceiling itself is accepted and actually adds that many
+    counters, and 0 - CR 608.2d's always-legal decline - is accepted too and
+    adds none."""
+    uids = seats_for(client, game)
+    force_turn_position(game, Step.UPKEEP, "alice")  # "Activate only during your upkeep."
+    rig = stock_clockwork_steed(client, game)
+
+    resolved = activate_steed(client, game, rig, x_value=3, sources=3)
+    assert resolved["paused"] is True
+    pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    assert pending["kind"] == "choose_an_amount"
+    assert pending["player"] == "alice"
+    assert pending["source"] == "Clockwork Steed"
+    assert pending["amount"] == 3  # min(announced X=3, room under the cap of four)
+
+    too_many = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "amount": 4},
+    )
+    assert too_many.status_code == 200
+    body = too_many.json()
+    assert body["accepted"] is False
+    assert "cannot choose 4" in body["reason"]
+    assert "CR 608.2d" in body["reason"]
+    still_pending = state(client, game, uid=uids["alice"])
+    assert still_pending.get("pending_decision") is not None, "a refused answer must not consume it"
+
+    ceiling = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "amount": 3},
+    )
+    assert ceiling.status_code == 200, ceiling.text
+    assert ceiling.json()["accepted"] is True
+
+    after_ceiling = state(client, game)
+    steed = find(after_ceiling["battlefield"], "Clockwork Steed")
+    assert steed["counters"]["+1/+0"] == 3, "the ceiling chosen, not the maximum defaulted to"
+
+    # Untap for a second activation, at a smaller X - proving 0 is a real,
+    # separately-answerable decline, not just the untried branch of the
+    # first decision.
+    client.post(f"/api/games/{game}/cards/{rig['steed_id']}/tap", json={"tapped": False})
+    for forest_id in rig["forests"]:
+        client.post(f"/api/games/{game}/cards/{forest_id}/tap", json={"tapped": False})
+
+    resolved_again = activate_steed(client, game, rig, x_value=1, sources=1)
+    assert resolved_again["paused"] is True
+    pending_again = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    assert pending_again["kind"] == "choose_an_amount"
+    assert pending_again["amount"] == 1  # min(announced X=1, room=4-3=1)
+
+    declined = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "amount": 0},
+    )
+    assert declined.status_code == 200, declined.text
+    assert declined.json()["accepted"] is True
+
+    final = state(client, game)
+    steed_final = find(final["battlefield"], "Clockwork Steed")
+    assert steed_final["counters"]["+1/+0"] == 3, "0 chosen: CR 608.2d's decline, nothing added"
+
+
 # -- pay_mana: "unless its controller pays {N}" (CR 118.12a) ----------------
 
 

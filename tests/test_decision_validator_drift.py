@@ -325,6 +325,16 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
         [4, 0, 10, -1, 11, "4", True],
     )
 
+    cases[DecisionKind.CHOOSE_AN_AMOUNT] = (
+        Decision(
+            kind=DecisionKind.CHOOSE_AN_AMOUNT,
+            player="alice",
+            prompt="choose an amount",
+            amount=3,
+        ),
+        [2, 0, 3, -1, 4, "2", True],
+    )
+
     cases[DecisionKind.SCRY] = (
         Decision(
             kind=DecisionKind.SCRY,

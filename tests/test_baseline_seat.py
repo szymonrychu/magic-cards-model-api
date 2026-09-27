@@ -507,8 +507,12 @@ def test_an_amount_question_pays_nothing():
     energy = baseline_seat.decide_body(
         pending_view(_decision(DecisionKind.PAY_ENERGY_AMOUNT, amount=4)), "alice"
     )
+    chosen = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.CHOOSE_AN_AMOUNT, amount=3)), "alice"
+    )
     assert life["life_amount"] == 0
     assert energy["energy_amount"] == 0
+    assert chosen["amount"] == 0
 
 
 def test_put_into_hand_or_graveyard_takes_the_hand():

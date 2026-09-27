@@ -55,10 +55,14 @@ def test_the_amount_decision_kinds_are_the_ones_the_api_answers_with_an_amount()
     assert set(AMOUNT_DECISION_KINDS) == {
         kind.value for kind, field in ANSWER_FIELD_FOR_KIND.items() if field == "amount"
     }
-    assert set(AMOUNT_DECISION_KINDS) == {"pay_energy_amount", "pay_life_amount"}
+    assert set(AMOUNT_DECISION_KINDS) == {
+        "pay_energy_amount",
+        "pay_life_amount",
+        "choose_an_amount",
+    }
 
 
-@pytest.mark.parametrize("kind", ["pay_energy_amount", "pay_life_amount"])
+@pytest.mark.parametrize("kind", ["pay_energy_amount", "pay_life_amount", "choose_an_amount"])
 @pytest.mark.parametrize("amount", [0, 2, 3, "max"])
 def test_an_amount_decision_takes_an_integer_or_max(kind, amount):
     doc = answer_move({"decision": kind, "amount": amount})
@@ -66,7 +70,7 @@ def test_an_amount_decision_takes_an_integer_or_max(kind, amount):
     assert Play.model_validate(doc).moves[0].answers[0].amount == amount
 
 
-@pytest.mark.parametrize("kind", ["pay_energy_amount", "pay_life_amount"])
+@pytest.mark.parametrize("kind", ["pay_energy_amount", "pay_life_amount", "choose_an_amount"])
 def test_accept_on_an_amount_decision_is_answer_shape_mismatch(kind):
     doc = answer_move({"decision": kind, "accept": True})
     assert codes(doc) == ["answer-shape-mismatch"]

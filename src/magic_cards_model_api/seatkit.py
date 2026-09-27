@@ -998,7 +998,7 @@ PROTOCOL_VERSION = "seatkit-26"
 #: carries this kind's answer; `answer_with` is the whole call, paste-ready,
 #: already carrying this question's own generation. The mapping they encode
 #: (`decisions.TOOL_FIELD_FOR_KIND`/`TOOL_FOR_KIND`) disagrees with the
-#: engine-facing field name on ten of the nineteen kinds and lived only in
+#: engine-facing field name on twelve of the twenty-four kinds and lived only in
 #: `decide`'s own ~200-line docstring before this, which is exactly the
 #: "how" thinking a seat had to do before it could answer at all - and where
 #: it guessed wrong, the guess was a real parameter of `decide` accepted by

@@ -2245,6 +2245,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         top_order: str = "",
         energy_amount: int | None = None,
         life_amount: int | None = None,
+        amount: int | None = None,
         choice: str = "",
         top: bool | None = None,
         to_hand: bool | None = None,
@@ -2385,6 +2386,13 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
           is `pay_energy`'s - and a distinct field from `energy_amount`,
           since the two pay from different resources. 0 always declines and
           is always legal (CR 119.4b).
+        - `choose_an_amount` (e.g. Clockwork Steed's "{X}, {T}: Put up to X
+          +1/+0 counters on this creature", CR 608.2d - any resolution-time
+          "choose an amount from 0 up to N" with no cost or payment
+          attached): `amount` is an integer from 0 up to
+          `pending_decision.amount` (the ceiling this question offers). Not
+          `energy_amount`/`life_amount` - nothing is paid here, only chosen.
+          0 always declines and is always legal.
         - `choose_a_quality` (e.g. Utopia Sprawl's "as this enters, choose a
           color", CR 614.12a): `choice` is the chosen color, card name, or
           creature type. `pending_decision.options` lists the legal colors
@@ -2614,6 +2622,8 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             body["energy_amount"] = energy_amount
         if life_amount is not None:
             body["life_amount"] = life_amount
+        if amount is not None:
+            body["amount"] = amount
         if choice:
             body["choice"] = choice
         if top is not None:

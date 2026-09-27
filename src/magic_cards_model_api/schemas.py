@@ -1720,6 +1720,15 @@ class DecideRequest(BoardRead):
     question as `pay_life`'s `accept`: this kind asks how much, not whether.
     Distinct from `energy_amount` - the two pay from different resources.
     `None` (the default) is refused, matching `accept`/`energy_amount`."""
+    amount: int | None = None
+    """The `choose_an_amount` kind's answer (CR 608.2d) - "put up to N +1/+0
+    counters on this creature" (Clockwork Steed's `{X}, {T}` ability) and any
+    other resolution-time "choose an amount from 0 up to N" with no cost or
+    payment attached: an integer from 0 up to `pending_decision.amount` (the
+    ceiling this question offers). Not `energy_amount`/`life_amount` -
+    `pay_energy_amount`/`pay_life_amount` pay something away, and nothing is
+    paid here at all. `None` (the default) is refused, matching
+    `accept`/`energy_amount`/`life_amount`."""
     moved: list[str] = Field(default_factory=list)
     """For the `scry` and `surveil` kinds: which of `pending_decision.cards`
     move off the top - to the bottom of the library for a scry (CR 701.22a),
@@ -2625,7 +2634,7 @@ class PendingDecisionView(BaseModel):
     decision's own `generation` (`decisions.PendingDecision.answer_with`).
 
     Emitted rather than derived because the mapping from `kind` to parameter
-    disagrees with the engine-facing field name on ten of the nineteen
+    disagrees with the engine-facing field name on twelve of the twenty-four
     kinds, and lived only in the MCP `decide` tool's own docstring before
     this - see `decisions.TOOL_FIELD_FOR_KIND`'s note for the table of
     divergences and the refusal it was costing."""

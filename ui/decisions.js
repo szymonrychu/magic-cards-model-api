@@ -121,7 +121,7 @@ function yesNo(pending, yes, no) {
   };
 }
 
-function amount(pending, draft, field) {
+function amount(pending, draft, field, label) {
   const value = draft.amount === undefined ? 0 : draft.amount;
   return {
     kind: pending.kind,
@@ -129,7 +129,7 @@ function amount(pending, draft, field) {
     prompt: pending.prompt,
     controls: [{ type: "number", min: 0, max: pending.amount, value }],
     submit: {
-      label: "Pay",
+      label: label || "Pay",
       enabled: value >= 0 && value <= pending.amount,
       answer: { [field]: value },
     },
@@ -570,6 +570,10 @@ export const DECISION_KINDS = {
   pay_mana: (p) => yesNo(p, "Pay", "Don't pay"),
   pay_energy_amount: (p, d) => amount(p, d, "energy_amount"),
   pay_life_amount: (p, d) => amount(p, d, "life_amount"),
+  // CR 608.2d's "up to N" with nothing paid (Clockwork Steed's "put up to X
+  // +1/+0 counters") - `amount`'s own shape, labelled "Choose" rather than
+  // "Pay" since nothing changes hands.
+  choose_an_amount: (p, d) => amount(p, d, "amount", "Choose"),
   scry: split,
   surveil: split,
   // CR 103.5: "True takes a mulligan and False keeps the hand"
@@ -657,6 +661,7 @@ const POPOVER_KINDS = new Set([
   "pay_mana",
   "pay_energy_amount",
   "pay_life_amount",
+  "choose_an_amount",
   "choose_a_quality",
   "choose_a_mode",
   "put_on_top_or_bottom",

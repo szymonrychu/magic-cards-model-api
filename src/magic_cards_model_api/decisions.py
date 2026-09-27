@@ -57,7 +57,7 @@ logger = logging.getLogger("mcm.decisions")
 
 #: Every `DecisionKind` that `POST /api/games/{id}/decide` actually knows how
 #: to answer - see `app.py`'s `decide` endpoint, which this set must be kept
-#: in lockstep with. Covers all 19 of the engine's `DecisionKind` members -
+#: in lockstep with. Covers all 24 of the engine's `DecisionKind` members -
 #: there is no longer a second set for "answered somewhere else": pausing put
 #: every decision, `DECLARE_ATTACKERS`/`DECLARE_BLOCKERS` included, on the one
 #: tape a paused command replays from, so the one thing that used to be true
@@ -104,6 +104,16 @@ logger = logging.getLogger("mcm.decisions")
 #: creature type") - so it shares the same request field, `choice`, and
 #: `mode_answer` differs from `quality_answer` only in its error text citing
 #: CR 700.2a instead of CR 614.12a.
+#: `CHOOSE_AN_AMOUNT` ("put up to N +1/+0 counters on this creature" -
+#: Clockwork Steed's own `{X}, {T}` ability, CR 608.2d) joined this set the
+#: same way `PAY_LIFE_AMOUNT` did: caught by the drift test at merge time.
+#: It is `PAY_ENERGY_AMOUNT`/`PAY_LIFE_AMOUNT`'s own shape - an `int` from 0
+#: up to `Decision.amount` - generalised past paying anything at all: an
+#: "up to N" resolution-time choice with no cost or payment attached, so
+#: `choose_amount_answer` is `life_amount_answer` read with nothing spent.
+#: Its own request field (`amount`), not shared with `energy_amount`/
+#: `life_amount`: those two name what is being paid away, and this kind pays
+#: nothing.
 #: `CHOOSE_PLAYERS` (CR 701.34a's own "and/or players" half of Proliferate)
 #: and `CHOOSE_PILE` (CR 700.3's pile primitive, Liliana of the Veil's own
 #: `-6`, Do or Die) joined this set the Reality Fracture way every kind above
@@ -225,6 +235,7 @@ ANSWERABLE_KINDS = frozenset(
         DecisionKind.PAY_ENERGY,
         DecisionKind.PAY_ENERGY_AMOUNT,
         DecisionKind.PAY_LIFE_AMOUNT,
+        DecisionKind.CHOOSE_AN_AMOUNT,
         DecisionKind.PAY_MANA,
         DecisionKind.SCRY,
         DecisionKind.SURVEIL,
@@ -274,6 +285,7 @@ ANSWER_FIELD_FOR_KIND: dict[DecisionKind, str] = {
     DecisionKind.PUT_INTO_HAND_OR_GRAVEYARD: "accept",
     DecisionKind.PAY_ENERGY_AMOUNT: "amount",
     DecisionKind.PAY_LIFE_AMOUNT: "amount",
+    DecisionKind.CHOOSE_AN_AMOUNT: "amount",
     DecisionKind.CHOOSE_CARDS: "card_ids",
     DecisionKind.ORDER_TRIGGERS: "card_ids",
     DecisionKind.SCRY: "split",
@@ -299,8 +311,8 @@ assert set(ANSWER_FIELD_FOR_KIND) == set(DecisionKind)
 #: Deliberately *not* derived from `ANSWER_FIELD_FOR_KIND` above, and the two
 #: cannot be collapsed into one: that table names the engine-facing
 #: `machines.decisions.Answer` field the coerced value is handed back on,
-#: this one names the argument the caller writes, and they disagree on ten
-#: of the nineteen kinds.
+#: this one names the argument the caller writes, and they disagree on
+#: twelve of the twenty-four kinds.
 #:
 #: | kind | `ANSWER_FIELD_FOR_KIND` | `TOOL_FIELD_FOR_KIND` |
 #: |---|---|---|
@@ -323,7 +335,7 @@ assert set(ANSWER_FIELD_FOR_KIND) == set(DecisionKind)
 #:
 #: That divergence is exactly why this ships as *data on the decision* rather
 #: than as prose a seat reasons over: a seat guessing the parameter from the
-#: kind gets ten of nineteen wrong, and it gets them wrong in the worst
+#: kind gets twelve of twenty-four wrong, and it gets them wrong in the worst
 #: possible way - `accept` and `card_ids` are real parameters of `decide`, so
 #: the guess is accepted by the tool and refused by the route, which is the
 #: measured "this decision needs a yes/no answer ('accept')" refusal.
@@ -338,6 +350,7 @@ TOOL_FIELD_FOR_KIND: dict[DecisionKind, str] = {
     DecisionKind.PUT_INTO_HAND_OR_GRAVEYARD: "to_hand",
     DecisionKind.PAY_ENERGY_AMOUNT: "energy_amount",
     DecisionKind.PAY_LIFE_AMOUNT: "life_amount",
+    DecisionKind.CHOOSE_AN_AMOUNT: "amount",
     DecisionKind.CHOOSE_CARDS: "card_ids",
     DecisionKind.ORDER_TRIGGERS: "order",
     DecisionKind.SCRY: "moved",
@@ -689,9 +702,15 @@ class PendingDecision:
             # complement of it, among whatever this player controls, is pile
             # two.
             return "<true for pile one (pending_decision.cards), false for the other pile>"
-        if kind in (DecisionKind.PAY_ENERGY_AMOUNT, DecisionKind.PAY_LIFE_AMOUNT):
-            # `amount` is the ceiling the payer actually has (CR 118.3,
-            # CR 119.4); 0 is always legal and always the decline.
+        if kind in (
+            DecisionKind.PAY_ENERGY_AMOUNT,
+            DecisionKind.PAY_LIFE_AMOUNT,
+            DecisionKind.CHOOSE_AN_AMOUNT,
+        ):
+            # `amount` is the ceiling - the payer's own energy or life (CR
+            # 118.3, CR 119.4) for the two pay-amount kinds, or whatever
+            # ceiling this resolution offered (CR 608.2d) for
+            # `choose_an_amount`; 0 is always legal and always the decline.
             return f"<an integer from 0 to {self.amount}>"
         if kind is DecisionKind.CHOOSE_CARDS:
             if self.amount == 1:
@@ -801,7 +820,7 @@ class PendingDecision:
         The whole point of the field: `kind` -> parameter was documented only
         in the MCP `decide` tool's own ~200-line docstring, so answering cost
         a seat a read and a derivation before it could say anything at all,
-        and ten of the nineteen kinds do not answer on the parameter their
+        and twelve of the twenty-four kinds do not answer on the parameter their
         engine-side field name suggests (`TOOL_FIELD_FOR_KIND`).
 
         `generation` rides along on every `decide` template because echoing
@@ -948,6 +967,27 @@ def life_amount_answer(life_amount: int | None) -> int:
     if life_amount is None:
         raise ValueError("this decision needs an integer amount of life ('life_amount')")
     return life_amount
+
+
+def choose_amount_answer(amount: int | None) -> int:
+    """A `decide` request body's `amount`, in the shape `Game.ask` expects
+    for `CHOOSE_AN_AMOUNT` - "put up to N +1/+0 counters on this creature"
+    (Clockwork Steed) and any other resolution-time "choose an amount from 0
+    up to N" with no cost or payment attached (CR 608.2d): a plain `int`
+    from 0 up to `pending_decision.amount` (the ceiling this question
+    offers). `life_amount_answer`'s own shape, with nothing paid: distinct
+    from both `energy_amount`/`life_amount` - a client that answered this
+    kind on either of those fields would be naming what gets paid away, and
+    nothing here is paid at all.
+
+    Refuses a missing amount with a 400-shaped `ValueError` here, matching
+    `life_amount_answer`'s reasoning - `Game.ask`'s own `isinstance` and
+    range checks (0..`pending_decision.amount`) still run when the paused
+    command replays and are not duplicated here.
+    """
+    if amount is None:
+        raise ValueError("this decision needs an integer amount ('amount')")
+    return amount
 
 
 def mode_answer(choice: str | None) -> str:
@@ -1387,6 +1427,19 @@ def validate_answer(decision: Decision, value: object) -> None:
             raise ValueError(
                 f"{decision.prompt}: cannot pay {value} life, life total is only "
                 f"{decision.amount} (CR 119.4)"
+            )
+        return
+
+    if decision.kind is DecisionKind.CHOOSE_AN_AMOUNT:
+        # `Game.ask`'s own wording for this kind, word for word - see that
+        # branch in `models/game.py`, kept to parity by
+        # `test_decision_validator_drift`.
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"{decision.prompt}: needs an integer amount")
+        if value < 0 or value > decision.amount:
+            raise ValueError(
+                f"{decision.prompt}: cannot choose {value}, at most {decision.amount} "
+                f"is legal (CR 608.2d)"
             )
         return
 

@@ -106,6 +106,10 @@ function answerThrough(root, p) {
       fire(input(), "change", { target: { value: "2" } });
       press("Pay");
       break;
+    case "choose_an_amount":
+      fire(input(), "change", { target: { value: "2" } });
+      press("Choose");
+      break;
     case "choose_a_mode": case "choose_a_quality":
       if ((p.options || []).length) click(buttonNamed(root, p.options[1]));
       else fire(input(), "input", { target: { value: "Goblin" } });
@@ -173,6 +177,13 @@ SMALL = [
         "prompt": "choose a pile to sacrifice",
         "source": "Liliana of the Veil",
     },
+    {
+        **BASE,
+        "kind": "choose_an_amount",
+        "prompt": "choose how many +1/+0 counters to put on Clockwork Steed",
+        "source": "Clockwork Steed",
+        "amount": 3,
+    },
 ]
 
 EXPECTED_BODIES = {
@@ -186,6 +197,7 @@ EXPECTED_BODIES = {
     "choose_pile": [{"pile_one": True}, {"pile_one": False}],
     "pay_energy_amount": [{"energy_amount": 2}],
     "pay_life_amount": [{"life_amount": 2}],
+    "choose_an_amount": [{"amount": 2}],
     "choose_a_mode": [{"choice": "Draw a card"}],
 }
 

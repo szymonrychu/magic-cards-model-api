@@ -96,6 +96,7 @@ def test_every_answerable_kind_has_a_view_model() -> None:
             "pay_mana",
             "pay_energy_amount",
             "pay_life_amount",
+            "choose_an_amount",
             "scry",
             "surveil",
             "mulligan",

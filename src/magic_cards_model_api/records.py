@@ -1805,6 +1805,11 @@ def advice_summary(
     for key, label in (("energy_amount", "energy"), ("life_amount", "life")):
         if isinstance(body.get(key), int):
             parts.append(f"paying {body[key]} {label}")
+    # `choose_an_amount` (CR 608.2d): the same int shape as the two pay-
+    # amount kinds above, on its own request field so it is never confused
+    # for one of them - nothing is paid here, only chosen.
+    if isinstance(body.get("amount"), int):
+        parts.append(f"choosing {body['amount']}")
     for key, label in (("card_ids", "cards"), ("moved", "moving")):
         named = _names(game, body.get(key))
         if named:

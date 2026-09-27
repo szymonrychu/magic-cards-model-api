@@ -1086,6 +1086,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="integer amount of life to pay, for a pay_life_amount decision (CR 119.4)",
     )
     decide.add_argument(
+        "--amount",
+        type=int,
+        default=None,
+        help=(
+            "integer amount to choose, for a choose_an_amount decision (CR 608.2d) - "
+            "'put up to X counters' and any other resolution-time 'choose an amount' "
+            "with no cost or payment attached; not --energy-amount/--life-amount, which "
+            "pay something away"
+        ),
+    )
+    decide.add_argument(
         "--choice",
         default="",
         help=(
@@ -2287,6 +2298,8 @@ def run(argv: list[str] | None = None) -> int:
                     body["energy_amount"] = args.energy_amount
                 if args.life_amount is not None:
                     body["life_amount"] = args.life_amount
+                if args.amount is not None:
+                    body["amount"] = args.amount
                 if args.choice:
                     body["choice"] = args.choice
                 if args.top is not None:

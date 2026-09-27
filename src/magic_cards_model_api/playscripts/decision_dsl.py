@@ -350,7 +350,11 @@ _FOLDABLE_MOVE_KINDS = frozenset({"cast", "play_land", "activate", *KEYWORD_ACTI
 #: `decide` kinds a real answer schema can write with no card selector at
 #: all - see the module docstring's "not in the vocabulary" section.
 _ACCEPT_KINDS = frozenset({"may", "pay_life", "pay_energy", "pay_mana"})
-_AMOUNT_FIELD = {"pay_energy_amount": "energy_amount", "pay_life_amount": "life_amount"}
+_AMOUNT_FIELD = {
+    "pay_energy_amount": "energy_amount",
+    "pay_life_amount": "life_amount",
+    "choose_an_amount": "amount",
+}
 
 #: `decide` kinds answered directly by the two combat-declaration moves
 #: (FD4 (g)) - `/decide`'s own `pairs` field for `DECLARE_ATTACKERS`/
