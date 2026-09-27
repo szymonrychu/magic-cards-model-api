@@ -2030,6 +2030,59 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
 
     @server.tool()
     @_guarded(seats)
+    def unlock_door(
+        player_uid: str,
+        card_id: str,
+        door: str,
+        mana_sources: str = "",
+        dry_run: bool = False,
+        hold_priority: bool = True,
+        reasoning: str = "",
+        ctx: Context | None = None,
+    ) -> str | InputRequiredResult:
+        """CR 709.5e - a Room's own unlock cost: pay the mana cost of a
+        locked half ("door") of a Room permanent you control to give it that
+        door's unlocked designation. `card_id` is the Room permanent's own
+        id (from your board). `door` is the locked half's own printed name
+        (e.g. "Ritual Chamber"). Only in a main phase of your own turn with
+        an empty stack. `mana_sources` is comma-separated source ids; leave
+        it empty to offer all your untapped mana sources.
+
+        HOLDS PRIORITY BY DEFAULT, like every other special action (CR 116.3):
+        this does not use the stack (CR 116.1), so there is nothing to release
+        priority for. Pass `hold_priority=false` only when you really do want
+        to hand priority over. See `cast`'s docstring for the answer's shape."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        state = seat.fetch_state()
+        body: dict[str, Any] = {
+            "player": seat.player,
+            "card_id": card_id,
+            "door": door,
+            "dry_run": dry_run,
+        }
+        sources = seat.sources_or_all(mana_sources, state)
+        if sources:
+            body["mana_sources"] = sources
+        if reasoning:
+            body["reasoning"] = reasoning
+        if dry_run:
+            return seat.call("POST", f"/api/games/{seat.game_id()}/actions/unlock-door", body)
+
+        def perform() -> Any:
+            return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/unlock-door", body)
+
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
+
+    @server.tool()
+    @_guarded(seats)
     def declare_attackers(
         player_uid: str,
         attackers: str,

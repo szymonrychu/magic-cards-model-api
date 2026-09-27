@@ -1692,11 +1692,9 @@ def _activate_request(
 #: FD2 item 3/FD3 item 3: `KeywordActionMove.action` (`schema.KEYWORD_ACTIONS`)
 #: to the route it sends, in `actions/<...>` kebab-case exactly as every
 #: other move-request path in this module already is. `turn_face_up`/
-#: `companion` are FD5 part 5's own two routes - named here to the same
-#: convention (`actions/turn-face-up`, `actions/companion`) so this executor
-#: needs no further change once that part lands; unverified against a real
-#: route until then (FD3's own notes: rebase onto FD5 part 5, do not add the
-#: route here).
+#: `companion` are FD5 part 5's own two routes, and `unlock_door` is CR
+#: 709.5e's - named here to the same convention (`actions/turn-face-up`,
+#: `actions/companion`, `actions/unlock-door`).
 _KEYWORD_ACTION_ROUTES = {
     "suspend": "actions/suspend",
     "plot": "actions/plot",
@@ -1706,6 +1704,7 @@ _KEYWORD_ACTION_ROUTES = {
     "crew": "actions/crew",
     "turn_face_up": "actions/turn-face-up",
     "companion": "actions/companion",
+    "unlock_door": "actions/unlock-door",
 }
 
 
@@ -1719,10 +1718,10 @@ def _keyword_action_request(
     mana: int | None = None,
 ) -> tuple[str, dict[str, Any]] | ScriptExit:
     """FD2 item 3/FD3 item 3: one shape for the six existing keyword-action
-    routes (suspend, plot, foretell, cycle, equip, crew) and FD5's two new
-    ones (turn_face_up, companion) - the same `_pick` rule every other move
-    already uses (`unforeseen` when nothing matches the card/target/crew
-    selector, `ambiguous` on a tie)."""
+    routes (suspend, plot, foretell, cycle, equip, crew), FD5's two new ones
+    (turn_face_up, companion), and CR 709.5e's `unlock_door` - the same
+    `_pick` rule every other move already uses (`unforeseen` when nothing
+    matches the card/target/crew selector, `ambiguous` on a tie)."""
     action = move["action"]
     route = _KEYWORD_ACTION_ROUTES.get(action)
     if route is None:
@@ -1752,6 +1751,16 @@ def _keyword_action_request(
     card = chosen[0]
     if action in ("suspend", "plot", "foretell", "cycle", "turn_face_up"):
         return route, {"player": me, "card_id": card["id"], "reasoning": reasoning}
+    if action == "unlock_door":
+        door = move.get("door")
+        if not isinstance(door, str) or not door.strip():
+            return ScriptExit(Exit.UNFORESEEN, stop_reason="unlock_door needs door")
+        return route, {
+            "player": me,
+            "card_id": card["id"],
+            "door": door,
+            "reasoning": reasoning,
+        }
     if action == "equip":
         target = move.get("target")
         if target is None:

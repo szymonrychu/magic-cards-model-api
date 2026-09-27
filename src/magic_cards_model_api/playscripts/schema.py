@@ -70,6 +70,13 @@ for exactly this reason). The runtime that actually executes a `repeat` is
 FD3 part 7's, in `playscripts/runtime.py`; this schema only shapes and lints
 the construct.
 
+CR 709.5e's addition (2026-09-27), additive, still `schema_version` 1: a
+ninth `KEYWORD_ACTIONS` entry, `unlock_door` (pay the mana cost of a locked
+half - "door" - of a Room permanent you control to unlock it). `Keyword
+ActionMove` gains `door` (the locked half's own printed name, e.g. "Ritual
+Chamber"), meaningful only for this one action - every existing action
+leaves it out, exactly as before.
+
 FB2's B4 additions (2026-09-24), all additive over the shipped v1 vocabulary:
 `pass` (CR 117.3d, must be the play's last move - `pass-not-last`),
 `declare_attackers`/`declare_blockers` (CR 508.1/509.1, must be the play's
@@ -207,7 +214,7 @@ MAX_REPEAT_ITERATIONS = 40
 COLOR_LETTERS_CLOSED = ("W", "U", "B", "R", "G", "C")
 #: `KeywordActionMove.action` (FD2): the six existing keyword-action routes
 #: (suspend, plot, foretell, cycle, equip, crew) plus FD5's two new ones
-#: (turn_face_up, companion).
+#: (turn_face_up, companion) plus CR 709.5e's `unlock_door`.
 KEYWORD_ACTIONS = (
     "suspend",
     "plot",
@@ -217,6 +224,7 @@ KEYWORD_ACTIONS = (
     "crew",
     "turn_face_up",
     "companion",
+    "unlock_door",
 )
 #: `Answer.damage`'s own `rest_to` (FD2): where damage past the last lethal
 #: blocker tier goes once trample lets it through - the defending player, or
@@ -1452,17 +1460,20 @@ class DeclareBlockersMove(_Strict):
 
 class KeywordActionMove(_Strict):
     """FD2: one shape for the six existing keyword-action routes (suspend,
-    plot, foretell, cycle, equip, crew) and FD5's two new ones (turn_face_up,
-    companion) - `action` names which, `card` locates the card the way a
-    `cast`/`play_land` card already does, `target` names the creature an
-    `equip` attaches to (a `CardTarget`, never a player), and `crew_with`
-    names the creatures a `crew` action taps to pay its cost."""
+    plot, foretell, cycle, equip, crew), FD5's two new ones (turn_face_up,
+    companion), and CR 709.5e's `unlock_door` - `action` names which, `card`
+    locates the card the way a `cast`/`play_land` card already does, `target`
+    names the creature an `equip` attaches to (a `CardTarget`, never a
+    player), `crew_with` names the creatures a `crew` action taps to pay its
+    cost, and `door` names the locked half `unlock_door` pays for (the
+    half's own printed name) - meaningful only for that one action."""
 
     kind: Literal["keyword_action"]
     action: KeywordAction
     card: ZonedCard
     target: CardTarget = None
     crew_with: Pick = None
+    door: str | None = None
     answers: list[Answer] = Field(default_factory=list, max_length=MAX_ANSWERS)
 
 

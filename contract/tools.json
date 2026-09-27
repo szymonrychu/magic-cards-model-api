@@ -1320,6 +1320,61 @@
       ]
     },
     {
+      "docstring_first_line": "CR 709.5e - a Room's own unlock cost: pay the mana cost of a",
+      "name": "unlock_door",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card_id",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "door",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
       "docstring_first_line": "Check whether it is your moment to act, then hand you the board.",
       "name": "wait_for_priority",
       "parameters": [

@@ -531,3 +531,122 @@ def test_turning_a_non_morph_permanent_face_up_is_refused(client, game):
     body = response.json()
     assert body["allowed"] is False
     assert body["reason"]
+
+
+# -- CR 709.5e: a Room's unlock cost --------------------------------------
+
+
+def test_unlocking_a_rooms_door_pays_its_cost_and_gives_the_designation(client, game):
+    """CR 709.5e/709.5j: pay a locked door's own printed mana cost to give
+    the Room permanent that door's unlocked designation. Placed straight
+    onto the battlefield (not cast), so it enters with both halves locked
+    (CR 709.5d) - `Unholy Annex` costs `{2}{B}`."""
+    add_card(client, game, "Unholy Annex // Ritual Chamber", "alice", "battlefield")
+    for _ in range(3):
+        add_card(client, game, "Swamp", "alice", "battlefield")
+    board = state(client, game)
+    room = next(
+        c for c in board["battlefield"] if c["card_name"] == "Unholy Annex // Ritual Chamber"
+    )
+    assert room["name"] == ""
+    swamps = [c["id"] for c in board["battlefield"] if c["card_name"] == "Swamp"]
+
+    response = client.post(
+        f"/api/games/{game}/actions/unlock-door",
+        json={
+            "player": "alice",
+            "card_id": room["id"],
+            "door": "Unholy Annex",
+            "mana_sources": swamps,
+        },
+    )
+    body = response.json()
+    assert body["allowed"] is True, body
+    assert body["cost"] == "{2}{B}"
+    assert body["door"] == "Unholy Annex"
+    assert isinstance(body.pop("log_seq"), int)
+
+    after = state(client, game)
+    unlocked = next(c for c in after["battlefield"] if c["id"] == room["id"])
+    assert unlocked["name"] == "Unholy Annex"
+
+
+def test_unlocking_a_non_room_permanent_is_refused(client, game):
+    """The engine's own reason surfaces verbatim - `why_cannot_unlock_door_as`
+    refuses a permanent that has no locked half at all (CR 709.5e)."""
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    bear = next(c for c in state(client, game)["battlefield"] if c["name"] == "Grizzly Bears")
+
+    response = client.post(
+        f"/api/games/{game}/actions/unlock-door",
+        json={"player": "alice", "card_id": bear["id"], "door": "Grizzly Bears"},
+    )
+    body = response.json()
+    assert body["allowed"] is False
+    assert "locked half" in body["reason"]
+
+
+def test_unlocking_an_already_unlocked_door_is_refused(client, game):
+    add_card(client, game, "Unholy Annex // Ritual Chamber", "alice", "battlefield")
+    for _ in range(6):
+        add_card(client, game, "Swamp", "alice", "battlefield")
+    board = state(client, game)
+    room = next(
+        c for c in board["battlefield"] if c["card_name"] == "Unholy Annex // Ritual Chamber"
+    )
+    swamps = [c["id"] for c in board["battlefield"] if c["card_name"] == "Swamp"]
+
+    first = client.post(
+        f"/api/games/{game}/actions/unlock-door",
+        json={
+            "player": "alice",
+            "card_id": room["id"],
+            "door": "Unholy Annex",
+            "mana_sources": swamps[:3],
+        },
+    ).json()
+    assert first["allowed"] is True, first
+
+    second = client.post(
+        f"/api/games/{game}/actions/unlock-door",
+        json={
+            "player": "alice",
+            "card_id": room["id"],
+            "door": "Unholy Annex",
+            "mana_sources": swamps[3:],
+        },
+    ).json()
+    assert second["allowed"] is False
+    assert "already unlocked" in second["reason"]
+
+
+def test_unlocking_a_door_dry_run_does_not_change_state(client, game):
+    add_card(client, game, "Unholy Annex // Ritual Chamber", "alice", "battlefield")
+    for _ in range(3):
+        add_card(client, game, "Swamp", "alice", "battlefield")
+    board = state(client, game)
+    room = next(
+        c for c in board["battlefield"] if c["card_name"] == "Unholy Annex // Ritual Chamber"
+    )
+    swamps = [c["id"] for c in board["battlefield"] if c["card_name"] == "Swamp"]
+
+    response = client.post(
+        f"/api/games/{game}/actions/unlock-door",
+        json={
+            "player": "alice",
+            "card_id": room["id"],
+            "door": "Unholy Annex",
+            "mana_sources": swamps,
+            "dry_run": True,
+        },
+    )
+    body = response.json()
+    assert body["allowed"] is True, body
+    assert body["cost"] == "{2}{B}"
+
+    after = state(client, game)
+    unchanged = next(c for c in after["battlefield"] if c["id"] == room["id"])
+    assert unchanged["name"] == ""
+    assert all(
+        not source["tapped"] for source in after["battlefield"] if source["card_name"] == "Swamp"
+    )

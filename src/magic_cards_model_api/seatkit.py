@@ -191,7 +191,14 @@ def scripts_enabled_here(env: Mapping[str, str] | None = None) -> bool:
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-25"
+PROTOCOL_VERSION = "seatkit-26"
+#: `seatkit-26`: one new action tool, `unlock_door` (CR 709.5e - a Room's own
+#: unlock cost: pay the mana cost of a locked half ("door") of a Room
+#: permanent you control to give it that door's unlocked designation, only
+#: in a main phase of your own turn with an empty stack). Holds priority by
+#: default like every other special action tool. Additive: a `seatkit-25`
+#: process has no `unlock_door` tool to call and simply never calls one -
+#: nothing about an existing tool's shape moved.
 #: `seatkit-25` (FD5): two new action tools, both CR 116.2 special actions
 #: (FD1's engine surface) - `turn_face_up` (CR 702.37e/701.40b-d: turn a
 #: face-down morph/megamorph/disguise/manifested permanent face up) and
@@ -1426,7 +1433,7 @@ UNKNOWN_OUTCOME = (
 # shapes that *have* that field. See `DRY_RUN_SHAPES` for why that matters.
 
 #: Every game-mutating action path a seat's own tools POST to, and the request
-#: shape each one takes (`schemas.py`). Fourteen paths, twelve shapes - the
+#: shape each one takes (`schemas.py`). Fifteen paths, thirteen shapes - the
 #: three CR 116.2 special actions share `SpecialActionRequest`.
 #:
 #: Frozen here, and pinned against `openapi.json` by
@@ -1450,6 +1457,7 @@ ACTION_REQUEST_SHAPES: dict[str, str] = {
     "actions/suspend": "SpecialActionRequest",
     "actions/turn-face-up": "TurnFaceUpRequest",
     "actions/companion": "CompanionRequest",
+    "actions/unlock-door": "UnlockDoorRequest",
     "advance": "AdvanceRequest",
     "decide": "DecideRequest",
 }
@@ -1482,6 +1490,9 @@ DRY_RUN_SHAPES = frozenset(
         # already gets.
         "TurnFaceUpRequest",
         "CompanionRequest",
+        # CR 709.5e: unlock_door, a Room's own unlock cost, the same real
+        # payment to probe.
+        "UnlockDoorRequest",
     }
 )
 

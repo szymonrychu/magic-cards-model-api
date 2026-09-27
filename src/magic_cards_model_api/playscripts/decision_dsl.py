@@ -2,9 +2,10 @@
 
 `decision_rows(entries, seat)` turns every *committing* ledger row of `seat`
 - a cast, an activation, a land play, a keyword-action route (suspend, plot,
-foretell, cycle, equip, crew, turn_face_up, companion), an answer to a
-pending decision, the two combat declarations (whether logged by their own
-dedicated route or answered directly through `/decide`'s own `pairs`), a
+foretell, cycle, equip, crew, turn_face_up, companion, unlock_door), an
+answer to a pending decision, the two combat declarations (whether logged
+by their own dedicated route or answered directly through `/decide`'s own
+`pairs`), a
 mulligan declaration or CR 103.6 opening-hand action, a priority pass
 (`pass`/`pass_until` both post the same `pass_priority` action - see below),
 or a script run it started - into one record:
@@ -154,15 +155,17 @@ back to `"declare_attackers:unresolved"`/`"declare_blockers:unresolved"` -
 never a half-built move standing in for one it could not finish honestly.
 
 **Keyword-action routes (FD4 (d)).** `suspend`, `plot`, `foretell`, `cycle`,
-`equip` and `crew` (six existing routes) and `turn_face_up`/`companion`
-(FD5's two new ones - reachable here the moment their own ledger action
-exists, with no change needed in this module once it does) all become one
+`equip` and `crew` (six existing routes), `turn_face_up`/`companion` (FD5's
+two), and `unlock_door` (CR 709.5e's Room-unlock cost) all become one
 `keyword_action` move apiece (`_keyword_action`): `card` the same
 card-name-free way `cast`/`play_land` are, `target` for `equip` (the
-creature it attaches to) and `crew_with` for `crew` (the creatures tapped to
-pay its cost) - both Picks/selectors resolved against the pre-action frame
-the same as everything else. A card (or, for `equip`/`crew`, a target/crew
-member) that cannot be resolved is `"<action>:unresolved"` -
+creature it attaches to), `crew_with` for `crew` (the creatures tapped to
+pay its cost), and `door` for `unlock_door` (the locked half's own printed
+name, carried straight through - never resolved against the board, since it
+names no card) - the three Picks/selectors resolved against the pre-action
+frame the same as everything else. A card (or, for `equip`/`crew`, a
+target/crew member; for `unlock_door`, its own `door` string) that cannot be
+resolved is `"<action>:unresolved"` -
 `"suspend:unresolved"`, `"equip:unresolved-target"`, and so on - never a
 half-built move.
 
@@ -320,11 +323,11 @@ _CONCEDE = "concede"
 
 #: The ledger action -> this module's own canonical action-kind label, for
 #: every committing row `decision_rows` recognizes at all. A raw action not
-#: in this table contributes no record. FD4 (d): the eight keyword-action
-#: routes (six existing, plus FD5's `turn_face_up`/`companion`) map to
-#: themselves - `KEYWORD_ACTIONS` is both the schema's own closed vocabulary
-#: for `KeywordActionMove.action` and, read here, the exact set of ledger
-#: action names this module treats as one.
+#: in this table contributes no record. FD4 (d): the nine keyword-action
+#: routes (six existing, plus FD5's `turn_face_up`/`companion` and CR
+#: 709.5e's `unlock_door`) map to themselves - `KEYWORD_ACTIONS` is both the
+#: schema's own closed vocabulary for `KeywordActionMove.action` and, read
+#: here, the exact set of ledger action names this module treats as one.
 _ACTION_KIND: dict[str, str] = {
     "cast": "cast",
     "activate": "activate",
@@ -1079,6 +1082,13 @@ def _keyword_action(
                 "select": _selector_for_cards(crewing_cards),
                 "count": len(crewing_cards),
             }
+    elif action == "unlock_door":
+        # CR 709.5e: the locked half's own printed name, carried straight
+        # through - never a card, so there is nothing to resolve here.
+        door = detail.get("door")
+        if not isinstance(door, str) or not door.strip():
+            return None, f"{action}:unresolved"
+        move["door"] = door
     return move, None
 
 

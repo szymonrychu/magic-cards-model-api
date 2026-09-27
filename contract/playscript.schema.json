@@ -1302,7 +1302,7 @@
     },
     "KeywordActionMove": {
       "additionalProperties": false,
-      "description": "FD2: one shape for the six existing keyword-action routes (suspend,\nplot, foretell, cycle, equip, crew) and FD5's two new ones (turn_face_up,\ncompanion) - `action` names which, `card` locates the card the way a\n`cast`/`play_land` card already does, `target` names the creature an\n`equip` attaches to (a `CardTarget`, never a player), and `crew_with`\nnames the creatures a `crew` action taps to pay its cost.",
+      "description": "FD2: one shape for the six existing keyword-action routes (suspend,\nplot, foretell, cycle, equip, crew), FD5's two new ones (turn_face_up,\ncompanion), and CR 709.5e's `unlock_door` - `action` names which, `card`\nlocates the card the way a `cast`/`play_land` card already does, `target`\nnames the creature an `equip` attaches to (a `CardTarget`, never a\nplayer), `crew_with` names the creatures a `crew` action taps to pay its\ncost, and `door` names the locked half `unlock_door` pays for (the\nhalf's own printed name) - meaningful only for that one action.",
       "properties": {
         "action": {
           "enum": [
@@ -1313,7 +1313,8 @@
             "equip",
             "crew",
             "turn_face_up",
-            "companion"
+            "companion",
+            "unlock_door"
           ],
           "title": "Action",
           "type": "string"
@@ -1332,6 +1333,18 @@
         "crew_with": {
           "$ref": "#/$defs/Pick",
           "default": null
+        },
+        "door": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Door"
         },
         "kind": {
           "const": "keyword_action",

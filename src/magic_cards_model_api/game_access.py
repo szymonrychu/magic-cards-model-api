@@ -208,6 +208,7 @@ DRY_RUN_ROUTES = frozenset(
         "/api/games/{game_id}/actions/suspend",
         "/api/games/{game_id}/actions/turn-face-up",
         "/api/games/{game_id}/actions/companion",
+        "/api/games/{game_id}/actions/unlock-door",
     }
 )
 

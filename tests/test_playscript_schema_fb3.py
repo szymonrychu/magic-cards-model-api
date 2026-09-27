@@ -209,7 +209,7 @@ def test_every_keyword_action_validates(action):
     assert play_errors(doc) == []
 
 
-def test_keyword_action_covers_the_eight_routes():
+def test_keyword_action_covers_the_nine_routes():
     assert KEYWORD_ACTIONS == (
         "suspend",
         "plot",
@@ -219,6 +219,7 @@ def test_keyword_action_covers_the_eight_routes():
         "crew",
         "turn_face_up",
         "companion",
+        "unlock_door",
     )
 
 
@@ -255,6 +256,22 @@ def test_keyword_action_crew_takes_crew_with():
                 "action": "crew",
                 "card": {"zone": "battlefield", "select": {}},
                 "crew_with": {"select": {"types_any": ["Creature"]}, "count": 1},
+            }
+        ]
+    )
+    assert play_errors(doc) == []
+
+
+def test_keyword_action_unlock_door_takes_a_door_name():
+    """CR 709.5e: `door` names the locked half's own printed name - a plain
+    string, never a card selector, since it names no card."""
+    doc = play(
+        moves=[
+            {
+                "kind": "keyword_action",
+                "action": "unlock_door",
+                "card": {"zone": "battlefield", "select": {}},
+                "door": "Ritual Chamber",
             }
         ]
     )

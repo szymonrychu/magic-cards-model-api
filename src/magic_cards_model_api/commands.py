@@ -103,6 +103,7 @@ from .schemas import (
     PlayLandRequest,
     SpecialActionRequest,
     TurnFaceUpRequest,
+    UnlockDoorRequest,
 )
 
 logger = logging.getLogger("mcm.commands")
@@ -218,6 +219,10 @@ def _run_turn_face_up(game: Game, payload: dict[str, Any]) -> Any:
 
 def _run_companion(game: Game, payload: dict[str, Any]) -> Any:
     return engine_api.bring_companion_to_hand(game, CompanionRequest.model_validate(payload))
+
+
+def _run_unlock_door(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.unlock_door(game, UnlockDoorRequest.model_validate(payload))
 
 
 def _run_crew(game: Game, payload: dict[str, Any]) -> Any:
@@ -519,6 +524,7 @@ COMMAND_HANDLERS: dict[str, Callable[[Game, dict[str, Any]], Any]] = {
     "equip": _run_equip,
     "turn_face_up": _run_turn_face_up,
     "companion": _run_companion,
+    "unlock_door": _run_unlock_door,
     "concede": _run_concede,
     "pass_priority": _run_pass_priority,
     "advance": _run_advance,
@@ -922,6 +928,7 @@ ANNOUNCING_KINDS = frozenset(
         "play_land",
         "turn_face_up",
         "companion",
+        "unlock_door",
     }
 )
 

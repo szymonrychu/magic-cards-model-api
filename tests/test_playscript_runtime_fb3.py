@@ -508,6 +508,70 @@ def test_a_keyword_action_with_no_route_wired_exits_unforeseen() -> None:
     assert body == "actions/companion"
 
 
+# -- keyword_action: unlock_door (CR 709.5e) ----------------------------------------
+
+
+def test_unlock_door_pays_the_cost_and_sends_the_door_name(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "unlock-door",
+        keyword_action_move(
+            "unlock_door",
+            {"subtypes_any": ["Room"]},
+            zone="battlefield",
+            door="Unholy Annex",
+        ),
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Unholy Annex // Ritual Chamber", "alice", "battlefield")
+    for _ in range(3):
+        add_card(client, board, "Swamp", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    room = [
+        c
+        for c in state(client, board)["battlefield"]
+        if c["card_name"] == "Unholy Annex // Ritual Chamber"
+    ][0]
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="unlock-door", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
+    [body] = hook.posts("/actions/unlock-door")
+    assert body["card_id"] == room["id"]
+    assert body["door"] == "Unholy Annex"
+    after = state(client, board)
+    unlocked = next(c for c in after["battlefield"] if c["id"] == room["id"])
+    assert unlocked["name"] == "Unholy Annex"
+
+
+def test_unlock_door_with_no_door_named_exits_unforeseen(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "unlock-door-miss",
+        keyword_action_move("unlock_door", {"subtypes_any": ["Room"]}, zone="battlefield"),
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Unholy Annex // Ritual Chamber", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="unlock-door-miss", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert hook.posts("/actions/unlock-door") == []
+
+
 # -- mulligan -------------------------------------------------------------------------
 
 

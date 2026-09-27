@@ -46,6 +46,7 @@ from .schemas import (
     SpecialActionRequest,
     TargetRequest,
     TurnFaceUpRequest,
+    UnlockDoorRequest,
 )
 
 SHARED_ZONES = (Zone.BATTLEFIELD, Zone.STACK, Zone.EXILE, Zone.COMMAND)
@@ -1602,6 +1603,49 @@ def turn_face_up(game: Game, req: TurnFaceUpRequest) -> Outcome:
         True,
         detail={
             "card_id": str(turned.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
+
+
+def unlock_door(game: Game, req: UnlockDoorRequest) -> Outcome:
+    """CR 709.5e: pay the mana cost of a locked half ("door") of a Room
+    permanent to give it that door's unlocked designation - the cost the
+    engine's own `Game.begin_unlocking_door` opens once the permanent, its
+    controller's eligibility, and CR 709.5j's door name are all confirmed.
+
+    Same payment/dry-run shape as `turn_face_up` - the engine's own
+    `finish_unlocking_door` takes the place `turn_face_up`'s own engine call
+    takes there."""
+    try:
+        permanent = find_card(game, req.card_id)
+        refusal = game.why_cannot_unlock_door_as(req.player, permanent, req.door)
+        if refusal is not None:
+            raise ValueError(refusal)
+        payment = game.begin_unlocking_door(req.player, permanent, req.door)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+    try:
+        pay_with(payment, list(req.mana_sources or []), game)
+        if req.dry_run:
+            tapped = tapped_view(payment)
+            if payment.unpayable or payment.shortfall:
+                reason = shortfall_reason(payment)
+                payment.rewind()
+                return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped})
+            payment.rewind()
+            return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped})
+        payment.pay()
+    except ValueError as exc:
+        payment.rewind()
+        return refused(exc)
+    unlocked = game.finish_unlocking_door(req.player, permanent, req.door)
+    return Outcome(
+        True,
+        detail={
+            "card_id": str(unlocked.id),
+            "door": req.door,
             "cost": str(payment.cost),
             "tapped": tapped_view(payment),
         },

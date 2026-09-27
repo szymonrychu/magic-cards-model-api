@@ -1437,6 +1437,21 @@ class TurnFaceUpRequest(BoardRead):
     """T10: required for an agent seat, optional for a human one."""
 
 
+class UnlockDoorRequest(BoardRead):
+    """CR 709.5e: pay the mana cost of a locked half ("door") of a Room
+    permanent you control to unlock it - only in a main phase of your own
+    turn with an empty stack (CR 709.5e). `door` names the half by its own
+    printed name (e.g. "Ritual Chamber")."""
+
+    player: str
+    card_id: UUID
+    door: str
+    mana_sources: list[UUID | ManaSource] | None = None
+    dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat, optional for a human one."""
+
+
 class CompanionRequest(BoardRead):
     """FD5 (5)/FD1: CR 116.2g - pay {3} to put your chosen companion from
     outside the game into your hand. Names no card: `Player.companion_id`

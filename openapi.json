@@ -241,6 +241,17 @@
             ],
             "title": "Defender"
           },
+          "door": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Door"
+          },
           "from_zone": {
             "anyOf": [
               {
@@ -430,6 +441,7 @@
           "foretell",
           "plot",
           "dredge",
+          "unlock_door",
           "activate",
           "activate_mana",
           "activate_off_zone",
@@ -668,6 +680,17 @@
               }
             ],
             "title": "Defender"
+          },
+          "door": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Door"
           },
           "from_zone": {
             "anyOf": [
@@ -1143,6 +1166,17 @@
               }
             ],
             "title": "Defender"
+          },
+          "door": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Door"
           },
           "from_zone": {
             "anyOf": [
@@ -15414,6 +15448,81 @@
         "title": "TurnFaceUpRequest",
         "type": "object"
       },
+      "UnlockDoorRequest": {
+        "additionalProperties": false,
+        "description": "CR 709.5e: pay the mana cost of a locked half (\"door\") of a Room\npermanent you control to unlock it - only in a main phase of your own\nturn with an empty stack (CR 709.5e). `door` names the half by its own\nprinted name (e.g. \"Ritual Chamber\").",
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "door": {
+            "title": "Door",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
+          "mana_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ManaSource"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Sources"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          }
+        },
+        "required": [
+          "player",
+          "card_id",
+          "door"
+        ],
+        "title": "UnlockDoorRequest",
+        "type": "object"
+      },
       "UnreadableModeView": {
         "description": "One mode of a modal spell the engine cannot read into an effect -\n`action_rows.legal_action_rows`, from the reading\n`effects.resolve_modal_spell` records a `ModeNotice` for.",
         "properties": {
@@ -17086,6 +17195,72 @@
           }
         },
         "summary": "Action Turn Face Up"
+      }
+    },
+    "/api/games/{game_id}/actions/unlock-door": {
+      "post": {
+        "description": "CR 709.5e - a Room's unlock cost: pay the mana cost of a locked half\n(\"door\") of a Room permanent you control to unlock it, only in a main\nphase of your own turn with an empty stack.",
+        "operationId": "action_unlock_door_api_games__game_id__actions_unlock_door_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnlockDoorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionOutcome"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Action Unlock Door"
       }
     },
     "/api/games/{game_id}/advance": {

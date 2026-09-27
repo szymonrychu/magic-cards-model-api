@@ -160,6 +160,7 @@ from .schemas import (
     TapCardResponse,
     TargetRequest,
     TurnFaceUpRequest,
+    UnlockDoorRequest,
 )
 from .serialize import FIRST_STRIKE_DAMAGE, state_view, step_position
 from .store import known_players, new_seat_uids, player_for_advisor_uid, store
@@ -3357,6 +3358,49 @@ def action_companion(game_id: str, req: CompanionRequest, uid: str | None = None
         result,
         dry_run=req.dry_run,
         player=req.player,
+        mana_sources=[str(source) for source in req.mana_sources or []],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
+    )
+
+
+@app.post(
+    "/api/games/{game_id}/actions/unlock-door",
+    dependencies=REFUSED_AFTER_GAME_OVER,
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
+def action_unlock_door(
+    game_id: str, req: UnlockDoorRequest, uid: str | None = None
+) -> dict[str, Any]:
+    """CR 709.5e - a Room's unlock cost: pay the mana cost of a locked half
+    ("door") of a Room permanent you control to unlock it, only in a main
+    phase of your own turn with an empty stack."""
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
+    req, refused = _acting_as(game_id, "unlock_door", "unlock_door", req, uid)
+    if refused is not None:
+        return refused
+    records.require_current_board(
+        game_id,
+        "unlock_door",
+        req.expected_seq,
+        player=actor,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
+    result, _, legal_before, seq = _run_command(game_id, "unlock_door", req, acting=(sent, uid))
+    return _respond(
+        game_id,
+        "unlock_door",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card_id=str(req.card_id),
+        door=req.door,
         mana_sources=[str(source) for source in req.mana_sources or []],
         reasoning=req.reasoning,
         legal_actions_before=legal_before,

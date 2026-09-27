@@ -516,11 +516,12 @@ def _openapi() -> dict[str, Any]:
     return json.loads((REPO_ROOT / "openapi.json").read_text())
 
 
-def test_the_frozen_action_shapes_are_exactly_fifteen_ten_of_which_dry_run() -> None:
+def test_the_frozen_action_shapes_are_exactly_sixteen_eleven_of_which_dry_run() -> None:
     # FD5 (5): turn_face_up/bring_companion add TurnFaceUpRequest and
-    # CompanionRequest, both real payments an advisor can probe.
-    assert len(set(seatkit.ACTION_REQUEST_SHAPES.values())) == 15
-    assert len(seatkit.DRY_RUN_SHAPES) == 10
+    # CompanionRequest, both real payments an advisor can probe. CR 709.5e
+    # adds UnlockDoorRequest, another real payment.
+    assert len(set(seatkit.ACTION_REQUEST_SHAPES.values())) == 16
+    assert len(seatkit.DRY_RUN_SHAPES) == 11
     assert set(seatkit.ACTION_REQUEST_SHAPES.values()) >= seatkit.DRY_RUN_SHAPES
 
 
@@ -1235,7 +1236,7 @@ def mcp_server(game_id: str) -> Any:
     return build_server(seats_for(game_id))
 
 
-def test_the_buddy_gets_the_same_twenty_six_tools(client: TestClient, game: str) -> None:
+def test_the_buddy_gets_the_same_twenty_seven_tools(client: TestClient, game: str) -> None:
     """One server, one toolset: there is no advisor-only tool and no tool an
     advisor is denied - `contract/tools.json` is the committed list, and this
     pins that advise mode did not fork it."""
@@ -1246,9 +1247,9 @@ def test_the_buddy_gets_the_same_twenty_six_tools(client: TestClient, game: str)
     }
 
     assert names == committed
-    assert len(names) == 26, (
+    assert len(names) == 27, (
         "19 plus run_script, list_scripts, equip, stage_advice, stage_script, "
-        "turn_face_up, bring_companion"
+        "turn_face_up, bring_companion, unlock_door"
     )
 
 

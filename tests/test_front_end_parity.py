@@ -367,6 +367,10 @@ def test_every_hold_by_default_tool_says_so_in_its_own_docstring():
         # hold by default like every other special action tool above.
         "turn_face_up",
         "bring_companion",
+        # CR 709.5e: unlock_door, a Room's own unlock cost - also a special
+        # action (CR 116.1: it does not use the stack), so it holds by
+        # default too.
+        "unlock_door",
     }, holds
 
     for name in sorted(defaults):
