@@ -103,9 +103,14 @@ read directly, not overridden by a carried-forward value from a row that
 might belong to the other player entirely (FD4-r1/G16: seat B's own first
 action of B's brand new turn used to be misread as "theirs", because the
 carried-forward approximation used to apply to every kind uniformly, not
-only to `pass`). FD5's `pre_action_frame`/`pre_state`, when present, still
-take priority even for `active_player` - the referenced row's own value is
-exact regardless of kind.
+only to `pass`). Whenever FD5 stamps either `pre_action_frame` or
+`pre_state` on a row at all, `audit.record` has already re-read that row's
+own `active_player` off the pre-action board (`records.action_board`, the
+same note that decides which of the two pointers gets attached) - so this
+row's own field is exact then too, *pass included*, and neither pointer's
+*referenced* row is ever consulted for it (FD4-r1: reading the referenced
+row's own value there instead reproduced the identical "theirs" misread one
+step later, once a row happened to carry a pointer).
 
 **Board.** `compact_board` (below) turns one `GameStateView`-shaped dict -
 what `GET /review/frames/{seq}` hands back for a row that has a recorded
@@ -420,6 +425,20 @@ def decision_rows(entries: Iterable[Mapping[str, Any]], seat: str) -> list[dict[
         # `pre_action_frame` is the exact `seq` of the row this action was
         # taken against, read back out of `by_seq` below - the row that
         # named it, never re-derived. `0`/`None` both read as "not named".
+        #
+        # FD4-r1 (review): whichever pointer is set, it names where the
+        # *board* (`pre_state`) comes from - never where `active_player`
+        # comes from. `audit.record` stamps exactly one of the two pointers
+        # in the same breath it re-reads `active_player`/`priority_holder`
+        # off the pre-action board (`records.action_board`), so a row that
+        # carries either pointer already carries its own exact,
+        # pre-action-correct `active_player` too - reading the *referenced*
+        # row's value instead (as this branch used to) reads a different
+        # row's turn, not this one's, and misconverts a cast or a pass alike
+        # the moment the referenced row belongs to the other player. The
+        # row's own field is only ever missing on a hand-built fixture that
+        # sets a pointer without it, so both branches still fall back to the
+        # pointer's own board for that one honest-best-effort case.
         explicit_pre_state = payload.get("pre_state")
         explicit_pre_state = explicit_pre_state if isinstance(explicit_pre_state, Mapping) else None
         explicit_pre_frame = payload.get("pre_action_frame")
@@ -427,10 +446,18 @@ def decision_rows(entries: Iterable[Mapping[str, Any]], seat: str) -> list[dict[
 
         if explicit_pre_state is not None:
             pre_state = explicit_pre_state
-            pre_active = explicit_pre_state.get("active_player", row_active_player)
+            pre_active = (
+                row_active_player
+                if row_active_player is not None
+                else explicit_pre_state.get("active_player")
+            )
         elif referenced is not None:
             pre_state = referenced.get("state_view")
-            pre_active = referenced.get("active_player")
+            pre_active = (
+                row_active_player
+                if row_active_player is not None
+                else referenced.get("active_player")
+            )
         else:
             # No explicit FD5 pointer (yet) - the carried-forward
             # approximation: the nearest *earlier* row's own value
