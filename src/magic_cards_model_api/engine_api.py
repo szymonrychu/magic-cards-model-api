@@ -36,6 +36,7 @@ from .schemas import (
     ActivateRequest,
     AttackRequest,
     CastRequest,
+    CompanionRequest,
     CrewRequest,
     CycleRequest,
     EquipRequest,
@@ -44,6 +45,7 @@ from .schemas import (
     PlayLandRequest,
     SpecialActionRequest,
     TargetRequest,
+    TurnFaceUpRequest,
 )
 
 SHARED_ZONES = (Zone.BATTLEFIELD, Zone.STACK, Zone.EXILE, Zone.COMMAND)
@@ -1547,6 +1549,90 @@ def foretell_card(game: Game, req: SpecialActionRequest) -> Outcome:
     except (KeyError, ValueError) as exc:
         return refused(exc)
     return _take_marked_exile(game, action, req)
+
+
+# -- FD5 (5)/FD1: turning a permanent face up, and bringing a companion in --
+
+
+def turn_face_up(game: Game, req: TurnFaceUpRequest) -> Outcome:
+    """CR 702.37e/701.40b-d: turn a face-down permanent face up, paying the
+    cost `Game.begin_turning_face_up` opens once the permanent and its
+    controller's own eligibility are both confirmed.
+
+    Same payment/dry-run shape as `_take_marked_exile` - the pause path is
+    real here too: a mana ability tapped for the cost can itself ask a
+    decision (`pay_with`), so this is not folded into that helper only
+    because there is no `MarkedExile` object to `.take()` afterward, the
+    engine's own `turn_face_up` call takes its place."""
+    try:
+        permanent = find_card(game, req.card_id)
+        refusal = game.why_cannot_turn_face_up_as(req.player, permanent, procedure=req.procedure)
+        if refusal is not None:
+            raise ValueError(refusal)
+        payment = game.begin_turning_face_up(permanent, req.player, procedure=req.procedure)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+    try:
+        pay_with(payment, list(req.mana_sources or []), game)
+        if req.dry_run:
+            tapped = tapped_view(payment)
+            if payment.unpayable or payment.shortfall:
+                reason = shortfall_reason(payment)
+                payment.rewind()
+                return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped})
+            payment.rewind()
+            return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped})
+        payment.pay()
+    except ValueError as exc:
+        payment.rewind()
+        return refused(exc)
+    turned = game.turn_face_up(permanent, req.player, procedure=req.procedure)
+    return Outcome(
+        True,
+        detail={
+            "card_id": str(turned.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
+
+
+def bring_companion_to_hand(game: Game, req: CompanionRequest) -> Outcome:
+    """CR 116.2g: pay {3} to put the caster's chosen companion into hand.
+    Same payment/dry-run shape as `_take_marked_exile`, again without a
+    `MarkedExile` to `.take()` - `Game.bring_companion_to_hand` does that
+    half."""
+    try:
+        refusal = game.why_cannot_bring_companion_to_hand(req.player)
+        if refusal is not None:
+            raise ValueError(refusal)
+        payment = game.begin_bringing_companion_to_hand(req.player)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+    try:
+        pay_with(payment, list(req.mana_sources or []), game)
+        if req.dry_run:
+            tapped = tapped_view(payment)
+            if payment.unpayable or payment.shortfall:
+                reason = shortfall_reason(payment)
+                payment.rewind()
+                return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped})
+            payment.rewind()
+            return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped})
+        payment.pay()
+    except ValueError as exc:
+        payment.rewind()
+        return refused(exc)
+    card = game.bring_companion_to_hand(req.player)
+    return Outcome(
+        True,
+        detail={
+            "card_id": str(card.id),
+            "card": card.name,
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
 
 
 # -- cycling (CR 702.29): an activated ability that functions only in hand --

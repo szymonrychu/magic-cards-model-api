@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import mimetypes
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -72,6 +72,8 @@ from .schemas import (
     ActionOutcome,
     ActivateRequest,
     ActorRequest,
+    AdhocScriptRequest,
+    AdhocScriptResponse,
     AdvanceRequest,
     AdvanceResponse,
     AdviceApprovedResponse,
@@ -87,6 +89,7 @@ from .schemas import (
     CardLookupResponse,
     CardNamesResponse,
     CastRequest,
+    CompanionRequest,
     ConcedeRequest,
     ConcedeResponse,
     CrewRequest,
@@ -119,6 +122,7 @@ from .schemas import (
     OpeningHandActionRequest,
     OpeningHandActionResponse,
     OpeningHandFinishResponse,
+    OpsDslCoverageResponse,
     PassPriorityRequest,
     PassPriorityResponse,
     PatchCard,
@@ -149,6 +153,7 @@ from .schemas import (
     StepUpdate,
     TapCardResponse,
     TargetRequest,
+    TurnFaceUpRequest,
 )
 from .serialize import FIRST_STRIKE_DAMAGE, state_view, step_position
 from .store import known_players, new_seat_uids, player_for_advisor_uid, store
@@ -1159,10 +1164,18 @@ def _respond(
         # `store.replace` at all - there is no row to fill in, so this is a
         # fresh standalone append, the same as any refusal caught before a
         # command ever ran.
+        #
+        # FD5 (3): `allowed=True` here, not `None` - a `PAUSED` result only
+        # ever happens once the command has run far enough to be asked a
+        # real question with no scripted answer, so it is a committing row
+        # (`decision_dsl.decision_rows` reads `allowed is True` as its own
+        # commitment test) rather than one that gets skipped as noise. The
+        # HTTP response `body` above keeps its own `allowed: None` - this is
+        # the persisted ledger row's shape only.
         seq = audit.record(
             game_id,
             action,
-            allowed=None,
+            allowed=True,
             reason=None,
             paused=True,
             paused_on=_paused_on(result),
@@ -1987,6 +2000,141 @@ def game_review_frame(
     return serialize.frame_view(game, game_id, you=viewer if isinstance(viewer, str) else None)
 
 
+_ADMIT_FIELDS = ("added", "updated", "reprioritized")
+
+
+def _ops_game_review(game_id: str) -> dict[str, Any] | None:
+    """One game's own review, built the same way `game_review` does but for
+    `GET /api/ops/dsl-coverage`'s already-authorized-across-every-game
+    caller: no per-game credential to present (`records.
+    authorized_ops_caller` gated the whole request once, at the route), and
+    always the admin's own full, unredacted view (`visibility.ADMIN`) -
+    aggregate coverage needs every seat's rows, not any one seat's own
+    filtered read. `None` for a game still in progress (`_post_game` false)
+    or one this store never actually held (should not happen for an id
+    `store.ids_since` itself returned, but never trusted blindly)."""
+    archived = store.archived(game_id)
+    if archived is None:
+        return None
+    entries = _gate_entries(archived)
+    if not _post_game(archived, entries):
+        return None
+    ledger = entries if entries is not None else audit.entries(game_id)
+    ledger = [entry for entry in ledger if not visibility.hides_script_run(entry, visibility.ADMIN)]
+    ledger = [audit.normalize_problem_category(entry) for entry in ledger]
+    exact_frames: list[int] = []
+    if archived.game is not None:
+        ledger_seqs = {entry["seq"] for entry in ledger}
+        exact_frames = sorted(seq for seq in store.record_state_seqs(game_id) if seq in ledger_seqs)
+    frame_views = _review_frame_views(game_id, exact_frames)
+    corpora = _review_corpora(game_id, archived, list(archived.seat_uids.values()))
+    return review.build_review(
+        archived,
+        ledger,
+        exact_frames=exact_frames,
+        viewer=None,
+        frame_views=frame_views,
+        corpora=corpora,
+    )
+
+
+def _admit_totals(play_stats: Mapping[str, Any], *, reviewer: bool) -> dict[str, int]:
+    """`{added, updated, reprioritized}`, summed across every seat's own
+    `ReviewPlayStats` in `play_stats` - or, with `reviewer=True`, across
+    each one's own nested `reviewer` stats instead (FD5 (6))."""
+    totals = {field: 0 for field in _ADMIT_FIELDS}
+    for seat_stats in play_stats.values():
+        source = (seat_stats or {}).get("reviewer", {}) if reviewer else (seat_stats or {})
+        for field in _ADMIT_FIELDS:
+            totals[field] += int(source.get(field) or 0)
+    return totals
+
+
+def _fold_coverage(
+    into: dict[str, dict[str, Any]], coverage: Mapping[str, Mapping[str, Any]]
+) -> None:
+    """Fold one game's `review.dsl_coverage` result into a running
+    aggregate, in place - `count`/`unexpressible` summed, `labels` unioned."""
+    for kind, entry in coverage.items():
+        bucket = into.setdefault(kind, {"count": 0, "unexpressible": 0, "labels": set()})
+        bucket["count"] += entry.get("count", 0)
+        bucket["unexpressible"] += entry.get("unexpressible", 0)
+        bucket["labels"] = set(bucket["labels"]) | set(entry.get("labels") or ())
+
+
+@app.get(
+    "/api/ops/dsl-coverage",
+    response_model=OpsDslCoverageResponse,
+    response_model_exclude_unset=True,
+)
+def ops_dsl_coverage(
+    since: str | None = None, limit: int = 200, key: str | None = None
+) -> dict[str, Any]:
+    """FD5 (6): per-game and aggregated `playscripts` DSL coverage across
+    every game since `since` (an ISO 8601 timestamp; omitted reads every
+    game this store has ever held), using the same `review.dsl_coverage`
+    function `GET /api/games/{id}/review` already calls once per game -
+    `{kind: {count, unexpressible, labels}}` - folded together here across
+    every finished game, plus each game's own reviewer/handover admit
+    counts (`_admit_totals`).
+
+    This is what makes prod coverage measurable without a per-game admin
+    key: every existing "admin" credential in this codebase is scoped to
+    one game (`store.admin_key`), and there is no cross-game listing route
+    that reads past the soft delete the way this one has to (most finished
+    games are archived, not live, by the time anyone asks) - see `store.
+    ids_since`'s own docstring.
+
+    Behind `key`, checked against this deployment's own `OPS_TOKEN`
+    (`records.authorized_ops_caller`) - an env-configured operator
+    credential, never a per-game one, and refused (404, naming no game and
+    confirming nothing) for any caller that does not present it, including
+    an unconfigured deployment (`OPS_TOKEN` unset refuses everyone rather
+    than falling open).
+
+    `limit` bounds how many games (oldest-first, per `ids_since`) this one
+    call will build a full review for - each one is real ledger work, and
+    this route is meant for a periodic operator sweep, not a hot path.
+    """
+    if not records.authorized_ops_caller(key):
+        raise KeyError("no ops token presented, or it does not match this deployment's own")
+    game_ids = store.ids_since(since)[:limit]
+    games: list[dict[str, Any]] = []
+    aggregated: dict[str, dict[str, Any]] = {}
+    handover_totals = {field: 0 for field in _ADMIT_FIELDS}
+    reviewer_totals = {field: 0 for field in _ADMIT_FIELDS}
+    for game_id in game_ids:
+        built = _ops_game_review(game_id)
+        if built is None:
+            continue
+        coverage = built.get("dsl_coverage") or {}
+        play_stats = built.get("play_stats") or {}
+        handover = _admit_totals(play_stats, reviewer=False)
+        reviewer = _admit_totals(play_stats, reviewer=True)
+        _fold_coverage(aggregated, coverage)
+        for field in _ADMIT_FIELDS:
+            handover_totals[field] += handover[field]
+            reviewer_totals[field] += reviewer[field]
+        games.append(
+            {
+                "game_id": game_id,
+                "created_at": built.get("created_at"),
+                "dsl_coverage": coverage,
+                "handover_admits": handover,
+                "reviewer_admits": reviewer,
+            }
+        )
+    return {
+        "since": since,
+        "games": games,
+        "aggregated": {
+            kind: {**entry, "labels": sorted(entry["labels"])} for kind, entry in aggregated.items()
+        },
+        "handover_admits": handover_totals,
+        "reviewer_admits": reviewer_totals,
+    }
+
+
 @app.delete(
     "/api/games/{game_id}", response_model=DeleteGameResponse, response_model_exclude_unset=True
 )
@@ -2311,6 +2459,24 @@ def action_cast(game_id: str, req: CastRequest, uid: str | None = None) -> dict[
         from_zone=engine_api.cast_origin_zone(committed, req),
         spell_face=req.spell_face,
         targets=req.targets,
+        # FD5 (1): every other `CastRequest` field the announcement can
+        # carry, `mana_sources` alone excepted (on purpose - see the plan).
+        keyword=req.keyword,
+        alternative_cost=req.alternative_cost,
+        modes=req.modes,
+        x_value=req.x_value,
+        shares=req.shares,
+        optional_costs=[cost.model_dump() for cost in req.optional_costs or []],
+        convoke=[
+            {"card_id": str(choice.card_id), "color": choice.color} for choice in req.convoke or []
+        ],
+        delve=[str(card_id) for card_id in req.delve or []],
+        improvise=[str(card_id) for card_id in req.improvise or []],
+        choosing=[str(card_id) for card_id in req.choosing or []],
+        sacrificing=[str(card_id) for card_id in req.sacrificing or []],
+        discarding=[str(card_id) for card_id in req.discarding or []],
+        exiling=[str(card_id) for card_id in req.exiling or []],
+        tapping=[str(card_id) for card_id in req.tapping or []],
         mana_sources=[str(source) for source in req.mana_sources or []],
         reasoning=req.reasoning,
         legal_actions_before=legal_before,
@@ -2877,6 +3043,13 @@ def action_activate(game_id: str, req: ActivateRequest, uid: str | None = None) 
         card_id=str(req.card_id),
         ability_index=req.ability_index,
         targets=req.targets,
+        # FD5 (1): every other `ActivateRequest` field, `mana_sources` alone
+        # excepted (see the cast route's own note).
+        sacrificing=[str(card_id) for card_id in req.sacrificing or []],
+        discarding=[str(card_id) for card_id in req.discarding or []],
+        exiling=[str(card_id) for card_id in req.exiling or []],
+        x_value=req.x_value,
+        color=req.color,
         mana_sources=[str(source) for source in req.mana_sources or []],
         reasoning=req.reasoning,
         legal_actions_before=legal_before,
@@ -2962,6 +3135,87 @@ def action_equip(game_id: str, req: EquipRequest, uid: str | None = None) -> dic
         player=req.player,
         card_id=str(req.card_id),
         target=str(req.target),
+        mana_sources=[str(source) for source in req.mana_sources or []],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
+    )
+
+
+@app.post(
+    "/api/games/{game_id}/actions/turn-face-up",
+    dependencies=REFUSED_AFTER_GAME_OVER,
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
+def action_turn_face_up(
+    game_id: str, req: TurnFaceUpRequest, uid: str | None = None
+) -> dict[str, Any]:
+    """FD5 (5)/FD1: CR 702.37e/701.40b-d - turn a face-down permanent (a
+    morph, megamorph, disguise, or manifested permanent) face up, paying
+    whatever cost that reveals."""
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
+    req, refused = _acting_as(game_id, "turn_face_up", "turn_face_up", req, uid)
+    if refused is not None:
+        return refused
+    records.require_current_board(
+        game_id,
+        "turn_face_up",
+        req.expected_seq,
+        player=actor,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
+    result, _, legal_before, seq = _run_command(game_id, "turn_face_up", req, acting=(sent, uid))
+    return _respond(
+        game_id,
+        "turn_face_up",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card_id=str(req.card_id),
+        procedure=req.procedure,
+        mana_sources=[str(source) for source in req.mana_sources or []],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
+    )
+
+
+@app.post(
+    "/api/games/{game_id}/actions/companion",
+    dependencies=REFUSED_AFTER_GAME_OVER,
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
+def action_companion(game_id: str, req: CompanionRequest, uid: str | None = None) -> dict[str, Any]:
+    """FD5 (5)/FD1: CR 116.2g - pay {3} to bring your chosen companion from
+    outside the game into your hand."""
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
+    req, refused = _acting_as(game_id, "companion", "companion", req, uid)
+    if refused is not None:
+        return refused
+    records.require_current_board(
+        game_id,
+        "companion",
+        req.expected_seq,
+        player=actor,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
+    result, _, legal_before, seq = _run_command(game_id, "companion", req, acting=(sent, uid))
+    return _respond(
+        game_id,
+        "companion",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
         mana_sources=[str(source) for source in req.mana_sources or []],
         reasoning=req.reasoning,
         legal_actions_before=legal_before,
@@ -3299,11 +3553,14 @@ def action_pass_priority(
         pending = decisions.PendingDecision.from_engine(
             result.pending.decision, store.pause_generation(game_id)
         )
+        # FD5 (3): `allowed=True`, a committing row - see `_respond`'s own
+        # PAUSED branch for why. The response body below keeps `allowed:
+        # None`.
         seq = audit.record(
             game_id,
             "pass_priority",
             player=req.player,
-            allowed=None,
+            allowed=True,
             paused=True,
             paused_on={"player": pending.player, "kind": pending.kind},
             reasoning=req.reasoning,
@@ -4384,6 +4641,41 @@ def read_scripts(game_id: str, uid: str, request: Request) -> dict[str, Any]:
     return {"uid": uid, "inputs": [], **corpus}
 
 
+@app.post(
+    "/api/games/{game_id}/seats/{uid}/scripts/adhoc",
+    response_model=AdhocScriptResponse,
+    response_model_exclude_unset=True,
+)
+def stage_adhoc_script(
+    game_id: str, uid: str, req: AdhocScriptRequest, request: Request
+) -> dict[str, Any]:
+    """FD5 (7): stage a mid-game ad-hoc play script under `uid`'s own
+    corpus (`records.stage_adhoc_script`) - a play written and staged
+    without registering it into the corpus `PUT .../scripts` builds first,
+    for a multi-step or repetitive sequence a seat is facing right now
+    (FD9's `repeat` covers the loop itself).
+
+    **The credential is the driver's own**, exactly `register_scripts`'
+    own rule: `?uid=` equal to the path's `{uid}`, or this game's admin key.
+    Anything else is a 404, confirming nothing about whether that uid or
+    game exists.
+
+    **Behind the kill switch**: with `SCRIPTS_ENABLED` off this refuses
+    with `code: scripts_disabled`. **Every refusal is `code: invalid_
+    scripts`** with each `PlaysError` - a malformed play, a card-name-ban
+    hit, a conflict with the corpus... - `records.stage_adhoc_script`'s
+    own docstring has the rest.
+    """
+    game_or_404(game_id)
+    caller, key = _query_credentials(request)
+    if caller != uid and not _presents_admin_key(game_id, caller, key):
+        raise KeyError("that credential does not stage a script under that uid")
+    if store.player_for_uid(game_id, uid) is None and player_for_advisor_uid(game_id, uid) is None:
+        raise KeyError(f"no seat or advisor {uid} in this game")
+    records.require_reasoning(game_id, uid, req.reasoning)
+    return records.stage_adhoc_script(game_id, uid, req.play, req.reasoning)
+
+
 def _uids_running(game_id: str, player: str, role: str) -> list[str]:
     """The uids whose corpora a `role` run for `player` may start from: that
     seat's uids for `seat`, that seat's advisors' uids for `advisor`."""
@@ -4720,6 +5012,16 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(f"bad damage assignment: {exc}", **detail)
         detail["damage"] = [{"target": d.target, "amount": d.amount} for d in req.damage]
+    elif kind is DecisionKind.DREDGE:
+        # CR 702.52a: replace a draw by dredging one graveyard card, or
+        # decline (an empty `card_ids`) and draw normally. Same request
+        # field and coercion as `CHOOSE_CARDS` - `validate_answer` above
+        # caps it at one card and checks it against `decision.cards`.
+        try:
+            answer_value = decisions.card_ids_answer(req.card_ids)
+        except ValueError as exc:
+            return refuse(str(exc), **detail)
+        detail["card_ids"] = req.card_ids
     else:  # pragma: no cover - unreachable: ANSWERABLE_KINDS == every DecisionKind
         return refuse(
             f"this endpoint does not know how to answer a {kind.value!r} decision", **detail

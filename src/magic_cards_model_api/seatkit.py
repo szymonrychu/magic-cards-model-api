@@ -191,7 +191,22 @@ def scripts_enabled_here(env: Mapping[str, str] | None = None) -> bool:
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-24"
+PROTOCOL_VERSION = "seatkit-25"
+#: `seatkit-25` (FD5): two new action tools, both CR 116.2 special actions
+#: (FD1's engine surface) - `turn_face_up` (CR 702.37e/701.40b-d: turn a
+#: face-down morph/megamorph/disguise/manifested permanent face up) and
+#: `bring_companion` (CR 116.2g: pay {3} to put your chosen companion into
+#: your hand, once per game). Both hold priority by default like every
+#: other special action tool. `run_script` gains `body` (an inline play
+#: document, staged and run in one call - exactly one of `script`/`body`)
+#: and a new `stage_script` tool stages one without running it
+#: (`POST .../scripts/adhoc`) - both FD9's `repeat` and manual-chain-DSL
+#: work, DSL-first: write and run a script for any multi-step or
+#: repetitive sequence rather than chaining manual calls. A `seatkit-24`
+#: process calling `run_script` with `body` gets `TypeError: unexpected
+#: keyword argument 'body'` from its own call site - a bump because the
+#: parameter is new, not because an old one changed shape.
+#:
 #: `seatkit-24` (EC3): an **additive request** change. `OptionalCostChoice`
 #: gained `cost`, which of two printed kicker costs is paid - CR 702.33b's
 #: "Kicker {R} and/or {W}" is two kicker costs, each announced on its own, and
@@ -1433,6 +1448,8 @@ ACTION_REQUEST_SHAPES: dict[str, str] = {
     "actions/play-land": "PlayLandRequest",
     "actions/plot": "SpecialActionRequest",
     "actions/suspend": "SpecialActionRequest",
+    "actions/turn-face-up": "TurnFaceUpRequest",
+    "actions/companion": "CompanionRequest",
     "advance": "AdvanceRequest",
     "decide": "DecideRequest",
 }
@@ -1460,6 +1477,11 @@ DRY_RUN_SHAPES = frozenset(
         "EquipRequest",
         "PlayLandRequest",
         "SpecialActionRequest",
+        # FD5 (5): turn_face_up/bring_companion, CR 116.2 special actions
+        # with a real payment to probe, the same shape every other one here
+        # already gets.
+        "TurnFaceUpRequest",
+        "CompanionRequest",
     }
 )
 

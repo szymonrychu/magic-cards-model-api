@@ -306,6 +306,18 @@ MUTATING_ROUTES: list[tuple[str, str, str, dict[str, Any]]] = [
             "target": "00000000-0000-0000-0000-000000000001",
         },
     ),
+    (
+        "turn_face_up",
+        "POST",
+        "/api/games/{gid}/actions/turn-face-up",
+        {"player": "alice", "card_id": "00000000-0000-0000-0000-000000000000"},
+    ),
+    (
+        "companion",
+        "POST",
+        "/api/games/{gid}/actions/companion",
+        {"player": "alice"},
+    ),
     ("attack", "POST", "/api/games/{gid}/actions/attack", {"attackers": []}),
     (
         "declare_blockers",

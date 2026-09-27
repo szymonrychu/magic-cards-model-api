@@ -241,6 +241,9 @@ ANSWERABLE_KINDS = frozenset(
         DecisionKind.ASSIGN_COMBAT_DAMAGE,
         DecisionKind.CHOOSE_PLAYERS,
         DecisionKind.CHOOSE_PILE,
+        # FD5 (5): CR 702.52a - replace a draw by dredging a graveyard card,
+        # or decline (an empty answer) and draw normally.
+        DecisionKind.DREDGE,
     }
 )
 assert frozenset(DecisionKind) == ANSWERABLE_KINDS, (
@@ -283,6 +286,7 @@ ANSWER_FIELD_FOR_KIND: dict[DecisionKind, str] = {
     DecisionKind.ASSIGN_COMBAT_DAMAGE: "damage",
     DecisionKind.CHOOSE_PLAYERS: "usernames",
     DecisionKind.CHOOSE_PILE: "accept",
+    DecisionKind.DREDGE: "card_ids",
 }
 assert set(ANSWER_FIELD_FOR_KIND) == set(DecisionKind)
 
@@ -346,6 +350,7 @@ TOOL_FIELD_FOR_KIND: dict[DecisionKind, str] = {
     DecisionKind.ASSIGN_COMBAT_DAMAGE: "damage",
     DecisionKind.CHOOSE_PLAYERS: "usernames",
     DecisionKind.CHOOSE_PILE: "pile_one",
+    DecisionKind.DREDGE: "card_ids",
 }
 assert set(TOOL_FIELD_FOR_KIND) == set(DecisionKind), (
     "TOOL_FIELD_FOR_KIND must cover every DecisionKind: a kind with no entry "
@@ -699,6 +704,10 @@ class PendingDecision:
                 f'"<up to {self.amount} of pending_decision.cards, comma-separated; '
                 f'empty declines>"'
             )
+        if kind is DecisionKind.DREDGE:
+            # CR 702.52a: at most one of `pending_decision.cards`, or an
+            # empty answer to draw normally instead of dredging.
+            return '"<at most one of pending_decision.cards, or empty to draw normally>"'
         if kind is DecisionKind.CHOOSE_PLAYERS:
             # `CHOOSE_CARDS`'s own template, over `players` instead of
             # `cards` - every printed proliferate in the pool is CR 107.1c's
@@ -1399,6 +1408,24 @@ def validate_answer(decision: Decision, value: object) -> None:
             raise ValueError(
                 f"{decision.prompt}: at most {decision.amount} card(s) may be chosen "
                 f"(CR 107.1c), {len(value)} given"
+            )
+        return
+
+    if decision.kind is DecisionKind.DREDGE:
+        # CR 702.52a: at most one card, always one of the offered candidates
+        # - the engine's own `Game.ask` re-checks this identically (`models/
+        # game.py`), this is the synchronous, same-request half.
+        if not isinstance(value, tuple) or not all(isinstance(v, UUID) for v in value):
+            raise ValueError(f"{decision.prompt}: needs a tuple of at most one dredge card")
+        if len(value) > 1:
+            raise ValueError(
+                f"{decision.prompt}: only one dredge card can replace a single draw (CR 702.52a)"
+            )
+        offered = set(decision.cards)
+        stray = [str(card_id) for card_id in value if card_id not in offered]
+        if stray:
+            raise ValueError(
+                f"{decision.prompt}: cannot dredge a card that was not offered: {', '.join(stray)}"
             )
         return
 

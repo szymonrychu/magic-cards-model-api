@@ -536,6 +536,22 @@ def test_a_scry_keeps_everything_on_top():
     assert body["top_order"] is None
 
 
+def test_a_dredge_declines_and_draws_normally():
+    """CR 702.52a's "you may instead": the baseline's own default for a
+    `DREDGE` decision is an empty `card_ids`, the same "leave the more
+    ordinary outcome alone" posture as `SCRY`/`SURVEIL` above - and that
+    empty tuple is exactly what `/decide`'s own validator
+    (`decisions.py:validate_answer`'s `DREDGE` branch) accepts as "at most
+    one card", so the fallback seat never stalls on a dredge decision."""
+    from uuid import uuid4
+
+    cards = (uuid4(), uuid4())
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.DREDGE, cards=cards)), "alice"
+    )
+    assert body["card_ids"] == []
+
+
 def test_trigger_order_keeps_the_order_they_triggered_in():
     from uuid import uuid4
 

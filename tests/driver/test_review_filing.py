@@ -667,9 +667,7 @@ def test_the_review_files_its_own_reviewer_plays_outcome_row(tmp_path):
         try:
             _dispatch(driver, info)
             _concede(api_client, info["game_id"])
-            driver.post(
-                "/release", json={"uid": info["seat_uids"]["bob"], "reason": "lobby reset"}
-            )
+            driver.post("/release", json={"uid": info["seat_uids"]["bob"], "reason": "lobby reset"})
             driver.post(
                 "/turn-done",
                 json={"turnId": "turn-1", "state": "complete", "finalText": "I attack"},

@@ -853,3 +853,33 @@ def test_the_mcp_wait_carries_the_log_but_no_action_list(client, game, monkeypat
         "no `available_actions` - the action list rides `pass_until`/`pass` "
         "and every action's own answer"
     )
+
+
+# -- FD5 (7): DSL-first, in the brief and in the tool descriptions ----------
+
+
+def test_the_brief_states_the_dsl_first_rule():
+    flat = " ".join(BRIEF.read_text().split())
+    assert "DSL-first" in flat, (
+        "ai_seat_brief.md never states the DSL-first rule: write and run a "
+        "play-script for a multi-step or repetitive sequence, manual calls "
+        "for one-off decisions"
+    )
+    assert "Devoted Druid" in flat, (
+        "ai_seat_brief.md's DSL-first section carries no worked repeat "
+        "example - the Devoted Druid + Vizier of Remedies mana loop, "
+        "written with selectors, never card names"
+    )
+
+
+def test_run_script_and_stage_script_state_the_dsl_first_rule():
+    from test_front_end_parity import _tool_functions, build_a_server
+
+    docstrings = {
+        name: (fn.__doc__ or "") for name, fn in _tool_functions(build_a_server()).items()
+    }
+    for name in ("run_script", "stage_script", "list_scripts", "pass_until"):
+        assert "DSL-first" in docstrings[name], (
+            f"{name}'s own docstring never states the DSL-first rule - it is the only "
+            "instruction the model reading it gets"
+        )

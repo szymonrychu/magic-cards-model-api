@@ -261,6 +261,7 @@ def test_every_ui_decision_kind_has_exactly_one_surface() -> None:
         "put_into_hand_or_graveyard",
         "choose_pile",
         "choose_players",
+        "dredge",
     }
 
 
@@ -310,4 +311,4 @@ def test_every_popover_kind_has_a_prompt_box_renderer_and_no_window() -> None:
     assert popover <= ui_side, "an anchored kind lost its renderer"
     assert not {kind for kind in popover if routed[kind][1]}, "a kind is on two surfaces"
     assert not popover & {kind.value for kind in _UI_HANDLED_ELSEWHERE}
-    assert ui_side - popover - _WINDOW_KINDS == {"choose_targets", "choose_players"}
+    assert ui_side - popover - _WINDOW_KINDS == {"choose_targets", "choose_players", "dredge"}

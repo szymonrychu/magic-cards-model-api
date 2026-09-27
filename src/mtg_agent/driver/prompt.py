@@ -1827,8 +1827,9 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
   "what happened while I was not looking" came with "what can they do now".
   It is an escape hatch for one question: history from before that tail
   reaches back to, with `since=`.
-- Seven tools take `dry_run` - `cast`, `cycle`, `activate`, `equip`,
-  `suspend`, `plot` and `foretell`, as in `cast(player_uid=..., card="...", targets="...",
+- Nine tools take `dry_run` - `cast`, `cycle`, `activate`, `equip`,
+  `suspend`, `plot`, `foretell`, `turn_face_up` and `bring_companion`, as in
+  `cast(player_uid=..., card="...", targets="...",
   dry_run=True)` - and a dry run changes nothing, which is how you check an
   idea before you propose it: is the mana really there, is the target really
   legal. Read the `outcome` and, when it refuses, the engine's own words for

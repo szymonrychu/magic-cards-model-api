@@ -656,9 +656,14 @@ def test_resolve_top_reports_changed_when_only_the_stack_changed(client, game, m
 
 def test_entries_carry_active_player_and_priority_holder(client, game):
     """S2 A7: every row is stamped with whose turn it was written in and who
-    held priority the moment after - both read straight off the live game,
-    so `alice`/`bob` here are what `game` fixture's own seating (alice seat
-    0) and CR 103.3's starting priority already say."""
+    held priority *before* the action ran - both read off the pre-action
+    board (FD5 (2)), so `alice`/`bob` here are what `game` fixture's own
+    seating (alice seat 0) and CR 103.3's starting priority already say.
+
+    FD5 (2): `priority_holder` used to be read off the *post*-action board,
+    which for a pass is always the *other* player - wrong for the row that
+    says who actually took the action. It is alice's own row, and alice held
+    priority to be able to pass it at all."""
     add_card(client, game, "Mountain", "alice", "hand")
     log = log_of(client, game)
     create = entry_of(log, "create_game")
@@ -673,7 +678,7 @@ def test_entries_carry_active_player_and_priority_holder(client, game):
     log = log_of(client, game)
     pass_entry = entry_of(log, "pass_priority")
     assert pass_entry["active_player"] == "alice", "the turn has not changed hands"
-    assert pass_entry["priority_holder"] == "bob", "alice's pass handed bob priority"
+    assert pass_entry["priority_holder"] == "alice", "alice held priority to make this pass"
 
 
 def test_entries_carry_turns_taken(client, game):

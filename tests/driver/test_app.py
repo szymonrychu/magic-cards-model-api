@@ -388,9 +388,7 @@ def test_the_ai_review_posts_the_parsed_turning_points_as_structured_data(world)
                 "why": "walked into the sweeper",
             }
         ],
-        "alice": [
-            {"turn": 4, "action": "held removal", "why": "kept the answer back"}
-        ],
+        "alice": [{"turn": 4, "action": "held removal", "why": "kept the answer back"}],
     }
     # The raw line still reaches the filed text too - shown in the review,
     # not only stored as data.

@@ -161,6 +161,21 @@ spec:
             # harder stop - see deploy/k8s/README.md.
             - name: SCRIPTS_ENABLED
               value: "true"
+            # The operator's cross-game token for `GET /api/ops/dsl-coverage`
+            # (`records.authorized_ops_caller`) - the one credential in this
+            # deployment that reads across every game rather than one. Comes
+            # from the `mtg-ops` Secret's own `OPS_TOKEN` key (see
+            # `deploy/k8s/10-secret.template.yaml` for how to create it);
+            # `optional: true` so a namespace that has not created that
+            # Secret yet still starts the Pod - the route just stays refused,
+            # per `authorized_ops_caller`'s own fail-closed default when
+            # `OPS_TOKEN` is unset.
+            - name: OPS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-ops
+                  key: OPS_TOKEN
+                  optional: true
             - name: SPELLSLINGER_MCP_URL
               value: http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp
             - name: MAX_LIVE_GAMES

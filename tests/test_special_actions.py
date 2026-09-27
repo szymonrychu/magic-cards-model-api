@@ -12,10 +12,17 @@ hand-written card data, per the project's "no mocks" rule.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from uuid import uuid4
+
 from conftest import add_card, find, force_turn_position, resolve_whole_stack, state
 from magic_cards_model.machines import Step
+from magic_cards_model.models import Card, CardState, Zone
 
 from magic_cards_model_api.store import store
+
+FIXTURES = Path(__file__).parent / "fixtures" / "scryfall"
 
 
 def seats_for(client, game_id: str) -> dict[str, str]:
@@ -392,3 +399,135 @@ def test_the_seat_cli_keeps_priority_after_a_land_drop(monkeypatch, client, game
         "not release it, or the seat loses the rest of its own main phase"
     )
     assert any(c["name"] == "Forest" for c in after["battlefield"])
+
+
+# -- FD5 (5)/FD1: turn-face-up and companion -----------------------------
+
+
+def stage_companion(client, game_id: str, player: str, card_name: str) -> str:
+    """A real card added to `player`'s sideboard, then wired up as their
+    chosen companion by reaching straight into the live engine object -
+    `Player.companion_id` is only ever set at deck load for real, and there
+    is no HTTP route for it, so this mirrors `_bump_turn`'s own "reach past
+    the API for setup" pattern."""
+    added = add_card(client, game_id, card_name, player, "sideboard")
+    card_id = added["added"]["card_id"]
+    game = store.get(game_id)
+    assert game is not None
+    from uuid import UUID
+
+    game.player(player).companion_id = UUID(card_id)
+    return card_id
+
+
+def _face_down_morph_creature(game_id: str, player: str) -> str:
+    """A synthetic 2/2-turned-3/3 creature with `Morph {2}`, staged directly
+    on the live engine's own battlefield - `magic-cards-model-api` (unlike
+    `magic-cards-model` itself) treats a test double as a legitimate tool
+    for an API-level route test, and no real morph/manifest/disguise
+    printing is cached under `tests/fixtures/scryfall/` for this route's
+    happy path (no network access to fetch one - see the review response).
+    Built by cloning the real, committed Grizzly Bears fixture and adding
+    only the one line and keyword a morph creature's printing carries, so
+    everything else about the `Card` stays a real, valid printing shape."""
+    raw = json.loads((FIXTURES / "grizzly_bears.json").read_text())
+    raw["name"] = "FD5 Test Morph Bears"
+    raw["oracle_text"] = "Morph {2} (You may cast this card face down as a 2/2 creature for {3}...)"
+    raw["keywords"] = [*raw.get("keywords", []), "Morph"]
+    # A fresh id, distinct from the real Grizzly Bears printing this was
+    # cloned from - `machines/abilities.py`'s own `_ability_cache` is a
+    # process-global cache keyed by `Card.id`, so reusing the real id would
+    # let whichever test (this one or a real-Grizzly-Bears one) runs first
+    # in the same session poison the other's parsed abilities.
+    raw["id"] = str(uuid4())
+    raw["oracle_id"] = str(uuid4())
+    card = Card.model_validate(raw)
+    game = store.get(game_id)
+    assert game is not None
+    state_obj = CardState(
+        card=card, zone=Zone.BATTLEFIELD, controller=player, owner=player, face_up=False
+    )
+    game.battlefield.append(state_obj)
+    return str(state_obj.id)
+
+
+def test_bringing_a_companion_to_hand_pays_three_and_moves_it(client, game):
+    stage_companion(client, game, "alice", "Kaheera, the Orphanguard")
+    for _ in range(3):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    mountains = [c["id"] for c in state(client, game)["battlefield"]]
+
+    response = client.post(
+        f"/api/games/{game}/actions/companion",
+        json={"player": "alice", "mana_sources": mountains},
+    )
+    body = response.json()
+    assert body["allowed"] is True, body
+    assert body["cost"] == "{3}"
+    assert isinstance(body.pop("log_seq"), int)
+
+    after = state(client, game)
+    assert any(c["name"] == "Kaheera, the Orphanguard" for c in after["hands"]["alice"])
+
+
+def test_bringing_a_companion_to_hand_is_refused_with_no_companion_chosen(client, game):
+    response = client.post(
+        f"/api/games/{game}/actions/companion",
+        json={"player": "alice"},
+    )
+    body = response.json()
+    assert body["allowed"] is False
+    assert "companion" in body["reason"]
+
+
+def test_bringing_a_companion_to_hand_only_once_per_game(client, game):
+    stage_companion(client, game, "alice", "Kaheera, the Orphanguard")
+    for _ in range(6):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    mountains = [c["id"] for c in state(client, game)["battlefield"]]
+
+    first = client.post(
+        f"/api/games/{game}/actions/companion",
+        json={"player": "alice", "mana_sources": mountains[:3]},
+    ).json()
+    assert first["allowed"] is True, first
+
+    second = client.post(
+        f"/api/games/{game}/actions/companion",
+        json={"player": "alice", "mana_sources": mountains[3:]},
+    ).json()
+    assert second["allowed"] is False
+    assert "already" in second["reason"]
+
+
+def test_turning_a_permanent_face_up_pays_its_cost_and_reveals_it(client, game):
+    card_id = _face_down_morph_creature(game, "alice")
+    for _ in range(2):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    mountains = [c["id"] for c in state(client, game)["battlefield"] if c["name"] == "Mountain"]
+
+    response = client.post(
+        f"/api/games/{game}/actions/turn-face-up",
+        json={"player": "alice", "card_id": card_id, "mana_sources": mountains},
+    )
+    body = response.json()
+    assert body["allowed"] is True, body
+    assert body["cost"] == "{2}"
+    assert isinstance(body.pop("log_seq"), int)
+
+    after = state(client, game)
+    turned = next(c for c in after["battlefield"] if c["id"] == card_id)
+    assert turned["name"] == "FD5 Test Morph Bears"
+
+
+def test_turning_a_non_morph_permanent_face_up_is_refused(client, game):
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    bear = next(c for c in state(client, game)["battlefield"] if c["name"] == "Grizzly Bears")
+
+    response = client.post(
+        f"/api/games/{game}/actions/turn-face-up",
+        json={"player": "alice", "card_id": bear["id"]},
+    )
+    body = response.json()
+    assert body["allowed"] is False
+    assert body["reason"]
