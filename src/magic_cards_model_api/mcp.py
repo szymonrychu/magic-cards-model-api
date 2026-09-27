@@ -58,7 +58,10 @@ very call raised it or something else did - arrives shaped `input_required`
 than as plain text a caller could skim past. The whole flow (wake
 conditions, `hold_priority`, the no-deadlock invariant, the
 `input_required` shaping) lives in `seatkit.run_action`/`mcp._tool_result`,
-shared with `seat_cli.py` - see that module's docstring.
+shared with `seat_cli.py` - see that module's docstring. A client's retry of
+an `input_required` call never re-runs it, and after
+`INPUT_REQUIRED_MAX_ROUNDS` the decision comes back as ordinary text - see
+`_resume_input_required`.
 
 Whether the harness auto-passes priority on the seat's behalf is NOT uniform,
 and the tools that differ say so in capitals in their own docstrings:
@@ -157,6 +160,25 @@ def cancel_probe(ctx: Any) -> Callable[[], bool]:
     return event.is_set
 
 
+#: How many `input_required` results one logical tool call may answer before
+#: the pending decision is handed back as ordinary text instead. An
+#: `InputRequiredResult` from `_tool_result` carries only `request_state` (no
+#: `input_requests` - nothing in it is for the client to fulfil), so a
+#: client's SEP-2322 driver can only sleep and re-send the same `tools/call`
+#: with that state echoed, and every SDK gives up past 10 rounds
+#: (`DEFAULT_INPUT_REQUIRED_MAX_ROUNDS` in the python SDK, `maxRounds` in the
+#: typescript SDK Claude Code runs, a hard constant in csharp and go; Claude
+#: Code exposes no setting to raise it). 8 keeps two rounds of margin under
+#: that cap for a client that counts its first answer or its last retry
+#: differently.
+INPUT_REQUIRED_MAX_ROUNDS = 8
+
+#: The key `_tool_result` stamps into `request_state` to count those rounds;
+#: the client echoes it back byte-exact on each retry and it never reaches
+#: an ordinary text answer.
+INPUT_REQUIRED_ROUND_KEY = "input_required_round"
+
+
 def _guarded(seats: Seats):
     """Wrap one tool function so the API restarting underneath this
     long-lived process - once per playtest game, see the module docstring -
@@ -175,7 +197,11 @@ def _guarded(seats: Seats):
             trouble = seatkit.api_trouble(seats.http, seats.api)
             if trouble:
                 return trouble
+            ctx = kwargs.get("ctx")
+            echoed = ctx.request_state if isinstance(ctx, Context) else None
             try:
+                if echoed is not None:
+                    return _resume_input_required(seats, kwargs.get("player_uid", ""), echoed)
                 return fn(*args, **kwargs)
             except httpx.HTTPError as exc:
                 return f"the game server at {seats.api} became unreachable mid-call: {exc}"
@@ -183,6 +209,41 @@ def _guarded(seats: Seats):
         return wrapper
 
     return decorate
+
+
+def _resume_input_required(seats: Seats, player_uid: str, echoed: str) -> str | InputRequiredResult:
+    """Answer a client's retry of a call that already returned
+    `input_required` - never by running the tool again.
+
+    The retry is the same logical `tools/call`, re-sent by the client's
+    SEP-2322 driver with our own `request_state` echoed back (see
+    `INPUT_REQUIRED_MAX_ROUNDS` for why it can do nothing else). The action
+    already ran on round 1; running it again would re-send it - a `decide`
+    re-answering whatever decision came next, a `cast` cast twice. So this
+    only re-reads the board: while the decision is still this seat's and the
+    round count is under `INPUT_REQUIRED_MAX_ROUNDS`, it answers
+    `input_required` again with the count raised; otherwise it hands back
+    round 1's answer as ordinary text - `pending_decision` refreshed from the
+    board - and the seat answers it with a fresh `decide` call, exactly as a
+    pre-2026 client always has."""
+    try:
+        answer = json.loads(echoed)
+        rounds = int(answer.pop(INPUT_REQUIRED_ROUND_KEY))
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return echoed
+    seat = seats.seat_for(player_uid)
+    if seat is None:
+        return NO_SUCH_SEAT
+    board = seat.fetch_state()
+    pending = board.get("pending_decision")
+    if pending is None:
+        answer.pop("pending_decision", None)
+    else:
+        answer["pending_decision"] = pending
+    if decision_is_mine(pending, board, seat.player) and rounds < INPUT_REQUIRED_MAX_ROUNDS:
+        stamped = {**answer, INPUT_REQUIRED_ROUND_KEY: rounds + 1}
+        return InputRequiredResult(request_state=json.dumps(stamped, indent=1))
+    return json.dumps(answer, indent=1)
 
 
 #: `battlefield_state`'s section vocabulary: the name a seat asks for, and
@@ -864,17 +925,22 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             _attach_script_hint(answer, seat, state_view)
             _attach_draft(answer, seat, state_view)
             pending = answer.get("pending_decision")
-            text = json.dumps(answer, indent=1)
+            sort_keys = False
         else:
-            state_view = payload
+            state_view = answer = payload
             _attach_script_hint(payload, seat, payload)
             _attach_draft(payload, seat, payload)
             pending = payload.get("pending_decision")
-            text = json.dumps(payload, indent=1, sort_keys=True)
+            sort_keys = True
         modern = protocol_version is None or protocol_version in MODERN_PROTOCOL_VERSIONS
         if decision_is_mine(pending, state_view, seat.player) and modern:
-            return InputRequiredResult(request_state=text)
-        return text
+            # Round 1 of `INPUT_REQUIRED_MAX_ROUNDS`; `_resume_input_required`
+            # counts the client's retries from here.
+            stamped = {**answer, INPUT_REQUIRED_ROUND_KEY: 1}
+            return InputRequiredResult(
+                request_state=json.dumps(stamped, indent=1, sort_keys=sort_keys)
+            )
+        return json.dumps(answer, indent=1, sort_keys=sort_keys)
 
     def act(
         seat: Seat,

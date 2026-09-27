@@ -855,9 +855,9 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   bare call - that is a whole extra tool call and turn spent doing what
   this one parameter already does for you, and it is the pattern that used
   to show up as `Bash sleep 2` after `Bash sleep 2` in the log. A decision
-  addressed to you comes back as its own distinct kind of result
-  (`input_required`) rather than buried in ordinary text, on any call,
-  bounded wait or not - answer it with `decide` before doing anything else.
+  addressed to you comes back on any call, bounded wait or not, as a
+  `pending_decision` naming you (shaped `input_required` for a client that
+  surfaces that kind) - answer it with `decide` before doing anything else.
 
   While nothing is new the server re-issues that wait itself, bound after
   bound, so a quiet opponent costs you one call, not one per bound. If
@@ -872,7 +872,7 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   one answer with no `available_actions`, because it only looks, it never
   acts. That is why the loop's wait is `pass_until`, not this: a
   `pass_until`/`pass` answer carries the action list as well. Open your
-  activation with this one, answer any `input_required` decision it hands
+  activation with this one, answer any decision it hands
   you straight from that decision's `answer_with`, and go back to the loop.
 - An action tool's answer is about the action: `outcome` first (whether it
   was allowed, and if not, the engine's own refusal in its own words - read
@@ -1205,7 +1205,7 @@ Read `finished`:
 
 - `finished: true` - a real stop, and `stopped_because` names it: the
   destination, something new on the stack you could answer, a decision
-  addressed to you (that answer arrives as `input_required`), your own
+  addressed to you (its `pending_decision` names you), your own
   declare-attackers step, being attacked in your own declare-blockers step, a
   refused pass, the game ending.
 - `finished: false` - it got as far as it could within `max_seconds` and
