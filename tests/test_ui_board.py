@@ -645,7 +645,11 @@ def test_the_always_yield_toggle_is_checked_when_it_matches_stops_and_calls_the_
           const stops = {
             mine: [], theirs: [],
             yieldTo: [
-              { controller: "bob", name: "Krosan Grip", text: "Destroy target artifact or enchantment." },
+              {
+                controller: "bob",
+                name: "Krosan Grip",
+                text: "Destroy target artifact or enchantment.",
+              },
             ],
           };
           const state = baseState({ stack: [ABILITY_OBJ] });
