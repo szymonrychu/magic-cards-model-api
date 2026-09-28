@@ -78,9 +78,12 @@
 # It is `alwaysLoad`, NOT `anthropic/alwaysLoad`: the latter is a *server*'s
 # own per-tool `_meta` marker in its `tools/list` answer and does nothing at
 # all in a config file, which is the silent-failure spelling
-# `tests/test_k8s_seats.py` pins both branches against. `spellslinger` is
-# deliberately left deferred - it is a large, occasional reference surface
-# (card text and rules lookups), not the seat's per-turn toolset.
+# `tests/test_k8s_seats.py` pins both branches against. `spellslinger` used
+# to be deliberately left deferred (a large, occasional reference surface,
+# not the seat's per-turn toolset) - reversed 2026-09-28, owner call: a
+# seat's own `ToolSearch` round trip to find it measured 59-162s per game
+# where it actually reached for it, well past the cost of loading its tool
+# list eagerly, so it now carries `alwaysLoad` too, in both branches.
 #
 # `ownerReferences` is gone on purpose (T9/T10): with durable games, an api
 # restart must not garbage-collect the seat Jobs of games that survived it.
@@ -217,7 +220,7 @@ spec:
 
           if [ -n "$MCP_URL" ]; then mtg="{\"type\": \"http\", \"url\": \"$MCP_URL\", \"alwaysLoad\": true}"; else mtg="{\"command\": \"/app/.venv/bin/python\", \"args\": [\"-m\", \"magic_cards_model_api.mcp\", \"--api\", \"$API_URL\", \"--game\", \"$GAME_ID\", \"--transport\", \"stdio\"], \"alwaysLoad\": true}"; fi
 
-          printf "%s" "{\"mcpServers\": {\"mtg\": $mtg, \"spellslinger\": {\"type\": \"http\", \"url\": \"http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp\"}}}" > "$out"
+          printf "%s" "{\"mcpServers\": {\"mtg\": $mtg, \"spellslinger\": {\"type\": \"http\", \"url\": \"http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp\", \"alwaysLoad\": true}}}" > "$out"
 
           '
         env:
@@ -277,6 +280,15 @@ spec:
           value: tools
         - name: ACCESS_LOG_QUIET
           value: '1'
+        # Speed pass 2026-09-28: Claude Code truncates every MCP tool
+        # description/server instructions to 2048 chars by default; the
+        # seat's served descriptions can run up to 4096, so the cap is
+        # raised to fit them. MAX_MCP_OUTPUT_TOKENS keeps a large
+        # wait_for_priority/pass_until result from being truncated.
+        - name: CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH
+          value: '4096'
+        - name: MAX_MCP_OUTPUT_TOKENS
+          value: '60000'
         - name: MODEL
           value: __MODEL__
         - name: EFFORT

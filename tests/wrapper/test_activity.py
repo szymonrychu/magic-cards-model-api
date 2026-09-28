@@ -481,3 +481,187 @@ def test_poll_once_feeds_the_watcher_s_own_metrics_regardless_of_log_level(home)
     watcher.poll_once()
     body, _ = metrics.render()
     assert 'ccw_inference_seconds_count{output_tokens_bucket="200-500"} 1.0' in body.decode()
+
+
+# ---- per-tool step timing (ccw_model_step_seconds / ccw_tool_seconds) ------
+#
+# One "step" is one tool call: `model_ms` is the time from the previous
+# user/tool_result line (or this timer's own construction - "turn start") to
+# the `assistant` line carrying the `tool_use` block; `tool_ms` is the time
+# from that `tool_use` line to its matching `tool_result` (matched by
+# `id`/`tool_use_id`). Nothing is logged or recorded until the result lands -
+# a step in flight when the transcript stops growing is an inherent gap, the
+# same one `InferenceTimer` documents for its own last group.
+
+
+def tool_use_line(ts: str, tool_id: str, name: str) -> dict:
+    return {
+        "type": "assistant",
+        "timestamp": ts,
+        "message": {"content": [{"type": "tool_use", "id": tool_id, "name": name, "input": {}}]},
+    }
+
+
+def tool_result_line(ts: str, tool_id: str, content: object = "ok") -> dict:
+    return {
+        "type": "user",
+        "timestamp": ts,
+        "message": {
+            "content": [{"type": "tool_result", "tool_use_id": tool_id, "content": content}]
+        },
+    }
+
+
+def test_a_completed_tool_call_logs_one_step_line_with_both_durations(agent_log):
+    timer = activity.StepTimer(rank=activity.level_rank("tools"))
+    timer.feed(
+        [
+            user_boundary("2026-09-28T00:00:00.000Z"),
+            tool_use_line("2026-09-28T00:00:00.400Z", "toolu_1", "mcp__mtg__wait_for_priority"),
+            tool_result_line("2026-09-28T00:00:01.900Z", "toolu_1"),
+        ]
+    )
+    assert "step tool=wait_for_priority model_ms=400 tool_ms=1500" in agent_log.text
+
+
+def test_a_builtin_tool_keeps_its_own_name(agent_log):
+    timer = activity.StepTimer(rank=activity.level_rank("tools"))
+    timer.feed(
+        [
+            user_boundary("2026-09-28T00:00:00.000Z"),
+            tool_use_line("2026-09-28T00:00:00.000Z", "toolu_1", "Bash"),
+            tool_result_line("2026-09-28T00:00:00.100Z", "toolu_1"),
+        ]
+    )
+    assert "step tool=Bash model_ms=0 tool_ms=100" in agent_log.text
+
+
+def test_nothing_is_logged_until_the_matching_tool_result_lands(agent_log):
+    timer = activity.StepTimer(rank=activity.level_rank("tools"))
+    timer.feed(
+        [
+            user_boundary("2026-09-28T00:00:00.000Z"),
+            tool_use_line("2026-09-28T00:00:00.400Z", "toolu_1", "Bash"),
+        ]
+    )
+    assert agent_log.text.strip() == ""
+
+
+def test_the_step_line_is_gated_by_the_tools_level_like_other_tool_logging(agent_log):
+    timer = activity.StepTimer(rank=activity.level_rank("messages"))
+    timer.feed(
+        [
+            user_boundary("2026-09-28T00:00:00.000Z"),
+            tool_use_line("2026-09-28T00:00:00.400Z", "toolu_1", "Bash"),
+            tool_result_line("2026-09-28T00:00:01.000Z", "toolu_1"),
+        ]
+    )
+    assert agent_log.text.strip() == ""
+
+
+def test_a_server_side_auto_answered_list_is_counted_and_logged(agent_log):
+    timer = activity.StepTimer(rank=activity.level_rank("tools"))
+    timer.feed(
+        [
+            user_boundary("2026-09-28T00:00:00.000Z"),
+            tool_use_line("2026-09-28T00:00:00.000Z", "toolu_1", "mcp__mtg__decide"),
+            tool_result_line(
+                "2026-09-28T00:00:00.500Z",
+                "toolu_1",
+                content=json.dumps({"auto_answered": ["d1", "d2"]}),
+            ),
+        ]
+    )
+    assert "auto_answers=2" in agent_log.text
+
+
+def test_a_tool_result_with_no_auto_answered_key_carries_no_suffix(agent_log):
+    timer = activity.StepTimer(rank=activity.level_rank("tools"))
+    timer.feed(
+        [
+            user_boundary("2026-09-28T00:00:00.000Z"),
+            tool_use_line("2026-09-28T00:00:00.000Z", "toolu_1", "Bash"),
+            tool_result_line("2026-09-28T00:00:00.500Z", "toolu_1", content="plain text"),
+        ]
+    )
+    assert "step tool=Bash" in agent_log.text
+    assert "auto_answers" not in agent_log.text
+
+
+def test_step_timer_feeds_ccw_model_step_and_ccw_tool_seconds():
+    from mtg_agent.wrapper.metrics import Metrics
+
+    metrics = Metrics()
+    timer = activity.StepTimer(metrics=metrics, rank=activity.level_rank("tools"))
+    timer.feed(
+        [
+            user_boundary("2026-09-28T00:00:00.000Z"),
+            tool_use_line("2026-09-28T00:00:00.400Z", "toolu_1", "mcp__mtg__wait_for_priority"),
+            tool_result_line("2026-09-28T00:00:01.900Z", "toolu_1"),
+        ]
+    )
+    body, _ = metrics.render()
+    text = body.decode()
+    assert "ccw_model_step_seconds_count 1.0" in text
+    assert 'ccw_tool_seconds_count{tool="wait_for_priority"} 1.0' in text
+
+
+def test_step_timer_records_metrics_regardless_of_log_rank():
+    """Metrics must not depend on `AGENT_LOG_LEVEL` - the same rule
+    `test_poll_once_feeds_the_watcher_s_own_metrics_regardless_of_log_level`
+    pins for `ccw_inference_seconds`."""
+    from mtg_agent.wrapper.metrics import Metrics
+
+    metrics = Metrics()
+    timer = activity.StepTimer(metrics=metrics, rank=activity.level_rank("off"))
+    timer.feed(
+        [
+            user_boundary("2026-09-28T00:00:00.000Z"),
+            tool_use_line("2026-09-28T00:00:00.400Z", "toolu_1", "Bash"),
+            tool_result_line("2026-09-28T00:00:01.000Z", "toolu_1"),
+        ]
+    )
+    body, _ = metrics.render()
+    assert "ccw_model_step_seconds_count 1.0" in body.decode()
+
+
+def test_step_timer_survives_malformed_and_unmatched_lines():
+    """Never raises: a message that is not a dict, content that is not a
+    list, a tool_use with no id/name, a tool_result whose tool_use_id was
+    never seen, and an unparsable timestamp are all silently skipped."""
+    timer = activity.StepTimer(rank=activity.level_rank("tools"))
+    timer.feed(
+        [
+            {"type": "assistant"},
+            {"type": "assistant", "message": {"content": "not a list"}},
+            {
+                "type": "assistant",
+                "timestamp": "2026-09-28T00:00:00.000Z",
+                "message": {"content": [{"type": "tool_use"}]},
+            },
+            tool_use_line("not a timestamp", "toolu_bad_ts", "Bash"),
+            tool_result_line("2026-09-28T00:00:00.000Z", "toolu_bad_ts"),
+            {"type": "user", "message": {"content": [{"type": "tool_result"}]}},
+            tool_result_line("2026-09-28T00:00:01.000Z", "toolu_never_issued"),
+        ]
+    )
+    assert True  # got here without raising
+
+
+def test_the_watcher_feeds_the_step_timer_too(home):
+    root, path = home
+    from mtg_agent.wrapper.metrics import Metrics
+
+    metrics = Metrics()
+    watcher = activity.ActivityWatcher(root, "tools", poll=0.01, metrics=metrics)
+    write(
+        path,
+        [
+            user_boundary("2026-09-28T00:00:00.000Z"),
+            tool_use_line("2026-09-28T00:00:00.400Z", "toolu_1", "mcp__mtg__wait_for_priority"),
+            tool_result_line("2026-09-28T00:00:01.900Z", "toolu_1"),
+        ],
+    )
+    watcher.poll_once()
+    body, _ = metrics.render()
+    assert 'ccw_tool_seconds_count{tool="wait_for_priority"} 1.0' in body.decode()

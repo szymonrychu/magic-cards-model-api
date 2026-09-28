@@ -188,6 +188,17 @@ def test_the_agent_carries_the_effort_setting(compose):
     assert "EFFORT" in env
 
 
+def test_the_agent_carries_the_mcp_description_length_and_output_token_env(compose):
+    """2026-09-28 speed pass, same reasoning as the k8s seat Job's agent
+    container (deploy/seat-job.yaml): Claude Code truncates every MCP tool
+    description/server instructions to 2048 chars by default, and
+    `MAX_MCP_OUTPUT_TOKENS` keeps a large `wait_for_priority`/`pass_until`
+    result from being truncated."""
+    env = compose["services"]["agent"]["environment"]
+    assert "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH=4096" in env
+    assert "MAX_MCP_OUTPUT_TOKENS=60000" in env
+
+
 def test_env_example_lists_every_variable_compose_requires(compose):
     example = (ROOT / ".env.example").read_text()
     for key in (

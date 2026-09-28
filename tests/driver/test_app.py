@@ -835,6 +835,19 @@ def test_settings_read_the_boot_wait_from_the_environment():
     assert settings.agent_retry_interval == 0.5
 
 
+def test_agent_retry_interval_default_is_the_faster_2026_09_28_value():
+    """Speed pass: was 3.0s. The driver retries `push_turn` against a booting
+    agent (`push_turn_when_reachable`/`_dispatch_and_retry`) every
+    `agent_retry_interval` while the wrapper's claude process is still
+    starting up - so the interval bounds how long the driver can sit on an
+    agent that became reachable moments ago. Lowered to 0.5s (no cap on
+    total wait: `agent_boot_wait` is unchanged), both as the dataclass
+    default and as `AGENT_RETRY_INTERVAL_SECONDS`'s own env fallback so an
+    unset env var gets the fast value too."""
+    assert DriverSettings().agent_retry_interval == 0.5
+    assert DriverSettings.from_env({}).agent_retry_interval == 0.5
+
+
 # -- the contract this file's fake game server stands in for ------------------
 
 

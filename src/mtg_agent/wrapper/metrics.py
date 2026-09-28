@@ -25,6 +25,15 @@ INFERENCE_SECONDS_BUCKETS = (1, 2, 3, 5, 8, 12, 17, 25, 40, 60, 90, 150)
 #: extended-thinking tokens, not the visible text/tool_use.
 _OUTPUT_TOKEN_BUCKET_EDGES = (200, 500, 1000, 2000, 4000)
 
+#: `ccw_model_step_seconds`/`ccw_tool_seconds` bucket boundaries. Fed from
+#: `activity.StepTimer`, one observation per completed tool call: a tool
+#: itself runs from a fast in-memory board read (tens of ms) to a rules
+#: lookup or a script run (several seconds), and the model-thinking half of a
+#: step is bounded below by inference latency itself - coarser than
+#: `INFERENCE_SECONDS_BUCKETS` on purpose, since this is an operational
+#: latency signal, not the tokens-vs-time fit that histogram was tuned for.
+STEP_SECONDS_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 40, 90)
+
 
 def _output_tokens_bucket(output_tokens: int) -> str:
     if output_tokens < _OUTPUT_TOKEN_BUCKET_EDGES[0]:
@@ -79,6 +88,35 @@ class Metrics:
             "ccw_turn_stall_suspected_total", "Inactivity timer firings", registry=r
         )
         self.probe_total = Counter("ccw_probe_total", "Probes by result", ["result"], registry=r)
+        #: Fed from `activity.StepTimer`, one observation per completed tool
+        #: call: how long the model took to produce the `tool_use` (the time
+        #: since the previous tool result, or turn start). Unlabelled -
+        #: `ccw_tool_seconds` below carries the per-tool breakdown, and a
+        #: second label dimension here would only double-count it.
+        self.model_step_seconds = Histogram(
+            "ccw_model_step_seconds",
+            "Wall-clock duration from the previous tool result (or turn start) to a tool_use line",
+            buckets=STEP_SECONDS_BUCKETS,
+            registry=r,
+        )
+        #: The other half of the same step: from `tool_use` to its matching
+        #: `tool_result`, labelled by the tool's own short name (an `mcp`
+        #: server prefix stripped, a builtin tool name kept as-is).
+        self.tool_seconds = Histogram(
+            "ccw_tool_seconds",
+            "Wall-clock duration of one tool call, from tool_use to its tool_result",
+            ["tool"],
+            buckets=STEP_SECONDS_BUCKETS,
+            registry=r,
+        )
+        #: A tool result whose JSON body carries an `auto_answered` list (the
+        #: server answered one or more pending decisions on the caller's
+        #: behalf) - incremented by that list's length, not by 1 per result.
+        self.auto_answers_total = Counter(
+            "ccw_auto_answers_total",
+            "Server-side auto-answered decisions observed in a tool result",
+            registry=r,
+        )
 
     def record_tokens(self, turn_tokens: list[dict[str, Any]]) -> None:
         for entry in turn_tokens or []:
@@ -99,6 +137,21 @@ class Metrics:
         self.inference_seconds.labels(
             output_tokens_bucket=_output_tokens_bucket(output_tokens)
         ).observe(duration_seconds)
+
+    def record_step(
+        self, tool: str, model_seconds: float, tool_seconds: float, auto_answers: int = 0
+    ) -> None:
+        """One tool-call step finished (fed from `activity.StepTimer`).
+
+        The two durations are independent transcript-line measurements, so a
+        clock skew poisoning one (`< 0`) is dropped on its own rather than
+        discarding the other half of the same step too."""
+        if model_seconds >= 0:
+            self.model_step_seconds.observe(model_seconds)
+        if tool_seconds >= 0:
+            self.tool_seconds.labels(tool=tool).observe(tool_seconds)
+        if auto_answers:
+            self.auto_answers_total.inc(auto_answers)
 
     def record_cost(self, result_json: Any) -> None:
         if not isinstance(result_json, dict):

@@ -620,6 +620,137 @@ class InferenceTimer:
         self._group_tokens = 0
 
 
+def _short_tool_name(name: str) -> str:
+    """The mcp tool's own short name (its server prefix stripped) or, for a
+    builtin, the name unchanged - `mcp__mtg__wait_for_priority` ->
+    `wait_for_priority`, `Bash` -> `Bash`."""
+    if name.startswith(_MTG_PREFIX):
+        return name[len(_MTG_PREFIX) :]
+    if name.startswith(_SPELLSLINGER_PREFIX):
+        return name[len(_SPELLSLINGER_PREFIX) :]
+    if name.startswith("mcp__"):
+        parts = name.split("__", 2)
+        if len(parts) == 3:
+            return parts[2]
+    return name
+
+
+def _auto_answered_count(content: Any) -> int:
+    """A tool result's `auto_answered` list length, or 0 - the result's own
+    text (`_result_text`) parsed as JSON, `0` for anything that is not JSON,
+    not an object, or has no such list. Never raises on malformed input."""
+    text = _result_text(content)
+    if not text:
+        return 0
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return 0
+    if not isinstance(parsed, dict):
+        return 0
+    answers = parsed.get("auto_answered")
+    return len(answers) if isinstance(answers, list) else 0
+
+
+class StepTimer:
+    """`ccw_model_step_seconds`/`ccw_tool_seconds`/`ccw_auto_answers_total`,
+    plus one `tools`-level log line per completed tool call.
+
+    Fed transcript lines in order, same shape as `InferenceTimer`. For every
+    `tool_use` block: `model_ms` is the time from the previous
+    `user`/`tool_result` line (or this timer's own construction - "turn
+    start") to the line carrying the `tool_use` block; `tool_ms` is the time
+    from that line to the matching `tool_result` (matched by the block's own
+    `id`/`tool_use_id`) - so a step is neither logged nor recorded until its
+    result lands. A tool call in flight when the transcript stops growing is
+    an inherent gap of timing a live tail, the same one `InferenceTimer`
+    documents for its own last group.
+
+    Metrics are fed unconditionally, the log line only at `rank >=
+    level_rank("tools")` - the same split `ActivityWatcher` already makes
+    between `AGENT_LOG_LEVEL` (text log volume) and what a production
+    wrapper wants regardless of it.
+
+    Every field access here is defensive (`.get` plus an `isinstance` guard)
+    rather than wrapped in `try`/`except`, matching `observations`'/
+    `InferenceTimer`'s own style - a malformed or out-of-order line degrades
+    to "nothing observed", never an exception.
+    """
+
+    def __init__(
+        self,
+        metrics: Metrics | None = None,
+        rank: int = 0,
+        now: Callable[[], float] = time.time,
+    ) -> None:
+        self.metrics = metrics
+        self.rank = rank
+        #: The last observed `user`/`tool_result` line's timestamp - "turn
+        #: start" until the first one arrives.
+        self._boundary_ts: float = now()
+        #: tool_use id -> (short name, issued timestamp, model_ms already
+        #: computed at issue time) - popped once its `tool_result` lands.
+        self._pending: dict[str, tuple[str, float, float]] = {}
+
+    def feed(self, lines: Iterable[dict]) -> None:
+        for line in lines:
+            self._feed_one(line)
+
+    def _feed_one(self, line: dict) -> None:
+        kind = line.get("type")
+        message = line.get("message")
+        if not isinstance(message, dict):
+            return
+        content = message.get("content")
+        if not isinstance(content, list):
+            return
+        ts = _parse_ts(line.get("timestamp"))
+        if kind == "assistant":
+            self._feed_tool_uses(content, ts)
+        elif kind == "user":
+            self._feed_tool_results(content, ts)
+
+    def _feed_tool_uses(self, content: list, ts: float | None) -> None:
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            tool_id = block.get("id")
+            name = block.get("name")
+            if not isinstance(tool_id, str) or not tool_id:
+                continue
+            if not isinstance(name, str) or not name:
+                continue
+            if ts is None:
+                continue
+            model_ms = max(0.0, (ts - self._boundary_ts) * 1000.0)
+            self._pending[tool_id] = (name, ts, model_ms)
+
+    def _feed_tool_results(self, content: list, ts: float | None) -> None:
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            if ts is not None:
+                self._boundary_ts = ts
+            tool_id = block.get("tool_use_id")
+            if not isinstance(tool_id, str) or not tool_id:
+                continue
+            pending = self._pending.pop(tool_id, None)
+            if pending is None or ts is None:
+                continue
+            name, issued_ts, model_ms = pending
+            tool_ms = max(0.0, (ts - issued_ts) * 1000.0)
+            auto_answers = _auto_answered_count(block.get("content"))
+            self._record(name, model_ms, tool_ms, auto_answers)
+
+    def _record(self, name: str, model_ms: float, tool_ms: float, auto_answers: int) -> None:
+        short = _short_tool_name(name)
+        if self.metrics is not None:
+            self.metrics.record_step(short, model_ms / 1000.0, tool_ms / 1000.0, auto_answers)
+        if self.rank >= level_rank("tools"):
+            suffix = f" auto_answers={auto_answers}" if auto_answers else ""
+            log.info("step tool=%s model_ms=%.0f tool_ms=%.0f%s", short, model_ms, tool_ms, suffix)
+
+
 def newest_transcript(home_dir: Path) -> Path | None:
     """The most recently modified session file under `~/.claude/projects`."""
     root = home_dir / ".claude" / "projects"
@@ -656,6 +787,11 @@ class ActivityWatcher:
         #: gated on `rank` - a production wrapper turned down to `off`/`turns`
         #: for log volume still wants latency data.
         self._timer = InferenceTimer(metrics)
+        #: `ccw_model_step_seconds`/`ccw_tool_seconds`/`ccw_auto_answers_total`
+        #: plus the per-tool-call `tools`-level log line - see `StepTimer`.
+        #: Metrics fed unconditionally, same reasoning as `_timer` above; the
+        #: log line itself still respects `rank`.
+        self._steps = StepTimer(metrics, rank=self.rank)
         #: What the play UI's AI pill says. Fed unconditionally for the same
         #: reason: `AGENT_LOG_LEVEL` is a choice about this container's log
         #: volume, not a decision to leave the human opposite this seat
@@ -698,6 +834,7 @@ class ActivityWatcher:
             self._tail = TranscriptTail(newest)
         lines = self._tail.read()
         self._timer.feed(lines)
+        self._steps.feed(lines)
         self._activity.feed(lines)
         return log_lines(lines, self.rank)
 

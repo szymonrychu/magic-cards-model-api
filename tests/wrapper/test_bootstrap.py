@@ -269,6 +269,22 @@ def test_render_writes_the_rules_researcher_as_a_project_agent(tmp_path):
     assert fields["description"]
 
 
+def test_the_rules_researcher_description_tells_the_seat_when_to_background_it(tmp_path):
+    """2026-09-28 speed pass: the launch guidance used to live only in
+    `prompt.turn_zero`/`ai_seat_brief.md` - this puts it on the subagent's
+    own `description` too, the text a seat reads right when it is deciding
+    how to launch it, so the choice does not depend on having read the
+    briefing closely. `run_in_background: true` is the default; foreground
+    is the exception, reserved for a decision that depends on the answer
+    right now."""
+    fields, _ = researcher(tmp_path)
+    desc = fields["description"]
+    assert "\n" not in desc, "the frontmatter line must stay a single line"
+    assert "run_in_background: true" in desc
+    assert "foreground" in desc
+    assert "depend" in desc
+
+
 def test_the_rules_researcher_may_only_look_things_up(tmp_path):
     fields, _ = researcher(tmp_path)
     tools = _names(fields["tools"])

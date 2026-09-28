@@ -190,6 +190,16 @@ def test_both_seats_default_to_opus_at_low_effort(compose):
         assert env["EFFORT"] == "${CLAUDE_AIVAI_EFFORT:-low}"
 
 
+def test_both_agents_carry_the_mcp_description_length_and_output_token_env(compose):
+    """2026-09-28 speed pass, same reasoning as docker-compose.yml's single
+    `agent` service and the k8s seat Job's agent container
+    (deploy/seat-job.yaml)."""
+    for name in ("agent-p1", "agent-p2"):
+        env = _env(compose["services"][name])
+        assert env["CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH"] == "4096"
+        assert env["MAX_MCP_OUTPUT_TOKENS"] == "60000"
+
+
 def test_the_game_seeds_its_own_agent_default_model_and_effort_from_the_aivai_vars(compose):
     """`game`, not agent-p1/agent-p2's own env, is what
     `agent_settings.AgentSettings.default` reads for a lobby-booted game

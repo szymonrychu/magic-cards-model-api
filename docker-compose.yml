@@ -185,6 +185,14 @@ services:
       # `wrapper/activity.py`.
       - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-tools}
       - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
+      # Speed pass 2026-09-28 (deploy/seat-job.yaml's agent container carries
+      # the same pair, same reasoning): Claude Code truncates every MCP tool
+      # description/server instructions to 2048 chars by default, and the
+      # seat's served descriptions can run up to 4096 - raised to fit them.
+      # MAX_MCP_OUTPUT_TOKENS keeps a large wait_for_priority/pass_until
+      # result from being truncated.
+      - CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH=4096
+      - MAX_MCP_OUTPUT_TOKENS=60000
       # Who this agent is, for the branches and commits it makes in the
       # writable guides checkout (`playscripts/gitwork.py:identity`) -
       # consistent with the k8s seat Job's `__MTG_ROLE__`/`__MTG_GAME_ID__`

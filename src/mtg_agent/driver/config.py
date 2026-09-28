@@ -23,7 +23,15 @@ class DriverSettings:
     #: `k8s_seats.py` (36 x 10s = 360s) - a shorter wait here would give up on
     #: an agent Kubernetes itself is still willing to wait for.
     agent_boot_wait: float = 360.0
-    agent_retry_interval: float = 3.0
+    #: Speed pass 2026-09-28: was 3.0. Prod measured pod-up +20-52s and
+    #: dispatched +35-64s after `create_game`; `push_turn_when_reachable`
+    #: (and the pregame `_dispatch_and_retry` path) retry a booting agent on
+    #: this cadence, so it bounds how long the driver can sit on an agent
+    #: that became reachable moments ago, up to `agent_boot_wait` worst case.
+    #: A plain HTTP GET against a not-yet-listening socket is cheap, so
+    #: polling 6x more often than before costs nothing but shaves up to
+    #: ~2.5s off the worst case.
+    agent_retry_interval: float = 0.5
     #: A dispatch body (the same shape `POST /dispatch` takes), set when the
     #: container is a per-game Kubernetes Job rather than a long-lived
     #: compose service: the driver dispatches itself at startup instead of
@@ -67,7 +75,7 @@ class DriverSettings:
             self_url=value("DRIVER_SELF_URL", "http://driver:8090"),
             http_addr=value("HTTP_ADDR", ":8090"),
             agent_boot_wait=float(value("AGENT_BOOT_WAIT_SECONDS", "360")),
-            agent_retry_interval=float(value("AGENT_RETRY_INTERVAL_SECONDS", "3")),
+            agent_retry_interval=float(value("AGENT_RETRY_INTERVAL_SECONDS", "0.5")),
             assignment_json=value("DRIVER_ASSIGNMENT_JSON", ""),
             exit_after_match=value("DRIVER_EXIT_AFTER_MATCH", "").lower() in ("1", "true", "yes"),
             review_record_timeout=float(value("REVIEW_RECORD_TIMEOUT_SECONDS", "120")),

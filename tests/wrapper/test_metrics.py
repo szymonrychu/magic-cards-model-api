@@ -61,3 +61,57 @@ def test_record_inference_ignores_a_negative_duration() -> None:
     body, _ = m.render()
     text = body.decode()
     assert 'ccw_inference_seconds_count{output_tokens_bucket="<200"} 1.0' not in text
+
+
+# ---- ccw_model_step_seconds / ccw_tool_seconds / ccw_auto_answers_total ----
+#
+# Fed from the transcript watcher's `StepTimer` (activity.py), one
+# observation per completed tool call: `model_step_seconds` (unlabelled) is
+# how long the model took to produce the tool_use, `tool_seconds{tool}` is
+# how long the tool itself took to answer.
+
+
+def test_the_step_histograms_and_the_auto_answer_counter_are_registered() -> None:
+    m = Metrics()
+    body, _ = m.render()
+    text = body.decode()
+    assert "ccw_model_step_seconds" in text
+    assert "ccw_tool_seconds" in text
+    assert "ccw_auto_answers_total" in text
+
+
+def test_record_step_observes_both_histograms_under_the_tool_label() -> None:
+    m = Metrics(registry=CollectorRegistry())
+    m.record_step("wait_for_priority", 0.4, 1.5)
+    m.record_step("wait_for_priority", 0.1, 0.2)
+
+    body, _ = m.render()
+    text = body.decode()
+    assert "ccw_model_step_seconds_count 2.0" in text
+    assert 'ccw_tool_seconds_count{tool="wait_for_priority"} 2.0' in text
+
+
+def test_record_step_ignores_a_negative_duration_independently_per_half() -> None:
+    """A clock skew that poisons one side of a step must not drop the other
+    - each duration is a separate transcript-line measurement. `x`'s
+    negative model duration is dropped but its tool duration still counts,
+    and vice versa for `y`."""
+    m = Metrics(registry=CollectorRegistry())
+    m.record_step("x", -1.0, 0.5)
+    m.record_step("y", 0.5, -1.0)
+
+    body, _ = m.render()
+    text = body.decode()
+    assert "ccw_model_step_seconds_count 1.0" in text
+    assert 'ccw_tool_seconds_count{tool="x"} 1.0' in text
+    assert 'tool="y"' not in text, "a dropped negative tool duration must never label the series"
+
+
+def test_record_step_counts_auto_answers() -> None:
+    m = Metrics(registry=CollectorRegistry())
+    m.record_step("decide", 0.1, 0.1, auto_answers=3)
+    m.record_step("decide", 0.1, 0.1)
+
+    body, _ = m.render()
+    text = body.decode()
+    assert "ccw_auto_answers_total 3.0" in text

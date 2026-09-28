@@ -14,7 +14,8 @@
     },
     "spellslinger": {
       "type": "http",
-      "url": "https://mcp.szymonrichert.pl/mcp"
+      "url": "https://mcp.szymonrichert.pl/mcp",
+      "alwaysLoad": true
     }
   }
 }

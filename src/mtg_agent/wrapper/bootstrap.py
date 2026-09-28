@@ -179,8 +179,11 @@ def write_agents(settings: Settings) -> None:
     text = (
         "---\n"
         f"name: {RULES_RESEARCHER}\n"
-        "description: Answers one Magic rules question with verified CR citations, "
-        "in the background while the seat waits. Read-only; cannot act in the game.\n"
+        "description: Answers one Magic rules question with verified CR citations. "
+        "Launch it with run_in_background: true whenever the decision in front of "
+        "you does not depend on the answer - keep playing, then read the answer "
+        "when it arrives; run it in the foreground only when the decision you are "
+        "making right now does depend on it. Read-only; cannot act in the game.\n"
         f"tools: {', '.join(RULES_RESEARCHER_TOOLS)}\n"
         f"disallowedTools: {', '.join(RULES_RESEARCHER_DENY)}\n"
         f"model: {settings.rules_researcher_model}\n"

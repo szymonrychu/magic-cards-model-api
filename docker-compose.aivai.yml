@@ -205,6 +205,10 @@ services:
       - LOG_LEVEL=info
       - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-tools}
       - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
+      # Speed pass 2026-09-28, same pair and reasoning as docker-compose.yml's
+      # single `agent` service and deploy/seat-job.yaml's agent container.
+      - CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH=4096
+      - MAX_MCP_OUTPUT_TOKENS=60000
       - MTG_ROLE=seat
       - MTG_GAME_ID=${MTG_GAME_ID:-}
       # FD6 (5), fb3-parity.md item 3: where the driver writes this game's
@@ -261,6 +265,8 @@ services:
       - LOG_LEVEL=info
       - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-tools}
       - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
+      - CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH=4096
+      - MAX_MCP_OUTPUT_TOKENS=60000
       - MTG_ROLE=seat
       - MTG_GAME_ID=${MTG_GAME_ID:-}
       - MTG_EVIDENCE_DIR=/driver-workspace/evidence

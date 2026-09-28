@@ -164,6 +164,19 @@ def test_the_substituted_values_appear_where_expected() -> None:
     assert "MCP_JSON" not in mcp_env
 
 
+def test_agent_container_carries_the_mcp_description_length_and_output_token_env() -> None:
+    """2026-09-28 speed pass: Claude Code truncates every MCP tool
+    description/server instructions to 2048 chars by default, and the seat's
+    served descriptions can run up to 4096 - so the agent container raises
+    the cap. `MAX_MCP_OUTPUT_TOKENS` keeps a large `wait_for_priority`/
+    `pass_until` result from being truncated too."""
+    job = _build()
+    agent = next(c for c in job["spec"]["template"]["spec"]["containers"] if c["name"] == "agent")
+    agent_env = {e["name"]: e.get("value") for e in agent["env"]}
+    assert agent_env["CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH"] == "4096"
+    assert agent_env["MAX_MCP_OUTPUT_TOKENS"] == "60000"
+
+
 def test_max_thinking_tokens_absent_renders_as_empty_string() -> None:
     # `AgentSettings.env()` used to omit the env var entirely when unset;
     # the template's placeholder slot always exists now, so the closest
@@ -251,6 +264,7 @@ def test_mcp_config_script_emits_stdio_mtg_entry_when_mcp_url_empty(tmp_path: Pa
     assert rendered["mcpServers"]["spellslinger"] == {
         "type": "http",
         "url": ("http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp"),
+        "alwaysLoad": True,
     }
 
 
@@ -264,6 +278,7 @@ def test_mcp_config_script_emits_http_mtg_entry_when_mcp_url_set(tmp_path: Path)
     }
     assert "command" not in rendered["mcpServers"]["mtg"]
     assert rendered["mcpServers"]["spellslinger"]["type"] == "http"
+    assert rendered["mcpServers"]["spellslinger"]["alwaysLoad"] is True
 
 
 def test_mcp_config_script_marks_mtg_always_loaded_in_the_stdio_branch(tmp_path: Path) -> None:
@@ -293,12 +308,37 @@ def test_mcp_config_script_marks_mtg_always_loaded_in_the_http_branch(tmp_path: 
     assert rendered["mcpServers"]["mtg"]["alwaysLoad"] is True
 
 
+def test_mcp_config_script_marks_spellslinger_always_loaded_in_both_branches(
+    tmp_path: Path,
+) -> None:
+    """Reversed 2026-09-28: `spellslinger` used to be left deferred on
+    purpose (a large, occasional reference surface, not the seat's per-turn
+    toolset) - but the `ToolSearch` round trip to find it costs 59-162s per
+    game where a seat actually reaches for it, so it is now `alwaysLoad`
+    too, in both the stdio and http `mtg` branches (the script emits the
+    `spellslinger` entry identically in either branch)."""
+    stdio_job = _build({**ENV, "MCP_SERVICE_URL": ""})
+    http_job = _build(ENV)
+    for job in (stdio_job, http_job):
+        rendered = _run_mcp_config_script(job, tmp_path)
+        assert rendered["mcpServers"]["spellslinger"]["alwaysLoad"] is True
+
+
 def test_compose_mcp_base_marks_mtg_always_loaded() -> None:
     """`deploy/mcp.base.json` is the docker-compose path's own base config,
     written by hand rather than by the initContainer script above - the same
     deferral applies to it, so it carries the same flag."""
     base = json.loads((REPO_ROOT / "deploy" / "mcp.base.json").read_text())
     assert base["mcpServers"]["mtg"]["alwaysLoad"] is True
+
+
+def test_compose_mcp_base_marks_spellslinger_always_loaded() -> None:
+    """Reversed 2026-09-28 alongside the k8s mcp-config script above: the
+    compose path's spellslinger entry gets the same flag, for the same
+    reason (see `test_mcp_config_script_marks_spellslinger_always_loaded_in_
+    both_branches`)."""
+    base = json.loads((REPO_ROOT / "deploy" / "mcp.base.json").read_text())
+    assert base["mcpServers"]["spellslinger"]["alwaysLoad"] is True
 
 
 def test_driver_assignment_json_validates_as_a_dispatch_in() -> None:
