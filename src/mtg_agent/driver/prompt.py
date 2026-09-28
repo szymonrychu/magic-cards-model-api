@@ -885,6 +885,16 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   `board.omitted_sections`. An action answer is small enough to read whole;
   do not grep it, and do not read the absence of a battlefield section as
   an empty board when the digest right above it lists the permanents.
+- A decision with exactly one legal answer - no creature able to attack or
+  block, a single legal target, a "yes" you cannot legally choose, one
+  trigger to order - is answered for you by the server, with reasoning in
+  the game log saying so, and listed under `auto_answered` in the answer.
+  Every decision that reaches you is a real choice.
+- `then_pass=true` on `cast`, `activate`, `play_land` or `decide` makes the
+  one `pass` you would otherwise send as your very next call - use it when
+  that pass is already decided (letting your own spell or trigger resolve).
+  It passes only if you still hold priority with nothing pending, and the
+  answer is the pass's, with the action's own outcome under `first`.
 - `battlefield_state(player_uid)` is the ESCAPE HATCH, not a step in your
   loop (see "The loop"). Four questions are worth it, and they are the only
   four: what is in a graveyard or exile, what a card's actual oracle text and
@@ -1224,6 +1234,16 @@ Read `finished`:
   declare-attackers step would pass straight through your attack without
   stopping - silently, which is exactly what that stop exists to prevent.
 
+  On your opponent's turn a `finished: false` answer also says
+  `background.now_running: true`: the server keeps running that same run
+  for you in the background - the same passes, the same stops - while you
+  do something else, so your opponent is never kept waiting on you while
+  you write your plan. It never passes on your own turn and never makes the
+  pass that could end your opponent's turn; those wait for your next call.
+  Your next `pass_until` with the same `resume` takes it back and carries on
+  from wherever it got to (its `background` field says how many priorities
+  it passed); any other action tool stops it first.
+
 A combat stop never fires on the step you were standing in when you started
 the run - asking to pass past combat from inside it is you having already
 looked at combat.
@@ -1308,9 +1328,13 @@ holding priority, so composing a plan while you hold it is exactly the stall
 this loop exists to avoid. Write `declare_plan(for_turn="next")` for how you
 mean to play your own next turn only once a wait has come back because your
 opponent is the one still deciding - that is, once you do NOT hold priority,
-never while you do. The one thing that is not "nothing to do" is a response
-you are actually weighing: hold priority for that, decide it, then act or
-pass, before you turn to next turn's plan.
+never while you do. That is the moment a `pass_until` answer says
+`background.now_running: true`: the server keeps passing for that run while
+you write the plan, so write it right then, then call `pass_until` again
+with the same `resume` - the plan is on record before your own turn starts,
+and it is what you play when your priority arrives. The one thing that is
+not "nothing to do" is a response you are actually weighing: hold priority
+for that, decide it, then act or pass, before you turn to next turn's plan.
 
 Default to `for_turn="next"`, during your opponent's turn: that keeps your
 own turn's declaration off its critical path entirely. Leaving `for_turn` at
@@ -1365,7 +1389,9 @@ you can do something in response, how a matchup card interacts with yours:
 - Launch it in the background when the question comes up and you do not
   hold priority, or right before you pass: the `Agent` tool with `subagent_type` set to
   `rules-researcher` and `run_in_background` set to true, the question in its
-  prompt. Then pass, `pass_until` or `wait_for_priority` as you would have
+  prompt. A launch without `run_in_background` blocks your whole seat until
+  it answers - use the foreground only when the decision you are making
+  right now depends on the answer. Then pass, `pass_until` or `wait_for_priority` as you would have
   anyway - pass first, plan second still holds, and the launch is part of
   the planning you do while your opponent acts.
 - When you next hold priority, its answer has arrived as a task

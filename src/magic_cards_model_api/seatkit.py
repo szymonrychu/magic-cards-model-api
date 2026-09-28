@@ -191,7 +191,16 @@ def scripts_enabled_here(env: Mapping[str, str] | None = None) -> bool:
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-26"
+PROTOCOL_VERSION = "seatkit-27"
+#: `seatkit-27`: AI-seat speed, every change additive. `cast`, `activate`,
+#: `play_land` and `decide` take `then_pass` (the `pass` a seat would send as
+#: its next call, answered with the action's own outcome under `first`); a
+#: decision with exactly one legal answer is answered server-side and listed
+#: under `auto_answered` (`forced_decisions`); an idle `pass_until` hand-back
+#: on the opponent's turn keeps running in the background and reports itself
+#: under `background`; and every MCP answer is compact JSON (no indentation,
+#: same fields). A `seatkit-26` process sends no `then_pass`, and reads the
+#: new keys as harmless extra fields.
 #: `seatkit-26`: one new action tool, `unlock_door` (CR 709.5e - a Room's own
 #: unlock cost: pay the mana cost of a locked half ("door") of a Room
 #: permanent you control to give it that door's unlocked designation, only
@@ -2511,6 +2520,11 @@ class Seats:
         #: `seat_for` mints a fresh `Seat` on every tool call. Keyed by game
         #: too, because a uid is only ever valid inside the game it opens.
         self.script_corpora: dict[tuple[str, str], dict[str, Any]] = {}
+        #: `background_autopass.BackgroundRuns`, set by `mcp.build_server` -
+        #: the background `pass_until` runs of this process, by seat uid.
+        self.background: Any = None
+        #: When each seat uid's previous tool call returned (`mcp._log_timing`).
+        self.call_returned: dict[str, float] = {}
         #: 2b T11: the http transport is one long-running process that may
         #: serve several concurrently-live games at once - "the one live
         #: game" (`game_id()` below) stops being a coherent idea for it, and
@@ -3032,6 +3046,7 @@ def block_until_wake(
     *,
     wake_to_draft: bool = False,
     draft_staged: bool = False,
+    answered: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Check this seat's own state, right now - and, if nothing has changed
     yet, keep checking for up to `max_seconds` (capped at `MAX_WAIT_SECONDS`)
@@ -3101,6 +3116,13 @@ def block_until_wake(
         state = seat.fetch_state()
         if game_gone(seat):
             return {"state": state, "wake_reason": GAME_GONE, "recent_log": seat.recent_log()}
+        if answered is not None:
+            # A decision with one legal answer is answered here and never
+            # wakes the seat (`auto_answer_forced`); `answered` collects them.
+            _answered_state, entries = auto_answer_forced(seat, state)
+            answered.extend(entries)
+            if answered_cleanly(entries):
+                continue
         reason = compute_wake_reason(
             state, before, seat.player, wake_to_draft=wake_to_draft, draft_staged=draft_staged
         )
@@ -3259,6 +3281,7 @@ def wait_and_arm(
     wake_to_draft: bool = False,
     draft_staged: bool = False,
     reissue_seconds: float = 0.0,
+    answer_forced: bool = False,
 ) -> dict[str, Any]:
     """`block_until_wake`, then judge this seat's armed scripts
     (`playscripts.arming.arm`, API-7 - never runs anything) once the wait
@@ -3281,7 +3304,11 @@ def wait_and_arm(
     L2: `reissue_seconds` re-issues a `NOTHING_NEW_YET` wait below the model
     (`_reissue_while_idle`) until a real wake or `reissue_seconds` from entry,
     so arming still judges only the one real wake. 0.0 (the default) never
-    re-issues."""
+    re-issues.
+
+    `answer_forced` (`mcp.wait_for_priority`): decisions with exactly one
+    legal answer are answered while waiting, listed under `auto_answered`."""
+    answered: list[Any] | None = [] if answer_forced else None
     if arm:
         from .playscripts import arming as playscript_arming
 
@@ -3301,7 +3328,10 @@ def wait_and_arm(
                 should_stop=should_stop,
                 wake_to_draft=wake_to_draft,
                 draft_staged=draft_staged,
+                answered=answered,
             )
+            if answered:
+                woken["auto_answered"] = answered
             woken["armed_refusal"] = problem
             return woken
     woken = _reissue_while_idle(
@@ -3312,12 +3342,15 @@ def wait_and_arm(
             should_stop=should_stop,
             wake_to_draft=wake_to_draft,
             draft_staged=draft_staged,
+            answered=answered,
         ),
         lambda answer: answer["wake_reason"] == NOTHING_NEW_YET,
         max_seconds,
         reissue_seconds,
         should_stop,
     )
+    if answered:
+        woken["auto_answered"] = answered
     if woken["wake_reason"] in (NOTHING_NEW_YET, GAME_GONE, WAIT_INTERRUPTED):
         return woken
     if not _arming_moment(woken["state"], seat.player):
@@ -5086,6 +5119,46 @@ MAX_PASSES_PER_CALL = 100
 _REACHED_STOP_PREFIX = "reached "
 
 
+#: `_pass_until_once(background=True)`'s own hand-back: the next pass is the
+#: seat's to make, not the background run's.
+BACKGROUND_HALT = (
+    "the background run stopped short of your own turn: the next pass would be on your "
+    "turn or could end your opponent's"
+)
+
+
+def _background_must_halt(state: dict[str, Any], player: str) -> bool:
+    """Whether a background run must leave the next pass to the seat itself:
+    it is this seat's own turn (or the turn of a player it decides for), or
+    an empty stack in the opponent's end step or cleanup, where passing could
+    end their turn and start this seat's own."""
+    if state.get("active_player") in decides_for(state, player):
+        return True
+    return step_position(state) in ("end_step", "cleanup") and not state.get("stack")
+
+
+def auto_answer_forced(seat: Seat, state: dict[str, Any]) -> tuple[dict[str, Any], list[Any]]:
+    """Answer every decision addressed to this seat that has exactly one
+    legal answer (`forced_decisions`), so it never costs the model a turn.
+    Never for an advisor, which must not move the game."""
+    if seat.advise or not decision_is_mine(state.get("pending_decision"), state, seat.player):
+        return state, []
+    from .forced_decisions import auto_answer_forced as answer_forced
+
+    return answer_forced(seat, state)
+
+
+def answered_cleanly(entries: list[Any]) -> bool:
+    """Whether every auto-answer in `entries` was actually accepted - a
+    refusal or an unposted answer leaves the decision standing, and the caller
+    must stop for it rather than try again."""
+    return bool(entries) and not any(
+        isinstance(entry, dict)
+        and (entry.get("refused") or entry.get("unknown_outcome") or entry.get("outcome"))
+        for entry in entries
+    )
+
+
 def _window_passed_note(stopped_because: str) -> str:
     """`pass_until`'s own `stopped_because` when an armed `theirs`/`either`
     destination came and went without this seat ever holding priority there
@@ -5288,6 +5361,7 @@ def pass_until(
     opposing_archetype: str = "*",
     inputs: dict[str, Any] | None = None,
     reissue_seconds: float = 0.0,
+    report_idle: bool = False,
 ) -> dict[str, Any]:
     """`_pass_until_once` (below), optionally ridden out across a bounded wait
     rather than handed straight back the first time it would otherwise have
@@ -5434,7 +5508,11 @@ def pass_until(
         reissue_seconds,
         should_stop,
     )
-    result.pop("_idle", None)
+    idle = bool(result.pop("_idle", None))
+    if report_idle:
+        # `mcp.pass_until` reads (and pops) this to decide whether the run
+        # continues in the background (`background_autopass`).
+        result["_idle"] = idle
     # T1: the one fetch this whole call pays for `available_actions`/
     # `recent_log` with - every internal retry and re-issue skipped it
     # (`include_extras=False`). Before this point `result` carries neither
@@ -5603,6 +5681,7 @@ def _pass_until_once(
     opposing_archetype: str = "*",
     inputs: dict[str, Any] | None = None,
     include_extras: bool = True,
+    background: bool = False,
 ) -> dict[str, Any]:
     """Pass every priority this seat is *currently* able to pass, up to a named
     point in the turn - then return. Never sleeps, never waits for the
@@ -5696,6 +5775,13 @@ def _pass_until_once(
     same as `run_action`'s own - "I am auto-passing through this stretch" is
     itself the reasoning an agent seat gives once, for the whole run, not a
     fresh one per pass.
+
+    `background` (`background_autopass`): the same run continued while the
+    seat writes its next-turn plan, with one extra rule - never a pass or a
+    combat answer on this seat's own turn, and never the pass that could end
+    the opponent's turn (`_background_must_halt`). Either hands back
+    `BACKGROUND_HALT`, unfinished and not retryable, for the seat's own next
+    call to continue.
     """
     before = seat.fetch_state()
     if game_gone(seat):
@@ -5729,6 +5815,10 @@ def _pass_until_once(
             # L1: every stack object this run passed over unasked, across
             # every call of it (the list rides in `resume`).
             result["auto_passed"] = list(run["auto_passed"])
+        if run.get("auto_answered"):
+            # Every forced decision this run answered for the seat, across
+            # every call of it (rides in `resume` the same way).
+            result["auto_answered"] = list(run["auto_answered"])
         if include_actions and actions is not None:
             # Already read for this very board (the L1 stack judgement) -
             # `_fill_answer_extras` leaves a present key alone.
@@ -5788,10 +5878,28 @@ def _pass_until_once(
         result["retryable"] = retryable
         return result
 
+    def answered_forced(state: dict[str, Any]) -> bool:
+        """Auto-answer a forced decision standing for this seat; True when
+        the run should look at the board again rather than stop for it."""
+        _state, entries = auto_answer_forced(seat, state)
+        if entries:
+            run["auto_answered"] = [*run.get("auto_answered", []), *entries]
+        return answered_cleanly(entries)
+
     while True:
         state = seat.fetch_state()
         if game_gone(seat):
             return answer(state, GAME_GONE)
+        standing = state.get("pending_decision")
+        standing_kind = standing.get("kind") if standing is not None else None
+        # A combat declaration the caller asked to be stopped at is a look at
+        # combat, not only a question: it is answered (when forced) at that
+        # stop below, never passed through here.
+        combat_stop = (standing_kind == "declare_attackers" and stop_when_you_can_attack) or (
+            standing_kind == "declare_blockers" and stop_when_attacked
+        )
+        if not combat_stop and answered_forced(state):
+            continue
         # Condition 6 (the stack) is judged here rather than inside
         # `autopass_stop_reason`: it is the one stop that also asks what this
         # seat could do about it (L1).
@@ -5804,6 +5912,17 @@ def _pass_until_once(
             stop_when_you_can_attack=stop_when_you_can_attack,
         )
         if reason is not None:
+            if combat_stop and decision_is_mine(standing, state, seat.player):
+                fresh, entries = auto_answer_forced(seat, state)
+                if entries:
+                    run["auto_answered"] = [*run.get("auto_answered", []), *entries]
+                if answered_cleanly(entries):
+                    # Still the stop the caller asked for - only the
+                    # declaration with one legal answer is already made.
+                    who = "attacker" if standing_kind == "declare_attackers" else "blocker"
+                    return answer(
+                        fresh, f"{reason} - declared nobody for you: there is no legal {who}"
+                    )
             return answer(state, reason)
 
         # L1: a new stack object only hands the board back when this seat
@@ -5839,6 +5958,8 @@ def _pass_until_once(
             "declare_attackers",
             "declare_blockers",
         ):
+            if background and _background_must_halt(state, seat.player):
+                return handed_back(state, BACKGROUND_HALT, retryable=False)
             # `autopass_stop_reason` above already decided not to stop for
             # this pause - either it is not addressed to this seat's combat
             # toggles at all, or the seat asked not to stop for combat
@@ -5877,6 +5998,8 @@ def _pass_until_once(
             if self_decision is None and _paused(outcome):
                 self_decision = outcome.get("pending_decision")
             if self_decision is not None:
+                if answered_forced(seat.fetch_state()):
+                    continue
                 return answer(
                     seat.fetch_state(),
                     "declaring nobody raised a decision only you can answer: "
@@ -6000,6 +6123,9 @@ def _pass_until_once(
                     retryable=False,
                 )
 
+            if background and _background_must_halt(state, seat.player):
+                return handed_back(state, BACKGROUND_HALT, retryable=False)
+
             def perform_pass() -> Any:
                 body: dict[str, Any] = {"player": seat.player}
                 if reasoning:
@@ -6053,6 +6179,8 @@ def _pass_until_once(
                     "they can answer",
                 )
             if self_decision is not None:
+                if answered_forced(seat.fetch_state()):
+                    continue
                 return answer(
                     seat.fetch_state(),
                     "passing priority raised a decision only you can answer: "

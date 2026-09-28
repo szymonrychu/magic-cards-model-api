@@ -116,6 +116,8 @@ import functools
 import json
 import logging
 import sys
+import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -125,6 +127,8 @@ from mcp_types import InputRequiredResult
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from . import seatkit
+from .background_autopass import BackgroundRuns
+from .mcp_descriptions import SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS
 from .playscripts import script_tools
 from .seatkit import (
     DEFAULT_API,
@@ -181,6 +185,40 @@ INPUT_REQUIRED_MAX_ROUNDS = 1
 #: an ordinary text answer.
 INPUT_REQUIRED_ROUND_KEY = "input_required_round"
 
+#: Claude Code persists an MCP result above 50,000 chars to a file and hands
+#: the model a preview, unless the tool raises its own threshold with
+#: `_meta["anthropic/maxResultSizeChars"]` (capped at 500,000 there). A
+#: spilled board cost a seat one Bash round trip - a whole inference - to
+#: read back what the answer already held, so every tool here raises it.
+MAX_RESULT_SIZE_CHARS = 200_000
+
+#: Tools that never act for the seat, so a background `pass_until` run
+#: (`background_autopass`) keeps going while the seat calls them - above all
+#: `declare_plan`, which is what the seat writes while the run passes for it.
+#: Every other tool stops the run before it does anything.
+BACKGROUND_SAFE_TOOLS = frozenset(
+    {"declare_plan", "battlefield_state", "game_log", "list_scripts", "report_problem"}
+)
+
+#: Per-call scratch shared by `_guarded` and `_tool_result` on the worker
+#: thread a sync tool runs on: the background run the call stopped (to be
+#: reported in its answer) and how many decisions the answer auto-answered
+#: (for the timing log line).
+_CALL = threading.local()
+
+
+def _dump(value: Any, *, sort_keys: bool = False) -> str:
+    """A tool answer as one line of JSON - every field, no indentation (the
+    indented form was ~17% whitespace on a mid-game board)."""
+    return json.dumps(value, sort_keys=sort_keys)
+
+
+def _count_auto_answered(answer: Any) -> int:
+    if not isinstance(answer, dict):
+        return 0
+    entries = answer.get("auto_answered") or []
+    return len(entries) if isinstance(entries, list) else 0
+
 
 def _guarded(seats: Seats):
     """Wrap one tool function so the API restarting underneath this
@@ -195,23 +233,62 @@ def _guarded(seats: Seats):
     """
 
     def decorate(fn):
+        name = "pass" if fn.__name__ == "pass_once" else fn.__name__
+
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> str:
-            trouble = seatkit.api_trouble(seats.http, seats.api)
-            if trouble:
-                return trouble
-            ctx = kwargs.get("ctx")
-            echoed = ctx.request_state if isinstance(ctx, Context) else None
+            started = time.monotonic()
+            uid = str(kwargs.get("player_uid") or "")
+            _CALL.background = None
+            _CALL.auto_answered = 0
             try:
-                if echoed is not None:
-                    return _resume_input_required(seats, kwargs.get("player_uid", ""), echoed)
-                return fn(*args, **kwargs)
-            except httpx.HTTPError as exc:
-                return f"the game server at {seats.api} became unreachable mid-call: {exc}"
+                trouble = seatkit.api_trouble(seats.http, seats.api)
+                if trouble:
+                    return trouble
+                ctx = kwargs.get("ctx")
+                echoed = ctx.request_state if isinstance(ctx, Context) else None
+                try:
+                    if echoed is not None:
+                        return _resume_input_required(seats, uid, echoed)
+                    if name not in BACKGROUND_SAFE_TOOLS and name != "pass_until" and uid:
+                        # Never two things acting for one seat at once.
+                        _CALL.background = _background(seats).stop(uid.strip())
+                    return fn(*args, **kwargs)
+                except httpx.HTTPError as exc:
+                    return f"the game server at {seats.api} became unreachable mid-call: {exc}"
+            finally:
+                _log_timing(seats, name, uid, started)
 
         return wrapper
 
     return decorate
+
+
+def _background(seats: Seats) -> BackgroundRuns:
+    """The process's one registry of background `pass_until` runs."""
+    if seats.background is None:
+        seats.background = BackgroundRuns()
+    return seats.background
+
+
+def _log_timing(seats: Seats, name: str, uid: str, started: float) -> None:
+    """One line per tool call: its server time, and the gap since this seat's
+    previous call returned - the model's own step between the two, as seen
+    from here - so per-decision model time and tool round trips can be
+    compared before and after a change from logs alone."""
+    now = time.monotonic()
+    returned = seats.call_returned
+    previous = returned.get(uid)
+    gap = "-" if previous is None else str(round((started - previous) * 1000))
+    returned[uid] = now
+    logger.info(
+        "tool name=%s seat=%s server_ms=%d gap_ms=%s auto_answered=%d",
+        name,
+        uid[:8],
+        round((now - started) * 1000),
+        gap,
+        getattr(_CALL, "auto_answered", 0),
+    )
 
 
 def _resume_input_required(seats: Seats, player_uid: str, echoed: str) -> str | InputRequiredResult:
@@ -245,8 +322,8 @@ def _resume_input_required(seats: Seats, player_uid: str, echoed: str) -> str | 
         answer["pending_decision"] = pending
     if decision_is_mine(pending, board, seat.player) and rounds < INPUT_REQUIRED_MAX_ROUNDS:
         stamped = {**answer, INPUT_REQUIRED_ROUND_KEY: rounds + 1}
-        return InputRequiredResult(request_state=json.dumps(stamped, indent=1))
-    return json.dumps(answer, indent=1)
+        return InputRequiredResult(request_state=_dump(stamped))
+    return _dump(answer)
 
 
 #: `battlefield_state`'s section vocabulary: the name a seat asks for, and
@@ -793,7 +870,7 @@ IDLE_REISSUE_SECONDS = {"stdio": 120.0, "http": 45.0}
 def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServer:
     """`idle_reissue_seconds` is `IDLE_REISSUE_SECONDS[transport]` from
     `main()`; left at 0.0 a capped wait hands back idle as it always did."""
-    server = MCPServer(name="mtg")
+    server = MCPServer(name="mtg", instructions=SERVER_INSTRUCTIONS)
 
     def resolve(player_uid: str) -> Seat | None:
         return seats.seat_for(player_uid)
@@ -916,6 +993,9 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         the one that structurally cannot occur in production. The pending
         decision itself is never dropped either way - a legacy client still
         gets it, as ordinary text, just without the distinct wire shape."""
+        stopped_background = getattr(_CALL, "background", None)
+        if stopped_background:
+            payload["background"] = stopped_background
         if "state" in payload:
             # An action's answer, not a board: narrow it and put the outcome
             # first (`_action_answer`). `sort_keys` is off for this shape on
@@ -935,15 +1015,14 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             _attach_draft(payload, seat, payload)
             pending = payload.get("pending_decision")
             sort_keys = True
+        _CALL.auto_answered = _count_auto_answered(answer)
         modern = protocol_version is None or protocol_version in MODERN_PROTOCOL_VERSIONS
         if decision_is_mine(pending, state_view, seat.player) and modern:
             # Round 1 of `INPUT_REQUIRED_MAX_ROUNDS`; `_resume_input_required`
             # counts the client's retries from here.
             stamped = {**answer, INPUT_REQUIRED_ROUND_KEY: 1}
-            return InputRequiredResult(
-                request_state=json.dumps(stamped, indent=1, sort_keys=sort_keys)
-            )
-        return json.dumps(answer, indent=1, sort_keys=sort_keys)
+            return InputRequiredResult(request_state=_dump(stamped, sort_keys=sort_keys))
+        return _dump(answer, sort_keys=sort_keys)
 
     def act(
         seat: Seat,
@@ -953,11 +1032,86 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         reasoning: str = "",
         *,
         protocol_version: str | None,
+        then_pass: bool = False,
     ) -> str | InputRequiredResult:
-        result = run_action(
-            seat, perform, hold_priority=hold_priority, release=release, reasoning=reasoning or None
+        result = _settle_forced(
+            seat,
+            run_action(
+                seat,
+                perform,
+                hold_priority=hold_priority,
+                release=release,
+                reasoning=reasoning or None,
+            ),
         )
+        if then_pass:
+            result = _then_pass(seat, result, reasoning)
         return _tool_result(seat, result, protocol_version)
+
+    def _settle_forced(seat: Seat, result: dict[str, Any]) -> dict[str, Any]:
+        """An action that left a decision with exactly one legal answer
+        standing for this seat: answer it (`seatkit.auto_answer_forced`) and
+        hand back the board after it, the answers under `auto_answered`."""
+        state = result.get("state")
+        if not isinstance(state, dict):
+            return result
+        fresh, entries = seatkit.auto_answer_forced(seat, state)
+        if not entries:
+            return result
+        result["auto_answered"] = entries
+        if not seatkit.answered_cleanly(entries):
+            return result
+        result["state"] = fresh
+        result["held_priority"] = seatkit.holds_priority(fresh, seat.player)
+        result["wake_reason"] = (
+            seatkit.compute_wake_reason(fresh, None, seat.player) or seatkit.NOTHING_NEW_YET
+        )
+        if "available_actions" in result:
+            result["available_actions"] = seatkit.available_actions(seat, fresh)
+        result["recent_log"] = seat.recent_log()
+        return result
+
+    def _perform_pass(seat: Seat, reasoning: str) -> Callable[[], Any]:
+        """The `pass` tool's own request - also what `then_pass` sends."""
+        body: dict[str, Any] = {"player": seat.player}
+        if reasoning:
+            body["reasoning"] = reasoning
+
+        def perform() -> Any:
+            return seat.call_json(
+                "POST", f"/api/games/{seat.game_id()}/actions/pass-priority", body
+            )
+
+        return perform
+
+    def _then_pass(seat: Seat, result: dict[str, Any], reasoning: str) -> dict[str, Any]:
+        """`then_pass`: the `pass` the seat would otherwise send as its very
+        next call - made only when the action landed, the game goes on,
+        nothing is pending for anyone, and this seat still holds priority
+        (an action that already released it has passed once already). The
+        answer is the pass's own, with the action's outcome under `first`."""
+        state = result.get("state") if isinstance(result.get("state"), dict) else {}
+        outcome = result.get("outcome")
+        if not (
+            isinstance(outcome, dict)
+            and outcome.get("allowed") is True
+            and not state.get("winner")
+            and not state.get("drawn")
+            and state.get("pending_decision") is None
+            and seatkit.holds_priority(state, seat.player)
+        ):
+            return result
+        passed = run_action(
+            seat,
+            _perform_pass(seat, reasoning),
+            hold_priority=False,
+            release=False,
+            reasoning=reasoning or None,
+        )
+        passed["first"] = {
+            key: result[key] for key in ("outcome", "auto_answered") if key in result
+        }
+        return passed
 
     @server.tool()
     @_guarded(seats)
@@ -1106,8 +1260,11 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             wake_to_draft=wake_to_draft and seat.advise,
             draft_staged=draft_staged,
             reissue_seconds=idle_reissue_seconds,
+            answer_forced=True,
         )
         woken["state"]["wake_reason"] = woken["wake_reason"]
+        if woken.get("auto_answered"):
+            woken["state"]["auto_answered"] = woken["auto_answered"]
         woken["state"]["recent_log"] = woken["recent_log"]
         for field_name in seatkit.ARMED_RESULT_FIELDS:
             if field_name in woken:
@@ -1257,7 +1414,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             "you": seat.player,
             "opponents": opponents,
         }
-        return json.dumps(view, indent=1, sort_keys=True)
+        return _dump(view, sort_keys=True)
 
     @server.tool()
     @_guarded(seats)
@@ -1283,6 +1440,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         dry_run: bool = False,
         hold_priority: bool = False,
         reasoning: str = "",
+        then_pass: bool = False,
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Cast a spell. Most casts are from your hand, and need nothing
@@ -1556,6 +1714,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             hold_priority,
             reasoning=reasoning,
             protocol_version=ctx.protocol_version if ctx is not None else None,
+            then_pass=then_pass,
         )
 
     def _special_action_tool(action: str) -> Any:
@@ -1782,6 +1941,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         card: str,
         hold_priority: bool = True,
         reasoning: str = "",
+        then_pass: bool = False,
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Play a land from your hand (your one-per-turn allowance, unless an
@@ -1814,6 +1974,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             hold_priority,
             reasoning=reasoning,
             protocol_version=ctx.protocol_version if ctx is not None else None,
+            then_pass=then_pass,
         )
 
     @server.tool()
@@ -1832,6 +1993,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         dry_run: bool = False,
         hold_priority: bool = False,
         reasoning: str = "",
+        then_pass: bool = False,
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Activate one ability of a card you control - a permanent's ability
@@ -1940,6 +2102,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             hold_priority,
             reasoning=reasoning,
             protocol_version=ctx.protocol_version if ctx is not None else None,
+            then_pass=then_pass,
         )
 
     @server.tool()
@@ -2255,6 +2418,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         damage: str = "",
         generation: int | None = None,
         reasoning: str = "",
+        then_pass: bool = False,
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Answer your pending decision (CR 608.2d) - `battlefield_state`'s
@@ -2652,7 +2816,9 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
                 return {"allowed": False, "reason": answer.get("reason"), **answer}
             return {"allowed": True, **answer} if isinstance(answer, dict) else answer
 
-        result = run_decision(seat, perform, reasoning=reasoning or None)
+        result = _settle_forced(seat, run_decision(seat, perform, reasoning=reasoning or None))
+        if then_pass:
+            result = _then_pass(seat, result, reasoning)
         return _tool_result(seat, result, ctx.protocol_version if ctx is not None else None)
 
     @server.tool(name="pass")
@@ -2716,18 +2882,9 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        body: dict[str, Any] = {"player": seat.player}
-        if reasoning:
-            body["reasoning"] = reasoning
-
-        def perform() -> Any:
-            return seat.call_json(
-                "POST", f"/api/games/{seat.game_id()}/actions/pass-priority", body
-            )
-
         return act(
             seat,
-            perform,
+            _perform_pass(seat, reasoning),
             hold_priority=False,
             release=False,
             reasoning=reasoning,
@@ -2971,28 +3128,50 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         # for. This was the one action tool returning raw text on that path, so
         # the one tool most likely to be mid-run when a decision arrives was
         # also the only one that could not say so on the wire.
-        return _tool_result(
+        # Planning off the clock (`background_autopass`): take back the run
+        # a previous call left going in the background, continuing from
+        # wherever it got to - only when this call names that same run.
+        background = _background(seats)
+        taken, _CALL.background = background.take_over(seat.uid, resumed)
+        if taken is not None:
+            resumed = taken
+        run_kwargs: dict[str, Any] = {
+            "until_step": step,
+            "whose_turn": whose_turn,
+            "stop_on_stack": stop_on_stack,
+            "stop_when_attacked": stop_when_attacked,
+            "stop_when_you_can_attack": stop_when_you_can_attack,
+            "reasoning": reasoning or None,
+            "corpora": seats.script_corpora,
+            "arm": _parse_ids(arm),
+            "arm_reasoning": arm_reasoning,
+            "opposing_archetype": opposing_archetype,
+            "inputs": inputs,
+        }
+        result = seatkit.pass_until(
             seat,
-            seatkit.pass_until(
-                seat,
-                until_step=step,
-                whose_turn=whose_turn,
-                stop_on_stack=stop_on_stack,
-                stop_when_attacked=stop_when_attacked,
-                stop_when_you_can_attack=stop_when_you_can_attack,
-                resume=resumed,
-                reasoning=reasoning or None,
-                max_seconds=max_seconds,
-                should_stop=cancel_probe(ctx),
-                corpora=seats.script_corpora,
-                arm=_parse_ids(arm),
-                arm_reasoning=arm_reasoning,
-                opposing_archetype=opposing_archetype,
-                inputs=inputs,
-                reissue_seconds=idle_reissue_seconds,
-            ),
-            ctx.protocol_version if ctx is not None else None,
+            resume=resumed,
+            max_seconds=max_seconds,
+            should_stop=cancel_probe(ctx),
+            reissue_seconds=idle_reissue_seconds,
+            report_idle=True,
+            **run_kwargs,
         )
+        idle = result.pop("_idle", False)
+        board = result.get("state") if isinstance(result.get("state"), dict) else {}
+        if (
+            idle
+            and not seat.advise
+            and isinstance(result.get("resume"), dict)
+            and board.get("active_player") not in seatkit.decides_for(board, seat.player)
+        ):
+            # Only waiting on the opponent, on their turn: keep passing what
+            # this very run would pass while the seat plans its next turn.
+            background.start(
+                seat.uid, lambda: seats.seat_for(player_uid), run_kwargs, result["resume"]
+            )
+            _CALL.background = {**(_CALL.background or {}), "now_running": True}
+        return _tool_result(seat, result, ctx.protocol_version if ctx is not None else None)
 
     @server.tool()
     @_guarded(seats)
@@ -3088,7 +3267,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         if isinstance(answer, str):
             return answer
         if "errors" in answer:
-            return json.dumps(answer, indent=1)
+            return _dump(answer)
         return _tool_result(seat, answer, ctx.protocol_version if ctx is not None else None)
 
     @server.tool()
@@ -3119,7 +3298,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         if seat is None:
             return NO_SUCH_SEAT
         answer = script_tools.stage(seat, seats.script_corpora, body=body, reasoning=reasoning)
-        return answer if isinstance(answer, str) else json.dumps(answer, indent=1)
+        return answer if isinstance(answer, str) else _dump(answer)
 
     @server.tool()
     @_guarded(seats)
@@ -3155,7 +3334,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         answer = script_tools.listing(
             seat, seats.script_corpora, opposing_archetype=opposing_archetype, inputs=inputs
         )
-        return answer if isinstance(answer, str) else json.dumps(answer, indent=1)
+        return answer if isinstance(answer, str) else _dump(answer)
 
     @server.tool()
     @_guarded(seats)
@@ -3298,7 +3477,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             reuse_previous=reuse_previous,
             still_because=still_because or None,
         )
-        return json.dumps(result, indent=1, sort_keys=True)
+        return _dump(result, sort_keys=True)
 
     @server.tool()
     @_guarded(seats)
@@ -3337,7 +3516,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         if seat is None:
             return NO_SUCH_SEAT
         result = seat.stage_advice(step, whose_turn)
-        return json.dumps(result, indent=1, sort_keys=True)
+        return _dump(result, sort_keys=True)
 
     @server.tool()
     @_guarded(seats)
@@ -3400,14 +3579,19 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         try:
             payload = answer.json()
             entries = payload.get("log", [])[-limit:]
-            return json.dumps(
-                {"entries": entries, "last_seq": payload.get("last_seq", since)},
-                indent=1,
-                sort_keys=True,
+            return _dump(
+                {"entries": entries, "last_seq": payload.get("last_seq", since)}, sort_keys=True
             )
         except ValueError:
             return answer.text
 
+    # What the model reads is `TOOL_DESCRIPTIONS` (`mcp_descriptions`), not
+    # the docstrings above: Claude Code cuts every MCP tool description at
+    # 2,048 chars by default, and the docstrings are developer documentation
+    # several times that long.
+    for name, tool in server._tool_manager._tools.items():
+        tool.description = TOOL_DESCRIPTIONS[name]
+        tool.meta = {**(tool.meta or {}), "anthropic/maxResultSizeChars": MAX_RESULT_SIZE_CHARS}
     return server
 
 

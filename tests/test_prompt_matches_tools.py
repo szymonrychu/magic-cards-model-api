@@ -65,6 +65,10 @@ CONTRACT = REPO_ROOT / "contract" / "tools.json"
 NON_TOOL_VOCABULARY = {
     # fields on a tool's *answer*, not a parameter of any call
     "wake_reason",
+    # seatkit-27: the forced decisions the server answered, and the
+    # action's own outcome on a `then_pass` answer
+    "auto_answered",
+    "first",
     "finished",
     "stopped_because",
     "winner",

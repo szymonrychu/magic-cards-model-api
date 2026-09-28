@@ -356,11 +356,19 @@ def test_seatkit_21_names_the_pre_bump_behaviour() -> None:
         assert term in paragraph, f"the seatkit-21 paragraph does not name {term}"
 
 
-def test_seatkit_26_is_the_current_version() -> None:
-    """CR 709.5e: one new special-action tool, `unlock_door`, a Room's own
-    unlock cost."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-26"
-    assert seatkit.PROTOCOL_VERSION == "seatkit-26"
+def test_seatkit_27_is_the_current_version() -> None:
+    """AI-seat speed: `then_pass`, `auto_answered`, the background
+    `pass_until` run and compact JSON answers."""
+    assert protocol.PROTOCOL_VERSION == "seatkit-27"
+    assert seatkit.PROTOCOL_VERSION == "seatkit-27"
+
+
+def test_seatkit_27_names_the_speed_additions() -> None:
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-27`", 1)[1].split("`seatkit-26`", 1)[0]
+    for term in ("then_pass", "auto_answered", "background", "compact"):
+        assert term in paragraph, f"the seatkit-27 paragraph does not name {term}"
 
 
 def test_seatkit_26_names_the_unlock_door_addition() -> None:

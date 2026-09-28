@@ -94,6 +94,13 @@
           "name": "reasoning",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "then_pass",
+          "type": "bool",
+          "type_error": null
         }
       ]
     },
@@ -315,6 +322,13 @@
           "name": "reasoning",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "then_pass",
+          "type": "bool",
+          "type_error": null
         }
       ]
     },
@@ -508,6 +522,13 @@
           "has_default": true,
           "name": "reasoning",
           "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "then_pass",
+          "type": "bool",
           "type_error": null
         }
       ]
@@ -1021,6 +1042,13 @@
           "has_default": true,
           "name": "reasoning",
           "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "then_pass",
+          "type": "bool",
           "type_error": null
         }
       ]

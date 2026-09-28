@@ -493,6 +493,9 @@ def test_a_run_stops_when_this_seat_is_being_attacked(client, game, monkeypatch)
     bob = seats.seat_for(uids["bob"])
     stock_libraries(client, game)
     stage_an_attack_on_bob(client, game)
+    # A creature bob could block with, so the declaration is a real choice:
+    # one with no legal blocker is answered for him (`forced_decisions`).
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
 
     with Opponent(game, "alice"):
         # T2: this stop is opt-in now - the test names the toggle it is
