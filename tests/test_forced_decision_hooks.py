@@ -136,3 +136,34 @@ def test_a_decision_with_a_real_choice_still_reaches_the_seat(client, game, monk
     )
 
     assert isinstance(result, InputRequiredResult), "a real choice was answered for the seat"
+
+
+def test_a_run_stopping_when_attacked_declares_no_blocker_when_none_is_legal(
+    client, game, monkeypatch
+):
+    from test_autopass import stage_an_attack_on_bob
+
+    seats, uids = wired(client, monkeypatch, game)
+    bob = seats.seat_for(uids["bob"])
+    stock_libraries(client, game)
+    stage_an_attack_on_bob(client, game)  # bob controls no creature at all
+
+    with Opponent(game, "alice"):
+        resume = None
+        for _ in range(50):
+            result = seatkit.pass_until(
+                bob,
+                until_step="upkeep",
+                whose_turn="mine",
+                stop_when_attacked=True,
+                resume=resume,
+                max_seconds=2.0,
+            )
+            if result["finished"]:
+                break
+            resume = result["resume"]
+
+    assert "you are being attacked" in result["stopped_because"], result["stopped_because"]
+    assert result["stopped_because"].endswith("there is no legal blocker")
+    kinds = [entry["kind"] for entry in result.get("auto_answered") or []]
+    assert kinds == ["declare_blockers"], result.get("auto_answered")
