@@ -3482,7 +3482,7 @@ class DecideResponse(BaseModel):
     log_seq: int | None = None
 
 
-class DecideForcedRequest(BaseModel):
+class DecideForcedRequest(RequestModel):
     """`POST .../decide-forced`'s body - a nudge naming the standing
     question, nothing else: `forced_decisions` reads the answer straight off
     the engine's own enumeration, so there is no answer for the caller to

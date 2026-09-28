@@ -5416,6 +5416,7 @@
         "type": "object"
       },
       "DecideForcedRequest": {
+        "additionalProperties": false,
         "description": "`POST .../decide-forced`'s body - a nudge naming the standing\nquestion, nothing else: `forced_decisions` reads the answer straight off\nthe engine's own enumeration, so there is no answer for the caller to\npropose and no `reasoning` to carry (the route writes its own, prefixed\n`forced_decisions.AUTO_REASONING_PREFIX`).",
         "properties": {
           "generation": {
