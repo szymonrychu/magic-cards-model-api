@@ -1,6 +1,7 @@
 // Priority automation: two verbs, and a persisted stops panel that says when
-// the second one hands the board back. No key bindings, those vary by client
-// version.
+// the second one hands the board back. Two key bindings, MTGO's own: F2 is
+// `pass` and F6 is `pass_until` (`shortcutVerb` below), live only while
+// `passButtonsFor` offers that verb.
 //
 // Two verbs because the rules give priority exactly two things to do with it.
 // CR 117.1: "The player with priority may cast spells, activate abilities, and
@@ -129,6 +130,14 @@ export const VERB_LABELS = {
 // `stopReason` is ever asked about that pause (see this file's own header).
 // On by default, the same as every other tick here: absent has to read as
 // "ask", never as a silent auto-decline a player did not choose.
+// Human-side speed, every one an opt-out and every action it takes recorded
+// (a toast, and `reasoning` on the request): `autoForced` asks the server to
+// answer a decision with exactly one legal answer (`app.js`'s
+// `maybeAutoAnswerForced`); `autoPassNothing` passes when pass is the only
+// legal move (`onlyPassLegal`, `autoPassWindow`, `app.js`'s `maybeAutoPass`);
+// `tappedToast` names the sources a payment tapped; `yieldTo` is the
+// "always yield to this" list, `{controller, name, text}` per entry
+// (`isYielded`). Absent reads as the default, the same as every tick here.
 export const DEFAULT_STOPS = {
   mine: ["precombat_main", "declare_attackers", "postcombat_main"],
   theirs: ["declare_attackers", "end_step"],
@@ -136,6 +145,10 @@ export const DEFAULT_STOPS = {
   keepPriorityByDefault: true,
   askAttackers: true,
   askBlockers: true,
+  autoForced: true,
+  autoPassNothing: true,
+  tappedToast: true,
+  yieldTo: [],
 };
 
 // v1 was written while the keep-priority setting defaulted off, so a stored
@@ -158,35 +171,118 @@ function readStops(storage, key) {
   return parsed;
 }
 
-export function loadStops(storage) {
-  const defaults = {
-    mine: [...DEFAULT_STOPS.mine],
-    theirs: [...DEFAULT_STOPS.theirs],
-    onStack: DEFAULT_STOPS.onStack,
-    keepPriorityByDefault: DEFAULT_STOPS.keepPriorityByDefault,
-    askAttackers: DEFAULT_STOPS.askAttackers,
-    askBlockers: DEFAULT_STOPS.askBlockers,
+function yieldEntry(obj) {
+  return { controller: obj.controller, name: obj.name, text: obj.text };
+}
+
+/** A stored stops object read back with every absent tick at its default.
+ * `isV2` is false only for a `mcm.stops.v1` payload, whose
+ * `keepPriorityByDefault` recorded the old default rather than a choice. */
+export function normalizeStops(parsed, isV2) {
+  // Absent-means-ON across the board: a payload written before a given
+  // tick existed must not silently take that tick's chance away from a
+  // player who never touched it - `onStack`'s own original reasoning,
+  // extended to `keepPriorityByDefault`, `askAttackers`/`askBlockers` and
+  // the speed ticks.
+  const yields = Array.isArray(parsed.yieldTo) ? parsed.yieldTo : [];
+  return {
+    mine: parsed.mine || [],
+    theirs: parsed.theirs || [],
+    onStack: parsed.onStack !== false,
+    keepPriorityByDefault: isV2 ? parsed.keepPriorityByDefault !== false : true,
+    askAttackers: parsed.askAttackers !== false,
+    askBlockers: parsed.askBlockers !== false,
+    autoForced: parsed.autoForced !== false,
+    autoPassNothing: parsed.autoPassNothing !== false,
+    tappedToast: parsed.tappedToast !== false,
+    yieldTo: yields.filter((y) => y && typeof y === "object").map(yieldEntry),
   };
+}
+
+export function loadStops(storage) {
   try {
     const v2 = readStops(storage, STOPS_KEY);
     const parsed = v2 || readStops(storage, V1_STOPS_KEY);
-    if (!parsed) return defaults;
-    // Absent-means-ON across the board: a payload written before a given
-    // tick existed must not silently take that tick's chance away from a
-    // player who never touched it - `onStack`'s own original reasoning,
-    // extended to `keepPriorityByDefault` and now to `askAttackers`/
-    // `askBlockers` too.
-    return {
-      mine: parsed.mine || [],
-      theirs: parsed.theirs || [],
-      onStack: parsed.onStack !== false,
-      keepPriorityByDefault: v2 ? v2.keepPriorityByDefault !== false : true,
-      askAttackers: parsed.askAttackers !== false,
-      askBlockers: parsed.askBlockers !== false,
-    };
+    if (parsed) return normalizeStops(parsed, Boolean(v2));
   } catch {
-    return defaults;
+    // unreadable storage: the defaults below
   }
+  return normalizeStops({ mine: [...DEFAULT_STOPS.mine], theirs: [...DEFAULT_STOPS.theirs] }, true);
+}
+
+/** The stops remembered for the signed-in user (`GET /api/me/preferences`)
+ * over this browser's own: the remote payload wins whole, read with the same
+ * absent-means-default rule, so a key it lacks is the default rather than
+ * whatever this browser last held. A remote value that is not a stops object
+ * leaves `local` as it is. */
+export function mergeStops(local, remote) {
+  if (!remote || typeof remote !== "object" || Array.isArray(remote)) return local;
+  return normalizeStops({ mine: local.mine, theirs: local.theirs, ...remote }, true);
+}
+
+/** Whether `rows` (`GET .../legal-actions`'s `actions`) leave this seat
+ * nothing to do but pass - the browser's twin of `seatkit.
+ * stack_stop_needs_you`: pass/concede/mana-ability rows are not moves, nor
+ * is a row the engine reports `affordable: "no"`; `"unknown"` (a modal or X
+ * cost) is given the benefit of the doubt and counts as a move, as does any
+ * other row (a land play, a special action, a non-mana activation). A
+ * malformed row counts as a move too: never pass on a read not understood. */
+const NOT_A_MOVE = new Set(["pass_priority", "concede", "activate_mana"]);
+export function onlyPassLegal(rows) {
+  if (!Array.isArray(rows)) return false;
+  for (const row of rows) {
+    if (!row || typeof row !== "object") return false;
+    if (NOT_A_MOVE.has(row.kind)) continue;
+    if (row.affordable === "no") continue;
+    return false;
+  }
+  return true;
+}
+
+/** Whether a stack object is on the "always yield" list - controller, name
+ * and text all equal, so a same-named object with other text (or someone
+ * else's copy) is not swept up with it. */
+export function isYielded(obj, stops) {
+  if (!obj) return false;
+  const list = (stops && Array.isArray(stops.yieldTo) && stops.yieldTo) || [];
+  return list.some((y) => y.controller === obj.controller && y.name === obj.name && y.text === obj.text);
+}
+
+/** `stops` with `obj` added to, or removed from, the "always yield" list. */
+export function toggleYield(stops, obj) {
+  const list = Array.isArray(stops.yieldTo) ? stops.yieldTo : [];
+  const yieldTo = isYielded(obj, stops)
+    ? list.filter((y) => !(y.controller === obj.controller && y.name === obj.name && y.text === obj.text))
+    : [...list, yieldEntry(obj)];
+  return { ...stops, yieldTo };
+}
+
+/** Whether this board is one the UI may pass on its own when nothing but
+ * pass is legal: this seat holds priority, no decision is pending and the
+ * game is on; never over an object this seat's own side put on the stack
+ * since it last held priority (`seenStackIds` - its own cast with priority
+ * kept, or its own trigger, is a stop); and never in this seat's own main
+ * phase with an empty stack, where the turn's own plays happen. */
+export function autoPassWindow(state, seenStackIds) {
+  if (!state || state.winner || state.drawn) return false;
+  if (state.pending_decision) return false;
+  if (!holdsPriority(state)) return false;
+  const stack = state.stack || [];
+  const mineTurn = decidesFor(state).has(state.active_player);
+  const main = state.step === "precombat_main" || state.step === "postcombat_main";
+  if (mineTurn && main && stack.length === 0) return false;
+  const seen = new Set(seenStackIds || []);
+  const own = decidesFor(state);
+  return !stack.some((obj) => !seen.has(obj.id) && own.has(obj.controller));
+}
+
+/** MTGO's keys: F2 passes once, F6 runs `pass_until` - each only while
+ * `passButtonsFor` offers that verb; any other key is `null`. */
+const SHORTCUTS = { F2: "pass", F6: "pass_until" };
+export function shortcutVerb(key, state) {
+  const verb = SHORTCUTS[key];
+  if (!verb || !state) return null;
+  return passButtonsFor(state).includes(verb) ? verb : null;
 }
 
 export function saveStops(storage, stops) {
@@ -348,9 +444,11 @@ export function stopReason(state, run, stops) {
       // `!== false`, not a bare truthiness check: a `stops` object from
       // before this tick existed (see `loadStops`) has no `onStack` key, and
       // absent has to read as on.
+      // An arrival on the "always yield" list (`isYielded`) is one the
+      // player already said they never respond to.
       if (stops.onStack !== false) {
-        const stackIds = (state.stack || []).map((o) => o.id);
-        if (stackIds.some((id) => !run.knownStackIds.includes(id))) {
+        const arrivals = (state.stack || []).filter((o) => !run.knownStackIds.includes(o.id));
+        if (arrivals.some((o) => !isYielded(o, stops))) {
           return "something new is on the stack";
         }
       }

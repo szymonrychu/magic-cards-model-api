@@ -891,6 +891,25 @@ class GameRepository(Protocol):
         pending."""
         ...
 
+    # -- per-user preferences (keyed on OIDC `sub`, not on any game) --------
+
+    def get_user_preferences(self, sub: str) -> dict[str, Any] | None:
+        """This OIDC user's stored preferences and when they were last
+        written - `{"preferences": <opaque dict>, "updated_at": <UTC ISO
+        8601>}` - or `None` for a `sub` that has never called `PUT
+        /api/me/preferences`. `sub` is the OIDC subject
+        (`oidc.AuthenticatedUser.sub`), never a game id or a seat uid - this
+        is the one piece of state in this protocol that outlives any single
+        game."""
+        ...
+
+    def set_user_preferences(self, sub: str, preferences: dict[str, Any]) -> str:
+        """Replace `sub`'s whole stored `preferences` (never merged - the
+        caller already read the old value back if it wanted to keep part of
+        it) and return the UTC ISO 8601 timestamp this write was stamped
+        with."""
+        ...
+
 
 class InMemoryRepository:
     """The in-memory `GameRepository`: game id -> engine `Game`. Nothing
@@ -995,6 +1014,11 @@ class InMemoryRepository:
         # archiving) and moves the handful of facts a review needs into
         # this one dict instead. See `ArchivedGame` and `archived()`.
         self._archived: dict[str, ArchivedGame] = {}
+        # OIDC `sub` -> `{"preferences": <opaque dict>, "updated_at": <UTC
+        # ISO 8601>}`. Not keyed by game id or uid at all, unlike everything
+        # else in this store - see `get_user_preferences`'s own docstring.
+        self._user_preferences: dict[str, dict[str, Any]] = {}
+        self._user_preferences_lock = threading.Lock()
         self._lock = threading.Lock()
         # M8: pending reservations against `MAX_LIVE_GAMES`, keyed by token.
         # Protected by `self._lock`, exactly like everything else here - see
@@ -1235,6 +1259,20 @@ class InMemoryRepository:
     def clear_paused_command(self, game_id: str) -> None:
         with self._lock:
             self._paused_commands.pop(game_id, None)
+
+    def get_user_preferences(self, sub: str) -> dict[str, Any] | None:
+        with self._user_preferences_lock:
+            stored = self._user_preferences.get(sub)
+            return copy.deepcopy(stored) if stored is not None else None
+
+    def set_user_preferences(self, sub: str, preferences: dict[str, Any]) -> str:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._user_preferences_lock:
+            self._user_preferences[sub] = {
+                "preferences": copy.deepcopy(preferences),
+                "updated_at": updated_at,
+            }
+        return updated_at
 
     def admin_key(self, game_id: str) -> str | None:
         """This game's admin key, to hand to whoever just created it."""

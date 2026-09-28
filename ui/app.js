@@ -949,6 +949,7 @@ function holdsPriority(tick) {
  * complete, and passes once unless held. */
 async function afterStackAction(res, hold) {
   if (refused(res)) return;
+  toastTapped(res);
   if (res.paused === true) {
     store.set({
       pendingRelease: hold
@@ -959,6 +960,16 @@ async function afterStackAction(res, hold) {
   }
   store.set({ pendingRelease: null });
   if (!hold) await passOnce();
+}
+
+/** Names what a payment tapped (`tapped`, `[{card_id, name}]`, on the
+ * acting route's answer) - the one record of auto-pay the player sees -
+ * unless the stops panel's "tappedToast" tick is off. */
+function toastTapped(res) {
+  if (store.get().stops.tappedToast === false) return;
+  const tapped = Array.isArray(res.tapped) ? res.tapped : [];
+  const names = tapped.map((t) => t && t.name).filter(Boolean);
+  if (names.length) toast(`tapped: ${names.join(", ")}`);
 }
 
 /** Drop an owed pass once a board read issued after it was armed shows its
@@ -1753,6 +1764,100 @@ async function maybeAutoAnswerCombatDeclaration(app) {
   return true;
 }
 
+/** The `pending_decision.generation` `maybeAutoAnswerForced` last asked
+ * the server about - one ask per question, whatever the answer. Reset with
+ * the combat one in `startGame`. */
+let autoForcedGeneration = null;
+
+/** A decision with exactly one legal answer, answered by the server on this
+ * seat's behalf (`POST .../decide-forced`, which answers `{forced: false}`
+ * for any other) - gated by the stops panel's `autoForced` tick, absent
+ * reading as on. Combat declarations are left to
+ * `maybeAutoAnswerCombatDeclaration`, which owns them. Toasted with the
+ * server's own `why`, and the answer is on the ledger as the /decide it
+ * is. An owed pass (`pendingRelease`) is paid exactly as `decide()` pays
+ * it. Returns `true` when it answered. */
+async function maybeAutoAnswerForced(app) {
+  if (app.stops.autoForced === false) return false;
+  const state = app.state;
+  const pending = state && state.pending_decision;
+  if (!pending || !decisionIsMine(state, pending)) return false;
+  if (pending.kind === "declare_attackers" || pending.kind === "declare_blockers") return false;
+  const generation = generationOf(pending);
+  if (generation === null || generation === autoForcedGeneration) return false;
+  autoForcedGeneration = generation;
+  const release = owedReleaseFor(app);
+  const res = await send("POST", withUid(gamePath("decide-forced"), app.uid), { player: you(), generation });
+  if (!res || !res.auto_answered) return false;
+  toast(`auto: ${res.auto_answered.why}`);
+  store.set({ decisionDraft: {} });
+  await payOwedRelease(release, res);
+  await refresh();
+  return true;
+}
+
+/** The board `maybeAutoPass` last judged, and the stack ids it saw then:
+ * one judgement (at most one legal-actions read) per board, and "new on the
+ * stack" means new since this seat last held priority. */
+let autoPassKey = null;
+let autoPassSeen = [];
+
+function autoPassBoardKey(state) {
+  return JSON.stringify([
+    state.turn_number,
+    P.stepPosition(state),
+    state.active_player,
+    state.priority_holder,
+    (state.stack || []).map((o) => o.id),
+  ]);
+}
+
+/** Passes for this seat when pass is its only legal move - or when the top
+ * of the stack is on the "always yield" list the player built - on any
+ * board `priority.js`'s `autoPassWindow` allows (never in its own main
+ * phase with an empty stack, never over its own new object). Gated by the
+ * `autoPassNothing` tick, absent reading as on; works with or without a
+ * run. The pass names the legal-actions read's `last_seq` as
+ * `expected_seq`, so a board that moved in between is refused rather than
+ * passed on, and carries `reasoning` for the ledger. Returns `true` when it
+ * sent a pass. */
+async function maybeAutoPass(app) {
+  const state = app.state;
+  if (app.stops.autoPassNothing === false) return false;
+  if (!state || state.pending_decision || !seatHoldsPriority(state)) return false;
+  const key = autoPassBoardKey(state);
+  if (key === autoPassKey) return false;
+  autoPassKey = key;
+  const open = P.autoPassWindow(state, autoPassSeen);
+  autoPassSeen = (state.stack || []).map((o) => o.id);
+  if (!open) return false;
+  const top = (state.stack || [])[0];
+  const body = { player: you() };
+  let note;
+  if (top && P.isYielded(top, app.stops)) {
+    body.reasoning = `auto-passed by the UI: always yield to ${top.name}`;
+    note = `auto: passed (always yield to ${top.name})`;
+  } else {
+    let answer;
+    try {
+      answer = await api("GET", withUid(gamePath(`legal-actions?player=${encodeURIComponent(you())}`), app.uid));
+    } catch {
+      return false;
+    }
+    if (!answer || !P.onlyPassLegal(answer.actions)) return false;
+    body.reasoning = "auto-passed by the UI: no legal action but pass";
+    if (typeof answer.last_seq === "number") body.expected_seq = answer.last_seq;
+    note = "auto: passed (nothing to do but pass)";
+  }
+  const res = await send("POST", gamePath("actions/pass-priority"), body);
+  if (res === null) return true;
+  if (!P.interpretPassOutcome(res).ok) return true;
+  toast(note);
+  store.set((s) => ({ run: s.run ? P.recordPass(s.run, s.state) : null }));
+  await refresh();
+  return true;
+}
+
 // ---- priority ------------------------------------------------------------
 
 async function passOnce() {
@@ -1827,6 +1932,8 @@ export async function tickRun() {
   // themselves call `refresh()`, which is what picks a live run back up (its
   // own nested `tickRun` call) - this is not a stop, so the run stays armed.
   if (await maybeAutoAnswerCombatDeclaration(app)) return;
+  if (await maybeAutoAnswerForced(app)) return;
+  if (await maybeAutoPass(store.get())) return;
   if (!app.run) return;
   // A decision addressed to someone else freezes the game exactly the same
   // way (`priority_holder` is stale for the whole freeze, not just for the
@@ -1901,32 +2008,42 @@ export async function decide(answer) {
   // the very question on the board: a poll landing while this answer is in
   // flight can already show the question gone and settle the release.
   const app = store.get();
-  const owed = app.pendingRelease;
-  const release =
-    owed &&
-    owed.seat === you() &&
-    app.state &&
-    app.state.pending_decision &&
-    generationOf(app.state.pending_decision) === owed.generation
-      ? owed
-      : null;
+  const release = owedReleaseFor(app);
   const res = await send("POST", withUid(gamePath("decide"), app.uid), { player: you(), ...answer });
   if (res === null) return;
   if (refused(res)) toast(res.reason);
   store.set({ decisionDraft: {} });
-  if (release) {
-    if (refused(res)) {
-      store.set({ pendingRelease: null });
-    } else if (res.paused === true) {
-      store.set({
-        pendingRelease: { ...release, generation: generationOf(res.pending_decision), readSeq: boardReads },
-      });
-    } else {
-      store.set({ pendingRelease: null });
-      await passOnce();
-    }
-  }
+  await payOwedRelease(release, res);
   await refresh();
+}
+
+/** The pass this seat owes (`pendingRelease`) when it is owed for the very
+ * question on the board, else `null`. */
+function owedReleaseFor(app) {
+  const owed = app.pendingRelease;
+  return owed &&
+    owed.seat === you() &&
+    app.state &&
+    app.state.pending_decision &&
+    generationOf(app.state.pending_decision) === owed.generation
+    ? owed
+    : null;
+}
+
+/** What an answer to the owed question does to the owed pass: a refusal
+ * drops it, a re-pause moves it to the new question, completion pays it. */
+async function payOwedRelease(release, res) {
+  if (!release) return;
+  if (refused(res)) {
+    store.set({ pendingRelease: null });
+  } else if (res.paused === true) {
+    store.set({
+      pendingRelease: { ...release, generation: generationOf(res.pending_decision), readSeq: boardReads },
+    });
+  } else {
+    store.set({ pendingRelease: null });
+    await passOnce();
+  }
 }
 
 async function onPregame(path, body) {
@@ -2103,6 +2220,9 @@ export async function startGame(created, { navigate = true } = {}) {
   // had open before must never suppress that new game's own first combat
   // pause (`maybeAutoAnswerCombatDeclaration`'s own dedupe guard).
   autoAnsweredCombatGeneration = null;
+  autoForcedGeneration = null;
+  autoPassKey = null;
+  autoPassSeen = [];
   store.set({ gameId: created.game_id, uid: created.uid, aiUid: created.aiUid, log: { entries: [], lastSeq: 0 } });
   // Appends rather than overwrites: `mcm.games.v1` is a list, one entry per
   // game this browser has started or opened, not the single `{gameId, uid,
@@ -2199,6 +2319,118 @@ export async function seatFromServer(gameId) {
   }
 }
 
+// ---- stops: toggles, persistence, the per-user copy -----------------------
+
+const PREFERENCES_DEBOUNCE_MS = 400;
+let preferencesTimer = null;
+
+/** `GET/PUT /api/me/preferences` go through `fetch` directly, never `api()`:
+ * with no OIDC user the route answers 401/404, and `api()` would take a 401
+ * as "send this page to the login screen". */
+function preferencesPath() {
+  return `${apiBase()}/me/preferences`;
+}
+
+/** Every stops save: this browser's own copy at once (the fallback), and the
+ * signed-in user's copy on the server, debounced, fire-and-forget, errors
+ * ignored. The PUT sends whatever the store holds when it fires. */
+function persistStops(stops) {
+  P.saveStops(localStorage, stops);
+  clearTimeout(preferencesTimer);
+  preferencesTimer = setTimeout(() => {
+    preferencesTimer = null;
+    try {
+      Promise.resolve(
+        fetch(preferencesPath(), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stops: store.get().stops }),
+        })
+      ).catch(() => {});
+    } catch {
+      // no network: this browser's copy is the one that counts
+    }
+  }, PREFERENCES_DEBOUNCE_MS);
+}
+
+/** On load: the signed-in user's remembered stops, merged over this
+ * browser's (`priority.js`'s `mergeStops`, absent reading as the default).
+ * Anything but a 2xx object carrying `stops` leaves the local copy alone. */
+export async function loadRemoteStops() {
+  try {
+    const res = await fetch(preferencesPath(), { method: "GET", headers: {} });
+    if (!res || !res.ok) return;
+    const body = await res.json();
+    if (!body || typeof body !== "object" || !body.stops) return;
+    const stops = P.mergeStops(store.get().stops, body.stops);
+    P.saveStops(localStorage, stops);
+    store.set({ stops });
+  } catch {
+    // unreachable or unparseable: the local copy stands
+  }
+}
+
+/** Flips one boolean stops tick, absent reading as on (every tick here
+ * defaults on), and saves. The one handler behind every boolean tick in the
+ * stops box. */
+export function toggleStopFlag(key) {
+  store.set((s) => {
+    const stops = { ...s.stops, [key]: s.stops[key] === false };
+    persistStops(stops);
+    return { stops };
+  });
+}
+
+/** Adds `stackObject` to, or removes it from, the "always yield" list
+ * (`stops.yieldTo`, matched on controller + name + text). */
+export function onYieldToggle(stackObject) {
+  store.set((s) => {
+    const stops = P.toggleYield(s.stops, stackObject);
+    persistStops(stops);
+    return { stops };
+  });
+}
+
+/** The page's keys. Escape backs out (a modal, then the decision window,
+ * then any action in progress). F2/F6 are MTGO's pass keys (`priority.js`'s
+ * `shortcutVerb`): only while that verb is offered, never while typing into
+ * a field, with a modal open, or during a replay. */
+export async function onKeydown(e) {
+  if (await onShortcut(e)) return;
+  if (e.key !== "Escape") return;
+  const modal = document.querySelector("#modal");
+  if (modal && !modal.hidden) {
+    closeModal(document);
+    return;
+  }
+  // A pending decision's window minimizes; it is never closed while the
+  // question is still standing.
+  if (decisionWindowIsOpen(document)) {
+    minimizeDecisionWindow(document);
+    return;
+  }
+  cancel();
+  hidePopover();
+}
+
+/** F2/F6 (`priority.js`'s `shortcutVerb`), or `false` when the key is not
+ * one of them or is not live right now. */
+async function onShortcut(e) {
+  const target = e.target;
+  const tag = target && typeof target.tagName === "string" ? target.tagName.toUpperCase() : "";
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (target && target.isContentEditable)) return false;
+  const modal = document.querySelector("#modal");
+  if (modal && !modal.hidden) return false;
+  const app = store.get();
+  if (!app.gameId || app.replay || !app.state) return false;
+  const verb = P.shortcutVerb(e.key, app.state);
+  if (!verb) return false;
+  if (e.preventDefault) e.preventDefault();
+  store.set({ concedeArmed: false });
+  await onVerb(verb);
+  return true;
+}
+
 async function main() {
   // Before anything mounts: no re-render may replace a button between the
   // player's mousedown and the click it is about to become (`ui/store.js`).
@@ -2231,6 +2463,7 @@ async function main() {
     onPermanent,
     onPlayer: (u) => tryTarget(u),
     onStackObject: (o) => tryTarget(o.id),
+    onYieldToggle,
     onPermission,
     onOpenZone: (key) => zoneViewer.open(key),
   });
@@ -2315,41 +2548,24 @@ async function main() {
       store.set((s) => {
         const list = s.stops[side].includes(step) ? s.stops[side].filter((x) => x !== step) : [...s.stops[side], step];
         const stops = { ...s.stops, [side]: list };
-        P.saveStops(localStorage, stops);
+        persistStops(stops);
         return { stops };
       }),
-    // The stack tick is not a step and lives beside the two step lists, so it
-    // gets its own toggle rather than a fake `side`. Same persistence.
-    onToggleStackStop: () =>
-      store.set((s) => {
-        const stops = { ...s.stops, onStack: s.stops.onStack === false };
-        P.saveStops(localStorage, stops);
-        return { stops };
-      }),
-    // Same shape, beside it: not a step either, and `fire()` reads it fresh
-    // on every action rather than only at the moment the action began.
-    onToggleKeepPriorityByDefault: () =>
-      store.set((s) => {
-        const stops = { ...s.stops, keepPriorityByDefault: s.stops.keepPriorityByDefault === false };
-        P.saveStops(localStorage, stops);
-        return { stops };
-      }),
-    // Same shape again: replaces the old dedicated "Declare attackers (CR
-    // 508.1)"/"Declare blockers (CR 509.1)" prompt boxes -
-    // `maybeAutoAnswerCombatDeclaration` reads these fresh on every tick,
-    // not `stopReason`.
-    onToggleAskAttackers: () =>
-      store.set((s) => {
-        const stops = { ...s.stops, askAttackers: s.stops.askAttackers === false };
-        P.saveStops(localStorage, stops);
-        return { stops };
-      }),
-    onToggleAskBlockers: () =>
-      store.set((s) => {
-        const stops = { ...s.stops, askBlockers: s.stops.askBlockers === false };
-        P.saveStops(localStorage, stops);
-        return { stops };
-      }),
+    // The boolean ticks beside the two step lists (not steps, so no fake
+    // `side`), all through `toggleStopFlag`. `fire()` reads
+    // `keepPriorityByDefault` fresh on every action;
+    // `maybeAutoAnswerCombatDeclaration` reads `askAttackers`/`askBlockers`,
+    // `maybeAutoAnswerForced` `autoForced`, `maybeAutoPass`
+    // `autoPassNothing`, and `toastTapped` `tappedToast`, all on every tick.
+    onToggleStopFlag: toggleStopFlag,
+    onToggleStackStop: () => toggleStopFlag("onStack"),
+    onToggleKeepPriorityByDefault: () => toggleStopFlag("keepPriorityByDefault"),
+    onToggleAskAttackers: () => toggleStopFlag("askAttackers"),
+    onToggleAskBlockers: () => toggleStopFlag("askBlockers"),
+    onToggleAutoForced: () => toggleStopFlag("autoForced"),
+    onToggleAutoPassNothing: () => toggleStopFlag("autoPassNothing"),
+    onToggleTappedToast: () => toggleStopFlag("tappedToast"),
+    onYieldToggle,
     onAttackConfirm: confirmAttack,
     onAttackNone: declareNoAttackers,
     onBlockConfirm: confirmBlocks,
@@ -2400,20 +2616,7 @@ async function main() {
   // First in `#game-toolbar`, where the Fullscreen API exists.
   mountFullscreen(document);
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    const modal = document.querySelector("#modal");
-    if (modal && !modal.hidden) {
-      closeModal(document);
-      return;
-    }
-    // A pending decision's window minimizes; it is never closed while the
-    // question is still standing.
-    if (decisionWindowIsOpen(document)) {
-      minimizeDecisionWindow(document);
-      return;
-    }
-    cancel();
-    hidePopover();
+    onKeydown(e).catch((err) => console.error(err));
   });
   let saved = [];
   try {
@@ -2440,6 +2643,9 @@ async function main() {
   // (an auto-navigate into the sole saved game that fired on every visit to
   // `/`, not once, making the lobby unreachable while exactly one game
   // existed).
+  // The signed-in user's remembered stops, over this browser's own; not
+  // awaited ahead of anything, since the local copy is already in force.
+  loadRemoteStops();
   const urlGameId = gameIdFromBaseURI(document.baseURI);
   const target = bootTarget(urlGameId, saved);
   if (target.kind === "game") {

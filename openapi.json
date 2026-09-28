@@ -2898,6 +2898,31 @@
         "title": "AttackRequest",
         "type": "object"
       },
+      "AutoAnsweredView": {
+        "description": "One decision `decide-forced` answered on the caller's behalf - the\nsame shape `forced_decisions.auto_answer_forced`'s own entries carry,\nminus the bookkeeping (`outcome`/`refused`) that only applies to a run of\nseveral in a row, since this route only ever answers one.",
+        "properties": {
+          "answer": {
+            "additionalProperties": true,
+            "title": "Answer",
+            "type": "object"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "why": {
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "answer",
+          "why"
+        ],
+        "title": "AutoAnsweredView",
+        "type": "object"
+      },
       "BlockPair": {
         "additionalProperties": false,
         "properties": {
@@ -5388,6 +5413,105 @@
           "amount"
         ],
         "title": "DamageAssignmentRequest",
+        "type": "object"
+      },
+      "DecideForcedRequest": {
+        "description": "`POST .../decide-forced`'s body - a nudge naming the standing\nquestion, nothing else: `forced_decisions` reads the answer straight off\nthe engine's own enumeration, so there is no answer for the caller to\npropose and no `reasoning` to carry (the route writes its own, prefixed\n`forced_decisions.AUTO_REASONING_PREFIX`).",
+        "properties": {
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player",
+          "generation"
+        ],
+        "title": "DecideForcedRequest",
+        "type": "object"
+      },
+      "DecideForcedResponse": {
+        "description": "`POST .../decide-forced` - `DecideResponse`'s own fields (all\noptional here: the not-forced case sends none of them, just `forced:\nfalse`) plus `forced` and, only once something was actually answered,\n`auto_answered`.",
+        "properties": {
+          "accepted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted"
+          },
+          "auto_answered": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoAnsweredView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "forced": {
+            "title": "Forced",
+            "type": "boolean"
+          },
+          "log_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Seq"
+          },
+          "notices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Notices",
+            "type": "array"
+          },
+          "paused": {
+            "default": false,
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "pending_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingDecisionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "forced"
+        ],
+        "title": "DecideForcedResponse",
         "type": "object"
       },
       "DecideRequest": {
@@ -15558,6 +15682,45 @@
         "title": "UnreadableModeView",
         "type": "object"
       },
+      "UserPreferencesIn": {
+        "additionalProperties": false,
+        "description": "`PUT /api/me/preferences`'s body - an opaque JSON object stored\nwholesale (replacing whatever was there, never merged) and handed back\nverbatim by `GET`. Never interpreted here: the UI's own speed-mode\nstop-setting opt-outs are this route's business to store, never to\nunderstand - a new setting needs no change on this side at all.",
+        "properties": {
+          "preferences": {
+            "additionalProperties": true,
+            "title": "Preferences",
+            "type": "object"
+          }
+        },
+        "required": [
+          "preferences"
+        ],
+        "title": "UserPreferencesIn",
+        "type": "object"
+      },
+      "UserPreferencesResponse": {
+        "description": "`GET`/`PUT /api/me/preferences` - `preferences` defaults to `{}` for a\nuser who has never called `PUT`, so the UI never has to special-case a\nfirst read; `updated_at` is `None` for that same case and a UTC ISO 8601\nstamp otherwise.",
+        "properties": {
+          "preferences": {
+            "additionalProperties": true,
+            "title": "Preferences",
+            "type": "object"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "title": "UserPreferencesResponse",
+        "type": "object"
+      },
       "ValidateRequest": {
         "additionalProperties": false,
         "properties": {
@@ -18016,6 +18179,72 @@
         "summary": "Decide"
       }
     },
+    "/api/games/{game_id}/decide-forced": {
+      "post": {
+        "description": "Speed convenience: answer `req.player`'s standing decision (at\n`req.generation`) only when the engine's own enumeration proves it has\nexactly one legal answer (`forced_decisions.forced_answer`), and change\nnothing at all otherwise.\n\nThis is `GET .../legal-actions` and `POST .../decide` fused into one\nin-process call rather than a seat/UI round trip through each: the same\nenumeration `get_legal_actions` builds (`_rows_while_controlling` plus\n`_attach_target_candidates`, on the same paused-or-live board\n`commands.board_at_pause` picks for a declaration), handed straight to\n`forced_decisions.forced_answer`/`forced_reason` rather than serialised\nout over HTTP and read back in - and, when it is forced, answered\nthrough `decide` itself, the exact same function `POST .../decide` calls,\nso every refusal shape, every audit row, and every board-race guard it\nalready has apply here unchanged.\n\n**Same auth as `/decide`**: `uid` must open `req.player`'s own seat, or\nbe this game's admin key, or be controlling `req.player` right now\n(CR 723.5, `player_control.may_decide_for`) - checked before anything is\nenumerated, so naming a player this uid does not open reveals nothing\nabout their hand.\n\n**Response shape.** `forced: false` alone (no other key) means \"this\nquestion currently has more than one legal answer\" - the caller's cue to\nfall back to whatever it would otherwise have done (ask the model, wait\nfor the human). `forced: false` with a `reason` means the request itself\ncould not be evaluated - a stale `generation`, no pending decision\naddressed to this player right now, or an auth refusal - matching\n`DecideRequest`'s own generation-mismatch convention (a 200 refusal, not\na 409: unlike `expected_seq`/`VersionConflict`, a decision's generation\nis not a board-race guard this route takes at all, since it names no\n`expected_seq`). `forced: true` carries every `DecideResponse` field\n`decide` itself produced (`accepted`, `paused`, `pending_decision`, ...)\nplus `auto_answered`, naming what was answered and why - the ledger row\n`decide` wrote already carries the same `why`, prefixed with\n`forced_decisions.AUTO_REASONING_PREFIX`, as its `reasoning`.",
+        "operationId": "decide_forced_api_games__game_id__decide_forced_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideForcedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideForcedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Forced"
+      }
+    },
     "/api/games/{game_id}/legal-actions": {
       "get": {
         "description": "Every action `player` could legally take right now\n(`machines.legal_actions.legal_actions`, Phase 1) - the api's own door\nonto the engine's enumeration surface, and what `seatkit.available_actions`\ncalls instead of brute-forcing one HTTP `dry_run` per candidate (T11).\n\nEach entry carries the engine's own `affordable` verdict\n(`\"yes\"`/`\"no\"`/`\"unknown\"`) alongside its legality - CR 118.6: an\nunpayable cast is still a legal one, so it is still listed, never dropped.\n`\"unknown\"` is a real, distinct answer (a modal or X spell before its\nparameters are announced) and is reported as such rather than folded into\n`\"no\"`, which is the whole reason this replaces the old probe: a dry run\ncan only ever say yes or no, never \"I cannot tell yet\".\n\nReads whichever decision is currently paused for this game straight off\nthe repository's own paused-command slot (`store.paused_command`, the\nsame source `serialize.state_view`'s own `pending_decision` reads from)\nand hands it to `legal_actions` as `pending` - when one is outstanding,\nthe answer is that decision's own legal answers and nothing else, for\nthe player it addresses only (`legal_actions`'s own module docstring).\n\n**`uid` must open `player`'s own seat, or be this game's admin key, or\nbe an advisor on that seat** (`repository.Advisor` - it resolves to the\nsame username through `visibility.resolve_viewer`, and an advisor is\nallowed to know exactly what its human is allowed to know).\nEvery action here is `player`'s own by construction - hand cards,\ncontrolled permanents, that player's own graveyard/exile cast options -\nand that is exactly why this is hidden information rather than why it is\nnot: the answer names each card in the seat's hand by id, its exact cost,\nthe zone it would be cast from, what it would target, and whether that\nseat can pay for it. `player` is a bare query parameter with nothing\nauthenticating it, so without this check naming the opponent was enough\nto read their hand out of the answer - while `GET /api/games/{game_id}`,\none route up, correctly hands the same caller `hands.<opponent> == []`.\n`visibility.py` is the rule that binds both: \"a caller that presents\nnothing must never see more than one that presents garbage, and neither\nmay see more than one that presents someone else's seat\".\n\n**`candidates=true` folds each targeting action's legal targets into its\nown entry** (`_attach_target_candidates`), so a seat can choose AND issue\nits next action out of one answer. Opt-in: the enumeration and its\ncandidates share one layered board (`board_scope.read_on_one_board`), so\nthe candidates no longer rebuild it per target check, but walking every\npublic object against every slot is still work the browser - which asks\nthis on a 1.2s poll and already has the whole board on screen to pick\ntargets from - has no use for. A seat pays it once per action and saves a\nwhole round trip, and so a whole inference cycle. So\n`seatkit.available_actions` passes it and `ui/app.js` does not, and the\ndefault is off: a caller that says nothing pays nothing.\n\n`get_affordances` needs no such guard and is not a precedent for\nskipping one: every candidate it names is an object in a public zone\n(CR 400.2) or a player, so there is nothing hidden in its answer to\nbegin with.\n\nRefused rather than answered empty, and this is the deliberate half of\nthe choice: `{\"actions\": []}` is a real answer this endpoint gives (a\nseat has nothing legal while a decision addressed to the *other* player\nstands - see `legal_actions`'s own docstring), so redacting to an empty\nlist would make \"you may not ask that\" indistinguishable from \"there is\nnothing you can do\", which is precisely the ambiguity\n`seatkit.available_actions` must be able to tell apart. The refusal is\nthe api's own existing shape for a credential that does not open what it\nnames - `ValueError` -> 400, the same as `pregame_settle`'s admin-key\ncheck - rather than a 403, which appears nowhere else in this api.",
@@ -19898,6 +20127,62 @@
         "tags": [
           "lobby"
         ]
+      }
+    },
+    "/api/me/preferences": {
+      "get": {
+        "description": "The UI's own per-user settings (speed-mode stop opt-outs among them),\nremembered across every device this OIDC user signs into - `{}` and no\n`updated_at` for a user who has never called `PUT`, so the caller never\nhas to special-case a first read.",
+        "operationId": "get_my_preferences_api_me_preferences_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPreferencesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get My Preferences"
+      },
+      "put": {
+        "description": "Replace this OIDC user's whole stored `preferences` (never merged -\nthe caller already has the old value from `GET` if it wants to keep part\nof it). Capped at `schemas.USER_PREFERENCES_MAX_BYTES`\n(`UserPreferencesIn`'s own validator, a typed 422).",
+        "operationId": "put_my_preferences_api_me_preferences_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPreferencesIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPreferencesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put My Preferences"
       }
     },
     "/api/ops/dsl-coverage": {

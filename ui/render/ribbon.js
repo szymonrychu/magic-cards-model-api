@@ -1144,6 +1144,89 @@ function renderStopsBox(el, app, handlers) {
       " Keep priority by default"
     )
   );
+  // ------------------------------------------------------------ automation
+  //
+  // Three more standing ticks, grouped under their own small heading because
+  // they answer *for* the player (a forced choice with exactly one legal
+  // answer, an empty hand of castables, a mana ability the engine auto-taps
+  // to pay a cost) rather than deciding whether to keep the turn moving - the
+  // distinction the ticks above are already organised around. Same
+  // `!== false` absent-reads-as-ticked shape, and each its own dedicated
+  // `onToggle*` handler exactly like `onToggleKeepPriorityByDefault` above -
+  // no new wiring, just three more keys of the same stops object saved the
+  // same way.
+  el.appendChild(h("div", { class: "stops-heading" }, "Automation"));
+  el.appendChild(
+    h(
+      "label",
+      { class: "stops-anything" },
+      h("input", {
+        type: "checkbox",
+        checked: app.stops.autoForced !== false,
+        onChange: () => handlers.onToggleAutoForced(),
+      }),
+      " Auto-answer forced choices"
+    )
+  );
+  el.appendChild(
+    h(
+      "label",
+      { class: "stops-anything" },
+      h("input", {
+        type: "checkbox",
+        checked: app.stops.autoPassNothing !== false,
+        onChange: () => handlers.onToggleAutoPassNothing(),
+      }),
+      " Auto-pass when nothing is castable"
+    )
+  );
+  el.appendChild(
+    h(
+      "label",
+      { class: "stops-anything" },
+      h("input", {
+        type: "checkbox",
+        checked: app.stops.tappedToast !== false,
+        onChange: () => handlers.onToggleTappedToast(),
+      }),
+      " Show auto-tapped mana"
+    )
+  );
+  // The other half of `render/board.js`'s own per-stack-object "Always
+  // yield" toggle: every entry the player has told the board to answer "no"
+  // for automatically, wherever it next shows up on the stack, with a
+  // remove control that reports the exact same `{controller, name, text}`
+  // entry back so it can be dropped from `stops.yieldTo`. `handlers` may not
+  // carry `onYieldToggle` yet (it is the logic agent's own addition to the
+  // shared bag) - this renders the list either way and only calls the
+  // handler when it is actually there, rather than letting an older handler
+  // bag crash the whole stops box for a feature it predates.
+  const yieldTo = app.stops.yieldTo || [];
+  if (yieldTo.length) {
+    const list = h("div", { class: "stops-yield-list" });
+    for (const entry of yieldTo) {
+      list.appendChild(
+        h(
+          "div",
+          { class: "stops-yield-entry" },
+          h("span", {}, `Always yield: ${entry.name} (${entry.controller})`),
+          h(
+            "button",
+            {
+              type: "button",
+              class: "ghost",
+              title: "Stop auto-yielding to this trigger",
+              onClick: () => {
+                if (handlers.onYieldToggle) handlers.onYieldToggle(entry);
+              },
+            },
+            "x"
+          )
+        )
+      );
+    }
+    el.appendChild(list);
+  }
   const grid = h("div", { class: "stops-grid" }, h("div", {}, "my turn"), h("div", {}, "their turn"));
   for (const step of steps) {
     const label = step.replace(/_/g, " ");

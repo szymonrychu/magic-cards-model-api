@@ -101,7 +101,7 @@ from sqlalchemy.engine import Engine
 
 from .agent_settings import AgentSettings
 from .commands import Command
-from .db import games, make_engine, record_states, records
+from .db import games, make_engine, record_states, records, user_preferences
 from .repository import (
     DEFAULT_RESERVATION_TTL_SECONDS,
     Advisor,
@@ -1175,3 +1175,30 @@ class PostgresRepository:
 
     def clear_paused_command(self, game_id: str) -> None:
         self._update_column(game_id, command=None, tape=None, pending=None)
+
+    # -- per-user preferences (keyed on OIDC `sub`, not on any game) --------
+
+    def get_user_preferences(self, sub: str) -> dict[str, Any] | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                select(user_preferences.c.data, user_preferences.c.updated_at).where(
+                    user_preferences.c.sub == sub
+                )
+            ).first()
+        if row is None:
+            return None
+        return {"preferences": row.data, "updated_at": _utc_isoformat(row.updated_at)}
+
+    def set_user_preferences(self, sub: str, preferences: dict[str, Any]) -> str:
+        """Upsert via `INSERT ... ON CONFLICT (sub) DO UPDATE` - one round
+        trip whether this `sub` has ever called `PUT` before, matching
+        `put_record_state`'s own shape."""
+        now = datetime.now(UTC)
+        stmt = pg_insert(user_preferences).values(sub=sub, data=preferences, updated_at=now)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[user_preferences.c.sub],
+            set_={"data": stmt.excluded.data, "updated_at": stmt.excluded.updated_at},
+        )
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+        return now.isoformat()

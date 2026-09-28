@@ -16,6 +16,7 @@ Six live bugs came from skipping that step."""
 
 from __future__ import annotations
 
+import json
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -3479,6 +3480,102 @@ class DecideResponse(BaseModel):
     its own resolving, because nothing that could pause mid-resolution and
     then complete inside `decide` yet did."""
     log_seq: int | None = None
+
+
+class DecideForcedRequest(BaseModel):
+    """`POST .../decide-forced`'s body - a nudge naming the standing
+    question, nothing else: `forced_decisions` reads the answer straight off
+    the engine's own enumeration, so there is no answer for the caller to
+    propose and no `reasoning` to carry (the route writes its own, prefixed
+    `forced_decisions.AUTO_REASONING_PREFIX`)."""
+
+    player: str
+    """Must be the pending decision's own player - matching `DecideRequest.player`."""
+    generation: int
+    """`pending_decision.generation`, echoed back - matching `DecideRequest.
+    generation`, but required rather than optional: a caller that does not
+    know which question it is nudging has nothing safe to nudge."""
+
+
+class AutoAnsweredView(BaseModel):
+    """One decision `decide-forced` answered on the caller's behalf - the
+    same shape `forced_decisions.auto_answer_forced`'s own entries carry,
+    minus the bookkeeping (`outcome`/`refused`) that only applies to a run of
+    several in a row, since this route only ever answers one."""
+
+    kind: str
+    answer: dict[str, Any]
+    """The `DecideRequest` fields this route filled in and posted - `player`/
+    `generation` left out, since the caller already knows both."""
+    why: str
+    """`forced_decisions.forced_reason`'s own words for why this was the
+    only legal answer - the same text folded into the ledger's `reasoning`."""
+
+
+class DecideForcedResponse(BaseModel):
+    """`POST .../decide-forced` - `DecideResponse`'s own fields (all
+    optional here: the not-forced case sends none of them, just `forced:
+    false`) plus `forced` and, only once something was actually answered,
+    `auto_answered`."""
+
+    forced: bool
+    reason: str | None = None
+    """Set on a `forced: false` answer that is not simply "no, there were
+    two or more legal answers" - a stale `generation`, no pending decision
+    addressed to this player, or an auth refusal (`DecideRequest`'s own auth
+    conventions - see `decide_forced`'s docstring)."""
+    accepted: bool | None = None
+    paused: bool = False
+    pending_decision: PendingDecisionView | None = None
+    notices: list[dict[str, Any]] = Field(default_factory=list)
+    log_seq: int | None = None
+    auto_answered: AutoAnsweredView | None = None
+
+
+#: The largest `PUT /api/me/preferences` body this api will store, in bytes
+#: of its `preferences` value serialised as JSON - generous for the UI's own
+#: speed-mode stop settings (a handful of booleans/strings), tight enough
+#: that this table never becomes a place to park a whole game's worth of
+#: state. Measured on the JSON encoding, not the Python object, so it is the
+#: same number a client can check against its own `JSON.stringify(...).
+#: length` before sending.
+USER_PREFERENCES_MAX_BYTES = 16 * 1024
+
+
+def _sized_preferences(value: dict[str, Any]) -> dict[str, Any]:
+    """Refuse a `preferences` body over `USER_PREFERENCES_MAX_BYTES`, typed
+    and saying what to do about it - matching `_short_rationale`'s own
+    shape."""
+    size = len(json.dumps(value).encode("utf-8"))
+    if size > USER_PREFERENCES_MAX_BYTES:
+        raise PydanticCustomError(
+            "preferences_too_large",
+            "preferences are {size} bytes and this endpoint is capped at {max_bytes}: "
+            "store only what genuinely needs to follow this user across devices, and keep "
+            "the rest in localStorage",
+            {"size": size, "max_bytes": USER_PREFERENCES_MAX_BYTES},
+        )
+    return value
+
+
+class UserPreferencesIn(RequestModel):
+    """`PUT /api/me/preferences`'s body - an opaque JSON object stored
+    wholesale (replacing whatever was there, never merged) and handed back
+    verbatim by `GET`. Never interpreted here: the UI's own speed-mode
+    stop-setting opt-outs are this route's business to store, never to
+    understand - a new setting needs no change on this side at all."""
+
+    preferences: Annotated[dict[str, Any], AfterValidator(_sized_preferences)]
+
+
+class UserPreferencesResponse(BaseModel):
+    """`GET`/`PUT /api/me/preferences` - `preferences` defaults to `{}` for a
+    user who has never called `PUT`, so the UI never has to special-case a
+    first read; `updated_at` is `None` for that same case and a UTC ISO 8601
+    stamp otherwise."""
+
+    preferences: dict[str, Any] = Field(default_factory=dict)
+    updated_at: str | None = None
 
 
 class ReportProblemResponse(BaseModel):

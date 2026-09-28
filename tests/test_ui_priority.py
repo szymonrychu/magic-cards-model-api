@@ -35,6 +35,11 @@ def board(**over):
     return state
 
 
+# The human-speed ticks (`priority.js`'s `DEFAULT_STOPS`), every one on by
+# default and absent reading as that default.
+SPEED_DEFAULTS = {"autoForced": True, "autoPassNothing": True, "tappedToast": True, "yieldTo": []}
+
+
 def test_default_stops_are_mtgo_like() -> None:
     assert run_module("priority.js", "m.DEFAULT_STOPS") == {
         "mine": ["precombat_main", "declare_attackers", "postcombat_main"],
@@ -43,6 +48,7 @@ def test_default_stops_are_mtgo_like() -> None:
         "keepPriorityByDefault": True,
         "askAttackers": True,
         "askBlockers": True,
+        **SPEED_DEFAULTS,
     }
 
 
@@ -111,6 +117,7 @@ def test_stops_round_trip_through_storage_under_the_v2_key() -> None:
         "keepPriorityByDefault": False,
         "askAttackers": True,
         "askBlockers": True,
+        **SPEED_DEFAULTS,
     }
 
 
@@ -165,6 +172,7 @@ def test_a_v1_payload_never_carries_the_old_off_default_forward() -> None:
         "keepPriorityByDefault": True,
         "askAttackers": True,
         "askBlockers": True,
+        **SPEED_DEFAULTS,
     }
 
 
@@ -198,6 +206,7 @@ def test_stops_saved_before_the_stack_tick_existed_read_back_with_it_on() -> Non
         "keepPriorityByDefault": True,
         "askAttackers": True,
         "askBlockers": True,
+        **SPEED_DEFAULTS,
     }
 
 

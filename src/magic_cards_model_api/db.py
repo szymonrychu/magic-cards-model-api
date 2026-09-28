@@ -187,6 +187,26 @@ record_states = Table(
     PrimaryKeyConstraint("game_id", "seq", name="pk_record_states"),
 )
 
+user_preferences = Table(
+    "user_preferences",
+    metadata,
+    # The OIDC subject (JWT `sub`, `oidc.AuthenticatedUser.sub`) this row
+    # belongs to - not a game id, not a seat uid: `PUT /api/me/preferences`
+    # is the UI's own speed-mode stop settings, remembered per human across
+    # every device and every game they play, so it is keyed on identity
+    # alone. `String`, matching `games.owner_user_id`'s own column, for the
+    # same reason that one is not postgres's native `uuid` type - a `sub` is
+    # an opaque IdP-minted string, never guaranteed to be uuid-shaped.
+    Column("sub", String, primary_key=True),
+    # Opaque to this api - never interpreted, only stored and handed back
+    # verbatim (`schemas.UserPreferencesIn`/`UserPreferencesResponse`).
+    # JSONB rather than `LargeBinary`: unlike `record_states.state`, this is
+    # small (capped at `schemas.USER_PREFERENCES_MAX_BYTES`, 16 KB) and
+    # nothing here rules out a future read wanting to query into it.
+    Column("data", JSONB, nullable=False, server_default="{}"),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
 
 #: The component variables a DSN is assembled from when `DATABASE_URL` is not
 #: set. They are named for what CloudNativePG publishes in a cluster's Secret

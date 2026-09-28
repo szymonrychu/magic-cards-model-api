@@ -260,10 +260,78 @@ export function fitBoardFloor(board, fitted) {
   return floor;
 }
 
+/** Whether `obj` is a triggered/activated ability (`kind: "ability"`,
+ * `serialize.py`'s `_stack_view`) the *opponent* controls - never a spell,
+ * and never this seat's own ability: those are the only stack objects the
+ * "Always yield" toggle below offers at all. */
+function isOpponentAbility(app, obj) {
+  return obj.kind === "ability" && Boolean(obj.controller) && obj.controller !== app.state.you;
+}
+
+/** Whether a `stops.yieldTo` entry names the same trigger as `obj` -
+ * controller, name and text together, the same triple `render/ribbon.js`'s
+ * stops-box list and `handlers.onYieldToggle` both key on. */
+function yieldEntryMatches(entry, obj) {
+  return Boolean(entry) && entry.controller === obj.controller && entry.name === obj.name && entry.text === obj.text;
+}
+
+/** Patch (building once, on first need) the "Always yield" toggle on one
+ * `.stack-object` wrapper - the per-trigger half of `stops.yieldTo`;
+ * `render/ribbon.js`'s stops box lists and removes entries, this is where
+ * one is added. Built and kept as a persistent node (`el.__yield`, the same
+ * shape `badgeParts` below uses) rather than rebuilt every poll, so a
+ * checkbox never loses focus mid-click the way tearing it down and back up
+ * every ~1.2s tick would risk. Absent for a spell or this seat's own
+ * ability - `isOpponentAbility` is the one gate - and torn down again if a
+ * kept-alive wrapper's object ever stops qualifying (a target changing
+ * controller mid-stack does not happen, but a poll landing during a swap of
+ * one stack object for a differently-keyed one could). */
+function patchYieldToggle(el, obj, app, handlers) {
+  if (!isOpponentAbility(app, obj)) {
+    if (el.__yield) {
+      el.removeChild(el.__yield.label);
+      el.__yield = null;
+    }
+    return;
+  }
+  if (!el.__yield) {
+    const input = h("input", { type: "checkbox" });
+    const label = h(
+      "label",
+      {
+        class: "stack-yield",
+        title: "Always answer no to this trigger automatically",
+        // A click on the toggle must not also open the stack object's own
+        // menu (`el.onclick` below, patched onto the wrapper this label is
+        // appended to) - the same reason the zone badge's own zone-count
+        // click stops its propagation (`patchBadge` below).
+        onClick: (e) => {
+          if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+        },
+      },
+      input,
+      " Always yield"
+    );
+    el.appendChild(label);
+    el.__yield = { label, input };
+  }
+  const yieldTo = (app.stops && app.stops.yieldTo) || [];
+  el.__yield.input.checked = yieldTo.some((entry) => yieldEntryMatches(entry, obj));
+  // A plain property assignment, not `addEventListener` (which `h()`'s own
+  // `onChange` would use) - reassigned fresh every patch so the closure
+  // always names the current `obj`, and a property assignment replaces
+  // rather than accumulates the previous poll's listener.
+  el.__yield.input.onchange = () => {
+    if (handlers.onYieldToggle) {
+      handlers.onYieldToggle({ controller: obj.controller, name: obj.name, text: obj.text });
+    }
+  };
+}
+
 /** One object on the stack, drawn as the card it is (a spell's printing, an
  * ability's text card) with a caption under it for the two things the card
  * cannot say: the announced X and what it targets. */
-function patchStackObjects(container, stack, app, onClick) {
+function patchStackObjects(container, stack, app, onClick, handlers) {
   patchChildren(
     container,
     stack,
@@ -283,6 +351,7 @@ function patchStackObjects(container, stack, app, onClick) {
       setText(el.querySelector(".stack-caption"), caption);
       el.title = `${obj.name}${obj.kind === "ability" ? " (ability)" : ""}${caption ? ` ${caption}` : ""}`;
       el.onclick = () => onClick(obj);
+      patchYieldToggle(el, obj, app, handlers);
     }
   );
 }
@@ -653,7 +722,7 @@ export function mountBoard(root, store, handlers) {
       els.permittedRow.hidden = permitted.length === 0;
       patchPermissions(els.permittedRow, permitted, handlers.onPermission);
     }
-    patchStackObjects(els.stack, state.stack, app, handlers.onStackObject);
+    patchStackObjects(els.stack, state.stack, app, handlers.onStackObject, handlers);
     fitAll();
   });
   return () => {

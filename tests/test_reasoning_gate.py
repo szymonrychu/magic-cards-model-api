@@ -153,6 +153,21 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
         "no `Game` touched, and made by the human seat rather than by an "
         "agent - there is no agent turn here to hold to a reason."
     ),
+    ("POST", "/api/games/{game_id}/decide-forced"): (
+        "takes no answer content at all - it only names which standing "
+        "question to check - so there is nothing for a caller to explain. "
+        "When it actually mutates the `Game` it does so by calling `decide` "
+        "itself, in-process, with a `reasoning` this route builds from "
+        "`forced_decisions.forced_reason` (`AUTO_REASONING_PREFIX: <why>`) - "
+        "the real mutation is exactly as gated as `POST .../decide` already "
+        "is, one call down, and the answer's ledger row proves it."
+    ),
+    ("PUT", "/api/me/preferences"): (
+        "the play UI's own per-user settings (speed-mode stop opt-outs), "
+        "keyed on the OIDC subject rather than on any seat. It mutates no "
+        "`Game` at all - there is no agent turn, and no ledger row, for "
+        "`records.require_reasoning` to gate."
+    ),
 }
 
 #: MCP tools that read and never mutate, each with the reason.

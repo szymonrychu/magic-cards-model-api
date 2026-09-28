@@ -47,6 +47,7 @@ from . import (
     decisions,
     decks_api,
     engine_api,
+    forced_decisions,
     game_access,
     handoff,
     lobby,
@@ -100,6 +101,8 @@ from .schemas import (
     ConcedeResponse,
     CrewRequest,
     CycleRequest,
+    DecideForcedRequest,
+    DecideForcedResponse,
     DecideRequest,
     DecideResponse,
     DeclareBlockersRequest,
@@ -161,6 +164,8 @@ from .schemas import (
     TargetRequest,
     TurnFaceUpRequest,
     UnlockDoorRequest,
+    UserPreferencesIn,
+    UserPreferencesResponse,
 )
 from .serialize import FIRST_STRIKE_DAMAGE, state_view, step_position
 from .store import known_players, new_seat_uids, player_for_advisor_uid, store
@@ -1315,6 +1320,53 @@ def health() -> dict[str, Any]:
         "status": "ok",
         "protocol_version": protocol.PROTOCOL_VERSION,
     }
+
+
+def _me_or_404(request: Request) -> str:
+    """The caller's OIDC subject, or a 404 for a request that carries none -
+    `oidc.current_user` itself already turns an invalid bearer token into a
+    401 (`BearerTokenRejected`); this only covers the *anonymous* case, which
+    is not an error this api can distinguish from "no such resource" for a
+    per-user route, and 404 (not 401) is deliberate: it is what lets the play
+    UI's `api()` wrapper fall back to `localStorage` on exactly the same
+    branch it already uses for "this browser has never talked to a signed-in
+    backend", rather than growing a second, 401-shaped fallback path."""
+    user = oidc.current_user(request)
+    if user is None:
+        raise KeyError("no signed-in user for this request")
+    return user.sub
+
+
+@app.get(
+    "/api/me/preferences",
+    response_model=UserPreferencesResponse,
+    response_model_exclude_unset=True,
+)
+def get_my_preferences(request: Request) -> dict[str, Any]:
+    """The UI's own per-user settings (speed-mode stop opt-outs among them),
+    remembered across every device this OIDC user signs into - `{}` and no
+    `updated_at` for a user who has never called `PUT`, so the caller never
+    has to special-case a first read."""
+    sub = _me_or_404(request)
+    stored = store.get_user_preferences(sub)
+    if stored is None:
+        return {"preferences": {}}
+    return stored
+
+
+@app.put(
+    "/api/me/preferences",
+    response_model=UserPreferencesResponse,
+    response_model_exclude_unset=True,
+)
+def put_my_preferences(req: UserPreferencesIn, request: Request) -> dict[str, Any]:
+    """Replace this OIDC user's whole stored `preferences` (never merged -
+    the caller already has the old value from `GET` if it wants to keep part
+    of it). Capped at `schemas.USER_PREFERENCES_MAX_BYTES`
+    (`UserPreferencesIn`'s own validator, a typed 422)."""
+    sub = _me_or_404(request)
+    updated_at = store.set_user_preferences(sub, req.preferences)
+    return {"preferences": req.preferences, "updated_at": updated_at}
 
 
 @app.post("/api/games", response_model=NewGameResponse, response_model_exclude_unset=True)
@@ -3093,6 +3145,118 @@ def get_legal_actions(
     # splittable into races and rules errors at all. See `at_seq` above for
     # why it is read before the board rather than here.
     return {"actions": views, "not_now": not_now, "last_seq": at_seq}
+
+
+@app.post(
+    "/api/games/{game_id}/decide-forced",
+    response_model=DecideForcedResponse,
+    response_model_exclude_unset=True,
+)
+def decide_forced(game_id: str, req: DecideForcedRequest, uid: str | None = None) -> dict[str, Any]:
+    """Speed convenience: answer `req.player`'s standing decision (at
+    `req.generation`) only when the engine's own enumeration proves it has
+    exactly one legal answer (`forced_decisions.forced_answer`), and change
+    nothing at all otherwise.
+
+    This is `GET .../legal-actions` and `POST .../decide` fused into one
+    in-process call rather than a seat/UI round trip through each: the same
+    enumeration `get_legal_actions` builds (`_rows_while_controlling` plus
+    `_attach_target_candidates`, on the same paused-or-live board
+    `commands.board_at_pause` picks for a declaration), handed straight to
+    `forced_decisions.forced_answer`/`forced_reason` rather than serialised
+    out over HTTP and read back in - and, when it is forced, answered
+    through `decide` itself, the exact same function `POST .../decide` calls,
+    so every refusal shape, every audit row, and every board-race guard it
+    already has apply here unchanged.
+
+    **Same auth as `/decide`**: `uid` must open `req.player`'s own seat, or
+    be this game's admin key, or be controlling `req.player` right now
+    (CR 723.5, `player_control.may_decide_for`) - checked before anything is
+    enumerated, so naming a player this uid does not open reveals nothing
+    about their hand.
+
+    **Response shape.** `forced: false` alone (no other key) means "this
+    question currently has more than one legal answer" - the caller's cue to
+    fall back to whatever it would otherwise have done (ask the model, wait
+    for the human). `forced: false` with a `reason` means the request itself
+    could not be evaluated - a stale `generation`, no pending decision
+    addressed to this player right now, or an auth refusal - matching
+    `DecideRequest`'s own generation-mismatch convention (a 200 refusal, not
+    a 409: unlike `expected_seq`/`VersionConflict`, a decision's generation
+    is not a board-race guard this route takes at all, since it names no
+    `expected_seq`). `forced: true` carries every `DecideResponse` field
+    `decide` itself produced (`accepted`, `paused`, `pending_decision`, ...)
+    plus `auto_answered`, naming what was answered and why - the ledger row
+    `decide` wrote already carries the same `why`, prefixed with
+    `forced_decisions.AUTO_REASONING_PREFIX`, as its `reasoning`.
+    """
+    game = game_or_404(game_id)
+    player = game_access.seat_for_uid(game_id, uid)
+    if player is None or (
+        player != req.player and not player_control.may_decide_for(game, player, req.player)
+    ):
+        return {"forced": False, "reason": "that uid does not open the deciding player's seat"}
+    paused = store.paused_command(game_id)
+    deciding = paused[2].decision.player if paused is not None else req.player
+    controlled = player_control.decision_refusal(game, player, deciding)
+    if controlled is not None:
+        return {"forced": False, "reason": controlled}
+    if paused is None or not player_control.may_decide_for(game, player, deciding):
+        return {"forced": False, "reason": "no pending decision for you"}
+    # `decide` itself reassigns `req.player` to `deciding` rather than
+    # refusing a mismatch (CR 723.5: a controller may name itself) - matched
+    # here rather than adding a stricter check `/decide` does not have.
+    generation = store.pause_generation(game_id)
+    if req.generation != generation:
+        return {
+            "forced": False,
+            "reason": (
+                f"that request names generation {req.generation}, but this game's standing "
+                f"question is generation {generation}: the decision you read has already "
+                "been answered and the resolution has moved on. Re-read pending_decision "
+                "and try again against the question standing now."
+            ),
+        }
+    command, tape, pending = paused
+    engine_decision = pending.decision
+    board = game
+    if engine_decision.kind in _DECLARATION_KINDS:
+        # See `get_legal_actions`'s own comment: a declare-attackers/
+        # declare-blockers pause is raised in the step before it is ever
+        # committed, so `game` alone enumerates no pair for it.
+        board = commands.board_at_pause(game, command, tape) or game
+
+    def rows() -> list[dict[str, Any]]:
+        actions, views = _rows_while_controlling(board, deciding, pending)
+        _attach_target_candidates(board, actions, views)
+        return views
+
+    views = read_on_one_board(rows, board)
+    pending_view = _paused_pending_view(
+        game_id, decisions.PendingDecision.from_engine(engine_decision, generation), deciding
+    )
+    # The minimal shape `forced_decisions.forced_answer`/`forced_reason`
+    # actually read off `seatkit.available_actions`' own answer - see that
+    # module's docstring.
+    actions_view = {"actions": views, "pending_decision": pending_view}
+    answer = forced_decisions.forced_answer(pending_view, actions_view)
+    if answer is None:
+        return {"forced": False}
+    why = forced_decisions.forced_reason(pending_view, actions_view)
+    assert why is not None, "forced_answer and forced_reason disagree on whether this is forced"
+    compact_answer = {k: v for k, v in answer.items() if k not in ("player", "generation")}
+    decide_req = DecideRequest(
+        player=deciding,
+        generation=req.generation,
+        reasoning=f"{forced_decisions.AUTO_REASONING_PREFIX}: {why}",
+        **compact_answer,
+    )
+    result = decide(game_id, decide_req, uid=uid)
+    return {
+        **result,
+        "forced": True,
+        "auto_answered": {"kind": pending_view.get("kind"), "answer": compact_answer, "why": why},
+    }
 
 
 @app.post(

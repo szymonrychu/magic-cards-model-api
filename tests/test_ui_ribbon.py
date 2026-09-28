@@ -1387,6 +1387,167 @@ def test_the_stops_box_offers_ask_attackers_and_ask_blockers_and_wires_them_up()
         assert off["checked"] is False, off_key
 
 
+def test_the_stops_box_offers_the_automation_ticks_grouped_under_a_heading() -> None:
+    """The speed-ai-seat interface note's three new boolean stops keys -
+    `autoForced` ("Auto-answer forced choices"), `autoPassNothing`
+    ("Auto-pass when nothing is castable"), `tappedToast` ("Show auto-tapped
+    mana") - grouped under a small "Automation" heading, each its own
+    dedicated handler (`onToggleAutoForced`/`onToggleAutoPassNothing`/
+    `onToggleTappedToast`), same `!== false` absent-reads-as-ticked shape and
+    same markup/handler pattern as `onToggleKeepPriorityByDefault` above -
+    the existing stops-tick wiring in `app.js`, no new dispatch mechanism."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const look = (label, handlerName, stops) => {
+            const store = makeStore(baseApp(baseState(), { stops }));
+            const toggled = [];
+            m.mountRibbon(document, store, { ...HANDLERS, [handlerName]: () => toggled.push(1) });
+            store.set({});
+            const box = document.querySelector("#stops-box");
+            const tick = findByText(box, "label", label);
+            const checkbox = tick && tick.children.find((c) => c.tagName === "input");
+            if (checkbox && checkbox.listeners && checkbox.listeners.change) {
+              checkbox.listeners.change({ target: checkbox });
+            }
+            return {
+              offered: Boolean(tick),
+              text: box.textContent,
+              checked: checkbox ? "checked" in checkbox.attrs : null,
+              toggles: toggled.length,
+            };
+          };
+          const empty = { mine: [], theirs: [] };
+          return {
+            forcedAbsent: look("Auto-answer forced choices", "onToggleAutoForced", empty),
+            forcedOff: look(
+              "Auto-answer forced choices", "onToggleAutoForced",
+              { ...empty, autoForced: false }
+            ),
+            nothingAbsent: look(
+              "Auto-pass when nothing is castable", "onToggleAutoPassNothing", empty
+            ),
+            nothingOff: look(
+              "Auto-pass when nothing is castable", "onToggleAutoPassNothing",
+              { ...empty, autoPassNothing: false }
+            ),
+            tappedAbsent: look("Show auto-tapped mana", "onToggleTappedToast", empty),
+            tappedOff: look(
+              "Show auto-tapped mana", "onToggleTappedToast",
+              { ...empty, tappedToast: false }
+            ),
+          };
+        })()
+        """,
+    )
+    for key, off_key in (
+        ("forcedAbsent", "forcedOff"),
+        ("nothingAbsent", "nothingOff"),
+        ("tappedAbsent", "tappedOff"),
+    ):
+        absent, off = result[key], result[off_key]
+        assert absent["offered"] is True, key
+        assert absent["checked"] is True, f"{key}: absent must read as ticked"
+        assert absent["toggles"] == 1, f"{key}: clicking the tick reaches no handler"
+        assert off["offered"] is True, off_key
+        assert off["checked"] is False, off_key
+        assert "Automation" in absent["text"]
+
+
+def test_the_always_yield_list_is_absent_when_empty_or_missing() -> None:
+    """`stops.yieldTo` unset or `[]` - the standing case for every player who
+    has never used the per-trigger "Always yield" toggle (`render/board.js`'s
+    own note has the other half) - renders nothing extra in the stops box."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const look = (stops) => {
+            const store = makeStore(baseApp(baseState(), { stops }));
+            m.mountRibbon(document, store, HANDLERS);
+            store.set({});
+            return document.querySelector("#stops-box").textContent;
+          };
+          return {
+            missing: look({ mine: [], theirs: [] }),
+            empty: look({ mine: [], theirs: [], yieldTo: [] }),
+          };
+        })()
+        """,
+    )
+    assert "Always yield" not in result["missing"]
+    assert "Always yield" not in result["empty"]
+
+
+def test_the_always_yield_list_renders_each_entry_with_a_remove_control() -> None:
+    """One line per `stops.yieldTo` entry, `"Always yield: <name> (<controller>)"`,
+    each with a remove control that reports the *exact* same `{controller,
+    name, text}` entry back through `onYieldToggle` - the handler the owner's
+    interface note says the logic agent adds to the same handler bag the
+    stops box already receives, beside `onToggleStop` and friends."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const entry = {
+            controller: "bob", name: "Krosan Grip",
+            text: "Destroy target artifact or enchantment.",
+          };
+          const calls = [];
+          const stops = { mine: [], theirs: [], yieldTo: [entry] };
+          const handlers = { ...HANDLERS, onYieldToggle: (e) => calls.push(e) };
+          const store = makeStore(baseApp(baseState(), { stops }));
+          m.mountRibbon(document, store, handlers);
+          store.set({});
+          const box = document.querySelector("#stops-box");
+          const removeBtn = findByText(box, "button", "x");
+          click(removeBtn);
+          return { text: box.textContent, calls };
+        })()
+        """,
+    )
+    assert "Always yield: Krosan Grip (bob)" in result["text"]
+    assert result["calls"] == [
+        {
+            "controller": "bob",
+            "name": "Krosan Grip",
+            "text": "Destroy target artifact or enchantment.",
+        }
+    ]
+
+
+def test_the_always_yield_remove_control_does_not_crash_with_no_handler() -> None:
+    """`onYieldToggle` is the logic agent's own addition to the handler bag;
+    a handler bag built before it exists (exactly `HANDLERS` above, which
+    carries no such key) must still render the list, and clicking remove
+    with nothing wired must be a silent no-op rather than a thrown error."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const entry = {
+            controller: "bob", name: "Krosan Grip",
+            text: "Destroy target artifact or enchantment.",
+          };
+          const stops = { mine: [], theirs: [], yieldTo: [entry] };
+          const store = makeStore(baseApp(baseState(), { stops }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          const box = document.querySelector("#stops-box");
+          const removeBtn = findByText(box, "button", "x");
+          click(removeBtn);
+          return box.textContent;
+        })()
+        """,
+    )
+    assert "Always yield: Krosan Grip (bob)" in result
+
+
 def test_the_per_action_tick_starts_from_the_standing_default_and_reports_an_untick() -> None:
     """The casting strip's own tick for one action. It starts where the
     standing default is (`holdPriority: null` means "not touched yet"), and

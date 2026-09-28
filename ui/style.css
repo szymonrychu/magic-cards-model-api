@@ -862,6 +862,20 @@ h3 { font-size: 14px; }
 .stack-object .name { font-weight: 600; }
 .stack-object .targets { color: var(--ink-dim); font-size: 11px; }
 
+/* The per-trigger "Always yield" toggle on an opponent-controlled ability
+   on the stack (`render/board.js`'s `patchYieldToggle`) - the same compact
+   tick shape `.stops-anything` uses, sized down to fit under a stack card. */
+.stack-yield {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.stack-yield input { margin: 0; }
+
 /* --------------------------------------------------- the zone ribbon ---- */
 
 /* The graveyards and the exiles, in their own column between the battlefield
@@ -1886,6 +1900,16 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 /* The stack tick is not one of the grid's two columns: it can fire in any
    step and on either turn, so it sits above the grid on its own line. */
 .stops-anything { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; margin-bottom: 6px; }
+
+/* The "Automation" group heading above the three auto-answer ticks, same
+   treatment as the stops-grid's own "my turn"/"their turn" header row. */
+.stops-heading { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-faint); margin: 4px 0 2px; }
+
+/* The always-yield list: one compact row per remembered trigger, a remove
+   control at the end rather than a second checkbox column. */
+.stops-yield-list { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 8px; }
+.stops-yield-entry { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.stops-yield-entry button { padding: 0 6px; font-size: 11px; line-height: 1.6; }
 
 .pregame-step { display: flex; flex-direction: column; gap: 6px; }
 .pregame-bottom { display: flex; flex-direction: column; gap: 3px; }

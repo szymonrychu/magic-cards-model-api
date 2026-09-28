@@ -562,6 +562,166 @@ def test_a_stack_card_without_x_or_targets_keeps_an_empty_caption() -> None:
     assert result == {"caption": "", "card": ["card", "card-fit"]}
 
 
+# -- "Always yield" toggle on an opponent-controlled stack ability --------
+#
+# The speed-ai-seat interface note's other half of `stops.yieldTo`:
+# `render/ribbon.js`'s stops box lists the remembered entries and removes
+# one; this file offers the toggle itself, on the stack object it is about,
+# for a triggered/activated ability the *opponent* controls (`kind:
+# "ability"`, `serialize.py`'s `_stack_view`) - never on a spell, and never
+# on this seat's own ability, since yielding to your own trigger is not a
+# thing this UI offers.
+ABILITY_OBJ = {
+    "id": "tr1",
+    "kind": "ability",
+    "name": "Krosan Grip",
+    "controller": "bob",
+    "text": "Destroy target artifact or enchantment.",
+    "targets": [],
+    "target_refs": [],
+}
+
+
+def test_an_opponent_controlled_ability_on_the_stack_offers_an_always_yield_toggle() -> None:
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + STACK_MOUNT
+        + """
+        (() => {
+          const { wrapper } = mountStack(ABILITY_OBJ);
+          const toggle = wrapper.querySelector(".stack-yield");
+          return { text: wrapper.textContent, offered: Boolean(toggle) };
+        })()
+        """,
+        ABILITY_OBJ=ABILITY_OBJ,
+    )
+    assert result["offered"] is True
+    assert "Always yield" in result["text"]
+
+
+def test_no_always_yield_toggle_for_your_own_ability() -> None:
+    my_ability = {**ABILITY_OBJ, "id": "tr2", "controller": "alice"}
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + STACK_MOUNT
+        + """
+        (() => {
+          const { wrapper } = mountStack(myAbility);
+          return Boolean(wrapper.querySelector(".stack-yield"));
+        })()
+        """,
+        myAbility=my_ability,
+    )
+    assert result is False
+
+
+def test_no_always_yield_toggle_for_a_spell_even_when_the_opponent_controls_it() -> None:
+    spell = _kozilek_stack_object()
+    spell = {**spell, "controller": "bob"}
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + STACK_MOUNT
+        + """
+        (() => {
+          const { wrapper } = mountStack(spell);
+          return Boolean(wrapper.querySelector(".stack-yield"));
+        })()
+        """,
+        spell=spell,
+    )
+    assert result is False
+
+
+def test_the_always_yield_toggle_is_checked_when_it_matches_stops_and_calls_the_handler() -> None:
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const calls = [];
+          const stops = {
+            mine: [], theirs: [],
+            yieldTo: [
+              { controller: "bob", name: "Krosan Grip", text: "Destroy target artifact or enchantment." },
+            ],
+          };
+          const state = baseState({ stack: [ABILITY_OBJ] });
+          const store = makeStore(baseApp(state, { stops }));
+          m.mountBoard(document, store, {
+            onHandCard: NOOP, onPlayer: NOOP, onPermission: NOOP, onPermanent: NOOP,
+            onStackObject: NOOP, onYieldToggle: (e) => calls.push(e),
+          });
+          store.set({});
+          const wrapper = document.querySelector("#stack-row").children[0];
+          const toggle = wrapper.querySelector(".stack-yield");
+          const input = toggle.children.find((c) => c.tagName === "input");
+          const checkedBefore = Boolean(input.checked);
+          input.onchange();
+          return { checkedBefore, calls };
+        })()
+        """,
+        ABILITY_OBJ=ABILITY_OBJ,
+    )
+    assert result["checkedBefore"] is True
+    assert result["calls"] == [
+        {
+            "controller": "bob",
+            "name": "Krosan Grip",
+            "text": "Destroy target artifact or enchantment.",
+        }
+    ]
+
+
+def test_the_always_yield_toggle_is_unchecked_with_no_matching_entry() -> None:
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const state = baseState({ stack: [ABILITY_OBJ] });
+          const store = makeStore(baseApp(state, { stops: { mine: [], theirs: [] } }));
+          m.mountBoard(document, store, {
+            onHandCard: NOOP, onPlayer: NOOP, onPermission: NOOP, onPermanent: NOOP,
+            onStackObject: NOOP,
+          });
+          store.set({});
+          const wrapper = document.querySelector("#stack-row").children[0];
+          const toggle = wrapper.querySelector(".stack-yield");
+          const input = toggle.children.find((c) => c.tagName === "input");
+          return Boolean(input.checked);
+        })()
+        """,
+        ABILITY_OBJ=ABILITY_OBJ,
+    )
+    assert result is False
+
+
+def test_the_always_yield_toggle_does_not_crash_with_no_handler_wired() -> None:
+    """`onYieldToggle` is the logic agent's own addition to the handler bag
+    - `mountBoard`'s own handlers here (no such key, same shape every other
+    test in this file already uses) must not crash on click, same
+    tolerance `render/ribbon.js`'s own stops-box list gets."""
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + STACK_MOUNT
+        + """
+        (() => {
+          const { wrapper } = mountStack(ABILITY_OBJ);
+          const toggle = wrapper.querySelector(".stack-yield");
+          const input = toggle.children.find((c) => c.tagName === "input");
+          input.onchange();
+          return "survived";
+        })()
+        """,
+        ABILITY_OBJ=ABILITY_OBJ,
+    )
+    assert result == "survived"
+
+
 def test_a_stack_card_lights_up_as_a_target_and_as_chosen() -> None:
     obj = _kozilek_stack_object()
     action = json.loads(json.dumps(ONE_TARGET_ACTION))

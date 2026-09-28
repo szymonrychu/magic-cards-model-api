@@ -105,6 +105,40 @@ goes away. The "keep priority" checkbox on
 the casting strip is CR 117.3c's retained priority for that one action: it
 starts from the standing default, and unticking it passes after that action.
 
+Below "Keep priority by default", the stops panel has an **Automation**
+group of three more ticks, all on by default: "Auto-answer forced choices"
+answers a decision with only one legal answer for you instead of stopping to
+ask; "Auto-pass when nothing is castable" passes straight through a stop
+that offers nothing to do but pass, land plays and mana abilities included;
+"Show auto-tapped mana" toggles the small toast that names which lands an
+automatic payment tapped, for the moments an auto-tap should not be a
+surprise. Untick any of the three to have that moment stop and ask instead.
+
+**Always yield.** Every triggered or activated ability your opponent puts on
+the stack gets its own small "Always yield" toggle beside it; ticking it
+tells the UI to answer "no" to that exact trigger automatically from then on
+- matched by controller, name and printed text together, so a same-named
+ability with different wording, or the same ability under someone else's
+control, is never swept in by mistake. The stops panel lists every trigger
+you have set this way under the Automation ticks ("Always yield: `<name>`
+(`<controller>`)"), each with its own remove control, so the whole standing
+list is visible and reversible in one place without having to wait for the
+trigger to show up on the stack again.
+
+**Keyboard shortcuts.** F2 passes once and F6 runs Pass until, MTGO's own
+bindings - each does exactly what its on-screen button does and only fires
+while that button is actually offered (so F2 does nothing once you no
+longer hold priority, and F6 does nothing once nothing is left to pass
+until). Neither shortcut is offered while a text field has focus.
+
+**Stops follow you.** Signed in, every stops setting above - the step grid,
+the stack tick, Keep priority by default, the three Automation ticks and
+the Always-yield list - is remembered on your account (`GET`/`PUT
+/api/me/preferences`) and carried to any device you sign in on, the remote
+copy winning whole over whatever this browser last held. Signed out, or
+before that sync has ever run, it still falls back to this browser's own
+`localStorage` copy exactly as described above.
+
 **The advisor panel.** The bottom of that column shows the mtg-buddy
 advisor's current suggestion, if it has one: the decision summary, the
 agent's own rationale, which ledger entry and step it was proposed at, and
