@@ -115,6 +115,7 @@ import argparse
 import functools
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -128,7 +129,8 @@ from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from . import seatkit
 from .background_autopass import BackgroundRuns
-from .mcp_descriptions import SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS
+from .baton import BATON_EXEMPT_TOOLS, BATON_OK, BatonStore, refusal
+from .mcp_descriptions import BATON_DESCRIPTION, SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS
 from .playscripts import script_tools
 from .seatkit import (
     DEFAULT_API,
@@ -196,9 +198,7 @@ MAX_RESULT_SIZE_CHARS = 200_000
 #: (`background_autopass`) keeps going while the seat calls them - above all
 #: `declare_plan`, which is what the seat writes while the run passes for it.
 #: Every other tool stops the run before it does anything.
-BACKGROUND_SAFE_TOOLS = frozenset(
-    {"declare_plan", "battlefield_state", "game_log", "list_scripts", "report_problem"}
-)
+BACKGROUND_SAFE_TOOLS = frozenset({"declare_plan"}) | BATON_EXEMPT_TOOLS
 
 #: Per-call scratch shared by `_guarded` and `_tool_result` on the worker
 #: thread a sync tool runs on: the background run the call stopped (to be
@@ -239,12 +239,20 @@ def _guarded(seats: Seats):
         def wrapper(*args: Any, **kwargs: Any) -> str:
             started = time.monotonic()
             uid = str(kwargs.get("player_uid") or "")
+            baton = str(kwargs.get("baton") or "")
             _CALL.background = None
             _CALL.auto_answered = 0
+            _CALL.holder = seats.baton.holder(uid.strip(), baton)
             try:
                 trouble = seatkit.api_trouble(seats.http, seats.api)
                 if trouble:
                     return trouble
+                if name not in BATON_EXEMPT_TOOLS:
+                    # Before anything that acts - above all before stopping
+                    # the seat's background run: a refused call touches nothing.
+                    verdict = seats.baton.check(uid.strip(), baton)
+                    if verdict != BATON_OK:
+                        return refusal(verdict, seats.baton.rotated_at(uid.strip()))
                 ctx = kwargs.get("ctx")
                 echoed = ctx.request_state if isinstance(ctx, Context) else None
                 try:
@@ -282,12 +290,13 @@ def _log_timing(seats: Seats, name: str, uid: str, started: float) -> None:
     gap = "-" if previous is None else str(round((started - previous) * 1000))
     returned[uid] = now
     logger.info(
-        "tool name=%s seat=%s server_ms=%d gap_ms=%s auto_answered=%d",
+        "tool name=%s seat=%s server_ms=%d gap_ms=%s auto_answered=%d holder=%s",
         name,
         uid[:8],
         round((now - started) * 1000),
         gap,
         getattr(_CALL, "auto_answered", 0),
+        getattr(_CALL, "holder", "-"),
     )
 
 
@@ -1124,6 +1133,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         inputs: dict[str, Any] | None = None,
         wake_to_draft: bool = False,
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """Check whether it is your moment to act, then hand you the board.
 
@@ -1442,6 +1452,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         reasoning: str = "",
         then_pass: bool = False,
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """Cast a spell. Most casts are from your hand, and need nothing
                 else; `card` is the card's name or id. `targets` is comma-separated
@@ -1769,6 +1780,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         hold_priority: bool = True,
         reasoning: str = "",
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """CR 116.2f/702.62a: exile a card with suspend from your hand, paying
         its suspend cost, with N time counters on it. `card` is the card's
@@ -1803,6 +1815,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         hold_priority: bool = True,
         reasoning: str = "",
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """CR 116.2k/702.170b: exile a card with plot from your hand, paying
         its plot cost. `card` is the card's name or id in your hand.
@@ -1835,6 +1848,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         hold_priority: bool = True,
         reasoning: str = "",
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """CR 116.2h/702.143b: pay {2} and exile a card with foretell from
         your hand, face down (opponents see only that a face-down card is
@@ -1869,6 +1883,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         hold_priority: bool = True,
         reasoning: str = "",
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """CR 702.29a: discard a card with cycling from your hand, paying its
         cycling cost, to draw a card (or search your library for a card of the
@@ -1943,6 +1958,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         reasoning: str = "",
         then_pass: bool = False,
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """Play a land from your hand (your one-per-turn allowance, unless an
         effect says otherwise). `card` is the card's name or id.
@@ -1995,6 +2011,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         reasoning: str = "",
         then_pass: bool = False,
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """Activate one ability of a card you control - a permanent's ability
         on the battlefield, OR an ability that functions somewhere else
@@ -2116,6 +2133,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         hold_priority: bool = False,
         reasoning: str = "",
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """Equip: attach an Equipment you control to a creature you control,
         paying its equip cost. CR 702.6a: "Equip [cost]" means "[Cost]: Attach
@@ -2174,6 +2192,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         hold_priority: bool = True,
         reasoning: str = "",
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """FD5 (5)/FD1: CR 702.37e/701.40b-d - turn a face-down permanent you
         control (a morph, megamorph, disguise, or manifested permanent) face
@@ -2224,6 +2243,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         hold_priority: bool = True,
         reasoning: str = "",
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """FD5 (5)/FD1: CR 116.2g - pay {3} to put your chosen companion from
         outside the game into your hand, once per game, any time you have
@@ -2271,6 +2291,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         hold_priority: bool = True,
         reasoning: str = "",
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """CR 709.5e - a Room's own unlock cost: pay the mana cost of a
         locked half ("door") of a Room permanent you control to give it that
@@ -2321,6 +2342,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         hold_priority: bool = False,
         reasoning: str = "",
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """Declare attackers during your declare attackers step. `attackers`
         is a JSON list: [{"card": "<attacker id>", "defender": "<player
@@ -2364,6 +2386,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         hold_priority: bool = False,
         reasoning: str = "",
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """Declare blockers during the declare blockers step. `blocks` is a
         JSON list: [{"blocker": "<your creature id>", "blocked": "<attacker
@@ -2420,6 +2443,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         reasoning: str = "",
         then_pass: bool = False,
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """Answer your pending decision (CR 608.2d) - `battlefield_state`'s
         `pending_decision` field says what is being asked, by `kind`.
@@ -2824,7 +2848,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
     @server.tool(name="pass")
     @_guarded(seats)
     def pass_once(
-        player_uid: str, reasoning: str = "", ctx: Context | None = None
+        player_uid: str, reasoning: str = "", ctx: Context | None = None, baton: str = ""
     ) -> str | InputRequiredResult:
         """Pass priority once - "I am done for now". The whole of what a player
         does with priority besides acting.
@@ -2908,6 +2932,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         opposing_archetype: str = "*",
         inputs: dict[str, Any] | None = None,
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """Keep passing priority - one `pass` after another, automatically -
         until something worth looking at happens. The same verb, run to a
@@ -3187,6 +3212,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         inputs: dict[str, Any] | None = None,
         body: dict[str, Any] | None = None,
         ctx: Context | None = None,
+        baton: str = "",
     ) -> str | InputRequiredResult:
         """Run one of your registered play scripts: its moves, in order, and
         the one `next` script that applies after them.
@@ -3272,7 +3298,9 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
 
     @server.tool()
     @_guarded(seats)
-    def stage_script(player_uid: str, body: dict[str, Any], *, reasoning: str) -> str:
+    def stage_script(
+        player_uid: str, body: dict[str, Any], *, reasoning: str, baton: str = ""
+    ) -> str:
         """Stage an inline play document as one of your own ad-hoc scripts for
         this game, without running it and without waiting for the post-game
         admit - for a multi-step or repetitive sequence you are facing right
@@ -3338,7 +3366,9 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
 
     @server.tool()
     @_guarded(seats)
-    def mulligan(player_uid: str, take: bool, bottom: str = "", reasoning: str = "") -> str:
+    def mulligan(
+        player_uid: str, take: bool, bottom: str = "", reasoning: str = "", baton: str = ""
+    ) -> str:
         """Declare whether you take a mulligan (CR 103.5), before the game starts.
 
         A game dealt from decklists rests in the mulligan step until every seat
@@ -3369,7 +3399,9 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
 
     @server.tool()
     @_guarded(seats)
-    def opening_hand_action(player_uid: str, card: str = "", reasoning: str = "") -> str:
+    def opening_hand_action(
+        player_uid: str, card: str = "", reasoning: str = "", baton: str = ""
+    ) -> str:
         """Take a card's opening-hand action, or finish (CR 103.6).
 
         Some cards let you act with them from your opening hand - Leyline of
@@ -3413,6 +3445,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         for_turn: str = "current",
         reuse_previous: bool = False,
         still_because: str = "",
+        baton: str = "",
     ) -> str:
         """Declare, before you act, how you read the turn you are about to
         take (`POST .../plan`). Call this once at the top of every one of
@@ -3481,7 +3514,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
 
     @server.tool()
     @_guarded(seats)
-    def stage_advice(player_uid: str, step: str, whose_turn: str = "mine") -> str:
+    def stage_advice(player_uid: str, step: str, whose_turn: str = "mine", baton: str = "") -> str:
         """S2 A6: arm your *next* committing action call to be captured as a
         draft for the window `(step, whose_turn)`, instead of posted as a
         proposal right away - so you can think and act now, while your human
@@ -3585,6 +3618,18 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         except ValueError:
             return answer.text
 
+    @server.tool()
+    @_guarded(seats)
+    def pass_baton(player_uid: str) -> str:
+        """The orchestrator's tool: rotate the baton of seat `player_uid`.
+        Returns the fresh token, which the new current agent passes as
+        `baton` on every acting call; the previous token stops working. It
+        never acts in the game."""
+        if resolve(player_uid) is None:
+            return NO_SUCH_SEAT
+        token = seats.baton.issue(player_uid.strip())
+        return _dump({"baton": token, "description": BATON_DESCRIPTION})
+
     # What the model reads is `TOOL_DESCRIPTIONS` (`mcp_descriptions`), not
     # the docstrings above: Claude Code cuts every MCP tool description at
     # 2,048 chars by default, and the docstrings are developer documentation
@@ -3626,6 +3671,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "MCP SDK's stateless streamable-HTTP ASGI app on --host/--port."
         ),
     )
+    parser.add_argument(
+        "--require-baton",
+        action="store_true",
+        default=os.environ.get("MTG_REQUIRE_BATON", "") == "1",
+        help=(
+            "enforce the baton on every seat uid from the start, not only once "
+            "pass_baton issued one (env MTG_REQUIRE_BATON=1)"
+        ),
+    )
     parser.add_argument("--host", default="127.0.0.1", help="http transport bind host")
     parser.add_argument(
         "--port",
@@ -3657,6 +3711,7 @@ def main() -> None:
     # explicitly - see `Seats.seat_for`/`_seat_for_any_game`.
     resolve_by_uid = args.transport == "http" and args.game is None
     seats = Seats(args.api, args.game, resolve_by_uid=resolve_by_uid)
+    seats.baton = BatonStore(require_all=args.require_baton)
     # Best-effort heads-up only: NOT fatal. The real, authoritative check is
     # `_guarded` on every tool call below - this process is spawned once for
     # a whole session and must survive the API not being up yet (or not up

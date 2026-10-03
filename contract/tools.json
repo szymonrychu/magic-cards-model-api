@@ -101,6 +101,13 @@
           "name": "then_pass",
           "type": "bool",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -167,6 +174,13 @@
           "default": "",
           "has_default": true,
           "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
           "type": "str",
           "type_error": null
         }
@@ -329,6 +343,13 @@
           "name": "then_pass",
           "type": "bool",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -382,6 +403,13 @@
           "default": "",
           "has_default": true,
           "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
           "type": "str",
           "type_error": null
         }
@@ -530,6 +558,13 @@
           "name": "then_pass",
           "type": "bool",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -564,6 +599,13 @@
           "name": "reasoning",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -596,6 +638,13 @@
           "default": "",
           "has_default": true,
           "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
           "type": "str",
           "type_error": null
         }
@@ -674,6 +723,13 @@
           "name": "still_because",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -729,6 +785,13 @@
           "name": "reasoning",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -775,6 +838,13 @@
           "default": "",
           "has_default": true,
           "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
           "type": "str",
           "type_error": null
         }
@@ -865,6 +935,13 @@
           "name": "reasoning",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -892,6 +969,13 @@
           "name": "reasoning",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -910,6 +994,26 @@
           "default": "",
           "has_default": true,
           "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "The orchestrator's tool: rotate the baton of seat `player_uid`.",
+      "name": "pass_baton",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
           "type": "str",
           "type_error": null
         }
@@ -1009,6 +1113,13 @@
           "name": "inputs",
           "type": "dict[str, Any] | None",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -1049,6 +1160,13 @@
           "has_default": true,
           "name": "then_pass",
           "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
           "type_error": null
         }
       ]
@@ -1096,6 +1214,13 @@
           "default": "",
           "has_default": true,
           "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
           "type": "str",
           "type_error": null
         }
@@ -1194,6 +1319,13 @@
           "name": "body",
           "type": "dict[str, Any] | None",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -1221,6 +1353,13 @@
           "name": "whose_turn",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -1246,6 +1385,13 @@
           "default": null,
           "has_default": false,
           "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
           "type": "str",
           "type_error": null
         }
@@ -1294,6 +1440,13 @@
           "default": "",
           "has_default": true,
           "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
           "type": "str",
           "type_error": null
         }
@@ -1351,6 +1504,13 @@
           "name": "reasoning",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
         }
       ]
     },
@@ -1404,6 +1564,13 @@
           "default": "",
           "has_default": true,
           "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
           "type": "str",
           "type_error": null
         }
@@ -1460,6 +1627,13 @@
           "has_default": true,
           "name": "wake_to_draft",
           "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
           "type_error": null
         }
       ]
