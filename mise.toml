@@ -239,6 +239,38 @@ export MTG_DECKS="${MTG_DECKS:-/tmp}"
 docker compose -f docker-compose.aivai.yml down "$@"
 """
 
+[tasks."aivai:down"]
+description = "Tear down the Opus-vs-Opus stack fast (60s grace) and drop its volumes, including leftover live games."
+run = """
+set -eu
+eval "$(uv run python scripts/compose_env.py)"
+export COMPOSE_PROJECT_NAME POSTGRES_HOST_PORT
+POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
+export POSTGRES_PASSWORD
+export MTG_DECKS="${MTG_DECKS:-/tmp}"
+docker compose -f docker-compose.aivai.yml down -v -t 60
+"""
+
+[tasks."aivai:budget"]
+description = "Where an AIvAI match's time went: per-seat waits, model steps by role, promotions, baton refusals, match seconds vs 900. Pass --json for JSON."
+run = """
+set -eu
+eval "$(uv run python scripts/compose_env.py)"
+export COMPOSE_PROJECT_NAME POSTGRES_HOST_PORT
+POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
+export POSTGRES_PASSWORD
+export MTG_DECKS="${MTG_DECKS:-/tmp}"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+docker compose -f docker-compose.aivai.yml logs --no-color --no-log-prefix game > "$tmp/game.log"
+docker compose -f docker-compose.aivai.yml logs --no-color --no-log-prefix agent-p1 > "$tmp/p1.log"
+docker compose -f docker-compose.aivai.yml logs --no-color --no-log-prefix agent-p2 > "$tmp/p2.log"
+uv run python scripts/match_time_budget.py \
+  --seat p1=http://127.0.0.1:8080/metrics --seat p2=http://127.0.0.1:8081/metrics \
+  --agent-log "p1=$tmp/p1.log" --agent-log "p2=$tmp/p2.log" \
+  --game-log "$tmp/game.log" "$@"
+"""
+
 [tasks.image-tag]
 description = "Print the tag the image tasks would use: <api sha>-<engine sha>"
 # BOTH shas, because BOTH repos are baked into the image. With the api sha

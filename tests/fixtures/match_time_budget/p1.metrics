@@ -1,0 +1,22 @@
+# HELP ccw_model_step_seconds Wall-clock duration from the previous tool result (or turn start) to a tool_use line
+# TYPE ccw_model_step_seconds histogram
+ccw_model_step_seconds_bucket{le="5.0",role="orchestrator"} 3.0
+ccw_model_step_seconds_bucket{le="+Inf",role="orchestrator"} 4.0
+ccw_model_step_seconds_count{role="orchestrator"} 4.0
+ccw_model_step_seconds_sum{role="orchestrator"} 40.5
+ccw_model_step_seconds_count{role="current"} 10.0
+ccw_model_step_seconds_sum{role="current"} 120.25
+ccw_model_step_seconds_count{role="future"} 2.0
+ccw_model_step_seconds_sum{role="future"} 30.0
+# TYPE ccw_tool_seconds histogram
+ccw_tool_seconds_bucket{le="+Inf",role="current",tool="pass_until"} 3.0
+ccw_tool_seconds_count{role="current",tool="pass_until"} 3.0
+ccw_tool_seconds_sum{role="current",tool="pass_until"} 90.0
+ccw_tool_seconds_count{role="current",tool="wait_for_priority"} 2.0
+ccw_tool_seconds_sum{role="current",tool="wait_for_priority"} 11.5
+ccw_tool_seconds_count{role="orchestrator",tool="await_baton"} 1.0
+ccw_tool_seconds_sum{role="orchestrator",tool="await_baton"} 7.0
+ccw_tool_seconds_count{role="orchestrator",tool="pass_baton"} 3.0
+ccw_tool_seconds_sum{role="orchestrator",tool="pass_baton"} 0.6
+ccw_tool_seconds_count{role="future",tool="pass_until"} 1.0
+ccw_tool_seconds_sum{role="future",tool="pass_until"} 10.0

@@ -53,6 +53,7 @@ def test_the_aivai_postgres_host_port_is_overridable_not_hardcoded(compose) -> N
 def test_the_aivai_file_has_two_of_every_wrapper_mode_service(compose) -> None:
     assert set(compose["services"]) == {
         "postgres",
+        "migrate",
         "game",
         "guides-init-p1",
         "guides-init-p2",
@@ -264,12 +265,9 @@ def test_a_dotenv_carrying_the_shared_claude_model_does_not_change_the_aivai_sea
 
 
 def test_both_agents_and_both_drivers_have_the_seat_jobs_stop_grace_period(compose):
-    """Review fix round 1: 7410s (up from 5520/92m) - mirrors
-    deploy/seat-job.yaml's own `terminationGracePeriodSeconds`, moved up
-    with `driver.app.RETIRE_REVIEW_JOIN_TIMEOUT`'s decision-count-aware
-    raise. See tests/driver/test_compose.py's own version of this test."""
+    """AIvAI compose stops fast: 60s (defect 5), not the prod seat Job's 7410s."""
     for name in ("agent-p1", "agent-p2", "driver-p1", "driver-p2"):
-        assert compose["services"][name]["stop_grace_period"] == "7410s", name
+        assert compose["services"][name]["stop_grace_period"] == "60s", name
 
 
 def test_both_agents_get_the_shared_memory_bind_mount(compose):
@@ -453,3 +451,50 @@ def test_the_game_pins_the_buddy_to_opus_while_the_seats_play_sonnet(compose):
     resolved = {"AGENT_DEFAULT_MODEL": "claude-sonnet-5", "ADVISOR_MODEL": "claude-opus-5"}
     assert AgentSettings.default(resolved).model == "claude-sonnet-5"
     assert AgentSettings.advisor_default(resolved).model == "claude-opus-5"
+
+
+def test_a_migrate_service_runs_before_game(compose) -> None:
+    """Defect 2: without it the first lobby POST 500s (relation games missing)."""
+    single = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    migrate = compose["services"]["migrate"]
+    assert migrate["command"] == ["alembic", "upgrade", "head"]
+    assert "profiles" not in migrate
+    assert migrate["build"] == single["services"]["migrate"]["build"]
+    assert _env(migrate) == _env(single["services"]["migrate"])
+    assert migrate["depends_on"]["postgres"]["condition"] == "service_healthy"
+    assert compose["services"]["game"]["depends_on"]["migrate"] == {
+        "condition": "service_completed_successfully"
+    }
+
+
+@pytest.mark.parametrize("name", ["agent-p1", "agent-p2", "driver-p1", "driver-p2"])
+def test_fast_teardown_settings(compose, name) -> None:
+    """Defect 5: a short handover hold and a 60s grace, not 7370s/7410s."""
+    service = compose["services"][name]
+    assert _env(service)["HANDOVER_HOLD_SECONDS"] == "${AIVAI_HANDOVER_HOLD_SECONDS:-30}"
+    assert service["stop_grace_period"] == "60s"
+
+
+@pytest.mark.parametrize("name", ["agent-p1", "agent-p2"])
+def test_agents_cap_thinking_and_run_the_orchestrator_at_low_effort(compose, name) -> None:
+    env = _env(compose["services"][name])
+    assert env["MAX_THINKING_TOKENS"] == "${CLAUDE_MAX_THINKING_TOKENS:-4000}"
+    assert env["EFFORT"] == "${CLAUDE_AIVAI_EFFORT:-low}"
+
+
+def test_game_dispatch_default_thinking_cap_agrees_with_the_agents(compose) -> None:
+    env = _env(compose["services"]["game"])
+    assert env["AGENT_DEFAULT_MAX_THINKING_TOKENS"] == "${CLAUDE_MAX_THINKING_TOKENS:-4000}"
+
+
+def test_the_env_example_documents_the_new_knobs() -> None:
+    text = (ROOT / ".env.example").read_text()
+    assert "AIVAI_HANDOVER_HOLD_SECONDS" in text
+    assert "CLAUDE_MAX_THINKING_TOKENS=4000" in text
+
+
+def test_aivai_down_tears_down_fast_and_clears_volumes() -> None:
+    mise = (ROOT / "mise.toml").read_text()
+    assert "docker compose -f docker-compose.aivai.yml down -v -t 60" in mise
+    assert '[tasks."aivai:down"]' in mise
+    assert '[tasks."aivai:budget"]' in mise
