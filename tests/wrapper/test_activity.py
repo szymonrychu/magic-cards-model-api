@@ -379,7 +379,7 @@ def test_one_inference_is_timed_from_the_prior_line_to_its_last_block():
     timer = activity.InferenceTimer(None)
     observed = []
     timer.metrics = type(
-        "M", (), {"record_inference": lambda self, d, t: observed.append((d, t))}
+        "M", (), {"record_inference": lambda self, d, t, **labels: observed.append((d, t))}
     )()
     timer.feed(
         [
@@ -396,7 +396,7 @@ def test_consecutive_inferences_are_timed_independently():
     timer = activity.InferenceTimer(None)
     observed = []
     timer.metrics = type(
-        "M", (), {"record_inference": lambda self, d, t: observed.append((d, t))}
+        "M", (), {"record_inference": lambda self, d, t, **labels: observed.append((d, t))}
     )()
     timer.feed(
         [
@@ -426,7 +426,7 @@ def test_the_final_in_flight_inference_is_not_recorded_without_a_following_line(
     timer = activity.InferenceTimer(None)
     observed = []
     timer.metrics = type(
-        "M", (), {"record_inference": lambda self, d, t: observed.append((d, t))}
+        "M", (), {"record_inference": lambda self, d, t, **labels: observed.append((d, t))}
     )()
     timer.feed(
         [
@@ -442,7 +442,7 @@ def test_a_missing_or_unparsable_timestamp_is_skipped_not_crashed():
     timer = activity.InferenceTimer(None)
     observed = []
     timer.metrics = type(
-        "M", (), {"record_inference": lambda self, d, t: observed.append((d, t))}
+        "M", (), {"record_inference": lambda self, d, t, **labels: observed.append((d, t))}
     )()
     timer.feed(
         [
@@ -480,7 +480,10 @@ def test_poll_once_feeds_the_watcher_s_own_metrics_regardless_of_log_level(home)
     )
     watcher.poll_once()
     body, _ = metrics.render()
-    assert 'ccw_inference_seconds_count{output_tokens_bucket="200-500"} 1.0' in body.decode()
+    assert (
+        'ccw_inference_seconds_count{model="",output_tokens_bucket="200-500",'
+        'role="orchestrator"} 1.0'
+    ) in body.decode()
 
 
 # ---- per-tool step timing (ccw_model_step_seconds / ccw_tool_seconds) ------
@@ -602,8 +605,8 @@ def test_step_timer_feeds_ccw_model_step_and_ccw_tool_seconds():
     )
     body, _ = metrics.render()
     text = body.decode()
-    assert "ccw_model_step_seconds_count 1.0" in text
-    assert 'ccw_tool_seconds_count{tool="wait_for_priority"} 1.0' in text
+    assert 'ccw_model_step_seconds_count{role="orchestrator"} 1.0' in text
+    assert 'ccw_tool_seconds_count{role="orchestrator",tool="wait_for_priority"} 1.0' in text
 
 
 def test_step_timer_records_metrics_regardless_of_log_rank():
@@ -622,7 +625,7 @@ def test_step_timer_records_metrics_regardless_of_log_rank():
         ]
     )
     body, _ = metrics.render()
-    assert "ccw_model_step_seconds_count 1.0" in body.decode()
+    assert 'ccw_model_step_seconds_count{role="orchestrator"} 1.0' in body.decode()
 
 
 def test_step_timer_survives_malformed_and_unmatched_lines():
@@ -664,4 +667,6 @@ def test_the_watcher_feeds_the_step_timer_too(home):
     )
     watcher.poll_once()
     body, _ = metrics.render()
-    assert 'ccw_tool_seconds_count{tool="wait_for_priority"} 1.0' in body.decode()
+    assert (
+        'ccw_tool_seconds_count{role="orchestrator",tool="wait_for_priority"} 1.0' in body.decode()
+    )

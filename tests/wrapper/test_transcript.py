@@ -115,6 +115,31 @@ def test_sum_turn_tokens_groups_by_model(tmp_path):
     assert by_model == {"opus": 1, "haiku": 2}
 
 
+def test_sum_turn_tokens_counts_each_api_message_once_at_its_last_line(tmp_path):
+    # claude writes one line per content block of a response, each repeating
+    # the response's usage; the output count can grow between them.
+    def block(msg_id, text, **usage):
+        line = assistant(text, **usage)
+        line["message"]["id"] = msg_id
+        return line
+
+    path = write_jsonl(
+        tmp_path / "t.jsonl",
+        [
+            {"type": "user", "message": {"content": "go"}},
+            block("msg_1", "a", input_tokens=10, output_tokens=2, cache_read_input_tokens=100),
+            block("msg_1", "b", input_tokens=10, output_tokens=5, cache_read_input_tokens=100),
+            block("msg_1", "c", input_tokens=10, output_tokens=8, cache_read_input_tokens=100),
+            {"type": "user", "message": {"content": [{"type": "tool_result"}]}},
+            block("msg_2", "a", input_tokens=3, output_tokens=1, cache_creation_input_tokens=7),
+            block("msg_2", "b", input_tokens=3, output_tokens=4, cache_creation_input_tokens=7),
+        ],
+    )
+    (totals,) = sum_turn_tokens(path)
+    got = (totals.input, totals.output, totals.cache_read, totals.cache_creation)
+    assert got == (13, 12, 100, 7)
+
+
 def test_sum_turn_tokens_on_missing_file_is_empty(tmp_path):
     assert sum_turn_tokens(tmp_path / "nope.jsonl") == []
 

@@ -32,24 +32,35 @@ def test_record_tokens_counts_every_type_and_model():
         [{"model": "sonnet", "input": 10, "output": 3, "cache_read": 5, "cache_creation": 1}]
     )
     body = metrics.render()[0].decode()
-    assert 'ccw_turn_tokens_total{effort="",model="sonnet",type="input"} 10.0' in body
-    assert 'ccw_turn_tokens_total{effort="",model="sonnet",type="cache_read"} 5.0' in body
+    assert (
+        'ccw_turn_tokens_total{effort="",model="sonnet",role="orchestrator",type="input"} 10.0'
+        in body
+    )
+    assert (
+        'ccw_turn_tokens_total{effort="",model="sonnet",role="orchestrator",type="cache_read"} 5.0'
+        in body
+    )
 
 
 def test_record_tokens_carries_the_configured_effort_label():
     metrics = Metrics(effort="xhigh")
     metrics.record_tokens([{"model": "sonnet", "input": 10}])
     body = metrics.render()[0].decode()
-    assert 'ccw_turn_tokens_total{effort="xhigh",model="sonnet",type="input"} 10.0' in body
+    assert (
+        'ccw_turn_tokens_total{effort="xhigh",model="sonnet",role="orchestrator",type="input"} 10.0'
+        in body
+    )
 
 
 def test_record_cost_only_counts_when_the_agent_wrote_one():
     metrics = Metrics()
     metrics.record_cost(None)
     metrics.record_cost({"nothing": 1})
-    assert metrics.turn_cost_usd_total._value.get() == 0
+    assert metrics.turn_cost_usd_total.labels(role="orchestrator", model="")._value.get() == 0
     metrics.record_cost({"total_cost_usd": 0.25})
-    assert metrics.turn_cost_usd_total._value.get() == pytest.approx(0.25)
+    assert metrics.turn_cost_usd_total.labels(
+        role="orchestrator", model=""
+    )._value.get() == pytest.approx(0.25)
 
 
 def test_delivery_posts_the_full_record(monkeypatch):

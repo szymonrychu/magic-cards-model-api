@@ -15,10 +15,12 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
+from .activity import agent_turn_tokens
 from .config import Settings
-from .metrics import Metrics
+from .metrics import ORCHESTRATOR, Metrics
 from .probe import DEFAULT_PROBE_TEXT, ProbeTracker, ProbeUnavailableError
 from .pty_proc import ClaudeProcess, spawn_claude
 from .ring import Ring
@@ -176,6 +178,15 @@ class Manager:
         #: snapshot simply reports no activity and the play UI falls back
         #: to the seat's plain state word.
         self.activity_source: Callable[[], dict[str, Any] | None] | None = None
+        #: The newest transcript line any agent of the session wrote (epoch
+        #: seconds) - the orchestrator, the seat pair's players, any helper.
+        #: Set by `__main__` to the `ActivityWatcher`'s `last_progress`, for
+        #: the same reasons as `activity_source`. Left `None`, the stall timer
+        #: fires on the turn's age alone, as it always did.
+        self.progress_source: Callable[[], float | None] | None = None
+        #: Helper usage is totalled up to here (`complete`), so a turn never
+        #: counts usage an earlier turn already reported.
+        self._helper_tokens_until: float | None = None
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -437,29 +448,50 @@ class Manager:
                 raise
 
         with self._lock:
-            self._timer = threading.Timer(
-                self.settings.turn_timeout, self.mark_stall_suspected, args=(turn_id,)
-            )
-            self._timer.daemon = True
-            self._timer.start()
+            self._arm_stall_timer_locked(turn_id, self.settings.turn_timeout)
         log.info("turn submitted turn_id=%s", turn_id)
         return turn_id
+
+    def _arm_stall_timer_locked(self, turn_id: str, delay: float) -> None:
+        self._timer = threading.Timer(delay, self.mark_stall_suspected, args=(turn_id,))
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _progress(self) -> float | None:
+        """`progress_source()`, or `None` - never a raise (see `_activity`)."""
+        if self.progress_source is None:
+            return None
+        try:
+            return self.progress_source()
+        except Exception as exc:  # noqa: BLE001 - a stall check never fails
+            log.debug("could not read the agents' last progress: %s", exc)
+            return None
 
     def mark_stall_suspected(self, turn_id: str) -> None:
         """The inactivity timer fired. This is a REPORT, not a verdict: a
         wrapper inside one container cannot tell a hang from work it cannot
-        see, and a Magic turn waits on a human. Re-arm and carry on."""
+        see, and a Magic turn waits on a human. Re-arm and carry on.
+
+        Progress is any agent's transcript line since the turn started
+        (`progress_source`): with the seat pair the orchestrator sits idle
+        while its current player thinks, and that is not a stall. A line
+        within `turn_timeout` re-arms the timer for the rest of that window
+        and clears an earlier suspicion; only `turn_timeout` with no line from
+        any agent is a suspected stall."""
+        last = self._progress()
         with self._lock:
             if self._current != turn_id:
                 return
+            now = self.now()
+            timeout = self.settings.turn_timeout
+            if last is not None and last >= self._current_started and now - last < timeout:
+                self._stall_suspected_since = None
+                self._arm_stall_timer_locked(turn_id, max(0.05, timeout - (now - last)))
+                return
             if self._stall_suspected_since is None:
-                self._stall_suspected_since = self.now()
+                self._stall_suspected_since = now
             self.metrics.turn_stall_suspected_total.inc()
-            self._timer = threading.Timer(
-                self.settings.turn_timeout, self.mark_stall_suspected, args=(turn_id,)
-            )
-            self._timer.daemon = True
-            self._timer.start()
+            self._arm_stall_timer_locked(turn_id, timeout)
         log.warning("turn stall suspected turn_id=%s", turn_id)
 
     def complete(self, result: dict[str, Any]) -> None:
@@ -516,7 +548,13 @@ class Manager:
             path = result.get("transcriptPath") or ""
             if path:
                 self.transcript_path = path
+            since = self._helper_tokens_until
+            if since is None:
+                since = started
+            until = self.now()
+            self._helper_tokens_until = until
 
+        helper_tokens = self._helper_turn_tokens(self.transcript_path, since, until)
         if waited:
             log.info(
                 "background tasks finished turn_id=%s: %s; completing the turn",
@@ -528,7 +566,7 @@ class Manager:
             final_text=result.get("finalText") or "",
             result_json=result.get("resultJson"),
             usage=result.get("usage"),
-            turn_tokens=result.get("turnTokens") or [],
+            turn_tokens=list(result.get("turnTokens") or []) + helper_tokens,
             stop_reason=result.get("stopReason") or "",
             now=self.now(),
         )
@@ -537,7 +575,11 @@ class Manager:
         self.metrics.turns_total.labels(result="complete").inc()
         self.metrics.turn_duration_seconds.observe(max(0.0, self.now() - started))
         self.metrics.record_tokens(record.turn_tokens)
-        self.metrics.record_cost(record.result_json)
+        claude_costed = self.metrics.record_cost(record.result_json, model=self.settings.model)
+        self.metrics.record_token_cost(
+            record.turn_tokens,
+            skip_roles=frozenset({ORCHESTRATOR}) if claude_costed else frozenset(),
+        )
         log.info(
             "turn complete turn_id=%s seconds=%.1f stop_reason=%s final_text_chars=%d",
             turn_id,
@@ -546,6 +588,20 @@ class Manager:
             len(record.final_text),
         )
         self._deliver(record)
+
+    @staticmethod
+    def _helper_turn_tokens(path: str, since: float, until: float) -> list[dict[str, Any]]:
+        """Every subagent/teammate's usage in the turn (`agent_turn_tokens`),
+        each entry tagged with its role - the Stop hook's totals only cover
+        the orchestrator's transcript. Never a raise: a completion is not
+        worth losing over a transcript read."""
+        if not path:
+            return []
+        try:
+            return agent_turn_tokens(Path(path), since, until)
+        except Exception as exc:  # noqa: BLE001 - a completion never fails on this
+            log.warning("could not total the helpers' token usage: %s", exc)
+            return []
 
     # ---- probing ---------------------------------------------------------
 

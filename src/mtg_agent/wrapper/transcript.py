@@ -123,18 +123,24 @@ def last_turn_marker(path: Path) -> str:
 
 
 def sum_turn_tokens(path: Path) -> list[TurnTokens]:
-    """Per-model token totals for the LAST turn in the transcript."""
-    by_model: dict[str, TurnTokens] = {}
-    for line in _lines(path):
+    """Per-model token totals for the LAST turn in the transcript.
+
+    Each API message is counted once, at its last line: claude writes one
+    line per content block of a response, each repeating its usage."""
+    final: dict[str, tuple[str, dict]] = {}
+    for index, line in enumerate(_lines(path)):
         kind = line.get("type")
         message = line.get("message") or {}
         if kind == "user" and isinstance(message.get("content"), str):
-            by_model = {}
+            final = {}
             continue
         if kind != "assistant":
             continue
-        usage = message.get("usage") or {}
-        model = message.get("model") or ""
+        key = str(message.get("id") or line.get("requestId") or line.get("uuid") or f"line-{index}")
+        final.pop(key, None)
+        final[key] = (message.get("model") or "", message.get("usage") or {})
+    by_model: dict[str, TurnTokens] = {}
+    for model, usage in final.values():
         totals = by_model.setdefault(model, TurnTokens(model=model))
         totals.input += int(usage.get("input_tokens") or 0)
         totals.output += int(usage.get("output_tokens") or 0)

@@ -37,8 +37,14 @@ def test_record_inference_observes_duration_under_its_token_bucket_label() -> No
     # (which token range this observation counted against) must appear.
     assert 'output_tokens_bucket="200-500"' in text
     assert 'output_tokens_bucket="1000-2000"' in text
-    assert 'ccw_inference_seconds_count{output_tokens_bucket="200-500"} 1.0' in text
-    assert 'ccw_inference_seconds_count{output_tokens_bucket="1000-2000"} 1.0' in text
+    assert (
+        'ccw_inference_seconds_count{model="",output_tokens_bucket="200-500",'
+        'role="orchestrator"} 1.0'
+    ) in text
+    assert (
+        'ccw_inference_seconds_count{model="",output_tokens_bucket="1000-2000",'
+        'role="orchestrator"} 1.0'
+    ) in text
 
 
 def test_record_inference_buckets_small_and_very_large_outputs_too() -> None:
@@ -60,7 +66,9 @@ def test_record_inference_ignores_a_negative_duration() -> None:
 
     body, _ = m.render()
     text = body.decode()
-    assert 'ccw_inference_seconds_count{output_tokens_bucket="<200"} 1.0' not in text
+    assert (
+        'ccw_inference_seconds_count{model="",output_tokens_bucket="<200",role="orchestrator"} 1.0'
+    ) not in text
 
 
 # ---- ccw_model_step_seconds / ccw_tool_seconds / ccw_auto_answers_total ----
@@ -87,8 +95,8 @@ def test_record_step_observes_both_histograms_under_the_tool_label() -> None:
 
     body, _ = m.render()
     text = body.decode()
-    assert "ccw_model_step_seconds_count 2.0" in text
-    assert 'ccw_tool_seconds_count{tool="wait_for_priority"} 2.0' in text
+    assert 'ccw_model_step_seconds_count{role="orchestrator"} 2.0' in text
+    assert 'ccw_tool_seconds_count{role="orchestrator",tool="wait_for_priority"} 2.0' in text
 
 
 def test_record_step_ignores_a_negative_duration_independently_per_half() -> None:
@@ -102,8 +110,8 @@ def test_record_step_ignores_a_negative_duration_independently_per_half() -> Non
 
     body, _ = m.render()
     text = body.decode()
-    assert "ccw_model_step_seconds_count 1.0" in text
-    assert 'ccw_tool_seconds_count{tool="x"} 1.0' in text
+    assert 'ccw_model_step_seconds_count{role="orchestrator"} 1.0' in text
+    assert 'ccw_tool_seconds_count{role="orchestrator",tool="x"} 1.0' in text
     assert 'tool="y"' not in text, "a dropped negative tool duration must never label the series"
 
 

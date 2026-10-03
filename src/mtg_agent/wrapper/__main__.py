@@ -118,6 +118,7 @@ def main() -> None:
     # the play UI. Set after `start()`, and read lazily on every snapshot,
     # so nothing here depends on the watcher having seen anything yet.
     manager.activity_source = watcher.activity_snapshot
+    manager.progress_source = watcher.last_progress
 
     signalled = threading.Event()
 
