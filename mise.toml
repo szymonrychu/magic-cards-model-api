@@ -333,6 +333,9 @@ for f in deploy/k8s/*.yaml; do
   echo "---"
   sed "s|__TAG__|${TAG}|g" "$f"
 done
+# The per-game seat Job and buddy Job are built at runtime from deploy/seat-job.yaml;
+# render one of each so the seat-vs-buddy differences (model, role, baton) are visible.
+uv run python scripts/render_seat_jobs.py
 """
 
 [tasks."k8s:deploy"]

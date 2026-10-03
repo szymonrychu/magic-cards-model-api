@@ -533,3 +533,50 @@ def test_the_public_ingresses_do_not_route_metrics_to_the_api() -> None:
         assert paths["/metrics"]["backend"]["service"]["name"] == "mtg-metrics-deny", ingress[
             "metadata"
         ]["name"]
+
+
+# ---- `mise run k8s:render` also renders a seat Job and a buddy Job --------
+
+
+def _render_jobs() -> list[dict]:
+    from scripts.render_seat_jobs import render_jobs
+
+    return render_jobs({"AGENT_NAMESPACE": "mtg-engine", "MTG_STACK_INSTANCE_ID": "t"})
+
+
+def _env(job: dict, container: str) -> dict:
+    spec = job["spec"]["template"]["spec"]
+    c = next(c for c in spec["containers"] if c["name"] == container)
+    return {e["name"]: e.get("value") for e in c["env"]}
+
+
+def test_k8s_render_task_calls_the_seat_job_renderer() -> None:
+    mise = (ROOT / "mise.toml").read_text()
+    block = mise.split('[tasks."k8s:render"]', 1)[1].split("[tasks.", 1)[0]
+    assert "scripts/render_seat_jobs.py" in block
+
+
+def test_render_jobs_yields_a_seat_job_and_a_buddy_job() -> None:
+    seat, buddy = _render_jobs()
+    assert seat["kind"] == buddy["kind"] == "Job"
+    assert "role" not in "".join(seat["metadata"]["labels"])
+    assert any(k.endswith("role") for k in buddy["metadata"]["labels"])
+
+
+def test_rendered_seat_runs_sonnet_and_buddy_runs_opus() -> None:
+    seat, buddy = _render_jobs()
+    assert _env(seat, "agent")["MODEL"] == "claude-sonnet-5"
+    assert _env(buddy, "agent")["MODEL"] == "claude-opus-5"
+    assert _env(seat, "agent")["MTG_ROLE"] != _env(buddy, "agent")["MTG_ROLE"]
+
+
+def test_rendered_seat_requires_baton_and_buddy_does_not() -> None:
+    seat, buddy = _render_jobs()
+
+    def init_env(job: dict) -> dict:
+        spec = job["spec"]["template"]["spec"]
+        c = next(c for c in spec["initContainers"] if c["name"] == "mcp-config")
+        return {e["name"]: e.get("value") for e in c["env"]}
+
+    assert init_env(seat)["MTG_REQUIRE_BATON"] == "1"
+    assert init_env(buddy)["MTG_REQUIRE_BATON"] != "1"
