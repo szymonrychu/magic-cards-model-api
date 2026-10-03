@@ -1,0 +1,14 @@
+INFO agent step tool=Read model_ms=4000 tool_ms=100
+INFO agent step tool=Write model_ms=44000 tool_ms=200
+INFO agent step tool=battlefield_state model_ms=3000 tool_ms=50 role=current
+INFO agent step tool=pass_baton model_ms=1000 tool_ms=10
+INFO agent step tool=declare_plan model_ms=5000 tool_ms=300 role=current
+INFO agent step tool=pass_until model_ms=2000 tool_ms=9000 role=current
+WARNING agent tool failed: BATON_REQUIRED: acting tools on this seat need the current baton
+WARNING agent tool failed: BATON_STALE: this seat's turn to act moved
+WARNING agent tool failed: BATON_STALE: this seat's turn to act moved again
+WARNING agent tool failed: BATON_SPENT: that baton was already used
+WARNING agent tool failed: BATON_NOT_YET: not your turn to hold the baton
+WARNING agent tool failed: BATON_BUSY: another call holds the baton
+WARNING agent tool failed: BATON_REVOKED: the baton was taken back
+WARNING agent tool failed: BATON_BUSY: another call holds the baton
