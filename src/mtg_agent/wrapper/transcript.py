@@ -8,8 +8,9 @@ assistant message of the last turn: the single last-message usage badly
 undercounts an agentic turn that made twenty tool calls.
 `pending_background_tasks` answers "is this turn's work still running": the
 subagents, teammates and background commands the turn launched that have not
-reported back or been shut down - minus a seat pair's `future-N` helper, which
-plans for the next decision and so is never an open turn.
+reported back or been shut down. A seat pair's `current-N` and `future-N`
+`seat-player` agents count like any other: the pair runs the whole game, so
+the orchestrator's turn stays open until both have ended.
 
 A turn boundary is a `user` line whose `content` is a plain string. Tool
 results arrive as `user` lines too, but carry an array `content`, so they do
@@ -22,8 +23,6 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-
-from ..seat_pair import ROLE_CURRENT, ROLE_FUTURE
 
 #: The line `Manager.submit` appends to every turn's prompt, naming the turn.
 #: The Stop hook payload carries no turn id at all, so this is how the hook
@@ -193,48 +192,21 @@ def _launch_ids(block: dict, result: object) -> set[str] | None:
     return ids if launched else None
 
 
-_ROLE_RE = re.compile(rf"\b({ROLE_CURRENT}|{ROLE_FUTURE})-\d+\b")
 _TEAMMATE_MESSAGE_RE = re.compile(r"<teammate-message\b[^>]*>(.*?)</teammate-message>", re.DOTALL)
 _SHUT_DOWN_RE = re.compile(r"(\S+) has shut down")
 _AGENT_TOOLS = frozenset({"Agent", "Task"})
 _SHUTDOWN_RESPONSES = frozenset({"shutdown_response", "shutdown_approved"})
 
 
-def helper_role(*texts: object) -> str:
-    """`ROLE_CURRENT` / `ROLE_FUTURE` when the first of `texts` naming a seat-pair
-    helper (`current-N`, `future-N`) does, else "" (some other background task)."""
-    for text in texts:
-        match = _ROLE_RE.search(str(text or ""))
-        if match:
-            return match.group(1)
-    return ""
-
-
 @dataclass
 class _Task:
     """One piece of background work: the tool call that started it (what
     `pending_background_tasks` returns), every handle it answers to (task and
-    agent ids, a teammate's name), and its seat-pair role."""
+    agent ids, a teammate's name)."""
 
     key: str
     ids: set[str]
-    role: str = ""
     launched: bool = False
-
-
-def _meta_texts(transcript: Path, agent_id: str) -> list[str]:
-    """`name` and `description` from the helper's `agent-<id>.meta.json` beside
-    the lead transcript: a background subagent's name is only recorded there."""
-    meta = transcript.with_suffix("") / "subagents" / f"agent-{agent_id}.meta.json"
-    try:
-        data = json.loads(meta.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    return (
-        [str(data.get(key) or "") for key in ("name", "description")]
-        if isinstance(data, dict)
-        else []
-    )
 
 
 def _finished_by_tool(name: str, tool_input: dict, result: object) -> set[str]:
@@ -297,7 +269,6 @@ def _background_tasks(path: Path) -> list[_Task]:
             start = index
     live: dict[str, _Task] = {}
     tool_uses: dict[str, tuple[str, dict]] = {}
-    roles: dict[str, str] = {}  # agent id -> role, for a resume by SendMessage
 
     def finish(handles: set[str]) -> None:
         for key in [k for k, task in live.items() if task.ids & handles]:
@@ -318,11 +289,7 @@ def _background_tasks(path: Path) -> list[_Task]:
                 ):
                     # The hook can run before the launch's result is on disk;
                     # the call being unanswered is itself a pending launch.
-                    live[tool_id] = _Task(
-                        tool_id,
-                        {tool_id},
-                        helper_role(tool_input.get("name"), tool_input.get("description")),
-                    )
+                    live[tool_id] = _Task(tool_id, {tool_id})
         elif line.get("type") == "user" and isinstance(content, list):
             for block in content:
                 if not isinstance(block, dict) or block.get("type") != "tool_result":
@@ -349,23 +316,15 @@ def _background_tasks(path: Path) -> list[_Task]:
                         value = result.get(key) or tool_input.get(key)
                         if isinstance(value, str) and value:
                             handles.add(value)
-                    role = helper_role(result.get("name"), tool_input.get("name"))
-                    live[tool_id] = _Task(tool_id, handles, role, launched=True)
+                    live[tool_id] = _Task(tool_id, handles, launched=True)
                     continue
                 resumed = result.get("resumedAgentId")
                 if isinstance(resumed, str) and resumed:
-                    live[tool_id] = _Task(
-                        tool_id, {resumed, tool_id}, roles.get(resumed, ""), launched=True
-                    )
+                    live[tool_id] = _Task(tool_id, {resumed, tool_id}, launched=True)
                     continue
                 ids = _launch_ids(block, result)
                 if ids is not None:
-                    role = helper_role(tool_input.get("name"), tool_input.get("description"))
-                    for agent_id in ids:
-                        role = role or helper_role(*_meta_texts(path, agent_id))
-                    for agent_id in ids:
-                        roles[agent_id] = role
-                    live[tool_id] = _Task(tool_id, ids | {tool_id}, role, launched=True)
+                    live[tool_id] = _Task(tool_id, ids | {tool_id}, launched=True)
         for text in _prompt_texts(line):
             for body in _NOTIFICATION_RE.findall(text):
                 tags = dict(_TAG_RE.findall(body))
@@ -393,9 +352,8 @@ def pending_background_tasks(path: Path) -> list[str]:
     the task's end, may get no notification after it, so those finish a task
     too. A launch whose result is not yet written still counts.
 
-    A seat pair's `future-N` helper is left out: it plans the next decision and
-    so is never reason to hold the turn open, while a `current-N` (a decision in
-    flight) and any other helper or command are. Lines of a subagent's own
+    Every live `seat-player` (`current-N` and `future-N`) holds the turn, as does
+    any other helper or command. Lines of a subagent's own
     sidechain are not this turn's launches. Everything before the last marker
     belongs to an earlier turn."""
-    return [task.key for task in _background_tasks(path) if task.role != ROLE_FUTURE]
+    return [task.key for task in _background_tasks(path)]
