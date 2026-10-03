@@ -28,6 +28,16 @@ BATON_EXEMPT_TOOLS = frozenset(
 BATON_OK = "ok"
 BATON_REQUIRED = "BATON_REQUIRED"
 BATON_STALE = "BATON_STALE"
+BATON_ADVISOR = "BATON_ADVISOR"
+
+#: `pass_baton`'s answer to an advisor (buddy) uid. On the http `MCP_URL`
+#: path a buddy shares this process and its one store with the seats; its
+#: advisor uid is the only credential it holds, so refusing that uid is what
+#: keeps a buddy from rotating anything.
+ADVISOR_REFUSAL = (
+    f"{BATON_ADVISOR}: this uid is an advisor's (a buddy); an advisor has no baton and "
+    "may not rotate one. Only the seat's own orchestrator calls pass_baton. Nothing changed."
+)
 
 
 class BatonStore:

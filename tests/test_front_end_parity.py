@@ -952,7 +952,9 @@ def test_script_subcommands_take_their_tools_parameters_by_name():
             for action in _script_subcommand(name)._actions
             if action.dest != "help"
         }
-        expected = set(parameters) - {"player_uid", "reasoning"}
+        # `baton` is the MCP process's own access token (`baton.py`); the CLI
+        # talks to the game API, which has no baton.
+        expected = set(parameters) - {"player_uid", "reasoning", "baton"}
         assert set(actions) == expected, (name, sorted(set(actions) ^ expected))
         for dest, action in actions.items():
             parameter = parameters[dest]

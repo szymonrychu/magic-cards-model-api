@@ -1236,7 +1236,7 @@ def mcp_server(game_id: str) -> Any:
     return build_server(seats_for(game_id))
 
 
-def test_the_buddy_gets_the_same_twenty_seven_tools(client: TestClient, game: str) -> None:
+def test_the_buddy_gets_the_same_twenty_eight_tools(client: TestClient, game: str) -> None:
     """One server, one toolset: there is no advisor-only tool and no tool an
     advisor is denied - `contract/tools.json` is the committed list, and this
     pins that advise mode did not fork it."""
@@ -1247,9 +1247,9 @@ def test_the_buddy_gets_the_same_twenty_seven_tools(client: TestClient, game: st
     }
 
     assert names == committed
-    assert len(names) == 27, (
+    assert len(names) == 28, (
         "19 plus run_script, list_scripts, equip, stage_advice, stage_script, "
-        "turn_face_up, bring_companion, unlock_door"
+        "turn_face_up, bring_companion, unlock_door, pass_baton"
     )
 
 

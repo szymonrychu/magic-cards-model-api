@@ -129,7 +129,7 @@ from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from . import seatkit
 from .background_autopass import BackgroundRuns
-from .baton import BATON_EXEMPT_TOOLS, BATON_OK, BatonStore, refusal
+from .baton import ADVISOR_REFUSAL, BATON_EXEMPT_TOOLS, BATON_OK, BatonStore, refusal
 from .mcp_descriptions import BATON_DESCRIPTION, SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS
 from .playscripts import script_tools
 from .seatkit import (
@@ -3624,9 +3624,12 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         """The orchestrator's tool: rotate the baton of seat `player_uid`.
         Returns the fresh token, which the new current agent passes as
         `baton` on every acting call; the previous token stops working. It
-        never acts in the game."""
-        if resolve(player_uid) is None:
+        never acts in the game. Refused for an advisor uid (`ADVISOR_REFUSAL`)."""
+        seat = resolve(player_uid)
+        if seat is None:
             return NO_SUCH_SEAT
+        if seat.advise:
+            return ADVISOR_REFUSAL
         token = seats.baton.issue(player_uid.strip())
         return _dump({"baton": token, "description": BATON_DESCRIPTION})
 

@@ -135,8 +135,10 @@ def test_the_plain_pass_takes_no_run_arguments() -> None:
     framework-injected `ctx: Context` parameter now (the MCP protocol-version
     fix, so its answer can be shaped for whichever revision the caller
     actually negotiated), which the framework itself excludes from what a
-    caller can see or pass, same as it always excluded `self`."""
-    parameters = set(tool_registry()["pass"].parameters.get("properties", {}))
+    caller can see or pass, same as it always excluded `self`. `baton` is
+    left out the same way: it is the seat-pair access token every acting tool
+    takes (`baton.py`), not an argument about the run."""
+    parameters = set(tool_registry()["pass"].parameters.get("properties", {})) - {"baton"}
     assert parameters == {"player_uid", "reasoning"}, sorted(parameters)
 
     flags = {

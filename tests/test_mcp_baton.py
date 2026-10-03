@@ -428,3 +428,58 @@ def test_http_transport_enforces_per_uid_over_a_real_socket(client, game, monkey
     assert required.startswith("BATON_REQUIRED:")
     assert not accepted.startswith("BATON_")
     assert not bob.startswith("BATON_")
+
+
+# ---- a buddy shares the http MCP process, never the seat's baton ----
+#
+# On the http `MCP_URL` path one process serves every seat and every buddy
+# (advisor uid) of every live game from ONE `BatonStore`, keyed by uid. The
+# buddy is a top-level claude with the same tool surface as a seat (advise
+# mode forks no toolset), so it can call `pass_baton`. The only uid it holds
+# is its own advisor credential, and `pass_baton` refuses an advisor uid: a
+# buddy can neither rotate the seat's baton nor start enforcement on itself.
+
+
+def test_a_buddy_on_the_shared_server_cannot_rotate_a_baton(client, game, monkeypatch):
+    from magic_cards_model_api.repository import Advisor
+    from magic_cards_model_api.store import store
+
+    seats, uids = wired(client, monkeypatch, game, resolve_by_uid=True)
+    server = mcp.build_server(seats)
+    store.register_advisors(game, {"buddy-uid": Advisor(player="alice")})
+    seat_token = pass_baton(server, uids["alice"])
+
+    refused = call(server, "pass_baton", {"player_uid": "buddy-uid"})
+
+    assert refused.startswith("BATON_ADVISOR:"), refused
+    assert "advisor" in refused.lower() and "orchestrator" in refused.lower()
+    assert not seats.baton.enforced("buddy-uid")
+    assert seats.baton.check(uids["alice"], seat_token) == BATON_OK
+    add_card(client, game, "Plains", "alice", "hand")
+    played = json.loads(
+        call(
+            server,
+            "play_land",
+            {
+                "player_uid": uids["alice"],
+                "card": "Plains",
+                "reasoning": "still the holder",
+                "baton": seat_token,
+            },
+        )
+    )
+    assert played["outcome"]["allowed"] is True
+
+
+def test_an_advisor_lookup_never_reveals_the_seat_uid(client, game):
+    """The buddy's only way to name the seat's baton is the seat uid, a
+    separate credential the advisor lookup does not hand out."""
+    from magic_cards_model_api.repository import Advisor
+    from magic_cards_model_api.store import store
+
+    store.register_advisors(game, {"buddy-uid": Advisor(player="alice")})
+    seat = next(uid for uid, name in store.seat_uids(game).items() if name == "alice")
+    answer = client.get("/api/seats/buddy-uid")
+    assert answer.status_code == 200
+    assert answer.json()["role"] == "advisor"
+    assert seat not in answer.text
