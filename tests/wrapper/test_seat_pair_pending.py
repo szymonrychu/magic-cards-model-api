@@ -1,11 +1,12 @@
-"""A live `future-*` helper is not an open turn; a live `current-*` is.
+"""Every live seat-player (`current-*` and `future-*`) holds the orchestrator's turn.
 
 The seat's orchestrator drives a `current-N` and a `future-N` `seat-player`.
 The wrapper's Stop hook lists the background work still running
 (`pendingTasks`) and `Manager.complete` keeps the turn open while it is not
-empty. A future that idles for the whole game must not hold the turn; a
-current (a decision in flight) must, on both channels. Any other background
-task (rules-researcher, Bash) keeps its old behaviour.
+empty. The pair runs the whole game, so while either agent is alive the
+orchestrator's wrapper turn stays open on both channels and no turn-done
+reaches the driver mid-game. Any other background task (rules-researcher,
+Bash) behaves as before.
 
 The transcripts are T1's recorded claude 2.1.282 runs (`fixtures/seat_pair`).
 They name their helpers `alpha` and `beta`, so each test renames them to
@@ -76,18 +77,16 @@ CURRENT_ALPHA = {"alpha": "current-1", "beta": "future-1"}
 # ---- subagents channel --------------------------------------------------------------------
 
 
-def test_subagents_only_the_current_holds_the_turn(tmp_path):
+def test_subagents_the_whole_pair_holds_the_turn(tmp_path):
     lines = variant(tmp_path, "subagents", FUTURE_ALPHA)
-    # 35: both launched, future alpha not counted.
-    # 67: beta (current) resumed by SendMessage - the old code lost it (0).
-    # 78: beta reported, alpha (future) resumed.
-    # 101: beta resumed, then stopped.
-    assert pending_at(tmp_path, lines, SUBAGENT_STOPS) == [1, 1, 0, 0]
+    # 35: both launched. 67: beta (current) resumed by SendMessage.
+    # 78: beta reported, alpha (future) resumed. 101: beta resumed, then stopped.
+    assert pending_at(tmp_path, lines, SUBAGENT_STOPS) == [2, 1, 1, 0]
 
 
-def test_subagents_mirrored_roles_flip_the_answer(tmp_path):
+def test_subagents_mirrored_roles_hold_alike(tmp_path):
     lines = variant(tmp_path, "subagents", CURRENT_ALPHA)
-    assert pending_at(tmp_path, lines, SUBAGENT_STOPS) == [1, 0, 1, 0]
+    assert pending_at(tmp_path, lines, SUBAGENT_STOPS) == [2, 1, 1, 0]
 
 
 def test_subagents_other_background_agents_keep_holding_the_turn(tmp_path):
@@ -98,7 +97,7 @@ def test_subagents_other_background_agents_keep_holding_the_turn(tmp_path):
 def test_a_subagent_resumed_by_sendmessage_is_tracked_until_it_reports(tmp_path):
     lines = variant(tmp_path, "subagents", FUTURE_ALPHA)
     ids = pending_background_tasks(stops_at(tmp_path, lines, 67))
-    assert ids == ["toolu_01JcZJYqhhmNdihTG28HzbgF"]  # the resuming SendMessage
+    assert "toolu_01JcZJYqhhmNdihTG28HzbgF" in ids  # the resuming SendMessage
 
 
 def test_a_launch_whose_result_is_not_on_disk_yet_still_counts(tmp_path):
@@ -106,24 +105,24 @@ def test_a_launch_whose_result_is_not_on_disk_yet_still_counts(tmp_path):
     calls were still unanswered (`stop_reason=tool_use`) and deferred nothing."""
     lines = variant(tmp_path, "subagents", {"alpha": "current-1", "beta": "future-1"})
     assert len(pending_background_tasks(stops_at(tmp_path, lines, 23))) == 1
-    assert len(pending_background_tasks(stops_at(tmp_path, lines, 25))) == 1
+    assert len(pending_background_tasks(stops_at(tmp_path, lines, 25))) == 2
     future_only = variant(tmp_path / "f", "subagents", {"alpha": "future-1", "beta": "future-2"})
-    assert pending_background_tasks(stops_at(tmp_path, future_only, 25)) == []
+    assert len(pending_background_tasks(stops_at(tmp_path, future_only, 25))) == 2
 
 
 # ---- teams channel ------------------------------------------------------------------------
 
 
-def test_teams_the_live_current_holds_the_turn_until_it_is_shut_down(tmp_path):
+def test_teams_the_live_pair_holds_the_turn_until_it_is_shut_down(tmp_path):
     lines = variant(tmp_path, "teams", FUTURE_ALPHA)
-    # Only beta (current) counts through every Stop until the lead's
-    # shutdown_request rows (65-68); at 71 both are gone.
-    assert pending_at(tmp_path, lines, TEAM_STOPS) == [1, 1, 1, 1, 0, 0]
+    # Both count through every Stop until the lead's shutdown_request rows
+    # (65-68); at 71 both are gone.
+    assert pending_at(tmp_path, lines, TEAM_STOPS) == [2, 2, 2, 2, 0, 0]
 
 
 def test_teams_mirrored_roles(tmp_path):
     lines = variant(tmp_path, "teams", CURRENT_ALPHA)
-    assert pending_at(tmp_path, lines, TEAM_STOPS) == [1, 1, 1, 1, 0, 0]
+    assert pending_at(tmp_path, lines, TEAM_STOPS) == [2, 2, 2, 2, 0, 0]
 
 
 def test_teams_other_teammates_keep_holding_the_turn(tmp_path):
@@ -131,16 +130,16 @@ def test_teams_other_teammates_keep_holding_the_turn(tmp_path):
     assert pending_at(tmp_path, lines, TEAM_STOPS) == [2, 2, 2, 2, 0, 0]
 
 
-def test_teams_two_futures_never_hold_the_turn(tmp_path):
+def test_teams_two_futures_hold_the_turn(tmp_path):
     lines = variant(tmp_path, "teams", {"alpha": "future-1", "beta": "future-2"})
-    assert pending_at(tmp_path, lines, TEAM_STOPS) == [0] * 6
+    assert pending_at(tmp_path, lines, TEAM_STOPS) == [2, 2, 2, 2, 0, 0]
 
 
 def test_teams_the_idle_current_is_still_alive(tmp_path):
     """Both teammates have sent idle_notification by row 44; an idle teammate
     is alive and takes the next SendMessage."""
     lines = variant(tmp_path, "teams", FUTURE_ALPHA)
-    assert len(pending_background_tasks(stops_at(tmp_path, lines, 44))) == 1
+    assert len(pending_background_tasks(stops_at(tmp_path, lines, 44))) == 2
 
 
 # ---- ending a helper however it ends -------------------------------------------------------
@@ -184,7 +183,16 @@ def test_a_teammate_stopped_by_taskstop_is_finished(tmp_path):
             ),
         ],
     )
-    assert pending_background_tasks(path) == []
+    assert pending_background_tasks(path) == ["toolu_F"]
+    stop_future = [
+        assistant_tool("toolu_S2", "TaskStop", task_id="future-1"),
+        tool_result("toolu_S2", "stopped", {"message": "Successfully stopped task"}),
+    ]
+    write(
+        tmp_path / "u.jsonl",
+        [*(json.loads(x) for x in path.read_text().splitlines()), *stop_future],
+    )
+    assert pending_background_tasks(tmp_path / "u.jsonl") == []
 
 
 def test_a_teammate_that_shut_down_is_finished(tmp_path):
@@ -255,16 +263,16 @@ def test_a_killed_subagent_notification_finishes_it(tmp_path):
 
 
 @pytest.mark.parametrize(("channel", "stop"), [("subagents", 35), ("teams", 35)])
-def test_the_stop_hook_lists_only_open_turn_work(tmp_path, channel, stop):
+def test_the_stop_hook_lists_the_live_pair(tmp_path, channel, stop):
     lines = variant(tmp_path, channel, FUTURE_ALPHA)
     path = stops_at(tmp_path, lines, stop)
     payload = json.dumps({"session_id": "s", "transcript_path": str(path)}).encode()
     result = stop_hook.build_result(payload, tmp_path / "absent.json")
-    assert len(result["pendingTasks"]) == 1
+    assert len(result["pendingTasks"]) == 2
 
 
 @pytest.mark.parametrize("channel", ["subagents", "teams"])
-def test_a_stop_with_only_a_future_live_completes_the_turn(monkeypatch, tmp_path, channel):
+def test_a_stop_with_only_a_future_live_defers_the_turn(monkeypatch, tmp_path, channel):
     from mtg_agent.wrapper.turns import TurnState
     from tests.wrapper.test_session import FakeProc, ready_manager
 
@@ -277,6 +285,132 @@ def test_a_stop_with_only_a_future_live_completes_the_turn(monkeypatch, tmp_path
         result = stop_hook.build_result(payload, tmp_path / "absent.json")
         result["turnId"] = turn_id
         manager.complete(result)
+        assert manager.store.get(turn_id).state is not TurnState.COMPLETE
+    finally:
+        manager.shutdown()
+
+
+# ---- the pair across a promotion, and the attempt-4 shape ----------------------------------
+
+
+def seat_player(tool_id: str, name: str) -> list[dict]:
+    """A background `seat-player` subagent launch and its answer."""
+    return [
+        use(
+            tool_id,
+            "Agent",
+            {"name": name, "subagent_type": "seat-player", "run_in_background": True},
+        ),
+        tool_result(
+            tool_id,
+            "Async agent launched successfully.\nagentId: " + tool_id,
+            {"isAsync": True, "status": "async_launched", "agentId": tool_id},
+        ),
+    ]
+
+
+def test_a_pair_alive_after_a_promotion_by_sendmessage_is_pending(tmp_path):
+    path = write(
+        tmp_path / "t.jsonl",
+        [
+            prompt(HANDOVER),
+            *seat_player("toolu_C", "current-1"),
+            *seat_player("toolu_F", "future-1"),
+            use("toolu_P", "SendMessage", {"to": "toolu_F", "message": "you are current"}),
+            tool_result("toolu_P", "resumed", {"success": True, "resumedAgentId": "toolu_F"}),
+        ],
+    )
+    assert len(pending_background_tasks(path)) == 3
+
+
+def test_old_current_ended_and_a_new_future_spawned_is_still_pending(tmp_path):
+    path = write(
+        tmp_path / "t.jsonl",
+        [
+            prompt(HANDOVER),
+            *seat_player("toolu_C", "current-1"),
+            *seat_player("toolu_F", "future-1"),
+            prompt(notification("toolu_C", "toolu_C", "completed")),
+            *seat_player("toolu_F2", "future-2"),
+        ],
+    )
+    assert pending_background_tasks(path) == ["toolu_F", "toolu_F2"]
+
+
+def test_both_stopped_leaves_nothing_pending_and_the_turn_completes(monkeypatch, tmp_path):
+    from mtg_agent.wrapper.turns import TurnState
+    from tests.wrapper.test_session import FakeProc, ready_manager
+
+    path = write(
+        tmp_path / "t.jsonl",
+        [
+            prompt(HANDOVER),
+            *seat_player("toolu_C", "current-1"),
+            *seat_player("toolu_F", "future-1"),
+            assistant_tool("toolu_S", "TaskStop", task_id="toolu_C"),
+            tool_result("toolu_S", "stopped", {"message": "stopped"}),
+            prompt(notification("toolu_F", "toolu_F", "killed")),
+        ],
+    )
+    assert pending_background_tasks(path) == []
+    manager = ready_manager(monkeypatch, FakeProc(b"ready"))
+    try:
+        turn_id = manager.submit("play")
+        payload = json.dumps({"session_id": "s", "transcript_path": str(path)}).encode()
+        result = stop_hook.build_result(payload, tmp_path / "absent.json")
+        result["turnId"] = turn_id
+        manager.complete(result)
         assert manager.store.get(turn_id).state is TurnState.COMPLETE
+    finally:
+        manager.shutdown()
+
+
+def test_a_rules_researcher_still_counts(tmp_path):
+    path = write(
+        tmp_path / "t.jsonl",
+        [
+            prompt(HANDOVER),
+            use("toolu_R", "Agent", {"name": "rules-researcher", "run_in_background": True}),
+            tool_result(
+                "toolu_R",
+                "Async agent launched successfully.\nagentId: r1",
+                {"isAsync": True, "status": "async_launched", "agentId": "r1"},
+            ),
+        ],
+    )
+    assert pending_background_tasks(path) == ["toolu_R"]
+
+
+def test_attempt_four_orchestrator_idling_never_completes_a_turn_while_the_pair_runs(
+    monkeypatch, tmp_path
+):
+    """The orchestrator idles 15 times (a Stop hook each) while the pair runs:
+    every one defers; only once both agents end does the turn complete."""
+    from mtg_agent.wrapper.turns import TurnState
+    from tests.wrapper.test_session import FakeProc, ready_manager
+
+    manager = ready_manager(monkeypatch, FakeProc(b"ready"))
+    try:
+        turn_id = manager.submit("play")
+        lines = [
+            prompt(f"{HANDOVER}\n<!-- wrapper turn: {turn_id} -->"),
+            *seat_player("toolu_C", "current-1"),
+            *seat_player("toolu_F", "future-1"),
+        ]
+        path = tmp_path / "t.jsonl"
+
+        def stop() -> TurnState:
+            write(path, lines)
+            payload = json.dumps({"session_id": "s", "transcript_path": str(path)}).encode()
+            result = stop_hook.build_result(payload, tmp_path / "absent.json")
+            manager.complete(result)
+            return manager.store.get(turn_id).state
+
+        for i in range(15):
+            assert stop() is not TurnState.COMPLETE, f"idle {i} completed the turn"
+        lines.append(prompt(notification("toolu_C", "toolu_C", "completed")))
+        assert stop() is not TurnState.COMPLETE
+        lines.append(prompt(notification("toolu_F", "toolu_F", "completed")))
+        assert stop() is TurnState.COMPLETE
     finally:
         manager.shutdown()

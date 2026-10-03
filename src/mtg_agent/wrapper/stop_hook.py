@@ -46,7 +46,7 @@ def build_result(payload: bytes, result_json_path: Path) -> dict:
         "turnId": "",
         #: The open-turn work the turn launched that has not ended
         #: (`pending_background_tasks`): subagents, teammates and background
-        #: commands, but not a seat pair's `future-N` helper. While any is
+        #: commands, and both agents of a seat pair. While any is
         #: listed, `Manager.complete` keeps the turn in flight.
         "pendingTasks": [],
     }
