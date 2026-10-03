@@ -128,9 +128,35 @@ def test_the_buddys_agent_settings_live_in_the_advisor_entry(client: TestClient)
     created = boot(client)
     game_id = created["game_id"]
     advisor = store.advisor_uids(game_id)[created["advisor_uids"]["you"]]
-    assert advisor.agent == AgentSettings.default({})
+    assert advisor.agent == AgentSettings.advisor_default({})
     assert "you" not in store.agent_settings(game_id)
     assert list(store.agent_settings(game_id)) == ["bot"]
+
+
+def test_the_buddy_runs_opus_while_the_seat_orchestrator_runs_sonnet(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T6 owner decision: AGENT_DEFAULT_MODEL moves the seat to Sonnet, the
+    buddy stays pinned to Opus through ADVISOR_MODEL (default claude-opus-5)."""
+    monkeypatch.setenv("AGENT_DEFAULT_MODEL", "claude-sonnet-5")
+    monkeypatch.delenv("ADVISOR_MODEL", raising=False)
+    created = boot(client)
+    game_id = created["game_id"]
+    advisor = store.advisor_uids(game_id)[created["advisor_uids"]["you"]]
+    assert advisor.agent is not None and advisor.agent.model == "claude-opus-5"
+    assert store.agent_settings(game_id)["bot"].model == "claude-sonnet-5"
+    # The restart path (`ai_seat_api._resolve`) resolves the same split.
+    from magic_cards_model_api import ai_seat_api
+
+    seat_uid = created["seat_uids"]["bot"]
+    for uid, role, model in (
+        (created["advisor_uids"]["you"], "advisor", "claude-opus-5"),
+        (seat_uid, "seat", "claude-sonnet-5"),
+    ):
+        field = "advisor_uid" if role == "advisor" else "uid"
+        req = ai_seat_api.StartAiSeat(**{field: uid})
+        _, resolved_role, _, agent = ai_seat_api._resolve(game_id, req)
+        assert (resolved_role, agent.model) == (role, model)
 
 
 def test_buddy_agent_field_is_rejected_even_with_buddy_true(client: TestClient) -> None:
@@ -310,7 +336,7 @@ def test_game_seats_lists_the_advisor_with_its_role_player_and_status(
     assert len(advisors) == 1
     advisor = advisors[0]
     assert advisor["player"] == "you"
-    assert advisor["agent"]["model"] == "claude-sonnet-5"
+    assert advisor["agent"]["model"] == "claude-opus-5"
     assert advisor["ai_seat"]["role"] == "advisor"
     # The seat rows are untouched and still say what they always said.
     seats = [row for row in rows if row.get("role", "seat") == "seat"]
@@ -1164,16 +1190,16 @@ def test_a_game_created_through_the_lobby_form_with_the_buddy_registers_an_advis
     advisors = store.advisor_uids(created["game_id"])
     assert list(advisors) == [uid]
     assert advisors[uid].player == "you"
-    assert advisors[uid].agent == AgentSettings.default({})
+    assert advisors[uid].agent == AgentSettings.advisor_default({})
     assert set(store.agent_settings(created["game_id"])) == {"bot"}
 
 
-def test_a_buddy_with_no_settings_runs_as_the_play_default(client: TestClient) -> None:
+def test_a_buddy_with_no_settings_runs_as_the_advisor_default(client: TestClient) -> None:
     created = boot(client)
     uid = created["advisor_uids"]["you"]
     advisor = store.advisor_uids(created["game_id"])[uid]
     assert advisor.agent is not None
-    assert advisor.agent.model == "claude-sonnet-5"
+    assert advisor.agent.model == "claude-opus-5"
 
 
 def test_the_advisor_wrapper_prose_says_its_legal_plays_arrive_on_the_wake() -> None:

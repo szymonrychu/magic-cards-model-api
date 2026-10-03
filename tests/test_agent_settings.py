@@ -86,3 +86,16 @@ def test_env_and_args() -> None:
     assert settings.env() == {"MODEL": "fable", "EFFORT": "max", "MAX_THINKING_TOKENS": "0"}
     assert settings.claude_args() == ["--model", "fable", "--effort", "max"]
     assert "MAX_THINKING_TOKENS" not in AgentSettings(model="sonnet", effort="high").env()
+
+
+def test_advisor_default_is_opus_unless_advisor_model_overrides() -> None:
+    """T6 owner decision: the buddy/advisor stays on Opus even though
+    AGENT_DEFAULT_MODEL moves the seat to Sonnet. Effort follows the seat's
+    AGENT_DEFAULT_EFFORT; only the model is pinned separately."""
+    assert AgentSettings.advisor_default({}).model == "claude-opus-5"
+    env = {"AGENT_DEFAULT_MODEL": "claude-sonnet-5", "AGENT_DEFAULT_EFFORT": "medium"}
+    advisor = AgentSettings.advisor_default(env)
+    assert (advisor.model, advisor.effort) == ("claude-opus-5", "medium")
+    assert AgentSettings.default(env).model == "claude-sonnet-5"
+    assert AgentSettings.advisor_default({"ADVISOR_MODEL": " claude-x "}).model == "claude-x"
+    assert AgentSettings.advisor_default({"ADVISOR_MODEL": "  "}).model == "claude-opus-5"

@@ -258,6 +258,7 @@ def test_mcp_config_script_emits_stdio_mtg_entry_when_mcp_url_empty(tmp_path: Pa
             "g1",
             "--transport",
             "stdio",
+            "--require-baton",
         ],
         "alwaysLoad": True,
     }
@@ -1976,3 +1977,106 @@ def test_reconcile_deletes_a_review_job_once_its_game_is_gone() -> None:
     report = seats.reconcile(lambda: set())
     assert "mtg-review-g1-u1" in report["deleted"]
     assert batch.jobs == {}
+
+
+# ---- T6: seat-pair env, strict baton for seats only, Opus buddy -------------
+
+SEAT_PAIR_PLACEHOLDERS = (
+    "__SEAT_AGENT_CHANNEL__",
+    "__SEAT_SUBAGENT_MODEL__",
+    "__SEAT_SUBAGENT_EFFORT__",
+    "__MTG_REQUIRE_BATON__",
+)
+
+
+def _env_of(job: dict, container: str) -> dict:
+    return {e["name"]: e.get("value") for e in _container(job, container)["env"]}
+
+
+def _mtg_stdio_args(job: dict, tmp_path: Path) -> list[str]:
+    return _run_mcp_config_script(job, tmp_path)["mcpServers"]["mtg"]["args"]
+
+
+def test_the_seat_pair_placeholders_are_in_the_closed_set() -> None:
+    for token in SEAT_PAIR_PLACEHOLDERS:
+        assert token in SEAT_JOB_PLACEHOLDERS, token
+
+
+def test_the_seat_pair_env_defaults_to_the_t1_verdict_on_agent_and_driver() -> None:
+    job = _build()
+    for container in ("agent", "driver"):
+        env = _env_of(job, container)
+        assert env["SEAT_AGENT_CHANNEL"] == "teams", container
+        assert env["SEAT_SUBAGENT_MODEL"] == "claude-opus-5", container
+        assert env["SEAT_SUBAGENT_EFFORT"] == "", container
+
+
+def test_switching_the_channel_is_an_env_change_only() -> None:
+    env = {
+        **ENV,
+        "SEAT_AGENT_CHANNEL": "subagents",
+        "SEAT_SUBAGENT_MODEL": "claude-sonnet-5",
+        "SEAT_SUBAGENT_EFFORT": "high",
+    }
+    job = _build(env)
+    for container in ("agent", "driver"):
+        got = _env_of(job, container)
+        assert got["SEAT_AGENT_CHANNEL"] == "subagents"
+        assert got["SEAT_SUBAGENT_MODEL"] == "claude-sonnet-5"
+        assert got["SEAT_SUBAGENT_EFFORT"] == "high"
+
+
+def test_an_invalid_channel_is_a_startup_error() -> None:
+    with pytest.raises(ValueError, match="SEAT_AGENT_CHANNEL"):
+        K8sSettings.from_env({**ENV, "SEAT_AGENT_CHANNEL": "carrier-pigeon"})
+
+
+def test_the_seat_jobs_stdio_mtg_server_requires_the_baton(tmp_path: Path) -> None:
+    job = _build({**ENV, "MCP_SERVICE_URL": ""})
+    assert "--require-baton" in _mtg_stdio_args(job, tmp_path)
+
+
+def test_the_baton_is_not_required_when_the_channel_is_off(tmp_path: Path) -> None:
+    job = _build({**ENV, "MCP_SERVICE_URL": "", "SEAT_AGENT_CHANNEL": "off"})
+    assert "--require-baton" not in _mtg_stdio_args(job, tmp_path)
+
+
+def test_the_buddy_job_never_requires_the_baton(tmp_path: Path) -> None:
+    job = _build_advisor({**ENV, "MCP_SERVICE_URL": ""})
+    assert "--require-baton" not in _mtg_stdio_args(job, tmp_path)
+
+
+def test_the_http_mcp_path_has_no_flag_and_relies_on_baton_issuance(tmp_path: Path) -> None:
+    """With `MCP_SERVICE_URL` set the `mtg` server is a shared http service the
+    Job cannot pass argv to: enforcement there is issuance alone (T3 rule (e):
+    once a baton is issued for a uid it is enforced), so the config carries
+    no flag and no stdio args at all."""
+    rendered = _run_mcp_config_script(_build(ENV), tmp_path)
+    assert rendered["mcpServers"]["mtg"] == {
+        "type": "http",
+        "url": ENV["MCP_SERVICE_URL"],
+        "alwaysLoad": True,
+    }
+
+
+def test_a_buddy_job_runs_the_advisor_model_not_the_seat_default() -> None:
+    """Prod split: the seat orchestrator is Sonnet (AGENT_DEFAULT_MODEL), the
+    buddy Job is rendered with `AgentSettings.advisor_default` = Opus."""
+    env = {"AGENT_DEFAULT_MODEL": "claude-sonnet-5"}
+    seat = build_job(
+        K8sSettings.from_env(ENV),
+        game_id="g1",
+        uid="u1",
+        player="bot",
+        agent=AgentSettings.default(env),
+    )
+    buddy = build_job(
+        K8sSettings.from_env(ENV),
+        game_id="g1",
+        uid="a1",
+        player="you",
+        agent=AgentSettings.advisor_default(env),
+        role="advisor",
+    )
+    assert _env_of(seat, "agent")["MODEL"] == "claude-sonnet-5"
+    assert _env_of(buddy, "agent")["MODEL"] == "claude-opus-5"

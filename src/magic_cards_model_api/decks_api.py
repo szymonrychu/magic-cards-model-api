@@ -172,8 +172,9 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
     # gives the reason (two advisors on one seat, and an advisor on a seat
     # that is itself an AI seat, both collide in a name-keyed map), which is
     # also why this does not go through `register_agent_settings`.
+    advisor_agent = AgentSettings.advisor_default(os.environ)
     advisors = {
-        uuid4().hex: Advisor(player=player.username, agent=AgentSettings.default(os.environ))
+        uuid4().hex: Advisor(player=player.username, agent=advisor_agent)
         for player in req.players
         if player.buddy
     }
@@ -277,7 +278,7 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
                 game_id=game_id,
                 player=advisor.player,
                 api_base=api_base,
-                agent=advisor.agent or AgentSettings.default(os.environ),
+                agent=advisor.agent or AgentSettings.advisor_default(os.environ),
                 role=ai_seat.ROLE_ADVISOR,
             )
     answer: dict[str, Any] = {

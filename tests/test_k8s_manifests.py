@@ -177,7 +177,7 @@ def test_the_play_ui_host_is_fronted_by_oauth2_proxy_not_basic_auth() -> None:
     ingress = by_name(docs, "Ingress", "mtg-stack-sso")
     (rule,) = ingress["spec"]["rules"]
     assert rule["host"] == "play-magic.szymonrichert.pl"
-    (path,) = rule["http"]["paths"]
+    path = next(p for p in rule["http"]["paths"] if p["path"] == "/")
     assert path["backend"]["service"]["name"] == "mtg-oauth2-proxy"
     assert path["backend"]["service"]["port"]["number"] == 80
     annotations = set(ingress["metadata"].get("annotations", {}))
@@ -202,7 +202,7 @@ def test_the_escape_hatch_keeps_basic_auth_on_its_own_host() -> None:
     ingress = by_name(docs, "Ingress", "mtg-stack")
     (rule,) = ingress["spec"]["rules"]
     assert rule["host"] == "pl.szymonrichert.pl"
-    (path,) = rule["http"]["paths"]
+    path = next(p for p in rule["http"]["paths"] if p["path"] == "/")
     assert path["backend"]["service"]["name"] == "mtg-stack"
     assert path["backend"]["service"]["port"]["number"] == 8000
     annotations = ingress["metadata"]["annotations"]
@@ -489,3 +489,47 @@ def test_the_api_requests_its_realistic_steady_state_and_keeps_the_1gi_limit() -
     (game,) = deploy["spec"]["template"]["spec"]["containers"]
     assert game["resources"]["requests"]["memory"] == "512Mi"
     assert game["resources"]["limits"]["memory"] == "1Gi"
+
+
+def _api_deployment() -> dict:
+    return by_name(rendered(), "Deployment", "mtg-stack")
+
+
+def test_the_api_seats_default_to_sonnet_and_the_buddy_stays_opus() -> None:
+    env = _api_env()
+    assert env["AGENT_DEFAULT_MODEL"]["value"] == "claude-sonnet-5"
+    assert env["ADVISOR_MODEL"]["value"] == "claude-opus-5"
+
+
+def test_the_api_publishes_the_seat_pair_env_the_seat_jobs_are_rendered_from() -> None:
+    env = _api_env()
+    assert env["SEAT_AGENT_CHANNEL"]["value"] == "teams"
+    assert env["SEAT_SUBAGENT_MODEL"]["value"] == "claude-opus-5"
+    assert env["SEAT_SUBAGENT_EFFORT"]["value"] == ""
+
+
+def test_the_game_pod_is_annotated_for_prometheus_scraping() -> None:
+    annotations = _api_deployment()["spec"]["template"]["metadata"]["annotations"]
+    assert annotations["prometheus.io/scrape"] == "true"
+    assert annotations["prometheus.io/port"] == "8000"
+    assert annotations["prometheus.io/path"] == "/metrics"
+
+
+def test_the_public_ingresses_do_not_route_metrics_to_the_api() -> None:
+    """GET /metrics has no auth in the cluster and oauth2-proxy only covers
+    the external ingress, so /metrics must never reach the API through an
+    Ingress. `/metrics` is routed to a Service with no endpoints instead
+    (nginx answers 503); no auth-url/auth-signin annotation is involved."""
+    docs = rendered()
+    deny = by_name(docs, "Service", "mtg-metrics-deny")
+    assert deny["spec"]["selector"] == {"app": "mtg-metrics-deny"}
+    assert not any(
+        d["spec"]["template"]["metadata"]["labels"].get("app") == "mtg-metrics-deny"
+        for d in by_kind(docs, "Deployment")
+    )
+    for ingress in by_kind(docs, "Ingress"):
+        (rule,) = ingress["spec"]["rules"]
+        paths = {p["path"]: p for p in rule["http"]["paths"]}
+        assert paths["/metrics"]["backend"]["service"]["name"] == "mtg-metrics-deny", ingress[
+            "metadata"
+        ]["name"]

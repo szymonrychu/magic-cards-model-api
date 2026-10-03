@@ -61,6 +61,8 @@ from kubernetes import config as k8s_config
 from kubernetes import watch as k8s_watch
 from kubernetes.client.exceptions import ApiException
 
+from mtg_agent.seat_pair import Channel
+
 from .agent_settings import AgentSettings
 
 logger = logging.getLogger(__name__)
@@ -195,6 +197,13 @@ class K8sSettings:
     #: `LABEL_INSTANCE` and the only Jobs its `reconcile` will delete. Empty
     #: means "owns nothing": such a `K8sSeats` reaps no Job at all.
     instance_id: str = ""
+    #: The seat pair (T2/T6): `SEAT_AGENT_CHANNEL` (`off`|`teams`|`subagents`,
+    #: default the T1 verdict `teams`), the `seat-player` agents' model and an
+    #: optional effort. Rendered identically into the agent and driver
+    #: containers; switching to the fallback channel is an env change only.
+    seat_agent_channel: Channel = Channel.TEAMS
+    seat_subagent_model: str = "claude-opus-5"
+    seat_subagent_effort: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> K8sSettings:
@@ -215,6 +224,9 @@ class K8sSettings:
             ),
             guides_ref=value("GUIDES_REF", "main"),
             instance_id=_instance_id(env),
+            seat_agent_channel=Channel.parse(env.get("SEAT_AGENT_CHANNEL") or ""),
+            seat_subagent_model=value("SEAT_SUBAGENT_MODEL", "claude-opus-5"),
+            seat_subagent_effort=(env.get("SEAT_SUBAGENT_EFFORT") or "").strip(),
         )
 
     def labels(self, **labels: str) -> dict[str, str]:
@@ -290,6 +302,15 @@ SEAT_JOB_PLACEHOLDERS = (
     #: The one placeholder whose value is an integer, not a string - the
     #: substitution swaps the whole leaf, so it lands as a YAML number.
     "__ACTIVE_DEADLINE_SECONDS__",
+    #: The seat pair's env (`K8sSettings.seat_agent_channel` and friends),
+    #: identical on the agent and driver containers.
+    "__SEAT_AGENT_CHANNEL__",
+    "__SEAT_SUBAGENT_MODEL__",
+    "__SEAT_SUBAGENT_EFFORT__",
+    #: `1` only for a seat Job whose channel is not `off`: the `mcp-config`
+    #: initContainer then adds `--require-baton` to the stdio `mtg` server.
+    #: Never for an advisor/buddy, a follow-up or a review Job.
+    "__MTG_REQUIRE_BATON__",
 )
 
 
@@ -304,6 +325,7 @@ def _seat_job_values(
     agent_image: str,
     api_image: str,
     guides_ref: str,
+    settings: K8sSettings,
     role: str = ROLE_SEAT,
     followup: Mapping[str, Any] | None = None,
     mode: str | None = None,
@@ -359,6 +381,17 @@ def _seat_job_values(
         "__GUIDES_REF__": guides_ref,
         "__MTG_ROLE__": role,
         "__MTG_GAME_ID__": game_id,
+        "__SEAT_AGENT_CHANNEL__": settings.seat_agent_channel.value,
+        "__SEAT_SUBAGENT_MODEL__": settings.seat_subagent_model,
+        "__SEAT_SUBAGENT_EFFORT__": settings.seat_subagent_effort,
+        "__MTG_REQUIRE_BATON__": (
+            "1"
+            if role == ROLE_SEAT
+            and followup is None
+            and mode is None
+            and settings.seat_agent_channel is not Channel.OFF
+            else ""
+        ),
         "__ACTIVE_DEADLINE_SECONDS__": (
             SEAT_ACTIVE_DEADLINE_SECONDS
             if followup is None and mode is None
@@ -432,6 +465,7 @@ def build_job(
         agent_image=settings.agent_image,
         api_image=settings.api_image,
         guides_ref=settings.guides_ref,
+        settings=settings,
         role=role,
     )
     template = _load_seat_job_template(settings.job_template_path)
@@ -490,6 +524,7 @@ def build_followup_job(
         agent_image=settings.agent_image,
         api_image=settings.api_image,
         guides_ref=settings.guides_ref,
+        settings=settings,
         role=role,
         followup=followup,
     )
@@ -555,6 +590,7 @@ def build_review_job(
         agent_image=settings.agent_image,
         api_image=settings.api_image,
         guides_ref=settings.guides_ref,
+        settings=settings,
         role=ROLE_SEAT,
         mode="review",
         review_key=review_key,

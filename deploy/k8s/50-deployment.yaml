@@ -64,6 +64,14 @@ spec:
     metadata:
       labels:
         app: mtg-stack
+      # Prometheus scrape of the game API's GET /metrics (port 8000). No other
+      # workload in this repo declares a scrape convention, so the standard
+      # prometheus.io/* pod annotations. /metrics has no auth inside the
+      # cluster; the public ingresses never route it (70-ingress.yaml).
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
     spec:
       restartPolicy: Always
       serviceAccountName: mtg-api
@@ -131,8 +139,23 @@ spec:
             # field). The post-game review is a separate, fixed choice
             # (`claude-opus-5` at `high`, `AgentSettings.review_default`)
             # that does not read either of these.
+            # T6: the seat orchestrator is Sonnet in every mode; the seat's
+            # `seat-player` subagents (SEAT_SUBAGENT_MODEL) do the Opus work.
             - name: AGENT_DEFAULT_MODEL
+              value: claude-sonnet-5
+            # Owner decision (T6): the buddy/advisor stays pinned to Opus
+            # (`AgentSettings.advisor_default`), unaffected by the line above.
+            - name: ADVISOR_MODEL
               value: claude-opus-5
+            # The seat pair, rendered by `k8s_seats.build_job` into every
+            # seat Job's agent and driver containers (deploy/seat-job.yaml).
+            # Switching channel (off | teams | subagents) is an env change.
+            - name: SEAT_AGENT_CHANNEL
+              value: teams
+            - name: SEAT_SUBAGENT_MODEL
+              value: claude-opus-5
+            - name: SEAT_SUBAGENT_EFFORT
+              value: ""
             - name: AGENT_DEFAULT_EFFORT
               value: medium
             - name: AGENT_NAMESPACE
