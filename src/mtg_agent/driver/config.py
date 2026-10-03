@@ -65,6 +65,14 @@ class DriverSettings:
     #: (`seat_pair.Channel.parse`, same default), so the prompts this driver
     #: pushes describe the agents the wrapper's bootstrap actually defined.
     seat_agent_channel: Channel = Channel.TEAMS
+    #: Defect 4: a turn that failed with an agent-gone reason, or a wrapper
+    #: session that died under an active turn, gets turn 0 pushed again to a
+    #: fresh session. `redispatch_ready_wait` bounds how long the driver polls
+    #: `GET /v1/session` for the replacement to be ready (polled on
+    #: `agent_retry_interval`); `redispatch_limit` is how many times per
+    #: assignment before the driver reports the problem instead.
+    redispatch_ready_wait: float = 180.0
+    redispatch_limit: int = 2
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> DriverSettings:
@@ -91,4 +99,6 @@ class DriverSettings:
                 value("REVIEW_RECORD_RETRY_MAX_DELAY_SECONDS", "30")
             ),
             seat_agent_channel=Channel.parse(env.get("SEAT_AGENT_CHANNEL", "")),
+            redispatch_ready_wait=float(value("REDISPATCH_READY_WAIT_SECONDS", "180")),
+            redispatch_limit=int(value("REDISPATCH_LIMIT", "2")),
         )

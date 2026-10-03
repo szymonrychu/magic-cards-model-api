@@ -33,6 +33,9 @@ class Record:
     turn_tokens: list[dict] = field(default_factory=list)
     stop_reason: str = ""
     error: str = ""
+    #: Background tasks (a seat pair) still running when the turn ended
+    #: without completing; a completed turn lists none.
+    pending_tasks: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.last_activity_at:
@@ -56,6 +59,7 @@ class Record:
             "turnTokens": self.turn_tokens,
             "stopReason": self.stop_reason,
             "error": self.error,
+            "pendingTasks": self.pending_tasks,
             "callbackUrl": self.callback_url,
         }
 
@@ -115,9 +119,12 @@ class Store:
             record.completed_at = now
             return record
 
-    def fail(self, id: str, reason: str, now: float) -> Record:
+    def fail(
+        self, id: str, reason: str, now: float, pending_tasks: list[str] | None = None
+    ) -> Record:
         with self._lock:
             record = self._require(id)
+            record.pending_tasks = list(pending_tasks or [])
             record.state = TurnState.FAILED
             record.error = reason
             record.completed_at = now

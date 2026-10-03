@@ -414,3 +414,24 @@ def test_attempt_four_orchestrator_idling_never_completes_a_turn_while_the_pair_
         assert stop() is TurnState.COMPLETE
     finally:
         manager.shutdown()
+
+
+def test_a_deferred_turn_that_fails_reports_the_pair_still_alive(monkeypatch):
+    """The only way a turn-done reaches the driver with the pair still running
+    is a deferred turn that fails (interrupt escalation): its record must say
+    which tasks were still pending, and a normal completion lists none."""
+    from tests.wrapper.test_session import FakeProc, ready_manager
+
+    manager = ready_manager(monkeypatch, FakeProc(b"ready"))
+    try:
+        turn_id = manager.submit("play")
+        manager.complete({"turnId": turn_id, "pendingTasks": ["future-1", "current-1"]})
+        manager._finish_failed(turn_id, "interrupted: stuck")
+        record = manager.store.get(turn_id)
+        assert record.full()["pendingTasks"] == ["future-1", "current-1"]
+        manager._current = None  # as escalate_interrupt frees the slot
+        other = manager.submit("again")
+        manager.complete({"turnId": other, "pendingTasks": []})
+        assert manager.store.get(other).full()["pendingTasks"] == []
+    finally:
+        manager.shutdown()

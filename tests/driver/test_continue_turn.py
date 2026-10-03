@@ -123,6 +123,7 @@ def test_a_turn_that_failed_for_a_non_terminal_reason_is_continued(world):
 )
 def test_a_turn_that_failed_because_the_agent_is_gone_keeps_today_s_handling(world, error):
     dispatch(world)
+    world.state["session_state"] = "dead"  # no replacement session: no turn 0 re-dispatch
     body = finish(world, "turn-1", state="failed", error=error)
     assert "continued" not in body
     assert len(world.submitted) == 1

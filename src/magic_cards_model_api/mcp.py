@@ -133,6 +133,7 @@ from . import seatkit
 from .background_autopass import BackgroundRuns
 from .baton import (
     ADVISOR_REFUSAL,
+    BATON_ADVISOR,
     BATON_BUSY,
     BATON_EXEMPT_TOOLS,
     BATON_OK,
@@ -280,6 +281,7 @@ def _guarded(seats: Seats):
                     # the seat's background run: a refused call touches nothing.
                     verdict, flight = seats.baton.begin(uid, name, baton)
                     if verdict != BATON_OK:
+                        _log_baton_refusal(verdict, name, uid)
                         return refusal(verdict, _refusal_detail(seats, verdict, uid, baton, flight))
                     _CALL.flight = flight
                 answer: Any = None
@@ -398,8 +400,32 @@ def _close_flight(
     if flight.interrupt.is_set():
         return REVOKED_ANSWER
     if rotated:
+        _log_baton_rotated(seats, flight.uid)
         return _mark_rotated(answer)
     return answer
+
+
+def _background_passed(seats: Seats, uid: str, outcome: Any) -> bool:
+    """`BatonStore.background_passed`, logging the rotation it may cause."""
+    rotated = seats.baton.background_passed(uid, outcome)
+    if rotated:
+        _log_baton_rotated(seats, uid)
+    return rotated
+
+
+def _log_baton_refusal(code: str, tool: str, uid: str) -> None:
+    """One structured line per refused acting call, for
+    `scripts/match_time_budget.py`."""
+    logger.info("baton_refusal code=%s tool=%s uid=%s", code, tool, uid)
+
+
+def _log_baton_rotated(seats: Seats, uid: str) -> None:
+    """One structured line per rotation: the window that just closed, and how
+    many actions it committed."""
+    last = seats.baton.last_commit(uid) or {}
+    logger.info(
+        "baton_rotated uid=%s window_actions=%d", uid, len(last.get("window_actions") or [])
+    )
 
 
 def _mark_rotated(answer: Any) -> Any:
@@ -1099,7 +1125,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         seat = seats.seat_for(player_uid)
         if seat is not None:
             uid = seat.uid
-            seat.on_pass = lambda outcome: seats.baton.background_passed(uid, outcome)
+            seat.on_pass = lambda outcome: _background_passed(seats, uid, outcome)
         return seat
 
     def _attach_script_hint(answer: dict[str, Any], seat: Seat, state: dict[str, Any]) -> None:
@@ -3855,6 +3881,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         if seat is None:
             return NO_SUCH_SEAT
         if seat.advise:
+            _log_baton_refusal(BATON_ADVISOR, "pass_baton", seat.uid)
             return ADVISOR_REFUSAL
         uid = seat.uid
         stopped = None

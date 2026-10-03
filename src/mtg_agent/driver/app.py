@@ -83,6 +83,7 @@ from magic_cards_model_api.playscripts.report import (
     script_run_table,
 )
 
+from ..seat_pair import pair_active
 from ..wrapper.config import Settings as _WrapperSettings
 from ..wrapper.config import scaled_review_wall_time
 from .config import DriverSettings
@@ -613,6 +614,12 @@ def build_app(
         # `board_mark` of the game when the continuation was pushed.
         "continuationMark": None,
         "quickContinuations": 0,
+        # Defect 4: what turn 0 was (text, workspace files) so a dead first
+        # boot can be re-dispatched verbatim, how many times that has been
+        # done for this assignment, and whether one is running now.
+        "turnZero": None,
+        "redispatches": 0,
+        "redispatching": False,
         "doneTurns": set(),
         # `now()` since which nothing has been playing this seat (no driver
         # turn in flight, the wrapper not busy); None while something is.
@@ -638,6 +645,9 @@ def build_app(
             continuationStarted=0.0,
             continuationMark=None,
             quickContinuations=0,
+            turnZero=None,
+            redispatches=0,
+            redispatching=False,
             doneTurns=set(),
             idleSince=None,
         )
@@ -670,7 +680,7 @@ def build_app(
     def wrapper_headers() -> dict[str, str]:
         return {"X-Wrapper-Secret": settings.wrapper_secret} if settings.wrapper_secret else {}
 
-    def push_turn(text: str) -> str:
+    def push_turn(text: str, files: dict[str, str] | None = None) -> str:
         """Statuses are read off the response rather than through
         `raise_for_status`, because the client is injected: the exception
         classes belong to whichever http library built it, while the status
@@ -679,7 +689,8 @@ def build_app(
             with make_client(settings.wrapper_api) as client:
                 response = client.post(
                     "/v1/messages",
-                    json={"text": text, "callbackUrl": f"{settings.self_url}/turn-done"},
+                    json={"text": text, "callbackUrl": f"{settings.self_url}/turn-done"}
+                    | ({"files": files} if files else {}),
                     headers=wrapper_headers(),
                 )
         except Exception as exc:  # noqa: BLE001 - nothing answered on the socket
@@ -1660,7 +1671,9 @@ def build_app(
         with lock:
             return dict(handover["status"])
 
-    def push_turn_when_reachable(assignment: Assignment, text: str) -> None:
+    def push_turn_when_reachable(
+        assignment: Assignment, text: str, files: dict[str, str] | None = None
+    ) -> None:
         """Keep offering turn 0 to an agent that is restarting.
 
         A dispatch can land in the window between one match ending and the
@@ -1678,7 +1691,7 @@ def build_app(
                 if current["assignment"] is not assignment:
                     return  # superseded or retired while we waited
             try:
-                turn_id = push_turn(text)
+                turn_id = push_turn(text, files)
             except AgentUnavailable as exc:
                 if not exc.retryable or time.monotonic() >= deadline:
                     with lock:
@@ -1953,6 +1966,10 @@ def build_app(
             text = turn_zero(
                 assignment, current_game_path, briefing, channel=settings.seat_agent_channel
             )
+        # The briefing travels with turn 0 as a workspace file: the wrapper
+        # writes it before the turn starts, so no model step spends time
+        # (44 s measured) writing it out.
+        turn_zero_files = {"current-game.md": briefing}
         with lock:
             # Claim the agent before talking to it, so a second game arriving
             # while we are pushing gets the 409 rather than a race.
@@ -1973,12 +1990,15 @@ def build_app(
                 outcome=None,
                 handover=None,
                 lastHandover=None,
+                turnZero=(text, turn_zero_files),
+                redispatches=0,
+                redispatching=False,
             )
 
         sync_agent_settings(body.agent)
 
         try:
-            turn_id = push_turn(text)
+            turn_id = push_turn(text, turn_zero_files)
         except AgentUnavailable as exc:
             if not exc.retryable:
                 with lock:
@@ -1990,7 +2010,7 @@ def build_app(
             )
             threading.Thread(
                 target=push_turn_when_reachable,
-                args=(assignment, text),
+                args=(assignment, text, turn_zero_files),
                 daemon=True,
                 name="driver-push-turn-zero",
             ).start()
@@ -2510,9 +2530,20 @@ def build_app(
             return {"ignored": "duplicate delivery"}
         error = str(record.get("error") or "")
         agent_gone = error.startswith(AGENT_GONE_ERRORS)
-        return settle_turn(assignment, finished, agent_gone=agent_gone, retry=True)
+        # A paired seat's orchestrator idles while the pair plays: a record
+        # that still lists background tasks means the pair is alive, and a
+        # continuation would only wake the orchestrator into re-issuing the
+        # baton under the player's feet.
+        pair_live = pair_active(settings.seat_agent_channel, assignment.role) and bool(
+            record.get("pendingTasks")
+        )
+        return settle_turn(
+            assignment, finished, agent_gone=agent_gone, retry=True, pair_live=pair_live
+        )
 
-    def retry_unreachable(assignment: Assignment, finished: str | None, agent_gone: bool) -> None:
+    def retry_unreachable(
+        assignment: Assignment, finished: str | None, agent_gone: bool, pair_live: bool
+    ) -> None:
         """`settle_turn`'s one delayed re-check of a game it could not read.
 
         Skipped when anything moved on meanwhile: the assignment was retired
@@ -2528,7 +2559,7 @@ def build_app(
             )
         if moved_on:
             return
-        settle_turn(assignment, finished, agent_gone=agent_gone, retry=False)
+        settle_turn(assignment, finished, agent_gone=agent_gone, retry=False, pair_live=pair_live)
 
     def file_problem_report(assignment: Assignment, text: str) -> None:
         """The same row the `mtg` MCP server's `report_problem` tool files
@@ -2556,6 +2587,119 @@ def build_app(
             or current["handover"] is not None
             or current["reflected"]
         )
+
+    def redispatch_or_report(assignment: Assignment, reason: str | None = None) -> dict:
+        """Defect 4: the agent behind a running game is gone (a turn failed
+        with an `AGENT_GONE_ERRORS` reason, or its wrapper session died under
+        an active turn). Push turn 0 again to the fresh session once it is
+        ready, at most `redispatch_limit` times per assignment; past that the
+        seat is reported, as it was before this existed."""
+        with lock:
+            if moved_on_locked(assignment):
+                return {"ignored": "assignment moved on"}
+            if current["redispatching"]:
+                return {"ignored": "redispatch running", "gameId": assignment.game_id}
+            turn_zero_pushed = current["turnZero"]
+            attempt = current["redispatches"] + 1
+            exhausted = turn_zero_pushed is None or attempt > settings.redispatch_limit
+            if exhausted:
+                if reason and not current["lastError"]:
+                    current["lastError"] = reason
+            else:
+                current.update(redispatches=attempt, redispatching=True, turnActive=False)
+        if exhausted:
+            with lock:
+                detail = current["lastError"] or "the agent is gone"
+            log.error(
+                "game %s (%s): agent gone and %d re-dispatches already made: %s",
+                assignment.game_id,
+                assignment.player,
+                settings.redispatch_limit,
+                detail,
+            )
+            file_problem_report(
+                assignment,
+                f"The agent behind this seat died {settings.redispatch_limit + 1} times "
+                f"({detail}) and the driver stopped re-dispatching turn 0. The seat is "
+                "no longer being played and needs a look.",
+            )
+            return {"ignored": "agent gone", "gameId": assignment.game_id}
+        threading.Thread(
+            target=run_redispatch,
+            args=(assignment, attempt),
+            daemon=True,
+            name="driver-redispatch",
+        ).start()
+        return {"redispatching": attempt, "gameId": assignment.game_id}
+
+    def run_redispatch(assignment: Assignment, attempt: int) -> None:
+        """Poll `GET /v1/session` until the replacement session is ready
+        (bounded by `redispatch_ready_wait`), then push turn 0 again."""
+        deadline = time.monotonic() + settings.redispatch_ready_wait
+        failure = ""
+        while True:
+            with lock:
+                if moved_on_locked(assignment):
+                    current["redispatching"] = False
+                    return
+                text, files = current["turnZero"]
+            session = agent_session() or {}
+            if session.get("state") == "ready":
+                try:
+                    turn_id = push_turn(text, files)
+                except AgentUnavailable as exc:
+                    if not exc.retryable:
+                        failure = f"the agent refused the re-dispatched turn 0: {exc}"
+                        break
+                else:
+                    with lock:
+                        raced = moved_on_locked(assignment)
+                        current["redispatching"] = False
+                        if not raced:
+                            current.update(
+                                lastTurnId=turn_id,
+                                turnActive=True,
+                                lastError=None,
+                                continuationTurnId=None,
+                                quickContinuations=0,
+                                idleSince=None,
+                            )
+                    if raced:
+                        wrapper_post("/v1/interrupt")
+                    log.info(
+                        "game %s (%s): agent gone, turn 0 re-dispatched (%d/%d) as turn %s",
+                        assignment.game_id,
+                        assignment.player,
+                        attempt,
+                        settings.redispatch_limit,
+                        turn_id,
+                    )
+                    return
+            if time.monotonic() >= deadline:
+                failure = (
+                    f"the replacement agent session was not ready within "
+                    f"{settings.redispatch_ready_wait:g}s"
+                )
+                break
+            time.sleep(settings.agent_retry_interval)
+        log.error("game %s (%s): %s", assignment.game_id, assignment.player, failure)
+        with lock:
+            current["redispatching"] = False
+            if not moved_on_locked(assignment):
+                current["lastError"] = failure
+        file_problem_report(assignment, f"The driver could not re-dispatch turn 0: {failure}.")
+
+    def watch_session_death(assignment: Assignment, session_state: str) -> None:
+        """`/status` saw the wrapper session dead or restarting under a turn
+        the driver believes is active. If the game is still running, that is
+        the same defect as an agent-gone turn failure: re-dispatch."""
+        try:
+            state = game_state(assignment.game_id, assignment.uid)
+        except httpx.HTTPError:
+            return
+        if state.get("winner") or state.get("drawn"):
+            return
+        redispatch_or_report(assignment, f"the agent session is {session_state}")
 
     def continue_play(assignment: Assignment, finished: str | None, state: dict) -> dict:
         """Push a continuation turn: the game is still running and nothing
@@ -2634,7 +2778,12 @@ def build_app(
         return {"continued": turn_id, "gameId": assignment.game_id}
 
     def settle_turn(
-        assignment: Assignment, finished: str | None, *, agent_gone: bool, retry: bool
+        assignment: Assignment,
+        finished: str | None,
+        *,
+        agent_gone: bool,
+        retry: bool,
+        pair_live: bool = False,
     ) -> dict:
         """A play turn ended outside any handover: continue the game, or
         reflect on it once it is over."""
@@ -2649,7 +2798,7 @@ def build_app(
                 )
                 threading.Thread(
                     target=retry_unreachable,
-                    args=(assignment, finished, agent_gone),
+                    args=(assignment, finished, agent_gone, pair_live),
                     daemon=True,
                     name="driver-unreachable-retry",
                 ).start()
@@ -2666,7 +2815,18 @@ def build_app(
         drawn = bool(state.get("drawn"))
         if not winner and not drawn:
             if agent_gone:
-                return {"ignored": "game still running"}
+                return redispatch_or_report(assignment)
+            if pair_live:
+                with lock:
+                    if not moved_on_locked(assignment):
+                        current.update(turnActive=True, idleSince=None)
+                log.info(
+                    "game %s (%s): pair live after turn %s, pushing no continuation",
+                    assignment.game_id,
+                    assignment.player,
+                    finished or "?",
+                )
+                return {"ignored": "pair live", "gameId": assignment.game_id}
             return continue_play(assignment, finished, state)
 
         outcome = f"{winner} won" if winner else "the game was a draw"
@@ -2793,6 +2953,24 @@ def build_app(
         session = agent_session() or {}
         activity = session.get("activity")
         busy = session.get("state") == "busy"
+        died = None
+        with lock:
+            if (
+                session.get("state") in ("dead", "booting")
+                and current["assignment"] is not None
+                and current["turnActive"]
+                and not current["reflected"]
+                and current["handover"] is None
+                and not current["redispatching"]
+            ):
+                died = (current["assignment"], str(session["state"]))
+        if died is not None:
+            threading.Thread(
+                target=watch_session_death,
+                args=died,
+                daemon=True,
+                name="driver-session-death",
+            ).start()
         with lock:
             # A handover in progress is the seat being wound down on purpose,
             # never a seat nobody is playing.

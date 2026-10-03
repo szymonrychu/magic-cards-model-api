@@ -88,3 +88,28 @@ def test_cli_prints_text_and_json() -> None:
         subprocess.run([*args, "--json"], capture_output=True, text=True, check=True).stdout
     )
     assert data["seats"]["p1"]["promotions"] == 3
+
+
+def test_baton_refusals_and_promotions_from_the_structured_mcp_log_lines() -> None:
+    report = mtb.build_report(
+        seats={"p3": ""},
+        agent_logs={"p3": (FIX / "p3.agent.log").read_text()},
+        game_log="",
+    )["seats"]["p3"]
+    assert report["baton_refusals"] == {"BATON_ADVISOR": 1, "BATON_REQUIRED": 1, "BATON_STALE": 2}
+    assert report["promotions"] == 2
+
+
+def test_the_text_report_shows_the_structured_counts() -> None:
+    report = mtb.build_report(
+        seats={"p3": ""},
+        agent_logs={"p3": (FIX / "p3.agent.log").read_text()},
+        game_log="",
+    )
+    text = mtb.render_text(report)
+    assert "promotions: 2" in text
+    assert "BATON_STALE=2" in text
+
+
+def test_metrics_promotions_stand_when_the_log_has_no_rotation_lines() -> None:
+    assert _report()["seats"]["p1"]["promotions"] == 3

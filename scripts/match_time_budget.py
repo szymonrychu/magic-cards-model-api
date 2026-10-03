@@ -6,7 +6,9 @@ Inputs (all optional except `--seat`):
   URL or a file. Feeds the waits, model step seconds per role and promotions.
 - `--agent-log NAME=FILE` (repeat): that seat's wrapper log (`docker compose
   logs agent-p1`). Feeds dispatch-to-first-acting-call (the `step tool=` lines
-  run from turn start) and baton refusals by code (`tool failed:` lines).
+  run from turn start), baton refusals by code (`baton_refusal code=` lines,
+  else the older `tool failed:` lines) and promotions (`baton_rotated` lines,
+  else the metrics' `pass_baton` count).
 - `--game-log FILE`: the game container's log, for the `match duration` line.
 
 `--json` prints the report as JSON instead of text.
@@ -25,6 +27,10 @@ TARGET_SECONDS = 900.0
 WAIT_TOOLS = ("pass_until", "wait_for_priority", "await_baton")
 ROLES = ("orchestrator", "current", "future")
 _BATON_CODE = re.compile(r"\b(BATON_[A-Z_]+)\b")
+#: The MCP server's structured lines (`mcp.py`): one per refused acting call
+#: and one per rotation (a promotion: the future takes over as current).
+_REFUSAL_LINE = re.compile(r"\bbaton_refusal code=(?P<code>BATON_[A-Z_]+) tool=\S+ uid=\S+")
+_ROTATED_LINE = re.compile(r"\bbaton_rotated uid=\S+ window_actions=\d+")
 #: The baton-gated tools that change the game (`mcp.py`'s acting tools); a
 #: wait, a read or a builtin is not an acting call.
 ACTING_TOOLS = frozenset(
@@ -107,16 +113,28 @@ def seat_from_agent_log(text: str) -> dict:
             first_acting = elapsed + model
         else:
             elapsed += model + float(step["tool_ms"]) / 1000.0
+    # The structured lines are the first-class source; the wrapper's
+    # `tool failed:` lines are the fallback for logs from before they existed
+    # (counting both would count each refusal twice).
+    structured = [m["code"] for m in _REFUSAL_LINE.finditer(text)]
+    codes = structured or [
+        m[1]
+        for line in text.splitlines()
+        if "tool failed:" in line
+        for m in [_BATON_CODE.search(line)]
+        if m
+    ]
     refusals: dict[str, int] = {}
-    for line in text.splitlines():
-        code = _BATON_CODE.search(line) if "tool failed:" in line else None
-        if code:
-            refusals[code[1]] = refusals.get(code[1], 0) + 1
-    refusals = dict(sorted(refusals.items()))
-    return {
+    for code in codes:
+        refusals[code] = refusals.get(code, 0) + 1
+    result: dict = {
         "dispatch_to_first_acting_seconds": None if first_acting is None else _round(first_acting),
-        "baton_refusals": refusals,
+        "baton_refusals": dict(sorted(refusals.items())),
     }
+    rotations = len(_ROTATED_LINE.findall(text))
+    if rotations:
+        result["promotions"] = rotations
+    return result
 
 
 def match_from_log(text: str) -> dict:

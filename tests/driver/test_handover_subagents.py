@@ -57,7 +57,11 @@ def wait_for(predicate, timeout: float = 10.0):
 def handover_stack(tmp_path, monkeypatch, clock=None):
     world = build_world(tmp_path, clock=clock)
     proc = FakeProc(b"ready")
-    wrapper_settings = fast_settings(INTERRUPT_SETTLE_SECONDS="0.3", TURN_TIMEOUT_SECONDS="60")
+    wrapper_settings = fast_settings(
+        INTERRUPT_SETTLE_SECONDS="0.3",
+        TURN_TIMEOUT_SECONDS="60",
+        WORKSPACE=str(tmp_path / "wrapper-workspace"),
+    )
     manager = ready_manager(monkeypatch, proc, wrapper_settings)
     public = build_public_app(manager, wrapper_settings)
     internal = TestClient(build_internal_app(manager))
