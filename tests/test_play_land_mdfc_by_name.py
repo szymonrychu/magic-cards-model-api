@@ -102,3 +102,56 @@ def test_the_seat_cli_plays_the_reported_mdfc_by_its_card_name(client, game, mon
     assert pending is not None, printed
     assert (pending["player"], pending["kind"]) == ("alice", "pay_life"), pending
     assert pending["source_card_id"] == card_id, pending
+
+
+def _battlefield_names(client: TestClient, game: str, uid: str) -> list[str]:
+    return [card["name"] for card in state(client, game, uid=uid)["battlefield"]]
+
+
+def test_a_pathway_plays_the_back_face_the_seat_chose(client, game):
+    """CR 712.12: both Pathway faces are lands, so the seat's `land_face`
+    (the engine's `Action.land_face`) picks which one enters."""
+    add_card(client, game, "Brightclimb Pathway", "alice", "hand")
+    uid = _uids(game)["alice"]
+
+    response = client.post(
+        f"/api/games/{game}/actions/play-land",
+        json={"player": "alice", "card": "Brightclimb Pathway", "land_face": "Grimclimb Pathway"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["allowed"] is True, response.json()
+    assert _battlefield_names(client, game, uid) == ["Grimclimb Pathway"]
+
+
+def test_a_pathway_played_by_its_back_faces_name_enters_as_that_face(client, game):
+    add_card(client, game, "Brightclimb Pathway", "alice", "hand")
+    uid = _uids(game)["alice"]
+
+    answer = _play_by_name(client, game, "Grimclimb Pathway")
+
+    assert answer["allowed"] is True, answer
+    assert _battlefield_names(client, game, uid) == ["Grimclimb Pathway"]
+
+
+def test_a_land_face_the_card_does_not_have_is_refused(client, game):
+    add_card(client, game, "Brightclimb Pathway", "alice", "hand")
+    response = client.post(
+        f"/api/games/{game}/actions/play-land",
+        json={"player": "alice", "card": "Brightclimb Pathway", "land_face": "Plains"},
+    )
+    assert response.json()["allowed"] is False, response.json()
+
+
+def test_a_dry_run_refuses_a_land_face_the_card_does_not_have(client, game):
+    add_card(client, game, "Brightclimb Pathway", "alice", "hand")
+    response = client.post(
+        f"/api/games/{game}/actions/play-land",
+        json={
+            "player": "alice",
+            "card": "Brightclimb Pathway",
+            "land_face": "Plains",
+            "dry_run": True,
+        },
+    )
+    assert response.json()["allowed"] is False, response.json()

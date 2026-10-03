@@ -10375,6 +10375,17 @@
             ],
             "title": "Expected Seq"
           },
+          "land_face": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Land Face"
+          },
           "player": {
             "title": "Player",
             "type": "string"

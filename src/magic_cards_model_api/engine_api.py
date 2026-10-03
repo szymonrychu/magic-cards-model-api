@@ -939,8 +939,10 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
     two printed kicker costs, CR 702.33b), bargain (CR 702.166a,
     `pay_bargain`), a printed "you may collect evidence N" (CR 701.59a,
     `collect_evidence`), "you may reveal a ... card" (CR 701.20a,
-    `reveal_for_cost`) and "you may choose a creature type and behold N
-    creatures of that type" (CR 701.4a, `behold_chosen_type_for_cost`),
+    `reveal_for_cost`), "you may choose a creature type and behold N
+    creatures of that type" (CR 701.4a, `behold_chosen_type_for_cost`), "you
+    may exile/sacrifice any number of ..." with its linked reduction (CR
+    118.8b, `exile_for_cost_reduction`/`sacrifice_for_cost_reduction`),
     replicate (CR 702.56a),
     offspring (CR 702.175a), blight (CR 701.68a), gift (CR 702.174a) and
     harmonize's "tapping up to one untapped creature you control"
@@ -988,6 +990,14 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
                     "name it in creature_type, and the beheld creatures' ids in choosing"
                 )
             casting.behold_chosen_type_for_cost(choice.creature_type, chosen)
+        elif keyword == "exile any number":
+            _paid_once(choice, "every card exiled this way is named in one choice (CR 118.8b)")
+            casting.exile_for_cost_reduction(chosen)
+        elif keyword == "sacrifice any number":
+            _paid_once(
+                choice, "every permanent sacrificed this way is named in one choice (CR 118.8b)"
+            )
+            casting.sacrifice_for_cost_reduction(chosen)
         elif keyword == "replicate":
             casting.pay_replicate(choice.times, choosing=chosen)
         elif keyword == "offspring":
@@ -1039,8 +1049,8 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
             raise ValueError(
                 f"{choice.keyword} is not an optional cost this engine pays (CR 601.2b): "
                 "name one of Kicker, Multikicker, Replicate, Offspring, Blight, Gift, "
-                "Bargain, Collect evidence, Reveal, Behold, Entwine, Escalate, Harmonize or "
-                "Pay life"
+                "Bargain, Collect evidence, Reveal, Behold, Exile any number, "
+                "Sacrifice any number, Entwine, Escalate, Harmonize or Pay life"
             )
     return mode_costs
 
@@ -2053,6 +2063,19 @@ def locate_land(game: Game, req: PlayLandRequest) -> CardState:
     raise ValueError(f"{req.player} has no land named {req.card} in hand")
 
 
+def _chosen_land_face(land: CardState, req: PlayLandRequest) -> str | None:
+    """CR 712.12's face choice: the request's `land_face`, else the name given
+    when it is one of the card's land faces and the card has more than one
+    (`Valakut Stoneforge` alone keeps the engine's default - the card's only
+    land face)."""
+    if req.land_face is not None:
+        return req.land_face
+    faces = {face.name for face in land.card.land_faces}
+    if len(faces) > 1 and req.card in faces:
+        return req.card
+    return None
+
+
 def _answers_to_land_name(state: CardState, name: str) -> bool:
     """Whether a hand card is a land `name` can mean.
 
@@ -2128,14 +2151,21 @@ def play_land(game: Game, req: PlayLandRequest) -> Outcome:
     except (KeyError, ValueError) as exc:
         return refused(exc)
     if req.dry_run:
+        face = _chosen_land_face(land, req)
+        face_refusal = (
+            f"{face!r} is not a land face of {land.name} (CR 712.12)"
+            if face is not None and face not in {each.name for each in land.card.land_faces}
+            else None
+        )
         refusal = (
             _not_a_land_refusal(land)
+            or face_refusal
             or game.why_cannot_play_land(req.player)
             or _land_zone_refusal(game, land, req.player)
         )
         return Outcome(refusal is None, refusal)
     try:
-        played = game.play_land(land, req.player)
+        played = game.play_land(land, req.player, face=_chosen_land_face(land, req))
     except ValueError as exc:
         return refused(exc)
     return Outcome(True, detail={"card_id": str(played.id)})
