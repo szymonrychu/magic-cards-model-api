@@ -580,3 +580,30 @@ def test_rendered_seat_requires_baton_and_buddy_does_not() -> None:
 
     assert init_env(seat)["MTG_REQUIRE_BATON"] == "1"
     assert init_env(buddy)["MTG_REQUIRE_BATON"] != "1"
+
+
+def test_prod_seat_and_buddy_jobs_render_the_owner_speed_settings() -> None:
+    from magic_cards_model_api.agent_settings import AgentSettings
+    from magic_cards_model_api.k8s_seats import ROLE_ADVISOR, K8sSettings, build_job
+
+    env = {name: e.get("value", "") for name, e in _api_env().items()}
+    env.setdefault("AGENT_NAMESPACE", "mtg-engine")
+
+    def agent_env(agent: AgentSettings, role: str) -> dict:
+        job = build_job(
+            K8sSettings.from_env(env),
+            game_id="g1",
+            uid="u1",
+            player="bot",
+            agent=agent,
+            role=role,
+        )
+        (c,) = [c for c in job["spec"]["template"]["spec"]["containers"] if c["name"] == "agent"]
+        return {e["name"]: e.get("value") for e in c["env"]}
+
+    seat = agent_env(AgentSettings.default(env), "seat")
+    assert seat["EFFORT"] == "low"
+    assert seat["MAX_THINKING_TOKENS"] == "4000"
+    buddy = agent_env(AgentSettings.advisor_default(env), ROLE_ADVISOR)
+    assert buddy["EFFORT"] == "medium"
+    assert not buddy.get("MAX_THINKING_TOKENS")
