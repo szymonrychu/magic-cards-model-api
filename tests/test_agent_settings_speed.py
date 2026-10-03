@@ -60,3 +60,48 @@ def test_blank_advisor_effort_falls_back() -> None:
 def test_invalid_advisor_effort_names_the_env_var() -> None:
     with pytest.raises(ValueError, match="ADVISOR_EFFORT"):
         AgentSettings.advisor_default({"ADVISOR_EFFORT": "turbo"})
+
+
+@pytest.mark.parametrize(
+    ("var", "bad"),
+    [
+        ("AGENT_DEFAULT_MAX_THINKING_TOKENS", "abc"),
+        ("AGENT_DEFAULT_MAX_THINKING_TOKENS", "-1"),
+        ("ADVISOR_EFFORT", "turbo"),
+        ("AGENT_DEFAULT_EFFORT", "turbo"),
+    ],
+)
+def test_validate_env_names_the_bad_var(var: str, bad: str) -> None:
+    from magic_cards_model_api.agent_settings import validate_env
+
+    with pytest.raises(ValueError, match=var):
+        validate_env({var: bad})
+
+
+def test_validate_env_accepts_prod_values_and_blank() -> None:
+    from magic_cards_model_api.agent_settings import validate_env
+
+    validate_env({})
+    validate_env(
+        {
+            "AGENT_DEFAULT_EFFORT": "low",
+            "AGENT_DEFAULT_MAX_THINKING_TOKENS": "4000",
+            "ADVISOR_EFFORT": "medium",
+        }
+    )
+
+
+def test_bad_env_fails_app_import_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+    import sys
+
+    import magic_cards_model_api.app  # noqa: F401  (ensure it is in sys.modules)
+
+    app_mod = sys.modules["magic_cards_model_api.app"]
+    monkeypatch.setenv("AGENT_DEFAULT_MAX_THINKING_TOKENS", "oops")
+    try:
+        with pytest.raises(ValueError, match="AGENT_DEFAULT_MAX_THINKING_TOKENS"):
+            importlib.reload(app_mod)
+    finally:
+        monkeypatch.delenv("AGENT_DEFAULT_MAX_THINKING_TOKENS")
+        importlib.reload(app_mod)

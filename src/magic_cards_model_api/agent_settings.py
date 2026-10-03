@@ -164,7 +164,10 @@ class AgentSettings(BaseModel):
         # (raising `ValidationError` for a deployment env var naming a level
         # that does not exist) - the `cast` only tells the type checker that
         # validation is coming, it performs none itself.
-        return cls(model=model, effort=cast(Effort, effort_raw), max_thinking_tokens=cap)
+        try:
+            return cls(model=model, effort=cast(Effort, effort_raw), max_thinking_tokens=cap)
+        except ValidationError as exc:
+            raise ValueError(f"{DEFAULT_EFFORT_ENV} is invalid: {effort_raw!r}") from exc
 
     @classmethod
     def advisor_default(cls, env: Mapping[str, str]) -> AgentSettings:
@@ -210,3 +213,11 @@ class AgentSettings(BaseModel):
         data = self.model_dump(mode="json")
         data["maxThinkingTokens"] = data.pop("max_thinking_tokens")
         return data
+
+
+def validate_env(env: Mapping[str, str]) -> None:
+    """Fail fast, naming the env var, on an invalid seat/buddy setting.
+    Called once at process startup so a bad deployment value stops the pod
+    rather than surfacing at the first lobby or seat creation."""
+    AgentSettings.default(env)
+    AgentSettings.advisor_default(env)

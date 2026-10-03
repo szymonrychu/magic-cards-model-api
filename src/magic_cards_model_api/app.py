@@ -66,6 +66,7 @@ from . import (
     visibility,
 )
 from .action_rows import legal_action_rows
+from .agent_settings import validate_env as validate_agent_env
 from .board_scope import read_on_one_board
 from .playscripts import decision_dsl
 from .playscripts.hypothetical_facts import build_hypothetical_facts
@@ -173,6 +174,10 @@ from .serialize import FIRST_STRIKE_DAMAGE, state_view, step_position
 from .store import known_players, new_seat_uids, player_for_advisor_uid, store
 
 logger = logging.getLogger(__name__)
+
+# Invalid AGENT_DEFAULT_* / ADVISOR_EFFORT values stop the process at import,
+# naming the env var, instead of failing at the first lobby or seat creation.
+validate_agent_env(os.environ)
 
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
 # `FastAPI.__init__` has no `route_class` parameter of its own (it silently
