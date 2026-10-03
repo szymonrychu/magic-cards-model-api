@@ -55,7 +55,7 @@ from typing import Any
 
 import httpx
 
-from . import k8s_seats
+from . import k8s_seats, match_metrics
 from .agent_settings import AgentSettings
 
 # Re-exported deliberately: `k8s_seats` defines these because it cannot
@@ -685,6 +685,8 @@ class AiSeatRegistry:
                     # that, in the end, actually ran.
                     self._unavailable.pop(uid, None)
                     self._fallbacks.pop(uid, None)
+                if role == ROLE_SEAT:
+                    match_metrics.dispatched(game_id, uid, status["mechanism"])
                 if status["mechanism"] == "kubernetes":
                     note = f"scheduled as kubernetes Job {status.get('job')}"
                     if role != ROLE_SEAT:
@@ -743,6 +745,8 @@ class AiSeatRegistry:
             self._unavailable.pop(uid, None)
             self._fallbacks.pop(uid, None)
         status = runner.status()
+        if status["state"] != "error" and role == ROLE_SEAT:
+            match_metrics.dispatched(game_id, uid, "subprocess")
         if status["state"] == "error":
             # Spawn itself failed (`runner.error` set) - report the fallback
             # command alongside the error, rather than leaving the caller
