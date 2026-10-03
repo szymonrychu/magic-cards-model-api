@@ -101,7 +101,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 
@@ -109,12 +109,17 @@ DEFAULT_MODEL_ENV = "AGENT_DEFAULT_MODEL"
 DEFAULT_MODEL = "claude-sonnet-5"
 DEFAULT_EFFORT_ENV = "AGENT_DEFAULT_EFFORT"
 DEFAULT_EFFORT: Effort = "high"
+#: The seat orchestrator's thinking cap (int >= 0, blank = unset). Never
+#: inherited by the buddy (`advisor_default`).
+DEFAULT_MAX_THINKING_TOKENS_ENV = "AGENT_DEFAULT_MAX_THINKING_TOKENS"
 
 #: The buddy/advisor's model (owner decision, T6): pinned to Opus while
 #: `AGENT_DEFAULT_MODEL` moves the seat orchestrator to Sonnet. Effort still
 #: follows `AGENT_DEFAULT_EFFORT`.
 ADVISOR_MODEL_ENV = "ADVISOR_MODEL"
 ADVISOR_DEFAULT_MODEL = "claude-opus-5"
+#: The buddy's own effort; blank = `AGENT_DEFAULT_EFFORT`.
+ADVISOR_EFFORT_ENV = "ADVISOR_EFFORT"
 
 #: The post-game review's own model/effort - fixed, never read from
 #: `AGENT_DEFAULT_MODEL`/`AGENT_DEFAULT_EFFORT` and never a per-request
@@ -145,18 +150,34 @@ class AgentSettings(BaseModel):
     def default(cls, env: Mapping[str, str]) -> AgentSettings:
         model = (env.get(DEFAULT_MODEL_ENV) or DEFAULT_MODEL).strip() or DEFAULT_MODEL
         effort_raw = (env.get(DEFAULT_EFFORT_ENV) or DEFAULT_EFFORT).strip() or DEFAULT_EFFORT
+        cap_raw = (env.get(DEFAULT_MAX_THINKING_TOKENS_ENV) or "").strip()
+        try:
+            cap = int(cap_raw) if cap_raw else None
+        except ValueError:
+            cap = -1
+        if cap is not None and cap < 0:
+            raise ValueError(
+                f"{DEFAULT_MAX_THINKING_TOKENS_ENV} must be an integer >= 0 or blank, "
+                f"got {cap_raw!r}"
+            )
         # `cls(...)` validates this against `Effort`'s Literal at construction
         # (raising `ValidationError` for a deployment env var naming a level
         # that does not exist) - the `cast` only tells the type checker that
         # validation is coming, it performs none itself.
-        return cls(model=model, effort=cast(Effort, effort_raw))
+        return cls(model=model, effort=cast(Effort, effort_raw), max_thinking_tokens=cap)
 
     @classmethod
     def advisor_default(cls, env: Mapping[str, str]) -> AgentSettings:
-        """A buddy/advisor's settings: `ADVISOR_MODEL` (default Opus) at the
-        seat's `AGENT_DEFAULT_EFFORT`."""
+        """A buddy/advisor's settings: `ADVISOR_MODEL` (default Opus) at
+        `ADVISOR_EFFORT` (blank = the seat's `AGENT_DEFAULT_EFFORT`), never
+        carrying the seat's thinking cap."""
         model = (env.get(ADVISOR_MODEL_ENV) or "").strip() or ADVISOR_DEFAULT_MODEL
-        return cls.default(env).model_copy(update={"model": model})
+        seat = cls.default(env)
+        effort = (env.get(ADVISOR_EFFORT_ENV) or "").strip() or seat.effort
+        try:
+            return cls(model=model, effort=cast(Effort, effort))
+        except ValidationError as exc:
+            raise ValueError(f"{ADVISOR_EFFORT_ENV} is invalid: {effort!r}") from exc
 
     @classmethod
     def review_default(cls) -> AgentSettings:

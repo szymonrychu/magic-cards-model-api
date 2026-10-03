@@ -156,7 +156,14 @@ spec:
               value: claude-opus-5
             - name: SEAT_SUBAGENT_EFFORT
               value: ""
+            # Owner decision 2026-10-03 (S7, seat speed): the seat
+            # orchestrator runs at low effort with a 4000 thinking cap; the
+            # buddy keeps medium via ADVISOR_EFFORT and never gets the cap.
             - name: AGENT_DEFAULT_EFFORT
+              value: low
+            - name: AGENT_DEFAULT_MAX_THINKING_TOKENS
+              value: "4000"
+            - name: ADVISOR_EFFORT
               value: medium
             - name: AGENT_NAMESPACE
               value: mtg-engine
