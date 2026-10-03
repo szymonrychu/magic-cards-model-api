@@ -329,3 +329,23 @@ def test_the_seat_itself_may_still_launch_subagents(tmp_path):
     deny = json.loads((s.home_dir / ".claude" / "settings.json").read_text())["permissions"]["deny"]
     assert "Agent" not in deny
     assert "Task" not in deny
+
+
+def test_render_writes_the_seat_player_for_a_seat_but_not_an_advisor(tmp_path):
+    (tmp_path / "seat").mkdir()
+    (tmp_path / "adv").mkdir()
+    seat = settings_in(tmp_path / "seat")
+    bootstrap.render(seat)
+    assert (seat.workspace / ".claude" / "agents" / "seat-player.md").is_file()
+    adv = settings_in(tmp_path / "adv", MTG_ROLE="advisor")
+    bootstrap.render(adv)
+    assert not (adv.workspace / ".claude" / "agents" / "seat-player.md").exists()
+    doc = json.loads((adv.home_dir / ".claude" / "settings.json").read_text())
+    assert "teammateMode" not in doc
+
+
+def test_settings_json_is_unchanged_when_the_channel_is_off(tmp_path):
+    s = settings_in(tmp_path, SEAT_AGENT_CHANNEL="off")
+    bootstrap.write_settings_json(s)
+    doc = json.loads((s.home_dir / ".claude" / "settings.json").read_text())
+    assert set(doc) == {"hooks", "enableAllProjectMcpServers", "permissions"}

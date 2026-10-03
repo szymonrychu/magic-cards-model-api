@@ -17,6 +17,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from .. import seat_pair
 from .config import Settings
 
 log = logging.getLogger("wrapper.bootstrap")
@@ -84,6 +85,9 @@ def write_settings_json(settings: Settings) -> None:
         "enableAllProjectMcpServers": settings.enable_all_mcp,
         "permissions": {"deny": list(DENY_TOOLS)},
     }
+    if settings.pair_active and settings.seat_agent_channel is seat_pair.Channel.TEAMS:
+        doc["env"] = {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"}
+        doc["teammateMode"] = "in-process"
     if settings.permission_mode:
         doc["permissions"]["defaultMode"] = settings.permission_mode
     _write_json(settings.home_dir / ".claude" / "settings.json", doc, 0o644)
@@ -170,6 +174,99 @@ You cannot act in the game and must not try: you have no game tools.
 """
 
 
+#: The MCP tool contract the `seat-player` allowlist is built from. In the
+#: image the repo is `/app`, so this resolves there too.
+TOOLS_CONTRACT = Path(__file__).resolve().parents[3] / "contract" / "tools.json"
+
+SEAT_PLAYER_SPELLSLINGER = (
+    "mcp__spellslinger__knowledge_search",
+    "mcp__spellslinger__resolve_cards",
+)
+
+SEAT_PLAYER_DENY = (
+    "mcp__mtg__pass_baton",
+    "Bash",
+    "Write",
+    "Edit",
+    "NotebookEdit",
+    "Agent",
+    "Task",
+    "TeamCreate",
+    "TeamDelete",
+)
+
+SEAT_PLAYER_PROMPT = """You are a seat-player: one of a pair of agents playing one seat of a
+Magic: the Gathering game for an orchestrator. At any moment one of you holds the
+`current` role and the other holds the `future` role; the orchestrator tells you
+which. It is one definition because `future` is promoted to `current` by
+continuing you, with your context intact.
+
+Start by reading /workspace/current-game.md: your deck, the opponent, the matchup
+card and the seat's briefing. Look rules up with the spellslinger tools, never
+from memory.
+
+## The future role
+
+You plan; you do not act. Use only the read-only tools in BATON_EXEMPT_TOOLS
+(`battlefield_state`, `game_log`, `list_scripts`, `report_problem`) plus the
+lookups and Read/Grep/Glob, and never call an acting tool: not `cast`, `decide`,
+`activate`, `pass`, `pass_until`, `run_script`, `declare_plan`, `stage_script`,
+nor any other that moves the game. Pre-plan the next decision as conditional DSL
+plans: when-clauses for what the opponent might do, and arm lists for what should
+stop a wait. Keep the plans current as the board moves - re-read the board and
+rewrite them whenever it changes - so that on promotion your plan is already
+fresh. Send plans to the orchestrator; do not wait to be asked.
+
+## The current role
+
+You hold the baton and you act. Play one wait then one committing call per
+decision: a single `pass_until` or `pass`, then exactly one committing call
+(`cast`, `decide`, `activate`, `play_land`, `declare_attackers`,
+`declare_blockers`, `run_script`), nothing in between. Be DSL-first: put any
+multi-step sequence into `run_script`. You must pass the baton on every acting call: give
+the baton you were handed as the `baton` argument. When you are promoted from
+the future role, revalidate the inherited plan against the fresh answer before
+using it - the opponent may have acted since you wrote it; adjust or discard it.
+The moment the decision commits, report `committed: <one line>` to the
+orchestrator (what you did, nothing more) so the next decision can be planned.
+
+## Refusals
+
+Read the engine's refusal text; it says why the action was illegal, so correct
+the action and retry. `BATON_REQUIRED` means you forgot the baton. `BATON_STALE`
+means you were demoted: stop acting at once, report it, and carry on as the
+future role.
+"""
+
+
+def _seat_player_tools(channel: seat_pair.Channel) -> list[str]:
+    contract = json.loads(TOOLS_CONTRACT.read_text())["tools"]
+    tools = [f"mcp__mtg__{t['name']}" for t in contract if t["name"] != "pass_baton"]
+    tools += SEAT_PLAYER_SPELLSLINGER
+    tools += ["Read", "Grep", "Glob"]
+    if channel is seat_pair.Channel.TEAMS:
+        tools.append("SendMessage")
+    return tools
+
+
+def _write_seat_player(settings: Settings, root: Path) -> None:
+    text = (
+        "---\n"
+        f"name: {seat_pair.SEAT_PLAYER}\n"
+        "description: Plays one seat of the game as the current (acting) or future "
+        "(read-only planning) role, as the orchestrator directs. Continue the same "
+        "agent to promote future to current.\n"
+        f"tools: {', '.join(_seat_player_tools(settings.seat_agent_channel))}\n"
+        f"disallowedTools: {', '.join(SEAT_PLAYER_DENY)}\n"
+        f"model: {settings.seat_subagent_model}\n"
+        "---\n"
+        f"{SEAT_PLAYER_PROMPT}"
+    )
+    path = root / f"{seat_pair.SEAT_PLAYER}.md"
+    path.write_text(text)
+    path.chmod(0o644)
+
+
 def write_agents(settings: Settings) -> None:
     """The seat's subagents, as project agents under the workspace (claude's
     cwd). Rendered from code so the tool allowlist is pinned by tests rather
@@ -193,6 +290,8 @@ def write_agents(settings: Settings) -> None:
     path = root / f"{RULES_RESEARCHER}.md"
     path.write_text(text)
     path.chmod(0o644)
+    if settings.pair_active:
+        _write_seat_player(settings, root)
 
 
 def copy_skills(settings: Settings) -> None:

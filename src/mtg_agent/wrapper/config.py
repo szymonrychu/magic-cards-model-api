@@ -11,6 +11,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..seat_pair import Channel, pair_active
+
 
 def _str(env: Mapping[str, str], key: str, default: str) -> str:
     value = env.get(key, "").strip()
@@ -64,6 +66,15 @@ class Settings:
     #: (`bootstrap.write_agents`). Its own setting, cheaper than the seat's:
     #: a rules lookup is one question and a few searches, not a game.
     rules_researcher_model: str = "sonnet"
+    #: How the seat's orchestrator reaches its `seat-player` pair (`seat_pair`):
+    #: off, teams or subagents. Default teams (the T1 probe verdict).
+    seat_agent_channel: Channel = Channel.TEAMS
+    #: This container's `MTG_ROLE`: only a `seat` pairs.
+    role: str = "seat"
+    #: The `seat-player` agents' model, and an optional effort. Effort is
+    #: not written to the agent frontmatter (2.1.282 is not shown to honour it).
+    seat_subagent_model: str = "claude-opus-5"
+    seat_subagent_effort: str = ""
     max_thinking_tokens: int | None = None
     workspace: Path = Path("/workspace")
     home_dir: Path = Path("/root")
@@ -186,6 +197,10 @@ class Settings:
     #: messages, tools. See `activity.py`.
     agent_log_level: str = "tools"
 
+    @property
+    def pair_active(self) -> bool:
+        return pair_active(self.seat_agent_channel, self.role)
+
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
         raw_skills = env.get("SKILLS_DIRS", "").strip()
@@ -197,6 +212,10 @@ class Settings:
             model=_str(env, "MODEL", ""),
             effort=_str(env, "EFFORT", ""),
             rules_researcher_model=_str(env, "RULES_RESEARCHER_MODEL", "sonnet"),
+            seat_agent_channel=Channel.parse(env.get("SEAT_AGENT_CHANNEL", "")),
+            role=_str(env, "MTG_ROLE", "seat"),
+            seat_subagent_model=_str(env, "SEAT_SUBAGENT_MODEL", "claude-opus-5"),
+            seat_subagent_effort=_str(env, "SEAT_SUBAGENT_EFFORT", ""),
             max_thinking_tokens=_int_or_none(env, "MAX_THINKING_TOKENS"),
             workspace=Path(_str(env, "WORKSPACE", "/workspace")),
             home_dir=Path(_str(env, "HOME_DIR", "/root")),
