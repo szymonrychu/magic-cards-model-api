@@ -57,8 +57,10 @@ def settled_on(world, turn_id: str) -> None:
     """The driver has recorded `turn_id` as the turn in flight (a re-dispatch
     pushes first and records after, on its own thread)."""
     wait_for(
-        lambda: (status := world.client.get("/status").json())["lastTurnId"] == turn_id
-        and status["turnActive"]
+        lambda: (
+            (status := world.client.get("/status").json())["lastTurnId"] == turn_id
+            and status["turnActive"]
+        )
     )
 
 

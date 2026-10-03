@@ -801,7 +801,9 @@ class Manager:
         # driver was told over the callback, but nobody watching the agent
         # container saw why its turn stopped.
         log.error("turn failed turn_id=%s: %s", turn_id, reason)
-        record = self.store.fail(turn_id, reason, self.now())
+        with self._lock:
+            pending = self._deferred.pop(turn_id, None) or []
+        record = self.store.fail(turn_id, reason, self.now(), pending)
         self.metrics.turn_in_flight.set(0)
         self.metrics.turns_total.labels(result="failed").inc()
         self._deliver(record)
