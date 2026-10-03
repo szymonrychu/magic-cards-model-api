@@ -24,6 +24,17 @@ only reports it once a turn has ended), so the watcher globs
 `$HOME_DIR/.claude/projects/*/*.jsonl` and follows the newest file, picking
 up a new session file when one appears.
 
+With the seat pair (`mtg_agent.seat_pair`) that file is only the
+orchestrator's. Every subagent or teammate the session spawns writes its own
+transcript next to it, `<session>/subagents/agent-<agentId>.jsonl` with its
+spawn metadata in `agent-<agentId>.meta.json` (layout recorded by T1 in
+`tests/wrapper/fixtures/seat_pair/README.md`). The watcher follows all of
+them and tags each with a role from its agent name (`role_for_name`,
+`AgentRoster`): `orchestrator` for the main transcript, `current`/`future` for
+the seat pair's players, `helper` for anything else (the rules researcher).
+The AI pill shows the current player, metrics carry the role, and the stall
+timer counts a line from any of them as progress.
+
 Verbosity is `AGENT_LOG_LEVEL`, and governs the text log only - `off`/`turns`
 still feed `ccw_inference_seconds` (see `InferenceTimer`), since that is a
 metric a production wrapper wants regardless of how loud its log is:
@@ -72,8 +83,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ..seat_pair import ROLE_CURRENT, ROLE_FUTURE
 from .bootstrap import RULES_RESEARCHER
-from .metrics import Metrics
+from .metrics import ORCHESTRATOR, Metrics
 
 log = logging.getLogger("agent")
 
@@ -345,7 +357,7 @@ def state_for(kind: str, name: str) -> str | None:
     return WORKING
 
 
-def observations(line: dict) -> Iterator[tuple[str, str]]:
+def observations(line: dict, include_sidechain: bool = False) -> Iterator[tuple[str, str]]:
     """`(kind, tool name)` for one transcript object - the activity-facing
     counterpart of `events` above.
 
@@ -355,9 +367,11 @@ def observations(line: dict) -> Iterator[tuple[str, str]]:
     `events` skips because they carry no readable text, are exactly what
     this one wants: their presence is the evidence.
 
-    A subagent's own sidechain line is not an observation: the seat launched
-    it and went back to waiting, so its researcher's lookups must not move
-    the seat's published state off `waiting`.
+    A subagent's own sidechain line is not an observation of the main
+    transcript's agent: the seat launched it and went back to waiting, so its
+    researcher's lookups must not move the seat's published state off
+    `waiting`. `include_sidechain` is for a helper's own transcript (every
+    line of which is a sidechain line), tracked as that helper's activity.
 
     A `user` line carrying a `tool_result` is an observation too, and yields
     `("thinking", "")` - the same kind a `thinking` block does. This used to
@@ -375,7 +389,7 @@ def observations(line: dict) -> Iterator[tuple[str, str]]:
     from whatever tool call preceded it.
     """
     kind = line.get("type")
-    if kind not in ("assistant", "user") or line.get("isSidechain"):
+    if kind not in ("assistant", "user") or (line.get("isSidechain") and not include_sidechain):
         return
     message = line.get("message")
     if not isinstance(message, dict):
@@ -427,11 +441,13 @@ def emit(kind: str, text: str, rank: int) -> None:
         log.warning("tool failed: %s", text)
 
 
-def log_lines(lines: Iterable[dict], rank: int) -> int:
+def log_lines(lines: Iterable[dict], rank: int, who: str = "") -> int:
+    """Log every event of `lines`; `who` (a helper's role and name) prefixes
+    each so a helper's line is never read as the seat's own."""
     count = 0
     for line in lines:
         for kind, text in events(line):
-            emit(kind, text, rank)
+            emit(kind, f"[{who}] {text}" if who else text, rank)
             count += 1
     return count
 
@@ -513,8 +529,11 @@ class CurrentActivity:
     rather than as a number nothing downstream would know what to do with.
     """
 
-    def __init__(self, now: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self, now: Callable[[], float] = time.time, include_sidechain: bool = False
+    ) -> None:
         self._now = now
+        self._include_sidechain = include_sidechain
         self._lock = threading.Lock()
         self._state: str | None = None
         self._at = 0.0
@@ -526,7 +545,7 @@ class CurrentActivity:
 
     def _feed_one(self, line: dict) -> None:
         stamped = _parse_ts(line.get("timestamp"))
-        for kind, name in observations(line):
+        for kind, name in observations(line, self._include_sidechain):
             state = state_for(kind, name)
             if state is None:
                 continue
@@ -570,10 +589,17 @@ class InferenceTimer:
     coming - so the very last inference in flight when the transcript stops
     growing (match end) is never recorded. That is an inherent limit of
     timing a live tail rather than a finished file, not a bug.
+
+    One timer follows one transcript. `role` is the agent's role, set by the
+    watcher before each line; a group is labelled with the role at its first
+    block and the `message.model` its lines name.
     """
 
-    def __init__(self, metrics: Metrics | None) -> None:
+    def __init__(self, metrics: Metrics | None, role: str = ORCHESTRATOR) -> None:
         self.metrics = metrics
+        self.role = role
+        self._group_role = role
+        self._group_model = ""
         self._prev_ts: float | None = None
         self._group_id: str | None = None
         self._group_start: float | None = None
@@ -593,10 +619,12 @@ class InferenceTimer:
             self._finish_group()
 
         if kind == "assistant" and rid:
+            message = line.get("message") or {}
             if self._group_id is None:
                 self._group_id = rid
                 self._group_start = self._prev_ts
-            message = line.get("message") or {}
+                self._group_role = self.role
+                self._group_model = str(message.get("model") or "")
             usage = message.get("usage") or {}
             output_tokens = usage.get("output_tokens")
             if isinstance(output_tokens, int):
@@ -613,7 +641,12 @@ class InferenceTimer:
             and self._group_start is not None
             and self._group_last is not None
         ):
-            self.metrics.record_inference(self._group_last - self._group_start, self._group_tokens)
+            self.metrics.record_inference(
+                self._group_last - self._group_start,
+                self._group_tokens,
+                role=self._group_role,
+                model=self._group_model,
+            )
         self._group_id = None
         self._group_start = None
         self._group_last = None
@@ -671,6 +704,16 @@ class StepTimer:
     between `AGENT_LOG_LEVEL` (text log volume) and what a production
     wrapper wants regardless of it.
 
+    A prompt the agent takes in - a `user` line whose content is a string: a
+    turn, a teammate message, a task notification - is a step boundary too:
+    the model starts on it, so a helper woken by a message is timed from the
+    message, not from its last tool result minutes before.
+
+    One timer follows one transcript, so with the seat pair the current
+    player's step is measured from its own tool results, never from the
+    future player's reads in between. `role` is set by the watcher before
+    each line; a step carries the role it had when its `tool_use` was issued.
+
     Every field access here is defensive (`.get` plus an `isinstance` guard)
     rather than wrapped in `try`/`except`, matching `observations`'/
     `InferenceTimer`'s own style - a malformed or out-of-order line degrades
@@ -682,15 +725,18 @@ class StepTimer:
         metrics: Metrics | None = None,
         rank: int = 0,
         now: Callable[[], float] = time.time,
+        role: str = ORCHESTRATOR,
     ) -> None:
         self.metrics = metrics
         self.rank = rank
+        self.role = role
         #: The last observed `user`/`tool_result` line's timestamp - "turn
         #: start" until the first one arrives.
         self._boundary_ts: float = now()
         #: tool_use id -> (short name, issued timestamp, model_ms already
-        #: computed at issue time) - popped once its `tool_result` lands.
-        self._pending: dict[str, tuple[str, float, float]] = {}
+        #: computed at issue time, role at issue) - popped once its
+        #: `tool_result` lands.
+        self._pending: dict[str, tuple[str, float, float, str]] = {}
 
     def feed(self, lines: Iterable[dict]) -> None:
         for line in lines:
@@ -702,9 +748,12 @@ class StepTimer:
         if not isinstance(message, dict):
             return
         content = message.get("content")
+        ts = _parse_ts(line.get("timestamp"))
+        if kind == "user" and isinstance(content, str) and ts is not None:
+            self._boundary_ts = ts
+            return
         if not isinstance(content, list):
             return
-        ts = _parse_ts(line.get("timestamp"))
         if kind == "assistant":
             self._feed_tool_uses(content, ts)
         elif kind == "user":
@@ -723,7 +772,7 @@ class StepTimer:
             if ts is None:
                 continue
             model_ms = max(0.0, (ts - self._boundary_ts) * 1000.0)
-            self._pending[tool_id] = (name, ts, model_ms)
+            self._pending[tool_id] = (name, ts, model_ms, self.role)
 
     def _feed_tool_results(self, content: list, ts: float | None) -> None:
         for block in content:
@@ -737,17 +786,23 @@ class StepTimer:
             pending = self._pending.pop(tool_id, None)
             if pending is None or ts is None:
                 continue
-            name, issued_ts, model_ms = pending
+            name, issued_ts, model_ms, role = pending
             tool_ms = max(0.0, (ts - issued_ts) * 1000.0)
             auto_answers = _auto_answered_count(block.get("content"))
-            self._record(name, model_ms, tool_ms, auto_answers)
+            self._record(name, model_ms, tool_ms, auto_answers, role)
 
-    def _record(self, name: str, model_ms: float, tool_ms: float, auto_answers: int) -> None:
+    def _record(
+        self, name: str, model_ms: float, tool_ms: float, auto_answers: int, role: str
+    ) -> None:
         short = _short_tool_name(name)
         if self.metrics is not None:
-            self.metrics.record_step(short, model_ms / 1000.0, tool_ms / 1000.0, auto_answers)
+            self.metrics.record_step(
+                short, model_ms / 1000.0, tool_ms / 1000.0, auto_answers, role=role
+            )
         if self.rank >= level_rank("tools"):
             suffix = f" auto_answers={auto_answers}" if auto_answers else ""
+            if role != ORCHESTRATOR:
+                suffix += f" role={role}"
             log.info("step tool=%s model_ms=%.0f tool_ms=%.0f%s", short, model_ms, tool_ms, suffix)
 
 
@@ -763,8 +818,326 @@ def newest_transcript(home_dir: Path) -> Path | None:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
+# ---- the seat pair: which agent wrote a line, in which role ----------------
+
+#: The key `ActivityWatcher.agent_roles`/`agent_activity` give the main
+#: transcript (the orchestrator). A helper's key is its own `agentId`.
+MAIN_AGENT = "main"
+
+#: Any agent that is not the orchestrator and not a seat-pair player: the
+#: rules researcher, a script-development subagent, a probe's `alpha`.
+HELPER = "helper"
+
+_PLAYER_NAME_RE = re.compile(rf"^({ROLE_CURRENT}|{ROLE_FUTURE})(-\d+)?$")
+#: The orchestrator's promotion message to a future player (T5's protocol:
+#: `promoted: you are current, baton <token>, last decision <line>`).
+_PROMOTED_RE = re.compile(r"^\s*promoted\b", re.IGNORECASE)
+_NOTIFICATION_RE = re.compile(r"<task-notification>(.*?)</task-notification>", re.DOTALL)
+_NOTIFICATION_TAG_RE = re.compile(r"<(task-id|status)>\s*([^<]*?)\s*</\1>")
+_TERMINATED_RE = re.compile(r'"teammate_terminated"[^}]*?"message"\s*:\s*"([^"\s]+) has shut down')
+
+
+def role_for_name(name: str | None) -> str:
+    """`current-<n>` -> current, `future-<n>` -> future (the names
+    `seat_pair.current_name`/`future_name` give the players), anything else
+    -> helper."""
+    match = _PLAYER_NAME_RE.match(str(name or "").strip())
+    return match.group(1) if match else HELPER
+
+
+def subagents_dir(main: Path) -> Path:
+    """Where the session `main` keeps its helpers' transcripts."""
+    return main.with_suffix("") / "subagents"
+
+
+def _agent_id_of(path: Path) -> str:
+    return path.name.removesuffix(".jsonl").removeprefix("agent-")
+
+
+def _read_meta(transcript: Path) -> dict:
+    meta_path = transcript.with_name(transcript.name.removesuffix(".jsonl") + ".meta.json")
+    try:
+        meta = json.loads(meta_path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _prompt_texts(line: dict) -> list[str]:
+    """Prompt text a line gave claude: a `user` string (or its text blocks),
+    or a prompt queued mid-turn (`attachment` of type `queued_command`)."""
+    if line.get("type") == "user":
+        content = (line.get("message") or {}).get("content")
+    elif line.get("type") == "attachment":
+        attachment = line.get("attachment") or {}
+        if attachment.get("type") != "queued_command":
+            return []
+        content = attachment.get("prompt")
+    else:
+        return []
+    if isinstance(content, str):
+        return [content]
+    if isinstance(content, list):
+        return [
+            str(block.get("text") or "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+    return []
+
+
+class AgentRoster:
+    """Who each helper transcript belongs to, and its role at any moment.
+
+    Built from the orchestrator's own transcript (`feed_main`) and each
+    helper's spawn metadata (`add_agent`). A helper's name is in its
+    `.meta.json` (teams), or only in the lead's `Agent` call that spawned it
+    (subagents: matched by the meta's `toolUseId`, or by the launch result's
+    `agentId`). Its role comes from that name (`role_for_name`), and moves:
+
+    - a future player becomes current when the orchestrator sends it a
+      `promoted: ...` message (it is continued, not respawned, so its name
+      stays `future-<n>`);
+    - a current player that another player has since become current over is
+      retired and counts as a helper from then on;
+    - a player stops being live at a `TaskStop` or `shutdown_request` naming
+      it, or a `killed` task notification or `teammate_terminated` for it.
+
+    Times are the transcripts' own timestamps (epoch seconds).
+    """
+
+    def __init__(self) -> None:
+        self._names: dict[str, str] = {}
+        self._spawn_tool_ids: dict[str, str] = {}
+        #: Agent `tool_use` id -> (name asked for, timestamp).
+        self._spawns: dict[str, tuple[str, float | None]] = {}
+        #: `agentId` from an async launch result -> its Agent `tool_use` id.
+        self._launches: dict[str, str] = {}
+        self._tool_uses: dict[str, str] = {}
+        self._promotions: list[tuple[float, str]] = []
+        self._stops: list[tuple[float, str]] = []
+
+    # -- feeding --
+
+    def add_agent(self, agent_id: str, meta: dict) -> None:
+        self._names.setdefault(agent_id, "")
+        name = meta.get("name")
+        if isinstance(name, str) and name:
+            self._names[agent_id] = name
+        tool_use_id = meta.get("toolUseId")
+        if isinstance(tool_use_id, str) and tool_use_id:
+            self._spawn_tool_ids[agent_id] = tool_use_id
+
+    def known(self, agent_id: str) -> bool:
+        return agent_id in self._names
+
+    def feed_main(self, lines: Iterable[dict]) -> None:
+        for line in lines:
+            stamp = _parse_ts(line.get("timestamp"))
+            content = (line.get("message") or {}).get("content")
+            if line.get("type") == "assistant" and isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        self._feed_tool_use(block, stamp)
+            elif line.get("type") == "user" and isinstance(content, list):
+                self._feed_launch(line, content)
+            if stamp is not None:
+                for text in _prompt_texts(line):
+                    self._feed_prompt(text, stamp)
+
+    def _feed_tool_use(self, block: dict, stamp: float | None) -> None:
+        name = str(block.get("name") or "")
+        tool_id = str(block.get("id") or "")
+        tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
+        self._tool_uses[tool_id] = name
+        if name in _AGENT_TOOLS:
+            self._spawns[tool_id] = (str(tool_input.get("name") or ""), stamp)
+            return
+        if stamp is None:
+            return
+        if name == "SendMessage":
+            ref = str(tool_input.get("to") or tool_input.get("recipient") or "")
+            message = tool_input.get("message")
+            if isinstance(message, str) and _PROMOTED_RE.match(message):
+                self._promotions.append((stamp, ref))
+            elif isinstance(message, dict) and message.get("type") == "shutdown_request":
+                self._stops.append((stamp, ref))
+        elif name == "TaskStop":
+            ref = str(tool_input.get("task_id") or "")
+            if ref:
+                self._stops.append((stamp, ref))
+
+    def _feed_launch(self, line: dict, content: list) -> None:
+        result = line.get("toolUseResult")
+        if not isinstance(result, dict):
+            return
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            tool_id = str(block.get("tool_use_id") or "")
+            if self._tool_uses.get(tool_id) not in _AGENT_TOOLS:
+                continue
+            for key in ("agentId", "agent_id"):
+                value = result.get(key)
+                if isinstance(value, str) and value:
+                    self._launches[value] = tool_id
+
+    def _feed_prompt(self, text: str, stamp: float) -> None:
+        for body in _NOTIFICATION_RE.findall(text):
+            tags = dict(_NOTIFICATION_TAG_RE.findall(body))
+            if tags.get("status", "").lower() == "killed" and tags.get("task-id"):
+                self._stops.append((stamp, tags["task-id"]))
+        for name in _TERMINATED_RE.findall(text):
+            self._stops.append((stamp, name))
+
+    # -- reading --
+
+    def agents(self) -> list[str]:
+        return list(self._names)
+
+    def name_of(self, agent_id: str) -> str:
+        if self._names.get(agent_id):
+            return self._names[agent_id]
+        tool_id = self._spawn_tool_ids.get(agent_id) or self._launches.get(agent_id) or ""
+        return self._spawns.get(tool_id, ("", None))[0]
+
+    def _spawned_at(self, agent_id: str) -> float | None:
+        tool_id = self._spawn_tool_ids.get(agent_id) or self._launches.get(agent_id) or ""
+        return self._spawns.get(tool_id, ("", None))[1]
+
+    def _refers_to(self, ref: str, agent_id: str) -> bool:
+        if not ref:
+            return False
+        name = self.name_of(agent_id)
+        return ref == agent_id or (bool(name) and ref.split("@", 1)[0] == name)
+
+    def _became_current_at(self, agent_id: str) -> float | None:
+        """When this agent became the current player, or None if never.
+        A `current-<n>` is current from its spawn (from the start of time if
+        the spawn is not on record); a `future-<n>` from its promotion."""
+        base = role_for_name(self.name_of(agent_id))
+        if base == ROLE_CURRENT:
+            spawned = self._spawned_at(agent_id)
+            return spawned if spawned is not None else float("-inf")
+        if base == ROLE_FUTURE:
+            promoted = [at for at, ref in self._promotions if self._refers_to(ref, agent_id)]
+            return min(promoted) if promoted else None
+        return None
+
+    def stopped_at(self, agent_id: str) -> float | None:
+        stops = [at for at, ref in self._stops if self._refers_to(ref, agent_id)]
+        return min(stops) if stops else None
+
+    def role_at(self, agent_id: str, at: float | None = None) -> str:
+        """The agent's role at `at` (epoch seconds; None means now)."""
+        base = role_for_name(self.name_of(agent_id))
+        became = self._became_current_at(agent_id)
+        moment = float("inf") if at is None else at
+        if became is None or moment < became:
+            return base
+        for other in self._names:
+            if other == agent_id:
+                continue
+            other_became = self._became_current_at(other)
+            if other_became is not None and became < other_became <= moment:
+                return HELPER
+        return ROLE_CURRENT
+
+    def active_current(self) -> str | None:
+        """The live current player now, or None."""
+        live = [
+            agent_id
+            for agent_id in self._names
+            if self.role_at(agent_id) == ROLE_CURRENT and self.stopped_at(agent_id) is None
+        ]
+        if not live:
+            return None
+        return max(live, key=lambda agent_id: self._became_current_at(agent_id) or float("-inf"))
+
+
+def _load_roster(main: Path) -> tuple[AgentRoster, list[Path]]:
+    roster = AgentRoster()
+    roster.feed_main(TranscriptTail(main).read())
+    try:
+        helpers = sorted(subagents_dir(main).glob("agent-*.jsonl"))
+    except OSError:
+        helpers = []
+    for path in helpers:
+        roster.add_agent(_agent_id_of(path), _read_meta(path))
+    return roster, helpers
+
+
+def agent_turn_tokens(main: Path, since: float, until: float) -> list[dict[str, Any]]:
+    """Token totals of every helper of the session `main` for the lines
+    stamped in `(since, until]`, one entry per (role, model) in the shape of
+    the Stop hook's `turnTokens` plus `role`.
+
+    The Stop hook only reads the orchestrator's transcript; this is the rest
+    of the turn's usage (the seat pair's Opus players, the researcher). Each
+    API message is counted once, at its last line: claude writes one line per
+    content block of a response, each repeating the response's usage (the
+    output count can still grow between them), and the role is the one the
+    agent held at that line."""
+    roster, helpers = _load_roster(Path(main))
+    totals: dict[tuple[str, str], dict[str, Any]] = {}
+    for path in helpers:
+        agent_id = _agent_id_of(path)
+        final: dict[str, tuple[float, str, dict]] = {}
+        for line in TranscriptTail(path).read():
+            if line.get("type") != "assistant":
+                continue
+            message = line.get("message") or {}
+            usage = message.get("usage")
+            stamp = _parse_ts(line.get("timestamp"))
+            if not isinstance(usage, dict) or stamp is None or not since < stamp <= until:
+                continue
+            key = str(message.get("id") or line.get("requestId") or line.get("uuid") or id(line))
+            # The last line of a message carries its final usage.
+            final[key] = (stamp, str(message.get("model") or ""), usage)
+        for stamp, model, usage in final.values():
+            role = roster.role_at(agent_id, stamp)
+            entry = totals.setdefault(
+                (role, model),
+                {
+                    "model": model,
+                    "input": 0,
+                    "output": 0,
+                    "cache_read": 0,
+                    "cache_creation": 0,
+                    "role": role,
+                },
+            )
+            entry["input"] += int(usage.get("input_tokens") or 0)
+            entry["output"] += int(usage.get("output_tokens") or 0)
+            entry["cache_read"] += int(usage.get("cache_read_input_tokens") or 0)
+            entry["cache_creation"] += int(usage.get("cache_creation_input_tokens") or 0)
+    return [totals[key] for key in sorted(totals)]
+
+
+class _Track:
+    """One transcript followed live: its tail, its activity, its timers."""
+
+    def __init__(self, path: Path, metrics: Metrics | None, rank: int, helper: bool) -> None:
+        self.tail = TranscriptTail(path)
+        self.activity = CurrentActivity(include_sidechain=helper)
+        self.inference = InferenceTimer(metrics)
+        self.steps = StepTimer(metrics, rank=rank)
+
+    def feed(self, lines: list[dict], role_at: Callable[[float | None], str]) -> None:
+        for line in lines:
+            role = role_at(_parse_ts(line.get("timestamp")))
+            self.inference.role = role
+            self.steps.role = role
+            self.inference.feed((line,))
+            self.steps.feed((line,))
+            self.activity.feed((line,))
+
+
 class ActivityWatcher:
-    """A daemon thread that turns the live transcript into log lines.
+    """A daemon thread that turns the live transcripts into log lines.
+
+    Follows the newest session transcript (the orchestrator) and every
+    helper transcript of that session (see the module docstring).
 
     Read-only and entirely out of the turn's path: if it dies, the game is
     unaffected and only the log goes quiet.
@@ -776,35 +1149,74 @@ class ActivityWatcher:
         level: str = "tools",
         poll: float = POLL_SECONDS,
         metrics: Metrics | None = None,
+        now: Callable[[], float] = time.time,
     ) -> None:
         self.home_dir = Path(home_dir)
         self.rank = level_rank(level)
         self.poll = poll
+        self.metrics = metrics
+        self._now = now
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._tail: TranscriptTail | None = None
-        #: `ccw_inference_seconds`. Fed unconditionally in `poll_once`, not
+        self._lock = threading.Lock()
+        #: The orchestrator's transcript. Its timers feed
+        #: `ccw_inference_seconds` and the step metrics unconditionally, not
         #: gated on `rank` - a production wrapper turned down to `off`/`turns`
-        #: for log volume still wants latency data.
-        self._timer = InferenceTimer(metrics)
-        #: `ccw_model_step_seconds`/`ccw_tool_seconds`/`ccw_auto_answers_total`
-        #: plus the per-tool-call `tools`-level log line - see `StepTimer`.
-        #: Metrics fed unconditionally, same reasoning as `_timer` above; the
-        #: log line itself still respects `rank`.
-        self._steps = StepTimer(metrics, rank=self.rank)
-        #: What the play UI's AI pill says. Fed unconditionally for the same
-        #: reason: `AGENT_LOG_LEVEL` is a choice about this container's log
-        #: volume, not a decision to leave the human opposite this seat
-        #: staring at one static word for the whole match.
-        self._activity = CurrentActivity()
+        #: for log volume still wants latency data - and its activity feeds
+        #: the AI pill for the same reason: `AGENT_LOG_LEVEL` is a choice
+        #: about this container's log volume, not a decision to leave the
+        #: human opposite this seat staring at one static word.
+        self._main: _Track | None = None
+        self._helpers: dict[str, _Track] = {}
+        self._roster = AgentRoster()
+        #: The newest line any agent of the session wrote (`last_progress`).
+        self._last_line_at: float | None = None
 
     def enabled(self) -> bool:
         return self.rank > level_rank("turns")
 
     def activity_snapshot(self) -> dict[str, Any] | None:
-        """What the agent is doing right now, for `Manager.snapshot` to
-        publish - `None` until the transcript shows something."""
-        return self._activity.snapshot()
+        """What the seat is doing right now, for `Manager.snapshot` to
+        publish - `None` until the transcript shows something.
+
+        The live current player's latest activity when there is one and it
+        has been seen doing something, otherwise the orchestrator's: a future
+        player's activity never reaches the pill. `role` names whose it is
+        and `label` prefixes the word with it; `state`, `seconds` and `seq`
+        keep their meaning (`CurrentActivity.snapshot`)."""
+        with self._lock:
+            current = self._roster.active_current()
+            track = self._helpers.get(current or "")
+            main = self._main
+        if track is not None:
+            snapshot = track.activity.snapshot()
+            if snapshot is not None:
+                return _with_role(snapshot, ROLE_CURRENT)
+        if main is None:
+            return None
+        snapshot = main.activity.snapshot()
+        return _with_role(snapshot, ORCHESTRATOR) if snapshot is not None else None
+
+    def agent_roles(self) -> dict[str, str]:
+        """Every followed transcript (`MAIN_AGENT` or a helper's `agentId`)
+        and its role now."""
+        with self._lock:
+            roles = {MAIN_AGENT: ORCHESTRATOR} if self._main is not None else {}
+            roles.update({agent_id: self._roster.role_at(agent_id) for agent_id in self._helpers})
+            return roles
+
+    def agent_activity(self, agent_id: str) -> dict[str, Any] | None:
+        """One agent's own latest activity (`CurrentActivity.snapshot`)."""
+        with self._lock:
+            track = self._main if agent_id == MAIN_AGENT else self._helpers.get(agent_id)
+        return track.activity.snapshot() if track is not None else None
+
+    def last_progress(self) -> float | None:
+        """The newest line any agent of the session wrote, as epoch seconds
+        (its own timestamp, or the time it was read when it has none) - the
+        stall timer's measure of progress (`Manager.progress_source`)."""
+        with self._lock:
+            return self._last_line_at
 
     def start(self) -> None:
         # No longer gated on `enabled()`: the watcher's job is not just text
@@ -820,23 +1232,74 @@ class ActivityWatcher:
         self._stop.set()
 
     def poll_once(self) -> int:
-        """Follow the newest transcript, log whatever is new, feed
-        `ccw_inference_seconds`, and update what the agent is currently
-        doing. Returns the number of events logged - the unit of the tests."""
+        """Follow the newest transcript and its helpers' transcripts, log
+        whatever is new, feed the metrics, and update what each agent is
+        currently doing. Returns the number of events logged - the unit of
+        the tests."""
         newest = newest_transcript(self.home_dir)
         if newest is None:
             return 0
-        if self._tail is None or self._tail.path != newest:
-            # From byte 0. The agent container gets a fresh HOME per match
-            # (one container, one match - see `wrapper/__main__.py`), so the
-            # only file here is this session's, and its opening turn is worth
-            # logging rather than skipping.
-            self._tail = TranscriptTail(newest)
-        lines = self._tail.read()
-        self._timer.feed(lines)
-        self._steps.feed(lines)
-        self._activity.feed(lines)
-        return log_lines(lines, self.rank)
+        with self._lock:
+            if self._main is None or self._main.tail.path != newest:
+                # From byte 0. The agent container gets a fresh HOME per match
+                # (one container, one match - see `wrapper/__main__.py`), so
+                # the only file here is this session's, and its opening turn
+                # is worth logging rather than skipping.
+                self._main = _Track(newest, self.metrics, self.rank, helper=False)
+                self._helpers = {}
+                self._roster = AgentRoster()
+                self._last_line_at = None
+            main, roster = self._main, self._roster
+        lines = main.tail.read()
+        with self._lock:
+            roster.feed_main(lines)
+        main.feed(lines, lambda _at: ORCHESTRATOR)
+        self._note_progress(lines)
+        count = log_lines(lines, self.rank)
+        count += self._poll_helpers(newest, roster)
+        return count
+
+    def _poll_helpers(self, main: Path, roster: AgentRoster) -> int:
+        try:
+            paths = sorted(subagents_dir(main).glob("agent-*.jsonl"))
+        except OSError:
+            return 0
+        count = 0
+        for path in paths:
+            agent_id = _agent_id_of(path)
+            with self._lock:
+                # The meta is re-read until it names the agent: it can land
+                # after the transcript's first line.
+                if not roster.known(agent_id) or not roster.name_of(agent_id):
+                    roster.add_agent(agent_id, _read_meta(path))
+                track = self._helpers.get(agent_id)
+                if track is None:
+                    track = _Track(path, self.metrics, self.rank, helper=True)
+                    self._helpers[agent_id] = track
+            lines = track.tail.read()
+            if not lines:
+                continue
+
+            def role_at(at: float | None, agent_id: str = agent_id) -> str:
+                with self._lock:
+                    return roster.role_at(agent_id, at)
+
+            track.feed(lines, role_at)
+            self._note_progress(lines)
+            who = f"{role_at(None)} {roster.name_of(agent_id) or agent_id}"
+            count += log_lines(lines, self.rank, who=who)
+        return count
+
+    def _note_progress(self, lines: list[dict]) -> None:
+        if not lines:
+            return
+        stamps = [_parse_ts(line.get("timestamp")) for line in lines]
+        newest = max((at for at in stamps if at is not None), default=None)
+        if newest is None:
+            newest = self._now()
+        with self._lock:
+            if self._last_line_at is None or newest > self._last_line_at:
+                self._last_line_at = newest
 
     def _run(self) -> None:
         while not self._stop.wait(self.poll):
@@ -844,3 +1307,7 @@ class ActivityWatcher:
                 self.poll_once()
             except Exception as exc:  # noqa: BLE001 - logging never breaks a turn
                 log.debug("activity watcher hiccup: %s", exc)
+
+
+def _with_role(snapshot: dict[str, Any], role: str) -> dict[str, Any]:
+    return {**snapshot, "role": role, "label": f"{role}: {snapshot['state']}"}
