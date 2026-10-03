@@ -34,6 +34,7 @@ from magic_cards_model.machines.decisions import PendingDecision as PendingDecis
 from magic_cards_model.machines.legal_actions import blocked_casts
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.convertors import Convertor, register_url_convertor
 from starlette.responses import Response
 
@@ -51,6 +52,7 @@ from . import (
     game_access,
     handoff,
     lobby,
+    match_metrics,
     oidc,
     opening,
     player_control,
@@ -1094,6 +1096,7 @@ def _record_game_over(game_id: str, game: Game) -> None:
     window = store.recent_records(game_id, RECENT_RECORDS_WINDOW)
     if any(row["payload"].get("action") == audit.GAME_OVER_ACTION for row in window):
         return
+    match_metrics.game_over(game_id, seats=len(game.players))
     audit.record(
         game_id,
         audit.GAME_OVER_ACTION,
@@ -1300,6 +1303,11 @@ def frontend_dir() -> Path | None:
 
 
 # -- sessions ---------------------------------------------------------------
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics() -> Response:
+    return Response(generate_latest(match_metrics.REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/api/health", response_model=HealthResponse, response_model_exclude_unset=True)
