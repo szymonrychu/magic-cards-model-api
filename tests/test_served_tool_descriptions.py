@@ -29,7 +29,7 @@ from magic_cards_model_api.mcp_descriptions import (
     TOOL_DESCRIPTIONS,
 )
 
-SERVED_SURFACE_BUDGET = 45_000
+SERVED_SURFACE_BUDGET = 46_500  # +1.4k: `baton: str` on 23 acting tools (T3)
 
 
 def served_tools() -> list[Any]:

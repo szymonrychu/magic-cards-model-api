@@ -133,6 +133,8 @@ from typing import Any
 
 import httpx
 
+from .baton import BatonStore
+
 logger = logging.getLogger("mcm.seatkit")
 
 DEFAULT_API = "http://127.0.0.1:8000"
@@ -2523,6 +2525,11 @@ class Seats:
         #: `background_autopass.BackgroundRuns`, set by `mcp.build_server` -
         #: the background `pass_until` runs of this process, by seat uid.
         self.background: Any = None
+        #: uid -> the seat's current baton (`baton.BatonStore`), set up here
+        #: and replaced by `mcp.main` for `--require-baton`. Held on `Seats`
+        #: so stdio (one process per seat) and http (one process, many seats
+        #: keyed by uid) both work.
+        self.baton = BatonStore()
         #: When each seat uid's previous tool call returned (`mcp._log_timing`).
         self.call_returned: dict[str, float] = {}
         #: 2b T11: the http transport is one long-running process that may

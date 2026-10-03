@@ -68,6 +68,9 @@ you still hold priority and nothing is pending for you, it passes priority once 
 `pass` would and returns the pass's answer, with the action's outcome under `first`. Use it when \
 your next call would have been a bare pass (letting your own spell or trigger resolve).
 
+`baton`: the token pass_baton gave you; acting tools without it are refused (BATON_*). \
+Reads need none.
+
 Common parameters: ids are comma-separated strings. `mana_sources`: source ids to tap; empty \
 lets the engine's automatic payment tap only what the cost needs from your untapped sources. \
 `dry_run`: true asks "could I?" without changing anything (never blocks).
@@ -81,7 +84,17 @@ Refusals come back in the engine's own words: read the reason, fix the call, ret
 something looks wrong, report_problem and play on.
 """
 
+BATON_DESCRIPTION = (
+    "Pass this token as `baton` on every acting call for this seat; it replaces the previous "
+    "baton, which stops working. Without it acting calls are refused (BATON_REQUIRED/"
+    "BATON_STALE); battlefield_state, game_log and list_scripts need none."
+)
+
 TOOL_DESCRIPTIONS: dict[str, str] = {
+    "pass_baton": """\
+The orchestrator's tool; it never acts in the game. Hands seat `player_uid`'s baton to a new \
+agent: returns a fresh `baton` token and invalidates the previous one. From then on only a call \
+carrying that token may act for the seat.""",
     "wait_for_priority": """\
 Check whether it is your moment to act, then hand you the board. Wakes when: a decision is \
 waiting for you (answer with decide; arrives input_required); you have priority (act, or pass); \
