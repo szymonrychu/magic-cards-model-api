@@ -51,7 +51,14 @@ def test_dispatch_to_first_acting_call_and_baton_refusals_from_the_agent_log() -
     # and its own model step counts (the wait before the first acting call).
     expected = 4.1 + 44.2 + 3.05 + 1.01 + 5.0
     assert report["p1"]["dispatch_to_first_acting_seconds"] == pytest.approx(expected)
-    assert report["p1"]["baton_refusals"] == {"BATON_REQUIRED": 1, "BATON_STALE": 2}
+    assert report["p1"]["baton_refusals"] == {
+        "BATON_BUSY": 2,
+        "BATON_NOT_YET": 1,
+        "BATON_REQUIRED": 1,
+        "BATON_REVOKED": 1,
+        "BATON_SPENT": 1,
+        "BATON_STALE": 2,
+    }
     assert report["p2"]["dispatch_to_first_acting_seconds"] is None
     assert report["p2"]["baton_refusals"] == {}
 

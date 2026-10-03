@@ -24,7 +24,7 @@ from pathlib import Path
 TARGET_SECONDS = 900.0
 WAIT_TOOLS = ("pass_until", "wait_for_priority", "await_baton")
 ROLES = ("orchestrator", "current", "future")
-BATON_CODES = ("BATON_REQUIRED", "BATON_STALE")
+_BATON_CODE = re.compile(r"\b(BATON_[A-Z_]+)\b")
 #: The baton-gated tools that change the game (`mcp.py`'s acting tools); a
 #: wait, a read or a builtin is not an acting call.
 ACTING_TOOLS = frozenset(
@@ -107,11 +107,12 @@ def seat_from_agent_log(text: str) -> dict:
             first_acting = elapsed + model
         else:
             elapsed += model + float(step["tool_ms"]) / 1000.0
-    refusals = {}
-    for code in BATON_CODES:
-        count = sum(code in line for line in text.splitlines() if "tool failed:" in line)
-        if count:
-            refusals[code] = count
+    refusals: dict[str, int] = {}
+    for line in text.splitlines():
+        code = _BATON_CODE.search(line) if "tool failed:" in line else None
+        if code:
+            refusals[code[1]] = refusals.get(code[1], 0) + 1
+    refusals = dict(sorted(refusals.items()))
     return {
         "dispatch_to_first_acting_seconds": None if first_acting is None else _round(first_acting),
         "baton_refusals": refusals,
