@@ -54,3 +54,30 @@ UNREADABLE_CHARM_RAW: dict[str, Any] = {
     "rarity": "common",
     "set": "tst",
 }
+
+#: A sorcery whose optional additional cost (CR 118.8b) is a made-up sentence
+#: no engine reader charges. March of Otherworldly Light stood in for it until
+#: the engine learned to charge "exile any number of ... cards from your hand"
+#: (card-coverage round R0b); every real optional cost in the pool is charged
+#: now, so the "cannot charge" path needs a card built for the tests alone.
+UNCHARGEABLE_COST_NAME = "Garbled Offering"
+UNCHARGEABLE_COST_TEXT = "you may frobnicate a zorblax"
+
+UNCHARGEABLE_COST_RAW: dict[str, Any] = {
+    "id": "ffffffff-0000-0000-0000-000000000021",
+    "oracle_id": "ffffffff-0000-0000-0000-000000000022",
+    "name": UNCHARGEABLE_COST_NAME,
+    "type_line": "Sorcery",
+    "mana_cost": "{1}{W}",
+    "cmc": 2.0,
+    "oracle_text": (
+        f"As an additional cost to cast this spell, {UNCHARGEABLE_COST_TEXT}.\nYou gain 3 life."
+    ),
+    "colors": ["W"],
+    "color_identity": ["W"],
+    "keywords": [],
+    "layout": "normal",
+    "legalities": {"standard": "legal", "pioneer": "legal", "modern": "legal"},
+    "rarity": "common",
+    "set": "tst",
+}

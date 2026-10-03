@@ -358,6 +358,25 @@ def unreadable_charm(monkeypatch: pytest.MonkeyPatch) -> str:
     return UNREADABLE_CHARM_NAME
 
 
+@pytest.fixture
+def unchargeable_cost_card(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Makes `synthetic_cards_testkit.UNCHARGEABLE_COST_NAME` resolve through
+    `scryfall.fetch_card`, like `unreadable_charm`. Returns the card's name."""
+    from synthetic_cards_testkit import UNCHARGEABLE_COST_NAME, UNCHARGEABLE_COST_RAW
+
+    from magic_cards_model_api import scryfall
+
+    real_fetch_card = scryfall.fetch_card
+
+    def fetch_card_or_synthetic(name: str) -> dict:
+        if name == UNCHARGEABLE_COST_NAME:
+            return UNCHARGEABLE_COST_RAW
+        return real_fetch_card(name)
+
+    monkeypatch.setattr(scryfall, "fetch_card", fetch_card_or_synthetic)
+    return UNCHARGEABLE_COST_NAME
+
+
 def add_card(client: TestClient, game_id: str, name: str, player: str, zone: str, **kwargs):
     response = client.post(
         f"/api/games/{game_id}/cards",

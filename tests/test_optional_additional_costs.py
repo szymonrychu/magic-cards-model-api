@@ -23,6 +23,9 @@ import json
 import httpx
 from conftest import add_card, find, life_of, state
 from fastapi.testclient import TestClient
+from magic_cards_model.machines.casting import optional_additional_costs
+from magic_cards_model.models.card import Card
+from synthetic_cards_testkit import UNCHARGEABLE_COST_RAW, UNCHARGEABLE_COST_TEXT
 from test_legal_actions_endpoint import legal_actions
 
 from magic_cards_model_api import mcp as mcp_module
@@ -556,27 +559,45 @@ def test_a_card_with_no_optional_cost_carries_no_additional_costs(client, game):
     assert "additional_costs" not in hand_card(client, game, "Lightning Bolt")["cast"]
 
 
-def test_an_optional_cost_the_engine_cannot_charge_is_shown_not_swallowed(client, game):
-    """March of Otherworldly Light prints its optional additional cost as a
-    sentence the engine cannot charge. Failing closed out loud: the card says
-    the option exists and that announcing it is not available here, rather
-    than showing nothing at all."""
-    add_card(client, game, "March of Otherworldly Light", "alice", "hand")
-    (option,) = hand_card(client, game, "March of Otherworldly Light")["cast"]["additional_costs"]
+def test_the_synthetic_optional_cost_is_still_uncharged():
+    """The premise of the two tests below: the engine enumerates the synthetic
+    card's optional cost but cannot charge it. If this ever fails, give the
+    card a new made-up sentence - never a real card, which the engine will
+    eventually learn to charge (March of Otherworldly Light did)."""
+    (option,) = optional_additional_costs(Card.model_validate(UNCHARGEABLE_COST_RAW))
+    assert option.understood is False, option
+
+
+def test_an_optional_cost_the_engine_cannot_charge_is_shown_not_swallowed(
+    client, game, unchargeable_cost_card
+):
+    """Failing closed out loud: the card says the option exists and that
+    announcing it is not available here, rather than showing nothing at all."""
+    add_card(client, game, unchargeable_cost_card, "alice", "hand")
+    (option,) = hand_card(client, game, unchargeable_cost_card)["cast"]["additional_costs"]
     assert option["understood"] is False
     assert option["keyword"] is None
-    assert option["cost"] == "you may exile any number of white cards from your hand"
+    assert option["cost"] == UNCHARGEABLE_COST_TEXT
     assert option["rule"] == "CR 118.8b"
 
 
-def test_a_row_says_which_optional_costs_it_cannot_charge(client, game):
-    add_card(client, game, "March of Otherworldly Light", "alice", "hand")
-    row = cast_row(client, game, "March of Otherworldly Light")
+def test_a_row_says_which_optional_costs_it_cannot_charge(client, game, unchargeable_cost_card):
+    add_card(client, game, unchargeable_cost_card, "alice", "hand")
+    row = cast_row(client, game, unchargeable_cost_card)
     (option,) = row["optional_costs"]
     assert option["understood"] is False
     assert option["keyword"] is None
     assert option["affordable"] == "unknown"
     assert "cannot" in option["unaffordable_reason"]
+
+
+def test_an_optional_exile_from_hand_cost_is_charged(client, game):
+    """March of Otherworldly Light's "you may exile any number of white cards
+    from your hand" (CR 118.8b) is charged by the engine now."""
+    add_card(client, game, "March of Otherworldly Light", "alice", "hand")
+    (option,) = hand_card(client, game, "March of Otherworldly Light")["cast"]["additional_costs"]
+    assert option["understood"] is True
+    assert option["keyword"] == "Exile any number"
 
 
 def test_a_row_the_engine_can_charge_says_so_too(client, game):
@@ -905,3 +926,53 @@ def test_behold_needs_the_creature_type_named(client, game):
     body = response.json()
     assert body.get("allowed") is not True, body
     assert "creature_type" in json.dumps(body), body
+
+
+# -- "any number of" cost-reduction costs (CR 118.8b, CR 118.7a) ---------------
+#
+# "As an additional cost to cast this spell, you may exile any number of white
+# cards from your hand. This spell costs {2} less to cast for each card exiled
+# this way." and "... you may sacrifice any number of nonland permanents. This
+# spell costs {1} less ..." - one choice, made once, of every object paid.
+
+
+def test_march_exiles_white_cards_from_hand_to_cut_its_cost(client, game):
+    sources = lands(client, game, "Plains", 1)
+    add_card(client, game, "Memnite", "bob", "battlefield")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    add_card(client, game, "Savannah Lions", "alice", "hand")
+    add_card(client, game, "March of Otherworldly Light", "alice", "hand")
+    lion = hand_card(client, game, "Savannah Lions")["id"]
+    card = hand_card(client, game, "March of Otherworldly Light")["id"]
+    bears = find(state(client, game)["battlefield"], "Grizzly Bears")["id"]
+    assert offer(cast_row(client, game, "March of Otherworldly Light"), "Exile any number")
+    body = cast(
+        client,
+        game,
+        card,
+        x_value=2,
+        targets=[bears],
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Exile any number", "choosing": [lion]}],
+    )
+    assert body["allowed"] is True, body
+    assert "Savannah Lions" in [c["name"] for c in state(client, game)["exile"]]
+
+
+def test_rottenmouth_viper_sacrifices_permanents_to_cut_its_cost(client, game):
+    sources = lands(client, game, "Swamp", 2)
+    for _ in range(4):
+        add_card(client, game, "Memnite", "alice", "battlefield")
+    memnites = [c["id"] for c in state(client, game)["battlefield"] if c["name"] == "Memnite"]
+    add_card(client, game, "Rottenmouth Viper", "alice", "hand")
+    card = hand_card(client, game, "Rottenmouth Viper")["id"]
+    assert offer(cast_row(client, game, "Rottenmouth Viper"), "Sacrifice any number")
+    body = cast(
+        client,
+        game,
+        card,
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Sacrifice any number", "choosing": memnites}],
+    )
+    assert body["allowed"] is True, body
+    assert [c["name"] for c in state(client, game)["graveyards"]["alice"]].count("Memnite") == 4

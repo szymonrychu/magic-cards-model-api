@@ -939,8 +939,10 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
     two printed kicker costs, CR 702.33b), bargain (CR 702.166a,
     `pay_bargain`), a printed "you may collect evidence N" (CR 701.59a,
     `collect_evidence`), "you may reveal a ... card" (CR 701.20a,
-    `reveal_for_cost`) and "you may choose a creature type and behold N
-    creatures of that type" (CR 701.4a, `behold_chosen_type_for_cost`),
+    `reveal_for_cost`), "you may choose a creature type and behold N
+    creatures of that type" (CR 701.4a, `behold_chosen_type_for_cost`), "you
+    may exile/sacrifice any number of ..." with its linked reduction (CR
+    118.8b, `exile_for_cost_reduction`/`sacrifice_for_cost_reduction`),
     replicate (CR 702.56a),
     offspring (CR 702.175a), blight (CR 701.68a), gift (CR 702.174a) and
     harmonize's "tapping up to one untapped creature you control"
@@ -988,6 +990,14 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
                     "name it in creature_type, and the beheld creatures' ids in choosing"
                 )
             casting.behold_chosen_type_for_cost(choice.creature_type, chosen)
+        elif keyword == "exile any number":
+            _paid_once(choice, "every card exiled this way is named in one choice (CR 118.8b)")
+            casting.exile_for_cost_reduction(chosen)
+        elif keyword == "sacrifice any number":
+            _paid_once(
+                choice, "every permanent sacrificed this way is named in one choice (CR 118.8b)"
+            )
+            casting.sacrifice_for_cost_reduction(chosen)
         elif keyword == "replicate":
             casting.pay_replicate(choice.times, choosing=chosen)
         elif keyword == "offspring":
@@ -1039,8 +1049,8 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
             raise ValueError(
                 f"{choice.keyword} is not an optional cost this engine pays (CR 601.2b): "
                 "name one of Kicker, Multikicker, Replicate, Offspring, Blight, Gift, "
-                "Bargain, Collect evidence, Reveal, Behold, Entwine, Escalate, Harmonize or "
-                "Pay life"
+                "Bargain, Collect evidence, Reveal, Behold, Exile any number, "
+                "Sacrifice any number, Entwine, Escalate, Harmonize or Pay life"
             )
     return mode_costs
 

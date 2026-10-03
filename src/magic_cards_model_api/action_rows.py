@@ -917,9 +917,8 @@ def _unreadable_offers(action: Action, offers: list[dict[str, Any]]) -> list[dic
     minus what this api already knows how to announce.
 
     What is left is the loud case, and the reason this exists: a printed
-    optional cost this engine cannot charge (March of Otherworldly Light's
-    "you may exile any number of white cards from your hand" - no keyword to
-    name back, `understood: false` off the engine's own enumeration). Dropping
+    optional cost this engine cannot charge (no keyword to name back,
+    `understood: false` off the engine's own enumeration). Dropping
     it would show a seat a cast row that reads exactly like a card with no
     optional cost at all, and the standing preference here is failing closed
     with a notice over a silent omission - the same shape
