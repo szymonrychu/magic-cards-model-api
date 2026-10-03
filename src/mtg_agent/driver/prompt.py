@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from magic_cards_model_api.playscripts.gitwork import PRIORITY_STEP_LIMIT
 from magic_cards_model_api.playscripts.report import DevelopmentCandidates
@@ -27,6 +27,7 @@ from magic_cards_model_api.playscripts.schema import (
     MAX_STEPS,
 )
 
+from .. import seat_pair
 from .guides import (
     CONFIDENT,
     LOW,
@@ -570,12 +571,279 @@ WHOLE_GAME_TURN_ADVISOR = (
 )
 
 
-def continue_turn(assignment: Assignment) -> str:
+# ---- the seat pair: a Sonnet orchestrator over two Opus seat-players (T5) ---
+#
+# With `SEAT_AGENT_CHANNEL` other than `off`, a seat's own claude no longer
+# plays: it runs two `seat-player` agents (`seat_pair.SEAT_PLAYER`, defined by
+# the wrapper's bootstrap) and rotates the baton (`pass_baton`) between them.
+# The decision loop itself is the seat-player definition's, so none of it is
+# restated here. An advisor never pairs (`seat_pair.pair_active`).
+
+#: `WHOLE_GAME_TURN` for the orchestrator: the same rule about never ending
+#: the turn mid-game, but what to do if it ends anyway is re-establish the
+#: pair, never take a game action.
+WHOLE_GAME_TURN_PAIR = (
+    "Your turn lasts the whole game. Nobody reads what you write between tool\n"
+    "  calls, so never end it with a summary or a checkpoint while the game is\n"
+    "  still running. If it ends early anyway and you are told the game is still\n"
+    "  running, re-establish the pair first - check which player agents are\n"
+    "  alive, respawn any that is missing, and re-issue the baton to the current\n"
+    "  one - and never act in the game yourself."
+)
+
+
+class _PairChannel(NamedTuple):
+    """How the orchestrator spawns, messages and stops a seat-player on one
+    channel (the 2.1.282 mechanics in tests/wrapper/fixtures/seat_pair)."""
+
+    spawn: str
+    message: str
+    stop: str
+    reports: str
+    alive: str
+    notes: str
+
+
+_PAIR_CHANNELS = {
+    seat_pair.Channel.TEAMS: _PairChannel(
+        spawn=(
+            f"the `Agent` tool with `subagent_type` `{seat_pair.SEAT_PLAYER}` and `name` set\n"
+            "  to the agent's name. Every `Agent` call with a `name` spawns an in-process\n"
+            "  teammate: teams are implicit and there is no `TeamCreate` tool, so never\n"
+            "  look for one."
+        ),
+        message="`SendMessage` to its name",
+        stop='`SendMessage` with `{"type": "shutdown_request"}` to its name',
+        reports=(
+            "Reports reach you as teammate messages, each naming the teammate that\n"
+            "sent it, and an idle notice whenever a teammate finishes a turn."
+        ),
+        alive=(
+            "a teammate that announced it shut down, or that does not answer a\n   message, is gone"
+        ),
+        notes=(
+            "The two player agents are teammates and message each other directly\n"
+            "with `SendMessage`: the future agent sends its plans straight to the\n"
+            "current one, and the current one sends its committed line to the future\n"
+            "one as well as to you. You do not carry their notes between them; you\n"
+            "rotate the baton and keep both alive."
+        ),
+    ),
+    seat_pair.Channel.SUBAGENTS: _PairChannel(
+        spawn=(
+            f"the `Agent` tool with `subagent_type` `{seat_pair.SEAT_PLAYER}`, `name` set to\n"
+            "  the agent's name, and `run_in_background` set to true - a launch without\n"
+            "  it blocks you until that agent finishes, and the game with you."
+        ),
+        message="`SendMessage` to its name, which resumes it with its context intact",
+        stop="`TaskStop` with its name as the `task_id`",
+        reports=(
+            "Reports reach you as task notifications: each time a background agent\n"
+            "ends a run, its last text arrives as the notification's result. A\n"
+            "seat-player cannot message you mid-run, so the current agent reports\n"
+            "`committed: <line>` by ending its run with that line, and the future\n"
+            "agent ends each run with its plan."
+        ),
+        alive=(
+            "an agent whose task notification says it was killed, or that does not\n"
+            "   resume when messaged, is gone"
+        ),
+        notes=(
+            "Background subagents cannot message each other, so you relay between\n"
+            "them. Forward each plan the future agent reports to the current agent\n"
+            "with `SendMessage`, verbatim and at once, then resume the future agent\n"
+            "so it keeps its plans current. The current agent's committed line\n"
+            "reaches the future agent in its promotion message. Never rewrite a plan\n"
+            "you relay."
+        ),
+    ),
+}
+
+
+def _orchestrator_turn_zero(
+    assignment: Assignment,
+    current_game_path: Path,
+    briefing: str,
+    channel: seat_pair.Channel,
+) -> str:
+    how = _PAIR_CHANNELS[channel]
+    uid = assignment.uid
+    first_current = seat_pair.current_name(1)
+    first_future = seat_pair.future_name(1)
+    briefing_block = (
+        f"Here is everything about this game (the driver wrote the same text to\n"
+        f"`{current_game_path}` on its own disk):\n\n{briefing}\n"
+        if briefing
+        else f"Read `{current_game_path}`. It names your seat, your uid, your decklist\n"
+        "and your guides.\n"
+    )
+    return f"""You are the orchestrator for one seat of a real game of Magic: the
+Gathering against a human, who is playing through a web UI against the same
+game server. Two Opus `{seat_pair.SEAT_PLAYER}` agents play the seat; you run them.
+
+## Before you start
+
+{briefing_block}
+## Your job: you never act in the game
+
+You are the orchestrator, and you never call an acting `mtg` tool: not
+`pass_until`, `pass`, `wait_for_priority`, `cast`, `decide`, `run_script`,
+`declare_plan`, `stage_script`, nor any other that moves the game or waits on
+it. The `mtg` tools you call are `pass_baton`, `battlefield_state` and
+`game_log` when you need to see what the agents are doing, and
+`report_problem` when the seat cannot be played. Game id {assignment.game_id},
+player_uid {uid!r}, playing as {assignment.player!r}.
+
+Of the two player agents, the current one holds the baton and acts; the future
+one plans the next decision read-only. The `{seat_pair.SEAT_PLAYER}` agent
+definition carries the decision loop - one wait then exactly one committing
+call, DSL-first, `declare_plan` during the opponent's turn, armed plays that
+never run on their own - so you neither restate it to them nor play it
+yourself.
+
+## The channel: {channel.value}
+
+- Spawn a player agent with {how.spawn}
+- Message one with {how.message}.
+- Stop one with {how.stop}.
+
+{how.reports}
+
+## On start
+
+1. Write the briefing, verbatim, to `/workspace/current-game.md` with
+   `Write`: the `{seat_pair.SEAT_PLAYER}` definition starts by reading that
+   file, and the driver's own copy is on a disk the agents cannot see.
+2. Call `pass_baton(player_uid=...)` with player_uid {uid!r}. Its answer
+   carries the baton token.
+3. Spawn `{first_current}` and `{first_future}`, together. Each spawn prompt
+   names the agent's role (current or future), its own name, the other
+   agent's name, the game id and the player_uid; hand the token to
+   `{first_current}` in its spawn prompt, and nothing to `{first_future}`.
+   Ask `{first_current}` to put its opening plan in its first report.
+4. Write that opening plan, once, into the plan file the briefing names. You
+   do not update it turn to turn.
+
+## The promotion cycle, on every `committed:` report
+
+Agents keep the name they were spawned with: once promoted, `future-<n>` is
+the current agent and is still called `future-<n>`. Keep track of which name
+is current. When the current agent reports `committed: <line>`:
+
+1. Call `pass_baton(player_uid=...)` for a new token. This revokes the old
+   one at once, so the old current agent can no longer act.
+2. Promote the future agent: send it, with {how.message},
+   `promoted: you are current, baton <token>, last decision <line>` - the
+   token from step 1 and the committed line verbatim. This continues the same
+   agent with its plans intact: never respawn it to promote it.
+3. Stop the old current agent, with {how.stop}.
+4. Spawn `future-<n+1>` immediately - the next unused number - as the new
+   future agent, its spawn prompt naming its role, the current agent's name,
+   the game id and the player_uid.
+
+Run the four steps at once, in this order, with nothing in between: the game
+waits on the new current agent from step 2. Keep exactly two live player
+agents at all times: one current, one future - never three, and never one for
+longer than steps 3 to 4 take.
+
+## Plans between the two
+
+{how.notes}
+
+## Baton refusals
+
+When an agent reports `BATON_STALE` or `BATON_REQUIRED`, re-issue the baton to
+the current agent only. `BATON_REQUIRED` from the current agent: send it the
+token it already holds. `BATON_STALE` from the current agent: call
+`pass_baton(player_uid=...)` and send it the new token. A refusal from an agent
+that is not current gets no token - remind it that it is the future agent, or
+make sure it is stopped. Outside a promotion, never hand a baton token to the
+future agent.
+
+## When an agent goes missing
+
+Check on the pair whenever a report is overdue. If the current agent is gone,
+promote the future agent (steps 1 to 4 above, with the last line you know of);
+if the future agent is gone, spawn `future-<n+1>`. Only if the seat cannot be
+played at all, file it with `report_problem`.
+
+## When the game ends
+
+When the game ends - a report or the board shows a winner or a drawn game -
+stop both player agents. Stop the future agent at once. Ask the current agent
+for its reflection notes first - what decided the game, what the opponent
+played and how early it knew, how to win this matchup, what it would do
+differently - keep its answer, then stop it too. Then end your turn: the
+driver's next turn asks you to write those notes up.
+
+## Rules of engagement
+
+- Run the pair until the game shows a winner or a drawn game, or until a
+  report is filed. Stopping for any other reason is not allowed.
+- {WHOLE_GAME_TURN_PAIR}
+- Never state card text or a rule from memory: the player agents look rules
+  up themselves.
+
+Begin."""
+
+
+def _pair_continue_turn(assignment: Assignment, channel: seat_pair.Channel) -> str:
+    how = _PAIR_CHANNELS[channel]
+    return f"""The game is not over - game {assignment.game_id} is still running, and your
+turn just ended.
+
+Nobody reads what you write between turns. A status summary or a "natural
+checkpoint" reaches no one and stops the game for everyone: while the game
+runs, never end your turn with a summary. Your turn lasts until the game shows
+a winner or a draw.
+
+You are the orchestrator: do not act in the game. Instead, re-establish the
+pair now - check which player agents are alive, respawn any that is missing,
+and re-issue the baton:
+
+1. Check which player agents are alive - the current one, holding the baton,
+   and the future one, planning: {how.alive}.
+2. Respawn any that is missing: a missing future agent is replaced by spawning
+   `future-<n+1>`; a missing current agent is replaced by promoting the
+   future agent and spawning a new future one, exactly as in the promotion
+   cycle.
+3. Re-issue the baton: call `pass_baton(player_uid=...)` with player_uid
+   {assignment.uid!r} and send the new token to the current agent only, with
+   {how.message}.
+
+Then keep running the pair until the game shows a winner or a draw."""
+
+
+def _pair_reflection(channel: seat_pair.Channel) -> str:
+    how = _PAIR_CHANNELS[channel]
+    return f"""The final current agent played this game; you did not. So before you write
+anything, ask the final current agent for its reflection notes - what decided
+the game, what the opponent played and how early it knew, how to win this
+matchup, what it would do differently - unless you already hold the notes it
+gave you when the game ended, then stop it with {how.stop}, and stop the
+future agent the same way if it is still alive. Write the files below from
+its notes."""
+
+
+def _pair_handover(channel: seat_pair.Channel) -> str:
+    how = _PAIR_CHANNELS[channel]
+    return f"""Stop both player agents before any handover work starts: stop the current
+agent and the future agent, each with {how.stop}, if either is still alive.
+The pair played the game; the handover is yours, and the subagents it asks for
+below are new ones, never the player agents."""
+
+
+def continue_turn(
+    assignment: Assignment, *, channel: seat_pair.Channel = seat_pair.Channel.OFF
+) -> str:
     """The turn the driver pushes when a turn ended while the game is still
     running - the agent stopped with a summary, hit a turn limit, or errored
     without the agent itself being gone. Short on purpose: everything the
     agent needs is already in this same conversation, and what it lacks is
-    only the instruction to carry on."""
+    only the instruction to carry on. A paired seat's orchestrator is told to
+    re-establish the pair instead of to play."""
+    if seat_pair.pair_active(channel, assignment.role):
+        return _pair_continue_turn(assignment, channel)
     uid = assignment.uid
     if assignment.role == "advisor":
         role_line = (
@@ -601,14 +869,24 @@ a winner or a draw.
 {role_line}"""
 
 
-def turn_zero(assignment: Assignment, current_game_path: Path, briefing: str = "") -> str:
+def turn_zero(
+    assignment: Assignment,
+    current_game_path: Path,
+    briefing: str = "",
+    *,
+    channel: seat_pair.Channel = seat_pair.Channel.OFF,
+) -> str:
     """Turn 0. `briefing` is the rendered `current-game.md`.
 
     It is inlined rather than referenced because the driver and the agent are
     separate containers with separate filesystems: `current_game_path` names a
     file only the driver can open. The guides stay as paths - `/guides` is
     mounted in both containers, and they run to hundreds of lines each.
+
+    A paired seat (`seat_pair.pair_active`) gets the orchestrator brief instead.
     """
+    if seat_pair.pair_active(channel, assignment.role):
+        return _orchestrator_turn_zero(assignment, current_game_path, briefing, channel)
     matchups = (
         f"`{assignment.matchups_dir}/<archetype>.json`"
         if assignment.matchups_dir is not None
@@ -1711,10 +1989,21 @@ def _vs_note(assignment: Assignment, deck_dir: Path) -> str:
    like, mulligan policy."""
 
 
-def reflection_turn(assignment: Assignment, memory_root: Path, outcome: str) -> str:
+def reflection_turn(
+    assignment: Assignment,
+    memory_root: Path,
+    outcome: str,
+    *,
+    channel: seat_pair.Channel = seat_pair.Channel.OFF,
+) -> str:
     slug = assignment.deck_slug
     deck_dir = Path(memory_root) / slug
-    return f"""The game is over: {outcome}
+    pair = (
+        f"\n\n{_pair_reflection(channel)}"
+        if seat_pair.pair_active(channel, assignment.role)
+        else ""
+    )
+    return f"""The game is over: {outcome}{pair}
 
 {_opponent_reveal(assignment)}
 
@@ -2487,6 +2776,7 @@ def handover_turn(
     evidence: str,
     candidates: DevelopmentCandidates,
     review_answered: Sequence[str] = (),
+    channel: seat_pair.Channel = seat_pair.Channel.OFF,
 ) -> str:
     """The one handover turn, for a seat and a buddy alike: the same deck,
     the same commands and the same limits, so one prose serves both roles.
@@ -2506,7 +2796,10 @@ def handover_turn(
     game = assignment.game_id
     budget = int(HANDOVER_BUDGET_SECONDS // 60)
     own_notes = f" (`decks/{slug}/NOTES.md`)" if assignment.guide is not None else ""
-    return f"""{HANDOVER_OPENING}
+    pair = (
+        f"\n\n{_pair_handover(channel)}" if seat_pair.pair_active(channel, assignment.role) else ""
+    )
+    return f"""{HANDOVER_OPENING}{pair}
 
 Outcome: {outcome}. Stop playing: whether you played this seat or advised on
 it, this turn is the handover, and it has {budget} minutes, not an hour.

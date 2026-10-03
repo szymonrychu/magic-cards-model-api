@@ -1646,6 +1646,7 @@ def build_app(
                 review_answered=review_answered_plays(
                     read_journal(settings.guides_root, assignment.game_id, "reviewer")
                 ),
+                channel=settings.seat_agent_channel,
             )
         except Exception as exc:  # noqa: BLE001 - the background half records it
             prepared = exc
@@ -1946,8 +1947,12 @@ def build_app(
 
         # An advisor gets its own prose, never the seat's with caveats bolted
         # on: a buddy that is told to win the game will try to play it.
-        write_turn_zero = advisor_turn_zero if assignment.role == "advisor" else turn_zero
-        text = write_turn_zero(assignment, current_game_path, briefing)
+        if assignment.role == "advisor":
+            text = advisor_turn_zero(assignment, current_game_path, briefing)
+        else:
+            text = turn_zero(
+                assignment, current_game_path, briefing, channel=settings.seat_agent_channel
+            )
         with lock:
             # Claim the agent before talking to it, so a second game arriving
             # while we are pushing gets the 409 rather than a race.
@@ -2585,7 +2590,7 @@ def build_app(
             )
             return {"ignored": "continuation loop", "gameId": assignment.game_id}
         try:
-            turn_id = push_turn(continue_turn(assignment))
+            turn_id = push_turn(continue_turn(assignment, channel=settings.seat_agent_channel))
         except AgentUnavailable as exc:
             log.error(
                 "game %s is still running but the agent could not continue: %s",
@@ -2667,7 +2672,11 @@ def build_app(
         outcome = f"{winner} won" if winner else "the game was a draw"
         identify_opponent(assignment)
         try:
-            turn_id = push_turn(reflection_turn(assignment, settings.memory_root, outcome))
+            turn_id = push_turn(
+                reflection_turn(
+                    assignment, settings.memory_root, outcome, channel=settings.seat_agent_channel
+                )
+            )
         except AgentUnavailable as exc:
             # No notes from this game, but the match is still over. Retire it
             # rather than hold an assignment that would 409 every future

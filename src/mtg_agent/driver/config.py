@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..seat_pair import Channel
+
 
 @dataclass(frozen=True)
 class DriverSettings:
@@ -59,6 +61,10 @@ class DriverSettings:
     #: a tight retry loop hammering a game server that just said "not yet".
     review_record_retry_start: float = 2.0
     review_record_retry_max_delay: float = 30.0
+    #: `SEAT_AGENT_CHANNEL`, parsed exactly as the wrapper parses it
+    #: (`seat_pair.Channel.parse`, same default), so the prompts this driver
+    #: pushes describe the agents the wrapper's bootstrap actually defined.
+    seat_agent_channel: Channel = Channel.TEAMS
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> DriverSettings:
@@ -84,4 +90,5 @@ class DriverSettings:
             review_record_retry_max_delay=float(
                 value("REVIEW_RECORD_RETRY_MAX_DELAY_SECONDS", "30")
             ),
+            seat_agent_channel=Channel.parse(env.get("SEAT_AGENT_CHANNEL", "")),
         )
