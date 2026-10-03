@@ -97,7 +97,7 @@ def test_subagents_other_background_agents_keep_holding_the_turn(tmp_path):
 def test_a_subagent_resumed_by_sendmessage_is_tracked_until_it_reports(tmp_path):
     lines = variant(tmp_path, "subagents", FUTURE_ALPHA)
     ids = pending_background_tasks(stops_at(tmp_path, lines, 67))
-    assert "toolu_01JcZJYqhhmNdihTG28HzbgF" in ids  # the resuming SendMessage
+    assert ids == ["toolu_01JcZJYqhhmNdihTG28HzbgF"]  # the resuming SendMessage
 
 
 def test_a_launch_whose_result_is_not_on_disk_yet_still_counts(tmp_path):
