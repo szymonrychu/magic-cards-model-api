@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 
 from mtg_agent.driver.app import build_app
 from mtg_agent.driver.config import DriverSettings
+from mtg_agent.seat_pair import Channel
 
 #: The refreshed fixture corpus's own plays for the one guide this world
 #: carries, copied verbatim into its `decks/dimir-frog/plays/`.
@@ -60,7 +61,7 @@ ARCHETYPE = {
 }
 
 
-def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
+def build_world(tmp_path, clock=None, sleep=None, channel=Channel.OFF) -> SimpleNamespace:
     guides = tmp_path / "guides" / "decks" / "dimir-frog"
     guides.mkdir(parents=True)
     (guides / "decklist.txt").write_text(DECKLIST)
@@ -446,6 +447,7 @@ def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
         http_addr=":8090",
         agent_boot_wait=1.0,
         agent_retry_interval=0.01,
+        seat_agent_channel=channel,
     )
     client = TestClient(
         build_app(settings, client_factory=client_factory, clock=clock, sleep=sleep)

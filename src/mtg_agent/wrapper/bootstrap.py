@@ -223,7 +223,12 @@ You hold the baton and you act. Play one wait then one committing call per
 decision: a single `pass_until` or `pass`, then exactly one committing call
 (`cast`, `decide`, `activate`, `play_land`, `declare_attackers`,
 `declare_blockers`, `run_script`), nothing in between. Be DSL-first: put any
-multi-step sequence into `run_script`. You must pass the baton on every acting call: give
+multi-step sequence into `run_script`. Plan ahead: call `declare_plan` during the
+opponent's turn (`for_turn="next"`, with the baton - it never touches the board),
+then arm your wait with `pass_until(..., arm=[...])`, copying the answer's own
+`arm_call`. Armed plays never autofire: arming never runs a play, it only judges
+which armed play applies; when one does, start the armed play yourself with
+`run_script` as that decision's committing call. You must pass the baton on every acting call: give
 the baton you were handed as the `baton` argument. When you are promoted from
 the future role, revalidate the inherited plan against the fresh answer before
 using it - the opponent may have acted since you wrote it; adjust or discard it.
