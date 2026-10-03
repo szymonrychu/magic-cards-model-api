@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..seat_pair import Channel, pair_active
+from .handover_wait import DEFAULT_WAIT_SECONDS
 
 
 def _str(env: Mapping[str, str], key: str, default: str) -> str:
@@ -169,6 +170,10 @@ class Settings:
     #: waiting on more tool calls. 300s is generous headroom for that alone.
     review_prose_timeout: float = 300.0
     boot_timeout: float = 60.0
+    #: Cap on how long a SIGTERM keeps the PTY open for a handover
+    #: (`handover_wait.hold_until_handover`). The default is the seat Job's
+    #: own wait, so kubernetes is unchanged; 0 closes the PTY and exits at once.
+    handover_hold_seconds: float = DEFAULT_WAIT_SECONDS
     submit_delay: float = 0.4
     #: How long an interrupted turn gets to end on its own before the wrapper
     #: ends it (`Manager.escalate_interrupt`): claude runs no Stop hook for an
@@ -231,6 +236,7 @@ class Settings:
             review_timeout_max=_float(env, "REVIEW_TIMEOUT_MAX_SECONDS", 4800.0),
             review_prose_timeout=_float(env, "REVIEW_PROSE_TIMEOUT_SECONDS", 300.0),
             boot_timeout=_float(env, "BOOT_TIMEOUT_SECONDS", 60.0),
+            handover_hold_seconds=_float(env, "HANDOVER_HOLD_SECONDS", DEFAULT_WAIT_SECONDS),
             submit_delay=_float(env, "SUBMIT_DELAY_SECONDS", 0.4),
             interrupt_settle=_float(env, "INTERRUPT_SETTLE_SECONDS", 20.0),
             webhook_retries=_int(env, "WEBHOOK_RETRIES", 3),

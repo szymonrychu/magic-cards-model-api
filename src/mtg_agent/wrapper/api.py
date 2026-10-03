@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Request, Response
@@ -43,9 +43,41 @@ log = logging.getLogger("wrapper.api")
 ReviewRunner = Callable[..., str]
 
 
+#: Largest single file a message may carry into the workspace.
+MAX_FILE_BYTES = 256 * 1024
+
+
 class MessageIn(BaseModel):
     text: str = ""
     callbackUrl: str = ""
+    #: Workspace-relative path -> text, written before the turn is submitted.
+    files: dict[str, str] = Field(default_factory=dict)
+
+
+def write_workspace_files(workspace: Path, files: dict[str, str]) -> None:
+    """Write `files` under `workspace`, or raise `HTTPException(422)` having
+    written nothing: absolute paths, `..`, anything that resolves (through a
+    symlink or not) outside the workspace, and files over `MAX_FILE_BYTES`
+    are all refused."""
+    root = workspace.resolve()
+    targets: list[tuple[Path, str]] = []
+    for rel, content in files.items():
+        pure = PurePosixPath(rel)
+        if not rel or rel.endswith("/") or pure.is_absolute() or ".." in pure.parts:
+            raise HTTPException(
+                status_code=422, detail=f"files: {rel!r} is not a workspace-relative path"
+            )
+        if len(content.encode()) > MAX_FILE_BYTES:
+            raise HTTPException(
+                status_code=422, detail=f"files: {rel!r} is over {MAX_FILE_BYTES} bytes"
+            )
+        target = (root / pure).resolve()
+        if not target.is_relative_to(root) or target == root:
+            raise HTTPException(status_code=422, detail=f"files: {rel!r} escapes the workspace")
+        targets.append((target, content))
+    for target, content in targets:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
 
 
 class ProbeIn(BaseModel):
@@ -127,6 +159,11 @@ def build_public_app(
     def post_message(body: MessageIn) -> dict[str, str]:
         if not body.text.strip():
             raise HTTPException(status_code=400, detail="text is required")
+        if body.files:
+            # Never rewrite files under a turn that is running.
+            if manager.current_turn_id is not None:
+                raise HTTPException(status_code=409, detail="session busy")
+            write_workspace_files(settings.workspace, body.files)
         try:
             turn_id = manager.submit(body.text, body.callbackUrl)
         except BusyError as exc:

@@ -133,7 +133,11 @@ def main() -> None:
     signal.signal(signal.SIGINT, stop)
     server.run()
     if signalled.is_set():
-        handover_wait.hold_until_handover(lambda: request_exit("signal"))
+        handover_wait.hold_until_handover(
+            lambda: request_exit("signal"),
+            wait=settings.handover_hold_seconds,
+            dispatched=manager.dispatched,
+        )
     watcher.stop()
     manager.shutdown()
 

@@ -65,6 +65,9 @@ class FakeProc:
 def fast_settings(**overrides) -> Settings:
     env = {
         "BOOT_TIMEOUT_SECONDS": "10",
+        # Not bypassPermissions: that mode refuses to go ready on quiet alone
+        # (tests/wrapper/test_boot_bypass.py), and these fakes print no dialog.
+        "PERMISSION_MODE": "default",
         "SUBMIT_DELAY_SECONDS": "0.05",
         "TURN_TIMEOUT_SECONDS": "0.2",
     } | overrides

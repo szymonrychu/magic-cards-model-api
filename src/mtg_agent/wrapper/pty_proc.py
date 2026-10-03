@@ -20,9 +20,13 @@ import pty
 import signal
 import struct
 import termios
+import time
 from typing import Protocol
 
 from .config import Settings
+
+#: How long a SIGTERMed claude process group gets before SIGKILL.
+KILL_GRACE_SECONDS = 5.0
 
 ROWS = 50
 COLS = 200
@@ -58,12 +62,16 @@ class PtyProcess:
 
     def wait(self) -> int:
         if self._status is None:
-            _, status = os.waitpid(self.pid, 0)
+            try:
+                _, status = os.waitpid(self.pid, 0)
+            except ChildProcessError:
+                # `close()` reaped it first.
+                return -1 if self._status is None else self._status
             self._status = os.waitstatus_to_exitcode(status)
         return self._status
 
     def close(self) -> None:
-        """Signal the child FIRST, then close the master.
+        """Signal the child's process group FIRST, then close the master.
 
         The order is load-bearing. The session runs a reader thread parked in
         `os.read` on this same fd; on macOS `os.close` then blocks until that
@@ -71,11 +79,39 @@ class PtyProcess:
         the slave open - the two wait on each other forever. Killing the
         child drops the last slave reference, the parked read gets EIO and
         returns, and the close completes.
+
+        `pty.fork` makes the child a session leader, so its pid is its process
+        group id and the signal reaches claude's own children too. A group
+        still alive after `KILL_GRACE_SECONDS` gets SIGKILL, so nothing of
+        claude outlives the wrapper.
         """
-        with contextlib.suppress(OSError, ProcessLookupError):
-            os.kill(self.pid, signal.SIGTERM)
+        self._signal_group(signal.SIGTERM)
         with contextlib.suppress(OSError):
             os.close(self._fd)
+        deadline = time.monotonic() + KILL_GRACE_SECONDS
+        while self._group_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if self._group_alive():
+            self._signal_group(signal.SIGKILL)
+
+    def _signal_group(self, sig: int) -> None:
+        with contextlib.suppress(OSError, ProcessLookupError):
+            os.killpg(self.pid, sig)
+
+    def _group_alive(self) -> bool:
+        # A dead but unreaped leader still counts as a group member, so reap it.
+        if self._status is None:
+            with contextlib.suppress(ChildProcessError):
+                done, status = os.waitpid(self.pid, os.WNOHANG)
+                if done:
+                    self._status = os.waitstatus_to_exitcode(status)
+        try:
+            os.killpg(self.pid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+        return True
 
 
 def _set_winsize(fd: int) -> None:
