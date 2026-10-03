@@ -1,0 +1,18 @@
+{
+  "name": "session-cde69916",
+  "createdAt": 1791034712019,
+  "leadAgentId": "team-lead@session-cde69916",
+  "leadSessionId": "cde69916-7d33-4f57-90d3-d643596072d4",
+  "members": [
+    {
+      "agentId": "team-lead@session-cde69916",
+      "name": "team-lead",
+      "agentType": "team-lead",
+      "joinedAt": 1791034712019,
+      "tmuxPaneId": "leader",
+      "cwd": "/workspace",
+      "subscriptions": [],
+      "backendType": "in-process"
+    }
+  ]
+}

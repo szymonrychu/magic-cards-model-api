@@ -1,0 +1,1 @@
+{"agentType":"alpha","description":"Probe teammate alpha","name":"alpha","spawnDepth":0,"requestShape":"background","requestNonInteractive":true,"model":"opus","taskKind":"in_process_teammate","teamName":"session-cde69916","color":"blue","planModeRequired":false,"permissionMode":"bypassPermissions"}

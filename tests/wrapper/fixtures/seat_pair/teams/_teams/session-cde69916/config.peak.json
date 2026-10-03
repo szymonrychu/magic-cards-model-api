@@ -1,0 +1,46 @@
+{
+  "name": "session-cde69916",
+  "createdAt": 1791034712019,
+  "leadAgentId": "team-lead@session-cde69916",
+  "leadSessionId": "cde69916-7d33-4f57-90d3-d643596072d4",
+  "members": [
+    {
+      "agentId": "team-lead@session-cde69916",
+      "name": "team-lead",
+      "agentType": "team-lead",
+      "joinedAt": 1791034712019,
+      "tmuxPaneId": "leader",
+      "cwd": "/workspace",
+      "subscriptions": [],
+      "backendType": "in-process"
+    },
+    {
+      "agentId": "alpha@session-cde69916",
+      "name": "alpha",
+      "color": "blue",
+      "joinedAt": 1791034741833,
+      "tmuxPaneId": "in-process",
+      "subscriptions": [],
+      "agentType": "general-purpose",
+      "model": "opus",
+      "prompt": "You are alpha. Your secret word is word-676d99. Remember it, never say it until the lead asks for it. Do these now: (a) call mcp__mtg__battlefield_state with player_uid `f4c06654c2014790a49b359278b08e48` once; (b) call mcp__spellslinger__knowledge_search once with query `priority`; (c) send teammate `beta` a direct message (SendMessage to `beta`) whose text is exactly `NONCE 2505949e`; (d) send the lead (`team-lead`) the message `alpha ready`, then wait for messages. When the lead asks for your secret, reply to the lead with `SECRET <your secret word>`.",
+      "planModeRequired": false,
+      "cwd": "/workspace",
+      "backendType": "in-process"
+    },
+    {
+      "agentId": "beta@session-cde69916",
+      "name": "beta",
+      "color": "green",
+      "joinedAt": 1791034743820,
+      "tmuxPaneId": "in-process",
+      "subscriptions": [],
+      "agentType": "general-purpose",
+      "model": "opus",
+      "prompt": "You are beta. Do these now: (a) call mcp__mtg__battlefield_state with player_uid `f4c06654c2014790a49b359278b08e48` once; (b) call mcp__spellslinger__knowledge_search once with query `stack`; (c) wait for a direct message from teammate alpha; when it arrives, send the lead (`team-lead`) a message quoting it: `BETA GOT <the exact text alpha sent>`; then wait for messages.",
+      "planModeRequired": false,
+      "cwd": "/workspace",
+      "backendType": "in-process"
+    }
+  ]
+}
