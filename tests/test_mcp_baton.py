@@ -29,6 +29,7 @@ from test_decisions import seats_for
 from magic_cards_model_api import mcp
 from magic_cards_model_api.baton import (
     BATON_EXEMPT_TOOLS,
+    BATON_NOT_YET,
     BATON_OK,
     BATON_REQUIRED,
     BATON_STALE,
@@ -66,14 +67,14 @@ def test_store_is_open_until_a_baton_is_issued():
     assert not store.enforced("u1")
 
 
-def test_issue_returns_a_fresh_unguessable_token_and_invalidates_the_previous():
+def test_issue_returns_a_fresh_unguessable_token_and_queues_it_behind_the_live_one():
     store = BatonStore()
     first = store.issue("u1")
     second = store.issue("u1")
     assert first != second
     assert len(first) >= 16 and len(second) >= 16
-    assert store.check("u1", second) == BATON_OK
-    assert store.check("u1", first) == BATON_STALE
+    assert store.check("u1", first) == BATON_OK
+    assert store.check("u1", second) == BATON_NOT_YET
     assert store.check("u1", "") == BATON_REQUIRED
     assert store.enforced("u1")
 
@@ -120,6 +121,7 @@ def test_exempt_set_is_the_documented_read_only_set():
         "list_scripts",
         "report_problem",
         "pass_baton",
+        "await_baton",
     } == BATON_EXEMPT_TOOLS
 
 
@@ -148,11 +150,16 @@ def test_pass_baton_is_registered_and_every_acting_tool_takes_baton(client, game
     server = mcp.build_server(seats)
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
     assert "pass_baton" in tools
-    assert set(tools["pass_baton"].input_schema["properties"]) == {"player_uid"}
+    assert set(tools["pass_baton"].input_schema["properties"]) == {"player_uid", "revoke"}
+    assert set(tools["await_baton"].input_schema["properties"]) == {
+        "player_uid",
+        "baton",
+        "max_seconds",
+    }
     for name, tool in tools.items():
         has = "baton" in tool.input_schema["properties"]
-        assert has == (name not in BATON_EXEMPT_TOOLS), name
-        if has:
+        assert has == (name not in BATON_EXEMPT_TOOLS or name == "await_baton"), name
+        if has and name != "await_baton":
             assert tool.input_schema["properties"]["baton"].get("default") == ""
     for name in ("stage_script", "declare_plan", "wait_for_priority", "pass_until", "pass"):
         assert "baton" in tools[name].input_schema["properties"], name
@@ -167,7 +174,7 @@ def test_pass_baton_returns_token_and_description_and_never_acts(client, game, m
     board = state(client, game)
     answer = json.loads(call(server, "pass_baton", {"player_uid": uids["alice"]}))
     assert len(answer["baton"]) >= 16
-    assert answer["baton"] in seats.baton._current.values()
+    assert seats.baton.check(uids["alice"], answer["baton"]) == BATON_OK
     assert "baton" in answer["description"].lower() and len(answer["description"]) < 400
     assert log_len(client, game, uids["alice"]) == before
     assert state(client, game) == board
@@ -202,20 +209,19 @@ def test_acting_tool_without_a_baton_is_refused_once_one_was_issued(client, game
     assert ok["outcome"]["allowed"] is True
 
 
-def test_stale_baton_is_refused_with_time_and_guidance(client, game, monkeypatch):
+def test_stale_baton_is_refused_with_guidance(client, game, monkeypatch):
     seats, uids = wired(client, monkeypatch, game)
     server = mcp.build_server(seats)
-    old = pass_baton(server, uids["alice"])
-    new = pass_baton(server, uids["alice"])
+    live = pass_baton(server, uids["alice"])
     add_card(client, game, "Plains", "alice", "hand")
     args = {"player_uid": uids["alice"], "card": "Plains", "reasoning": "x"}
 
-    refused = call(server, "play_land", {**args, "baton": old})
+    refused = call(server, "play_land", {**args, "baton": "never-issued"})
     assert refused.startswith("BATON_STALE:"), refused
-    assert "newer agent" in refused and "20" in refused  # an iso timestamp
+    assert "not the current player" in refused
     assert "battlefield_state" in refused and "orchestrator" in refused
 
-    assert json.loads(call(server, "play_land", {**args, "baton": new}))["outcome"]["allowed"]
+    assert json.loads(call(server, "play_land", {**args, "baton": live}))["outcome"]["allowed"]
 
 
 @pytest.mark.parametrize(
@@ -333,8 +339,8 @@ def test_rotation_mid_run_lets_the_new_holder_take_the_run_back(client, game, mo
     new = pass_baton(server, uids["alice"])
     resumed = {**arguments, "resume": json.dumps(first["resume"])}
 
-    stale = call(server, "pass_until", resumed)
-    assert stale.startswith("BATON_STALE:")
+    early = call(server, "pass_until", {**resumed, "baton": new})
+    assert early.startswith("BATON_NOT_YET:")
     assert seats.background.status(uids["alice"]) == "running"
 
     with Opponent(game, "bob"):
@@ -342,6 +348,7 @@ def test_rotation_mid_run_lets_the_new_holder_take_the_run_back(client, game, mo
         while seats.background.status(uids["alice"]) == "running":
             assert time.monotonic() < give_up
             time.sleep(0.05)
+        assert call(server, "pass_until", resumed).startswith("BATON_SPENT:")
         final = json.loads(call(server, "pass_until", {**resumed, "baton": new}))
     assert final["stopped_because"] == "reached your upkeep", final["stopped_because"]
     assert final["background"]["passes"] > 0, final["background"]

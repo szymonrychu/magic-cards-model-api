@@ -313,7 +313,8 @@ def test_max_seconds_lives_only_on_the_two_tools_that_can_genuinely_wait(client,
 
     seats, _ = wired(client, monkeypatch, game)
     server = build_server(seats)
-    can_wait = {"wait_for_priority", "pass_until", "run_script"}
+    # `await_baton` (S1): the future agent's wait for its baton to go live.
+    can_wait = {"wait_for_priority", "pass_until", "run_script", "await_baton"}
     for name, tool in server._tool_manager._tools.items():
         parameters = inspect.signature(tool.fn).parameters
         if name in can_wait:
@@ -321,7 +322,7 @@ def test_max_seconds_lives_only_on_the_two_tools_that_can_genuinely_wait(client,
         else:
             assert "max_seconds" not in parameters, (
                 f"{name} takes max_seconds, but only wait_for_priority, "
-                "pass_until and run_script can genuinely wait on anything"
+                "pass_until, run_script and await_baton can genuinely wait on anything"
             )
 
 

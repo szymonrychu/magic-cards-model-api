@@ -85,16 +85,25 @@ something looks wrong, report_problem and play on.
 """
 
 BATON_DESCRIPTION = (
-    "Pass this token as `baton` on every acting call for this seat; it replaces the previous "
-    "baton, which stops working. Without it acting calls are refused (BATON_REQUIRED/"
-    "BATON_STALE); battlefield_state, game_log and list_scripts need none."
+    "Pass this token as `baton` on every acting call for this seat. `state: next` means it "
+    "goes live when the current holder's priority window closes - await_baton until then. "
+    "Refusals: BATON_NOT_YET, BATON_SPENT, BATON_STALE, BATON_REQUIRED, BATON_BUSY; "
+    "battlefield_state, game_log and list_scripts need none."
 )
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "pass_baton": """\
-The orchestrator's tool; it never acts in the game. Hands seat `player_uid`'s baton to a new \
-agent: returns a fresh `baton` token and invalidates the previous one. From then on only a call \
-carrying that token may act for the seat.""",
+Orchestrator only; never acts in the game. Mints a `baton` for seat `player_uid`: `state: live` \
+when the seat has none, else `state: next`, made live by the server when the current holder's \
+call that gives priority away returns (an earlier unpromoted next dies). Never revokes, never \
+blocks. Answers `live_holder_since`, `last_commit`, `in_flight`. `revoke` (recovery only): live \
+at once; an in-flight wait is interrupted (BATON_REVOKED), an acting call finishes first \
+(`revoke`: `applied` or `queued_behind:<tool>`).""",
+    "await_baton": """\
+Future agent's wait; never acts. Blocks until `baton` goes live, then answers `{live: true, \
+last_commit, pending_decision, board}` (board: compact battlefield_state) - you are current: \
+revalidate the plan and act with this baton. Else `{live: false, state}`: `next` after \
+`max_seconds` (max 600; call again), `spent`/`stale` at once (end your run).""",
     "wait_for_priority": """\
 Check whether it is your moment to act, then hand you the board. Wakes when: a decision is \
 waiting for you (answer with decide; arrives input_required); you have priority (act, or pass); \
