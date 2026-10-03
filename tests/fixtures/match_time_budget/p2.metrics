@@ -1,0 +1,8 @@
+ccw_model_step_seconds_count{role="orchestrator"} 2.0
+ccw_model_step_seconds_sum{role="orchestrator"} 20.0
+ccw_model_step_seconds_count{role="current"} 5.0
+ccw_model_step_seconds_sum{role="current"} 60.0
+ccw_tool_seconds_count{role="current",tool="pass_until"} 4.0
+ccw_tool_seconds_sum{role="current",tool="pass_until"} 200.0
+ccw_tool_seconds_count{role="orchestrator",tool="pass_baton"} 1.0
+ccw_tool_seconds_sum{role="orchestrator",tool="pass_baton"} 0.1
