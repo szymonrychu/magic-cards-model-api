@@ -134,42 +134,93 @@ def test_pair_turn_zero_makes_the_seat_the_orchestrator_that_never_acts(channel)
     assert "You are the orchestrator" in text
     assert "you never call an acting `mtg` tool" in text
     assert "`pass_baton`" in text and "`report_problem`" in text
-    assert BRIEFING.strip().splitlines()[-1] in text
 
 
 @pytest.mark.parametrize("channel", PAIR)
-def test_pair_turn_zero_spawns_current_and_future_and_hands_current_the_baton(channel):
+def test_pair_turn_zero_carries_the_ids_and_the_file_path_not_the_briefing(channel):
+    """The driver delivers the briefing as /workspace/current-game.md (S3/S4):
+    the orchestrator neither reads nor writes it, and turn 0 carries no body."""
     text = _flat(turn_zero(_assignment(), GAME_PATH, BRIEFING, channel=channel))
-    assert "`current-1`" in text and "`future-1`" in text
-    assert "`subagent_type` `seat-player`" in text
-    assert "`pass_baton(player_uid=...)`" in text
-    assert "hand the token to `current-1`" in text
-    assert "/workspace/current-game.md" in text
+    assert BRIEFING.strip().splitlines()[-1] not in text
+    assert "# current game" not in text
+    assert "`/workspace/current-game.md`" in text
+    assert str(GAME_PATH) not in text
+    assert "g-1" in text and "'secret-uid'" in text and "'bob'" in text
+    assert "`Write`" not in text
 
 
 @pytest.mark.parametrize("channel", PAIR)
-def test_pair_turn_zero_states_the_promotion_cycle_in_order(channel):
+def test_pair_turn_zero_mints_live_then_next_and_spawns_both_in_one_message(channel):
     text = _flat(turn_zero(_assignment(), GAME_PATH, BRIEFING, channel=channel))
-    assert "`committed:`" in text
+    start = text.split("## On start", 1)[1].split("##", 1)[0]
     steps = [
         "1. Call `pass_baton(player_uid=...)`",
-        "2. Promote the future agent",
-        "`promoted: you are current, baton <token>, last decision <line>`",
-        "never respawn it",
-        "3. Stop the old current agent",
-        "4. Spawn `future-<n+1>` immediately",
+        "`state: live`",
+        "for `current-1`",
+        "2. Call `pass_baton(player_uid=...)` again",
+        "`state: next`",
+        "for `future-1`",
+        "3. Spawn `current-1` and `future-1` in one message",
     ]
-    positions = [text.index(step) for step in steps]
+    positions = [start.index(step) for step in steps]
     assert positions == sorted(positions)
-    assert "exactly two live player agents at all times" in text
+    assert "`subagent_type` `seat-player`" in text
 
 
 @pytest.mark.parametrize("channel", PAIR)
-def test_pair_turn_zero_reissues_the_baton_to_the_current_agent_only(channel):
+def test_pair_turn_zero_states_the_three_step_cycle_on_each_committed_report(channel):
     text = _flat(turn_zero(_assignment(), GAME_PATH, BRIEFING, channel=channel))
-    assert "`BATON_STALE`" in text and "`BATON_REQUIRED`" in text
-    assert "re-issue the baton to the current agent only" in text
-    assert "never hand a baton token to the future agent" in text
+    cycle = text.split("## On every `committed:` report", 1)[1].split("## ", 1)[0]
+    assert "once per priority window" in cycle
+    steps = [
+        "1. Stop the agent that reported",
+        "2. Call `pass_baton(player_uid=...)` for a fresh token",
+        "`state: next`",
+        "3. Spawn `future-<n+1>`",
+        "That is the whole cycle",
+    ]
+    positions = [cycle.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert "act on each report with the listed calls only" in cycle
+    assert "no analysis" in cycle
+    assert "exactly two live player agents" in text
+
+
+@pytest.mark.parametrize("channel", PAIR)
+def test_pair_turn_zero_never_promotes_relays_or_reissues(channel):
+    """The server rotates the baton at the end of the priority window (S1):
+    nothing about promotion by message, carrying plans, or handing a live
+    agent a fresh token survives in the orchestrator's brief."""
+    text = _flat(turn_zero(_assignment(), GAME_PATH, BRIEFING, channel=channel))
+    assert "promoted:" not in text
+    assert "relay" not in text.lower()
+    assert "Forward each plan" not in text
+    assert "re-issue the baton" not in text
+    assert "never hand a token to an agent that already holds one" in text
+    assert "the server makes" in text
+
+
+@pytest.mark.parametrize("channel", PAIR)
+def test_pair_turn_zero_never_names_isolation_and_spawns_with_fixed_parameters(channel):
+    """Defect 6: `Agent` with `isolation: worktree` failed with "Cannot
+    create agent worktree". The brief lists the spawn parameters and allows
+    no other, without naming the one that broke."""
+    text = _flat(turn_zero(_assignment(), GAME_PATH, BRIEFING, channel=channel))
+    assert "isolation" not in text.lower()
+    assert "worktree" not in text.lower()
+    assert "and no other parameter" in text
+
+
+@pytest.mark.parametrize("channel", PAIR)
+def test_pair_turn_zero_recovers_a_lost_current_with_a_revoke(channel):
+    text = _flat(turn_zero(_assignment(), GAME_PATH, BRIEFING, channel=channel))
+    recovery = text.split("## Recovery only", 1)[1].split("## ", 1)[0]
+    assert "without a `committed:` report" in recovery
+    assert "`pass_baton(player_uid=..., revoke=true)`" in recovery
+    revoke = recovery.index("revoke=true")
+    hand = recovery.index("to the future agent")
+    assert revoke < hand
+    assert "`BATON_STALE`" not in text and "`BATON_REQUIRED`" not in text
 
 
 @pytest.mark.parametrize("channel", PAIR)
@@ -179,23 +230,21 @@ def test_pair_turn_zero_stops_both_agents_when_the_game_ends(channel):
     assert "stop both player agents" in text
 
 
-def test_teams_channel_spawns_teammates_that_message_each_other_directly():
+def test_teams_channel_spawns_teammates_and_reads_reports_as_their_messages():
     text = _flat(turn_zero(_assignment(), GAME_PATH, BRIEFING, channel=Channel.TEAMS))
     assert "teammate" in text
-    assert "message each other directly" in text
     assert '`SendMessage` with `{"type": "shutdown_request"}`' in text
     assert "there is no `TeamCreate`" in text
     assert "`run_in_background`" not in text
     assert "`TaskStop`" not in text
-    assert "relay" not in text
+    assert "message each other" not in text
 
 
-def test_subagents_channel_spawns_background_agents_and_relays_their_notes():
+def test_subagents_channel_spawns_background_agents_whose_run_end_is_the_report():
     text = _flat(turn_zero(_assignment(), GAME_PATH, BRIEFING, channel=Channel.SUBAGENTS))
     assert "`run_in_background` set to true" in text
     assert "`TaskStop`" in text
-    assert "relay" in text
-    assert "cannot message each other" in text
+    assert "ends its run" in text
     assert "shutdown_request" not in text
 
 
@@ -210,9 +259,18 @@ def test_pair_continue_turn_re_establishes_the_pair_rather_than_acting(channel):
     assert "re-establish the pair" in flat
     assert "check which player agents are alive" in flat
     assert "respawn any that is missing" in flat
-    assert "re-issue the baton" in flat
     assert "`pass_baton(player_uid=...)`" in flat
     assert "Keep playing: call `wait_for_priority" not in flat
+
+
+@pytest.mark.parametrize("channel", PAIR)
+def test_pair_continue_turn_never_rotates_blindly(channel):
+    flat = _flat(continue_turn(_assignment(), channel=channel))
+    assert "re-issue the baton" not in flat
+    assert "both are alive, call nothing" in flat
+    assert "by the `state` its answer gives" in flat
+    assert "`pass_baton(player_uid=..., revoke=true)`" in flat
+    assert "never rotate" in flat
 
 
 @pytest.mark.parametrize("channel", PAIR)
@@ -222,7 +280,8 @@ def test_pair_whole_game_turn_tells_the_orchestrator_to_re_establish_the_pair(ch
     assert WHOLE_GAME_TURN not in text
     flat = _flat(WHOLE_GAME_TURN_PAIR)
     assert "re-establish the pair" in flat
-    assert "respawn" in flat and "re-issue the baton" in flat
+    assert "respawn" in flat
+    assert "re-issue the baton" not in flat
 
 
 # ---- (d) reflection and handover in pair mode -------------------------------
@@ -262,6 +321,7 @@ def test_pair_turn_zero_references_the_seat_player_loop_rather_than_duplicating_
     assert "## The loop" not in text
     assert "Your steady state is two tool calls" not in text
     assert "carries the decision loop" in _flat(text)
+    assert "plays a whole priority window" in _flat(text)
 
 
 def test_the_seat_player_prompt_carries_every_rule_turn_zero_references():
@@ -270,6 +330,7 @@ def test_the_seat_player_prompt_carries_every_rule_turn_zero_references():
     flat = _flat(SEAT_PLAYER_PROMPT)
     current = flat.split("## The current role", 1)[1].split("## Refusals", 1)[0]
     for needle in (
+        "play the whole priority window",
         "one wait then one committing call per decision",
         "DSL-first",
         "call `declare_plan` during the opponent's turn",
@@ -299,6 +360,8 @@ CLAUDE_VOCABULARY = {
     "TeamCreate",
     "mtg",
     "committed",
+    # the field of `pass_baton`'s answer the orchestrator reads
+    "state",
 }
 
 
@@ -334,6 +397,22 @@ def test_every_tool_the_pair_prose_names_exists_in_the_contract(channel):
             or token in CLAUDE_VOCABULARY
             or (token in _single_agent_tokens())
         ), f"pair prose names `{token}`, which is no contract tool or parameter"
+
+
+def test_every_call_the_seat_player_prompt_shows_exists_in_the_contract():
+    """`await_baton` and the window-closing calls the seat-player definition
+    names are real tools with real parameters (`test_prompt_matches_tools.py`
+    reads only prompt.py; the seat-player prose lives in the bootstrap)."""
+    from mtg_agent.wrapper.bootstrap import SEAT_PLAYER_PROMPT
+
+    tools, params = _contract()
+    assert "await_baton" in tools
+    calls = re.findall(r"`([a-z_]+)\(([^()`]*)\)`", SEAT_PLAYER_PROMPT)
+    assert "await_baton" in {name for name, _ in calls}
+    for name, args in calls:
+        assert name in tools, f"seat-player prose calls `{name}(...)`, not a contract tool"
+        for kwarg in re.findall(r"([a-z_]+)=", args):
+            assert kwarg in params, f"`{name}({kwarg}=...)` is no contract parameter"
 
 
 def _single_agent_tokens() -> set[str]:

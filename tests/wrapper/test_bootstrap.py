@@ -349,3 +349,74 @@ def test_settings_json_is_unchanged_when_the_channel_is_off(tmp_path):
     bootstrap.write_settings_json(s)
     doc = json.loads((s.home_dir / ".claude" / "settings.json").read_text())
     assert set(doc) == {"hooks", "enableAllProjectMcpServers", "permissions"}
+
+
+# ---- the seat-player definition: await the baton, play a whole window ------
+
+
+def _seat_player_prompt(tmp_path, **env) -> str:
+    s = settings_in(tmp_path, **env)
+    bootstrap.render(s)
+    body = (s.workspace / ".claude" / "agents" / "seat-player.md").read_text()
+    return " ".join(body.split("---\n", 2)[2].split())
+
+
+def _section(flat: str, heading: str) -> str:
+    return flat.split(f"## {heading}", 1)[1].split("## ", 1)[0]
+
+
+def test_the_future_reads_the_briefing_once_plans_one_window_then_awaits_the_baton(tmp_path):
+    future = _section(_seat_player_prompt(tmp_path), "The future role")
+    steps = [
+        "Read /workspace/current-game.md once",
+        "one concrete `run_script` body",
+        "ending in a pass",
+        "`await_baton(player_uid=..., baton=<your token>, max_seconds=600)`",
+        "in a loop",
+    ]
+    positions = [future.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert "BATON_NOT_YET" in future and "keep awaiting" in future
+    assert "never call an acting tool" in future
+
+
+def test_the_future_checks_last_commit_and_the_pending_decision_when_it_goes_live(tmp_path):
+    flat = _seat_player_prompt(tmp_path)
+    assert "`live: true`" in flat
+    assert "`last_commit`" in flat and "`pending_decision`" in flat
+    assert "revalidate the inherited plan" in flat
+
+
+def test_the_current_plays_the_whole_window_and_only_the_pass_ends_its_role(tmp_path):
+    current = _section(_seat_player_prompt(tmp_path), "The current role")
+    assert "play the whole priority window" in current
+    assert "as many actions as the window needs" in current
+    assert "prefer one `run_script` covering land, spells, attack and pass" in current
+    for give_away in ("`pass`", "`pass_until`", "`arm=[...]`", "`then_pass`"):
+        assert give_away in current, give_away
+    assert "Only the pass ends your role" in current
+
+
+def test_the_current_ends_its_run_after_the_pass_with_a_committed_line(tmp_path):
+    flat = _seat_player_prompt(tmp_path)
+    ends = _section(flat, "When your window closes")
+    order = ["`baton_rotated: true`", "BATON_SPENT", "end your run with `committed: <one line>`"]
+    positions = [ends.index(step) for step in order]
+    assert positions == sorted(positions)
+    assert "call nothing else" in ends
+    assert "SendMessage" in ends and "`team-lead`" in ends
+
+
+def test_the_seat_player_handles_every_server_baton_refusal(tmp_path):
+    refusals = _section(_seat_player_prompt(tmp_path), "Refusals")
+    assert "`BATON_NOT_YET`" in refusals and "keep awaiting" in refusals
+    assert "`BATON_BUSY`" in refusals and "own in-flight call" in refusals
+    assert "`BATON_SPENT`" in refusals
+    assert "`BATON_REQUIRED`" in refusals and "`BATON_STALE`" in refusals
+
+
+def test_the_seat_player_never_waits_on_a_promotion_message(tmp_path):
+    flat = _seat_player_prompt(tmp_path)
+    assert "promoted:" not in flat
+    assert "Send plans to the orchestrator" not in flat
+    assert "continuing you" not in flat

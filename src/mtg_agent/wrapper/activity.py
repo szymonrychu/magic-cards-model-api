@@ -829,9 +829,6 @@ MAIN_AGENT = "main"
 HELPER = "helper"
 
 _PLAYER_NAME_RE = re.compile(rf"^({ROLE_CURRENT}|{ROLE_FUTURE})(-\d+)?$")
-#: The orchestrator's promotion message to a future player (T5's protocol:
-#: `promoted: you are current, baton <token>, last decision <line>`).
-_PROMOTED_RE = re.compile(r"^\s*promoted\b", re.IGNORECASE)
 _NOTIFICATION_RE = re.compile(r"<task-notification>(.*?)</task-notification>", re.DOTALL)
 _NOTIFICATION_TAG_RE = re.compile(r"<(task-id|status)>\s*([^<]*?)\s*</\1>")
 _TERMINATED_RE = re.compile(r'"teammate_terminated"[^}]*?"message"\s*:\s*"([^"\s]+) has shut down')
@@ -895,9 +892,11 @@ class AgentRoster:
     (subagents: matched by the meta's `toolUseId`, or by the launch result's
     `agentId`). Its role comes from that name (`role_for_name`), and moves:
 
-    - a future player becomes current when the orchestrator sends it a
-      `promoted: ...` message (it is continued, not respawned, so its name
-      stays `future-<n>`);
+    - a waiting future player becomes current when the orchestrator stops
+      the live current (S5's cycle: it stops the agent that reported
+      `committed:`, the server having made the future's token live), or
+      when it calls `pass_baton(revoke=true)` (recovery: the current is gone
+      and the future gets the live token); it keeps its name `future-<n>`;
     - a current player that another player has since become current over is
       retired and counts as a helper from then on;
     - a player stops being live at a `TaskStop` or `shutdown_request` naming
@@ -914,7 +913,7 @@ class AgentRoster:
         #: `agentId` from an async launch result -> its Agent `tool_use` id.
         self._launches: dict[str, str] = {}
         self._tool_uses: dict[str, str] = {}
-        self._promotions: list[tuple[float, str]] = []
+        self._revokes: list[float] = []
         self._stops: list[tuple[float, str]] = []
 
     # -- feeding --
@@ -958,10 +957,10 @@ class AgentRoster:
         if name == "SendMessage":
             ref = str(tool_input.get("to") or tool_input.get("recipient") or "")
             message = tool_input.get("message")
-            if isinstance(message, str) and _PROMOTED_RE.match(message):
-                self._promotions.append((stamp, ref))
-            elif isinstance(message, dict) and message.get("type") == "shutdown_request":
+            if isinstance(message, dict) and message.get("type") == "shutdown_request":
                 self._stops.append((stamp, ref))
+        elif _short_tool_name(name) == "pass_baton" and tool_input.get("revoke") is True:
+            self._revokes.append(stamp)
         elif name == "TaskStop":
             ref = str(tool_input.get("task_id") or "")
             if ref:
@@ -1012,17 +1011,43 @@ class AgentRoster:
         return ref == agent_id or (bool(name) and ref.split("@", 1)[0] == name)
 
     def _became_current_at(self, agent_id: str) -> float | None:
-        """When this agent became the current player, or None if never.
-        A `current-<n>` is current from its spawn (from the start of time if
-        the spawn is not on record); a `future-<n>` from its promotion."""
-        base = role_for_name(self.name_of(agent_id))
-        if base == ROLE_CURRENT:
-            spawned = self._spawned_at(agent_id)
-            return spawned if spawned is not None else float("-inf")
-        if base == ROLE_FUTURE:
-            promoted = [at for at, ref in self._promotions if self._refers_to(ref, agent_id)]
-            return min(promoted) if promoted else None
-        return None
+        """When this agent became the current player, or None if never."""
+        return self._current_since().get(agent_id)
+
+    def _current_since(self) -> dict[str, float]:
+        """Replay the lead's spawns, stops and messages in time order. A
+        `current-<n>` is current from its spawn (from the start of time if the
+        spawn is not on record); the oldest waiting `future-<n>` from the stop
+        of the live current or from a `pass_baton(revoke=true)`."""
+        events: list[tuple[float, int, str, str]] = []
+        for agent_id in self._names:
+            base = role_for_name(self.name_of(agent_id))
+            if base in (ROLE_CURRENT, ROLE_FUTURE):
+                spawned = self._spawned_at(agent_id)
+                events.append(
+                    (spawned if spawned is not None else float("-inf"), 0, base, agent_id)
+                )
+        events += [(at, 1, "stop", ref) for at, ref in self._stops]
+        events += [(at, 1, "revoke", "") for at in self._revokes]
+        became: dict[str, float] = {}
+        current: str | None = None
+        waiting: list[str] = []
+        for at, _, kind, who in sorted(events):
+            if kind == ROLE_CURRENT:
+                became[who], current = at, who
+            elif kind == ROLE_FUTURE:
+                waiting.append(who)
+            elif kind == "stop":
+                waiting = [agent for agent in waiting if not self._refers_to(who, agent)]
+                if current is not None and self._refers_to(who, current):
+                    current = None
+                    if waiting:
+                        current = waiting.pop(0)
+                        became[current] = at
+            elif waiting:
+                current = waiting.pop(0)
+                became[current] = at
+        return became
 
     def stopped_at(self, agent_id: str) -> float | None:
         stops = [at for at, ref in self._stops if self._refers_to(ref, agent_id)]

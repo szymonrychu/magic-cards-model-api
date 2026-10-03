@@ -246,15 +246,38 @@ def test_a_helper_spawned_after_the_first_poll_is_picked_up(tmp_path, channel):
 
 
 @pytest.mark.parametrize("channel", CHANNELS)
-def test_a_promoted_future_becomes_the_current_and_the_old_current_retires(tmp_path, channel):
+def test_stopping_the_reporting_current_makes_the_waiting_future_current(tmp_path, channel):
+    """S5's cycle: on `committed:` the orchestrator stops the current; the
+    server already made the future's token live, and no message follows."""
+    home, main = installed(tmp_path, channel)
+    stop = (
+        ("TaskStop", {"task_id": current_name(1)})
+        if channel == "subagents"
+        else ("SendMessage", {"to": current_name(1), "message": {"type": "shutdown_request"}})
+    )
+    _append(main, lead_tool_use(session_end(main) + 1, *stop))
+    watcher = watched(home)
+    assert watcher.agent_roles()[agent_id(main, "beta")] == "current"
+    assert watcher.agent_roles()[agent_id(main, "alpha")] == "helper"
+    assert watcher.activity_snapshot()["role"] == "current"
+
+
+@pytest.mark.parametrize("channel", CHANNELS)
+def test_a_revoke_makes_the_waiting_future_current(tmp_path, channel):
+    """Recovery: the current is gone without a report, the orchestrator
+    calls `pass_baton(revoke=true)` and hands that live token to the future.
+    A plain message to the future (a liveness check) promotes nobody."""
     home, main = installed(tmp_path, channel)
     at = session_end(main) + 1
+    _append(main, lead_tool_use(at, "SendMessage", {"to": future_name(1), "message": "alive?"}))
+    assert watched(home).agent_roles()[agent_id(main, "beta")] == "future"
     _append(
         main,
         lead_tool_use(
-            at,
-            "SendMessage",
-            {"to": future_name(1), "message": "promoted: you are current, baton b2, last x"},
+            at + 1, "mcp__mtg__pass_baton", {"player_uid": "u", "revoke": True}, "toolu_r"
+        ),
+        lead_tool_use(
+            at + 2, "SendMessage", {"to": future_name(1), "message": "baton b2"}, "toolu_m"
         ),
     )
     watcher = watched(home)
@@ -307,9 +330,11 @@ def test_with_no_current_the_pill_falls_back_to_the_orchestrator(tmp_path, chann
 @pytest.mark.parametrize("channel", CHANNELS)
 def test_a_stopped_current_hands_the_pill_back_to_the_orchestrator(tmp_path, channel):
     home, main = installed(tmp_path, channel)
+    at = session_end(main) + 1
     _append(
         main,
-        lead_tool_use(session_end(main) + 1, "TaskStop", {"task_id": current_name(1)}),
+        lead_tool_use(at, "TaskStop", {"task_id": future_name(1)}),
+        lead_tool_use(at + 1, "TaskStop", {"task_id": current_name(1)}),
     )
     watcher = watched(home)
     assert watcher.activity_snapshot()["role"] == "orchestrator"
