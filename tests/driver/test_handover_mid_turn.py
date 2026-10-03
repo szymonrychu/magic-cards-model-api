@@ -39,7 +39,11 @@ def test_a_release_mid_turn_delivers_the_handover_turn_and_writes_a_done_marker(
 ):
     world = build_world(tmp_path)
     proc = FakeProc(b"ready")
-    wrapper_settings = fast_settings(INTERRUPT_SETTLE_SECONDS="0.3", TURN_TIMEOUT_SECONDS="60")
+    wrapper_settings = fast_settings(
+        INTERRUPT_SETTLE_SECONDS="0.3",
+        TURN_TIMEOUT_SECONDS="60",
+        WORKSPACE=str(tmp_path / "wrapper-workspace"),
+    )
     manager = ready_manager(monkeypatch, proc, wrapper_settings)
     public = build_public_app(manager, wrapper_settings)
     internal = TestClient(build_internal_app(manager))

@@ -925,6 +925,7 @@ def test_the_real_game_server_carries_the_field_seat_decklist_reads():
 def test_a_failed_turn_is_reported_by_status(world):
     client = world.client
     dispatch(client)
+    world.state["session_state"] = "dead"  # no replacement session: no turn 0 re-dispatch
     client.post(
         "/turn-done",
         json={
@@ -942,6 +943,7 @@ def test_a_failed_turn_is_reported_by_status(world):
 def test_a_turn_that_succeeds_clears_a_previous_failure(world):
     client = world.client
     dispatch(client)
+    world.state["session_state"] = "dead"  # no replacement session: no turn 0 re-dispatch
     client.post(
         "/turn-done",
         json={"turnId": "turn-1", "state": "failed", "error": "claude exited with code 1"},
@@ -975,6 +977,7 @@ def test_a_finished_turn_is_no_longer_in_flight(world):
     agent is gone, so no continuation could be pushed."""
     client = world.client
     dispatch(client)
+    world.state["session_state"] = "dead"  # no replacement session: no turn 0 re-dispatch
     client.post(
         "/turn-done",
         json={"turnId": "turn-1", "state": "failed", "error": "claude exited with code 1"},

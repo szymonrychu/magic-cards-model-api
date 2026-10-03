@@ -763,3 +763,78 @@ def test_acceptance_pass_baton_mid_pass_until_queues_without_stale(client, game,
     assert answers[-1].startswith("BATON_SPENT:")
     assert not any("BATON_STALE" in text for text in answers), answers
     assert state(client, game)["step"] == "end_step"
+
+
+# -- S4: baton refusals and rotations as structured log lines --
+
+
+def _baton_lines(caplog: Any, prefix: str) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith(prefix)]
+
+
+def test_every_baton_refusal_logs_code_tool_and_uid(client, game, monkeypatch, caplog):
+    caplog.set_level("INFO", logger="mcm.mcp")
+    seats, uids, server = served(client, game, monkeypatch)
+    uid = uids["alice"]
+    live = baton_answer(server, uid)["baton"]
+    future = baton_answer(server, uid)["baton"]
+    add_card(client, game, "Plains", "alice", "hand")
+    land = {"player_uid": uid, "card": "Plains", "reasoning": "x"}
+
+    call(server, "play_land", land)
+    call(server, "play_land", {**land, "baton": "bogus"})
+    call(server, "play_land", {**land, "baton": future})
+    call(server, "pass", {"player_uid": uid, "reasoning": "done", "baton": live})
+    call(server, "play_land", {**land, "baton": live})
+
+    assert _baton_lines(caplog, "baton_refusal") == [
+        f"baton_refusal code=BATON_REQUIRED tool=play_land uid={uid}",
+        f"baton_refusal code=BATON_STALE tool=play_land uid={uid}",
+        f"baton_refusal code=BATON_NOT_YET tool=play_land uid={uid}",
+        f"baton_refusal code=BATON_SPENT tool=play_land uid={uid}",
+    ]
+
+
+def test_an_advisor_asking_for_a_baton_is_a_logged_refusal(client, game, monkeypatch, caplog):
+    from magic_cards_model_api.repository import Advisor
+    from magic_cards_model_api.store import store
+
+    caplog.set_level("INFO", logger="mcm.mcp")
+    seats, _uids = wired(client, monkeypatch, game, resolve_by_uid=True)
+    server = mcp.build_server(seats)
+    store.register_advisors(game, {"buddy-uid": Advisor(player="alice")})
+    assert call(server, "pass_baton", {"player_uid": "buddy-uid"}).startswith("BATON_ADVISOR:")
+    assert _baton_lines(caplog, "baton_refusal") == [
+        "baton_refusal code=BATON_ADVISOR tool=pass_baton uid=buddy-uid"
+    ]
+
+
+def test_a_rotation_logs_the_uid_and_the_windows_action_count(client, game, monkeypatch, caplog):
+    caplog.set_level("INFO", logger="mcm.mcp")
+    seats, uids, server = served(client, game, monkeypatch)
+    uid = uids["alice"]
+    live = baton_answer(server, uid)["baton"]
+    baton_answer(server, uid)
+    add_card(client, game, "Plains", "alice", "hand")
+    call(
+        server, "play_land", {"player_uid": uid, "card": "Plains", "reasoning": "x", "baton": live}
+    )
+    assert _baton_lines(caplog, "baton_rotated") == []
+    passed = call(server, "pass", {"player_uid": uid, "reasoning": "done", "baton": live})
+    assert rotated(passed), passed
+    assert _baton_lines(caplog, "baton_rotated") == [f"baton_rotated uid={uid} window_actions=2"]
+
+
+def test_a_background_rotation_logs_too(client, game, monkeypatch, caplog):
+    caplog.set_level("INFO", logger="mcm.mcp")
+    seats, uids, server, live, _first = idle_background(client, game, monkeypatch)
+    uid = uids["alice"]
+    baton_answer(server, uid)
+    with Opponent(game, "bob"):
+        give_up = time.monotonic() + 30
+        while seats.baton.check(uid, live) == BATON_OK:
+            assert time.monotonic() < give_up
+            time.sleep(0.05)
+    seats.background.stop(uid)
+    lines = _baton_lines(caplog, "baton_rotated")
+    assert len(lines) == 1 and lines[0].startswith(f"baton_rotated uid={uid} window_actions=")
