@@ -30,6 +30,10 @@
 #   __AGENT_IMAGE__ / __API_IMAGE__ - the pushed images this deploy pinned
 #   __GUIDES_REF__             - which deck-guides revision to check out (must be main)
 #   __MTG_ROLE__ / __MTG_GAME_ID__ - the agent container's own role and game
+#   __SEAT_AGENT_CHANNEL__ / __SEAT_SUBAGENT_MODEL__ / __SEAT_SUBAGENT_EFFORT__ -
+#                                the seat pair's env, same on agent and driver
+#   __MTG_REQUIRE_BATON__      - `1` only for a seat Job whose channel is not
+#                                `off` (strict baton on the stdio mtg server)
 #   __ACTIVE_DEADLINE_SECONDS__ - the Job's deadline, an integer: 14400 for a
 #                                seat or a buddy, 3600 for a follow-up (below)
 #
@@ -218,7 +222,9 @@ spec:
         - -euc
         - 'out="${MCP_JSON_OUT:-/etc/mtg/mcp.json}"
 
-          if [ -n "$MCP_URL" ]; then mtg="{\"type\": \"http\", \"url\": \"$MCP_URL\", \"alwaysLoad\": true}"; else mtg="{\"command\": \"/app/.venv/bin/python\", \"args\": [\"-m\", \"magic_cards_model_api.mcp\", \"--api\", \"$API_URL\", \"--game\", \"$GAME_ID\", \"--transport\", \"stdio\"], \"alwaysLoad\": true}"; fi
+          baton=""; if [ "$MTG_REQUIRE_BATON" = "1" ]; then baton=", \"--require-baton\""; fi
+
+          if [ -n "$MCP_URL" ]; then mtg="{\"type\": \"http\", \"url\": \"$MCP_URL\", \"alwaysLoad\": true}"; else mtg="{\"command\": \"/app/.venv/bin/python\", \"args\": [\"-m\", \"magic_cards_model_api.mcp\", \"--api\", \"$API_URL\", \"--game\", \"$GAME_ID\", \"--transport\", \"stdio\"$baton], \"alwaysLoad\": true}"; fi
 
           printf "%s" "{\"mcpServers\": {\"mtg\": $mtg, \"spellslinger\": {\"type\": \"http\", \"url\": \"http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp\", \"alwaysLoad\": true}}}" > "$out"
 
@@ -230,6 +236,12 @@ spec:
           value: __API_URL__
         - name: GAME_ID
           value: __GAME_ID__
+        # `1` for a seat Job with a seat-pair channel: strict baton on the
+        # stdio `mtg` server. Empty for a buddy, follow-up and review Job,
+        # and ignored on the http `MCP_URL` path (there enforcement relies on
+        # baton issuance alone).
+        - name: MTG_REQUIRE_BATON
+          value: __MTG_REQUIRE_BATON__
         volumeMounts:
         - name: mcp
           mountPath: /etc/mtg
@@ -297,6 +309,15 @@ spec:
           value: __MAX_THINKING_TOKENS__
         # Who this agent is, for the branches and commits it makes in the
         # writable guides checkout: `seat` or `advisor`, and its game.
+        # The seat pair (K8sSettings.seat_agent_channel and friends): the same
+        # three on the agent and the driver, so switching channel is an env
+        # change only.
+        - name: SEAT_AGENT_CHANNEL
+          value: __SEAT_AGENT_CHANNEL__
+        - name: SEAT_SUBAGENT_MODEL
+          value: __SEAT_SUBAGENT_MODEL__
+        - name: SEAT_SUBAGENT_EFFORT
+          value: __SEAT_SUBAGENT_EFFORT__
         - name: MTG_ROLE
           value: __MTG_ROLE__
         - name: MTG_GAME_ID
@@ -405,6 +426,15 @@ spec:
           value: __PLAYER__
         - name: DRIVER_ASSIGNMENT_JSON
           value: __ASSIGNMENT_JSON__
+        # The seat pair (K8sSettings.seat_agent_channel and friends): the same
+        # three on the agent and the driver, so switching channel is an env
+        # change only.
+        - name: SEAT_AGENT_CHANNEL
+          value: __SEAT_AGENT_CHANNEL__
+        - name: SEAT_SUBAGENT_MODEL
+          value: __SEAT_SUBAGENT_MODEL__
+        - name: SEAT_SUBAGENT_EFFORT
+          value: __SEAT_SUBAGENT_EFFORT__
         volumeMounts:
         - name: guides
           mountPath: /guides

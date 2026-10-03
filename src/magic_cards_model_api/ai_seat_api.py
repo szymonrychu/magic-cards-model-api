@@ -66,7 +66,8 @@ def _resolve(game_id: str, req: StartAiSeat) -> tuple[str, str, str, AgentSettin
     *reads*. Anything else is a 404, indistinguishable from a game that does
     not exist, the same refusal this route has always given an unknown uid.
 
-    **`agent` is always the CURRENT `AgentSettings.default()`, never
+    **`agent` is always the CURRENT `AgentSettings.default()` (`advisor_default()`
+    for a buddy: Opus), never
     whatever this game's seat or advisor entry has stored** (2026-09-19,
     owner direction, cost cutting). `store.agent_settings`/`repository.
     Advisor.agent` still carry the historical value a game was actually
@@ -84,7 +85,7 @@ def _resolve(game_id: str, req: StartAiSeat) -> tuple[str, str, str, AgentSettin
         advisor = store.advisor_uids(game_id).get(uid)
         if advisor is None:
             raise KeyError("that uid is no advisor in this game")
-        return uid, role, advisor.player, AgentSettings.default(os.environ)
+        return uid, role, advisor.player, AgentSettings.advisor_default(os.environ)
     player = store.player_for_uid(game_id, uid)
     if player is None:
         raise KeyError("that uid is no seat in this game")

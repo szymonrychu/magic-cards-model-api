@@ -94,6 +94,9 @@ services:
     environment:
       - AI_SEAT_MODE=wrapper
       - DRIVER_URL=http://driver:8090
+      # Owner decision (T6): the buddy stays on Opus while the seat plays Sonnet
+      # (AgentSettings.advisor_default / .default).
+      - ADVISOR_MODEL=${ADVISOR_MODEL:-claude-opus-5}
       # The browser re-reads the game, long-polls its log, and re-reads the AI
       # seat's status every ~1.2s. Successful reads of those routes, and of
       # the healthcheck, are kept out of uvicorn's access log; POSTs and any
@@ -204,6 +207,13 @@ services:
       # drives a script command by hand - see the README and .env.example.
       - MTG_ROLE=seat
       - MTG_GAME_ID=${MTG_GAME_ID:-}
+      # Seat pair (same three on agent and driver) and the strict baton for
+      # this seat agent, handed to the stdio mtg server by deploy/mcp.base.json.
+      # With SEAT_AGENT_CHANNEL=off set MTG_REQUIRE_BATON=0.
+      - SEAT_AGENT_CHANNEL=${SEAT_AGENT_CHANNEL:-teams}
+      - SEAT_SUBAGENT_MODEL=${SEAT_SUBAGENT_MODEL:-claude-opus-5}
+      - SEAT_SUBAGENT_EFFORT=${SEAT_SUBAGENT_EFFORT:-}
+      - MTG_REQUIRE_BATON=${MTG_REQUIRE_BATON:-1}
     secrets:
       - source: mtg_decks_gh_pat
         target: /var/run/mtg-decks-git/GH_PAT
@@ -233,6 +243,9 @@ services:
       - GAME_API=http://game:8000
       - WRAPPER_API=http://agent:8080
       - DRIVER_SELF_URL=http://driver:8090
+      - SEAT_AGENT_CHANNEL=${SEAT_AGENT_CHANNEL:-teams}
+      - SEAT_SUBAGENT_MODEL=${SEAT_SUBAGENT_MODEL:-claude-opus-5}
+      - SEAT_SUBAGENT_EFFORT=${SEAT_SUBAGENT_EFFORT:-}
       # Also where the driver reads the guides corpus revision from: the
       # `.guides-revision` stamp `deploy/guides-clone.sh` writes, the same
       # for `guides-init` below as for the kubernetes `guides` initContainer

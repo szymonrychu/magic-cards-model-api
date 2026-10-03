@@ -84,8 +84,10 @@ services:
       # so this file's own fallback below never triggered for anyone who
       # followed the literal `cp .env.example .env` bring-up step - it
       # silently inherited sonnet/high. Dedicated vars close that collision.
-      - AGENT_DEFAULT_MODEL=${CLAUDE_AIVAI_MODEL:-claude-opus-5}
+      - AGENT_DEFAULT_MODEL=${CLAUDE_AIVAI_MODEL:-claude-sonnet-5}
       - AGENT_DEFAULT_EFFORT=${CLAUDE_AIVAI_EFFORT:-low}
+      # Owner decision (T6): the buddy stays on Opus.
+      - ADVISOR_MODEL=${ADVISOR_MODEL:-claude-opus-5}
       # FD6 (5), fb3-parity.md item 5: wired to the `postgres` service
       # below - already present here for `mise run test:pg` parity, but
       # never plumbed into `game` itself, so a finished local AIvAI game
@@ -189,7 +191,7 @@ services:
       # Opus-high `agent_settings.review_default()` regardless - see
       # `agent_settings.py`'s module docstring for the documented `low`
       # stop risk and where the loop watches for it (DR8).
-      - MODEL=${CLAUDE_AIVAI_MODEL:-claude-opus-5}
+      - MODEL=${CLAUDE_AIVAI_MODEL:-claude-sonnet-5}
       - EFFORT=${CLAUDE_AIVAI_EFFORT:-low}
       - MAX_THINKING_TOKENS=${CLAUDE_MAX_THINKING_TOKENS:-}
       - HTTP_ADDR=:8080
@@ -210,6 +212,10 @@ services:
       - CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH=4096
       - MAX_MCP_OUTPUT_TOKENS=60000
       - MTG_ROLE=seat
+      - SEAT_AGENT_CHANNEL=${SEAT_AGENT_CHANNEL:-teams}
+      - SEAT_SUBAGENT_MODEL=${SEAT_SUBAGENT_MODEL:-claude-opus-5}
+      - SEAT_SUBAGENT_EFFORT=${SEAT_SUBAGENT_EFFORT:-}
+      - MTG_REQUIRE_BATON=${MTG_REQUIRE_BATON:-1}
       - MTG_GAME_ID=${MTG_GAME_ID:-}
       # FD6 (5), fb3-parity.md item 3: where the driver writes this game's
       # play-offer evidence record, read-only here - `plays admit` commits
@@ -249,7 +255,7 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
-      - MODEL=${CLAUDE_AIVAI_MODEL:-claude-opus-5}
+      - MODEL=${CLAUDE_AIVAI_MODEL:-claude-sonnet-5}
       - EFFORT=${CLAUDE_AIVAI_EFFORT:-low}
       - MAX_THINKING_TOKENS=${CLAUDE_MAX_THINKING_TOKENS:-}
       - HTTP_ADDR=:8080
@@ -268,6 +274,10 @@ services:
       - CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH=4096
       - MAX_MCP_OUTPUT_TOKENS=60000
       - MTG_ROLE=seat
+      - SEAT_AGENT_CHANNEL=${SEAT_AGENT_CHANNEL:-teams}
+      - SEAT_SUBAGENT_MODEL=${SEAT_SUBAGENT_MODEL:-claude-opus-5}
+      - SEAT_SUBAGENT_EFFORT=${SEAT_SUBAGENT_EFFORT:-}
+      - MTG_REQUIRE_BATON=${MTG_REQUIRE_BATON:-1}
       - MTG_GAME_ID=${MTG_GAME_ID:-}
       - MTG_EVIDENCE_DIR=/driver-workspace/evidence
     secrets:
@@ -297,6 +307,9 @@ services:
       # Points at this driver's own agent, never the other seat's.
       - WRAPPER_API=http://agent-p1:8080
       - DRIVER_SELF_URL=http://driver-p1:8090
+      - SEAT_AGENT_CHANNEL=${SEAT_AGENT_CHANNEL:-teams}
+      - SEAT_SUBAGENT_MODEL=${SEAT_SUBAGENT_MODEL:-claude-opus-5}
+      - SEAT_SUBAGENT_EFFORT=${SEAT_SUBAGENT_EFFORT:-}
       - GUIDES_ROOT=/guides
       - MEMORY_ROOT=/workspace/memory
       - DRIVER_WORKSPACE=/driver-workspace
@@ -330,6 +343,9 @@ services:
       - GAME_API=http://game:8000
       - WRAPPER_API=http://agent-p2:8080
       - DRIVER_SELF_URL=http://driver-p2:8090
+      - SEAT_AGENT_CHANNEL=${SEAT_AGENT_CHANNEL:-teams}
+      - SEAT_SUBAGENT_MODEL=${SEAT_SUBAGENT_MODEL:-claude-opus-5}
+      - SEAT_SUBAGENT_EFFORT=${SEAT_SUBAGENT_EFFORT:-}
       - GUIDES_ROOT=/guides
       - MEMORY_ROOT=/workspace/memory
       - DRIVER_WORKSPACE=/driver-workspace

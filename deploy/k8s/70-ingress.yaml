@@ -39,6 +39,26 @@ type: Opaque
 stringData:
   auth: "play:$2y$05$BrvggN09btljyXYK9nww9e1YqFO/JIPRfeP.e6kRoEThvfhwcytBq"
 ---
+# /metrics is the game API's Prometheus endpoint and has NO authentication of
+# its own; oauth2-proxy only gates the browser path, and forwards every
+# authenticated path on to mtg-stack:8000. Both Ingresses below therefore send
+# /metrics to this Service, whose selector matches no Pod: nginx answers 503
+# and the endpoint is reachable only in-cluster (the game Pod's
+# prometheus.io/* annotations). Deliberately not an auth-url/auth-signin
+# annotation - forbidden on an API ingress (see mtg-stack-sso below).
+apiVersion: v1
+kind: Service
+metadata:
+  name: mtg-metrics-deny
+  namespace: mtg-engine
+spec:
+  selector:
+    app: mtg-metrics-deny
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
 # mtg-stack-sso: the new front door on play-magic.szymonrichert.pl.
 #
 # No auth-type/auth-secret/auth-realm annotation here, and NO auth-url/
@@ -76,6 +96,13 @@ spec:
           # request to this host must pass through oauth2-proxy first. The
           # proxy's own OAUTH2_PROXY_UPSTREAMS is what forwards an
           # authenticated request on to mtg-stack:8000 in-cluster.
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: mtg-metrics-deny
+                port:
+                  number: 80
           - path: /
             pathType: Prefix
             backend:
@@ -149,6 +176,13 @@ spec:
           # could call; the driver port exposes match control. Basic auth in
           # front of them would be the only thing between the internet and
           # that, and this password is public. Use port-forward for those two.
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: mtg-metrics-deny
+                port:
+                  number: 80
           - path: /
             pathType: Prefix
             backend:

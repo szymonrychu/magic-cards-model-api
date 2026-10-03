@@ -178,7 +178,7 @@ def test_the_secret_appears_only_in_the_two_guides_inits_and_the_two_agents(comp
     assert compose["secrets"]["mtg_decks_gh_pat"]["environment"] == "MTG_DECKS_GH_PAT"
 
 
-def test_both_seats_default_to_opus_at_low_effort(compose):
+def test_both_seats_default_to_sonnet_at_low_effort(compose):
     """Sourced from the dedicated CLAUDE_AIVAI_MODEL/CLAUDE_AIVAI_EFFORT -
     not the shared CLAUDE_MODEL/CLAUDE_EFFORT docker-compose.yml's single
     seat reads - so a .env with the single-seat file's own non-blank
@@ -186,7 +186,7 @@ def test_both_seats_default_to_opus_at_low_effort(compose):
     (bring-up fix, 2026-09-24)."""
     for name in ("agent-p1", "agent-p2"):
         env = _env(compose["services"][name])
-        assert env["MODEL"] == "${CLAUDE_AIVAI_MODEL:-claude-opus-5}"
+        assert env["MODEL"] == "${CLAUDE_AIVAI_MODEL:-claude-sonnet-5}"
         assert env["EFFORT"] == "${CLAUDE_AIVAI_EFFORT:-low}"
 
 
@@ -206,9 +206,9 @@ def test_the_game_seeds_its_own_agent_default_model_and_effort_from_the_aivai_va
     (model/effort are no longer a per-request field) - so `game` needs its
     own AGENT_DEFAULT_MODEL/AGENT_DEFAULT_EFFORT, sourced from the same
     dedicated CLAUDE_AIVAI_MODEL/CLAUDE_AIVAI_EFFORT vars as the two
-    wrapper containers, with the same claude-opus-5/low defaults."""
+    wrapper containers, with the same claude-sonnet-5/low defaults."""
     env = _env(compose["services"]["game"])
-    assert env["AGENT_DEFAULT_MODEL"] == "${CLAUDE_AIVAI_MODEL:-claude-opus-5}"
+    assert env["AGENT_DEFAULT_MODEL"] == "${CLAUDE_AIVAI_MODEL:-claude-sonnet-5}"
     assert env["AGENT_DEFAULT_EFFORT"] == "${CLAUDE_AIVAI_EFFORT:-low}"
 
 
@@ -221,7 +221,7 @@ def test_a_dotenv_carrying_the_shared_claude_model_does_not_change_the_aivai_sea
     CLAUDE_AIVAI_MODEL/CLAUDE_AIVAI_EFFORT left unset, and confirm every
     aivai seat - the two wrapper containers and `game`'s own
     AGENT_DEFAULT_MODEL/AGENT_DEFAULT_EFFORT - still resolves to
-    claude-opus-5/low, never the shared sonnet/high."""
+    claude-sonnet-5/low, never the shared sonnet/high."""
     import json
     import os
     import shutil
@@ -256,10 +256,10 @@ def test_a_dotenv_carrying_the_shared_claude_model_does_not_change_the_aivai_sea
     resolved_services = json.loads(result.stdout)["services"]
     for name in ("agent-p1", "agent-p2"):
         resolved_env = resolved_services[name]["environment"]
-        assert resolved_env["MODEL"] == "claude-opus-5", (name, resolved_env["MODEL"])
+        assert resolved_env["MODEL"] == "claude-sonnet-5", (name, resolved_env["MODEL"])
         assert resolved_env["EFFORT"] == "low", (name, resolved_env["EFFORT"])
     game_env = resolved_services["game"]["environment"]
-    assert game_env["AGENT_DEFAULT_MODEL"] == "claude-opus-5"
+    assert game_env["AGENT_DEFAULT_MODEL"] == "claude-sonnet-5"
     assert game_env["AGENT_DEFAULT_EFFORT"] == "low"
 
 
@@ -421,3 +421,35 @@ def test_seat_job_and_compose_and_dockerfile_pin_the_same_claude_code_version() 
 
     mise_text = (ROOT / "mise.toml").read_text()
     assert mise_text.count(f"CLAUDE_CODE_VERSION:-{dockerfile_default}") >= 2
+
+
+# ---- T6: Sonnet orchestrator, seat-pair env, strict baton, Opus buddy -------
+
+SEAT_PAIR_ENV = {
+    "SEAT_AGENT_CHANNEL": "${SEAT_AGENT_CHANNEL:-teams}",
+    "SEAT_SUBAGENT_MODEL": "${SEAT_SUBAGENT_MODEL:-claude-opus-5}",
+    "SEAT_SUBAGENT_EFFORT": "${SEAT_SUBAGENT_EFFORT:-}",
+}
+
+
+def test_the_seat_pair_env_is_identical_on_both_seats_agents_and_drivers(compose):
+    for name in ("agent-p1", "agent-p2", "driver-p1", "driver-p2"):
+        env = _env(compose["services"][name])
+        for key, value in SEAT_PAIR_ENV.items():
+            assert env[key] == value, (name, key)
+
+
+def test_both_seat_agents_require_the_baton(compose):
+    for name in ("agent-p1", "agent-p2"):
+        assert _env(compose["services"][name])["MTG_REQUIRE_BATON"] == "${MTG_REQUIRE_BATON:-1}"
+
+
+def test_the_game_pins_the_buddy_to_opus_while_the_seats_play_sonnet(compose):
+    env = _env(compose["services"]["game"])
+    assert env["ADVISOR_MODEL"] == "${ADVISOR_MODEL:-claude-opus-5}"
+    assert env["AGENT_DEFAULT_MODEL"] == "${CLAUDE_AIVAI_MODEL:-claude-sonnet-5}"
+    from magic_cards_model_api.agent_settings import AgentSettings
+
+    resolved = {"AGENT_DEFAULT_MODEL": "claude-sonnet-5", "ADVISOR_MODEL": "claude-opus-5"}
+    assert AgentSettings.default(resolved).model == "claude-sonnet-5"
+    assert AgentSettings.advisor_default(resolved).model == "claude-opus-5"

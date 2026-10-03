@@ -110,6 +110,12 @@ DEFAULT_MODEL = "claude-sonnet-5"
 DEFAULT_EFFORT_ENV = "AGENT_DEFAULT_EFFORT"
 DEFAULT_EFFORT: Effort = "high"
 
+#: The buddy/advisor's model (owner decision, T6): pinned to Opus while
+#: `AGENT_DEFAULT_MODEL` moves the seat orchestrator to Sonnet. Effort still
+#: follows `AGENT_DEFAULT_EFFORT`.
+ADVISOR_MODEL_ENV = "ADVISOR_MODEL"
+ADVISOR_DEFAULT_MODEL = "claude-opus-5"
+
 #: The post-game review's own model/effort - fixed, never read from
 #: `AGENT_DEFAULT_MODEL`/`AGENT_DEFAULT_EFFORT` and never a per-request
 #: choice. See the module docstring's last section.
@@ -144,6 +150,13 @@ class AgentSettings(BaseModel):
         # that does not exist) - the `cast` only tells the type checker that
         # validation is coming, it performs none itself.
         return cls(model=model, effort=cast(Effort, effort_raw))
+
+    @classmethod
+    def advisor_default(cls, env: Mapping[str, str]) -> AgentSettings:
+        """A buddy/advisor's settings: `ADVISOR_MODEL` (default Opus) at the
+        seat's `AGENT_DEFAULT_EFFORT`."""
+        model = (env.get(ADVISOR_MODEL_ENV) or "").strip() or ADVISOR_DEFAULT_MODEL
+        return cls.default(env).model_copy(update={"model": model})
 
     @classmethod
     def review_default(cls) -> AgentSettings:

@@ -395,3 +395,55 @@ def test_the_agent_image_installs_jq() -> None:
     assert any(re.search(r"\bjq\b", line) for line in installs), (
         "Dockerfile.agent never installs jq: " + dockerfile
     )
+
+
+# ---- T6: Sonnet orchestrator, seat-pair env, strict baton, Opus buddy -------
+
+
+def _compose_env(service: dict) -> dict:
+    return dict(e.split("=", 1) for e in service["environment"])
+
+
+def test_the_single_seat_agent_defaults_to_sonnet(compose):
+    assert _compose_env(compose["services"]["agent"])["MODEL"] == "${CLAUDE_MODEL:-claude-sonnet-5}"
+
+
+def test_the_seat_pair_env_is_identical_on_agent_and_driver(compose):
+    for name in ("agent", "driver"):
+        env = _compose_env(compose["services"][name])
+        assert env["SEAT_AGENT_CHANNEL"] == "${SEAT_AGENT_CHANNEL:-teams}", name
+        assert env["SEAT_SUBAGENT_MODEL"] == "${SEAT_SUBAGENT_MODEL:-claude-opus-5}", name
+        assert env["SEAT_SUBAGENT_EFFORT"] == "${SEAT_SUBAGENT_EFFORT:-}", name
+
+
+def test_the_compose_seat_agent_requires_the_baton_through_the_stdio_server(compose):
+    """Strict baton for seats only. compose runs only seat agents (the buddy
+    is kubernetes-only), so the agent container carries MTG_REQUIRE_BATON and
+    the base MCP config hands it to the stdio `mtg` server's own env. The
+    http MCP_URL path cannot take the flag: there enforcement relies on
+    issuance alone (T3 rule (e): a baton, once issued for a uid, is enforced)."""
+    agent_env = _compose_env(compose["services"]["agent"])
+    assert agent_env["MTG_REQUIRE_BATON"] == "${MTG_REQUIRE_BATON:-1}"
+    base = json.loads((ROOT / "deploy" / "mcp.base.json").read_text())
+    mtg = base["mcpServers"]["mtg"]
+    assert mtg["env"]["MTG_REQUIRE_BATON"] == "${MTG_REQUIRE_BATON:-}"
+    assert "--require-baton" not in mtg["args"]
+
+
+def test_the_game_pins_the_buddy_to_opus_while_the_seat_plays_sonnet(compose):
+    from magic_cards_model_api.agent_settings import AgentSettings
+
+    assert _compose_env(compose["services"]["game"])["ADVISOR_MODEL"] == (
+        "${ADVISOR_MODEL:-claude-opus-5}"
+    )
+    # No AGENT_DEFAULT_MODEL on `game` here: the seat falls to the code default.
+    assert "AGENT_DEFAULT_MODEL" not in _compose_env(compose["services"]["game"])
+    assert AgentSettings.default({}).model == "claude-sonnet-5"
+    advisor = AgentSettings.advisor_default({"ADVISOR_MODEL": "claude-opus-5"})
+    assert advisor.model == "claude-opus-5"
+
+
+def test_env_example_documents_the_seat_pair_variables():
+    text = (ROOT / ".env.example").read_text()
+    for key in ("SEAT_AGENT_CHANNEL", "SEAT_SUBAGENT_MODEL", "SEAT_SUBAGENT_EFFORT"):
+        assert re.search(rf"^{key}=", text, re.M), key

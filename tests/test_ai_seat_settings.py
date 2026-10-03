@@ -295,5 +295,5 @@ def test_resolving_a_buddy_also_uses_the_current_default_not_the_stored_one(
     _uid, role, player, agent = _resolve(game_id, StartAiSeat(advisor_uid=advisor_uid))
     assert role == ROLE_ADVISOR
     assert player == "alice"
-    assert agent.model == "claude-sonnet-5"
+    assert agent.model == "claude-opus-5"
     assert agent.effort == "high"
