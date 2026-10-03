@@ -44,8 +44,9 @@ def build_result(payload: bytes, result_json_path: Path) -> dict:
         #: Which turn stopped, read off the transcript (`last_turn_marker`);
         #: "" when it names none. `Manager.complete` ignores a stale one.
         "turnId": "",
-        #: The subagents and background commands the turn launched that have
-        #: not reported back (`pending_background_tasks`): while any are
+        #: The open-turn work the turn launched that has not ended
+        #: (`pending_background_tasks`): subagents, teammates and background
+        #: commands, but not a seat pair's `future-N` helper. While any is
         #: listed, `Manager.complete` keeps the turn in flight.
         "pendingTasks": [],
     }
