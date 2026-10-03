@@ -39,13 +39,16 @@ def hold_until_handover(
     marker: Path = MARKER_PATH,
     wait: float = DEFAULT_WAIT_SECONDS,
     *,
+    dispatched: bool = True,
     clock: Clock = time.monotonic,
     sleep: Sleep = time.sleep,
 ) -> None:
-    """Run `then` once the marker exists or `wait` passes. Without the shared
-    workspace (compose, a local run) there is no handover to wait for."""
+    """Run `then` once the marker exists or `wait` passes. There is no handover
+    to wait for without the shared workspace (compose, a local run), when no
+    assignment was ever dispatched, or when `wait` is 0 (`HANDOVER_HOLD_SECONDS`);
+    an already-written marker returns at once."""
     try:
-        if marker.parent.is_dir():
+        if dispatched and wait > 0 and marker.parent.is_dir():
             wait_for_marker(marker, wait, clock=clock, sleep=sleep)
     finally:
         then()

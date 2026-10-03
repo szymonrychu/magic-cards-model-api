@@ -38,6 +38,10 @@ DEFAULT_SUBMIT = "\r"
 #: The bypass-permissions warning is not seedable and appears on every boot.
 BYPASS_NEEDLE = "Bypass Permissions mode"
 
+#: The TUI's footer once it is up with bypass permissions on. Seeing it means
+#: claude is past (or never needed) the dialog and is at its prompt.
+READY_MARKERS = ("bypass permissions on", "? for shortcuts")
+
 #: Errors claude prints into the TUI and then *sits* at its prompt for: the
 #: process does not exit, so `_watch` never fires, and no Stop hook runs, so
 #: `complete` never fires either. Before this list the turn simply hung, and
@@ -169,6 +173,14 @@ class Manager:
         self._last_fatal: str = ""
         self._stopping = False
         self._threads: list[threading.Thread] = []
+        #: True once any turn was submitted: an assignment was dispatched, so
+        #: a SIGTERM must hold the PTY for its handover (`__main__`).
+        self.dispatched = False
+        #: A boot is in progress (set by `_launch`, cleared when it ends in
+        #: READY or DEAD). A `submit` made meanwhile waits on `_boot_done`
+        #: rather than typing into a dialog.
+        self._boot_pending = False
+        self._boot_done = threading.Event()
         #: What the agent is doing right now, as one coarse word - set by
         #: `__main__` to the `ActivityWatcher`'s own `activity_snapshot`
         #: once that thread exists. An attribute rather than a constructor
@@ -201,6 +213,13 @@ class Manager:
             return self._current
 
     def start(self) -> None:
+        self.boot_wait(self._launch())
+
+    def _launch(self) -> ClaudeProcess:
+        """Spawn claude and start its reader and watcher threads."""
+        with self._lock:
+            self._boot_pending = True
+            self._boot_done.clear()
         proc = self.spawn(self.settings, False)
         with self._lock:
             self._proc = proc
@@ -214,7 +233,14 @@ class Manager:
             thread = threading.Thread(target=target, args=(proc,), daemon=True)
             thread.start()
             self._threads.append(thread)
-        self.boot_wait(proc)
+        return proc
+
+    def _boot_over(self, proc: ClaudeProcess) -> None:
+        """Release queued submits, if `proc` is still the booting process."""
+        with self._lock:
+            if self._proc is proc:
+                self._boot_pending = False
+                self._boot_done.set()
 
     def _read_pty(self, proc: ClaudeProcess) -> None:
         """Copy the TUI's output into the ring. The only window into the
@@ -263,20 +289,27 @@ class Manager:
                 self._state = State.READY
         self._finish_failed(turn_id, f"claude reported a fatal error: {hit}")
 
-    def boot_wait(self, proc: ClaudeProcess) -> None:
+    def boot_wait(self, proc: ClaudeProcess, retried: bool = False) -> None:
         """Accept the bypass warning, then wait for the TUI to settle.
 
         Without accepting the warning, the first turn's submit keystroke
-        lands on the dialog and exits claude.
+        lands on the dialog and exits claude. With bypassPermissions the
+        dialog may print well after the first frame, so quiet alone is never
+        READY: the session waits for the dialog (then for quiet), or for the
+        TUI's own ready footer. Past `boot_timeout` with neither, claude is
+        relaunched once; a second miss ends the session as dead.
         """
+        bypass = self.settings.permission_mode == "bypassPermissions"
         start = time.monotonic()
         deadline = start + self.settings.boot_timeout
         last_written = self.ring.written()
         last_change = start
         accepted = False
+        ready = False
 
         while True:
             if self._is_dead() or not self._is_active(proc) or self._stopping:
+                self._boot_over(proc)
                 return
             now = time.monotonic()
             if now >= deadline:
@@ -290,21 +323,68 @@ class Manager:
                 log.info("accepted bypass-permissions warning")
                 time.sleep(0.5)
                 continue
+            if bypass and any(self.ring.contains(m) for m in READY_MARKERS):
+                ready = True
+                break
             written = self.ring.written()
             if written != last_written:
                 last_written, last_change = written, now
-            if now - start >= MIN_BOOT and now - last_change >= IDLE_READY:
+            if (
+                (accepted or not bypass)
+                and now - start >= MIN_BOOT
+                and now - last_change >= IDLE_READY
+            ):
+                ready = True
                 break
             time.sleep(BOOT_POLL)
+
+        if bypass and not accepted and not ready:
+            if not retried:
+                log.warning(
+                    "no bypass dialog or ready prompt in %.0fs, restarting claude once",
+                    self.settings.boot_timeout,
+                )
+                self.boot_wait(self._relaunch(proc), retried=True)
+                return
+            self._boot_failed(proc)
+            return
 
         with self._lock:
             if self._state is State.BOOTING and self._proc is proc:
                 self._state = State.READY
+        self._boot_over(proc)
         log.info(
             "session ready boot_ms=%d accepted_bypass=%s",
             int((time.monotonic() - start) * 1000),
             accepted,
         )
+
+    def _relaunch(self, proc: ClaudeProcess) -> ClaudeProcess:
+        """Replace a claude that booted to nothing. `_stopping` is held across
+        the swap so the old process's `_watch` treats its exit as expected."""
+        with self._lock:
+            self._stopping = True
+        proc.close()
+        self.ring.reset()
+        return self._launch()
+
+    def _boot_failed(self, proc: ClaudeProcess) -> None:
+        """Two boots in a row never reached a usable TUI: the session is dead,
+        and the container's restart policy brings up a fresh one."""
+        log.error(
+            "claude never reached its prompt after a restart pty_tail=%r", self.ring.tail(800)
+        )
+        with self._lock:
+            self._stopping = True
+            self._state = State.DEAD
+        proc.close()
+        self.metrics.claude_restarts_total.inc()
+        self._boot_over(proc)
+        if self.on_dead is not None:
+            try:
+                self.on_dead()
+            except Exception as exc:  # noqa: BLE001 - a bad hook must not hide the death
+                log.error("on_dead raised: %s", exc)
 
     def _watch(self, proc: ClaudeProcess) -> None:
         """Block until claude exits, then mark the session dead and fail any
@@ -341,8 +421,18 @@ class Manager:
             except Exception as exc:  # noqa: BLE001 - a bad hook must not hide the death
                 log.error("on_dead raised: %s", exc)
 
+    def _await_boot(self) -> None:
+        """A turn submitted while claude is still booting waits for READY (or
+        death) instead of being refused or typed into the dialog. Bounded by
+        two boot timeouts: one for a boot that needs its single relaunch."""
+        with self._lock:
+            pending = self._boot_pending and self._state is State.BOOTING
+        if pending:
+            self._boot_done.wait(self.settings.boot_timeout * 2 + 5)
+
     def shutdown(self) -> None:
         self._stopping = True
+        self._boot_done.set()
         with self._lock:
             proc = self._proc
             self._cancel_timer_locked()
@@ -381,6 +471,8 @@ class Manager:
         with self._lock:
             self.settings = settings
             self._state = State.BOOTING
+            self._boot_pending = True
+            self._boot_done.clear()
             # `_stopping` stays True across the gap until `start()` installs
             # the replacement `self._proc` and clears it atomically with that
             # swap - see the comment there. Clearing it here would let the
@@ -411,6 +503,7 @@ class Manager:
     # ---- turns -----------------------------------------------------------
 
     def submit(self, text: str, callback_url: str = "") -> str:
+        self._await_boot()
         with self._lock:
             if self._state is State.DEAD:
                 raise DeadError("session dead")
@@ -418,6 +511,7 @@ class Manager:
                 raise NotReadyError("session not ready")
             if self._current is not None:
                 raise BusyError("session busy")
+            self.dispatched = True
             turn_id = self.new_id()
             started = self.now()
             self.store.create(turn_id, text, callback_url, started)
