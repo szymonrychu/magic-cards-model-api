@@ -264,6 +264,21 @@ def test_pair_turn_zero_references_the_seat_player_loop_rather_than_duplicating_
     assert "carries the decision loop" in _flat(text)
 
 
+def test_the_seat_player_prompt_carries_every_rule_turn_zero_references():
+    from mtg_agent.wrapper.bootstrap import SEAT_PLAYER_PROMPT
+
+    flat = _flat(SEAT_PLAYER_PROMPT)
+    current = flat.split("## The current role", 1)[1].split("## Refusals", 1)[0]
+    for needle in (
+        "one wait then one committing call per decision",
+        "DSL-first",
+        "call `declare_plan` during the opponent's turn",
+        "arming never runs a play",
+        "start the armed play yourself with `run_script`",
+    ):
+        assert needle in current, needle
+
+
 # ---- (f) every tool the pair prose names is real -----------------------------
 
 #: Claude Code's own tools and their arguments, which the pair prose names to
