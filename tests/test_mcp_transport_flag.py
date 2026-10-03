@@ -77,7 +77,7 @@ def test_main_default_transport_serves_the_streamable_http_asgi_app(
     assert isinstance(served["port"], int)
 
 
-def test_main_resolves_by_uid_only_when_http_and_no_game_pinned(
+def test_main_resolves_by_uid_whenever_no_game_is_pinned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -102,7 +102,7 @@ def test_main_resolves_by_uid_only_when_http_and_no_game_pinned(
 
     monkeypatch.setattr(sys, "argv", ["mcp", "--api", "http://127.0.0.1:1", "--transport", "stdio"])
     mcp_module.main()
-    assert captured["resolve_by_uid"] is False, "stdio keeps the old single-live-game discovery"
+    assert captured["resolve_by_uid"] is True, "stdio, no --game: must resolve per uid too (S1)"
 
 
 class _NullServer:

@@ -104,9 +104,11 @@ Run one server, not per player (`--transport {stdio,http}`, default `http`):
 and, with no --game, resolves each call's game from its own seat uid (`GET
 /api/seats/{uid}`) - one process can answer for several live games. `stdio`
 is the historical per-game-subprocess shape (`deploy/mcp.base.json`'s
-docker-compose config uses this explicitly); with no --game there it falls
-back to "the one live game" instead. Every tool returns the API's JSON
-answer verbatim, engine refusal strings included.
+docker-compose config uses this explicitly); with no --game it resolves each
+call's game from its seat uid exactly as http does (`seats_from_args`) -
+never "the first of `/api/games`", which is the wrong game whenever two are
+live. Every tool returns the API's JSON answer verbatim, engine refusal
+strings included.
 """
 
 from __future__ import annotations
@@ -129,7 +131,21 @@ from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from . import seatkit
 from .background_autopass import BackgroundRuns
-from .baton import ADVISOR_REFUSAL, BATON_EXEMPT_TOOLS, BATON_OK, BatonStore, refusal
+from .baton import (
+    ADVISOR_REFUSAL,
+    BATON_BUSY,
+    BATON_EXEMPT_TOOLS,
+    BATON_OK,
+    BATON_REVOKED,
+    BATON_SPENT,
+    MAX_AWAIT_SECONDS,
+    NON_COMMITTING_TOOLS,
+    REVOKED_ANSWER,
+    WINDOW_CLOSED,
+    BatonStore,
+    Flight,
+    refusal,
+)
 from .mcp_descriptions import BATON_DESCRIPTION, SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS
 from .playscripts import script_tools
 from .seatkit import (
@@ -230,46 +246,212 @@ def _guarded(seats: Seats):
     check above and the actual call) is caught the same way rather than
     propagating out of the tool and taking the process down. Either problem
     is returned as a plain string - a normal tool answer - never raised.
+
+    The baton (`baton.py`) lives here too. An acting tool first checks its
+    token and takes the uid's acting lock in one step (`BatonStore.begin`);
+    a refused call - wrong token, or another acting call in flight
+    (`BATON_BUSY`) - touches nothing, not even the background run. When the
+    call returns, `_close_flight` releases the lock and, if the call gave
+    priority away, rotates the baton under the same store lock.
     """
 
     def decorate(fn):
         name = "pass" if fn.__name__ == "pass_once" else fn.__name__
 
         @functools.wraps(fn)
-        def wrapper(*args: Any, **kwargs: Any) -> str:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             started = time.monotonic()
-            uid = str(kwargs.get("player_uid") or "")
+            uid = str(kwargs.get("player_uid") or "").strip()
             baton = str(kwargs.get("baton") or "")
             _CALL.background = None
             _CALL.auto_answered = 0
-            _CALL.holder = seats.baton.holder(uid.strip(), baton)
+            _CALL.flight = None
+            _CALL.seat = None
+            _CALL.closes_pregame = False
+            _CALL.deferred = False
+            _CALL.holder = seats.baton.holder(uid, baton)
             try:
                 trouble = seatkit.api_trouble(seats.http, seats.api)
                 if trouble:
                     return trouble
+                flight: Flight | None = None
                 if name not in BATON_EXEMPT_TOOLS:
                     # Before anything that acts - above all before stopping
                     # the seat's background run: a refused call touches nothing.
-                    verdict = seats.baton.check(uid.strip(), baton)
+                    verdict, flight = seats.baton.begin(uid, name, baton)
                     if verdict != BATON_OK:
-                        return refusal(verdict, seats.baton.rotated_at(uid.strip()))
-                ctx = kwargs.get("ctx")
-                echoed = ctx.request_state if isinstance(ctx, Context) else None
+                        return refusal(verdict, _refusal_detail(seats, verdict, uid, baton, flight))
+                    _CALL.flight = flight
+                answer: Any = None
                 try:
-                    if echoed is not None:
-                        return _resume_input_required(seats, uid, echoed)
-                    if name not in BACKGROUND_SAFE_TOOLS and name != "pass_until" and uid:
-                        # Never two things acting for one seat at once.
-                        _CALL.background = _background(seats).stop(uid.strip())
-                    return fn(*args, **kwargs)
-                except httpx.HTTPError as exc:
-                    return f"the game server at {seats.api} became unreachable mid-call: {exc}"
+                    answer = _run_guarded(seats, fn, name, uid, args, kwargs)
+                finally:
+                    if flight is not None:
+                        answer = _close_flight(seats, flight, name, kwargs, answer)
+                return answer
             finally:
                 _log_timing(seats, name, uid, started)
 
         return wrapper
 
     return decorate
+
+
+def _run_guarded(
+    seats: Seats, fn: Callable[..., Any], name: str, uid: str, args: Any, kwargs: Any
+) -> Any:
+    ctx = kwargs.get("ctx")
+    echoed = ctx.request_state if isinstance(ctx, Context) else None
+    try:
+        if echoed is not None:
+            return _resume_input_required(seats, uid, echoed)
+        if name not in BACKGROUND_SAFE_TOOLS and name != "pass_until" and uid:
+            # Never two things acting for one seat at once.
+            _CALL.background = _background(seats).stop(uid)
+        return fn(*args, **kwargs)
+    except httpx.HTTPError as exc:
+        return f"the game server at {seats.api} became unreachable mid-call: {exc}"
+
+
+def _refusal_detail(
+    seats: Seats, verdict: str, uid: str, baton: str, flight: Flight | None
+) -> dict[str, Any]:
+    if verdict == BATON_BUSY and flight is not None:
+        return {"tool": flight.tool}
+    if verdict == BATON_SPENT:
+        return seats.baton.spent_detail(uid, baton)
+    return {}
+
+
+def _json_of(answer: Any) -> dict[str, Any] | None:
+    """The JSON object a tool answer carries - a bare JSON answer, or an
+    `HTTP <status>` line followed by one - or `None`."""
+    if not isinstance(answer, str):
+        return None
+    text = answer
+    if text.startswith("HTTP ") and "\n" in text:
+        text = text.split("\n", 1)[1]
+    if not text.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _landed(answer: Any) -> bool:
+    """Whether an acting call's answer says it committed something - not a
+    refusal, an HTTP error or a plain-text problem."""
+    if isinstance(answer, InputRequiredResult):
+        return True
+    if not isinstance(answer, str):
+        return False
+    if answer.startswith("HTTP "):
+        return answer.startswith("HTTP 2")
+    parsed = _json_of(answer)
+    if parsed is None:
+        return False
+    outcome = parsed.get("outcome")
+    return not (isinstance(outcome, dict) and outcome.get("allowed") is False)
+
+
+def _answer_seq(answer: Any) -> int | None:
+    parsed = _json_of(answer)
+    if parsed is None:
+        return None
+    recent = parsed.get("recent_log")
+    if isinstance(recent, dict) and isinstance(recent.get("last_seq"), int):
+        return recent["last_seq"]
+    outcome = parsed.get("outcome")
+    if isinstance(outcome, dict) and isinstance(outcome.get("log_seq"), int):
+        return outcome["log_seq"]
+    return None
+
+
+def _close_flight(
+    seats: Seats, flight: Flight, name: str, kwargs: dict[str, Any], answer: Any
+) -> Any:
+    """Release the acting lock `flight` holds and close the priority window
+    when this call gave priority away: a pass the server accepted, or the
+    call that completed the seat's pregame. A wait a revoke interrupted
+    answers `BATON_REVOKED` instead of what it saw."""
+    closes = flight.passed or bool(getattr(_CALL, "closes_pregame", False))
+    seq = flight.pass_seq if flight.passed else None
+    if seq is None and closes:
+        seq = _answer_seq(answer)
+        seat = getattr(_CALL, "seat", None)
+        if seq is None and seat is not None:
+            try:
+                last = seat.recent_log(limit=1).get("last_seq")
+                seq = last if isinstance(last, int) else None
+            except Exception:  # noqa: BLE001 - the seq is a label, never worth a failed answer
+                seq = None
+    rotated = seats.baton.finish(
+        flight,
+        committed=closes or (name not in NON_COMMITTING_TOOLS and _landed(answer)),
+        closes_window=closes,
+        reasoning=str(kwargs.get("reasoning") or ""),
+        seq=seq,
+        defer_to_background=bool(getattr(_CALL, "deferred", False)),
+    )
+    if flight.interrupt.is_set():
+        return REVOKED_ANSWER
+    if rotated:
+        return _mark_rotated(answer)
+    return answer
+
+
+def _mark_rotated(answer: Any) -> Any:
+    """The answer of the call that closed the window: `baton_rotated: true`
+    and the `WINDOW_CLOSED` line. An `input_required` answer comes back as
+    plain text: its client retry would carry the now-spent baton."""
+    if isinstance(answer, InputRequiredResult):
+        try:
+            payload = json.loads(answer.request_state or "")
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return answer
+        payload.pop(INPUT_REQUIRED_ROUND_KEY, None)
+        answer = _dump(payload)
+    if isinstance(answer, str) and answer.startswith("{"):
+        try:
+            payload = json.loads(answer)
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            return _dump({**payload, "baton_rotated": True, "baton_note": WINDOW_CLOSED})
+    return f"{answer}\nbaton_rotated: true\n{WINDOW_CLOSED}"
+
+
+def _stop_probe(ctx: Any) -> Callable[[], bool]:
+    """`cancel_probe`, plus a revoke interrupting this call's wait."""
+    cancelled = cancel_probe(ctx)
+    flight = getattr(_CALL, "flight", None)
+    if flight is None:
+        return cancelled
+    return lambda: cancelled() or flight.interrupt.is_set()
+
+
+def _pregame_complete(seat: Seat) -> bool:
+    """Whether `seat` owes nothing more in the pregame: kept, bottomed, and
+    past its own CR 103.6 opening-hand turn (or the game has begun)."""
+    pregame = seat.fetch_state().get("pregame")
+    if not isinstance(pregame, dict):
+        return True
+    me = seat.player
+    if me in (pregame.get("awaiting_mulligan") or []):
+        return False
+    if (pregame.get("cards_to_bottom") or {}).get(me):
+        return False
+    if pregame.get("step") == "mulligan":
+        return False
+    actor = pregame.get("opening_hand_actor")
+    if actor is None:
+        return True
+    order = list(pregame.get("hand_kept") or {})
+    return me in order and actor in order and order.index(me) < order.index(actor)
 
 
 def _background(seats: Seats) -> BackgroundRuns:
@@ -599,6 +781,26 @@ def _battlefield_digest(state: dict[str, Any]) -> dict[str, list[str]] | str | N
     return digest
 
 
+def _compact_board(state: dict[str, Any], me: str) -> dict[str, Any]:
+    """`await_baton`'s board: where the game is, life totals, the stack,
+    your hand and a one-line-per-permanent battlefield (`_battlefield_digest`)
+    - enough to revalidate a plan; battlefield_state has the full views."""
+    players = [p for p in state.get("players") or [] if isinstance(p, dict)]
+    hand = (state.get("hands") or {}).get(me) or []
+    return {
+        "turn": state.get("turn_number"),
+        "step": state.get("step"),
+        "active_player": state.get("active_player"),
+        "priority_holder": state.get("priority_holder"),
+        "life": {p.get("username"): p.get("life") for p in players},
+        "stack": [
+            entry.get("name") for entry in state.get("stack") or [] if isinstance(entry, dict)
+        ],
+        "hand": [card.get("name") for card in hand if isinstance(card, dict)],
+        "battlefield": _battlefield_digest(state),
+    }
+
+
 def _without_empty(entry: dict[str, Any]) -> dict[str, Any]:
     """`entry` without the keys carrying nothing to act on.
 
@@ -882,7 +1084,23 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
     server = MCPServer(name="mtg", instructions=SERVER_INSTRUCTIONS)
 
     def resolve(player_uid: str) -> Seat | None:
-        return seats.seat_for(player_uid)
+        """The seat `player_uid` opens; inside an acting call, every pass it
+        makes is reported to that call's baton flight (`Seat.on_pass`)."""
+        seat = seats.seat_for(player_uid)
+        flight = getattr(_CALL, "flight", None)
+        if seat is not None and flight is not None:
+            seat.on_pass = flight.mark_passed
+            _CALL.seat = seat
+        return seat
+
+    def background_seat(player_uid: str) -> Seat | None:
+        """The seat a background `pass_until` run passes for: its passes
+        close a window a `pass_until` left open (`BatonStore.background_passed`)."""
+        seat = seats.seat_for(player_uid)
+        if seat is not None:
+            uid = seat.uid
+            seat.on_pass = lambda outcome: seats.baton.background_passed(uid, outcome)
+        return seat
 
     def _attach_script_hint(answer: dict[str, Any], seat: Seat, state: dict[str, Any]) -> None:
         """S1: bolt `scripts: {"applicable": [...]}` onto `answer` when at
@@ -1261,7 +1479,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             seat,
             before=None,
             max_seconds=max_seconds,
-            should_stop=cancel_probe(ctx),
+            should_stop=_stop_probe(ctx),
             corpora=seats.script_corpora,
             arm=_parse_ids(arm),
             arm_reasoning=arm_reasoning,
@@ -3177,7 +3395,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             seat,
             resume=resumed,
             max_seconds=max_seconds,
-            should_stop=cancel_probe(ctx),
+            should_stop=_stop_probe(ctx),
             reissue_seconds=idle_reissue_seconds,
             report_idle=True,
             **run_kwargs,
@@ -3193,9 +3411,11 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             # Only waiting on the opponent, on their turn: keep passing what
             # this very run would pass while the seat plans its next turn.
             background.start(
-                seat.uid, lambda: seats.seat_for(player_uid), run_kwargs, result["resume"]
+                seat.uid, lambda: background_seat(player_uid), run_kwargs, result["resume"]
             )
             _CALL.background = {**(_CALL.background or {}), "now_running": True}
+            # Passed nothing yet: the window closes at the run's first pass.
+            _CALL.deferred = True
         return _tool_result(seat, result, ctx.protocol_version if ctx is not None else None)
 
     @server.tool()
@@ -3287,7 +3507,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             wait=wait,
             max_seconds=max_seconds,
             inputs=inputs,
-            should_stop=cancel_probe(ctx),
+            should_stop=_stop_probe(ctx),
             invoked_via="mcp",
         )
         if isinstance(answer, str):
@@ -3395,7 +3615,9 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             body["bottom"] = ids
         if reasoning:
             body["reasoning"] = reasoning
-        return seat.call("POST", f"/api/games/{seat.game_id()}/pregame/mulligan", body)
+        answer = seat.call("POST", f"/api/games/{seat.game_id()}/pregame/mulligan", body)
+        _CALL.closes_pregame = answer.startswith("HTTP 2") and _pregame_complete(seat)
+        return answer
 
     @server.tool()
     @_guarded(seats)
@@ -3422,15 +3644,14 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         if seat is None:
             return NO_SUCH_SEAT
         base = f"/api/games/{seat.game_id()}/pregame/opening-hand"
-        if not card.strip():
-            body: dict[str, Any] = {"player": seat.player}
-            if reasoning:
-                body["reasoning"] = reasoning
-            return seat.call("POST", f"{base}/finish", body)
-        body = {"player": seat.player, "card_id": card.strip()}
+        body: dict[str, Any] = {"player": seat.player}
+        if card.strip():
+            body["card_id"] = card.strip()
         if reasoning:
             body["reasoning"] = reasoning
-        return seat.call("POST", f"{base}/action", body)
+        answer = seat.call("POST", f"{base}/{'action' if card.strip() else 'finish'}", body)
+        _CALL.closes_pregame = answer.startswith("HTTP 2") and _pregame_complete(seat)
+        return answer
 
     @server.tool()
     @_guarded(seats)
@@ -3620,18 +3841,62 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
 
     @server.tool()
     @_guarded(seats)
-    def pass_baton(player_uid: str) -> str:
-        """The orchestrator's tool: rotate the baton of seat `player_uid`.
-        Returns the fresh token, which the new current agent passes as
-        `baton` on every acting call; the previous token stops working. It
-        never acts in the game. Refused for an advisor uid (`ADVISOR_REFUSAL`)."""
+    def pass_baton(player_uid: str, revoke: bool = False) -> str:
+        """The orchestrator's tool: mint a baton for seat `player_uid`. It is
+        live at once when the seat has none; otherwise it queues as `next`
+        (replacing an unpromoted next) and goes live the moment the current
+        holder's priority window closes - never revoking, never blocking.
+        `revoke` (recovery only) makes it live in place of the current one:
+        an in-flight wait or background run is interrupted (`BATON_REVOKED`),
+        a non-wait acting call is not - the revoke applies when it returns.
+        It never acts in the game. Refused for an advisor uid
+        (`ADVISOR_REFUSAL`)."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
         if seat.advise:
             return ADVISOR_REFUSAL
-        token = seats.baton.issue(player_uid.strip())
-        return _dump({"baton": token, "description": BATON_DESCRIPTION})
+        uid = seat.uid
+        stopped = None
+        if revoke:
+            stopped = _background(seats).stop(uid)
+            seats.baton.revoke_background(uid)
+        answer = seats.baton.pass_baton(uid, revoke=revoke)
+        if stopped is not None:
+            answer["background"] = {**stopped, "stopped_because": BATON_REVOKED}
+        answer["description"] = BATON_DESCRIPTION
+        return _dump(answer)
+
+    @server.tool()
+    @_guarded(seats)
+    def await_baton(
+        player_uid: str,
+        baton: str,
+        max_seconds: float = MAX_AWAIT_SECONDS,
+        ctx: Context | None = None,
+    ) -> str:
+        """The future agent's wait: block until `baton` is this seat's live
+        token - the current holder's priority window closed - and answer
+        `{live: true, last_commit, pending_decision, board}` (`board` a
+        compact battlefield_state), or `{live: false, state}`: `next` once
+        `max_seconds` (at most 600) ran out, `spent`/`stale` at once for a
+        token that can never go live. Never acts in the game."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        wait = max(0.0, min(float(max_seconds), MAX_AWAIT_SECONDS))
+        found = seats.baton.await_live(seat.uid, baton, wait, cancel_probe(ctx))
+        if found != "live":
+            return _dump({"live": False, "state": found})
+        board = seat.fetch_state()
+        return _dump(
+            {
+                "live": True,
+                "last_commit": seats.baton.last_commit(seat.uid),
+                "pending_decision": board.get("pending_decision"),
+                "board": _compact_board(board, seat.player),
+            }
+        )
 
     # What the model reads is `TOOL_DESCRIPTIONS` (`mcp_descriptions`), not
     # the docstrings above: Claude Code cuts every MCP tool description at
@@ -3657,10 +3922,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--game",
         default=None,
         help=(
-            "game id; default in stdio mode: the one live game. In http mode, "
-            "leaving this unset resolves each call's game from its own seat "
-            "uid instead (GET /api/seats/{uid}) - the server may be serving "
-            "several live games at once."
+            "game id. Leaving this unset (either transport) resolves each "
+            "call's game from its own seat uid (GET /api/seats/{uid}) - the "
+            "server may be serving several live games at once."
         ),
     )
     parser.add_argument("--api", default=DEFAULT_API, help=f"API base url; default {DEFAULT_API}")
@@ -3707,14 +3971,20 @@ def _serve_http(server: MCPServer, host: str, port: int) -> None:
     uvicorn.run(server.streamable_http_app(stateless_http=True), host=host, port=port)
 
 
-def main() -> None:
-    args = _build_parser().parse_args()
-    # http mode may be fronting several live games at once, so "the one live
-    # game" (stdio's auto-discovery) is only correct when `--game` pins one
-    # explicitly - see `Seats.seat_for`/`_seat_for_any_game`.
-    resolve_by_uid = args.transport == "http" and args.game is None
+def seats_from_args(args: argparse.Namespace) -> Seats:
+    """The `Seats` `main()` serves from. With no `--game`, every transport
+    resolves each call's game from its own seat uid (`GET /api/seats/{uid}`):
+    "the first of `/api/games`" is the wrong game whenever more than one is
+    live, and an stdio seat process cannot tell which one it was handed."""
+    resolve_by_uid = args.game is None
     seats = Seats(args.api, args.game, resolve_by_uid=resolve_by_uid)
     seats.baton = BatonStore(require_all=args.require_baton)
+    return seats
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+    seats = seats_from_args(args)
     # Best-effort heads-up only: NOT fatal. The real, authoritative check is
     # `_guarded` on every tool call below - this process is spawned once for
     # a whole session and must survive the API not being up yet (or not up

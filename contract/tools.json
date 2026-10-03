@@ -112,6 +112,33 @@
       ]
     },
     {
+      "docstring_first_line": "The future agent's wait: block until `baton` is this seat's live",
+      "name": "await_baton",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "MAX_AWAIT_SECONDS",
+          "has_default": true,
+          "name": "max_seconds",
+          "type": "float",
+          "type_error": null
+        }
+      ]
+    },
+    {
       "docstring_first_line": "The game as you may see it: your hand, both sides of the public",
       "name": "battlefield_state",
       "parameters": [
@@ -1007,7 +1034,7 @@
       ]
     },
     {
-      "docstring_first_line": "The orchestrator's tool: rotate the baton of seat `player_uid`.",
+      "docstring_first_line": "The orchestrator's tool: mint a baton for seat `player_uid`. It is",
       "name": "pass_baton",
       "parameters": [
         {
@@ -1015,6 +1042,13 @@
           "has_default": false,
           "name": "player_uid",
           "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "revoke",
+          "type": "bool",
           "type_error": null
         }
       ]

@@ -16,11 +16,18 @@ SEAT_PLAYER = "seat-player"
 #: The seat role (`MTG_ROLE`) that pairs; an advisor or buddy never does.
 SEAT_ROLE = "seat"
 
-#: Mirror of `magic_cards_model_api.baton.BATON_EXEMPT_TOOLS` minus
-#: `pass_baton` (imported nowhere here: that package pulls the whole game app
-#: in). A test pins the two against each other.
+#: Mirror of `magic_cards_model_api.baton.BATON_EXEMPT_TOOLS` (imported
+#: nowhere here: that package pulls the whole game app in). A test pins the
+#: two against each other.
 BATON_EXEMPT_TOOLS = frozenset(
-    {"battlefield_state", "game_log", "list_scripts", "report_problem", "pass_baton"}
+    {
+        "battlefield_state",
+        "game_log",
+        "list_scripts",
+        "report_problem",
+        "pass_baton",
+        "await_baton",
+    }
 )
 
 

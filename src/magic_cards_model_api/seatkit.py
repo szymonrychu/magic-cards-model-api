@@ -1798,6 +1798,12 @@ class Seat:
         #: last saw in a transcript, not what it last read). The seat has the
         #: fact already and hands it over without being asked.
         self.last_seq: int | None = None
+        #: Called with the outcome of every pass this seat makes that the
+        #: server accepted (`call_json`): the one place every pass - `pass`,
+        #: `pass_until`, an action's auto-pass or `then_pass`, a script's
+        #: moves, a background run - goes through. `mcp._guarded` hangs the
+        #: baton's end-of-window tracking here.
+        self.on_pass: Callable[[Any], None] | None = None
         #: Armed by `send_expected_seq_once`, consumed by the very next
         #: mutating `call_json`. One-shot rather than sticky, because the
         #: action itself moves the ledger: `run_action`'s auto-pass, sent
@@ -1957,7 +1963,16 @@ class Seat:
         if advised is not None:
             return advised[1]
         body = self._with_expected_seq(method, body)
-        return self._request_json(method, path, body)[1]
+        answer = self._request_json(method, path, body)[1]
+        if (
+            self.on_pass is not None
+            and method.upper() == "POST"
+            and path.endswith("/actions/pass-priority")
+            and not _refused(answer)
+            and not _unknown_outcome(answer)
+        ):
+            self.on_pass(answer)
+        return answer
 
     def _request_json(
         self, method: str, path: str, body: dict[str, Any] | None

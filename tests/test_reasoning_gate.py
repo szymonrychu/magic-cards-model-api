@@ -195,6 +195,11 @@ EXEMPT_TOOLS: dict[str, str] = {
         "row, only rotates the seat's baton held in the MCP process (`baton.py`); it "
         "has no backend route to gate, so there is no matching EXEMPT_ROUTES entry."
     ),
+    "await_baton": (
+        "the seat-pair future agent's wait: it changes no `Game` and writes no ledger "
+        "row, only blocks until its baton held in the MCP process (`baton.py`) goes "
+        "live; it has no backend route to gate, so there is no matching EXEMPT_ROUTES entry."
+    ),
 }
 
 #: Helpers a route may delegate its gate to rather than calling it inline.
