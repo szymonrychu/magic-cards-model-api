@@ -587,13 +587,18 @@ WHOLE_GAME_TURN_PAIR = (
     "  calls, so never end it with a summary or a checkpoint while the game is\n"
     "  still running. If it ends early anyway and you are told the game is still\n"
     "  running, re-establish the pair first - check which player agents are\n"
-    "  alive, respawn any that is missing, and re-issue the baton to the current\n"
-    "  one - and never act in the game yourself."
+    "  alive and respawn any that is missing - and never act in the game\n"
+    "  yourself."
 )
+
+#: Where the driver delivers the briefing in the agent's own workspace (the
+#: wrapper writes turn 0's `files` there); the `seat-player` definition reads
+#: the same path.
+PAIR_BRIEFING_PATH = "/workspace/current-game.md"
 
 
 class _PairChannel(NamedTuple):
-    """How the orchestrator spawns, messages and stops a seat-player on one
+    """How the orchestrator spawns, stops and hears from a seat-player on one
     channel (the 2.1.282 mechanics in tests/wrapper/fixtures/seat_pair)."""
 
     spawn: str
@@ -601,105 +606,85 @@ class _PairChannel(NamedTuple):
     stop: str
     reports: str
     alive: str
-    notes: str
 
 
 _PAIR_CHANNELS = {
     seat_pair.Channel.TEAMS: _PairChannel(
         spawn=(
-            f"the `Agent` tool with `subagent_type` `{seat_pair.SEAT_PLAYER}` and `name` set\n"
-            "  to the agent's name. Every `Agent` call with a `name` spawns an in-process\n"
-            "  teammate: teams are implicit and there is no `TeamCreate` tool, so never\n"
-            "  look for one."
+            f"the `Agent` tool with `subagent_type` `{seat_pair.SEAT_PLAYER}`, `name` set to\n"
+            "  the agent's name, and `prompt`, and no other parameter. Every `Agent`\n"
+            "  call with a `name` spawns an in-process teammate: teams are implicit and\n"
+            "  there is no `TeamCreate` tool, so never look for one."
         ),
         message="`SendMessage` to its name",
         stop='`SendMessage` with `{"type": "shutdown_request"}` to its name',
         reports=(
             "Reports reach you as teammate messages, each naming the teammate that\n"
-            "sent it, and an idle notice whenever a teammate finishes a turn."
+            "sent it: the current agent sends you `committed: <line>` the moment its\n"
+            "priority window closes, then goes idle. Idle notices on their own are\n"
+            "not reports; ignore them."
         ),
         alive=(
             "a teammate that announced it shut down, or that does not answer a\n   message, is gone"
-        ),
-        notes=(
-            "The two player agents are teammates and message each other directly\n"
-            "with `SendMessage`: the future agent sends its plans straight to the\n"
-            "current one, and the current one sends its committed line to the future\n"
-            "one as well as to you. You do not carry their notes between them; you\n"
-            "rotate the baton and keep both alive."
         ),
     ),
     seat_pair.Channel.SUBAGENTS: _PairChannel(
         spawn=(
             f"the `Agent` tool with `subagent_type` `{seat_pair.SEAT_PLAYER}`, `name` set to\n"
-            "  the agent's name, and `run_in_background` set to true - a launch without\n"
-            "  it blocks you until that agent finishes, and the game with you."
+            "  the agent's name, `prompt`, and `run_in_background` set to true, and no\n"
+            "  other parameter - a launch without `run_in_background` blocks you until\n"
+            "  that agent finishes, and the game with you."
         ),
         message="`SendMessage` to its name, which resumes it with its context intact",
         stop="`TaskStop` with its name as the `task_id`",
         reports=(
-            "Reports reach you as task notifications: each time a background agent\n"
-            "ends a run, its last text arrives as the notification's result. A\n"
-            "seat-player cannot message you mid-run, so the current agent reports\n"
-            "`committed: <line>` by ending its run with that line, and the future\n"
-            "agent ends each run with its plan."
+            "Reports reach you as task notifications: the current agent ends its run\n"
+            "with `committed: <line>` the moment its priority window closes, and that\n"
+            "last text arrives as the notification's result."
         ),
         alive=(
-            "an agent whose task notification says it was killed, or that does not\n"
-            "   resume when messaged, is gone"
-        ),
-        notes=(
-            "Background subagents cannot message each other, so you relay between\n"
-            "them. Forward each plan the future agent reports to the current agent\n"
-            "with `SendMessage`, verbatim and at once, then resume the future agent\n"
-            "so it keeps its plans current. The current agent's committed line\n"
-            "reaches the future agent in its promotion message. Never rewrite a plan\n"
-            "you relay."
+            "an agent whose task notification says it was killed, or whose run ended\n"
+            "   without a `committed:` line, is gone"
         ),
     ),
 }
 
 
-def _orchestrator_turn_zero(
-    assignment: Assignment,
-    current_game_path: Path,
-    briefing: str,
-    channel: seat_pair.Channel,
-) -> str:
+def _orchestrator_turn_zero(assignment: Assignment, channel: seat_pair.Channel) -> str:
     how = _PAIR_CHANNELS[channel]
     uid = assignment.uid
     first_current = seat_pair.current_name(1)
     first_future = seat_pair.future_name(1)
-    briefing_block = (
-        f"Here is everything about this game (the driver wrote the same text to\n"
-        f"`{current_game_path}` on its own disk):\n\n{briefing}\n"
-        if briefing
-        else f"Read `{current_game_path}`. It names your seat, your uid, your decklist\n"
-        "and your guides.\n"
-    )
     return f"""You are the orchestrator for one seat of a real game of Magic: the
 Gathering against a human, who is playing through a web UI against the same
 game server. Two Opus `{seat_pair.SEAT_PLAYER}` agents play the seat; you run them.
 
-## Before you start
+## The game
 
-{briefing_block}
+Game id {assignment.game_id}, player_uid {uid!r}, playing as {assignment.player!r}.
+The driver has already put this seat's briefing in `{PAIR_BRIEFING_PATH}`;
+the player agents read it themselves. You do not read it, write it or pass
+it on.
+
 ## Your job: you never act in the game
 
 You are the orchestrator, and you never call an acting `mtg` tool: not
 `pass_until`, `pass`, `wait_for_priority`, `cast`, `decide`, `run_script`,
-`declare_plan`, `stage_script`, nor any other that moves the game or waits on
-it. The `mtg` tools you call are `pass_baton`, `battlefield_state` and
-`game_log` when you need to see what the agents are doing, and
-`report_problem` when the seat cannot be played. Game id {assignment.game_id},
-player_uid {uid!r}, playing as {assignment.player!r}.
+`declare_plan`, `stage_script`, `await_baton`, nor any other that moves the
+game or waits on it. The `mtg` tools you call are `pass_baton`,
+`battlefield_state` and `game_log` when you need to see what the agents are
+doing, and `report_problem` when the seat cannot be played.
 
-Of the two player agents, the current one holds the baton and acts; the future
-one plans the next decision read-only. The `{seat_pair.SEAT_PLAYER}` agent
-definition carries the decision loop - one wait then exactly one committing
-call, DSL-first, `declare_plan` during the opponent's turn, armed plays that
-never run on their own - so you neither restate it to them nor play it
-yourself.
+The server owns the baton. Each `pass_baton(player_uid=...)` mints one token,
+and its answer's `state` says what it is: `state: live` when the seat has no
+live token, `state: next` otherwise. The current agent holds the live token and plays a
+whole priority window; the future agent holds the next token and waits in
+`await_baton`. The call that gives priority away closes the window, and at
+that moment the server makes the next token live: the future agent is the
+current one from then on, with nothing from you. The
+`{seat_pair.SEAT_PLAYER}` agent definition carries the decision loop -
+plan the coming window, `await_baton`, then play the whole window and end in
+a pass - so you neither restate it to them nor play it yourself.
 
 ## The channel: {channel.value}
 
@@ -711,70 +696,58 @@ yourself.
 
 ## On start
 
-1. Write the briefing, verbatim, to `/workspace/current-game.md` with
-   `Write`: the `{seat_pair.SEAT_PLAYER}` definition starts by reading that
-   file, and the driver's own copy is on a disk the agents cannot see.
-2. Call `pass_baton(player_uid=...)` with player_uid {uid!r}. Its answer
-   carries the baton token.
-3. Spawn `{first_current}` and `{first_future}`, together. Each spawn prompt
-   names the agent's role (current or future), its own name, the other
-   agent's name, the game id and the player_uid; hand the token to
-   `{first_current}` in its spawn prompt, and nothing to `{first_future}`.
-   Ask `{first_current}` to put its opening plan in its first report.
-4. Write that opening plan, once, into the plan file the briefing names. You
-   do not update it turn to turn.
+1. Call `pass_baton(player_uid=...)` with player_uid {uid!r}. Its answer
+   says `state: live`: that token is for `{first_current}`.
+2. Call `pass_baton(player_uid=...)` again. Its answer says `state: next`:
+   that token is for `{first_future}`.
+3. Spawn `{first_current}` and `{first_future}` in one message. Each spawn
+   prompt carries exactly: its role (current or future), its own name, its
+   baton token, the game id and the player_uid - nothing else.
 
-## The promotion cycle, on every `committed:` report
+## On every `committed:` report
 
-Agents keep the name they were spawned with: once promoted, `future-<n>` is
-the current agent and is still called `future-<n>`. Keep track of which name
-is current. When the current agent reports `committed: <line>`:
+A `committed: <line>` report comes once per priority window, from the agent
+whose window just closed. Agents keep the name they were spawned with: the
+future agent that was waiting is the current one now, still under its own
+name. On each report, at once and in this order:
 
-1. Call `pass_baton(player_uid=...)` for a new token. This revokes the old
-   one at once, so the old current agent can no longer act.
-2. Promote the future agent: send it, with {how.message},
-   `promoted: you are current, baton <token>, last decision <line>` - the
-   token from step 1 and the committed line verbatim. This continues the same
-   agent with its plans intact: never respawn it to promote it.
-3. Stop the old current agent, with {how.stop}.
-4. Spawn `future-<n+1>` immediately - the next unused number - as the new
-   future agent, its spawn prompt naming its role, the current agent's name,
-   the game id and the player_uid.
+1. Stop the agent that reported, with {how.stop}.
+2. Call `pass_baton(player_uid=...)` for a fresh token. Its answer says
+   `state: next`.
+3. Spawn `future-<n+1>` - the next unused number - as the new future agent,
+   with that token, its spawn prompt as on start.
 
-Run the four steps at once, in this order, with nothing in between: the game
-waits on the new current agent from step 2. Keep exactly two live player
-agents at all times: one current, one future - never three, and never one for
-longer than steps 3 to 4 take.
+That is the whole cycle. You send the new current agent nothing: the server
+made its token live. You never hand the role over by message, never carry
+plans or committed lines from one agent to the other, and never hand a token
+to an agent that already holds one. Do no analysis between the steps: act on
+each report with the listed calls only. Keep exactly two live player agents:
+one current, one future.
 
-## Plans between the two
+## Recovery only: the current agent is gone
 
-{how.notes}
+If the current agent is gone without a `committed:` report - {how.alive}:
 
-## Baton refusals
+1. Call `pass_baton(player_uid=..., revoke=true)`. Its answer says
+   `state: live`: the dead agent's token is revoked and the future agent's
+   queued one is replaced.
+2. Hand that live token to the future agent, with {how.message}: it is the
+   current agent now.
+3. Call `pass_baton(player_uid=...)` for a `state: next` token and spawn
+   `future-<n+1>` with it.
 
-When an agent reports `BATON_STALE` or `BATON_REQUIRED`, re-issue the baton to
-the current agent only. `BATON_REQUIRED` from the current agent: send it the
-token it already holds. `BATON_STALE` from the current agent: call
-`pass_baton(player_uid=...)` and send it the new token. A refusal from an agent
-that is not current gets no token - remind it that it is the future agent, or
-make sure it is stopped. Outside a promotion, never hand a baton token to the
-future agent.
-
-## When an agent goes missing
-
-Check on the pair whenever a report is overdue. If the current agent is gone,
-promote the future agent (steps 1 to 4 above, with the last line you know of);
-if the future agent is gone, spawn `future-<n+1>`. Only if the seat cannot be
+If the future agent is gone, call `pass_baton(player_uid=...)` and spawn
+`future-<n+1>` with its `state: next` token. Only if the seat cannot be
 played at all, file it with `report_problem`.
 
 ## When the game ends
 
 When the game ends - a report or the board shows a winner or a drawn game -
-stop both player agents. Stop the future agent at once. Ask the current agent
-for its reflection notes first - what decided the game, what the opponent
-played and how early it knew, how to win this matchup, what it would do
-differently - keep its answer, then stop it too. Then end your turn: the
-driver's next turn asks you to write those notes up.
+stop both player agents. Stop the future agent at once. Ask the agent that
+sent the last report for its reflection notes first - what decided the game,
+what the opponent played and how early it knew, how to win this matchup, what
+it would do differently - keep its answer, then stop it too. Then end your
+turn: the driver's next turn asks you to write those notes up.
 
 ## Rules of engagement
 
@@ -798,20 +771,25 @@ runs, never end your turn with a summary. Your turn lasts until the game shows
 a winner or a draw.
 
 You are the orchestrator: do not act in the game. Instead, re-establish the
-pair now - check which player agents are alive, respawn any that is missing,
-and re-issue the baton:
+pair now - check which player agents are alive and respawn any that is
+missing:
 
-1. Check which player agents are alive - the current one, holding the baton,
-   and the future one, planning: {how.alive}.
-2. Respawn any that is missing: a missing future agent is replaced by spawning
-   `future-<n+1>`; a missing current agent is replaced by promoting the
-   future agent and spawning a new future one, exactly as in the promotion
-   cycle.
-3. Re-issue the baton: call `pass_baton(player_uid=...)` with player_uid
-   {assignment.uid!r} and send the new token to the current agent only, with
-   {how.message}.
+1. Check which player agents are alive - the current one, playing its
+   window, and the future one, waiting in `await_baton`: {how.alive}.
+2. If both are alive, call nothing: the server rotates the baton on its own.
+   Keep waiting for the next `committed:` report.
+3. Respawn any that is missing, and hand each token by the `state` its answer
+   gives. A missing future agent: call `pass_baton(player_uid=...)` with
+   player_uid {assignment.uid!r} and spawn `future-<n+1>` with its
+   `state: next` token. A missing current agent: call
+   `pass_baton(player_uid=..., revoke=true)` and hand its `state: live` token
+   to the future agent with {how.message}, then mint a `state: next` token for
+   a new `future-<n+1>`. If neither is alive, spawn a current agent with the
+   `revoke=true` token and a future agent with the next one.
 
-Then keep running the pair until the game shows a winner or a draw."""
+While both agents are alive, never rotate the baton: `pass_baton` replaces
+the future agent's queued token. Then keep running the pair until the game
+shows a winner or a draw."""
 
 
 def _pair_reflection(channel: seat_pair.Channel) -> str:
@@ -883,10 +861,11 @@ def turn_zero(
     file only the driver can open. The guides stay as paths - `/guides` is
     mounted in both containers, and they run to hundreds of lines each.
 
-    A paired seat (`seat_pair.pair_active`) gets the orchestrator brief instead.
+    A paired seat (`seat_pair.pair_active`) gets the orchestrator brief instead:
+    ids and `PAIR_BRIEFING_PATH`, never the briefing body.
     """
     if seat_pair.pair_active(channel, assignment.role):
-        return _orchestrator_turn_zero(assignment, current_game_path, briefing, channel)
+        return _orchestrator_turn_zero(assignment, channel)
     matchups = (
         f"`{assignment.matchups_dir}/<archetype>.json`"
         if assignment.matchups_dir is not None
