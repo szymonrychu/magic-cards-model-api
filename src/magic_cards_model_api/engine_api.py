@@ -2053,6 +2053,19 @@ def locate_land(game: Game, req: PlayLandRequest) -> CardState:
     raise ValueError(f"{req.player} has no land named {req.card} in hand")
 
 
+def _chosen_land_face(land: CardState, req: PlayLandRequest) -> str | None:
+    """CR 712.12's face choice: the request's `land_face`, else the name given
+    when it is one of the card's land faces and the card has more than one
+    (`Valakut Stoneforge` alone keeps the engine's default - the card's only
+    land face)."""
+    if req.land_face is not None:
+        return req.land_face
+    faces = {face.name for face in land.card.land_faces}
+    if len(faces) > 1 and req.card in faces:
+        return req.card
+    return None
+
+
 def _answers_to_land_name(state: CardState, name: str) -> bool:
     """Whether a hand card is a land `name` can mean.
 
@@ -2128,14 +2141,21 @@ def play_land(game: Game, req: PlayLandRequest) -> Outcome:
     except (KeyError, ValueError) as exc:
         return refused(exc)
     if req.dry_run:
+        face = _chosen_land_face(land, req)
+        face_refusal = (
+            f"{face!r} is not a land face of {land.name} (CR 712.12)"
+            if face is not None and face not in {each.name for each in land.card.land_faces}
+            else None
+        )
         refusal = (
             _not_a_land_refusal(land)
+            or face_refusal
             or game.why_cannot_play_land(req.player)
             or _land_zone_refusal(game, land, req.player)
         )
         return Outcome(refusal is None, refusal)
     try:
-        played = game.play_land(land, req.player)
+        played = game.play_land(land, req.player, face=_chosen_land_face(land, req))
     except ValueError as exc:
         return refused(exc)
     return Outcome(True, detail={"card_id": str(played.id)})

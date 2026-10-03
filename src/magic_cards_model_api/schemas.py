@@ -1572,6 +1572,11 @@ class PlayLandRequest(BoardRead):
     player: str
     card_id: UUID | None = None
     card: str | None = None
+    land_face: str | None = None
+    """CR 712.12: which of a modal double-faced card's land faces to play (a
+    Pathway's front and back are both lands). The engine's `Action.land_face`
+    is the value to send; omitted, a card name that is itself one of the land
+    faces picks that face, else the engine's default face plays."""
     dry_run: bool = False
     reasoning: str | None = None
     """T10: required for an agent seat (`records.require_reasoning`),
