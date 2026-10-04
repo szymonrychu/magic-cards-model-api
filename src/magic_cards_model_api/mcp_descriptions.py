@@ -485,7 +485,8 @@ Take an opening-hand action (CR 103.6), or finish. `pregame.opening_hand_options
 `card` when done - that passes to the next seat, and the last seat finishing starts turn 1.
 
 HTTP 409 with `overruled`: a backstop already declined for you and the action was NOT taken (the \
-card stays in hand). Retrying cannot reopen it; report it and play on.""",
+card stays in hand). Retrying cannot reopen it; report it and play on.
+409 `repeated`: nothing moved since it was refused; never resend, follow `detail`.""",
     "declare_plan": """\
 Declare how you read your turn. Required: an agent seat's first mutating action of its own turn \
 is refused (422, naming `plan`) until this is called for that turn.

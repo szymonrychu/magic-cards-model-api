@@ -62,9 +62,13 @@ with `knowledge_search(type="rules")` in the session that wrote it.
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
 
+from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import DecisionKind, ScriptedAnswer
 from magic_cards_model.models import Game
 
@@ -91,6 +95,97 @@ class PregameOverruled(ValueError):
     loud, in the response and in the audit log, rather than answering 400 and
     moving on.
     """
+
+
+class RepeatedPregameRefusal(ValueError):
+    """A seat sent a pregame call the server had already refused, against a
+    pregame that has not moved since - so it cannot succeed, and the seat is
+    told that and what to do instead rather than handed the same refusal.
+
+    Prod game 5c0e9a57 (2026-10-04): the AI seat sent the same out-of-turn
+    `opening-hand/action` fourteen times over 55 minutes and got the same
+    bare 400 every time. A `ValueError` like `PregameOverruled`, its own class
+    so `app.py` answers 409 with `repeated: true`."""
+
+    def __init__(self, text: str, refusals: int) -> None:
+        super().__init__(text)
+        self.refusals = refusals
+
+
+#: (game_id, player, call) -> (pregame fingerprint, refusal text, times refused).
+_refused: dict[tuple[str, str, str], tuple[tuple[Any, ...], str, int]] = {}
+_refused_lock = threading.Lock()
+
+
+def _fingerprint(game: Game, username: str) -> tuple[Any, ...]:
+    """Everything about the pregame a refused call could have been refused on:
+    when none of it has moved, the same call is refused the same way again."""
+    return (
+        game.in_pregame,
+        game.turn.step.value if game.turn is not None else None,
+        game.opening_hand_actor,
+        game.opening_hand_seat,
+        tuple(game.awaiting_mulligan_declarations),
+        tuple(str(state.id) for state in game.player(username).hand),
+    )
+
+
+def _what_to_do(game: Game, username: str) -> str:
+    """The move that can work, for a seat whose pregame call was refused."""
+    if not game.in_pregame:
+        return "The pregame is over; read the board and play the game."
+    others = [name for name in game.awaiting_mulligan_declarations if name != username]
+    if others and username not in game.awaiting_mulligan_declarations:
+        return (
+            f"The game is waiting on {', '.join(others)}'s CR 103.5 mulligan declaration, "
+            "which no call of yours can make: call wait_for_priority, which returns the "
+            "moment the pregame needs you."
+        )
+    actor = game.opening_hand_actor
+    if actor is not None and actor != username:
+        return (
+            f"CR 103.6's opening-hand window is {actor}'s, and no call of yours can move it. "
+            f"{actor}'s opening_hand_options read as [] to you because they are hidden "
+            f"(CR 402.3), not because they are empty. Call wait_for_priority, which returns "
+            "the moment the window is yours; take your action then."
+        )
+    return "Read the pregame block on the board and send a different move."
+
+
+@contextmanager
+def refusal_guard(game_id: str, game: Game, username: str, call: str) -> Iterator[None]:
+    """Run one seat's pregame call, refusing an identical repeat of a call
+    already refused against an unmoved pregame, and saying on every refusal
+    what the seat can do instead."""
+    key = (game_id, username, call)
+    fingerprint = _fingerprint(game, username)
+    with _refused_lock:
+        prior = _refused.get(key)
+        if prior is not None and prior[0] == fingerprint:
+            count = prior[2] + 1
+            _refused[key] = (fingerprint, prior[1], count)
+        else:
+            prior = None
+    if prior is not None:
+        raise RepeatedPregameRefusal(
+            f"This exact call ({call}) from {username} was already refused "
+            f"{count - 1} time(s), and the pregame has not moved since, so it is refused "
+            f"again without being tried: {prior[1]} Sending it again cannot succeed - do "
+            f"not send it again. {_what_to_do(game, username)}",
+            count - 1,
+        )
+    try:
+        yield
+    except PregameOverruled:
+        raise
+    except ValueError as exc:
+        text = f"{exc}. {_what_to_do(game, username)}"
+        with _refused_lock:
+            _refused[key] = (fingerprint, text, 1)
+        raise ValueError(text) from exc
+    with _refused_lock:
+        for stale in [k for k in _refused if k[0] == game_id and k[1] == username]:
+            del _refused[stale]
 
 
 def _overruled(game_id: str, username: str, kind: str, what: str, exc: ValueError) -> None:
@@ -295,6 +390,13 @@ def declare_mulligan(
         # the same as every other action route's own commitment marker.
         allowed=True,
     )
+    if game.in_pregame and game.opening_hand_actor is not None:
+        # This declaration resolved CR 103.5's round and opened CR 103.6's
+        # window - possibly onto a human seat with nothing in it, which is
+        # passed here rather than left for a click (`_pass_forced_human_
+        # windows`), settling into CR 103.8's first turn if no seat is left.
+        with handoff.in_flight(game_id):
+            return {"declared": take, **_hand_on(game_id, game, step)}
     return {"declared": take, "step": step.value, "pregame": pregame_view(game, game_id)}
 
 
@@ -358,33 +460,128 @@ def finish_opening_hand_actions(
     ordinary command goes through, swaps a finished copy in under
     `store.replace`), so a concurrent lock-free board read could land between
     the two lines and be handed the frozen page itself - see `handoff.py`.
+
+    The window this hands on may land on a human seat with nothing in it;
+    `_pass_forced_human_windows` passes that one too, before settling. And a
+    human seat's own Done arriving after that pass was made for it is the
+    same move, so it is answered (`already_passed`) rather than refused.
     """
     with handoff.in_flight(game_id):
         try:
-            step = game.finish_opening_hand_actions(username)
+            step = _finish_one(
+                game_id, game, username, automatic=automatic, reason=reason, reasoning=reasoning
+            )
         except ValueError as exc:
             if not automatic:
+                if _forced_window_already_passed(game_id, game, username):
+                    assert game.turn is not None
+                    return {
+                        "step": game.turn.step.value,
+                        "pregame": pregame_view(game, game_id),
+                        "already_passed": True,
+                    }
                 _overruled(game_id, username, "opening_hand", "this CR 103.6 pass", exc)
             raise
-        if automatic:
-            store.record_automatic_pregame(game_id, username, "opening_hand")
-        store.clear_pregame_stall(game_id, username, "opening_hand")
-        audit.record(
-            game_id,
-            "opening_hand_done",
-            player=username,
-            step=step.value,
-            live=not automatic,
-            automatic=automatic,
-            reason=reason,
-            reasoning=reasoning,
-            allowed=True,  # FD5 (4): a committing row.
+        return _hand_on(game_id, game, step)
+
+
+def _finish_one(
+    game_id: str,
+    game: Game,
+    username: str,
+    *,
+    automatic: bool,
+    reason: str | None,
+    reasoning: str | None,
+) -> Step:
+    """One seat's CR 103.6 pass: the engine call, the ledgers, the audit row."""
+    step = game.finish_opening_hand_actions(username)
+    if automatic:
+        store.record_automatic_pregame(game_id, username, "opening_hand")
+    store.clear_pregame_stall(game_id, username, "opening_hand")
+    audit.record(
+        game_id,
+        "opening_hand_done",
+        player=username,
+        step=step.value,
+        live=not automatic,
+        automatic=automatic,
+        reason=reason,
+        reasoning=reasoning,
+        allowed=True,  # FD5 (4): a committing row.
+    )
+    return step
+
+
+#: Why `_pass_forced_human_windows` passed a human seat's CR 103.6 window -
+#: the `reason` on its `automatic` audit row.
+FORCED_WINDOW_REASON = (
+    "nothing in this seat's opening hand offers an opening-hand action (CR 103.6), "
+    "so passing the window was its one legal answer"
+)
+
+
+def _is_forced_human_window(game_id: str, game: Game, username: str | None) -> bool:
+    """A human seat's CR 103.6 window with nothing in it, in a game with an
+    AI seat. Only there: a human's click is then all that stands between the
+    AI seat and its own window, and nothing on the AI's side can prompt her.
+    Two humans at a PvP table keep their own Done, unchanged."""
+    ai_players = store.ai_players(game_id)
+    return (
+        username is not None
+        and bool(ai_players)
+        and username not in ai_players
+        and not game.opening_hand_options(username)
+    )
+
+
+def _pass_forced_human_windows(game_id: str, game: Game) -> Step | None:
+    """Pass every CR 103.6 window handed to a human seat whose opening hand
+    offers nothing, in turn order, until the window reaches a seat with a real
+    choice, an AI seat, or the end of the pregame. Returns the step the last
+    pass left the game in, or `None` when nothing was passed.
+
+    Prod game 5c0e9a57 (2026-10-04): the human starting player's window held
+    nothing, so "Done" was her one legal answer - and the game waited 55
+    minutes for her backgrounded tab to click it while the AI seat behind her,
+    holding a Gemstone Caverns, was refused every time it tried to act. One
+    legal answer is not a decision (`ai_pregame.is_forced` already says so for
+    AI seats, and the engine's own asking path, `Game.take_opening_hand_
+    actions`, asks nobody anything in that case), so nothing is taken from the
+    human by passing it. AI seats are left to their own agent and to
+    `ai_pregame.py`'s backstop, which already moves a gone seat's forced pass.
+    """
+    step: Step | None = None
+    while game.in_pregame and _is_forced_human_window(
+        game_id, game, actor := game.opening_hand_actor
+    ):
+        assert actor is not None
+        step = _finish_one(
+            game_id, game, actor, automatic=True, reason=FORCED_WINDOW_REASON, reasoning=None
         )
-        result: dict[str, Any] = {"step": step.value, "pregame": pregame_view(game, game_id)}
-        crossed = engine_api.settle_priorityless_steps(game)
-        if crossed and game.turn is not None:
-            result["step"] = game.turn.step.value
-            result["settled_through"] = crossed
+    return step
+
+
+def _forced_window_already_passed(game_id: str, game: Game, username: str) -> bool:
+    """Whether `username` is a human seat whose empty CR 103.6 window has
+    already gone by - so a Done from it now is the move already made for it."""
+    if not _is_forced_human_window(game_id, game, username):
+        return False
+    if not game.in_pregame or game.opening_hand_actions_taken:
+        return True
+    names = [player.username for player in game.players]
+    return game.opening_hand_actor is not None and names.index(username) < game.opening_hand_seat
+
+
+def _hand_on(game_id: str, game: Game, step: Step) -> dict[str, Any]:
+    """After a pregame move: pass any forced human window it handed on, then
+    settle CR 500.3's priorityless steps if the pregame is over."""
+    step = _pass_forced_human_windows(game_id, game) or step
+    result: dict[str, Any] = {"step": step.value, "pregame": pregame_view(game, game_id)}
+    crossed = engine_api.settle_priorityless_steps(game)
+    if crossed and game.turn is not None:
+        result["step"] = game.turn.step.value
+        result["settled_through"] = crossed
     return result
 
 
@@ -400,9 +597,11 @@ def finish_opening_hand_actions(
 
 __all__ = [
     "PregameOverruled",
+    "RepeatedPregameRefusal",
     "declare_mulligan",
     "finish_opening_hand_actions",
     "in_pregame",
     "pregame_view",
+    "refusal_guard",
     "take_opening_hand_action",
 ]

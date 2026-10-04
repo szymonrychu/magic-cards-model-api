@@ -8384,6 +8384,20 @@
               }
             ]
           },
+          "settled_through": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settled Through"
+          },
           "step": {
             "title": "Step",
             "type": "string"
@@ -9147,6 +9161,17 @@
       "OpeningHandFinishResponse": {
         "description": "`POST .../pregame/opening-hand/finish` (`opening.finish_opening_hand_actions`,\nsettled through any priorityless step by `app._settled`).",
         "properties": {
+          "already_passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Already Passed"
+          },
           "pregame": {
             "anyOf": [
               {

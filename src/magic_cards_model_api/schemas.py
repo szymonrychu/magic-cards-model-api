@@ -3593,6 +3593,7 @@ class MulliganResponse(BaseModel):
     declared: bool
     step: str
     pregame: PregameView | None = None
+    settled_through: list[str] | None = None
 
 
 class OpeningHandActionResponse(BaseModel):
@@ -3610,6 +3611,10 @@ class OpeningHandFinishResponse(BaseModel):
     step: str
     pregame: PregameView | None = None
     settled_through: list[str] | None = None
+    already_passed: bool | None = None
+    """True when this seat is a human seat whose CR 103.6 window offered
+    nothing and had already been passed for it (`opening._pass_forced_human_
+    windows`): this Done is that same move, answered rather than refused."""
 
 
 class TargetSlotCandidates(BaseModel):

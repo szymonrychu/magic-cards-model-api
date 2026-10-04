@@ -240,6 +240,18 @@ def _pregame_overruled(_: Request, exc: opening.PregameOverruled) -> JSONRespons
     return JSONResponse(status_code=409, content={"detail": str(exc), "overruled": True})
 
 
+@app.exception_handler(opening.RepeatedPregameRefusal)
+def _pregame_repeated(_: Request, exc: opening.RepeatedPregameRefusal) -> JSONResponse:
+    """409, not 400: the request is the same one already refused against a
+    pregame that has not moved, so it was not tried again - and `repeated`
+    is the key a seat branches on to stop sending it. See
+    `opening.refusal_guard`."""
+    return JSONResponse(
+        status_code=409,
+        content={"detail": str(exc), "repeated": True, "refusals": exc.refusals},
+    )
+
+
 @app.exception_handler(records.MissingReasoning)
 def _missing_reasoning(_: Request, exc: records.MissingReasoning) -> JSONResponse:
     """422, shaped like `RequestValidationError`'s own body
@@ -5564,9 +5576,11 @@ def pregame_mulligan(game_id: str, req: MulliganRequest, uid: str | None = None)
     records.require_plan(game_id, req.player)
     with store.locked(game_id) as game:
         game.player(req.player)  # 404 for a player who is not in this game
-        return opening.declare_mulligan(
-            game_id, game, req.player, req.take, req.bottom, reasoning=req.reasoning
-        )
+        call = f"mulligan take={req.take} bottom={sorted(map(str, req.bottom or []))}"
+        with opening.refusal_guard(game_id, game, req.player, call):
+            return opening.declare_mulligan(
+                game_id, game, req.player, req.take, req.bottom, reasoning=req.reasoning
+            )
 
 
 @app.post(
@@ -5594,9 +5608,10 @@ def pregame_opening_hand_action(
     records.require_plan(game_id, req.player)
     with store.locked(game_id) as game:
         game.player(req.player)
-        return opening.take_opening_hand_action(
-            game_id, game, req.player, req.card_id, reasoning=req.reasoning
-        )
+        with opening.refusal_guard(game_id, game, req.player, f"opening_hand_action {req.card_id}"):
+            return opening.take_opening_hand_action(
+                game_id, game, req.player, req.card_id, reasoning=req.reasoning
+            )
 
 
 @app.post(
@@ -5643,9 +5658,10 @@ def pregame_opening_hand_finish(
     records.require_plan(game_id, req.player)
     with store.locked(game_id) as game:
         game.player(req.player)
-        result = opening.finish_opening_hand_actions(
-            game_id, game, req.player, reasoning=req.reasoning
-        )
+        with opening.refusal_guard(game_id, game, req.player, "opening_hand_finish"):
+            result = opening.finish_opening_hand_actions(
+                game_id, game, req.player, reasoning=req.reasoning
+            )
         return _settled(game, result)
 
 

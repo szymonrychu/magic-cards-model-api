@@ -991,8 +991,12 @@ def test_the_backstop_records_that_the_seat_did_not_choose(client: TestClient, m
         assert declarations["bob"]["automatic"] is False
 
         passes = {entry["player"]: entry for entry in entries(client, info, "opening_hand_done")}
-        assert passes["alice"]["live"] is True
-        assert passes["alice"]["automatic"] is False
+        # alice's sixty Forests offer nothing either, and she is a human seat
+        # in a game with an AI seat, so her one-answer window is passed for
+        # her (`opening._pass_forced_human_windows`, prod game 5c0e9a57) -
+        # recorded as automatic, never as her own choice.
+        assert passes["alice"]["live"] is False
+        assert passes["alice"]["automatic"] is True
         assert passes["bob"]["automatic"] is True
         assert passes["bob"]["live"] is False
     finally:
