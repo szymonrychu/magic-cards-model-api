@@ -704,3 +704,46 @@ def test_a_mixture_named_on_a_choice_ability_is_refused_not_crashed(client, game
     )
     assert body["allowed"] is False, body
     assert body["reason"], body
+
+
+# -- a count the board decides ("for each", CR 605.3b) ----------------------
+
+
+def chalice_with_two_charge_counters(client, game):
+    add_card(client, game, "Everflowing Chalice", "alice", "battlefield")
+    add_card(client, game, "Mind Stone", "alice", "hand")
+    chalice = battlefield_id(client, game, "Everflowing Chalice")
+    live = store.get(game)
+    live.add_counters(live.find_by_id(UUID(chalice)), "charge", 2)
+    return chalice
+
+
+def test_a_named_colour_taps_a_for_each_ability_for_its_whole_count(client, game):
+    """Everflowing Chalice's `{T}: Add {C} for each charge counter on this
+    artifact.` with two counters makes `{C}{C}`: naming it with `["C"]` - by
+    colour alone or with its ability index - pays Mind Stone's `{2}` by
+    itself, the count the board decides rather than one mana."""
+    chalice = chalice_with_two_charge_counters(client, game)
+
+    by_colour = cast(
+        client, game, "Mind Stone", [{"card_id": chalice, "colors": ["C"]}], dry_run=True
+    )
+    assert by_colour["allowed"] is True, by_colour
+
+    by_index = cast(
+        client,
+        game,
+        "Mind Stone",
+        [{"card_id": chalice, "colors": ["C"], "ability_index": 0}],
+        dry_run=True,
+    )
+    assert by_index["allowed"] is True, by_index
+
+
+def test_a_bare_named_for_each_source_pays_with_its_whole_count(client, game):
+    """The bare-id shape reaches the automatic payment over just that source,
+    which counts the Chalice's two counters as two mana."""
+    chalice = chalice_with_two_charge_counters(client, game)
+
+    body = cast(client, game, "Mind Stone", [chalice], dry_run=True)
+    assert body["allowed"] is True, body

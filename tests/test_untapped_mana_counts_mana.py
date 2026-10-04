@@ -262,3 +262,22 @@ def test_a_wide_board_is_counted_without_enumerating_every_land():
     lands = [_source(PLAIN) for _ in range(40)]
     gates = [_source(PLAIN, _mana("{1}, {T}: Add {C}{C}{C}.", 3, 1)) for _ in range(4)]
     assert _seen(state_view(battlefield=lands + gates)) == 40 + 4 * 2
+
+
+def test_a_for_each_ability_view_says_the_count_the_board_decides(client, game):
+    """Everflowing Chalice's `{T}: Add {C} for each charge counter on this
+    artifact.` with two counters adds two, and Mage-Ring Network's "Remove any
+    number of storage counters ...: Add {C} for each storage counter removed
+    this way" can add all three counters' worth - not one mana each."""
+    _board(client, game, "Everflowing Chalice", "Mage-Ring Network")
+    live = store.get(game)
+    chalice = next(c for c in live.battlefield if c.name == "Everflowing Chalice")
+    network = next(c for c in live.battlefield if c.name == "Mage-Ring Network")
+    live.add_counters(chalice, "charge", 2)
+    live.add_counters(network, "storage", 3)
+    view = state(client, game, _uid(game, "alice"))
+
+    (chalice_mana,) = _abilities(view, "Everflowing Chalice")
+    assert chalice_mana["mana_amount"] == 2
+    removal = _abilities(view, "Mage-Ring Network")[2]
+    assert removal["mana_amount"] == 3

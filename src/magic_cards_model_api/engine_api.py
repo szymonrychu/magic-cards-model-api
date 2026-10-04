@@ -303,13 +303,19 @@ def _resolve(
     mana: Any,
     chosen: Color | list[Color] | None,
 ) -> list[Color]:
-    """`ManaAbility.resolve` for `chosen`, with `_narrowings` filled in."""
+    """`ManaAbility.resolve` for `chosen`, with `_narrowings` filled in, and
+    the count the board decides - Everflowing Chalice's "for each charge
+    counter", a "where X is" power, Nykthos's devotion - read the way
+    `Game.activate_ability` reads it (`cost.mana_ability_count`, CR 605.3b)."""
+    from magic_cards_model.machines.cost import mana_ability_count
+
     land_types, counters, imprinted = _narrowings(source, game)
     return mana.resolve(
         land_types,
         counters,
         chosen,
         imprinted,
+        count=mana_ability_count(game, source, mana, chosen, source.controller_or_owner),
         chosen_color=_chosen_color(source),
     )
 
@@ -2393,7 +2399,12 @@ def _mana_amount(
     (`unparsed_rider`) adds nothing.
     """
     from magic_cards_model.machines.abilities import CostKind
-    from magic_cards_model.machines.cost import among_colors, can_tap_for_mana
+    from magic_cards_model.machines.cost import (
+        among_colors,
+        can_tap_for_mana,
+        counted_mana_options,
+        mana_ability_most,
+    )
     from magic_cards_model.machines.effects import devotion_to
 
     mana = ability.mana
@@ -2419,13 +2430,22 @@ def _mana_amount(
         if allowed is not None:
             options = [option for option in options if set(option) <= allowed]
             any_color = any_color and bool(allowed)
+    if mana.for_each_expression is not None or mana.any_color_count_expression is not None:
+        # A count the board decides ("for each", "equal to", "where X is"),
+        # at its most over what the cost leaves open - the storage counters a
+        # Mage-Ring Network could remove, the artifact Slobad could sacrifice.
+        most = mana_ability_most(game, state, index, controller) if index is not None else None
+        if most is not None:
+            per = 1 if mana.any_color or not mana.options else len(mana.options[0])
+            return most * per if options or any_color else 0
+        options, _amount = counted_mana_options(game, controller, state, mana, options)
     if not options and not any_color:
         return 0
     if mana.amount_from_devotion:
         colors = set(_FIVE_COLORS) if any_color else {c for option in options for c in option}
         return max((devotion_to(game, controller, color) for color in colors), default=0)
     if any_color:
-        return mana.any_color_count
+        return max((len(option) for option in options), default=mana.any_color_count)
     return max(len(option) for option in options)
 
 
