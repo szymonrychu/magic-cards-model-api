@@ -2,7 +2,7 @@
 
 `decision_rows(entries, seat)` turns every *committing* ledger row of `seat`
 - a cast, an activation, a land play, a keyword-action route (suspend, plot,
-foretell, cycle, equip, crew, turn_face_up, companion, unlock_door), an
+foretell, cycle, equip, crew, station, turn_face_up, companion, unlock_door), an
 answer to a pending decision, the two combat declarations (whether logged
 by their own dedicated route or answered directly through `/decide`'s own
 `pairs`), a
@@ -1085,6 +1085,22 @@ def _keyword_action(
             move["crew_with"] = {
                 "select": _selector_for_cards(crewing_cards),
                 "count": len(crewing_cards),
+            }
+    elif action == "station":
+        # CR 702.184a: the one creature tapped, recorded as a one-id list.
+        refs = detail.get("tapping") or []
+        if isinstance(refs, str):
+            refs = [refs]
+        tapped_cards: list[dict[str, Any]] = []
+        for ref in refs:
+            tapped_found = _find_card_by_ref(state_view, ref)
+            if tapped_found is None:
+                return None, f"{action}:unresolved-tapped"
+            tapped_cards.append(tapped_found[0])
+        if tapped_cards:
+            move["station_with"] = {
+                "select": _selector_for_cards(tapped_cards),
+                "count": 1,
             }
     elif action == "unlock_door":
         # CR 709.5e: the locked half's own printed name, carried straight

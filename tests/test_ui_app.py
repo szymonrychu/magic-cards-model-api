@@ -1747,6 +1747,29 @@ def test_a_vehicle_with_no_abilities_still_offers_a_crew_menu() -> None:
     assert plan == {"kind": "menu", "abilities": [], "vehicle": True}
 
 
+STATION_PERMANENT = {
+    "id": "eb",
+    "name": "Extinguisher Battleship",
+    "type_line": "Artifact - Spacecraft",
+    "zone": "battlefield",
+    "controller": "alice",
+    "keywords": ["station"],
+    "abilities": [],
+}
+
+
+def test_a_station_permanent_with_no_abilities_still_offers_a_station_menu() -> None:
+    """CR 702.184a: station is read off the card's own keywords, and is what
+    tells `onPermanent` to add the "Station" item to an otherwise-empty menu."""
+    plan = run_app(
+        "m.planPermanentClick(ship, app, state)",
+        ship=STATION_PERMANENT,
+        app=base_app(),
+        state=base_state(),
+    )
+    assert plan == {"kind": "menu", "abilities": [], "vehicle": False, "station": True}
+
+
 def test_an_equipment_with_no_abilities_still_routes_to_a_menu() -> None:
     """CR 702.6a: equip has no entry in `card.abilities` (`Game.
     activated_abilities` never synthesises it), so the single-ability
@@ -3353,6 +3376,29 @@ def test_a_vehicle_still_reaches_crew_through_its_own_menu() -> None:
         vehicle=VEHICLE,
     )
     assert result["labels"] == ["Crew"]
+
+
+def test_a_station_permanent_reaches_station_through_its_own_menu_and_posts_it() -> None:
+    result = _click(
+        """
+          await m.onPermanent(ship, { currentTarget: anchor });
+          const labels = options().map((o) => o.label);
+          options()[0].click();
+          await settle();
+          const staged = m.store.get().action;
+          await m.tryTarget("wurm");
+          await settle();
+          return { labels, kind: staged && staged.kind, calls: globalThis.__calls };
+        """,
+        state=_click_state(battlefield=[STATION_PERMANENT]),
+        ship=STATION_PERMANENT,
+    )
+    assert result["labels"] == ["Station"]
+    assert result["kind"] == "station"
+    posts = [c for c in result["calls"] if c["method"] == "POST" and "actions/station" in c["path"]]
+    assert posts, result["calls"]
+    assert posts[0]["body"]["card_id"] == "eb"
+    assert posts[0]["body"]["tapping"] == "wurm"
 
 
 # -- equip (CR 702.6a): offer, target, post, refuse ---------------------------

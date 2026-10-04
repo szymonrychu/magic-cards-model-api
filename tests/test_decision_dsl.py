@@ -1312,6 +1312,26 @@ def test_crew_gives_a_crew_with_pick():
     assert move["crew_with"]["count"] == 1
 
 
+def test_station_gives_a_station_with_pick():
+    ship = kit.card("Ship", type_line="Artifact — Spacecraft", controller=SEAT)
+    tapped = kit.creature("Bear", controller=SEAT)
+    view = kit.state_view(SEAT, opponent=OPPONENT, battlefield=[ship, tapped])
+    entries = [
+        row(
+            1,
+            "station",
+            card_id=str(ship["id"]),
+            tapping=[str(tapped["id"])],
+            state_view=view,
+        )
+    ]
+    record = only(decision_rows(entries, SEAT))
+    play = play_of(record)
+    move = play["moves"][0]
+    assert move["action"] == "station"
+    assert move["station_with"]["count"] == 1
+
+
 # -- FD4 (h)/G10/G11: order_triggers and assign_combat_damage --------------------
 
 

@@ -44,6 +44,7 @@ from .schemas import (
     OptionalCostChoice,
     PlayLandRequest,
     SpecialActionRequest,
+    StationRequest,
     TargetRequest,
     TurnFaceUpRequest,
     UnlockDoorRequest,
@@ -1376,6 +1377,55 @@ def crew_vehicle(game: Game, req: CrewRequest) -> Outcome:
                 return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped})
             payment.rewind()
             return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped})
+        payment.pay()
+    except ValueError as exc:
+        if payment is not None:
+            payment.rewind()
+        return refused(exc)
+
+    on_stack = activation.activate()
+    game.retain_priority(req.player)
+    return Outcome(
+        True,
+        detail={
+            "ability_id": str(on_stack.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
+
+
+# -- stationing a Spacecraft (CR 702.184) ----------------------------------
+
+
+def station_permanent(game: Game, req: StationRequest) -> Outcome:
+    """CR 702.184a's station ability: tap another untapped creature you
+    control, and put charge counters on the permanent equal to its power.
+
+    Crew's own shape (`crew_vehicle`): a keyword ability the engine builds
+    (`machines.keywords.station_activation`) whose cost is the one creature
+    tapped, so it is not an `ActivateRequest` against an ability index.
+    """
+    from magic_cards_model.machines.keywords import station_activation
+
+    try:
+        permanent = find_card(game, req.card_id)
+        tapped = find_card(game, req.tapping)
+        activation = station_activation(game, permanent, tapped, req.player)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+
+    payment = None
+    try:
+        payment = activation.begin_paying()
+        if req.dry_run:
+            tapped_sources = tapped_view(payment)
+            if payment.unpayable or payment.shortfall:
+                reason = shortfall_reason(payment)
+                payment.rewind()
+                return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped_sources})
+            payment.rewind()
+            return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped_sources})
         payment.pay()
     except ValueError as exc:
         if payment is not None:

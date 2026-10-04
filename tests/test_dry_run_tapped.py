@@ -4,8 +4,9 @@ paying)."""
 
 from __future__ import annotations
 
-from conftest import add_card, card_id, find, state
+from conftest import add_card, card_id, find, force_turn_position, state
 from fastapi.testclient import TestClient
+from magic_cards_model.machines import Step
 
 
 def test_dry_run_cast_reports_the_lands_it_would_tap(client: TestClient, game: str) -> None:
@@ -97,3 +98,22 @@ def test_dry_run_crew_reports_tapped_sources(client: TestClient, game: str) -> N
     after = state(client, game)["battlefield"]
     assert find(after, "Savannah Lions")["tapped"] is False
     assert "Creature" not in find(after, "Smuggler's Copter")["type_line"]
+
+
+def test_dry_run_station_reports_tapped_sources(client: TestClient, game: str) -> None:
+    """CR 702.184a's cost is one creature tapped, never mana: like crew, a
+    station dry run carries `tapped: []` and leaves no trace (CR 733.1)."""
+    add_card(client, game, "Extinguisher Battleship", "alice", "battlefield")
+    add_card(client, game, "Craw Wurm", "alice", "battlefield")
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    board = state(client, game)["battlefield"]
+    ship, wurm = find(board, "Extinguisher Battleship"), find(board, "Craw Wurm")
+    res = client.post(
+        f"/api/games/{game}/actions/station",
+        json={"player": "alice", "card_id": ship["id"], "tapping": wurm["id"], "dry_run": True},
+    ).json()
+    assert res["allowed"] is True, res
+    assert res["tapped"] == []
+    after = state(client, game)["battlefield"]
+    assert find(after, "Craw Wurm")["tapped"] is False
+    assert not find(after, "Extinguisher Battleship").get("counters")

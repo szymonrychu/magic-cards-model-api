@@ -2662,3 +2662,59 @@ def test_the_stops_grid_offers_a_first_strike_damage_tick() -> None:
     assert "first strike damage" in result
     assert "block" in result
     assert "damage" in result
+
+
+# ------------------------------ CR 702.184a station, mid-announcement --------
+
+
+def _station_strip(tapping: str | None) -> str:
+    return run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const action = {
+            kind: "station", cardId: ship.id, card: ship, abilityIndex: null, keyword: null,
+            modes: [], xValue: null, color: null, altCost: null,
+            choosing: [], convoke: [], delve: [], crewing: [], tapping, slots: [],
+            shares: {}, pinned: [], freeTargets: [], pendingTargets: [],
+            affordance: {
+              candidates: [],
+              object_costs: {
+                station: {
+                  rule: "CR 702.184a",
+                  candidates: [{ id: "wurm", name: "Craw Wurm", power: 6 }],
+                },
+              },
+            },
+            error: null, holdPriority: false, done: false,
+          };
+          const state = baseState({ players: seats });
+          const store = makeStore(baseApp(state, { action }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          return document.querySelector("#casting-strip").textContent;
+        })()
+        """,
+        ship={
+            "id": "eb",
+            "name": "Extinguisher Battleship",
+            "zone": "battlefield",
+            "controller": "alice",
+            "type_line": "Artifact Spacecraft",
+            "abilities": [],
+        },
+        tapping=tapping,
+        seats=_seats({"floating": {}, "snow": {}, "restricted": []}),
+    )
+
+
+def test_the_station_strip_says_to_tap_a_creature() -> None:
+    text = _station_strip(None)
+    assert "Station - tap a creature (CR 702.184a)" in text, text
+    assert "click a creature on the board to tap" in text, text
+
+
+def test_the_station_strip_names_the_chosen_creature_and_its_counters() -> None:
+    text = _station_strip("wurm")
+    assert "tapping Craw Wurm for 6 charge counters" in text, text

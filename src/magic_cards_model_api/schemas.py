@@ -1359,6 +1359,26 @@ class CrewRequest(BoardRead):
     optional for a human one."""
 
 
+class StationRequest(BoardRead):
+    """CR 702.184a: "Station" means "Tap another untapped creature you
+    control: Put a number of charge counters on this permanent equal to the
+    tapped creature's power. Activate only as a sorcery."
+
+    Station is an activated ability of the Spacecraft, not of the creature,
+    and its cost is that one creature - so, like crew, this is not an
+    `ActivateRequest` against an ability index."""
+
+    player: str
+    card_id: UUID
+    """The station permanent being stationed."""
+    tapping: UUID
+    """The one other untapped creature tapped to pay for it."""
+    dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
+
+
 class EquipRequest(BoardRead):
     """CR 702.6a: "Equip [cost]" means "[Cost]: Attach this permanent to
     target creature you control. Activate only as a sorcery."
@@ -3965,6 +3985,11 @@ class CrewCostView(BaseModel):
     candidates: list[ObjectCostCandidateView]
 
 
+class StationCostView(BaseModel):
+    rule: str
+    candidates: list[ObjectCostCandidateView]
+
+
 class ObjectCostsView(BaseModel):
     """Which objects could be spent on this card's cost, and for what
     (`affordances.object_costs`) - only the keys that apply are ever
@@ -3974,6 +3999,7 @@ class ObjectCostsView(BaseModel):
     delve: DelveCostView | None = None
     improvise: ImproviseCostView | None = None
     crew: CrewCostView | None = None
+    station: StationCostView | None = None
 
 
 class AffordancesResponse(TargetingProfileView):

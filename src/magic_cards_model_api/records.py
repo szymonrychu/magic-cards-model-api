@@ -453,8 +453,8 @@ _OFFERED: ContextVar[bool | None] = ContextVar("offered_action", default=None)
 #: - `advance`, `resolve_top`, `state_based_actions`, `pregame_settle` -
 #:   there is no `ActionKind` for them; the enumeration does not offer them
 #:   as rows at all.
-#: - `crew` and `cycle` - both reach the engine through an activated ability
-#:   (`ACTIVATE`, `ACTIVATE_OFF_ZONE`), but neither request carries the
+#: - `crew`, `station` and `cycle` - all reach the engine through an
+#:   activated ability (`ACTIVATE`, `ACTIVATE_OFF_ZONE`), but none of the requests carries the
 #:   `ability_index` that says *which*, so a match on the card alone could
 #:   claim an offer that was for a different ability of the same card.
 #: - the two combat declarations and `decide`, which do not come through
@@ -1415,7 +1415,8 @@ def legal_actions_before(
 #: being done, with the preposition each one reads naturally with. Every one
 #: of them is a list of card ids (`CastRequest.sacrificing`/`.discarding`/
 #: `.exiling`/`.choosing`/`.tapping`, `ActivateRequest`'s same four,
-#: `CrewRequest.crewing`).
+#: `CrewRequest.crewing`, and `StationRequest.tapping`, the one that is a
+#: single id rather than a list).
 _COST_KEYS = (
     ("crewing", "crewing with"),
     ("sacrificing", "sacrificing"),
@@ -1448,6 +1449,9 @@ def _named(game: Game, token: Any) -> str:
 
 
 def _names(game: Game, tokens: Any) -> list[str]:
+    if isinstance(tokens, str):
+        # `StationRequest.tapping` is the one cost key holding a single id.
+        tokens = [tokens]
     return [_named(game, token) for token in tokens] if isinstance(tokens, list) else []
 
 
@@ -1470,9 +1474,9 @@ def _action_name(path: str) -> str:
 #: other activated ability are both reachable through that one route, and
 #: `ability_index` below is what tells them apart.
 #:
-#: `actions/crew` needs no entry and gets none: `legal_actions` does not
-#: enumerate crew at all (CR 702.122a's ability has no `{T}` of its own and is
-#: not one of the Vehicle's `activated_abilities`), and its cost is the
+#: `actions/crew` and `actions/station` need no entry and get none:
+#: `legal_actions` does not enumerate crew at all (CR 702.122a's ability has
+#: no `{T}` of its own and is not one of the Vehicle's `activated_abilities`), and its cost is the
 #: creatures tapped for it, which `_COST_KEYS`'s `crewing` already names in
 #: full. An entry that matched nothing would only make the printed-cost
 #: fallback fire on a cost the Vehicle's printing has nothing to do with.

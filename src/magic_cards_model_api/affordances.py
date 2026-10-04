@@ -909,9 +909,11 @@ def object_costs(game: Game, state: CardState, player: str) -> dict[str, Any]:
         has_convoke,
         has_delve,
         has_improvise,
+        has_station,
         improvise_offer,
         is_vehicle,
         power_of,
+        station_offer,
     )
 
     def eligible(offer: Any, cards: list[CardState]) -> list[dict[str, Any]]:
@@ -952,6 +954,11 @@ def object_costs(game: Game, state: CardState, player: str) -> dict[str, Any]:
             "rule": "CR 702.122a",
             "number": number,
             "candidates": eligible(crew_offer(state), battlefield),
+        }
+    if state.zone is Zone.BATTLEFIELD and has_station(state.card):
+        out["station"] = {
+            "rule": "CR 702.184a",
+            "candidates": eligible(station_offer(state), battlefield),
         }
     return out
 

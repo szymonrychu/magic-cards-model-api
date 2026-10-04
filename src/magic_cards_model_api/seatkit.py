@@ -1458,6 +1458,7 @@ ACTION_REQUEST_SHAPES: dict[str, str] = {
     "actions/cast": "CastRequest",
     "actions/concede": "ConcedeRequest",
     "actions/crew": "CrewRequest",
+    "actions/station": "StationRequest",
     "actions/cycle": "CycleRequest",
     "actions/equip": "EquipRequest",
     "actions/declare-blockers": "DeclareBlockersRequest",
@@ -1473,7 +1474,7 @@ ACTION_REQUEST_SHAPES: dict[str, str] = {
     "decide": "DecideRequest",
 }
 
-#: The 7 of those 12 shapes that carry `dry_run` - the ones an advisor can ask
+#: The dry-run-carrying shapes of those that carry `dry_run` - the ones an advisor can ask
 #: the engine to *validate* before proposing, against an isolated probe copy
 #: of the game (`engine_api.dry_run_copy`) that commits nothing.
 #:
@@ -1492,6 +1493,7 @@ DRY_RUN_SHAPES = frozenset(
         "AttackRequest",
         "CastRequest",
         "CrewRequest",
+        "StationRequest",
         "CycleRequest",
         "EquipRequest",
         "PlayLandRequest",

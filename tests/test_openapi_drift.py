@@ -113,6 +113,7 @@ REQUEST_MODEL_COMPONENTS = {
     "CastRequest",
     "ConvokeChoice",
     "CrewRequest",
+    "StationRequest",
     "CycleRequest",
     "SpecialActionRequest",
     "TargetRequest",

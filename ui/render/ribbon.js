@@ -264,6 +264,7 @@ function focusedTextInput(el) {
 function actionTitle(action) {
   if (action.kind === "land") return "Play land";
   if (action.kind === "crew") return "Crew";
+  if (action.kind === "station") return "Station";
   if (action.kind === "special") return action.keyword;
   const ability = action.abilityIndex !== null ? (action.card.abilities || [])[action.abilityIndex] : null;
   return ability ? "Activate" : "Cast";
@@ -728,6 +729,22 @@ function renderCrewProgress(action, offer) {
   );
 }
 
+function renderStationProgress(action, offer) {
+  const chosen = offer.candidates.find((c) => c.id === action.tapping);
+  return h(
+    "div",
+    { class: "tray-step" },
+    h("div", { class: "label" }, "Station - tap a creature (CR 702.184a)"),
+    h(
+      "div",
+      { class: "hint" },
+      chosen
+        ? `tapping ${chosen.name} for ${chosen.power || 0} charge counters (${offer.rule})`
+        : `click a creature on the board to tap (${offer.rule})`
+    )
+  );
+}
+
 function renderSlotChips(action, handlers) {
   if (!action.affordance || !action.affordance.targets_anything || !action.slots.length) return null;
   // A slot chip click (`handlers.onFocusSlot`) sets `action.focusSlot`;
@@ -894,6 +911,8 @@ function renderCastingStrip(el, app, handlers) {
   const objectCosts = (action.affordance && action.affordance.object_costs) || {};
   if (action.kind === "crew" && objectCosts.crew) {
     el.appendChild(renderCrewProgress(action, objectCosts.crew));
+  } else if (action.kind === "station" && objectCosts.station) {
+    el.appendChild(renderStationProgress(action, objectCosts.station));
   } else if (action.kind === "cast") {
     if (objectCosts.convoke) el.appendChild(renderObjectCostStep(action, objectCosts.convoke, "convoke", "Convoke", handlers.onToggleConvoke));
     if (objectCosts.delve) el.appendChild(renderObjectCostStep(action, objectCosts.delve, "delve", "Delve", handlers.onToggleDelve));

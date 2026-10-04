@@ -209,7 +209,7 @@ def test_every_keyword_action_validates(action):
     assert play_errors(doc) == []
 
 
-def test_keyword_action_covers_the_nine_routes():
+def test_keyword_action_covers_the_ten_routes():
     assert KEYWORD_ACTIONS == (
         "suspend",
         "plot",
@@ -220,6 +220,7 @@ def test_keyword_action_covers_the_nine_routes():
         "turn_face_up",
         "companion",
         "unlock_door",
+        "station",
     )
 
 
@@ -256,6 +257,20 @@ def test_keyword_action_crew_takes_crew_with():
                 "action": "crew",
                 "card": {"zone": "battlefield", "select": {}},
                 "crew_with": {"select": {"types_any": ["Creature"]}, "count": 1},
+            }
+        ]
+    )
+    assert play_errors(doc) == []
+
+
+def test_keyword_action_station_takes_station_with():
+    doc = play(
+        moves=[
+            {
+                "kind": "keyword_action",
+                "action": "station",
+                "card": {"zone": "battlefield", "select": {}},
+                "station_with": {"select": {"types_any": ["Creature"]}, "count": 1},
             }
         ]
     )

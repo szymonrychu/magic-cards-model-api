@@ -297,6 +297,16 @@ MUTATING_ROUTES: list[tuple[str, str, str, dict[str, Any]]] = [
         },
     ),
     (
+        "station",
+        "POST",
+        "/api/games/{gid}/actions/station",
+        {
+            "player": "alice",
+            "card_id": "00000000-0000-0000-0000-000000000000",
+            "tapping": "00000000-0000-0000-0000-000000000001",
+        },
+    ),
+    (
         "equip",
         "POST",
         "/api/games/{gid}/actions/equip",

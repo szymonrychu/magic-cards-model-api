@@ -225,6 +225,7 @@ KEYWORD_ACTIONS = (
     "turn_face_up",
     "companion",
     "unlock_door",
+    "station",
 )
 #: `Answer.damage`'s own `rest_to` (FD2): where damage past the last lethal
 #: blocker tier goes once trample lets it through - the defending player, or
@@ -1467,7 +1468,8 @@ class KeywordActionMove(_Strict):
     locates the card the way a `cast`/`play_land` card already does, `target`
     names the creature an `equip` attaches to (a `CardTarget`, never a
     player), `crew_with` names the creatures a `crew` action taps to pay its
-    cost, and `door` names the locked half `unlock_door` pays for (the
+    cost, `station_with` the one creature a `station` action (CR 702.184a)
+    taps, and `door` names the locked half `unlock_door` pays for (the
     half's own printed name) - meaningful only for that one action."""
 
     kind: Literal["keyword_action"]
@@ -1475,6 +1477,7 @@ class KeywordActionMove(_Strict):
     card: ZonedCard
     target: CardTarget = None
     crew_with: Pick = None
+    station_with: Pick = None
     door: str | None = None
     answers: list[Answer] = Field(default_factory=list, max_length=MAX_ANSWERS)
 

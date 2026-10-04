@@ -1705,6 +1705,7 @@ _KEYWORD_ACTION_ROUTES = {
     "turn_face_up": "actions/turn-face-up",
     "companion": "actions/companion",
     "unlock_door": "actions/unlock-door",
+    "station": "actions/station",
 }
 
 
@@ -1783,6 +1784,27 @@ def _keyword_action_request(
             "player": me,
             "card_id": card["id"],
             "target": picked[0]["id"],
+            "reasoning": reasoning,
+        }
+    if action == "station":
+        station_with = move.get("station_with")
+        if station_with is None:
+            return ScriptExit(Exit.UNFORESEEN, stop_reason="station needs station_with")
+        tapping = _cost_object_pick(
+            {**station_with, "count": 1},
+            state,
+            me,
+            "battlefield",
+            "the creature to tap",
+            hypo=hypo,
+            mana=mana,
+        )
+        if isinstance(tapping, ScriptExit):
+            return tapping
+        return route, {
+            "player": me,
+            "card_id": card["id"],
+            "tapping": tapping[0],
             "reasoning": reasoning,
         }
     # action == "crew"

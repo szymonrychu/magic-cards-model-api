@@ -1,4 +1,4 @@
-// The one in-flight action: cast, activate, crew, or a special action. Pure
+// The one in-flight action: cast, activate, crew, station, or a special action. Pure
 // state transitions; `render/ribbon.js` draws it and `app.js` fires it.
 import {
   activeSlotIndex,
@@ -151,6 +151,9 @@ export function begin(kind, card, extra) {
     // the same.
     improvise: [],
     crewing: [],
+    // CR 702.184a: the ONE creature a station permanent taps (a single id,
+    // not a list - `StationRequest.tapping`), or null before one is picked.
+    tapping: null,
     slots: [],
     shares: {},
     pinned: [],
@@ -263,7 +266,7 @@ export function optionalCostTimes(action, keyword) {
  * ordinary one, `activate_mana` for a mana ability, each its own entry
  * point); this browser's announcement state has a single `activate` for
  * both, so a match that compared the names directly would find a mana
- * ability's row never. `crew` and `special` are deliberately absent: neither
+ * ability's row never. `crew`, `station` and `special` are deliberately absent: neither
  * is an `ActionKind` the enumeration answers with.
  */
 const ROW_KINDS = { cast: ["cast"], activate: ["activate", "activate_mana"] };
@@ -379,6 +382,12 @@ export function toggleImprovise(action, id) {
 
 export function toggleCrewing(action, id) {
   return { ...action, crewing: toggleIn(action.crewing, id) };
+}
+
+/** Station takes exactly one creature: clicking another replaces it, clicking
+ * the chosen one again clears it. */
+export function selectTapping(action, id) {
+  return { ...action, tapping: action.tapping === id ? null : id };
 }
 
 export function addFreeTarget(action, id) {
@@ -590,6 +599,7 @@ function chosenAltCostRequires(action) {
 
 export function readyToFire(action) {
   if (action.kind === "crew") return action.crewing.length > 0;
+  if (action.kind === "station") return action.tapping !== null;
   // A special action (foretell, plot, suspend, CR 116.2) exiles the card
   // face down without choosing anything about the spell it will become -
   // that happens later, when it's cast from exile - so the underlying
@@ -623,6 +633,7 @@ export function readyToFire(action) {
 export function endpointFor(action) {
   if (action.kind === "activate") return "actions/activate";
   if (action.kind === "crew") return "actions/crew";
+  if (action.kind === "station") return "actions/station";
   if (action.kind === "special") return `actions/${action.keyword.toLowerCase()}`;
   return "actions/cast";
 }
@@ -638,6 +649,7 @@ export function isManaAbility(action) {
 export function bodyFor(action, you, untapped) {
   const body = { player: you, card_id: action.cardId };
   if (action.kind === "crew") return { ...body, crewing: action.crewing };
+  if (action.kind === "station") return { ...body, tapping: action.tapping };
   if (action.kind === "activate") {
     body.ability_index = action.abilityIndex;
     if (action.color) body.color = action.color;

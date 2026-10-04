@@ -162,6 +162,7 @@ from .schemas import (
     SetStepResponse,
     SpecialActionRequest,
     StateBasedActionsResponse,
+    StationRequest,
     StepUpdate,
     TapCardResponse,
     TargetRequest,
@@ -2963,7 +2964,7 @@ def _affordances_of(
         # discovering one means building a `Casting`, which is per-card work
         # not worth doing for every card on the board on every poll.
         result["alternative_costs"] = affordances.alternative_costs(game, state, player)
-    # Convoke, delve and crew: which objects could be spent on this card's
+    # Convoke, delve, crew and station: which objects could be spent on this card's
     # cost. Absent keys mean the card offers none of them.
     object_costs = affordances.object_costs(game, state, player)
     if object_costs:
@@ -3422,6 +3423,47 @@ def action_crew(game_id: str, req: CrewRequest, uid: str | None = None) -> dict[
         player=req.player,
         card_id=str(req.card_id),
         crewing=[str(card_id) for card_id in req.crewing],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
+    )
+
+
+@app.post(
+    "/api/games/{game_id}/actions/station",
+    dependencies=REFUSED_AFTER_GAME_OVER,
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
+def action_station(game_id: str, req: StationRequest, uid: str | None = None) -> dict[str, Any]:
+    """Station a Spacecraft (CR 702.184a). Its own endpoint rather than an
+    `activate` against an ability index: the cost is the one creature tapped,
+    not mana, and station is the permanent's ability rather than the
+    creature's."""
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
+    req, refused = _acting_as(game_id, "station", "station", req, uid)
+    if refused is not None:
+        return refused
+    records.require_current_board(
+        game_id,
+        "station",
+        req.expected_seq,
+        player=actor,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
+    result, _, legal_before, seq = _run_command(game_id, "station", req, acting=(sent, uid))
+    return _respond(
+        game_id,
+        "station",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card_id=str(req.card_id),
+        tapping=[str(req.tapping)],
         reasoning=req.reasoning,
         legal_actions_before=legal_before,
         seq_hint=seq,

@@ -43,6 +43,7 @@ ACTION_ROUTES = (
     "actions/concede",
     "actions/activate",
     "actions/crew",
+    "actions/station",
     "actions/attack",
     "actions/play-land",
     "actions/pass-priority",

@@ -9092,6 +9092,16 @@
                 "type": "null"
               }
             ]
+          },
+          "station": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StationCostView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "title": "ObjectCostsView",
@@ -15119,6 +15129,81 @@
         "title": "StateBasedActionsResponse",
         "type": "object"
       },
+      "StationCostView": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectCostCandidateView"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "candidates"
+        ],
+        "title": "StationCostView",
+        "type": "object"
+      },
+      "StationRequest": {
+        "additionalProperties": false,
+        "description": "CR 702.184a: \"Station\" means \"Tap another untapped creature you\ncontrol: Put a number of charge counters on this permanent equal to the\ntapped creature's power. Activate only as a sorcery.\"\n\nStation is an activated ability of the Spacecraft, not of the creature,\nand its cost is that one creature - so, like crew, this is not an\n`ActivateRequest` against an ability index.",
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          },
+          "tapping": {
+            "format": "uuid",
+            "title": "Tapping",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player",
+          "card_id",
+          "tapping"
+        ],
+        "title": "StationRequest",
+        "type": "object"
+      },
       "StepUpdate": {
         "additionalProperties": false,
         "properties": {
@@ -17225,6 +17310,72 @@
           }
         },
         "summary": "Action Plot"
+      }
+    },
+    "/api/games/{game_id}/actions/station": {
+      "post": {
+        "description": "Station a Spacecraft (CR 702.184a). Its own endpoint rather than an\n`activate` against an ability index: the cost is the one creature tapped,\nnot mana, and station is the permanent's ability rather than the\ncreature's.",
+        "operationId": "action_station_api_games__game_id__actions_station_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionOutcome"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Action Station"
       }
     },
     "/api/games/{game_id}/actions/suspend": {

@@ -103,6 +103,24 @@ def test_crew_picked_from_a_menu_stages_in_the_ribbon():
     }
 
 
+def test_station_picked_from_a_menu_stages_in_the_ribbon():
+    """Station, like Crew, is a key picked out of the permanent's own menu
+    and what it begins is the in-flight announcement."""
+    assert call('m.choiceForPlan({kind: "station"})') == {
+        "kind": "announcement",
+        "surface": "ribbon",
+    }
+
+
+def test_a_station_permanent_adds_station_after_crew():
+    plan = {"kind": "menu", "abilities": [], "vehicle": True, "station": True}
+    card = {"id": "p1", "name": "Some Spacecraft", "abilities": []}
+    assert call("m.abilityMenuItems(plan, card)", plan=plan, card=card) == [
+        {"key": "crew", "label": "Crew", "sublabel": "", "match": None},
+        {"key": "station", "label": "Station", "sublabel": "", "match": None},
+    ]
+
+
 def test_every_action_click_opens_a_confirm_and_a_selection_click_opens_nothing():
     """T5, and the literal inverse of what this case used to assert. A click
     that *acts* - playing a land, casting, activating the one ability a

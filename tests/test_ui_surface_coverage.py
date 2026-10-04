@@ -634,11 +634,6 @@ _NOT_CONSUMED_ON_PURPOSE: dict[tuple[str, str], _Reason] = {
         'with a stub named "a face-down card", so the browser renders the difference '
         "without reading the flag",
     ),
-    ("_CardViewFields", "keywords"): _Reason(
-        "cosmetic",
-        "the computed keyword list; the browser shows `oracle_text` plus the badges it "
-        "derives from power, toughness, damage and counters",
-    ),
     ("_CardViewFields", "mana_value"): _Reason(
         "agent-facing",
         "CR 202.3e's stack-aware mana value, for a seat reasoning about mana value; the "

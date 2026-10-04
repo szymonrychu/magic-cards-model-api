@@ -878,6 +878,48 @@ def test_toggling_crewing_twice_removes_it() -> None:
     assert crewing == []
 
 
+# -- station (CR 702.184a): one creature tapped, not a list ------------------
+
+EXTINGUISHER_BATTLESHIP = {
+    "id": "eb",
+    "name": "Extinguisher Battleship",
+    "zone": "battlefield",
+    "controller": "alice",
+    "type_line": "Artifact Spacecraft",
+    "keywords": ["station"],
+    "abilities": [],
+}
+
+
+def test_station_needs_exactly_one_creature_and_a_second_click_replaces_it() -> None:
+    result = run_module(
+        "actions.js",
+        "(() => { let a = m.begin('station', ship, {}); const before = m.readyToFire(a); "
+        "a = m.selectTapping(a, 'c1'); const first = m.bodyFor(a, 'alice', []); "
+        "a = m.selectTapping(a, 'c2'); "
+        "return [before, m.readyToFire(a), m.endpointFor(a), first, "
+        "m.bodyFor(a, 'alice', [])]; })()",
+        ship=EXTINGUISHER_BATTLESHIP,
+    )
+    assert result == [
+        False,
+        True,
+        "actions/station",
+        {"player": "alice", "card_id": "eb", "tapping": "c1"},
+        {"player": "alice", "card_id": "eb", "tapping": "c2"},
+    ]
+
+
+def test_selecting_the_station_creature_twice_clears_it() -> None:
+    ready = run_module(
+        "actions.js",
+        "(() => { let a = m.begin('station', ship, {}); a = m.selectTapping(a, 'c1'); "
+        "a = m.selectTapping(a, 'c1'); return [a.tapping, m.readyToFire(a)]; })()",
+        ship=EXTINGUISHER_BATTLESHIP,
+    )
+    assert ready == [None, False]
+
+
 # -- CR 601.3 play permissions: casting from a zone other than the hand -----
 
 

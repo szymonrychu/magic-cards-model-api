@@ -404,7 +404,7 @@ export function planHandCardClick(card, app) {
  * (a mana-ability land, clicked while casting, that isn't already an
  * affordance candidate) | `{kind: "attack"}` | `{kind: "block"}` |
  * `{kind: "activate", abilityIndex}` (exactly one activated ability) |
- * `{kind: "menu", abilities, vehicle}` (more than one thing this permanent
+ * `{kind: "menu", abilities, vehicle, station?}` (more than one thing this permanent
  * could do) | `{kind: "none", reason?}` (not yours, or nothing to do). */
 export function planPermanentClick(card, app, state) {
   // CR 723.5: while this seat decides for another player, that player's
@@ -463,6 +463,11 @@ export function planPermanentClick(card, app, state) {
   if (!mine.has(card.controller)) return { kind: "none" };
   const abilities = card.abilities || [];
   const vehicle = /vehicle/i.test(card.type_line || "");
+  // CR 702.184a: station is a keyword ability of the permanent itself, read
+  // off the card's own computed keywords the way a Vehicle is read off its
+  // type line - always offered, with a dry run left to refuse it (the
+  // sorcery-speed timing included), exactly like Crew.
+  const station = (card.keywords || []).some((k) => String(k).toLowerCase() === "station");
   // CR 702.6a: equip has no entry in `card.abilities` (`Game.
   // activated_abilities` never synthesises it - `action_rows.is_equip_row`'s
   // own docstring), so nothing here can say whether it is legal *right now*
@@ -478,13 +483,14 @@ export function planPermanentClick(card, app, state) {
   // permanent to the menu; `openPermanentMenu` decides which doors (if any)
   // actually appear in it, from the engine's own legal-actions answer.
   const room = /\broom\b/i.test(card.type_line || "");
-  if (!abilities.length && !vehicle && !equipment && !room) {
+  if (!abilities.length && !vehicle && !station && !equipment && !room) {
     return { kind: "none", reason: `${card.name} has no activated abilities` };
   }
-  if (abilities.length === 1 && !vehicle && !equipment && !room) {
+  if (abilities.length === 1 && !vehicle && !station && !equipment && !room) {
     return { kind: "activate", abilityIndex: 0 };
   }
   const menu = { kind: "menu", abilities, vehicle };
+  if (station) menu.station = true;
   if (equipment) menu.equipment = true;
   if (room) menu.room = true;
   return menu;
@@ -1198,6 +1204,12 @@ function beginCrew(card) {
   return refreshAffordance();
 }
 
+function beginStation(card) {
+  hidePopover();
+  store.set({ action: A.begin("station", card, {}), preview: null, pendingRelease: null });
+  return refreshAffordance();
+}
+
 /** CR 601.3's dynamic play permissions (a flashback grant, an exiled card
  * made playable "this turn" - cascade's hit and suspend's own third ability
  * no longer grant one of these, battle 8): begin casting `card` from
@@ -1295,6 +1307,7 @@ async function onPermanentImpl(card, event) {
   // same menu with one item in it rather than activating on the click.
   return openActionMenu(card, event, M.abilityMenuItems(plan, card), (key) => {
     if (key === "crew") return beginCrew(card);
+    if (key === "station") return beginStation(card);
     if (key.startsWith("activate:")) return beginActivate(card, Number(key.slice("activate:".length)));
   });
 }
@@ -1354,6 +1367,7 @@ async function openPermanentMenu(card, event, plan) {
   if (!items.length) return;
   openCardMenuAt(anchor, card, items, (key) => {
     if (key === "crew") return beginCrew(card);
+    if (key === "station") return beginStation(card);
     if (key === "equip") return beginEquip(anchor, card, equipRow, answer.last_seq);
     if (key.startsWith("unlock:")) {
       return fireUnlockDoor(card, key.slice("unlock:".length), answer.last_seq);
@@ -1548,6 +1562,10 @@ async function tryTargetImpl(id) {
   const action = app.action;
   if (action.kind === "crew") {
     store.set({ action: A.toggleCrewing(action, id) });
+    return previewAndMaybeFire();
+  }
+  if (action.kind === "station") {
+    store.set({ action: A.selectTapping(action, id) });
     return previewAndMaybeFire();
   }
   if (action.affordance && action.affordance.understood === false) {

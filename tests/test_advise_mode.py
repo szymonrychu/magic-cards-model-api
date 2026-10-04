@@ -516,12 +516,13 @@ def _openapi() -> dict[str, Any]:
     return json.loads((REPO_ROOT / "openapi.json").read_text())
 
 
-def test_the_frozen_action_shapes_are_exactly_sixteen_eleven_of_which_dry_run() -> None:
+def test_the_frozen_action_shapes_are_exactly_seventeen_twelve_of_which_dry_run() -> None:
     # FD5 (5): turn_face_up/bring_companion add TurnFaceUpRequest and
     # CompanionRequest, both real payments an advisor can probe. CR 709.5e
-    # adds UnlockDoorRequest, another real payment.
-    assert len(set(seatkit.ACTION_REQUEST_SHAPES.values())) == 16
-    assert len(seatkit.DRY_RUN_SHAPES) == 11
+    # adds UnlockDoorRequest, another real payment. CR 702.184a adds
+    # StationRequest, crew's twin.
+    assert len(set(seatkit.ACTION_REQUEST_SHAPES.values())) == 17
+    assert len(seatkit.DRY_RUN_SHAPES) == 12
     assert set(seatkit.ACTION_REQUEST_SHAPES.values()) >= seatkit.DRY_RUN_SHAPES
 
 
@@ -823,6 +824,24 @@ def test_a_crew_proposal_quotes_no_printed_cost_because_the_creatures_are_the_co
     )
 
     assert summary == "alice: crew Smuggler's Copter, crewing with Savannah Lions", summary
+
+
+def test_a_station_proposal_names_the_one_creature_tapped(client: TestClient, game: str) -> None:
+    """CR 702.184a's station cost is the one creature tapped; unlike crew's
+    list it is a single id, and the line still names it. No printed cost."""
+    uid = advisor_uid(game, "alice")
+    ship = card_id(client, game, "Extinguisher Battleship", "alice", "battlefield")
+    wurm = card_id(client, game, "Craw Wurm", "alice", "battlefield")
+
+    summary = summary_of(
+        client,
+        game,
+        uid,
+        "actions/station",
+        {"player": "alice", "card_id": ship, "tapping": wurm},
+    )
+
+    assert summary == "alice: station Extinguisher Battleship, tapping Craw Wurm", summary
 
 
 def test_a_cycling_proposal_reads_the_cycling_cost(client: TestClient, game: str) -> None:

@@ -115,7 +115,9 @@ export function choiceForPlan(plan) {
   }
   if (kind === "pin") return { kind: "mana_colour", surface: surfaceForChoice("mana_colour") };
   if (kind === "attack") return { kind: "defender", surface: surfaceForChoice("defender") };
-  if (kind === "crew") return { kind: "announcement", surface: surfaceForChoice("announcement") };
+  if (kind === "crew" || kind === "station") {
+    return { kind: "announcement", surface: surfaceForChoice("announcement") };
+  }
   return null;
 }
 
@@ -325,7 +327,8 @@ export function permissionMenuItems(permission) {
  * the ability's own index (not its position in this list - a permanent can
  * offer ability 0 and ability 2 with nothing offerable between them), then
  * Equip (CR 702.6a) for an Equipment the engine's own legal-actions answer
- * currently offers it on, then Crew for a Vehicle, then Unlock <door>
+ * currently offers it on, then Crew for a Vehicle, then Station (CR 702.184a)
+ * for a permanent carrying the station keyword, then Unlock <door>
  * (CR 709.5e) for each locked door of a Room the engine's own legal-actions
  * answer still offers.
  *
@@ -367,6 +370,7 @@ export function abilityMenuItems(plan, card) {
     );
   }
   if (plan.vehicle) items.push(item("crew", "Crew"));
+  if (plan.station) items.push(item("station", "Station"));
   for (const door of plan.doors || []) {
     items.push(
       item(

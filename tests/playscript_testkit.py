@@ -624,7 +624,7 @@ def keyword_action_move(
     action: str, select: dict[str, Any] | None = None, *, zone: str = "hand", **over: Any
 ) -> dict[str, Any]:
     """A `KeywordActionMove` (FD2/FD3 item 3): `action` names the route,
-    `select` the card by characteristic; `target`/`crew_with`/`door` go in
+    `select` the card by characteristic; `target`/`crew_with`/`station_with`/`door` go in
     `over`."""
     move: dict[str, Any] = {
         "kind": "keyword_action",

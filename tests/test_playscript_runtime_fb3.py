@@ -395,6 +395,40 @@ def test_crew_taps_the_picked_creatures(
     assert body["crewing"] == [bear["id"]]
 
 
+# -- keyword_action: station ----------------------------------------------------------
+
+
+def test_station_taps_the_picked_creature(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "station",
+        keyword_action_move(
+            "station",
+            {"subtypes_any": ["Spacecraft"]},
+            zone="battlefield",
+            station_with=pick({"types_all": ["Creature"]}, count=1),
+        ),
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Extinguisher Battleship", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    bear = [c for c in state(client, board)["battlefield"] if c["name"] == "Grizzly Bears"][0]
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="station", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    assert result.script_exit.moves_done == 1, result.to_dict()
+    [body] = hook.posts("/actions/station")
+    assert body["tapping"] == bear["id"]
+
+
 # -- keyword_action: cycle -------------------------------------------------------------
 
 
@@ -1754,6 +1788,28 @@ def test_crew_with_no_matching_creature_exits_unforeseen(
 
     assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
     assert hook.posts("/actions/crew") == []
+
+
+def test_station_without_station_with_exits_unforeseen(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "station-bare",
+        keyword_action_move("station", {"subtypes_any": ["Spacecraft"]}, zone="battlefield"),
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Extinguisher Battleship", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="station-bare", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert hook.posts("/actions/station") == []
 
 
 def test_cycle_with_no_matching_card_exits_unforeseen(

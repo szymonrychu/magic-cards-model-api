@@ -102,6 +102,7 @@ from .schemas import (
     PassPriorityRequest,
     PlayLandRequest,
     SpecialActionRequest,
+    StationRequest,
     TurnFaceUpRequest,
     UnlockDoorRequest,
 )
@@ -227,6 +228,10 @@ def _run_unlock_door(game: Game, payload: dict[str, Any]) -> Any:
 
 def _run_crew(game: Game, payload: dict[str, Any]) -> Any:
     return engine_api.crew_vehicle(game, CrewRequest.model_validate(payload))
+
+
+def _run_station(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.station_permanent(game, StationRequest.model_validate(payload))
 
 
 def _run_equip(game: Game, payload: dict[str, Any]) -> Any:
@@ -521,6 +526,7 @@ COMMAND_HANDLERS: dict[str, Callable[[Game, dict[str, Any]], Any]] = {
     "foretell": _run_foretell,
     "cycle": _run_cycle,
     "crew": _run_crew,
+    "station": _run_station,
     "equip": _run_equip,
     "turn_face_up": _run_turn_face_up,
     "companion": _run_companion,
@@ -920,6 +926,7 @@ ANNOUNCING_KINDS = frozenset(
         "cast",
         "activate_ability",
         "crew",
+        "station",
         "equip",
         "cycle",
         "suspend",
