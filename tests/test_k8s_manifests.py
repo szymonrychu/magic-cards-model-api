@@ -495,15 +495,15 @@ def _api_deployment() -> dict:
     return by_name(rendered(), "Deployment", "mtg-stack")
 
 
-def test_the_api_seats_default_to_sonnet_and_the_buddy_stays_opus() -> None:
+def test_the_api_seats_default_to_opus_and_the_buddy_stays_opus() -> None:
     env = _api_env()
-    assert env["AGENT_DEFAULT_MODEL"]["value"] == "claude-sonnet-5"
+    assert env["AGENT_DEFAULT_MODEL"]["value"] == "claude-opus-5"
     assert env["ADVISOR_MODEL"]["value"] == "claude-opus-5"
 
 
 def test_the_api_publishes_the_seat_pair_env_the_seat_jobs_are_rendered_from() -> None:
     env = _api_env()
-    assert env["SEAT_AGENT_CHANNEL"]["value"] == "teams"
+    assert env["SEAT_AGENT_CHANNEL"]["value"] == "off"
     assert env["SEAT_SUBAGENT_MODEL"]["value"] == "claude-opus-5"
     assert env["SEAT_SUBAGENT_EFFORT"]["value"] == ""
 
@@ -602,8 +602,10 @@ def test_prod_seat_and_buddy_jobs_render_the_owner_speed_settings() -> None:
         return {e["name"]: e.get("value") for e in c["env"]}
 
     seat = agent_env(AgentSettings.default(env), "seat")
-    assert seat["EFFORT"] == "low"
-    assert seat["MAX_THINKING_TOKENS"] == "4000"
+    assert seat["MODEL"] == "claude-opus-5"
+    assert seat["EFFORT"] == "medium"
+    assert not seat.get("MAX_THINKING_TOKENS")
+    assert seat["SEAT_AGENT_CHANNEL"] == "off"
     buddy = agent_env(AgentSettings.advisor_default(env), ROLE_ADVISOR)
     assert buddy["EFFORT"] == "medium"
     assert not buddy.get("MAX_THINKING_TOKENS")

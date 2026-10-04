@@ -141,8 +141,11 @@ spec:
             # that does not read either of these.
             # T6: the seat orchestrator is Sonnet in every mode; the seat's
             # `seat-player` subagents (SEAT_SUBAGENT_MODEL) do the Opus work.
+            # 2026-10-04: seat pair disabled in prod until seat round 3 meets
+            # the speed target; seats play as before on the new engine: Opus
+            # at medium effort, no thinking cap (SEAT_AGENT_CHANNEL=off).
             - name: AGENT_DEFAULT_MODEL
-              value: claude-sonnet-5
+              value: claude-opus-5
             # Owner decision (T6): the buddy/advisor stays pinned to Opus
             # (`AgentSettings.advisor_default`), unaffected by the line above.
             - name: ADVISOR_MODEL
@@ -151,18 +154,16 @@ spec:
             # seat Job's agent and driver containers (deploy/seat-job.yaml).
             # Switching channel (off | teams | subagents) is an env change.
             - name: SEAT_AGENT_CHANNEL
-              value: teams
+              value: "off"
             - name: SEAT_SUBAGENT_MODEL
               value: claude-opus-5
             - name: SEAT_SUBAGENT_EFFORT
               value: ""
-            # Owner decision 2026-10-03 (S7, seat speed): the seat
-            # orchestrator runs at low effort with a 4000 thinking cap; the
-            # buddy keeps medium via ADVISOR_EFFORT and never gets the cap.
+            # 2026-10-04, owner: pre-pair prod effort (medium) and no
+            # MAX_THINKING_TOKENS cap for seats; the buddy keeps medium via
+            # ADVISOR_EFFORT. AGENT_DEFAULT_MAX_THINKING_TOKENS is unset.
             - name: AGENT_DEFAULT_EFFORT
-              value: low
-            - name: AGENT_DEFAULT_MAX_THINKING_TOKENS
-              value: "4000"
+              value: medium
             - name: ADVISOR_EFFORT
               value: medium
             - name: AGENT_NAMESPACE
