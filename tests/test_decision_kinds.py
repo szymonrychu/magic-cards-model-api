@@ -2844,3 +2844,58 @@ def test_declining_a_dredge_draws_normally(client, game):
     alice = after_game.player("alice")
     assert dredge_id not in [str(c.id) for c in alice.hand]
     assert any(str(c.id) == dredge_id for c in alice.graveyard)
+
+
+def test_a_cast_without_priority_is_refused_before_it_can_pause_on_order_triggers(client, game):
+    """Game 891056b6's deadlock, at the seat level. Bob, holding two prowess
+    creatures, posted a cast while alice held priority. The engine only
+    refused that once the spell was on the stack - after it had already asked
+    bob to order his two prowess triggers (CR 603.3b) - so the cast paused on
+    `order_triggers`, and every `decide` bob sent replayed the cast to its end
+    and was refused "bob does not have priority, alice does", while alice was
+    told "no pending decision for you": no seat could move the game.
+
+    CR 117.1a/CR 601.3 refuse the cast at its proposal instead, so nothing
+    pauses; once alice passes, the same cast is bob's to make, and the
+    ordering question it raises is bob's to answer through `decide`."""
+    uids = seats_for(client, game)
+    force_turn_position(game, Step.DECLARE_BLOCKERS, "alice")
+    add_card(client, game, "Monastery Swiftspear", "bob", "battlefield")
+    add_card(client, game, "Slickshot Show-Off", "bob", "battlefield")
+    mountain = add_card(client, game, "Mountain", "bob", "battlefield")["added"]["card_id"]
+    bolt = add_card(client, game, "Lightning Bolt", "bob", "hand")["added"]["card_id"]
+    cast = {"player": "bob", "card_id": bolt, "mana_sources": [mountain], "targets": ["alice"]}
+
+    refused = client.post(f"/api/games/{game}/actions/cast", params={"uid": uids["bob"]}, json=cast)
+    assert refused.status_code == 200, refused.text
+    assert refused.json()["allowed"] is False, refused.text
+    assert "bob does not have priority, alice does" in refused.json()["reason"]
+    assert not refused.json().get("paused"), refused.text
+    assert state(client, game, uid=uids["bob"])["pending_decision"] is None
+    assert store.get(game).stack == []
+
+    passed = client.post(
+        f"/api/games/{game}/actions/pass-priority",
+        params={"uid": uids["alice"]},
+        json={"player": "alice"},
+    )
+    assert passed.status_code == 200, passed.text
+    paused = client.post(f"/api/games/{game}/actions/cast", params={"uid": uids["bob"]}, json=cast)
+    assert paused.status_code == 200, paused.text
+    assert paused.json().get("paused") is True, paused.text
+    pending = wait_for_pending(client, game, uids["bob"])["pending_decision"]
+    assert pending["player"] == "bob"
+    assert pending["kind"] == "order_triggers"
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "order": list(reversed(pending["cards"]))},
+    )
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["accepted"] is True, answer.text
+    assert [obj.name for obj in store.get(game).stack] == [
+        "Lightning Bolt",
+        "Slickshot Show-Off's triggered ability",
+        "Monastery Swiftspear's triggered ability",
+    ]

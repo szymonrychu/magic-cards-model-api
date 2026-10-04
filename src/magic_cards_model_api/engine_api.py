@@ -1243,6 +1243,19 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
     except ValueError as exc:
         return refused(exc)
 
+    if not req.dry_run:
+        # CR 117.1a's "any time they have priority", asked of the engine
+        # before CR 601.2f-h, the same place `Game.cast` asks it. Left to
+        # `retain_priority` at the end, a cast by a player without priority
+        # first put everything it triggered on the stack - asking that
+        # player to order two prowess triggers (CR 603.3b) - so the command
+        # paused on a question whose every answer replayed into this very
+        # refusal, and the game deadlocked (891056b6). A dry run is a probe
+        # of cost and affordability, not a cast, and is not asked this.
+        not_holding = game.why_not_holding_priority(casting.caster, "CR 117.1a")
+        if not_holding is not None:
+            return refused(not_holding)
+
     payment = None
     try:
         payment = casting.determine_cost(x_value=req.x_value)
