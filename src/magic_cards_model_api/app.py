@@ -29,7 +29,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from magic_cards_model.machines import Step
-from magic_cards_model.machines.decisions import Answer, DecisionKind
+from magic_cards_model.machines.decisions import Answer, DecisionKind, NamedManaAbility
 from magic_cards_model.machines.decisions import PendingDecision as PendingDecisionEngine
 from magic_cards_model.machines.legal_actions import blocked_casts
 from magic_cards_model.machines.priority import PriorityOutcome
@@ -5468,8 +5468,15 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         # `card_ids` without `accept=True` - see `pay_mana_answer`'s own
         # docstring for why declining and naming sources are mutually
         # exclusive already).
+        source_ids = tuple(entry for entry in answer_value if isinstance(entry, UUID))
+        named = tuple(entry for entry in answer_value if isinstance(entry, NamedManaAbility))
         answer = Answer(
-            seq=pending.seq, kind=kind, player=req.player, accept=True, card_ids=answer_value
+            seq=pending.seq,
+            kind=kind,
+            player=req.player,
+            accept=True,
+            card_ids=source_ids,
+            mana_abilities=named or None,
         )
     else:
         field_name = decisions.ANSWER_FIELD_FOR_KIND[kind]

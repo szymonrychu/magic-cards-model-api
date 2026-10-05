@@ -5638,7 +5638,14 @@
             "anyOf": [
               {
                 "items": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ManaSource"
+                    }
+                  ]
                 },
                 "type": "array"
               },

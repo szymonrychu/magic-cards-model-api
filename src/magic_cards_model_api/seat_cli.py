@@ -112,6 +112,7 @@ from .seatkit import (
     autopass_target_error,
     card_reference,
     parse_convoke,
+    parse_mana_sources,
     parse_optional_costs,
     pass_until,
     run_action,
@@ -518,7 +519,9 @@ NAMED_SOURCES_HELP = (
     "comma-separated ids of the mana sources to pay with; only the sources named "
     "are sent. Omit it (or pass '') to name none: the engine's automatic payment "
     "then taps only what the cost needs from your untapped permanents, and the log "
-    "names only the permanents that actually paid"
+    "names only the permanents that actually paid. <id>:<ability index>[:<colours>] "
+    "names a mana ability whatever its cost (e.g. a {0} or {1}, {T} one, CR 605.3a), "
+    "colours one letter per mana (URR)"
 )
 
 
@@ -823,7 +826,10 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(
             "--sources",
             default="",
-            help="comma-separated mana source ids (default: all your untapped sources)",
+            help=(
+                "comma-separated mana source ids, or <id>:<ability index>[:<colours>] for a "
+                "mana ability with any cost (default: all your untapped sources)"
+            ),
         )
         parser.add_argument(
             "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
@@ -850,7 +856,10 @@ def build_parser() -> argparse.ArgumentParser:
     cycle.add_argument(
         "--sources",
         default="",
-        help="comma-separated mana source ids (default: all your untapped sources)",
+        help=(
+            "comma-separated mana source ids, or <id>:<ability index>[:<colours>] for a "
+            "mana ability with any cost (default: all your untapped sources)"
+        ),
     )
     cycle.add_argument(
         "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
@@ -870,7 +879,10 @@ def build_parser() -> argparse.ArgumentParser:
     equip.add_argument(
         "--sources",
         default="",
-        help="comma-separated mana source ids (default: all your untapped sources)",
+        help=(
+            "comma-separated mana source ids, or <id>:<ability index>[:<colours>] for a "
+            "mana ability with any cost (default: all your untapped sources)"
+        ),
     )
     equip.add_argument(
         "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
@@ -1048,7 +1060,9 @@ def build_parser() -> argparse.ArgumentParser:
             "subset of pending_decision.mana_sources - legal only with --accept "
             "yes. Omit it (or pass '') to name none: the engine then taps every "
             "offered source it needs on its own, the same 'name none, let the "
-            "engine pick' rule --sources already follows on cast and activate"
+            "engine pick' rule --sources already follows on cast and activate. "
+            "<id>:<ability index>[:<colours>] activates a mana ability of any cost "
+            "(CR 605.3a) that is never among the offered sources"
         ),
     )
     decide.add_argument(
@@ -1947,7 +1961,7 @@ def run(argv: list[str] | None = None) -> int:
         # already had: this used to branch on the raw string, so `--sources ","`
         # offered the engine nothing at all while the MCP tool, branching on the
         # parsed list, offered everything.
-        def sources_or_all(value: str) -> list[str]:
+        def sources_or_all(value: str) -> list[str | dict[str, Any]]:
             return seat.sources_or_all(value)
 
         #: CR 116.3: "If a player takes a special action, that player receives
@@ -2066,7 +2080,7 @@ def run(argv: list[str] | None = None) -> int:
                 body["spell_face"] = args.spell_face.strip()
             if args.target:
                 body["targets"] = _parse_ids(args.target)
-            sources = _parse_ids(args.sources)
+            sources = parse_mana_sources(args.sources)
             if sources:
                 body["mana_sources"] = sources
             if args.modes:
@@ -2164,7 +2178,7 @@ def run(argv: list[str] | None = None) -> int:
             }
             if args.target:
                 body["targets"] = _parse_ids(args.target)
-            sources = _parse_ids(args.sources)
+            sources = parse_mana_sources(args.sources)
             if sources:
                 body["mana_sources"] = sources
             if args.sacrificing:
@@ -2300,7 +2314,7 @@ def run(argv: list[str] | None = None) -> int:
                 }
                 if args.accept is not None:
                     body["accept"] = args.accept == "yes"
-                sources = _parse_ids(args.sources)
+                sources = parse_mana_sources(args.sources)
                 if sources:
                     body["mana_sources"] = sources
                 if args.top_order:

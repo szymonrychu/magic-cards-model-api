@@ -69,7 +69,7 @@ export function manaSources(pinned, untapped) {
  * the ability's own count (`engine_api._expanded_to_the_abilitys_own_count`),
  * because that count is nowhere on `AbilityView` for this side to read and
  * every other client would have to guess at it too. */
-function manaSource(p) {
+export function manaSource(p) {
   const index = p.ability_index ?? null;
   const colors = p.color ? splitColors(p.color) : null;
   if (index === null) return colors ? { card_id: p.card_id, colors } : p.card_id;

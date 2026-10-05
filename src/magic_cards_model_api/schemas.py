@@ -1716,11 +1716,14 @@ class DecideRequest(BoardRead):
     `pay_life` decision, a fixed "pay {E}{E}" is `pay_energy`. `None` (the
     default) is refused rather than treated as "no": a client must say which
     one it means."""
-    mana_sources: list[str] | None = None
+    mana_sources: list[str | ManaSource] | None = None
     """The `pay_mana` kind's optional companion to `accept` (CR 608.2g, CR
     605.3a; engine PR #17, B6-08): which of `pending_decision.mana_sources` -
     the payer's own untapped permanents - to activate while paying, rather
-    than leaving the engine to tap them all. Legal only alongside `accept:
+    than leaving the engine to tap them all. An entry naming an
+    `ability_index` (`ManaSource`) activates that mana ability whatever its
+    cost - Vivi Ornitier's `{0}` is never among the offered `{T}` sources -
+    and the engine refuses it in its own words when it cannot be paid. Legal only alongside `accept:
     true` - naming sources while declining is refused, matching the engine's
     own `Answer` shape. `None` (the default) is the plain yes/no this kind has
     always taken; an empty list is a real, different answer from omitting the

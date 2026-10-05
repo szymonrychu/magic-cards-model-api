@@ -159,6 +159,7 @@ from .seatkit import (
     card_reference,
     decision_is_mine,
     parse_convoke,
+    parse_mana_sources,
     parse_optional_costs,
     run_action,
     run_decision,
@@ -1704,9 +1705,10 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
                 `mana_sources` is comma-separated source
                 ids, and only the sources named are sent; leave it empty to name
                 none, and the engine's automatic payment taps only what the cost
-                needs from your untapped permanents. Set `dry_run` to true to ask
-                "could I cast this?" without changing anything (a dry run never
-                blocks).
+                needs from your untapped permanents. `<id>:<ability index>[:<colours>]`
+                names a mana ability of any cost (`{0}`, `{1}, {T}`). Set `dry_run`
+                to true to ask "could I cast this?" without changing anything (a dry
+                run never blocks).
 
         **A split card is two casts, and `spell_face` is how you say which.**
                 Wear // Tear is offered to you as TWO `cast` entries in
@@ -1921,7 +1923,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             body["spell_face"] = spell_face.strip()
         if targets:
             body["targets"] = _parse_ids(targets)
-        sources = _parse_ids(mana_sources)
+        sources = parse_mana_sources(mana_sources)
         if sources:
             body["mana_sources"] = sources
         if modes:
@@ -2341,7 +2343,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         }
         if targets:
             body["targets"] = _parse_ids(targets)
-        sources = _parse_ids(mana_sources)
+        sources = parse_mana_sources(mana_sources)
         if sources:
             body["mana_sources"] = sources
         if sacrificing:
@@ -3053,7 +3055,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         }
         if accept is not None:
             body["accept"] = accept
-        sources = _parse_ids(mana_sources)
+        sources = parse_mana_sources(mana_sources)
         if sources:
             body["mana_sources"] = sources
         if top_order:

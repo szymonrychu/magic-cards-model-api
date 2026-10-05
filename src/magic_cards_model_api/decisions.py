@@ -46,9 +46,11 @@ from magic_cards_model.machines.decisions import (
     Decision,
     DecisionKind,
     DeclaredPair,
+    NamedManaAbility,
     damage_assignment_answer,
     legal_options,
 )
+from magic_cards_model.models.card import Color
 from magic_cards_model.models.card_state import TargetRef
 
 from .schemas import DamageAssignmentRequest, DeclaredPairRequest
@@ -898,7 +900,9 @@ def bool_answer(accept: bool | None) -> bool:
     return accept
 
 
-def pay_mana_answer(accept: bool | None, mana_sources: list[str] | None) -> bool | tuple[UUID, ...]:
+def pay_mana_answer(
+    accept: bool | None, mana_sources: list[Any] | None
+) -> bool | tuple[UUID | NamedManaAbility, ...]:
     """A `decide` request body's `accept`/`mana_sources`, in the shape
     `Game.ask` expects for `PAY_MANA` (CR 608.2g, CR 605.3a) - either a bare
     `bool` (`bool_answer`'s own shape, still legal: `accept: true` alone taps
@@ -926,7 +930,25 @@ def pay_mana_answer(accept: bool | None, mana_sources: list[str] | None) -> bool
         raise ValueError(
             "this decision names mana sources only when it pays ('accept' must be true)"
         )
-    return tuple(parse_id(source_id, "mana source id") for source_id in mana_sources)
+    answer: list[UUID | NamedManaAbility] = []
+    for entry in mana_sources:
+        index = getattr(entry, "ability_index", None)
+        if index is None:
+            # A bare id, or a `ManaSource` naming no ability: one of the
+            # offered sources, which the engine taps (`auto_tap`).
+            card_id = getattr(entry, "card_id", entry)
+            answer.append(parse_id(str(card_id), "mana source id"))
+            continue
+        # CR 605.3a: a mana ability of any cost, activated in full while
+        # paying (`CostPayment.activate_mana_ability`).
+        try:
+            colors = tuple(Color(color.strip().upper()) for color in entry.colors or ())
+        except ValueError as exc:
+            raise ValueError(
+                f"unknown mana color in {entry.colors}: use W, U, B, R, G or C"
+            ) from exc
+        answer.append(NamedManaAbility(card_id=entry.card_id, ability_index=index, colors=colors))
+    return tuple(answer)
 
 
 def energy_amount_answer(energy_amount: int | None) -> int:
@@ -1326,16 +1348,19 @@ def validate_answer(decision: Decision, value: object) -> None:
         # checked and worded identically, and checked *before* the plain
         # yes/no branch below so a tuple answer never falls into "needs a
         # bool answer" the way a stray non-bool would.
-        if not all(isinstance(card_id, UUID) for card_id in value):
+        if not all(isinstance(entry, UUID | NamedManaAbility) for entry in value):
             raise ValueError(f"{decision.prompt}: needs a tuple of mana source ids")
         offered = set(decision.mana_sources)
-        stray = [str(card_id) for card_id in value if card_id not in offered]
+        stray = [str(entry) for entry in value if isinstance(entry, UUID) and entry not in offered]
         if stray:
             raise ValueError(
                 f"{decision.prompt}: {', '.join(stray)} is not one of the mana sources "
                 f"{decision.player} can activate while paying (CR 605.3a)"
             )
-        if True not in legal_options(decision):
+        named = any(isinstance(entry, NamedManaAbility) for entry in value)
+        if True not in legal_options(decision) and not named:
+            # The engine's own rule: a named mana ability of any cost is
+            # judged by the payment itself, which refuses what it cannot pay.
             raise ValueError(_illegal_option_refusal(decision))
         return
 

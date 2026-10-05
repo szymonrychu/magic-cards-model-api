@@ -609,6 +609,7 @@ def pay_with(
     list does not already say. The refusal a caller does still get is for a
     source it named that *was* needed and could not pay.
     """
+    from magic_cards_model.machines.abilities import CostKind
     from magic_cards_model.machines.cost import spend_restriction
 
     unpinned: list[CardState] = []
@@ -618,6 +619,15 @@ def pay_with(
             if not owes_mana(payment):
                 continue
             ability = mana_ability_at(game, source, entry.ability_index)
+            if [piece.kind for piece in ability.costs] != [CostKind.TAP]:
+                # CR 605.3a: any mana ability may be activated while paying,
+                # whatever its cost - Vivi Ornitier's `{0}`, Rakdos Signet's
+                # `{1}, {T}`. The engine activates it in full and refuses it
+                # in its own words when that cost cannot be paid.
+                payment.activate_mana_ability(
+                    source, entry.ability_index, color=named_mana_colors(entry.colors)
+                )
+                continue
             payment.tap_for_mana(
                 source,
                 mana_colors(source, entry.colors, game, entry.ability_index),
@@ -654,6 +664,18 @@ def pay_with(
             # such as a CR 106.6 restriction, rather than "no combination".
 
 
+def named_mana_colors(colors: list[str] | None) -> list[Color] | None:
+    """A `ManaSource.colors` list as the engine's colours - the choice the
+    named ability offers, handed to `Game.activate_ability` as it is - or
+    `None` when nothing was named."""
+    if not colors:
+        return None
+    try:
+        return [Color(color.strip().upper()) for color in colors]
+    except ValueError as exc:
+        raise ValueError(f"unknown mana color in {colors}: use W, U, B, R, G or C") from exc
+
+
 def shortfall_reason(payment: Any) -> str:
     """The engine's own wording for an unpaid cost, composed from its parts."""
     if payment.unpayable:
@@ -676,7 +698,10 @@ def tapped_view(payment: Any) -> list[dict[str, str]]:
     """
     game = getattr(payment, "game", None)
     view: list[dict[str, str]] = []
-    for entry in getattr(payment, "tapped_for_mana", []):
+    # CR 605.3a: a mana ability activated mid-payment whatever its cost
+    # (`CostPayment.activate_mana_ability`) paid too, after the taps.
+    activated = list(getattr(payment, "mana_abilities_activated", []))
+    for entry in [*getattr(payment, "tapped_for_mana", []), *activated]:
         source = entry
         if isinstance(entry, UUID):
             source = game.find_by_id(entry) if game is not None else None

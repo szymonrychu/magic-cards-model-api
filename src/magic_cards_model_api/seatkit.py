@@ -2444,7 +2444,9 @@ class Seat:
             body["still_because"] = still_because
         return self.call_json("POST", f"/api/games/{self.game_id()}/plan", body)
 
-    def sources_or_all(self, given: str, state: dict[str, Any] | None = None) -> list[str]:
+    def sources_or_all(
+        self, given: str, state: dict[str, Any] | None = None
+    ) -> list[str | dict[str, Any]]:
         """Which mana sources to offer: the ones named, else all untapped ones.
 
         Shared by both transports so "empty means all of them" can only ever
@@ -2455,10 +2457,10 @@ class Seat:
         bare comma, stray whitespace) offered the engine *no* sources at all
         and the action was refused for mana it plainly had.
         """
-        named = _parse_ids(given)
+        named = parse_mana_sources(given)
         if named:
             return named
-        return self.my_untapped_sources(state if state is not None else self.fetch_state())
+        return list(self.my_untapped_sources(state if state is not None else self.fetch_state()))
 
     def my_untapped_sources(self, state: dict[str, Any]) -> list[str]:
         """Every untapped mana source I control, the set the UI offers too.
@@ -2734,6 +2736,37 @@ def _parse_ids(value: str | list[str]) -> list[str]:
     if value.startswith("["):
         return [str(entry) for entry in json.loads(value)]
     return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def parse_mana_sources(value: str | list[str]) -> list[str | dict[str, Any]]:
+    """`mana_sources` out of a comma-separated string (or a JSON/plain list):
+    each entry a bare card id, or `<card id>:<ability index>[:<colours>]`
+    naming *which* mana ability of the source pays, whatever its cost (CR
+    605.3a - Vivi Ornitier's `{0}`, Rakdos Signet's `{1}, {T}`), and the
+    colours it makes, one letter per mana ("URR"). The second shape goes out
+    as the api's own `ManaSource` (`card_id`, `ability_index`, `colors`) - the
+    one parser `seat_cli.py`'s `--sources` and `mcp.py`'s `mana_sources`
+    share."""
+    entries: list[str | dict[str, Any]] = []
+    for token in _parse_ids(value):
+        if ":" not in token:
+            entries.append(token)
+            continue
+        card_id, _, rest = token.partition(":")
+        index_text, _, colors = rest.partition(":")
+        try:
+            index = int(index_text)
+        except ValueError:
+            raise ValueError(
+                f"mana source {token!r}: expected <card id>:<ability index>[:<colours>], "
+                f"and {index_text!r} is not an ability index"
+            ) from None
+        entry: dict[str, Any] = {"card_id": card_id.strip(), "ability_index": index}
+        letters = [letter.upper() for letter in colors.strip() if not letter.isspace()]
+        if letters:
+            entry["colors"] = letters
+        entries.append(entry)
+    return entries
 
 
 def parse_optional_costs(value: str) -> list[dict[str, Any]]:

@@ -414,6 +414,18 @@ export function planPermanentClick(card, app, state) {
   const pendingTargets =
     decisionIsMine(state, state.pending_decision) &&
     state.pending_decision.kind === "choose_targets";
+  // CR 608.2g: while this seat's own "pay {N}?" question is pending (a ward
+  // cost, an "unless pays"), its mana permanents are pinned for that
+  // payment - any mana ability, whatever its cost (CR 605.3a).
+  if (
+    !app.action &&
+    decisionIsMine(state, state.pending_decision) &&
+    state.pending_decision.kind === "pay_mana" &&
+    card.controller === seat &&
+    (card.abilities || []).some((a) => a.is_mana_ability)
+  ) {
+    return { kind: "pin_decision" };
+  }
   if (app.action || pendingTargets) {
     const isCandidate = Boolean(
       app.action &&
@@ -1287,6 +1299,7 @@ async function onPermanentImpl(card, event) {
   const state = app.state;
   const plan = planPermanentClick(card, app, state);
   if (plan.kind === "pin") return pinLand(card, event);
+  if (plan.kind === "pin_decision") return pinForDecision(card, event);
   if (plan.kind === "target") return tryTarget(plan.id);
   if (plan.kind === "attack") return toggleAttacker(card, event);
   if (plan.kind === "block") return toggleBlock(card);
@@ -1496,7 +1509,11 @@ export function planPinnedAbility(card, abilityIndex) {
 
 function pinStep(card, index, named) {
   const colors = colorChoices(card, index);
-  const abilityIndex = named ? index : null;
+  // CR 605.3a: a mana ability whose cost is more than a bare {T} (Vivi
+  // Ornitier's {0}, a Signet's {1}, {T}) is activated in full while paying,
+  // which the server does only for a source that names its ability - so it
+  // is named even when it is the source's only mana ability.
+  const abilityIndex = named || costsMoreThanTap(card, index) ? index : null;
   if (colors.length > 1) return { kind: "colour", abilityIndex, colors };
   // No single colour to pin (`colorOptions` came back empty - a one-option
   // ability reports `mana_options: null`, `affordances.py`'s own
@@ -1505,6 +1522,15 @@ function pinStep(card, index, named) {
   // `auto_tap` rather than forcing a colourless `"C"` choice onto a land
   // that never produces colourless mana at all.
   return { kind: "pin", abilityIndex, color: colors[0] ?? null };
+}
+
+/** Whether mana ability `index` of `card` costs anything but a bare {T} -
+ * read off `AbilityView.cost`; a payload without one is the plain tap it
+ * always meant. */
+function costsMoreThanTap(card, index) {
+  const ability = manaAbilities(card).find((a) => a.index === index);
+  const cost = ability && ability.cost;
+  return Boolean(cost) && cost.trim() !== "{T}";
 }
 
 /** Exported for `tests/test_ui_app.py` only, alongside `store`/`fire`/
@@ -1526,6 +1552,37 @@ export async function pinLand(card, event) {
     });
   }
   return settlePin(anchor, card, plan);
+}
+
+/** `pinLand`'s twin for a pending `pay_mana` decision (CR 608.2g): the same
+ * which-ability / which-colour plan, written into `decisionDraft.pinned`,
+ * which `decisions.js`'s `payMana` sends with the "Pay" answer. */
+async function pinForDecision(card, event) {
+  const draftPins = () => (store.get().decisionDraft || {}).pinned || [];
+  const setPins = (pinned) =>
+    store.set((s) => ({ decisionDraft: { ...s.decisionDraft, pinned } }));
+  const plan = planPin(card, { pinned: draftPins() });
+  if (plan.kind === "unpin") return setPins(draftPins().filter((p) => p.card_id !== card.id));
+  const anchor = anchorFor(card, event);
+  const settle = (step) => {
+    if (step.kind === "colour") {
+      return openCardMenuAt(anchor, card, M.manaMenuItems(step.colors), (key) => {
+        const colour = key.slice("colour:".length);
+        setPins(pinSourceList(draftPins(), card.id, colour, step.abilityIndex));
+      });
+    }
+    setPins(pinSourceList(draftPins(), card.id, step.color, step.abilityIndex));
+  };
+  if (plan.kind === "ability") {
+    return openCardMenuAt(anchor, card, M.manaAbilityMenuItems(plan.abilities), (key) =>
+      settle(planPinnedAbility(card, Number(key.slice("ability:".length))))
+    );
+  }
+  return settle(plan);
+}
+
+function pinSourceList(pinned, id, color, abilityIndex) {
+  return A.pinSource({ pinned }, id, color, abilityIndex).pinned;
 }
 
 /** Act on a settled `planPin`/`planPinnedAbility` step: ask for the colour

@@ -14,6 +14,7 @@
 // for the kinds `usesDecisionWindow` names. All post exactly the answer the
 // view model says.
 import { fill, flatten, isSatisfied, slotsFromAffordance } from "./targeting.js";
+import { manaSource } from "./mana.js";
 
 // -- moved verbatim from ui/app.js (chooseCardsOptions, triggerOrderOptions)
 
@@ -118,6 +119,26 @@ function yesNo(pending, yes, no) {
     },
     secondary: { label: no, answer: { accept: false } },
     remaining: null,
+  };
+}
+
+/** `pay_mana` (CR 608.2g): yes/no, plus whatever mana sources the player
+ * pinned on the board while it was pending (`app.js`'s `pinForDecision`) -
+ * each in `mana.js`'s `manaSource` wire shape, so a mana ability of any cost
+ * (CR 605.3a, Vivi Ornitier's {0}) goes out naming its index and colours.
+ * With pins the engine judges the payment itself (`affirmative_is_legal`
+ * counts only the offered {T} sources), so "Pay" is not greyed out. */
+function payMana(pending, draft) {
+  const view = yesNo(pending, "Pay", "Don't pay");
+  const pinned = draft.pinned || [];
+  if (!pinned.length) return view;
+  return {
+    ...view,
+    submit: {
+      ...view.submit,
+      enabled: true,
+      answer: { accept: true, mana_sources: pinned.map(manaSource) },
+    },
   };
 }
 
@@ -567,7 +588,7 @@ export const DECISION_KINDS = {
   may: (p) => yesNo(p, "Yes", "No"),
   pay_life: (p) => yesNo(p, "Pay", "Don't pay"),
   pay_energy: (p) => yesNo(p, "Pay", "Don't pay"),
-  pay_mana: (p) => yesNo(p, "Pay", "Don't pay"),
+  pay_mana: payMana,
   pay_energy_amount: (p, d) => amount(p, d, "energy_amount"),
   pay_life_amount: (p, d) => amount(p, d, "life_amount"),
   // CR 608.2d's "up to N" with nothing paid (Clockwork Steed's "put up to X

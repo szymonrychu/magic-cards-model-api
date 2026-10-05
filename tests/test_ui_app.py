@@ -2304,6 +2304,91 @@ SHANG_CHI = {
 }
 
 
+VIVI_ORNITIER = {
+    "id": "vv",
+    "name": "Vivi Ornitier",
+    "type_line": "Legendary Creature - Wizard",
+    "zone": "battlefield",
+    "controller": "alice",
+    "tapped": False,
+    "abilities": [
+        {
+            "index": 0,
+            "text": (
+                "{0}: Add X mana in any combination of {U} and/or {R}, where X is "
+                "Vivi Ornitier's power. Activate only during your turn and only once each turn."
+            ),
+            "cost": "{0}",
+            "is_mana_ability": True,
+            "mana_options": [["U"], ["R"]],
+            "mana_choice_count": 1,
+        },
+    ],
+}
+
+RAKDOS_SIGNET = {
+    "id": "rs",
+    "name": "Rakdos Signet",
+    "type_line": "Artifact",
+    "zone": "battlefield",
+    "controller": "alice",
+    "tapped": False,
+    "abilities": [
+        {
+            "index": 0,
+            "text": "{1}, {T}: Add {B}{R}.",
+            "cost": "{1}, {T}",
+            "is_mana_ability": True,
+            "mana_options": None,
+        },
+    ],
+}
+
+
+def test_a_mana_ability_costing_more_than_tap_is_pinned_by_its_index() -> None:
+    """CR 605.3a: a mana ability whose cost is not a bare {T} is activated in
+    full while paying (`CostPayment.activate_mana_ability`), which the server
+    does only for a source naming its ability - so its one ability is named
+    even though there is no other to choose between."""
+    signet = run_app("m.planPin(land, action)", land=RAKDOS_SIGNET, action=pinning_action())
+    assert signet == {"kind": "pin", "abilityIndex": 0, "color": None}
+    vivi = run_app("m.planPin(land, action)", land=VIVI_ORNITIER, action=pinning_action())
+    assert vivi == {"kind": "colour", "abilityIndex": 0, "colors": ["U", "R"]}
+
+
+def test_a_pending_pay_mana_decision_pins_a_mana_source_on_click() -> None:
+    """CR 608.2g: "If an effect gives a player the option to pay mana, they
+    may activate mana abilities before taking that action" - while this
+    seat's own `pay_mana` decision is pending (a ward cost), clicking a
+    permanent of its own with a mana ability pins it for that payment."""
+    plan = run_app(
+        "m.planPermanentClick(vivi, app, state)",
+        vivi=VIVI_ORNITIER,
+        app=base_app(),
+        state=base_state(pending_decision={"player": "alice", "kind": "pay_mana"}),
+    )
+    assert plan == {"kind": "pin_decision"}
+
+
+def test_a_pay_mana_answer_carries_the_pinned_mana_abilities() -> None:
+    from ui_node import run_module
+
+    pending = {"kind": "pay_mana", "player": "alice", "prompt": "pay {2}", "mana_sources": []}
+    unpinned = run_module("decisions.js", "m.viewModel(p, {})", p=pending)
+    assert unpinned["submit"]["answer"] == {"accept": True}
+    pinned = run_module(
+        "decisions.js",
+        "m.viewModel(p, d)",
+        p={**pending, "affirmative_is_legal": False},
+        d={"pinned": [{"card_id": "vv", "color": "U,R", "ability_index": 0}]},
+    )
+    assert pinned["submit"]["enabled"] is True
+    assert pinned["submit"]["answer"] == {
+        "accept": True,
+        "mana_sources": [{"card_id": "vv", "colors": ["U", "R"], "ability_index": 0}],
+    }
+
+
 def pinning_action(**overrides: Any) -> dict:
     return {"cardId": "spell1", "pinned": [], **overrides}
 
