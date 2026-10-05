@@ -330,7 +330,9 @@ def _adds_any_color(source: CardState, game: Game, mana: Any) -> bool:
         imprinted,
         chosen_color=_chosen_color(source),
     )
-    return bool(any_color)
+    # "N mana in any combination of {U} and/or {R}" is a per-mana choice too,
+    # over its printed palette rather than all five.
+    return bool(any_color) or bool(mana.any_color_mixed)
 
 
 def _chosen_color(source: CardState) -> Color | None:
@@ -1993,6 +1995,17 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
         color = Color(req.color.strip().upper()) if req.color else None
     except ValueError:
         return refused(f"unknown mana color {req.color!r}: use W, U, B, R, G or C")
+    # The split of "Add N mana in any combination of <colours>", one colour
+    # per mana (CR 106.1a) - `ManaAbility.resolve`'s own mixture limb, which
+    # refuses a wrong count or a colour outside the palette in its own words.
+    chosen: Color | list[Color] | None = color
+    if req.colors is not None:
+        if req.color is not None:
+            return refused("name the mana's colour once: `color` or `colors`, not both")
+        try:
+            chosen = [Color(letter.strip().upper()) for letter in req.colors]
+        except ValueError:
+            return refused(f"unknown mana color in {req.colors}: use W, U, B, R, G or C")
 
     if permanent.zone is not Zone.BATTLEFIELD:
         return _activate_off_zone_ability(game, permanent, req)
@@ -2062,7 +2075,7 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
             permanent,
             req.ability_index,
             req.player,
-            color=color,
+            color=chosen,
             x_value=req.x_value or 0,
         )
     except ValueError as exc:
@@ -2539,6 +2552,11 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
                 "text": ability.text,
                 "mana": is_mana_ability(ability),
                 **_mana_counts(game, state, ability, index, scanned),
+                "mana_choice_count": (
+                    game.mana_color_choice_count(state, index)
+                    if getattr(ability, "mana", None) is not None
+                    else None
+                ),
                 # What activating it actually asks the player for: its cost, a
                 # loyalty symbol (CR 606.2), an X to announce, and whether it
                 # targets at all. A UI without this cannot tell Karn's `+1`

@@ -441,7 +441,9 @@ export function manaAbilityMenuItems(abilities) {
 
 /** One item per colour a pinned mana source could be tapped for. */
 export function manaMenuItems(colors) {
-  return (colors || []).map((color) => item(`colour:${color}`, `Tap for {${color}}`));
+  return (colors || []).map((color) =>
+    item(`colour:${color}`, `Tap for ${String(color).split(",").map((c) => `{${c}}`).join("")}`)
+  );
 }
 
 /** One item per legal defender an attacker can be aimed at - the opponent,

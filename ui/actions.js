@@ -652,7 +652,10 @@ export function bodyFor(action, you, untapped) {
   if (action.kind === "station") return { ...body, tapping: action.tapping };
   if (action.kind === "activate") {
     body.ability_index = action.abilityIndex;
-    if (action.color) body.color = action.color;
+    // "U,R,R" is the split of an "any combination" ability: `colors`.
+    if (action.color && String(action.color).includes(",")) {
+      body.colors = String(action.color).split(",");
+    } else if (action.color) body.color = action.color;
   }
   if (action.kind !== "special") {
     // A special action's request has no `targets`/`shares` fields at all

@@ -2307,6 +2307,11 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         own cost needs it is refused with the engine's own reason - it is
         never silently activated for X=0.
 
+        `color` with commas is the split for "Add N mana in any combination
+        of <colours>" (CR 106.1a): one colour letter per mana - `"U,R,R"` for
+        Vivi Ornitier at power 3. The ability's state-view entry says how many
+        (`mana_choice_count`) and from which (`mana_options`).
+
         Mana abilities resolve immediately and never touch the stack
         (CR 605.3b); every other ability goes on the stack and needs priority
         to be released before it resolves. This tool follows that split rather
@@ -2347,7 +2352,10 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             body["exiling"] = _parse_ids(exiling)
         if x_value is not None:
             body["x_value"] = x_value
-        if color:
+        if "," in color:
+            # One colour per mana: the split of an "any combination" ability.
+            body["colors"] = [letter.strip() for letter in color.split(",") if letter.strip()]
+        elif color:
             body["color"] = color
         if reasoning:
             body["reasoning"] = reasoning

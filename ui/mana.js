@@ -71,11 +71,18 @@ export function manaSources(pinned, untapped) {
  * every other client would have to guess at it too. */
 function manaSource(p) {
   const index = p.ability_index ?? null;
-  if (index === null) return p.color ? { card_id: p.card_id, colors: [p.color] } : p.card_id;
+  const colors = p.color ? splitColors(p.color) : null;
+  if (index === null) return colors ? { card_id: p.card_id, colors } : p.card_id;
   const source = { card_id: p.card_id };
-  if (p.color) source.colors = [p.color];
+  if (colors) source.colors = colors;
   source.ability_index = index;
   return source;
+}
+
+/** A chosen colour as the wire's list: `"R"` is one choice, `"U,R,R"` the
+ * split of an "any combination" ability, one colour per mana. */
+export function splitColors(choice) {
+  return String(choice).split(",").filter(Boolean);
 }
 
 /** `card`'s mana abilities, each carrying its own `index` - the index
@@ -97,6 +104,32 @@ export function manaAbilities(card) {
 function abilityAt(card, abilityIndex) {
   const abilities = (card && card.abilities) || [];
   return abilities.find((a) => a && a.index === abilityIndex) || abilities[abilityIndex];
+}
+
+/** The cap on how many splits a menu lists; a mixture with more than this
+ * falls back to one colour per choice, which the engine expands to the
+ * ability's own count (`engine_api._expanded_to_the_abilitys_own_count`). */
+const MAX_SPLITS = 36;
+
+/** What a player picks from for this mana ability: its colours, or - for
+ * "Add N mana in any combination of <colours>" (`mana_choice_count` > 1,
+ * CR 106.1a) - every split of N mana over them, each as `"U,R,R"`. */
+export function colorChoices(card, abilityIndex) {
+  const colors = colorOptions(card, abilityIndex);
+  const ability = abilityAt(card, abilityIndex);
+  const count = (ability && ability.mana_choice_count) || 0;
+  if (count <= 1 || colors.length <= 1) return colors;
+  const splits = [];
+  const walk = (start, picked) => {
+    if (splits.length > MAX_SPLITS) return;
+    if (picked.length === count) {
+      splits.push(picked.join(","));
+      return;
+    }
+    for (let i = start; i < colors.length; i++) walk(i, [...picked, colors[i]]);
+  };
+  walk(0, []);
+  return splits.length > MAX_SPLITS ? colors : splits;
 }
 
 export function colorOptions(card, abilityIndex) {

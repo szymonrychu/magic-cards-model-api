@@ -26,7 +26,7 @@ import { loadSymbols } from "./symbols.js";
 import * as A from "./actions.js";
 import * as P from "./priority.js";
 import * as C from "./combat.js";
-import { untappedSources, colorOptions, manaAbilities } from "./mana.js";
+import { untappedSources, colorChoices, manaAbilities } from "./mana.js";
 import * as M from "./menus.js";
 import { viewModel } from "./decisions.js";
 import { fill, canFill } from "./targeting.js";
@@ -1451,7 +1451,7 @@ export async function fireUnlockDoor(card, door, expectedSeq) {
 async function beginActivate(card, index) {
   hidePopover();
   let action = A.begin("activate", card, { abilityIndex: index });
-  const colors = colorOptions(card, index);
+  const colors = colorChoices(card, index);
   if (colors.length === 1) action = A.chooseColor(action, colors[0]);
   store.set({ action, preview: null, pendingRelease: null });
   if (!A.needsChoices(card, index) || (colors.length <= 1 && !(card.abilities[index].targeting || {}).targets_anything && !card.abilities[index].needs_x)) {
@@ -1495,7 +1495,7 @@ export function planPinnedAbility(card, abilityIndex) {
 }
 
 function pinStep(card, index, named) {
-  const colors = colorOptions(card, index);
+  const colors = colorChoices(card, index);
   const abilityIndex = named ? index : null;
   if (colors.length > 1) return { kind: "colour", abilityIndex, colors };
   // No single colour to pin (`colorOptions` came back empty - a one-option

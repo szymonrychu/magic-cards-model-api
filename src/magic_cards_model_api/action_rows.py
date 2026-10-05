@@ -851,7 +851,9 @@ class _Rows:
             options, any_color = effective_production(self.game, permanent, mana)
         except ValueError:
             return []
-        if any_color:
+        if any_color or mana.any_color_mixed:
+            # "N mana in any combination" tried one colour at a time, as an
+            # any-colour source is - the engine fills in its own count.
             return list(self.game.mana_color_options(permanent, index, self.player))
         if len(options) == 1:
             return [None]

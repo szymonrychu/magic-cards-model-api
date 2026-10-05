@@ -55,7 +55,7 @@ import { decisionIsMine } from "../control.js";
 import { attackCandidates, blockCandidates } from "../combat.js";
 import { clear, h, setText } from "../dom.js";
 import { flatten } from "../targeting.js";
-import { colorOptions } from "../mana.js";
+import { colorChoices } from "../mana.js";
 import { anchoredPosition } from "../menus.js";
 import { withSymbols, restrictedManaRows } from "../symbols.js";
 import {
@@ -421,7 +421,8 @@ function renderModeChips(card, action, handlers, symbols) {
 
 function renderColorChips(card, action, handlers, symbols) {
   if (action.abilityIndex === null) return null;
-  const colors = colorOptions(card, action.abilityIndex);
+  // A split ("U,R,R") for an "any combination" ability, else one colour.
+  const colors = colorChoices(card, action.abilityIndex);
   if (colors.length <= 1) return null;
   return h(
     "div",
@@ -431,7 +432,7 @@ function renderColorChips(card, action, handlers, symbols) {
       "div",
       { class: "chip-row" },
       ...colors.map((c) =>
-        h("button", { class: `chip ${action.color === c ? "on" : ""}`, onClick: () => handlers.onChooseColor(c) }, withSymbols(symbols, `{${c}}`, true))
+        h("button", { class: `chip ${action.color === c ? "on" : ""}`, onClick: () => handlers.onChooseColor(c) }, withSymbols(symbols, c.split(",").map((x) => `{${x}}`).join(""), true))
       )
     )
   );

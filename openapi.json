@@ -48,6 +48,17 @@
             ],
             "title": "Mana Amount"
           },
+          "mana_choice_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Choice Count"
+          },
           "mana_cost_value": {
             "anyOf": [
               {
@@ -1469,6 +1480,20 @@
               }
             ],
             "title": "Color"
+          },
+          "colors": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colors"
           },
           "discarding": {
             "anyOf": [

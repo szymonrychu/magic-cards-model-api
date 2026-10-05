@@ -1559,6 +1559,11 @@ class ActivateRequest(BoardRead):
     """Color letter ("W", "U", "B", "R", "G", "C") chosen for a mana ability
     that offers one - an "any color" source or a dual land. Ignored by any
     ability that does not need a choice."""
+    colors: list[str] | None = None
+    """The split for "Add N mana in any combination of <colours>" (CR 106.1a):
+    one colour letter per mana, `AbilityView.mana_choice_count` of them, each
+    from `AbilityView.mana_options` - `["U", "R", "R"]` for Vivi Ornitier at
+    power 3. Instead of `color`, never beside it."""
     dry_run: bool = False
     reasoning: str | None = None
     """T10: required for an agent seat (`records.require_reasoning`),
@@ -2152,6 +2157,14 @@ class AbilityView(BaseModel):
     is_mana_ability: bool
     loyalty: LoyaltyHintView | None = None
     mana_options: list[str] | None = None
+    mana_choice_count: int | None = None
+    """How many colours an activation names out of `mana_options` - one per
+    mana for "Add N mana in any combination of <colours>" (CR 106.1a: each
+    mana's colour chosen on its own; Vivi Ornitier's "X mana in any
+    combination of {U} and/or {R}" at power 3 is 3), 1 for any other colour
+    choice, 0 when there is none. `None` for an ability that is not a mana
+    ability. Pass the split as `ActivateRequest.colors` or `ManaSource.colors`.
+    """
     targeting: TargetingProfileView
     restriction: RestrictionView | None = None
     """The CR 106.6 restriction the mana this ability makes would carry

@@ -256,8 +256,8 @@ you act on (0-based). On the battlefield, intrinsic mana abilities come after pr
 hand, graveyard or exile the list holds only abilities that function there, renumbered from 0 - \
 never carry a number across zones.
 
-`targets`: comma-separated ids. `color`: W, U, B, R, G or C - required when the ability chooses \
-a color of mana (Birds of Paradise, Mox Diamond, dual lands); ignored otherwise. \
+`targets`: comma-separated ids. `color`: W, U, B, R, G or C when the ability chooses a color of \
+mana (Birds of Paradise); for N mana in any combination, one per mana (`U,R,R`). \
 `sacrificing`/`discarding`/`exiling`: ids for the cost's object-naming part (CR 118.3), as many \
 as it asks: Goblin Bombardment is `activate(..., sacrificing="<creature id>", targets="<any \
 target>")`; `exiling` also covers graveyard costs (Scrapheap Scrounger). `x_value`: X in the \

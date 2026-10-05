@@ -945,6 +945,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="color letter (W/U/B/R/G/C) for a mana ability that offers a choice",
     )
     activate.add_argument(
+        "--colors",
+        default="",
+        help=(
+            "comma-separated color letters, one per mana, for 'Add N mana in any "
+            "combination of <colours>' (the ability's mana_choice_count of them, "
+            "from its mana_options) - instead of --color"
+        ),
+    )
+    activate.add_argument(
         "--x",
         type=int,
         default=None,
@@ -2168,6 +2177,8 @@ def run(argv: list[str] | None = None) -> int:
                 body["x_value"] = args.x
             if args.color:
                 body["color"] = args.color
+            if args.colors:
+                body["colors"] = [c.strip() for c in args.colors.split(",") if c.strip()]
             if args.reasoning:
                 body["reasoning"] = args.reasoning
             with locked():
