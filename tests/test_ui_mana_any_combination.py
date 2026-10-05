@@ -58,7 +58,8 @@ def test_a_pinned_split_goes_out_one_colour_per_mana() -> None:
 def test_an_activation_with_a_split_sends_colors() -> None:
     body = run_module(
         "actions.js",
-        "m.bodyFor({kind: 'activate', cardId: 'v1', abilityIndex: 0, color: 'U,R', pinned: []}, 'alice', [])",
+        "m.bodyFor({kind: 'activate', cardId: 'v1', abilityIndex: 0, color: 'U,R', "
+        "pinned: []}, 'alice', [])",
     )
     assert body["colors"] == ["U", "R"], body
     assert "color" not in body, body
