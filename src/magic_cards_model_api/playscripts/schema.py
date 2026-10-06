@@ -327,6 +327,7 @@ CAST_COSTS = (
     "normal",
     "adventure",
     "airbend",
+    "awaken",
     "bestow",
     "dash",
     "disguise",
