@@ -3,16 +3,21 @@ the engine's own reason verbatim - and the console logger sees one line each."""
 
 from __future__ import annotations
 
+import importlib
 from datetime import datetime
 
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import PriorityOutcome
 from magic_cards_model.machines.effects import effect_for as real_effect_for
-from magic_cards_model.models import game as game_module
+from magic_cards_model.models.game import Game
 
 from magic_cards_model_api import audit
 from magic_cards_model_api.store import store  # noqa: E402
+
+# The module whose `effect_for` `Game._resolve_top` calls: the engine keeps Game's
+# methods in per-area mixin modules, so the seam is wherever `_resolve_top` lives.
+resolve_module = importlib.import_module(Game._resolve_top.__module__)
 
 
 def log_of(client: TestClient, game: str) -> list[dict]:
@@ -328,8 +333,8 @@ def test_an_unimplemented_instant_records_changed_false(client, game, monkeypatc
     casts a real card (Mind Rot, a real Scryfall printing, cast for real mana,
     same as every other scenario in this suite - CLAUDE.md's "no mocks"
     applies here too) but forces the structural precondition the old test was
-    hoping to get by luck: it monkeypatches `models.game.effect_for` - the
-    exact seam `Game._resolve` calls, `effect = effect_for(spell.name,
+    hoping to get by luck: it monkeypatches `effect_for` in `Game._resolve_top`'s module - the
+    exact seam `Game._resolve_top` calls, `effect = effect_for(spell.name,
     spell.oracle_text, x_value=x_value)` - so that this one card resolves to
     `None` (no effect) regardless of what `machines/effects.py` knows how to
     do with it, this test run or any future one. That is stable by
@@ -345,7 +350,7 @@ def test_an_unimplemented_instant_records_changed_false(client, game, monkeypatc
             return None
         return real_effect_for(card_name, effect_text, x_value=x_value)
 
-    monkeypatch.setattr(game_module, "effect_for", effect_for_forced_no_op)
+    monkeypatch.setattr(resolve_module, "effect_for", effect_for_forced_no_op)
 
     add_card(client, game, "Swamp", "alice", "battlefield")
     add_card(client, game, "Swamp", "alice", "battlefield")
@@ -550,7 +555,7 @@ def test_resolve_top_reports_changed_for_a_control_change_alone(client, game, mo
             return take_the_swiftspear
         return real_effect_for(card_name, effect_text, x_value=x_value)
 
-    monkeypatch.setattr(game_module, "effect_for", effect_for_taking_control)
+    monkeypatch.setattr(resolve_module, "effect_for", effect_for_taking_control)
 
     add_card(client, game, "Mountain", "alice", "battlefield")
     add_card(client, game, "Shock", "alice", "hand")
@@ -632,7 +637,7 @@ def test_resolve_top_reports_changed_when_only_the_stack_changed(client, game, m
             return copy_the_bolt
         return real_effect_for(card_name, effect_text, x_value=x_value)
 
-    monkeypatch.setattr(game_module, "effect_for", effect_for_copying_the_bolt)
+    monkeypatch.setattr(resolve_module, "effect_for", effect_for_copying_the_bolt)
 
     add_card(client, game, "Mountain", "alice", "battlefield")
     add_card(client, game, "Mountain", "alice", "battlefield")
