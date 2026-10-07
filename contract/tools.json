@@ -905,6 +905,61 @@
       ]
     },
     {
+      "docstring_first_line": "Level up: put a level counter on a leveler you control, paying its",
+      "name": "level_up",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card_id",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
       "docstring_first_line": "Your registered play scripts, highest priority first, each judged",
       "name": "list_scripts",
       "parameters": [
@@ -1239,6 +1294,68 @@
         },
         {
           "default": true,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "baton",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Reconfigure: CR 702.151a's two abilities of an Equipment with",
+      "name": "reconfigure",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card_id",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "target",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": false,
           "has_default": true,
           "name": "hold_priority",
           "type": "bool",

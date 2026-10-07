@@ -1706,6 +1706,8 @@ _KEYWORD_ACTION_ROUTES = {
     "companion": "actions/companion",
     "unlock_door": "actions/unlock-door",
     "station": "actions/station",
+    "level_up": "actions/level-up",
+    "reconfigure": "actions/reconfigure",
 }
 
 
@@ -1720,8 +1722,10 @@ def _keyword_action_request(
 ) -> tuple[str, dict[str, Any]] | ScriptExit:
     """FD2 item 3/FD3 item 3: one shape for the six existing keyword-action
     routes (suspend, plot, foretell, cycle, equip, crew), FD5's two new ones
-    (turn_face_up, companion), and CR 709.5e's `unlock_door` - the same
-    `_pick` rule every other move already uses (`unforeseen` when nothing
+    (turn_face_up, companion), CR 709.5e's `unlock_door`, CR 702.184a's
+    `station`, CR 702.87a's `level_up` and CR 702.151a's `reconfigure` (its
+    unattach when no `target` is given) - the same `_pick` rule every other
+    move already uses (`unforeseen` when nothing
     matches the card/target/crew selector, `ambiguous` on a tie)."""
     action = move["action"]
     route = _KEYWORD_ACTION_ROUTES.get(action)
@@ -1750,7 +1754,7 @@ def _keyword_action_request(
     if isinstance(chosen, ScriptExit):
         return chosen
     card = chosen[0]
-    if action in ("suspend", "plot", "foretell", "cycle", "turn_face_up"):
+    if action in ("suspend", "plot", "foretell", "cycle", "turn_face_up", "level_up"):
         return route, {"player": me, "card_id": card["id"], "reasoning": reasoning}
     if action == "unlock_door":
         door = move.get("door")
@@ -1762,7 +1766,10 @@ def _keyword_action_request(
             "door": door,
             "reasoning": reasoning,
         }
-    if action == "equip":
+    if action == "reconfigure" and move.get("target") is None:
+        # CR 702.151a's second ability, "Unattach this permanent": no target.
+        return route, {"player": me, "card_id": card["id"], "reasoning": reasoning}
+    if action in ("equip", "reconfigure"):
         target = move.get("target")
         if target is None:
             return ScriptExit(Exit.UNFORESEEN, stop_reason="equip needs a target creature")
@@ -1771,7 +1778,7 @@ def _keyword_action_request(
         picked = _pick(
             pool,
             target["select"],
-            "the equip target",
+            f"the {action} target",
             target.get("prefer"),
             present=present,
             ties=target.get("ties"),

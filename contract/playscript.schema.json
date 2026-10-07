@@ -1305,7 +1305,7 @@
     },
     "KeywordActionMove": {
       "additionalProperties": false,
-      "description": "FD2: one shape for the six existing keyword-action routes (suspend,\nplot, foretell, cycle, equip, crew), FD5's two new ones (turn_face_up,\ncompanion), and CR 709.5e's `unlock_door` - `action` names which, `card`\nlocates the card the way a `cast`/`play_land` card already does, `target`\nnames the creature an `equip` attaches to (a `CardTarget`, never a\nplayer), `crew_with` names the creatures a `crew` action taps to pay its\ncost, `station_with` the one creature a `station` action (CR 702.184a)\ntaps, and `door` names the locked half `unlock_door` pays for (the\nhalf's own printed name) - meaningful only for that one action.",
+      "description": "FD2: one shape for the six existing keyword-action routes (suspend,\nplot, foretell, cycle, equip, crew), FD5's two new ones (turn_face_up,\ncompanion), and CR 709.5e's `unlock_door` - `action` names which, `card`\nlocates the card the way a `cast`/`play_land` card already does, `target`\nnames the creature an `equip` attaches to (a `CardTarget`, never a\nplayer), `crew_with` names the creatures a `crew` action taps to pay its\ncost, `station_with` the one creature a `station` action (CR 702.184a)\ntaps, and `door` names the locked half `unlock_door` pays for (the\nhalf's own printed name) - meaningful only for that one action.\n`level_up` (CR 702.87a) names only its leveler; `reconfigure` (CR\n702.151a) attaches its Equipment to the `target` creature, or, with no\n`target`, is the unattach ability instead.",
       "properties": {
         "action": {
           "enum": [
@@ -1318,7 +1318,9 @@
             "turn_face_up",
             "companion",
             "unlock_door",
-            "station"
+            "station",
+            "level_up",
+            "reconfigure"
           ],
           "title": "Action",
           "type": "string"

@@ -495,16 +495,26 @@ export function planPermanentClick(card, app, state) {
   // permanent to the menu; `openPermanentMenu` decides which doors (if any)
   // actually appear in it, from the engine's own legal-actions answer.
   const room = /\broom\b/i.test(card.type_line || "");
-  if (!abilities.length && !vehicle && !station && !equipment && !room) {
+  // CR 702.87a/702.151a: level up and reconfigure are Equip's shape again -
+  // keyword activations with no entry in `card.abilities`, read off the
+  // card's own keywords only to route the click to `openPermanentMenu`,
+  // which asks the engine whether each is legal right now.
+  const keywords = (card.keywords || []).map((k) => String(k).toLowerCase());
+  const levelUp = keywords.includes("level up");
+  const reconfigure = keywords.includes("reconfigure");
+  const keyworded = vehicle || station || equipment || room || levelUp || reconfigure;
+  if (!abilities.length && !keyworded) {
     return { kind: "none", reason: `${card.name} has no activated abilities` };
   }
-  if (abilities.length === 1 && !vehicle && !station && !equipment && !room) {
+  if (abilities.length === 1 && !keyworded) {
     return { kind: "activate", abilityIndex: 0 };
   }
   const menu = { kind: "menu", abilities, vehicle };
   if (station) menu.station = true;
   if (equipment) menu.equipment = true;
   if (room) menu.room = true;
+  if (levelUp) menu.levelUp = true;
+  if (reconfigure) menu.reconfigure = true;
   return menu;
 }
 
@@ -1312,7 +1322,7 @@ async function onPermanentImpl(card, event) {
   // Equip, or CR 709.5e's unlock, is legal right now before it can say
   // whether the item belongs in the menu at all, not merely whether to grey
   // it out.
-  if (plan.kind === "menu" && (plan.equipment || plan.room)) {
+  if (plan.kind === "menu" && (plan.equipment || plan.room || plan.levelUp || plan.reconfigure)) {
     return openPermanentMenu(card, event, plan);
   }
   // `activate` and `menu` alike: `abilityMenuItems` reads the one ability an
@@ -1373,15 +1383,33 @@ async function openPermanentMenu(card, event, plan) {
   const doors = rows
     .filter((row) => row.card_id === card.id && row.kind === "unlock_door")
     .map((row) => row.door);
-  const items = M.enrichItems(
-    M.abilityMenuItems({ ...plan, equipment: Boolean(equipRow), doors }, card),
-    rows
-  );
+  // CR 702.87a/702.151a: the engine's own level up and reconfigure rows;
+  // the two reconfigure rows are told apart by `unattach` alone.
+  const levelUpRow = rows.find((row) => row.card_id === card.id && row.kind === "level_up");
+  const reconfigureRows = rows.filter((row) => row.card_id === card.id && row.kind === "reconfigure");
+  const attachRow = reconfigureRows.find((row) => !row.unattach);
+  const unattachRow = reconfigureRows.find((row) => row.unattach);
+  const offered = {
+    ...plan,
+    equipment: Boolean(equipRow),
+    doors,
+    levelUp: Boolean(levelUpRow),
+    attach: Boolean(attachRow),
+    unattach: Boolean(unattachRow),
+  };
+  const items = M.enrichItems(M.abilityMenuItems(offered, card), rows);
   if (!items.length) return;
   openCardMenuAt(anchor, card, items, (key) => {
     if (key === "crew") return beginCrew(card);
     if (key === "station") return beginStation(card);
     if (key === "equip") return beginEquip(anchor, card, equipRow, answer.last_seq);
+    if (key === "level_up") {
+      return fireKeywordActivation("level-up", { card_id: card.id }, answer.last_seq);
+    }
+    if (key === "reconfigure") return beginReconfigure(anchor, card, attachRow, answer.last_seq);
+    if (key === "unattach") {
+      return fireKeywordActivation("reconfigure", { card_id: card.id }, answer.last_seq);
+    }
     if (key.startsWith("unlock:")) {
       return fireUnlockDoor(card, key.slice("unlock:".length), answer.last_seq);
     }
@@ -1417,19 +1445,46 @@ function beginEquip(anchor, card, row, lastSeq) {
  * blind. No `mana_sources`: the engine's own `payment.pay()` auto-taps the
  * rest, exactly as `playLand`/`fireSpecial`/`cycle` already leave it to. */
 export async function fireEquip(card, targetId, expectedSeq) {
+  return fireKeywordActivation("equip", { card_id: card.id, target: targetId }, expectedSeq);
+}
+
+/** Picking "Reconfigure" (CR 702.151a's attach): `beginEquip`'s second
+ * popover again, over the attach row's own candidates ("another target
+ * creature you control"); picking one posts it. */
+function beginReconfigure(anchor, card, row, lastSeq) {
+  const slot = row && row.targets && row.targets.slots && row.targets.slots[0];
+  const lines = (slot && slot.candidates) || [];
+  if (!lines.length) {
+    hidePopover();
+    toast(`${card.name} has no legal creature to attach to`);
+    return;
+  }
+  openCardMenuAt(anchor, card, M.reconfigureTargetMenuItems(lines), (key) => {
+    const target = key.slice("target:".length);
+    fireKeywordActivation("reconfigure", { card_id: card.id, target }, lastSeq);
+  });
+}
+
+/** `POST .../actions/<route>` for one of the engine's keyword activations of
+ * a permanent - equip (CR 702.6a), level up (CR 702.87a), reconfigure (CR
+ * 702.151a, its unattach when `fields` names no `target`) - the routes the
+ * api, the CLI and the MCP server already share. `fields` is the request
+ * beyond `player`; no `mana_sources`, so the engine's own `payment.pay()`
+ * auto-taps. A refusal is the engine's own reason, shown as is. */
+export async function fireKeywordActivation(route, fields, expectedSeq) {
   hidePopover();
   store.set({ pendingRelease: null });
-  const body = { player: you(), card_id: card.id, target: targetId };
+  const body = { player: you(), ...fields };
   if (expectedSeq !== undefined && expectedSeq !== null) body.expected_seq = expectedSeq;
-  const res = await send("POST", gamePath("actions/equip"), body);
+  const res = await send("POST", gamePath(`actions/${route}`), body);
   if (res === null) return;
   if (refused(res)) {
     toast(res.reason);
     return;
   }
-  // Equip has no ribbon panel of its own to carry a per-action hold tick, so
-  // this follows the stops panel's standing default, as `fire()` does when
-  // nothing overrides it.
+  // None of these has a ribbon panel of its own to carry a per-action hold
+  // tick, so this follows the stops panel's standing default, as `fire()`
+  // does when nothing overrides it.
   await afterStackAction(res, holdsPriority(null));
   await refresh();
 }

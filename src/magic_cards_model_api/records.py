@@ -471,6 +471,8 @@ OFFERED_KINDS: dict[str, frozenset[str]] = {
     "pass_priority": frozenset({"pass_priority"}),
     "concede": frozenset({"concede"}),
     "equip": frozenset({"equip"}),
+    "level_up": frozenset({"level_up"}),
+    "reconfigure": frozenset({"reconfigure"}),
 }
 
 #: The two kinds that name no object. Everything else is an action taken with
@@ -486,10 +488,11 @@ _OBJECTLESS_KINDS = frozenset({"pass_priority", "concede"})
 #: from matching the plain row it sits beside.
 _EXACT_FIELDS = ("spell_face", "keyword", "alternative_cost")
 
-#: Kinds whose request announces none of `_EXACT_FIELDS`: `EquipRequest` has
-#: no face, keyword or alternative cost to name, while its row carries
-#: `keyword: Equip` - the keyword its own route already is.
-_NO_ANNOUNCEMENT_KINDS = frozenset({"equip"})
+#: Kinds whose request announces none of `_EXACT_FIELDS`: `EquipRequest`,
+#: `LevelUpRequest` and `ReconfigureRequest` have no face, keyword or
+#: alternative cost to name, while each row carries its `keyword` (`Equip`,
+#: `Level Up`, `Reconfigure`) - the keyword its own route already is.
+_NO_ANNOUNCEMENT_KINDS = frozenset({"equip", "level_up", "reconfigure"})
 
 #: Fields the request may leave for the server to work out (which zone the
 #: card is in, which of an ability's indices) - compared only when the
@@ -635,6 +638,10 @@ def _was_offered(kind: str, payload: Any, legal_before: LegalActionsBefore | Non
             payload.get(name) is not None and _same(row.get(name)) != _same(payload.get(name))
             for name in _GIVEN_FIELDS
         ):
+            continue
+        if kind == "reconfigure" and bool(row.get("unattach")) != (payload.get("target") is None):
+            # CR 702.151a's two abilities share one route: a target names the
+            # attach row, its absence the one marked `unattach`.
             continue
         return True
     return False

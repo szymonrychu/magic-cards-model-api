@@ -36,9 +36,9 @@ _ROTATED_LINE = re.compile(r"\bbaton_rotated uid=\S+ window_actions=\d+")
 ACTING_TOOLS = frozenset(
     {
         "cast", "suspend", "plot", "foretell", "cycle", "play_land", "activate", "equip",
-        "turn_face_up", "bring_companion", "unlock_door", "declare_attackers",
-        "declare_blockers", "decide", "pass", "pass_until", "run_script", "mulligan",
-        "opening_hand_action", "declare_plan",
+        "level_up", "reconfigure", "turn_face_up", "bring_companion", "unlock_door",
+        "declare_attackers", "declare_blockers", "decide", "pass", "pass_until", "run_script",
+        "mulligan", "opening_hand_action", "declare_plan",
     }
 )  # fmt: skip
 

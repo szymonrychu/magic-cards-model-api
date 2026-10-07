@@ -744,7 +744,11 @@
                 "$ref": "#/components/schemas/ActionKind"
               },
               {
-                "const": "equip",
+                "enum": [
+                  "equip",
+                  "level_up",
+                  "reconfigure"
+                ],
                 "type": "string"
               }
             ],
@@ -902,6 +906,17 @@
               }
             ],
             "title": "Unaffordable Reason"
+          },
+          "unattach": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unattach"
           },
           "unreadable_modes": {
             "anyOf": [
@@ -1230,7 +1245,11 @@
                 "$ref": "#/components/schemas/ActionKind"
               },
               {
-                "const": "equip",
+                "enum": [
+                  "equip",
+                  "level_up",
+                  "reconfigure"
+                ],
                 "type": "string"
               }
             ],
@@ -1391,6 +1410,17 @@
               }
             ],
             "title": "Unaffordable Reason"
+          },
+          "unattach": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unattach"
           },
           "unreadable_modes": {
             "anyOf": [
@@ -7426,6 +7456,76 @@
         "title": "Legality",
         "type": "string"
       },
+      "LevelUpRequest": {
+        "additionalProperties": false,
+        "description": "CR 702.87a: \"Level up [cost]\" means \"[Cost]: Put a level counter on\nthis permanent. Activate only as a sorcery.\"\n\nA keyword ability the engine builds on its own (`machines.level_up.\nlevel_up_activation`), not one of the leveler's `activated_abilities`,\nso - like equip - there is no ability index to name.",
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
+          "mana_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ManaSource"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Sources"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          }
+        },
+        "required": [
+          "player",
+          "card_id"
+        ],
+        "title": "LevelUpRequest",
+        "type": "object"
+      },
       "ListGamesResponse": {
         "properties": {
           "games": {
@@ -11884,6 +11984,88 @@
         ],
         "title": "Rarity",
         "type": "string"
+      },
+      "ReconfigureRequest": {
+        "additionalProperties": false,
+        "description": "CR 702.151a: \"Reconfigure [cost]\" means \"[Cost]: Attach this permanent\nto another target creature you control. Activate only as a sorcery\" and\n\"[Cost]: Unattach this permanent. Activate only if this permanent is\nattached to a creature and only as a sorcery.\"\n\nBoth are keyword abilities the engine builds (`machines.reconfigure`),\nso there is no ability index to name. `target` says which of the two:\ngiven, the attach (the legal-action row with a target slot); left out,\nthe unattach (the row marked `unattach: true`).",
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
+          "mana_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ManaSource"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Sources"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "required": [
+          "player",
+          "card_id"
+        ],
+        "title": "ReconfigureRequest",
+        "type": "object"
       },
       "ReflectionIn": {
         "additionalProperties": false,
@@ -17147,6 +17329,72 @@
         "summary": "Action Foretell"
       }
     },
+    "/api/games/{game_id}/actions/level-up": {
+      "post": {
+        "description": "Activate a leveler's level up ability (CR 702.87a): \"[Cost]: Put a\nlevel counter on this permanent. Activate only as a sorcery.\"\n\nIts own endpoint for equip's reason (`action_equip`): level up is a\nkeyword ability the engine builds (`machines.level_up.\nlevel_up_activation`), not one of the permanent's `activated_abilities`,\nso there is no index to name. The legal-action row for it is\n`kind: level_up`.",
+        "operationId": "action_level_up_api_games__game_id__actions_level_up_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LevelUpRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionOutcome"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Action Level Up"
+      }
+    },
     "/api/games/{game_id}/actions/pass-priority": {
       "post": {
         "description": "Pass priority - \"I am done for now\". `outcome` tells the caller what\nthe pass caused: `resolve_top` (the stack's top resolved, priority goes\nround again) or `end_step` (everyone passed on an empty stack, so the\nstep ended and the next has already begun - CR 117.4, 405.5). Resolving\nthe stack's top is exactly where a spell or ability's own CR 608.2d\nquestion is asked, so this can pause the same way `resolve-top` can.\n\nIf that next step is one in which no player receives priority,\n`commands._run_pass_priority` does not stop there: it runs the game on to\nthe first step somebody can act in (CR 500.3) as part of this same\ncommand, and `settled_through` lists the steps crossed. A player who has\npassed has said \"I am done for now\", and nothing in CR 500.3's untap or\ncleanup steps is waiting on them - so handing the pass back with\n`priority_holder: null` would be handing back a state no client, human or\notherwise, is allowed to move.",
@@ -17342,6 +17590,72 @@
           }
         },
         "summary": "Action Plot"
+      }
+    },
+    "/api/games/{game_id}/actions/reconfigure": {
+      "post": {
+        "description": "Activate one of an Equipment's two reconfigure abilities (CR\n702.151a): with a `target`, \"[Cost]: Attach this permanent to another\ntarget creature you control\"; without one, \"[Cost]: Unattach this\npermanent\", only while it is attached to a creature. Both only as a\nsorcery.\n\nIts own endpoint for equip's reason (`action_equip`). The legal-action\nrows for it are `kind: reconfigure`, the unattach one marked\n`unattach: true`.",
+        "operationId": "action_reconfigure_api_games__game_id__actions_reconfigure_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconfigureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionOutcome"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Action Reconfigure"
       }
     },
     "/api/games/{game_id}/actions/station": {

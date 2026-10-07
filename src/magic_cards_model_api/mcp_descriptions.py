@@ -53,8 +53,9 @@ the game log) and listed in the answer's `auto_answered` field; you only ever se
 a real choice.
 
 Priority after an action (`hold_priority`):
-- Release by default: cast, activate (non-mana), equip, declare_attackers, declare_blockers. \
-They use the stack, and releasing is how they resolve. Set `hold_priority=true` to act again or \
+- Release by default: cast, activate (non-mana), equip, level_up, reconfigure, \
+declare_attackers/blockers. \
+They use the stack; releasing is how they resolve. Set `hold_priority=true` to act again or \
 respond to your own spell first (CR 117.3c: you keep priority after casting; the flag only \
 decides whether the harness auto-passes for you).
 - These hold priority by default: play_land, suspend, plot, foretell, turn_face_up, \
@@ -248,8 +249,8 @@ throws away the rest of your main phase - including the spell the land just paid
     "activate": """\
 Activate one ability of a card you control: a permanent's ability, or one that works from \
 another zone because its cost or effect says so (CR 113.6j: Waker of Waves' `{1}{U}, Discard \
-this card`, Boseiju's Channel, from hand). Use `cycle` only for an actual cycling ability; equip \
-has its own tool.
+this card`, Boseiju's Channel, from hand). Use `cycle` only for an actual cycling ability; equip, \
+level_up and reconfigure have their own tools.
 
 `card_id`, `ability_index`: the number from that card's `abilities` list in the same state view \
 you act on (0-based). On the battlefield, intrinsic mana abilities come after printed ones; in \
@@ -274,6 +275,17 @@ sorcery timing, CR 307.5). `card_id`: the Equipment; `target`: the creature's id
 are `available_actions` rows of kind `equip` (cost, candidates); equip has no `abilities` index \
 for `activate`. It uses the stack: releases priority and checks once unless \
 `hold_priority=true`; the Equipment attaches when it resolves.""",
+    "level_up": """\
+Put a level counter on a leveler you control, paying its level up cost (CR 702.87a; sorcery \
+timing, CR 307.5). `card_id`: the leveler. Legal level ups are `available_actions` rows of kind \
+`level_up` (cost); level up has no `abilities` index for `activate`. It uses the stack: releases \
+priority and checks once unless `hold_priority=true`; the counter goes on when it resolves.""",
+    "reconfigure": """\
+An Equipment's reconfigure (CR 702.151a; sorcery timing, CR 307.5). `card_id`: the Equipment. \
+With `target` (another creature you control), attach it; with `target` empty, unattach it (only \
+while attached). Legal ones are `available_actions` rows of kind `reconfigure`: the attach row \
+has target candidates, the unattach row `unattach: true`; no `abilities` index for `activate`. \
+It uses the stack: releases priority and checks once unless `hold_priority=true`.""",
     "turn_face_up": """\
 Turn a face-down permanent you control (morph, megamorph, disguise or manifested) face up, \
 paying the cost that reveals (CR 702.37e, CR 701.40b-d). `card_id`: the permanent's own id (from \

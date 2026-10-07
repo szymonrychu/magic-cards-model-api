@@ -77,6 +77,13 @@ ActionMove` gains `door` (the locked half's own printed name, e.g. "Ritual
 Chamber"), meaningful only for this one action - every existing action
 leaves it out, exactly as before.
 
+CR 702.87a's and CR 702.151a's addition (2026-10-07), additive, still
+`schema_version` 1: two more `KEYWORD_ACTIONS` entries over two new routes,
+`level_up` (put a level counter on a leveler - names only its `card`) and
+`reconfigure` (attach an Equipment with reconfigure to the `target` creature
+you control, or, with no `target`, unattach it). No new field: `reconfigure`
+reuses equip's `target`.
+
 FB2's B4 additions (2026-09-24), all additive over the shipped v1 vocabulary:
 `pass` (CR 117.3d, must be the play's last move - `pass-not-last`),
 `declare_attackers`/`declare_blockers` (CR 508.1/509.1, must be the play's
@@ -214,7 +221,8 @@ MAX_REPEAT_ITERATIONS = 40
 COLOR_LETTERS_CLOSED = ("W", "U", "B", "R", "G", "C")
 #: `KeywordActionMove.action` (FD2): the six existing keyword-action routes
 #: (suspend, plot, foretell, cycle, equip, crew) plus FD5's two new ones
-#: (turn_face_up, companion) plus CR 709.5e's `unlock_door`.
+#: (turn_face_up, companion) plus CR 709.5e's `unlock_door`, CR 702.184a's
+#: `station`, CR 702.87a's `level_up` and CR 702.151a's `reconfigure`.
 KEYWORD_ACTIONS = (
     "suspend",
     "plot",
@@ -226,6 +234,8 @@ KEYWORD_ACTIONS = (
     "companion",
     "unlock_door",
     "station",
+    "level_up",
+    "reconfigure",
 )
 #: `Answer.damage`'s own `rest_to` (FD2): where damage past the last lethal
 #: blocker tier goes once trample lets it through - the defending player, or
@@ -1472,7 +1482,10 @@ class KeywordActionMove(_Strict):
     player), `crew_with` names the creatures a `crew` action taps to pay its
     cost, `station_with` the one creature a `station` action (CR 702.184a)
     taps, and `door` names the locked half `unlock_door` pays for (the
-    half's own printed name) - meaningful only for that one action."""
+    half's own printed name) - meaningful only for that one action.
+    `level_up` (CR 702.87a) names only its leveler; `reconfigure` (CR
+    702.151a) attaches its Equipment to the `target` creature, or, with no
+    `target`, is the unattach ability instead."""
 
     kind: Literal["keyword_action"]
     action: KeywordAction

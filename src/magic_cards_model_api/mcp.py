@@ -2435,6 +2435,132 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             protocol_version=ctx.protocol_version if ctx is not None else None,
         )
 
+    def _keyword_activation(
+        player_uid: str,
+        route: str,
+        fields: dict[str, Any],
+        mana_sources: str,
+        dry_run: bool,
+        hold_priority: bool,
+        reasoning: str,
+        ctx: Context | None,
+    ) -> str | InputRequiredResult:
+        """`level_up`'s and `reconfigure`'s shared body: equip's own shape
+        (one POST to `actions/<route>`, every untapped mana source offered
+        unless `mana_sources` names some)."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        state = seat.fetch_state()
+        body: dict[str, Any] = {"player": seat.player, **fields, "dry_run": dry_run}
+        sources = seat.sources_or_all(mana_sources, state)
+        if sources:
+            body["mana_sources"] = sources
+        if reasoning:
+            body["reasoning"] = reasoning
+        path = f"/api/games/{seat.game_id()}/actions/{route}"
+        if dry_run:
+            return seat.call("POST", path, body)
+
+        def perform() -> Any:
+            return seat.call_json("POST", path, body)
+
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
+
+    @server.tool()
+    @_guarded(seats)
+    def level_up(
+        player_uid: str,
+        card_id: str,
+        mana_sources: str = "",
+        dry_run: bool = False,
+        hold_priority: bool = False,
+        reasoning: str = "",
+        ctx: Context | None = None,
+        baton: str = "",
+    ) -> str | InputRequiredResult:
+        """Level up: put a level counter on a leveler you control, paying its
+        level up cost. CR 702.87a: "Level up [cost]" means "[Cost]: Put a
+        level counter on this permanent. Activate only as a sorcery." - your
+        main phase, with the stack empty (CR 307.5).
+
+        `card_id` is the leveler. A legal level up is listed in your legal
+        actions as a row of kind `level_up`, with its cost. `mana_sources` is
+        comma-separated source ids; leave it empty to offer all your untapped
+        mana sources.
+
+        This is the tool for level up, not `activate`: level up is a keyword
+        ability, so the permanent's `abilities` list has no index for it.
+
+        The ability uses the stack, so this releases priority and then checks
+        once for your next moment to act, unless `hold_priority` is true - the
+        counter goes on when the ability resolves. Never blocks or waits;
+        see `cast`'s docstring for the shape of the answer."""
+        return _keyword_activation(
+            player_uid,
+            "level-up",
+            {"card_id": card_id},
+            mana_sources,
+            dry_run,
+            hold_priority,
+            reasoning,
+            ctx,
+        )
+
+    @server.tool()
+    @_guarded(seats)
+    def reconfigure(
+        player_uid: str,
+        card_id: str,
+        target: str = "",
+        mana_sources: str = "",
+        dry_run: bool = False,
+        hold_priority: bool = False,
+        reasoning: str = "",
+        ctx: Context | None = None,
+        baton: str = "",
+    ) -> str | InputRequiredResult:
+        """Reconfigure: CR 702.151a's two abilities of an Equipment with
+        reconfigure. With `target`, "[Cost]: Attach this permanent to another
+        target creature you control"; with `target` left empty, "[Cost]:
+        Unattach this permanent", only while it is attached to a creature.
+        Both only as a sorcery - your main phase, with the stack empty (CR
+        307.5).
+
+        `card_id` is the Equipment. Legal reconfigures are rows of kind
+        `reconfigure` in your legal actions: the attach row carries its target
+        candidates, the unattach row is marked `unattach: true`.
+        `mana_sources` is comma-separated source ids; leave it empty to offer
+        all your untapped mana sources.
+
+        This is the tool for reconfigure, not `activate` or `equip`:
+        reconfigure is a keyword ability, so the permanent's `abilities` list
+        has no index for it.
+
+        The ability uses the stack, so this releases priority and then checks
+        once for your next moment to act, unless `hold_priority` is true - it
+        attaches or unattaches when the ability resolves. Never blocks or
+        waits; see `cast`'s docstring for the shape of the answer."""
+        fields: dict[str, Any] = {"card_id": card_id}
+        if target:
+            fields["target"] = target
+        return _keyword_activation(
+            player_uid,
+            "reconfigure",
+            fields,
+            mana_sources,
+            dry_run,
+            hold_priority,
+            reasoning,
+            ctx,
+        )
+
     @server.tool()
     @_guarded(seats)
     def turn_face_up(

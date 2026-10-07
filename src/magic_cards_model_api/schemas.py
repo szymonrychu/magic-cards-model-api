@@ -1400,6 +1400,48 @@ class EquipRequest(BoardRead):
     optional for a human one."""
 
 
+class LevelUpRequest(BoardRead):
+    """CR 702.87a: "Level up [cost]" means "[Cost]: Put a level counter on
+    this permanent. Activate only as a sorcery."
+
+    A keyword ability the engine builds on its own (`machines.level_up.
+    level_up_activation`), not one of the leveler's `activated_abilities`,
+    so - like equip - there is no ability index to name."""
+
+    player: str
+    card_id: UUID
+    """The leveler permanent."""
+    mana_sources: list[UUID | ManaSource] | None = None
+    dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
+
+
+class ReconfigureRequest(BoardRead):
+    """CR 702.151a: "Reconfigure [cost]" means "[Cost]: Attach this permanent
+    to another target creature you control. Activate only as a sorcery" and
+    "[Cost]: Unattach this permanent. Activate only if this permanent is
+    attached to a creature and only as a sorcery."
+
+    Both are keyword abilities the engine builds (`machines.reconfigure`),
+    so there is no ability index to name. `target` says which of the two:
+    given, the attach (the legal-action row with a target slot); left out,
+    the unattach (the row marked `unattach: true`)."""
+
+    player: str
+    card_id: UUID
+    """The Equipment with reconfigure."""
+    target: UUID | None = None
+    """The creature to attach it to - CR 702.151a's "another target creature
+    you control". Left out to activate the unattach ability instead."""
+    mana_sources: list[UUID | ManaSource] | None = None
+    dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
+
+
 class CycleRequest(BoardRead):
     """CR 702.29a: "[Cost], Discard this card: Draw a card." An activated
     ability, but one `Game.begin_activating`/`activate_ability` cannot reach -
@@ -3768,10 +3810,16 @@ class ActionRow(Action):
     what the api adds to a row (`action_rows.legal_action_rows`). Every field
     here is left off a row it does not apply to."""
 
-    kind: ActionKind | Literal["equip"]
-    """The engine's `ActionKind`, or `equip`: CR 702.6a's activation, which
-    the engine's enumeration does not list and `POST .../actions/equip`
-    takes (`action_rows._Rows.equip_rows`)."""
+    kind: ActionKind | Literal["equip", "level_up", "reconfigure"]
+    """The engine's `ActionKind`, or one of the keyword activations a route
+    of its own takes (`action_rows.keyword_route_kind`): `equip` (CR 702.6a,
+    `POST .../actions/equip`), `level_up` (CR 702.87a, `POST .../actions/
+    level-up`) and `reconfigure` (CR 702.151a, `POST .../actions/
+    reconfigure`)."""
+
+    unattach: bool | None = None
+    """Set `true` on the `reconfigure` row that is CR 702.151a's unattach
+    ability (posted with no `target`); left off the attach row."""
 
     acting_for: str | None = None
     """Set on a row that is another player's, offered to the player making

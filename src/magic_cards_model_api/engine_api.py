@@ -40,9 +40,11 @@ from .schemas import (
     CrewRequest,
     CycleRequest,
     EquipRequest,
+    LevelUpRequest,
     ManaSource,
     OptionalCostChoice,
     PlayLandRequest,
+    ReconfigureRequest,
     SpecialActionRequest,
     StationRequest,
     TargetRequest,
@@ -1554,7 +1556,17 @@ def equip_permanent(game: Game, req: EquipRequest) -> Outcome:
         activation = equip_activation(game, equipment, target, req.player)
     except (KeyError, ValueError) as exc:
         return refused(exc)
+    return _take_keyword_activation(game, activation, req)
 
+
+def _take_keyword_activation(
+    game: Game, activation: Any, req: EquipRequest | LevelUpRequest | ReconfigureRequest
+) -> Outcome:
+    """Take one of the engine's synthetic keyword activations of a permanent
+    (`machines.keywords.KeywordActivation`: equip, level up, reconfigure):
+    its own `why_not` (CR 602.5, "Activate only as a sorcery" included) before
+    anything is paid, then its cost from `req.mana_sources` (CR 602.2b), then
+    the ability on the stack (CR 602.2a/602.2e). A dry run pays nothing."""
     refusal = activation.why_not()
     if refusal is not None:
         return refused(refusal)
@@ -1580,6 +1592,55 @@ def equip_permanent(game: Game, req: EquipRequest) -> Outcome:
     on_stack = activation.activate()
     game.retain_priority(req.player)
     return Outcome(True, detail={"ability_id": str(on_stack.id), "cost": str(payment.cost)})
+
+
+# -- leveling up (CR 702.87) -------------------------------------------------
+
+
+def level_up_permanent(game: Game, req: LevelUpRequest) -> Outcome:
+    """CR 702.87a's level up, activated: pay its cost and put "put a level
+    counter on this permanent" on the stack.
+
+    `machines.level_up.level_up_activation` is the engine's object for it -
+    the one its own `tests/scenarios/test_nw05_level_up.py` builds - and its
+    `why_not` is the refusal, CR 307.5's sorcery timing included. Equip's own
+    shape (`equip_permanent`) with no target."""
+    from magic_cards_model.machines.level_up import level_up_activation
+
+    try:
+        permanent = find_card(game, req.card_id)
+        activation = level_up_activation(game, permanent, req.player)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+    return _take_keyword_activation(game, activation, req)
+
+
+# -- reconfiguring (CR 702.151) ----------------------------------------------
+
+
+def reconfigure_permanent(game: Game, req: ReconfigureRequest) -> Outcome:
+    """One of CR 702.151a's two reconfigure abilities, activated: with a
+    `target`, "attach this permanent to another target creature you control"
+    (`machines.reconfigure.reconfigure_attach_activation`, which checks the
+    target at announcement, CR 602.2b/601.2c); without one, "unattach this
+    permanent" (`reconfigure_unattach_activation`, whose `why_not` carries
+    its own "only if this permanent is attached to a creature", CR 602.5b).
+    Both are the engine's own objects and refusals."""
+    from magic_cards_model.machines.reconfigure import (
+        reconfigure_attach_activation,
+        reconfigure_unattach_activation,
+    )
+
+    try:
+        equipment = find_card(game, req.card_id)
+        if req.target is None:
+            activation = reconfigure_unattach_activation(game, equipment, req.player)
+        else:
+            target = find_card(game, req.target)
+            activation = reconfigure_attach_activation(game, equipment, target, req.player)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+    return _take_keyword_activation(game, activation, req)
 
 
 # -- special actions: suspend, plot, foretell (CR 116.2) --------------------

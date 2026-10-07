@@ -792,6 +792,8 @@ CLI_COMMAND_TOOLS = {
     "play-land": "play_land",
     "activate": "activate",
     "equip": "equip",
+    "level-up": "level_up",
+    "reconfigure": "reconfigure",
     "attackers": "declare_attackers",
     "blockers": "declare_blockers",
     "decide": "decide",

@@ -99,8 +99,10 @@ from .schemas import (
     CrewRequest,
     CycleRequest,
     EquipRequest,
+    LevelUpRequest,
     PassPriorityRequest,
     PlayLandRequest,
+    ReconfigureRequest,
     SpecialActionRequest,
     StationRequest,
     TurnFaceUpRequest,
@@ -236,6 +238,14 @@ def _run_station(game: Game, payload: dict[str, Any]) -> Any:
 
 def _run_equip(game: Game, payload: dict[str, Any]) -> Any:
     return engine_api.equip_permanent(game, EquipRequest.model_validate(payload))
+
+
+def _run_level_up(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.level_up_permanent(game, LevelUpRequest.model_validate(payload))
+
+
+def _run_reconfigure(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.reconfigure_permanent(game, ReconfigureRequest.model_validate(payload))
 
 
 def _run_concede(game: Game, payload: dict[str, Any]) -> Any:
@@ -528,6 +538,8 @@ COMMAND_HANDLERS: dict[str, Callable[[Game, dict[str, Any]], Any]] = {
     "crew": _run_crew,
     "station": _run_station,
     "equip": _run_equip,
+    "level_up": _run_level_up,
+    "reconfigure": _run_reconfigure,
     "turn_face_up": _run_turn_face_up,
     "companion": _run_companion,
     "unlock_door": _run_unlock_door,
@@ -928,6 +940,8 @@ ANNOUNCING_KINDS = frozenset(
         "crew",
         "station",
         "equip",
+        "level_up",
+        "reconfigure",
         "cycle",
         "suspend",
         "plot",

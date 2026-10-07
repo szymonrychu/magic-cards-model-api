@@ -327,7 +327,11 @@ export function permissionMenuItems(permission) {
  * the ability's own index (not its position in this list - a permanent can
  * offer ability 0 and ability 2 with nothing offerable between them), then
  * Equip (CR 702.6a) for an Equipment the engine's own legal-actions answer
- * currently offers it on, then Crew for a Vehicle, then Station (CR 702.184a)
+ * currently offers it on, then Level up (CR 702.87a) and Reconfigure /
+ * Unattach (CR 702.151a) the same way (`plan.levelUp`/`attach`/`unattach`,
+ * set from that answer, never from the card alone - the unattach item's
+ * match carries `unattach: true`, which is all that tells the two
+ * reconfigure rows apart), then Crew for a Vehicle, then Station (CR 702.184a)
  * for a permanent carrying the station keyword, then Unlock <door>
  * (CR 709.5e) for each locked door of a Room the engine's own legal-actions
  * answer still offers.
@@ -367,6 +371,31 @@ export function abilityMenuItems(plan, card) {
   if (plan.equipment) {
     items.push(
       item("equip", "Equip", "", cardId ? { card_id: cardId, kind: "equip", ability_index: null } : null)
+    );
+  }
+  if (plan.levelUp) {
+    items.push(
+      item("level_up", "Level up", "", cardId ? { card_id: cardId, kind: "level_up", ability_index: null } : null)
+    );
+  }
+  if (plan.attach) {
+    items.push(
+      item(
+        "reconfigure",
+        "Reconfigure",
+        "",
+        cardId ? { card_id: cardId, kind: "reconfigure", ability_index: null } : null
+      )
+    );
+  }
+  if (plan.unattach) {
+    items.push(
+      item(
+        "unattach",
+        "Unattach",
+        "",
+        cardId ? { card_id: cardId, kind: "reconfigure", ability_index: null, unattach: true } : null
+      )
     );
   }
   if (plan.vehicle) items.push(item("crew", "Crew"));
@@ -411,9 +440,20 @@ export function parseCandidateLine(line) {
  * modes, no X, and exactly one target (CR 301.5c) - so the item's own key
  * is what `fireEquip` posts as `target`. */
 export function equipTargetMenuItems(lines) {
+  return targetMenuItems(lines, "Equip");
+}
+
+/** `equipTargetMenuItems`' twin for CR 702.151a's reconfigure attach: one
+ * item per candidate the attach row's own slot names ("another target
+ * creature you control"), keyed the same way for `beginReconfigure`. */
+export function reconfigureTargetMenuItems(lines) {
+  return targetMenuItems(lines, "Attach to");
+}
+
+function targetMenuItems(lines, verb) {
   return (lines || []).map((line) => {
     const { id, name } = parseCandidateLine(line);
-    return item(`target:${id}`, `Equip ${name}`);
+    return item(`target:${id}`, `${verb} ${name}`);
   });
 }
 
@@ -574,7 +614,8 @@ function matchesAction(match, action) {
     (match.ability_index ?? null) === (action.ability_index ?? null) &&
     (match.spell_face ?? null) === (action.spell_face ?? null) &&
     (match.land_face ?? null) === (action.land_face ?? null) &&
-    (match.door ?? null) === (action.door ?? null)
+    (match.door ?? null) === (action.door ?? null) &&
+    Boolean(match.unattach) === Boolean(action.unattach)
   );
 }
 

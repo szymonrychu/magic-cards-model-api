@@ -73,9 +73,10 @@ next time you are woken; `"superseded_by_script"` means an armed script
 already proposed for that same window, so yours was dropped in its favour
 and there is nothing to redo.
 
-Seven subcommands take `--dry-run`, which asks "could this be done?" and
-changes nothing: `cast`, `cycle`, `activate`, `equip` and the three special
-actions `suspend`, `plot` and `foretell`. That is how you check an idea before you
+Nine subcommands take `--dry-run`, which asks "could this be done?" and
+changes nothing: `cast`, `cycle`, `activate`, `equip`, `level-up`,
+`reconfigure` and the three special actions `suspend`, `plot` and
+`foretell`. That is how you check an idea before you
 propose it - whether the mana is really there, whether the target is really
 legal - rather than proposing something the engine would refuse. Read the
 answer's `outcome` and, when it refuses, the engine's own words for why: that

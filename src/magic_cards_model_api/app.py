@@ -121,6 +121,7 @@ from .schemas import (
     HealthResponse,
     HypotheticalFactsResponse,
     LegalActionsResponse,
+    LevelUpRequest,
     ListGamesResponse,
     ManaPoolUpdate,
     MintSeatRequest,
@@ -147,6 +148,7 @@ from .schemas import (
     PregameSettleResponse,
     PutCard,
     PutCardResponse,
+    ReconfigureRequest,
     ReflectionIn,
     ReflectionResponse,
     ReportProblemRequest,
@@ -3508,6 +3510,103 @@ def action_equip(game_id: str, req: EquipRequest, uid: str | None = None) -> dic
         player=req.player,
         card_id=str(req.card_id),
         target=str(req.target),
+        mana_sources=[str(source) for source in req.mana_sources or []],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
+    )
+
+
+@app.post(
+    "/api/games/{game_id}/actions/level-up",
+    dependencies=REFUSED_AFTER_GAME_OVER,
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
+def action_level_up(game_id: str, req: LevelUpRequest, uid: str | None = None) -> dict[str, Any]:
+    """Activate a leveler's level up ability (CR 702.87a): "[Cost]: Put a
+    level counter on this permanent. Activate only as a sorcery."
+
+    Its own endpoint for equip's reason (`action_equip`): level up is a
+    keyword ability the engine builds (`machines.level_up.
+    level_up_activation`), not one of the permanent's `activated_abilities`,
+    so there is no index to name. The legal-action row for it is
+    `kind: level_up`."""
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
+    req, refused = _acting_as(game_id, "level_up", "level_up", req, uid)
+    if refused is not None:
+        return refused
+    records.require_current_board(
+        game_id,
+        "level_up",
+        req.expected_seq,
+        player=actor,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
+    result, _, legal_before, seq = _run_command(game_id, "level_up", req, acting=(sent, uid))
+    return _respond(
+        game_id,
+        "level_up",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card_id=str(req.card_id),
+        mana_sources=[str(source) for source in req.mana_sources or []],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
+    )
+
+
+@app.post(
+    "/api/games/{game_id}/actions/reconfigure",
+    dependencies=REFUSED_AFTER_GAME_OVER,
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
+def action_reconfigure(
+    game_id: str, req: ReconfigureRequest, uid: str | None = None
+) -> dict[str, Any]:
+    """Activate one of an Equipment's two reconfigure abilities (CR
+    702.151a): with a `target`, "[Cost]: Attach this permanent to another
+    target creature you control"; without one, "[Cost]: Unattach this
+    permanent", only while it is attached to a creature. Both only as a
+    sorcery.
+
+    Its own endpoint for equip's reason (`action_equip`). The legal-action
+    rows for it are `kind: reconfigure`, the unattach one marked
+    `unattach: true`."""
+    sent = req
+    actor = _acting_seat(game_id, req.player, uid)
+    req, refused = _acting_as(game_id, "reconfigure", "reconfigure", req, uid)
+    if refused is not None:
+        return refused
+    records.require_current_board(
+        game_id,
+        "reconfigure",
+        req.expected_seq,
+        player=actor,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
+    records.require_reasoning(game_id, actor, req.reasoning)
+    records.require_plan(game_id, actor)
+    result, _, legal_before, seq = _run_command(game_id, "reconfigure", req, acting=(sent, uid))
+    detail: dict[str, Any] = {}
+    if req.target is not None:
+        detail["target"] = str(req.target)
+    return _respond(
+        game_id,
+        "reconfigure",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card_id=str(req.card_id),
+        **detail,
         mana_sources=[str(source) for source in req.mana_sources or []],
         reasoning=req.reasoning,
         legal_actions_before=legal_before,

@@ -2,7 +2,8 @@
 
 `decision_rows(entries, seat)` turns every *committing* ledger row of `seat`
 - a cast, an activation, a land play, a keyword-action route (suspend, plot,
-foretell, cycle, equip, crew, station, turn_face_up, companion, unlock_door), an
+foretell, cycle, equip, crew, station, turn_face_up, companion, unlock_door,
+level_up, reconfigure), an
 answer to a pending decision, the two combat declarations (whether logged
 by their own dedicated route or answered directly through `/decide`'s own
 `pairs`), a
@@ -1064,7 +1065,9 @@ def _keyword_action(
         "action": action,
         "card": {"zone": zone if zone in COUNT_ZONES else "hand", "select": _card_selector(card)},
     }
-    if action == "equip":
+    if action == "equip" or (action == "reconfigure" and detail.get("target") is not None):
+        # CR 702.6a's target creature, or CR 702.151a's attach; a reconfigure
+        # row with no target is the unattach and names nothing more.
         target_found = _find_card_by_ref(state_view, detail.get("target"))
         if target_found is None:
             return None, f"{action}:unresolved-target"

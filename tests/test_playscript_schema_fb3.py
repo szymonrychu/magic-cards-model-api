@@ -209,7 +209,7 @@ def test_every_keyword_action_validates(action):
     assert play_errors(doc) == []
 
 
-def test_keyword_action_covers_the_ten_routes():
+def test_keyword_action_covers_the_twelve_routes():
     assert KEYWORD_ACTIONS == (
         "suspend",
         "plot",
@@ -221,6 +221,8 @@ def test_keyword_action_covers_the_ten_routes():
         "companion",
         "unlock_door",
         "station",
+        "level_up",
+        "reconfigure",
     )
 
 

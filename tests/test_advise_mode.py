@@ -516,13 +516,14 @@ def _openapi() -> dict[str, Any]:
     return json.loads((REPO_ROOT / "openapi.json").read_text())
 
 
-def test_the_frozen_action_shapes_are_exactly_seventeen_twelve_of_which_dry_run() -> None:
+def test_the_frozen_action_shapes_are_exactly_nineteen_fourteen_of_which_dry_run() -> None:
     # FD5 (5): turn_face_up/bring_companion add TurnFaceUpRequest and
     # CompanionRequest, both real payments an advisor can probe. CR 709.5e
     # adds UnlockDoorRequest, another real payment. CR 702.184a adds
-    # StationRequest, crew's twin.
-    assert len(set(seatkit.ACTION_REQUEST_SHAPES.values())) == 17
-    assert len(seatkit.DRY_RUN_SHAPES) == 12
+    # StationRequest, crew's twin. CR 702.87a/702.151a add LevelUpRequest and
+    # ReconfigureRequest, equip's twins.
+    assert len(set(seatkit.ACTION_REQUEST_SHAPES.values())) == 19
+    assert len(seatkit.DRY_RUN_SHAPES) == 14
     assert set(seatkit.ACTION_REQUEST_SHAPES.values()) >= seatkit.DRY_RUN_SHAPES
 
 
@@ -1255,7 +1256,7 @@ def mcp_server(game_id: str) -> Any:
     return build_server(seats_for(game_id))
 
 
-def test_the_buddy_gets_the_same_twenty_nine_tools(client: TestClient, game: str) -> None:
+def test_the_buddy_gets_the_same_thirty_one_tools(client: TestClient, game: str) -> None:
     """One server, one toolset: there is no advisor-only tool and no tool an
     advisor is denied - `contract/tools.json` is the committed list, and this
     pins that advise mode did not fork it."""
@@ -1266,9 +1267,10 @@ def test_the_buddy_gets_the_same_twenty_nine_tools(client: TestClient, game: str
     }
 
     assert names == committed
-    assert len(names) == 29, (
+    assert len(names) == 31, (
         "19 plus run_script, list_scripts, equip, stage_advice, stage_script, "
-        "turn_face_up, bring_companion, unlock_door, pass_baton, await_baton"
+        "turn_face_up, bring_companion, unlock_door, pass_baton, await_baton, "
+        "level_up, reconfigure"
     )
 
 

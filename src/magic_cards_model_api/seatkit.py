@@ -193,7 +193,16 @@ def scripts_enabled_here(env: Mapping[str, str] | None = None) -> bool:
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-27"
+PROTOCOL_VERSION = "seatkit-28"
+#: `seatkit-28`: two new action tools over two new routes, both keyword
+#: activations of a permanent the engine builds the way it builds equip -
+#: `level_up` (CR 702.87a, `actions/level-up`: put a level counter on a
+#: leveler) and `reconfigure` (CR 702.151a, `actions/reconfigure`: attach an
+#: Equipment with reconfigure to another creature you control, or, with no
+#: target, unattach it). Legal-action rows gain the kinds `level_up` and
+#: `reconfigure`, the unattach row marked `unattach: true`. Both release
+#: priority by default, like equip. Additive: a `seatkit-27` process has
+#: neither tool and reads the new row kinds as rows it does not take.
 #: `seatkit-27`: AI-seat speed, every change additive. `cast`, `activate`,
 #: `play_land` and `decide` take `then_pass` (the `pass` a seat would send as
 #: its next call, answered with the action's own outcome under `first`); a
@@ -1444,8 +1453,8 @@ UNKNOWN_OUTCOME = (
 # shapes that *have* that field. See `DRY_RUN_SHAPES` for why that matters.
 
 #: Every game-mutating action path a seat's own tools POST to, and the request
-#: shape each one takes (`schemas.py`). Fifteen paths, thirteen shapes - the
-#: three CR 116.2 special actions share `SpecialActionRequest`.
+#: shape each one takes (`schemas.py`) - the three CR 116.2 special actions
+#: share `SpecialActionRequest`.
 #:
 #: Frozen here, and pinned against `openapi.json` by
 #: `tests/test_advise_mode.py`, so the split below cannot drift silently: a
@@ -1461,6 +1470,8 @@ ACTION_REQUEST_SHAPES: dict[str, str] = {
     "actions/station": "StationRequest",
     "actions/cycle": "CycleRequest",
     "actions/equip": "EquipRequest",
+    "actions/level-up": "LevelUpRequest",
+    "actions/reconfigure": "ReconfigureRequest",
     "actions/declare-blockers": "DeclareBlockersRequest",
     "actions/foretell": "SpecialActionRequest",
     "actions/pass-priority": "PassPriorityRequest",
@@ -1496,6 +1507,8 @@ DRY_RUN_SHAPES = frozenset(
         "StationRequest",
         "CycleRequest",
         "EquipRequest",
+        "LevelUpRequest",
+        "ReconfigureRequest",
         "PlayLandRequest",
         "SpecialActionRequest",
         # FD5 (5): turn_face_up/bring_companion, CR 116.2 special actions

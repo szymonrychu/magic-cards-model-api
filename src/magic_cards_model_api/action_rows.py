@@ -146,14 +146,40 @@ _IMPROVISE_NOT_EVALUATED = (
 _MAX_MANUAL_TRIALS = 16
 
 
+#: The engine's keyword activation rows (an `ACTIVATE` with a `keyword` and no
+#: `ability_index`, since none has an entry in `Game.activated_abilities`)
+#: that a route of their own takes, keyed by that keyword: the served row's
+#: `kind` names the route - `actions/equip` (CR 702.6a), `actions/level-up`
+#: (CR 702.87a) and `actions/reconfigure` (CR 702.151a).
+_KEYWORD_ROUTE_KINDS = {"Equip": "equip", "Level Up": "level_up", "Reconfigure": "reconfigure"}
+
+
+def keyword_route_kind(action: Action) -> str | None:
+    """The served `kind` of one of the engine's keyword activation rows
+    (`_KEYWORD_ROUTE_KINDS`), or None for every other row."""
+    if action.kind is not ActionKind.ACTIVATE or action.ability_index is not None:
+        return None
+    return _KEYWORD_ROUTE_KINDS.get(action.keyword or "")
+
+
 def is_equip_row(action: Action) -> bool:
     """The engine's equip row (CR 702.6a): an `ACTIVATE` with `keyword="Equip"`
     and no `ability_index`, since equip has no entry in
     `Game.activated_abilities`."""
+    return keyword_route_kind(action) == "equip"
+
+
+def is_reconfigure_unattach_row(action: Action) -> bool:
+    """CR 702.151a's second ability, "[Cost]: Unattach this permanent": the
+    engine's `Reconfigure` row with no target slot. The attach row always
+    carries its "another target creature you control" slot
+    (`legal_actions._reconfigure_actions`), even when no creature is there to
+    fill it. The one row the engine serves when the reconfigure cost cannot
+    be read has neither a slot nor a cost, and is neither ability."""
     return (
-        action.kind is ActionKind.ACTIVATE
-        and action.keyword == "Equip"
-        and action.ability_index is None
+        keyword_route_kind(action) == "reconfigure"
+        and not action.target_slots
+        and action.cost is not None
     )
 
 
@@ -179,10 +205,13 @@ def legal_action_rows(
     actions = [action for action, _ in charged]
     views = [action.model_dump(mode="json") for action in actions]
     for (action, charge), view in zip(charged, views, strict=True):
-        if is_equip_row(action):
-            # CR 702.6a: the engine's own equip row, taken by
-            # `POST .../actions/equip` - the kind names that route.
-            view["kind"] = "equip"
+        route_kind = keyword_route_kind(action)
+        if route_kind is not None:
+            # CR 702.6a/702.87a/702.151a: the engine's own keyword activation
+            # row, taken by its own route - the kind names that route.
+            view["kind"] = route_kind
+            if is_reconfigure_unattach_row(action):
+                view["unattach"] = True
         view.update(charge)
         if action.kind is ActionKind.CAST:
             rows.add_optional_costs(action, view)
