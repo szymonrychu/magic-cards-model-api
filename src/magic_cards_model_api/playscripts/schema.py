@@ -329,6 +329,7 @@ CAST_COSTS = (
     "airbend",
     "awaken",
     "bestow",
+    "blitz",
     "dash",
     "disguise",
     "emerge",
