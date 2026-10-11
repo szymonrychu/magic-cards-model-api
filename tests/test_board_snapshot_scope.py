@@ -81,7 +81,13 @@ BOARDS_PER_READ = 4
 #: enduring story now controls three artifacts, legendaries and/or Sagas,
 #: off the computed board - one more in-command board per event, and a land
 #: drop raises two (it enters, and it is played).
-BOARDS_PER_ACTION = 16
+#:
+#: 17, not 16, since engine EP-01 round 2 (T7, "You can't play lands."): a
+#: land drop asks `casting_restrictions.own_play_prohibition_source` whether a
+#: permanent its player controls prohibits it (CR 305.1, CR 101.2), off the
+#: computed board so a granted or lost line counts (CR 611.3a) - one more
+#: in-command board, the same on any battlefield size.
+BOARDS_PER_ACTION = 17
 
 READS = (
     "get_state",
