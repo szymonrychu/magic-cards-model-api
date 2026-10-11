@@ -1703,7 +1703,7 @@ def suspend_card(game: Game, req: SpecialActionRequest) -> Outcome:
     any other trigger is - not this function's job."""
     try:
         card = locate_hand_card(game, req.player, req.card_id, req.card)
-        action = MarkedExile.suspend(game, card, req.player)
+        action = MarkedExile.suspend(game, card, req.player, x_value=req.x_value)
     except (KeyError, ValueError) as exc:
         return refused(exc)
     return _take_marked_exile(game, action, req)

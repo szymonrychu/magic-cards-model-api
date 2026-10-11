@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from magic_cards_model.machines import AbilityOnStack, Step
-from magic_cards_model.machines.abilities import keywords_in_lines
+from magic_cards_model.machines.abilities import keyword_ability, keywords_in_lines
 from magic_cards_model.machines.casting import (
     KeywordCastOption,
     MarkedExile,
@@ -18,6 +18,7 @@ from magic_cards_model.machines.casting import (
 from magic_cards_model.machines.combat import Keyword
 from magic_cards_model.machines.keywords import cycling_abilities, cycling_activation
 from magic_cards_model.machines.layers import Characteristics
+from magic_cards_model.machines.legal_actions import suspend_at_its_least_x
 from magic_cards_model.machines.turn import PHASE_OF
 from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Zone
 from magic_cards_model.models.card import Layout
@@ -245,8 +246,9 @@ def _special_actions(game: Game, state: CardState) -> dict[str, Any]:
     that only functions from the hand - CR 702.29a).
 
     Every entry here is computed by building the engine's own action object
-    and reading its cost back - `MarkedExile.plot`/`.foretell`/`.suspend` and
-    `cycling_activation` all validate timing and printed-cost legality as part
+    and reading its cost back - `MarkedExile.plot`/`.foretell`,
+    `suspend_at_its_least_x` (Suspend X is listed at its least X, CR 702.62a)
+    and `cycling_activation` all validate timing and printed-cost legality as part
     of construction and raise rather than mutate anything, so a card that
     cannot currently take the action is simply left out (its `ValueError` is
     the "not right now" answer), and building one to check never taps a
@@ -265,7 +267,7 @@ def _special_actions(game: Game, state: CardState) -> dict[str, Any]:
     for name, factory in (
         ("plot", MarkedExile.plot),
         ("foretell", MarkedExile.foretell),
-        ("suspend", MarkedExile.suspend),
+        ("suspend", suspend_at_its_least_x),
     ):
         try:
             action = factory(game, state, controller)
@@ -274,6 +276,11 @@ def _special_actions(game: Game, state: CardState) -> dict[str, Any]:
         entry: dict[str, Any] = {"cost": str(action.cost)}
         if action.time_counters is not None:
             entry["time_counters"] = action.time_counters
+        suspend_x = keyword_ability(state.card, "suspend") if name == "suspend" else None
+        if suspend_x is not None and suspend_x.count_is_x:
+            # Suspend X (CR 702.62a): the listing above is at the least X, and
+            # the seat announces the X it wants as `x_value`.
+            entry["x_minimum"] = suspend_x.count_minimum or 0
         actions[name] = entry
 
     cyclers = []

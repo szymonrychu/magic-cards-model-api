@@ -1282,7 +1282,16 @@ export async function playLand(card) {
 async function fireSpecial(card, keyword) {
   hidePopover();
   store.set({ pendingRelease: null });
-  const res = await send("POST", gamePath(`actions/${keyword}`), { player: you(), card_id: card.id });
+  const body = { player: you(), card_id: card.id };
+  // Suspend X (CR 702.62a, CR 107.3a): the player announces X as they
+  // suspend; the hand card's `special_actions.suspend.x_minimum` says so.
+  const offer = (card.special_actions || {})[keyword] || {};
+  if (offer.x_minimum !== undefined) {
+    const answer = window.prompt(`Announce X for ${card.name} (at least ${offer.x_minimum})`, String(offer.x_minimum));
+    if (answer === null || answer.trim() === "" || Number.isNaN(Number(answer))) return;
+    body.x_value = Number(answer);
+  }
+  const res = await send("POST", gamePath(`actions/${keyword}`), body);
   if (res === null) return;
   if (res.allowed === false) toast(res.reason);
   await refresh();

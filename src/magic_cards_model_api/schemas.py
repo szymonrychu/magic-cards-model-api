@@ -1474,6 +1474,9 @@ class SpecialActionRequest(BoardRead):
     card_id: UUID | None = None
     card: str | None = None
     """Card name, used when no card_id is given: first match in the player's hand."""
+    x_value: int | None = None
+    """Suspend X (CR 702.62a): the announced X - the time counters and the X
+    in the cost. Required for a "Suspend X" card, ignored otherwise."""
     mana_sources: list[UUID | ManaSource] | None = None
     dry_run: bool = False
     reasoning: str | None = None
@@ -2305,6 +2308,10 @@ class SpecialActionEntry(BaseModel):
     cost: str
     time_counters: int | None = None
     """Suspend only: how many time counters this card would enter exile with."""
+    x_minimum: int | None = None
+    """Suspend X only (CR 702.62a): the least X the card allows. `cost` and
+    `time_counters` are listed at that X; the seat sends the X it wants as
+    `SpecialActionRequest.x_value`."""
 
 
 class CyclingEntry(BaseModel):

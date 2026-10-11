@@ -650,3 +650,66 @@ def test_unlocking_a_door_dry_run_does_not_change_state(client, game):
     assert all(
         not source["tapped"] for source in after["battlefield"] if source["card_name"] == "Swamp"
     )
+
+
+# -- Suspend X (CR 702.62a, CR 107.3a): the seat announces X ------------------
+
+
+def _aeon_chronicler_with_islands(client, game, islands: int = 8) -> list[str]:
+    add_card(client, game, "Aeon Chronicler", "alice", "hand")
+    for _ in range(islands):
+        add_card(client, game, "Island", "alice", "battlefield")
+    return [c["id"] for c in state(client, game)["battlefield"]]
+
+
+def test_suspend_x_is_discoverable_at_its_least_x(client, game):
+    """A "Suspend X" card is listed as suspendable (at X=1, its least) rather
+    than hidden for want of an announced X."""
+    _aeon_chronicler_with_islands(client, game)
+
+    (chronicler,) = state(client, game)["hands"]["alice"]
+    assert chronicler["special_actions"]["suspend"] == {
+        "cost": "{4}{U}",
+        "time_counters": 1,
+        "x_minimum": 1,
+    }
+
+
+def test_suspend_x_above_the_least_x_takes_that_many_time_counters(client, game):
+    """`x_value` reaches `MarkedExile.suspend`: X=3 pays {3}{3}{U} and exiles
+    Aeon Chronicler with 3 time counters."""
+    islands = _aeon_chronicler_with_islands(client, game)
+
+    body = client.post(
+        f"/api/games/{game}/actions/suspend",
+        json={"player": "alice", "card": "Aeon Chronicler", "x_value": 3, "mana_sources": islands},
+    ).json()
+
+    assert body["allowed"] is True, body
+    assert body["time_counters"] == 3
+    (chronicler,) = state(client, game)["exile"]
+    assert chronicler["counters"] == {"time": 3}
+
+
+def test_suspend_x_without_an_announced_x_is_refused_by_the_engine(client, game):
+    islands = _aeon_chronicler_with_islands(client, game)
+
+    body = client.post(
+        f"/api/games/{game}/actions/suspend",
+        json={"player": "alice", "card": "Aeon Chronicler", "mana_sources": islands},
+    ).json()
+
+    assert body["allowed"] is False
+    assert "announce X" in body["reason"]
+
+
+def test_suspend_x_of_zero_is_refused_by_the_engine(client, game):
+    islands = _aeon_chronicler_with_islands(client, game)
+
+    body = client.post(
+        f"/api/games/{game}/actions/suspend",
+        json={"player": "alice", "card": "Aeon Chronicler", "x_value": 0, "mana_sources": islands},
+    ).json()
+
+    assert body["allowed"] is False
+    assert "can't be 0" in body["reason"]

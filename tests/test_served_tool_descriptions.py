@@ -30,8 +30,8 @@ from magic_cards_model_api.mcp_descriptions import (
 )
 
 # +1.4k: `baton: str` on 23 acting tools (T3); +0.8k: await_baton, pass_baton revoke (S1);
-# +2.1k: level_up and reconfigure tools (seatkit-28)
-SERVED_SURFACE_BUDGET = 49_400
+# +2.1k: level_up and reconfigure tools (seatkit-28); +0.2k: suspend's `x_value` (Suspend X)
+SERVED_SURFACE_BUDGET = 49_600
 
 
 def served_tools() -> list[Any]:

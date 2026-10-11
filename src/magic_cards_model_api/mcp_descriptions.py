@@ -207,9 +207,10 @@ to your own spell, first). """
     + _THEN_PASS,
     "suspend": """\
 Suspend a card from your hand (CR 116.2f, CR 702.62a): pay its suspend cost and exile it with \
-its time counters. `card`: name or id in your hand. One counter comes off in each of your \
-upkeeps; when the last one does, you may cast it without paying its mana cost - that offer \
-arrives as a decision, and accepting it in decide casts it at once.
+its time counters. `card`: name or id in your hand. `x_value`: Suspend X's X (required). One \
+counter comes off in each of your upkeeps; when the last one does, you may cast it without \
+paying its mana cost - that offer arrives as a decision, and accepting it in decide casts it \
+at once.
 
 """
     + _SPECIAL_HOLD,

@@ -1988,6 +1988,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             hold_priority: bool = False,
             reasoning: str = "",
             ctx: Context | None = None,
+            x_value: int | None = None,
         ) -> str | InputRequiredResult:
             seat = resolve(player_uid)
             if seat is None:
@@ -1995,6 +1996,8 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
             state = seat.fetch_state()
             body: dict[str, Any] = {"player": seat.player, "dry_run": dry_run}
             body.update(card_reference(card))
+            if x_value is not None:
+                body["x_value"] = x_value
             sources = seat.sources_or_all(mana_sources, state)
             if sources:
                 body["mana_sources"] = sources
@@ -2027,11 +2030,14 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         reasoning: str = "",
         ctx: Context | None = None,
         baton: str = "",
+        x_value: int | None = None,
     ) -> str | InputRequiredResult:
         """CR 116.2f/702.62a: exile a card with suspend from your hand, paying
         its suspend cost, with N time counters on it. `card` is the card's
         name or id in your hand. `mana_sources` is comma-separated source ids;
-        leave it empty to offer all your untapped mana sources.
+        leave it empty to offer all your untapped mana sources. `x_value` is
+        the X of a "Suspend X" card (CR 702.62a, CR 107.3a): the number of
+        time counters and the X in the cost, required for such a card.
 
         Once N reaches zero (removed one per your own upkeep, CR 702.62a),
         you may cast it without paying its mana cost: call
@@ -2048,7 +2054,7 @@ def build_server(seats: Seats, *, idle_reissue_seconds: float = 0.0) -> MCPServe
         wait, no branch of this tool does. See `cast`'s docstring for the
         answer's shape."""
         return _special_action_tool("suspend")(
-            player_uid, card, mana_sources, dry_run, hold_priority, reasoning, ctx
+            player_uid, card, mana_sources, dry_run, hold_priority, reasoning, ctx, x_value
         )
 
     @server.tool()

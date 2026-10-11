@@ -837,9 +837,15 @@ def build_parser() -> argparse.ArgumentParser:
         priority_flag(parser)
         return parser
 
-    special_action(
+    suspend = special_action(
         "suspend",
         "CR 116.2f/702.62a: exile a card with suspend from your hand, with N time counters",
+    )
+    suspend.add_argument(
+        "--x-value",
+        type=int,
+        default=None,
+        help="the X of a 'Suspend X' card (CR 702.62a): its time counters and the X in its cost",
     )
     special_action(
         "plot", "CR 116.2k/702.170b: exile a card with plot from your hand, for its plot cost"
@@ -2156,6 +2162,8 @@ def run(argv: list[str] | None = None) -> int:
         elif args.command in ("suspend", "plot", "foretell"):
             body = {"player": seat.player, "dry_run": args.dry_run}
             body.update(card_reference(args.card))
+            if getattr(args, "x_value", None) is not None:
+                body["x_value"] = args.x_value
             sources = sources_or_all(args.sources)
             if sources:
                 body["mana_sources"] = sources
