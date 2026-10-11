@@ -481,14 +481,15 @@ def test_the_api_caps_glibc_malloc_arenas() -> None:
     assert env["MALLOC_ARENA_MAX"] == {"name": "MALLOC_ARENA_MAX", "value": "2"}
 
 
-def test_the_api_requests_its_realistic_steady_state_and_keeps_the_1gi_limit() -> None:
-    """OM1: a live game sits at 350-400 MB, so the request reserves 512Mi;
-    the limit stays 1Gi - the review OOM was fixed in code, not by scaling."""
+def test_the_api_engine_container_has_headroom_over_its_measured_peak() -> None:
+    """OM1: a live game sits at 350-400 MB. Owner 2026-10-11 raised the engine
+    pod's cpu/mem: the 7-day peak was 335 MB and 0.65 CPU against a 1 CPU
+    limit, so the request now reserves 1Gi/500m and the limit is 2Gi/2 CPU."""
     docs = rendered()
     deploy = by_name(docs, "Deployment", "mtg-stack")
     (game,) = deploy["spec"]["template"]["spec"]["containers"]
-    assert game["resources"]["requests"]["memory"] == "512Mi"
-    assert game["resources"]["limits"]["memory"] == "1Gi"
+    assert game["resources"]["requests"] == {"cpu": "500m", "memory": "1Gi"}
+    assert game["resources"]["limits"] == {"cpu": "2", "memory": "2Gi"}
 
 
 def _api_deployment() -> dict:

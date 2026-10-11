@@ -325,13 +325,12 @@ spec:
             failureThreshold: 3
           resources:
             # A uvicorn app serving the lobby's games. Requests are what the
-            # scheduler reserves, limits are where it gets throttled/OOMed. 512Mi
-            # is the measured steady state of a live game (350-400 MB); the 1Gi
-            # limit stays - a long game's review now streams its recorded
-            # states instead of decoding them all at once (OM1).
+            # scheduler reserves, limits are where it gets throttled/OOMed. A
+            # live game sits at 350-400 MB (OM1); raised 2026-10-11 for headroom
+            # over the 7-day peak (335 MB, 0.65 CPU).
             requests:
-              cpu: 100m
-              memory: 512Mi
-            limits:
-              cpu: "1"
+              cpu: 500m
               memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi

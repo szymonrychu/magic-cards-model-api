@@ -188,6 +188,20 @@ def test_max_thinking_tokens_absent_renders_as_empty_string() -> None:
     assert agent_env["MAX_THINKING_TOKENS"] == ""
 
 
+def test_seat_containers_have_headroom_over_their_measured_peak() -> None:
+    """Owner 2026-10-11 raised the seat pod's cpu/mem: the agent's 7-day peak
+    was 1.35 GB and 0.87 CPU, the driver's 296 MB against a 512Mi limit."""
+    containers = {c["name"]: c for c in _build()["spec"]["template"]["spec"]["containers"]}
+    assert containers["agent"]["resources"] == {
+        "requests": {"cpu": "500m", "memory": "2Gi"},
+        "limits": {"cpu": "3", "memory": "4Gi"},
+    }
+    assert containers["driver"]["resources"] == {
+        "requests": {"cpu": "100m", "memory": "512Mi"},
+        "limits": {"cpu": "1", "memory": "1Gi"},
+    }
+
+
 def test_namespace_is_set_in_code_from_settings_not_baked_in_the_template() -> None:
     job = build_job(
         K8sSettings.from_env({**ENV, "AGENT_NAMESPACE": "some-other-namespace"}),
