@@ -356,6 +356,7 @@ CAST_COSTS = (
     "mayhem",
     "megamorph",
     "morph",
+    "mutate",
     "plot",
     "printed",
     "prowl",

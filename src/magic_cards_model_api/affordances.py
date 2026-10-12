@@ -117,7 +117,7 @@ from magic_cards_model.models import CardState, Game, Player, Zone
 from magic_cards_model.models.action import TargetSlot
 
 from .alternative_cost_names import canonical_value
-from .board_scope import on_one_board
+from .board_scope import STALE_BOARD, on_one_board, one_board
 from .engine_api import dry_run_copy, unreadable_mode_notice, unreadable_modes
 
 #: Zones whose contents a spell or ability can realistically be asked to
@@ -759,9 +759,15 @@ def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[st
     `engine_api.dry_run_copy(game)` instead of `game` itself, and never
     assigns the real game to `casting` at all. `state` is looked up again by
     id in the copy, since a deep copy shares no `CardState` with the
-    original.
+    original. The copy gets its own board scope, so the casting checks share
+    one board on each side of the CR 601.2a move instead of one each.
     """
     probe = dry_run_copy(game)
+    with one_board(probe):
+        return _alternative_costs_on(probe, state, caster)
+
+
+def _alternative_costs_on(probe: Game, state: CardState, caster: str) -> list[dict[str, Any]]:
     probe_state = probe.find_by_id(state.id)
     if probe_state is None:
         return []
@@ -777,6 +783,8 @@ def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[st
         return []
     try:
         options = casting.alternative_costs
+    except STALE_BOARD:
+        raise
     except Exception:
         return []
     return [
