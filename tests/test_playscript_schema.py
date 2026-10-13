@@ -1016,7 +1016,7 @@ def test_a_cast_may_leave_the_cost_out():
     assert Play.model_validate(doc).moves[0].cost is None
 
 
-@pytest.mark.parametrize("cost", ["Evoke", "kicker", "overload", "", None, 3, ["evoke"]])
+@pytest.mark.parametrize("cost", ["Evoke", "kicker", "splice", "", None, 3, ["evoke"]])
 def test_a_cost_outside_the_vocabulary_is_unknown_cast_cost(cost):
     doc = play(moves=[cast_move(cost=cost)])
     assert codes(doc) == ["unknown-cast-cost"]
