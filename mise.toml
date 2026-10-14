@@ -9,6 +9,9 @@ uv = "latest"
 # `tests/ui_node.py::run_module`) passes on it, and an LTS line rather than
 # the Current release track this machine happens to have installed.
 node = "24.21.0"
+# k8s:deploy shells out to kubectl; pinned so it never falls back to a stale
+# system symlink (the Homebrew Docker cask one went dangling 2026-10-14).
+kubectl = "1.37.0"
 
 [env]
 _.python.venv = { path = ".venv", create = true }
