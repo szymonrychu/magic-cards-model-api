@@ -36,6 +36,7 @@ from test_playscript_runtime import (
 
 from magic_cards_model_api import seatkit
 from magic_cards_model_api.main import app
+from magic_cards_model_api.playscripts import runtime
 from magic_cards_model_api.playscripts.runtime import Exit, run_script
 from magic_cards_model_api.store import store as game_store
 
@@ -128,8 +129,27 @@ def opponent_plays_a_land(game_id: str, player: str = "bob") -> Iterator[None]:
 # -- FD9's own proof fixtures --------------------------------------------------------
 
 
+SLOW_RUNNER_CAP_SECONDS = 600.0
+
+
+@pytest.fixture
+def roomy_cap(monkeypatch: pytest.MonkeyPatch) -> float:
+    """Lift the product's 25s run cap for the long repeat loops.
+
+    These two loops (X=8 and the Ballista pump-then-ping) are 20-odd engine
+    moves each and take 12s and 30s on an idle machine and several times that
+    under load; a CI runner under
+    `-n 6` goes past the 25s cap, the run hands back a resume token with
+    `script_exit` null, and the test then asserts on the missing exit. The
+    cap is its own behaviour, tested by `test_the_time_cap_mid_loop_then_resume`;
+    here it must not decide the outcome.
+    """
+    monkeypatch.setattr(runtime, "RUN_CAP_SECONDS", SLOW_RUNNER_CAP_SECONDS)
+    return SLOW_RUNNER_CAP_SECONDS
+
+
 def test_the_devoted_druid_loop_reaches_x8_in_one_run_script_call(
-    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, roomy_cap: float
 ) -> None:
     """Finding seq 191: about 25 manual activate calls by hand: this fixture
     reaches the same X=8 mana target and casts the X spell in one
@@ -153,6 +173,7 @@ def test_the_devoted_druid_loop_reaches_x8_in_one_run_script_call(
             script_id="repeat_devoted_druid",
             reasoning=REASONING,
             corpora=seats.script_corpora,
+            max_seconds=roomy_cap,
         )
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
@@ -175,7 +196,7 @@ def test_the_devoted_druid_loop_reaches_x8_in_one_run_script_call(
 
 
 def test_the_walking_ballista_loop_pumps_then_pings_down_toughness_one(
-    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, roomy_cap: float
 ) -> None:
     alice = seat_uid(board, "alice")
     fixture = load_fixture("repeat_walking_ballista.json")
@@ -200,6 +221,7 @@ def test_the_walking_ballista_loop_pumps_then_pings_down_toughness_one(
             script_id="repeat_walking_ballista",
             reasoning=REASONING,
             corpora=seats.script_corpora,
+            max_seconds=roomy_cap,
         )
 
     assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()

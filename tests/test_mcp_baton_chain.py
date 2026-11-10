@@ -694,7 +694,11 @@ def pass_until_end(server: Any, uid: str, baton: str, out: list[Any]) -> None:
             "player_uid": uid,
             "step": "end_step",
             "whose_turn": "mine",
-            "max_seconds": 10,
+            # The tool's own ceiling (seatkit.MAX_WAIT_SECONDS). The wait ends
+            # as soon as end_step is reached, so a roomy value costs nothing
+            # on a fast machine; 10s ran out on a loaded CI runner and handed
+            # back at postcombat_main.
+            "max_seconds": 25,
             "reasoning": "let them resolve",
             "baton": baton,
         },
@@ -752,7 +756,7 @@ def test_acceptance_pass_baton_mid_pass_until_queues_without_stale(client, game,
     assert queued["in_flight"] == "pass_until"
     waiter, awaited = await_in_thread(server, uid, queued["baton"])
     with Opponent(game, "bob"):
-        runner.join(15)
+        runner.join(40)
     waiter.join(5)
     answer, returned_at = passed[0]
     answers.append(answer)
