@@ -1,0 +1,9 @@
+title = "magic-cards-model-api gitleaks config"
+
+[extend]
+useDefault = true
+
+# Fake sequential placeholder token used in tests/wrapper/test_activity.py.
+[allowlist]
+description = "Exact fake test token placeholder"
+regexes = ['''^ghp_abcdEFGH12345678901234567890123456$''']
