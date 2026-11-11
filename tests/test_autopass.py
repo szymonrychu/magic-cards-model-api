@@ -71,8 +71,10 @@ FAST_POLL = 0.01
 #: lap of `run_to_stop`. Generous by design - these tests run a real engine
 #: over a real HTTP stack - but far below any deadline the old loop could have
 #: been given: the version this replaced blocked for a measured 6.0s at
-#: `max_seconds=6.0`, and its MCP schema let an agent ask for 570.
-MAX_CALL_SECONDS = 3.0
+#: `max_seconds=6.0`, and its MCP schema let an agent ask for 570. 5.0 rather
+#: than 3.0: a loaded CI runner stretched a call that sleeps 0.6s by design to
+#: 3.016s; 5.0 is still under the 6.0s the old loop blocked for.
+MAX_CALL_SECONDS = 5.0
 
 
 def seats_for(game_id: str) -> dict[str, str]:

@@ -836,15 +836,21 @@ def test_the_checkout_lock_is_held_across_processes(tmp_path):
     import subprocess
     import sys
     import threading
+    import time
 
     from magic_cards_model_api.playscripts.gitwork import checkout_lock
 
     root = tmp_path / "guides"
     root.mkdir()
+    # The child imports `magic_cards_model_api`, whose package `__init__` pulls
+    # in the whole app and the engine: 10-25s on a loaded CI runner. It reports
+    # "imported" first, so the wait on the lock is timed on its own and the
+    # import cost cannot be mistaken for lock contention.
     script = (
         "import sys, time\n"
         f"sys.path.insert(0, {str(Path('src').resolve())!r})\n"
         "from magic_cards_model_api.playscripts.gitwork import checkout_lock\n"
+        "print('imported', flush=True)\n"
         "start = time.monotonic()\n"
         f"with checkout_lock({str(root)!r}):\n"
         "    print(round(time.monotonic() - start, 2))\n"
@@ -855,21 +861,25 @@ def test_the_checkout_lock_is_held_across_processes(tmp_path):
     def hold() -> None:
         with checkout_lock(root):
             held.set()
-            release.wait(5.0)
+            release.wait(180.0)
 
     holder = threading.Thread(target=hold)
     holder.start()
     held.wait(5.0)
     child = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True)
     try:
+        assert child.stdout.readline().strip() == "imported"
+        time.sleep(0.3)
         assert child.poll() is None
         release.set()
-        out, _ = child.communicate(timeout=10)
+        out, _ = child.communicate(timeout=30)
         assert child.returncode == 0, out
         assert float(out.strip()) >= 0.0
     finally:
         release.set()
         holder.join(5.0)
+        if child.poll() is None:
+            child.kill()
 
 
 def test_propose_takes_the_checkout_lock(capsys, root, bare, render_log, monkeypatch):
