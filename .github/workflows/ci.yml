@@ -11,6 +11,10 @@ jobs:
     # postgres); 35 minutes leaves generous headroom for a colder CI runner
     # plus checkout and mise install on top of both passes.
     timeout-minutes: 35
+    env:
+      # The runner has 4 vCPUs; the tasks default to 6 xdist workers, which
+      # oversubscribes it and tips several wall-time-sensitive tests over.
+      PYTEST_WORKERS: "3"
     defaults:
       run:
         working-directory: magic-cards-model-api
