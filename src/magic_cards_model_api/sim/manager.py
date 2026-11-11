@@ -6,19 +6,22 @@ The slot is global, not per caller (see MEMORY).
 
 from __future__ import annotations
 
+import logging
 import math
 import threading
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.handle import WorkerDied, WorkerError, WorkerHandle, WorkerTimeout
 
-# Covers the measured ~6 s worker cold start with a wide margin; calls use limits.call_timeout_s.
-WORKER_START_TIMEOUT_S = 60.0
+logger = logging.getLogger(__name__)
+
+_SHUTTING_DOWN = "The sandbox service is shutting down. Try again later."
+_BUSY = "The sandbox is busy with another call; retry in a few seconds."
 
 
 class SimRefused(Exception):
@@ -29,6 +32,7 @@ class SimRefused(Exception):
 class _Sandbox:
     handle: WorkerHandle
     last_used: float
+    busy: threading.Lock = field(default_factory=threading.Lock)
 
 
 class SandboxManager:
@@ -43,38 +47,54 @@ class SandboxManager:
         self._clock = clock
         self._lock = threading.Lock()
         self._sandboxes: dict[str, _Sandbox] = {}
+        self._closed = False
         self._starting = 0  # slots reserved by a `new` still in flight
 
     def new(self, spec: dict[str, Any], *, mode: str = "board") -> dict[str, Any]:
+        # Worker start and the `new` request share one deadline: the call cap.
+        cap = self._limits.call_timeout_s
+        deadline = time.monotonic() + cap
         with self._lock:
+            if self._closed:
+                raise SimRefused(_SHUTTING_DOWN)
             if len(self._sandboxes) + self._starting >= self._limits.max_sandboxes:
                 raise SimRefused(
                     f"The sandbox slot is in use (frees in {self._frees_in()} s unless used)."
                     " Retry later, or end your own sandbox with sim_end."
                 )
             self._starting += 1
-        handle = self._factory()
-        try:
-            try:
-                handle.start(WORKER_START_TIMEOUT_S)
-                answer = handle.request("new", spec, self._limits.call_timeout_s)
-            except WorkerError as exc:
-                raise SimRefused(str(exc)) from exc
-            except WorkerTimeout as exc:
-                raise SimRefused(
-                    f"Starting the sandbox exceeded {self._limits.call_timeout_s:g} s. Try again."
-                ) from exc
-            except WorkerDied as exc:
-                raise SimRefused(f"The sandbox worker stopped: {exc}. Try again.") from exc
-        except BaseException:
-            handle.kill()
-            with self._lock:
-                self._starting -= 1
-            raise
+        handle: WorkerHandle | None = None
         sandbox_id = f"sim-{uuid.uuid4().hex}"
+        try:
+            handle = self._factory()
+            handle.start(cap)
+            answer = handle.request("new", spec, max(0.0, deadline - time.monotonic()))
+            with self._lock:
+                if self._closed:
+                    raise SimRefused(_SHUTTING_DOWN)
+                self._sandboxes[sandbox_id] = _Sandbox(handle, self._clock())
+        except WorkerError as exc:
+            self._abort_new(handle)
+            raise SimRefused(str(exc)) from exc
+        except WorkerTimeout as exc:
+            self._abort_new(handle)
+            raise SimRefused(
+                f"Starting the sandbox exceeded the {cap:g} s call limit. Try again."
+            ) from exc
+        except WorkerDied as exc:
+            self._abort_new(handle)
+            raise SimRefused(f"The sandbox worker stopped: {exc}. Try again.") from exc
+        except SimRefused:
+            self._abort_new(handle)
+            raise
+        except Exception as exc:  # noqa: BLE001 - e.g. OSError from spawn; the slot must be freed
+            self._abort_new(handle)
+            raise SimRefused(f"The sandbox could not be started: {exc}. Try again.") from exc
+        except BaseException:
+            self._abort_new(handle)
+            raise
         with self._lock:
             self._starting -= 1
-            self._sandboxes[sandbox_id] = _Sandbox(handle, self._clock())
         return {
             **answer,
             "sandbox": {
@@ -84,7 +104,15 @@ class SandboxManager:
             },
         }
 
+    def _abort_new(self, handle: WorkerHandle | None) -> None:
+        if handle is not None:
+            handle.kill()
+        with self._lock:
+            self._starting -= 1
+
     def call(self, sandbox_id: str, op: str, args: dict[str, Any]) -> dict[str, Any]:
+        cap = self._limits.call_timeout_s
+        deadline = time.monotonic() + cap
         with self._lock:
             sandbox = self._sandboxes.get(sandbox_id)
             if sandbox is None:
@@ -93,19 +121,27 @@ class SandboxManager:
                     f" {self._limits.sandbox_idle_ttl_s:g} s idle. Start a new one with sim_new."
                 )
             sandbox.last_used = self._clock()
+        # The handle serialises requests without counting the wait toward its timeout, so the
+        # wait is bounded here and only the remaining budget is passed on.
+        if not sandbox.busy.acquire(timeout=cap):
+            raise SimRefused(_BUSY)
         try:
-            return sandbox.handle.request(op, args, self._limits.call_timeout_s)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SimRefused(_BUSY)
+            return sandbox.handle.request(op, args, remaining)
         except WorkerError as exc:
             return {"allowed": False, "reason": str(exc)}
         except WorkerTimeout as exc:
             self._drop(sandbox_id, kill=True)
             raise SimRefused(
-                f"The call exceeded {self._limits.call_timeout_s:g} s,"
-                " so the sandbox was ended. Start a new one."
+                f"The call exceeded {cap:g} s, so the sandbox was ended. Start a new one."
             ) from exc
         except WorkerDied as exc:
             self._drop(sandbox_id, kill=True)
             raise SimRefused(f"The sandbox worker stopped: {exc}. Start a new one.") from exc
+        finally:
+            sandbox.busy.release()
 
     def end(self, sandbox_id: str) -> dict[str, Any]:
         self._drop(sandbox_id, kill=True)
@@ -125,6 +161,7 @@ class SandboxManager:
 
     def shutdown(self) -> None:
         with self._lock:
+            self._closed = True
             ids = list(self._sandboxes)
         for sid in ids:
             self._drop(sid, kill=True)
@@ -175,4 +212,4 @@ class Reaper:
                 try:
                     fn()
                 except Exception:  # noqa: BLE001 - one failing reap must not stop the thread
-                    continue
+                    logger.exception("sim reaper callable failed")

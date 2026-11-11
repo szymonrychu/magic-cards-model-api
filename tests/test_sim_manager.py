@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -159,6 +160,184 @@ def test_shutdown_kills_everything(clock, made):
     m.new(SPEC)
     m.shutdown()
     assert made[0].killed
+
+
+class Gated(FakeHandle):
+    """A handle whose requests block until released; kill releases them as a dead worker."""
+
+    def __init__(self):
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def request(self, op, args, timeout):
+        self.entered.set()
+        self.release.wait(5)
+        if self.killed:
+            raise WorkerDied("killed")
+        return {"op": op}
+
+    def kill(self):
+        super().kill()
+        self.release.set()
+
+
+def short_limits(cap="0.3"):
+    return SimLimits.from_env({"MTG_SIM_CALL_TIMEOUT_S": cap})
+
+
+def test_new_bounds_start_and_request_by_one_deadline(clock):
+    seen = {}
+
+    class Slow(FakeHandle):
+        def start(self, timeout):
+            seen["start"] = timeout
+            time.sleep(0.2)
+
+        def request(self, op, args, timeout):
+            seen["request"] = timeout
+            raise WorkerTimeout("slow")
+
+    made = []
+
+    def make():
+        made.append(Slow())
+        return made[-1]
+
+    m = SandboxManager(short_limits("1"), handle_factory=make, clock=clock)
+    with pytest.raises(SimRefused, match="exceeded the 1 s call limit"):
+        m.new(SPEC)
+    assert seen["start"] == 1.0
+    assert 0 < seen["request"] <= 0.85
+    assert made[0].killed
+    with pytest.raises(SimRefused, match="exceeded"):
+        m.new(SPEC)  # slot is free again
+
+
+def test_factory_failure_frees_the_slot(clock):
+    calls = []
+
+    def make():
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError("spawn failed")
+        return FakeHandle()
+
+    m = SandboxManager(SimLimits.from_env({}), handle_factory=make, clock=clock)
+    with pytest.raises(SimRefused, match="spawn failed"):
+        m.new(SPEC)
+    assert m.new(SPEC)["sandbox"]["id"]
+
+
+def test_non_worker_error_on_new_becomes_a_refusal_and_frees_the_slot(clock):
+    class Boom(FakeHandle):
+        def start(self, timeout):
+            raise OSError("exec failed")
+
+    made = []
+
+    def make():
+        made.append(Boom())
+        return made[-1]
+
+    m = SandboxManager(SimLimits.from_env({}), handle_factory=make, clock=clock)
+    with pytest.raises(SimRefused, match="exec failed"):
+        m.new(SPEC)
+    assert made[0].killed
+    with pytest.raises(SimRefused, match="exec failed"):
+        m.new(SPEC)
+
+
+def test_concurrent_new_has_exactly_one_winner(clock):
+    gate = Gated()
+    m = SandboxManager(SimLimits.from_env({}), handle_factory=lambda: gate, clock=clock)
+    results = []
+
+    def first():
+        results.append(m.new(SPEC))
+
+    t = threading.Thread(target=first)
+    t.start()
+    assert gate.entered.wait(2)
+    with pytest.raises(SimRefused, match="slot is in use"):
+        m.new(SPEC)
+    gate.release.set()
+    t.join(2)
+    assert len(results) == 1
+
+
+def test_second_concurrent_call_is_refused_busy_within_the_cap(clock):
+    gate = Gated()
+    m = SandboxManager(short_limits(), handle_factory=lambda: gate, clock=clock)
+    gate.release.set()
+    sid = m.new(SPEC)["sandbox"]["id"]
+    gate.release.clear()
+    gate.entered.clear()
+    t = threading.Thread(target=lambda: m.call(sid, "state", {}))
+    t.start()
+    assert gate.entered.wait(2)
+    began = time.monotonic()
+    with pytest.raises(SimRefused, match="busy with another call"):
+        m.call(sid, "state", {})
+    assert time.monotonic() - began < 1
+    gate.release.set()
+    t.join(2)
+
+
+def test_reap_racing_an_in_flight_call_ends_it_cleanly(clock):
+    gate = Gated()
+    m = SandboxManager(SimLimits.from_env({}), handle_factory=lambda: gate, clock=clock)
+    gate.release.set()
+    sid = m.new(SPEC)["sandbox"]["id"]
+    gate.release.clear()
+    gate.entered.clear()
+    outcome = []
+
+    def run():
+        try:
+            m.call(sid, "state", {})
+        except SimRefused as exc:
+            outcome.append(str(exc))
+
+    t = threading.Thread(target=run)
+    t.start()
+    assert gate.entered.wait(2)
+    clock.now += 1801
+    assert m.reap() == [sid]
+    t.join(2)
+    assert gate.killed
+    assert outcome and "worker stopped" in outcome[0]
+    with pytest.raises(SimRefused, match="No sandbox"):
+        m.call(sid, "state", {})
+
+
+def test_new_after_shutdown_is_refused(clock, made):
+    m = manager(clock, made)
+    m.shutdown()
+    with pytest.raises(SimRefused, match="shutting down"):
+        m.new(SPEC)
+    assert made == []
+
+
+def test_new_finishing_after_shutdown_kills_its_worker(clock):
+    gate = Gated()
+    m = SandboxManager(SimLimits.from_env({}), handle_factory=lambda: gate, clock=clock)
+    errors = []
+
+    def run():
+        try:
+            m.new(SPEC)
+        except SimRefused as exc:
+            errors.append(str(exc))
+
+    t = threading.Thread(target=run)
+    t.start()
+    assert gate.entered.wait(2)
+    m.shutdown()
+    gate.release.set()
+    t.join(2)
+    assert gate.killed
+    assert errors
 
 
 def test_reaper_calls_registered_functions_and_survives_errors():
