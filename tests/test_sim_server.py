@@ -226,3 +226,54 @@ def test_run_script_answers_have_no_credentials(sim):
     stray -= {s.removeprefix("sim-") for s in re.findall(r"sim-[0-9a-f]{32}", text)}
     assert not stray
     call(sim, "sim_end", sandbox_id=answers[0]["sandbox"]["id"])
+
+
+@pytest.fixture
+def match_sim(monkeypatch):
+    from magic_cards_model_api.sim.manager import BatchManager
+
+    monkeypatch.setenv("MTG_SIM_TEST_OPS", "1")
+    monkeypatch.setenv("MTG_SIM_TEST_MATCH_MAX_STEPS", "40")
+    limits = SimLimits.from_env({"MTG_SIM_CALL_TIMEOUT_S": "6"})
+    manager = SandboxManager(limits)
+    batches = BatchManager(limits)
+    server = build_sim_server(manager, limits, batches)
+    yield server
+    batches.shutdown()
+    manager.shutdown()
+
+
+def test_match_tools_are_listed_and_documented(sim):
+    docs = {t.name: t.description for t in asyncio.run(sim.list_tools())}
+    assert "sim_match" in docs and "sim_match_status" in docs
+    assert "partial" in docs["sim_match"] and "baseline" in docs["sim_match"]
+    assert "MTG_SIM_MAX_MATCH_GAMES" in docs["sim_match"] or "10" in docs["sim_match"]
+
+
+def test_sim_match_tool_returns_running_then_done(match_sim):
+    deck_a = (Path(__file__).parent / "fixtures" / "sim" / "red_burn.txt").read_text()
+    deck_b = (Path(__file__).parent / "fixtures" / "sim" / "green_stompy.txt").read_text()
+    answers = [call(match_sim, "sim_match", deck_a=deck_a, deck_b=deck_b, games=2, seed=3)]
+    bid = answers[0]["batch_id"]
+    assert answers[0]["status"] in ("running", "done")
+    deadline = time.monotonic() + 120
+    while answers[-1]["status"] == "running" and time.monotonic() < deadline:
+        answers.append(call(match_sim, "sim_match_status", batch_id=bid))
+    final = answers[-1]
+    assert final["status"] == "done"
+    wins = final["deck_a"]["wins"] + final["deck_b"]["wins"]
+    assert wins + final["draws"] + final["unfinished"] == 2
+    assert len(final["games"]) == 2
+    assert "support_warnings" in final
+    text = json.dumps(answers)
+    for key in ("admin_key", "seat_uids", "uid", "key", "advisor_uids"):
+        assert f'"{key}"' not in text
+    assert not re.findall(r"\b[0-9a-f]{32}\b", text.replace(bid, ""))
+
+
+def test_match_refusals_come_back_as_text(match_sim):
+    out = call(match_sim, "sim_match", deck_a="nope.txt", deck_b="nope.txt", games=1)
+    assert "error" in out
+    out = call(match_sim, "sim_match", deck_a="a\nb", deck_b="a\nb", games=99)
+    assert "MTG_SIM_MAX_MATCH_GAMES" in out["error"]
+    assert "error" in call(match_sim, "sim_match_status", batch_id="batch-unknown")

@@ -665,7 +665,7 @@ environment, no database and a memory cap.
 - Auth: `Authorization: Bearer <MTG_SIM_TOKEN>`. Unset token answers 503 (disabled), a wrong or
   missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
-- Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`, `sim_end`.
+- Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`, `sim_end`, `sim_match`, `sim_match_status`.
   Cards carry labels (`"label": "bolt"` in the spec, `"@bolt"` in action bodies).
 - Scenarios: `sim_run_script(script, keep=False)` builds the sandbox from `setup` and runs
   `steps` in one call, returning per-step results, the initial and final board and a diff. It
@@ -687,8 +687,18 @@ environment, no database and a memory cap.
              {"act": {"action": "pass", "player": "bob"}},
              {"expect": {"zones": {"bob.graveyard": ["Grizzly Bears"]}}}]}
   ```
+- Batches: `sim_match(deck_a, deck_b, games=10, seed=None)` plays engine-only games between two
+  decks (a bundled deck name or the decklist text), both seats the zero-LLM baseline policy,
+  alternating who goes first, and reports wins, 95% intervals, draws, per-game rows and the
+  seed. It answers within the call limit: `status: "running"` plus a `batch_id` means poll
+  `sim_match_status(batch_id)`. One batch runs at a time (a second is refused with the time
+  left); batches do not use the sandbox slot. Caveats: the baseline plays weakly, so rates say
+  little about real matchups, and a baseline game takes about 1.5 to 2.5 minutes, so the
+  300 s wall-clock cap (`MTG_SIM_MATCH_WALL_S`) normally stops a 10-game batch early:
+  status `capped` returns the partial results of the finished games. Finished batches are kept
+  86400 s (`MTG_SIM_RESULT_TTL_S`).
 - Caps (env `MTG_SIM_*`, see `sim/config.py`): one sandbox slot, 1800 s idle TTL, 25 s per call,
-  1024 MB worker RSS.
+  1024 MB worker RSS, 10 games and 300 s per batch, one batch at a time.
 
 The full guide lands with slice S7.
 

@@ -19,7 +19,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 from magic_cards_model_api.sim.config import SimLimits
-from magic_cards_model_api.sim.manager import Reaper, SandboxManager, SimRefused
+from magic_cards_model_api.sim.manager import BatchManager, Reaper, SandboxManager, SimRefused
 from magic_cards_model_api.sim.redact import redact
 from magic_cards_model_api.sim.sandbox_game import ACTIONS
 from magic_cards_model_api.sim.scenario import validate_scenario
@@ -60,7 +60,11 @@ def _tool(call: Callable[[], dict[str, Any]], secrets: list[str] | None = None) 
     return run()
 
 
-def build_sim_server(manager: SandboxManager, limits: SimLimits) -> MCPServer:
+def build_sim_server(
+    manager: SandboxManager, limits: SimLimits, batches: BatchManager | None = None
+) -> MCPServer:
+    batches = batches or BatchManager(limits)
+    wait_s = max(0.0, limits.call_timeout_s - 5)  # leave room for the answer under the cap
     server = MCPServer(name="mtg-sim", instructions=INSTRUCTIONS)
 
     @server.tool(
@@ -130,6 +134,37 @@ def build_sim_server(manager: SandboxManager, limits: SimLimits) -> MCPServer:
 
         return await _tool(run)
 
+    @server.tool(
+        description=(
+            "Play a batch of engine-only games between two decks, both seats the zero-LLM"
+            " baseline policy, and report win counts with 95% intervals per deck.\n"
+            "deck_a / deck_b: a bundled deck name or the decklist text (multi-line). Decks"
+            f" alternate who goes first. games: 1 to {limits.max_match_games}; seed makes"
+            " the batch repeatable (random when omitted, and reported).\n"
+            "The baseline plays weakly, so win rates are a rough signal about the lists under"
+            " naive play, not about real matchups. A game takes about 1.5 to 2.5 minutes,"
+            f" and a batch has a {limits.match_wall_s:g} s wall-clock cap, so a large batch"
+            " is stopped early: status 'capped' returns the partial results of the games"
+            " finished so far (finished_games of requested_games).\n"
+            "Answers at once or within the call limit: status 'running' with a batch_id means"
+            " poll sim_match_status(batch_id) every 20 s or so; do not start a second batch,"
+            " only one runs at a time. Relay support_warnings to the user."
+        )
+    )
+    async def sim_match(
+        deck_a: str, deck_b: str, games: int = 10, seed: int | None = None
+    ) -> dict[str, Any]:
+        def run() -> dict[str, Any]:
+            return batches.status(batches.start(deck_a, deck_b, games, seed), wait_s)
+
+        return await _tool(run)
+
+    @server.tool()
+    async def sim_match_status(batch_id: str) -> dict[str, Any]:
+        """Poll a sim_match batch: status running, done, capped (partial) or failed, with the
+        win counts of the games finished so far. Waits a few seconds for news."""
+        return await _tool(lambda: batches.status(batch_id, wait_s))
+
     @server.tool()
     async def sim_end(sandbox_id: str) -> dict[str, Any]:
         """End the sandbox now and free the slot."""
@@ -194,9 +229,12 @@ class SimMount:
     instance, and the test suite enters the app lifespan once per TestClient.
     """
 
-    def __init__(self, server: MCPServer, manager: SandboxManager) -> None:
+    def __init__(
+        self, server: MCPServer, manager: SandboxManager, batches: BatchManager | None = None
+    ) -> None:
         self._server = server
         self._manager = manager
+        self._batches = batches
         self._current: Any = None
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
@@ -218,6 +256,9 @@ class SimMount:
         self._manager.reopen()
         reaper = Reaper()
         reaper.register(self._manager.reap)
+        if self._batches is not None:
+            self._batches.reopen()
+            reaper.register(self._batches.reap)
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(starlette_app.router.lifespan_context(starlette_app))
             self._current = SimAuth(starlette_app, _env_token)
@@ -228,9 +269,12 @@ class SimMount:
                 self._current = None
                 reaper.stop()
                 await asyncio.to_thread(self._manager.shutdown)
+                if self._batches is not None:
+                    await asyncio.to_thread(self._batches.shutdown)
 
 
 limits = SimLimits.from_env()
 manager = SandboxManager(limits)
-mount = SimMount(build_sim_server(manager, limits), manager)
+batches = BatchManager(limits)
+mount = SimMount(build_sim_server(manager, limits, batches), manager, batches)
 lifespan = mount.lifespan

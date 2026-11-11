@@ -131,3 +131,121 @@ def test_worker_match_op_streams_progress_and_ends_with_done():
     assert [r["game"] for r in rows] == [0, 1]
     for r in rows:
         assert not {"admin_key", "uid", "key"} & set(r)
+
+
+class FakeHandle:
+    """A worker stand-in whose `match` request blocks until released or killed."""
+
+    def __init__(self):
+        import threading
+
+        self.on_progress = None
+        self.release = threading.Event()
+        self.killed = False
+
+    def start(self, timeout):
+        pass
+
+    def request(self, op, args, timeout):
+        from magic_cards_model_api.sim.handle import WorkerTimeout
+
+        if not self.release.wait(timeout=timeout):
+            raise WorkerTimeout("slow")
+        return {"done": True}
+
+    def kill(self):
+        self.killed = True
+        self.release.set()
+
+
+def _batches(env=None, handles=None, **kw):
+    from magic_cards_model_api.sim.config import SimLimits
+    from magic_cards_model_api.sim.manager import BatchManager
+
+    limits = SimLimits.from_env(env or {})
+    made = handles if handles is not None else []
+
+    def factory():
+        made.append(FakeHandle())
+        return made[-1]
+
+    return BatchManager(limits, handle_factory=factory, **kw), made
+
+
+def test_second_batch_is_refused_while_one_runs():
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    batches, made = _batches()
+    first = batches.start(RED, GREEN, 2, 1)
+    assert first.startswith("batch-")
+    with pytest.raises(SimRefused) as exc:
+        batches.start(RED, GREEN, 2, 1)
+    msg = str(exc.value)
+    assert msg.startswith("A batch is already running (about ")
+    assert "s left of its 300 s cap). Poll it or retry later." in msg
+    made[0].release.set()
+    assert batches.status(first, 5)["status"] == "done"
+    assert batches.start(RED, GREEN, 2, 1) != first  # the slot is free again
+    batches.shutdown()
+
+
+def test_games_above_cap_refused():
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    batches, made = _batches({"MTG_SIM_MAX_MATCH_GAMES": "3"})
+    with pytest.raises(SimRefused) as exc:
+        batches.start(RED, GREEN, 4, None)
+    assert "MTG_SIM_MAX_MATCH_GAMES" in str(exc.value)
+    assert made == []
+    with pytest.raises(SimRefused):
+        batches.start(RED, GREEN, 0, None)
+    with pytest.raises(SimRefused) as exc:
+        batches.start("no_such_deck.txt", GREEN, 1, None)
+    assert "no_such_deck.txt" in str(exc.value)
+
+
+def test_random_seed_is_drawn_and_reported():
+    batches, made = _batches()
+    bid = batches.start(RED, GREEN, 1, None)
+    made[0].release.set()
+    out = batches.status(bid, 5)
+    assert isinstance(out["seed"], int)
+    assert out["batch_id"] == bid
+    batches.shutdown()
+
+
+def test_finished_batch_reaped_after_result_ttl():
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    now = [1000.0]
+    batches, made = _batches({"MTG_SIM_RESULT_TTL_S": "50"}, clock=lambda: now[0])
+    bid = batches.start(RED, GREEN, 1, 1)
+    made[0].release.set()
+    assert batches.status(bid, 5)["status"] == "done"
+    now[0] += 40
+    assert batches.reap() == []
+    assert batches.status(bid, 0)["status"] == "done"
+    now[0] += 20
+    assert batches.reap() == [bid]
+    with pytest.raises(SimRefused):
+        batches.status(bid, 0)
+
+
+def test_wall_cap_kills_and_keeps_partial_results(monkeypatch):
+    from magic_cards_model_api.sim.config import SimLimits
+    from magic_cards_model_api.sim.manager import BatchManager
+
+    monkeypatch.setenv("MTG_SIM_TEST_OPS", "1")
+    limits = SimLimits.from_env({"MTG_SIM_MATCH_WALL_S": "12"})
+    batches = BatchManager(limits, op="match_slow")
+    bid = batches.start(RED, GREEN, 3, 5)
+    try:
+        out = batches.status(bid, 60)
+    finally:
+        batches.shutdown()
+    assert out["status"] == "capped"
+    assert len(out["games"]) == 1
+    assert out["finished_games"] == 1
+    assert out["requested_games"] == 3
+    assert out["seed"] == 5
+    assert out["elapsed_s"] >= 12 - 1
