@@ -22,12 +22,14 @@ from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.manager import Reaper, SandboxManager, SimRefused
 from magic_cards_model_api.sim.redact import redact
 from magic_cards_model_api.sim.sandbox_game import ACTIONS
+from magic_cards_model_api.sim.scenario import validate_scenario
 
 INSTRUCTIONS = """\
 mtg-sim: throwaway Magic engine sandboxes for studying lines of play.
 Nothing here touches a real game.
 There is one sandbox slot for everyone and it frees after an idle TTL: end yours with sim_end.
 Build a board with sim_new (players, cards, step), then act with sim_act and read with sim_state.
+Or run a whole scripted line with sim_run_script (setup, steps, expectations) in one call.
 Cards carry labels: give a card "label": "bolt" in the spec and address it as "@bolt" afterwards.
 Always relay support_warnings (cards the engine does not fully support) to the user, and treat
 any result that depends on them as unreliable.
@@ -102,6 +104,31 @@ def build_sim_server(manager: SandboxManager, limits: SimLimits) -> MCPServer:
                 {"action": action, "player": player, "body": body or {}, "dry_run": dry_run},
             )
         )
+
+    @server.tool(
+        description=(
+            "Run a whole scenario in a fresh sandbox in one call and return per-step results,"
+            " the initial and final board and a diff. The slot is freed afterwards unless"
+            " keep=True (then the answer carries `sandbox` and you continue with sim_act).\n"
+            'script: {"setup": <spec>, "steps": [{"act": {"action": "cast", "player": "alice",'
+            ' "body": {...}}}, {"decide": {"player": "bob", "answer": {...}}},'
+            ' {"expect": {"life": {"bob": 17}, "zones": {"bob.graveyard": ["@bears"]},'
+            ' "step": "end", "winner": "alice"}}, {"note": "text"}], "answers": "stop"}.\n'
+            "answers=stop halts at a decision the next step does not answer; answers=baseline"
+            " answers it with the baseline seat. The run stops at the first refused act or when"
+            " the time budget is used up; failed expects are reported, not fatal.\n"
+            f"{_SPEC_DOC}\n{_LABELS_DOC}\n{_ACTIONS_DOC}"
+        )
+    )
+    async def sim_run_script(script: dict[str, Any], keep: bool = False) -> dict[str, Any]:
+        def run() -> dict[str, Any]:
+            try:
+                validate_scenario(script, limits.max_script_steps)
+            except ValueError as exc:
+                raise SimRefused(f"invalid script: {exc}") from exc
+            return manager.run_script(script, keep)
+
+        return await _tool(run)
 
     @server.tool()
     async def sim_end(sandbox_id: str) -> dict[str, Any]:

@@ -118,6 +118,15 @@ def main() -> None:
             except BaseException:
                 game.close()
                 raise
+        if op == "run_script":
+            from magic_cards_model_api.sim.scenario import run_scenario, validate_scenario
+
+            scenario = validate_scenario(args["script"], SimLimits.from_env().max_script_steps)
+            try:
+                return run_scenario(game, scenario, time.monotonic() + float(args["budget_s"]))
+            except BaseException:
+                game.close()
+                raise
         if op == "state":
             return game.state(full=bool(args.get("full", False)))
         if op == "legal_actions":
