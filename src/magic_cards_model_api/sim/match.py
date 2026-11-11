@@ -40,7 +40,9 @@ def resolve_deck(deck: str) -> tuple[str, str]:
     return name, (api_decks.DECKS_DIR / name).read_text()
 
 
-def _play_one(client: Any, deck_a: str, deck_b: str, seed: int, index: int) -> dict[str, Any]:
+def _play_one(
+    client: Any, deck_a: str, deck_b: str, seed: int, index: int, max_steps: int | None
+) -> dict[str, Any]:
     from magic_cards_model_api.api_client import HttpSeatApiClient
     from magic_cards_model_api.baseline_seat import BaselineSeat, play_out
     from magic_cards_model_api.decks import load_deck_into_game
@@ -61,7 +63,7 @@ def _play_one(client: Any, deck_a: str, deck_b: str, seed: int, index: int) -> d
         by_name = {name: uid for uid, name in uids.items()}
         seam = HttpSeatApiClient(http=client)
         seats = [BaselineSeat(seam, game_id, name, by_name[name]) for name, _ in lists]
-        outcome = play_out(seats)
+        outcome = play_out(seats) if max_steps is None else play_out(seats, max_steps=max_steps)
     finally:
         store.delete(game_id)
     return {
@@ -78,9 +80,19 @@ def _play_one(client: Any, deck_a: str, deck_b: str, seed: int, index: int) -> d
 
 
 def play_match(
-    deck_a: str, deck_b: str, games: int, seed: int, emit: Callable[[dict[str, Any]], None]
+    deck_a: str,
+    deck_b: str,
+    games: int,
+    seed: int,
+    emit: Callable[[dict[str, Any]], None],
+    max_steps: int | None = None,
 ) -> None:
-    """Play `games` baseline games, emitting each result; deck A leads on even game indexes."""
+    """Play `games` baseline games, emitting each result; deck A leads on even game indexes.
+
+    `max_steps` caps the steps of every game (a capped game ends undecided with
+    `ended_by` set by the engine loop). Only tests use it, to keep worker tests fast; the
+    sim_match tool never passes it, so real batches play to the baseline's own bound.
+    """
     from fastapi.testclient import TestClient
 
     from magic_cards_model_api.main import app
@@ -89,7 +101,7 @@ def play_match(
     # per request, which costs ~0.1 s each and made a single game take minutes.
     with TestClient(app) as client:
         for i in range(games):
-            emit(_play_one(client, deck_a, deck_b, seed, i))
+            emit(_play_one(client, deck_a, deck_b, seed, i, max_steps))
 
 
 def aggregate(
@@ -98,10 +110,13 @@ def aggregate(
     per_game: list[dict[str, Any]],
     requested: int,
     status: str,
-    deck_a_text: str = "",
-    deck_b_text: str = "",
+    deck_a_text: str,
+    deck_b_text: str,
 ) -> dict[str, Any]:
-    """Win counts and 95% intervals over the decided games, with the per-game rows."""
+    """Win counts and 95% intervals over the decided games, with the per-game rows.
+
+    The deck texts are required: they feed the support block (cards the engine cannot play).
+    """
     wins_a = sum(1 for g in per_game if g.get("winner") == "a")
     wins_b = sum(1 for g in per_game if g.get("winner") == "b")
     draws = sum(1 for g in per_game if g.get("drawn") and not g.get("winner"))
@@ -109,9 +124,8 @@ def aggregate(
     decided = wins_a + wins_b
     names: set[str] = set()
     for text in (deck_a_text, deck_b_text):
-        if text:
-            main, side = parse_decklist(text)
-            names.update(name for _, name in main + side)
+        main, side = parse_decklist(text)
+        names.update(name for _, name in main + side)
     return {
         "status": status,
         "requested_games": requested,

@@ -51,7 +51,8 @@ def test_aggregate_counts_and_interval():
 
     per_game = [game(0, "a"), game(1, "a"), game(2, "a"), game(3, "b"), game(4, None)]
     per_game[4]["ended_by"] = "bound"
-    out = aggregate("Red", "Green", per_game, requested=6, status="running")
+    out = aggregate("Red", "Green", per_game, requested=6, status="running",
+                    deck_a_text=RED, deck_b_text=GREEN)
     assert out["status"] == "running"
     assert out["requested_games"] == 6
     assert out["finished_games"] == 4
@@ -117,11 +118,16 @@ def test_worker_match_op_streams_progress_and_ends_with_done():
     rows: list[dict] = []
     handle.on_progress = rows.append
     try:
+        # max_steps keeps each game short (a full baseline game takes about two minutes).
         out = handle.request(
-            "match", {"deck_a": RED, "deck_b": GREEN, "games": 1, "seed": 3}, timeout=300
+            "match",
+            {"deck_a": RED, "deck_b": GREEN, "games": 2, "seed": 3, "max_steps": 40},
+            timeout=300,
         )
+        assert handle.on_progress is None  # cleared once the op finished
     finally:
         handle.kill()
     assert out == {"done": True}
-    assert [r["game"] for r in rows] == [0]
-    assert not {"admin_key", "uid", "key"} & set(rows[0])
+    assert [r["game"] for r in rows] == [0, 1]
+    for r in rows:
+        assert not {"admin_key", "uid", "key"} & set(r)

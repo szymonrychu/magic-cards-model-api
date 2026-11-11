@@ -136,6 +136,7 @@ def main() -> None:
                 int(args["games"]),
                 int(args["seed"]),
                 lambda row: _emit(out, {"id": req_id, "progress": row}),
+                max_steps=int(args["max_steps"]) if args.get("max_steps") else None,
             )
             return {"done": True}
         if op == "state":

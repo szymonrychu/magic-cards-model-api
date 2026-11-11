@@ -96,7 +96,10 @@ class WorkerHandle:
                 self._proc.stdin.flush()
             except OSError as exc:
                 raise self._died(f"worker pipe closed: {exc}") from exc
-            return self._await(req_id, timeout)
+            try:
+                return self._await(req_id, timeout)
+            finally:
+                self.on_progress = None  # per-request: never emit into a stale callback
 
     def _await(self, req_id: int, timeout: float) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
