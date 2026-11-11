@@ -144,6 +144,18 @@ def test_mount_survives_two_lifespans(monkeypatch):
             assert "mtg-sim" in response.text
 
 
+def test_second_lifespan_leaves_a_usable_manager(monkeypatch):
+    from magic_cards_model_api.sim.server import mount
+
+    monkeypatch.setenv("MTG_SIM_TOKEN", "t0k")
+    for _ in range(2):
+        with TestClient(app):
+            created = call(mount._server, "sim_new", spec=BOLT_SPEC)
+            assert "error" not in created, created
+            sid = created["sandbox"]["id"]
+            assert call(mount._server, "sim_end", sandbox_id=sid) == {"ended": True}
+
+
 def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))

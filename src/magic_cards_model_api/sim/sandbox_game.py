@@ -7,8 +7,10 @@ never leave this object: every answer is redacted, and cards are addressed by la
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Any, Literal
+from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,6 +21,7 @@ Credential = Literal["seat", "admin"]
 ActionRoute = tuple[str, str, Credential]
 
 _G = "/api/games/{game_id}"
+_PATH_PARAM = re.compile(r"[A-Za-z0-9_.:-]+")
 
 ACTIONS: dict[str, ActionRoute] = {
     # seat actions: the acting player's own uid
@@ -209,7 +212,8 @@ class SandboxGame:
         query: dict[str, Any] | None = None,
         **path: str,
     ) -> tuple[int, Any]:
-        url = template.format(game_id=self._game_id, **path)
+        quoted = {k: quote(v, safe="") for k, v in path.items()}
+        url = template.format(game_id=self._game_id, **quoted)
         params = {**(query or {}), **({"uid": uid} if uid else {})}
         resp = self._http.request(method, url, params=params, json=body)
         try:
@@ -333,6 +337,10 @@ class SandboxGame:
             path["card_id"] = str(payload.pop("card_id", ""))
         if "{username}" in template:
             path["username"] = str(payload.pop("player", player or ""))
+        for key, value in path.items():
+            if not _PATH_PARAM.fullmatch(value) or value in (".", ".."):
+                reason = f"invalid {key} {value!r}: not a card id or player name"
+                return self.answer(_refusal(reason))
         if player is not None and credential == "seat":
             payload.setdefault("player", player)
         if dry_run:

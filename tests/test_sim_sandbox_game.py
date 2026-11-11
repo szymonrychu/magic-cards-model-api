@@ -193,3 +193,33 @@ def test_pending_decision_for_the_opponent_names_that_player(sandbox):
     assert pending["player"] == "bob"
     assert pending["kind"] == "choose_cards"
     assert len(pending["cards"]) == 3 and pending["amount"] == 2
+
+
+@pytest.mark.parametrize(
+    ("action", "player", "body", "param"),
+    [
+        ("tap_card", None, {"card_id": "../../../decks/x", "tapped": True}, "card_id"),
+        ("patch_card", None, {"card_id": "..", "tapped": True}, "card_id"),
+        ("patch_card", None, {"card_id": "a/b"}, "card_id"),
+        ("patch_player", None, {"player": "../../../../health", "life": 1}, "username"),
+        ("mana_pool", None, {"player": "bob/../../x"}, "username"),
+        ("patch_player", None, {"player": "bob?x=1"}, "username"),
+    ],
+)
+def test_path_params_with_traversal_are_refused_and_nothing_is_sent(
+    sandbox, action, player, body, param
+):
+    sandbox.create(BOLT_SPEC)
+    sent = []
+    real = sandbox._http.request
+
+    def spy(method, url, **kw):
+        sent.append((method, url))
+        return real(method, url, **kw)
+
+    sandbox._http.request = spy
+    out = sandbox.act(action, player, body)
+    assert out["result"]["allowed"] is False
+    assert f"invalid {param}" in out["result"]["reason"]
+    mutating = [s for s in sent if s[0] != "GET"]
+    assert mutating == [], mutating

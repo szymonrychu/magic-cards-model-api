@@ -159,6 +159,11 @@ class SandboxManager:
             self._drop(sid, kill=True)
         return idle
 
+    def reopen(self) -> None:
+        """Accept calls again after `shutdown` (each app lifespan entry reopens the singleton)."""
+        with self._lock:
+            self._closed = False
+
     def shutdown(self) -> None:
         with self._lock:
             self._closed = True

@@ -188,6 +188,7 @@ class SimMount:
             streamable_http_path="/mcp",
             transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
         )
+        self._manager.reopen()
         reaper = Reaper()
         reaper.register(self._manager.reap)
         async with AsyncExitStack() as stack:
