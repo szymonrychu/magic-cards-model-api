@@ -163,7 +163,10 @@ def test_a_seats_own_call_that_raises_its_own_decision_no_longer_stalls(
     assert pending["kind"] == "choose_cards"
     assert pending["player"] == "alice"
     assert "discard" in result["wake_reason"]
-    assert elapsed < 1.0, (
+    # The deadlock rode the call out to `seatkit.CLIENT_TIMEOUT_SECONDS` (30s),
+    # so 10s still separates the two by a wide margin on a loaded CI runner
+    # where 1.0s was crossed (1.1s).
+    assert elapsed < 10.0, (
         f"took {elapsed:.1f}s to surface alice's own decision - it rode a "
         "timeout out instead of noticing the pause, the deadlock is back"
     )

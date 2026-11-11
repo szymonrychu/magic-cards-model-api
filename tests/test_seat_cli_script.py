@@ -161,7 +161,9 @@ def test_script_run_resume_round_trip(
     register(client, board, alice, script)
     strand_board(client, board)
 
-    assert cli(board, alice, "run", script["id"], "--max-seconds", "0.5") == 0
+    # The cap is what cuts the run (no opponent passes, so it waits at move 1):
+    # roomy enough that the first move finishes on a loaded runner (0.5s did not).
+    assert cli(board, alice, "run", script["id"], "--max-seconds", "4") == 0
     cut = printed(capsys)["script_exit"]
     assert cut["exit"] is None and cut["resume"]["move_index"] == 1, cut
 
