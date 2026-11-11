@@ -76,6 +76,15 @@ spec:
                 name: mtg-metrics-deny
                 port:
                   number: 80
+          # /sim is the chat sandbox MCP endpoint: bearer-protected in the app, and kept
+          # off the public hosts the same way as /metrics (in-cluster callers only).
+          - path: /sim
+            pathType: Prefix
+            backend:
+              service:
+                name: mtg-metrics-deny
+                port:
+                  number: 80
           - path: /
             pathType: Prefix
             backend:

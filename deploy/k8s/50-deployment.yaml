@@ -214,6 +214,16 @@ spec:
                   name: mtg-ops
                   key: OPS_TOKEN
                   optional: true
+            # Bearer token of the chat sandbox MCP endpoint (`/sim/mcp`). Its own Secret,
+            # `mtg-sim` (see `deploy/k8s/10-secret.template.yaml`), not `OPS_TOKEN`, which
+            # reads every game. `optional: true` so the Pod starts without the Secret; the
+            # endpoint then answers 503 "sim disabled" (fail closed).
+            - name: MTG_SIM_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-sim
+                  key: MTG_SIM_TOKEN
+                  optional: true
             - name: SPELLSLINGER_MCP_URL
               value: http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp
             - name: MAX_LIVE_GAMES

@@ -534,6 +534,20 @@ def test_the_public_ingresses_do_not_route_metrics_to_the_api() -> None:
         ]["name"]
 
 
+def test_the_public_ingress_denies_the_sim_endpoint() -> None:
+    for ingress in by_kind(rendered(), "Ingress"):
+        (rule,) = ingress["spec"]["rules"]
+        paths = {p["path"]: p for p in rule["http"]["paths"]}
+        assert paths["/sim"]["backend"]["service"]["name"] == "mtg-metrics-deny", ingress[
+            "metadata"
+        ]["name"]
+
+
+def test_the_api_publishes_the_sim_token_from_its_own_secret() -> None:
+    ref = _api_env()["MTG_SIM_TOKEN"]["valueFrom"]["secretKeyRef"]
+    assert ref == {"name": "mtg-sim", "key": "MTG_SIM_TOKEN", "optional": True}
+
+
 # ---- `mise run k8s:render` also renders a seat Job and a buddy Job --------
 
 
