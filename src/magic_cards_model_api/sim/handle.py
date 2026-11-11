@@ -39,6 +39,7 @@ class WorkerHandle:
         self._lock = threading.Lock()
         self._next_id = 0
         self._dead_reason: str | None = None
+        self._reader: threading.Thread | None = None
 
     @property
     def alive(self) -> bool:
@@ -58,7 +59,8 @@ class WorkerHandle:
             text=True,
             env=worker_env(os.environ),
         )
-        threading.Thread(target=self._read, args=(self._proc,), daemon=True).start()
+        self._reader = threading.Thread(target=self._read, args=(self._proc,), daemon=True)
+        self._reader.start()
         try:
             self.request("ping", {}, timeout)
         except BaseException:
@@ -69,9 +71,13 @@ class WorkerHandle:
         assert proc.stdout is not None
         for line in proc.stdout:
             try:
-                self._lines.put(json.loads(line))
+                msg = json.loads(line)
             except ValueError:
-                continue  # not protocol; ignore
+                msg = None
+            if isinstance(msg, dict):
+                self._lines.put(msg)
+            else:
+                print(f"sim worker: ignoring non-protocol line {line[:200]!r}", file=sys.stderr)
         self._lines.put(None)
 
     def request(self, op: str, args: dict[str, Any], timeout: float) -> dict[str, Any]:
@@ -79,7 +85,7 @@ class WorkerHandle:
             if self._dead_reason is not None:
                 raise WorkerDied(self._dead_reason)
             if not self.alive:
-                raise WorkerDied("worker is not running")
+                raise self._died(self._exit_reason())
             assert self._proc is not None and self._proc.stdin is not None
             self._next_id += 1
             req_id = self._next_id
@@ -98,7 +104,10 @@ class WorkerHandle:
             except queue.Empty:
                 raise WorkerTimeout(f"no answer within {timeout}s") from None
             if msg is None:
-                code = self._proc.wait(timeout=5) if self._proc else None
+                code = None
+                if self._proc is not None:
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        code = self._proc.wait(timeout=max(deadline - time.monotonic(), 0))
                 raise self._died(f"worker exited with code {code}")
             if msg.get("id") is None and not msg.get("ok", True):
                 raise self._died(str(msg.get("error", "worker failed")))
@@ -107,6 +116,23 @@ class WorkerHandle:
             if not msg.get("ok"):
                 raise WorkerError(str(msg.get("error", "")))
             return msg["result"]
+
+    def _exit_reason(self) -> str:
+        """Why the worker is gone: its last id-null report if unread, else its exit code."""
+        if self._reader is not None:
+            self._reader.join(timeout=2)
+        reason = None
+        while True:
+            try:
+                msg = self._lines.get_nowait()
+            except queue.Empty:
+                break
+            if msg is not None and msg.get("id") is None and not msg.get("ok", True):
+                reason = str(msg.get("error", "worker failed"))
+        if reason is not None:
+            return reason
+        code = self._proc.poll() if self._proc else None
+        return f"worker is not running (exit code {code})"
 
     def _died(self, reason: str) -> WorkerDied:
         self._dead_reason = reason
@@ -120,8 +146,9 @@ class WorkerHandle:
             proc.kill()
         with contextlib.suppress(subprocess.TimeoutExpired):
             proc.wait(timeout=10)
-        try:
-            if proc.stdin:
-                proc.stdin.close()
-        except OSError:
-            pass
+        for pipe in (proc.stdin, proc.stdout):
+            try:
+                if pipe:
+                    pipe.close()
+            except OSError:
+                pass

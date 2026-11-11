@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -127,3 +128,61 @@ def test_worker_refuses_to_run_on_postgres():
     )
     assert proc.returncode == 3
     assert proc.stdout == ""
+
+
+def test_child_killed_mid_call_names_the_death(monkeypatch):
+    import os
+    import signal
+    import threading
+
+    monkeypatch.setenv("MTG_SIM_TEST_OPS", "1")
+    h = WorkerHandle()
+    h.start(timeout=60)
+    try:
+        threading.Timer(1.0, lambda: os.kill(h.pid, signal.SIGKILL)).start()
+        with pytest.raises(WorkerDied, match="exited with code -9"):
+            h.request("sleep", {"seconds": 30}, timeout=20)
+        with pytest.raises(WorkerDied, match="exited with code -9"):
+            h.request("ping", {}, timeout=5)
+    finally:
+        h.kill()
+
+
+def test_live_rss_watchdog_kills_runaway_call(monkeypatch):
+    monkeypatch.setenv("MTG_SIM_TEST_OPS", "1")
+    monkeypatch.setenv("MTG_SIM_WORKER_MAX_RSS_MB", "450")
+    h = WorkerHandle()
+    h.start(timeout=60)
+    try:
+        with pytest.raises(WorkerDied, match="MTG_SIM_WORKER_MAX_RSS_MB"):
+            h.request("alloc", {"mb": 700, "seconds": 30}, timeout=30)
+        with pytest.raises(WorkerDied, match="MTG_SIM_WORKER_MAX_RSS_MB"):
+            h.request("ping", {}, timeout=5)
+    finally:
+        h.kill()
+    assert not h.alive
+
+
+def test_worker_fd1_is_not_the_protocol_pipe():
+    h = WorkerHandle()
+    h.start(timeout=60)
+    try:
+        assert h._proc is not None and h._proc.stdout is not None
+        protocol_pipe = f"pipe:[{os.fstat(h._proc.stdout.fileno()).st_ino}]"
+        assert os.readlink(f"/proc/{h.pid}/fd/1") != protocol_pipe
+    finally:
+        h.kill()
+
+
+def test_reader_ignores_non_dict_json_lines():
+    import io
+
+    h = WorkerHandle()
+
+    class FakeProc:
+        stdout = io.StringIO('123\nnull\n"x"\n{"id":1,"ok":true,"result":{}}\n')
+
+    h._read(FakeProc())  # type: ignore[arg-type]
+    assert h._lines.get_nowait() == {"id": 1, "ok": True, "result": {}}
+    assert h._lines.get_nowait() is None
+    assert h._lines.empty()
