@@ -238,3 +238,53 @@ def test_script_stops_when_the_time_budget_is_used_up(game):
     assert out["stopped_at"] == 0
     assert out["stop_reason"].startswith("time budget of ")
     assert out["stop_reason"].endswith(" s used up")
+
+
+def test_script_creature_keeps_summoning_sickness_like_sim_new(game):
+    spec = {
+        "players": [{"name": "alice"}, {"name": "bob"}],
+        "cards": [
+            {"card": "Grizzly Bears", "player": "alice", "zone": "battlefield", "label": "bears"}
+        ],
+    }
+    game.create(spec)
+    expected = game.state(full=True)["state"]["battlefield"][0]["summoning_sick"]
+    assert expected is True
+    run(game, {"setup": spec, "steps": []})
+    got = game.state(full=True)["state"]["battlefield"][0]["summoning_sick"]
+    assert got == expected
+
+
+class _StuckGame:
+    """A game whose decision never resolves and whose every answer takes 0.05 s."""
+
+    def __init__(self):
+        self.decides = 0
+        self.pending = {"kind": "choose_cards", "player": "alice", "options": [], "cards": []}
+
+    def create(self, spec):
+        return {"state": {"pending_decision": self.pending}, "labels": {}}
+
+    def act(self, action, player=None, body=None, dry_run=False):
+        time.sleep(0.05)
+        if action == "decide":
+            self.decides += 1
+        return {"state": {"pending_decision": self.pending}, "labels": {},
+                "result": {"accepted": True}}
+
+    def state(self, full=False):
+        return {"state": {"pending_decision": self.pending}, "labels": {}}
+
+
+def test_auto_decide_loop_stops_at_the_deadline():
+    stuck = _StuckGame()
+    steps = [{"act": {"action": "pass", "player": "alice"}}]
+    scenario = validate_scenario(
+        {"setup": BOLT_SCRIPT["setup"], "steps": steps, "answers": "baseline"}, 200
+    )
+    out = run_scenario(stuck, scenario, time.monotonic() + 0.2)
+    assert stuck.decides < 50
+    assert out["stopped_at"] == 0
+    assert out["stop_reason"].startswith("time budget of ")
+    assert out["stop_reason"].endswith(" s used up")
+    assert all(s["kind"] == "auto_decide" for s in out["steps"]) and out["steps"]

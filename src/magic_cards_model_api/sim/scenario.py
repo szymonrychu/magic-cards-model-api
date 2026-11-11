@@ -235,7 +235,7 @@ def run_scenario(game: SandboxGame, scenario: Scenario, deadline: float) -> dict
     expectations are recorded and never stop the run.
     """
     budget = max(0.0, deadline - time.monotonic())
-    created = game.create(scenario.setup.model_dump())
+    created = game.create(scenario.setup.model_dump(exclude_unset=True))
     initial = created["state"]
     state, labels = initial, created["labels"]
     records: list[dict[str, Any]] = []
@@ -265,6 +265,8 @@ def run_scenario(game: SandboxGame, scenario: Scenario, deadline: float) -> dict
             pending = state.get("pending_decision")
             auto = 0
             while pending and scenario.answers == "baseline" and auto < _MAX_AUTO_DECISIONS:
+                if time.monotonic() >= deadline:
+                    break
                 body = decide_body(pending, pending["player"])
                 answer = game.act("decide", pending["player"], body)
                 state, labels = answer["state"], answer["labels"]
@@ -277,6 +279,9 @@ def run_scenario(game: SandboxGame, scenario: Scenario, deadline: float) -> dict
                     break
                 auto += 1
                 pending = state.get("pending_decision")
+            if pending and time.monotonic() >= deadline:
+                stop(index, f"time budget of {budget:g} s used up")
+                break
             if pending:
                 stop(index, _describe_decision(pending) + "; answer it with a decide step first")
                 break

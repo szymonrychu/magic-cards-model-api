@@ -382,3 +382,15 @@ def test_real_worker_round_trip_and_end():
             m.call(sid, "state", {})
     finally:
         m.shutdown()
+
+
+def test_run_script_timeout_names_the_operation(clock):
+    class Slow(FakeHandle):
+        def request(self, op, args, timeout):
+            raise WorkerTimeout("slow")
+
+    m = SandboxManager(short_limits("1"), handle_factory=Slow, clock=clock)
+    with pytest.raises(SimRefused, match="Running the script exceeded the 1 s call limit"):
+        m.run_script({"setup": SPEC, "steps": []})
+    with pytest.raises(SimRefused, match="Starting the sandbox exceeded the 1 s call limit"):
+        m.new(SPEC)

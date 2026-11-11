@@ -100,9 +100,8 @@ class SandboxManager:
             raise SimRefused(str(exc)) from exc
         except WorkerTimeout as exc:
             self._abort_new(handle)
-            raise SimRefused(
-                f"Starting the sandbox ({op}) exceeded the {cap:g} s call limit. Try again."
-            ) from exc
+            what = "Running the script" if op == "run_script" else "Starting the sandbox"
+            raise SimRefused(f"{what} exceeded the {cap:g} s call limit. Try again.") from exc
         except WorkerDied as exc:
             self._abort_new(handle)
             raise SimRefused(f"The sandbox worker stopped: {exc}. Try again.") from exc
