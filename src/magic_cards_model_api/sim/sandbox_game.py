@@ -12,7 +12,7 @@ from functools import lru_cache
 from typing import Any, Literal
 from urllib.parse import quote
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from magic_cards_model_api.schemas import GameStateView
 from magic_cards_model_api.sim.redact import redact, support_block
@@ -22,6 +22,16 @@ ActionRoute = tuple[str, str, Credential]
 
 _G = "/api/games/{game_id}"
 _PATH_PARAM = re.compile(r"[A-Za-z0-9_.:-]+")
+
+
+def _safe_path_value(value: str) -> bool:
+    return bool(_PATH_PARAM.fullmatch(value)) and value not in (".", "..")
+
+
+def _check_name(value: str, field: str) -> str:
+    if not _safe_path_value(value):
+        raise ValueError(f"invalid {field} {value!r}: use letters, digits and _ . : - only")
+    return value
 
 ACTIONS: dict[str, ActionRoute] = {
     # seat actions: the acting player's own uid
@@ -68,6 +78,11 @@ class SpecPlayer(_Strict):
     name: str
     life: int = 20
 
+    @field_validator("name")
+    @classmethod
+    def _name_is_path_safe(cls, value: str) -> str:
+        return _check_name(value, "players.name")
+
 
 class SpecCard(_Strict):
     card: str
@@ -87,6 +102,13 @@ class SandboxSpec(_Strict):
     step: str = "precombat_main"
     cards: list[SpecCard] = Field(default_factory=list)
     mana_pool: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("mana_pool")
+    @classmethod
+    def _mana_pool_keys_are_path_safe(cls, value: dict[str, str]) -> dict[str, str]:
+        for key in value:
+            _check_name(key, "mana_pool key")
+        return value
 
 
 def resolve_labels(value: Any, labels: dict[str, str]) -> Any:
@@ -212,6 +234,8 @@ class SandboxGame:
         query: dict[str, Any] | None = None,
         **path: str,
     ) -> tuple[int, Any]:
+        for key, value in path.items():
+            _check_name(value, key)
         quoted = {k: quote(v, safe="") for k, v in path.items()}
         url = template.format(game_id=self._game_id, **quoted)
         params = {**(query or {}), **({"uid": uid} if uid else {})}
@@ -338,7 +362,7 @@ class SandboxGame:
         if "{username}" in template:
             path["username"] = str(payload.pop("player", player or ""))
         for key, value in path.items():
-            if not _PATH_PARAM.fullmatch(value) or value in (".", ".."):
+            if not _safe_path_value(value):
                 reason = f"invalid {key} {value!r}: not a card id or player name"
                 return self.answer(_refusal(reason))
         if player is not None and credential == "seat":
