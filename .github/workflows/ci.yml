@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -72,3 +75,78 @@ jobs:
       # It fails the job rather than skipping if postgres never comes up.
       - name: Test postgres
         run: mise run test:pg
+
+  # Builds both images on every push and PR (verifies the Dockerfiles); on main it
+  # also releases: next semver from next_version.py, images pushed to Harbor as
+  # X.Y.Z only (never a sha tag), and the vX.Y.Z git tag pushed last so a failed
+  # run leaves no tag and a re-run repeats the same idempotent pushes.
+  images:
+    needs: [test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      HARBOR_URL: harbor.szymonrichert.pl
+      REGISTRY: harbor.szymonrichert.pl/containers
+      RELEASE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      # The build context is the PARENT directory (the engine is a sibling path
+      # dependency), so both repos are checked out side by side under the workspace.
+      - name: Checkout magic-cards-model-api
+        uses: actions/checkout@v7
+        with:
+          path: magic-cards-model-api
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Checkout magic-cards-model (engine, sibling of this checkout)
+        uses: actions/checkout@v7
+        with:
+          repository: szymonrychu/magic-cards-model
+          path: magic-cards-model
+      # Prints nothing when HEAD is already in a vX.Y.Z tag; release steps then skip.
+      - name: Compute version
+        id: version
+        if: env.RELEASE == 'true'
+        working-directory: magic-cards-model-api
+        run: echo "version=$(python3 scripts/next_version.py)" >> "$GITHUB_OUTPUT"
+      - name: Build api image
+        run: >
+          docker build -f magic-cards-model-api/Dockerfile
+          -t magic-cards-model-api:ci .
+      - name: Build agent image
+        run: >
+          docker build -f magic-cards-model-api/Dockerfile.agent
+          -t magic-cards-model-agent:ci .
+      - uses: regclient/actions/regctl-installer@dd58ad94f76adb73d8ac1bf75ed25f01545d5b32 # main as of 2026-10-25
+        if: steps.version.outputs.version != ''
+      - name: Login to Harbor
+        if: steps.version.outputs.version != ''
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+        run: echo "$HARBOR_PASSWORD" | regctl registry login "$HARBOR_URL" -u "$HARBOR_USERNAME" --pass-stdin
+      # Cloudflare in front of Harbor answers 413 to request bodies over 100MB,
+      # so layers go up in 50MB chunks instead of docker push's single upload.
+      - name: Push images
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          regctl registry set "$HARBOR_URL" --blob-chunk 52428800 --blob-max 52428800
+          for name in magic-cards-model-api magic-cards-model-agent; do
+            docker save "$name:ci" -o image.tar
+            regctl image import "$REGISTRY/$name:$VERSION" image.tar
+            rm image.tar
+          done
+      - name: Push git tag
+        if: steps.version.outputs.version != ''
+        working-directory: magic-cards-model-api
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git tag "v$VERSION" "$GITHUB_SHA"
+          git push origin "refs/tags/v$VERSION"

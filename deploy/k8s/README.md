@@ -129,10 +129,13 @@ harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__   # agent, gu
 to deploy is:
 
 ```sh
-mise run k8s:deploy
+mise run k8s:deploy 1.2.3        # or: MTG_VERSION=1.2.3 mise run k8s:deploy
 ```
 
-which substitutes `__TAG__` with the commit sha and pipes the result to
+The version is the X.Y.Z that CI (the `images` job on main) pushed to Harbor and
+tagged `vX.Y.Z` in git; anything not matching `^[0-9]+\.[0-9]+\.[0-9]+$` is
+refused, and `k8s:deploy` no longer builds or pushes. It substitutes `__TAG__`
+with that version and pipes the result to
 `kubectl apply -f -`. Nothing rendered is written back into the repo. The
 Deployment sets `AGENT_IMAGE` and `API_IMAGE` env vars to the same
 `harbor.szymonrichert.pl/.../*:__TAG__` strings, substituted by the exact same
@@ -140,17 +143,14 @@ Deployment sets `AGENT_IMAGE` and `API_IMAGE` env vars to the same
 Job it creates will pull - no separate `__AGENT_IMAGE__`/`__API_IMAGE__`
 placeholder was needed.
 
-If you are not using mise, do the same thing by hand - `TAG` has to match what
-`mise.toml`'s `k8s:render`/`k8s:deploy` compute (`<api-sha>-<engine-sha>`, the
-two repos' commit shas joined with a hyphen, docker:push tags the image with
-the same string), not just this repo's own sha:
+If you are not using mise, do the same thing by hand with the released version:
 
 ```sh
-TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
+TAG=1.2.3
 sed "s/__TAG__/${TAG}/g" deploy/k8s/*.yaml | kubectl apply -f -
 ```
 
-`imagePullPolicy: IfNotPresent` throughout: a short commit sha is immutable, so
+`imagePullPolicy: IfNotPresent` throughout: a released X.Y.Z tag is immutable, so
 one tag always means one image and `Always` would only add a registry round
 trip per container start. If you ever push a mutable tag (`latest`), change the
 policy with it.
@@ -261,7 +261,7 @@ migration and the app rolling onto the new schema. Do the same thing by hand,
 in order, if you are not using mise:
 
 ```sh
-TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
+TAG=1.2.3   # a released X.Y.Z
 NS=mtg-engine
 
 # 1. everything except the migration Job, Deployment, Service, Ingress
@@ -566,8 +566,8 @@ kubectl -n mtg-engine get secret magic-trainer-webui-proxy
 #    and is waited on, and only once it succeeds is the Deployment (which
 #    expects the new schema) applied - see "Migrations: a Job, waited on"
 #    above for why, and the mise task itself for the exact ordering.
-mise run k8s:deploy
-#   or, without mise (TAG must match mise.toml's <api-sha>-<engine-sha>):
+mise run k8s:deploy 1.2.3
+#   or, without mise (TAG is the released X.Y.Z):
 #   see the hand-equivalent phased sequence under
 #   "Migrations: a Job, waited on" above - do NOT run
 #   `sed "s/__TAG__/${TAG}/g" deploy/k8s/*.yaml | kubectl apply -f -` as a
