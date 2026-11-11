@@ -693,9 +693,11 @@ environment, no database and a memory cap.
   seed. It answers within the call limit: `status: "running"` plus a `batch_id` means poll
   `sim_match_status(batch_id)`. One batch runs at a time (a second is refused with the time
   left); batches do not use the sandbox slot. Caveats: the baseline plays weakly, so rates say
-  little about real matchups, and a baseline game takes about 1.5 to 2.5 minutes, so the
-  300 s wall-clock cap (`MTG_SIM_MATCH_WALL_S`) normally stops a 10-game batch early:
-  status `capped` returns the partial results of the finished games. Finished batches are kept
+  little about real matchups, and a baseline game measured 85-140 s on the small fixture
+  decks, and the bundled 45c_aggro vs 45c_control finished 0 of 10 games in 300 s (about 0.55 s
+  per step). At the default 300 s wall-clock cap (`MTG_SIM_MATCH_WALL_S`, configurable by env)
+  a match therefore usually returns few or no finished games: status `capped` returns the
+  partial results of the finished games. Finished batches are kept
   86400 s (`MTG_SIM_RESULT_TTL_S`).
 - Caps (env `MTG_SIM_*`, see `sim/config.py`): one sandbox slot, 1800 s idle TTL, 25 s per call,
   1024 MB worker RSS, 10 games and 300 s per batch, one batch at a time.

@@ -304,13 +304,15 @@ class BatchManager:
         try:
             handle = self._factory()
             batch.handle = handle
+            self._refuse_if_closed()  # shutdown ran before the worker existed
             handle.start(_START_TIMEOUT_S)
+            self._refuse_if_closed()  # shutdown ran during start-up
             handle.on_progress = batch.rows.append  # after start: `request` clears it
             batch.play_started = time.monotonic()
             handle.request(self._op, args, self._limits.match_wall_s)
         except WorkerTimeout:
             status = "capped"
-        except WorkerError as exc:
+        except (WorkerError, SimRefused) as exc:
             status, error = "failed", str(exc)
         except WorkerDied as exc:
             status, error = "failed", f"The batch worker stopped: {exc}"
@@ -324,6 +326,12 @@ class BatchManager:
                 batch.status = status
                 batch.finished = self._clock()
             batch.done.set()
+
+    def _refuse_if_closed(self) -> None:
+        with self._lock:
+            closed = self._closed
+        if closed:
+            raise SimRefused(_SHUTTING_DOWN)
 
     def status(self, batch_id: str, wait_s: float) -> dict[str, Any]:
         with self._lock:

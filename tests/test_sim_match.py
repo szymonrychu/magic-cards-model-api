@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -51,8 +52,9 @@ def test_aggregate_counts_and_interval():
 
     per_game = [game(0, "a"), game(1, "a"), game(2, "a"), game(3, "b"), game(4, None)]
     per_game[4]["ended_by"] = "bound"
-    out = aggregate("Red", "Green", per_game, requested=6, status="running",
-                    deck_a_text=RED, deck_b_text=GREEN)
+    out = aggregate(
+        "Red", "Green", per_game, requested=6, status="running", deck_a_text=RED, deck_b_text=GREEN
+    )
     assert out["status"] == "running"
     assert out["requested_games"] == 6
     assert out["finished_games"] == 4
@@ -105,7 +107,15 @@ def test_play_match_alternates_seats(short_games):
     assert set(store.ids()) == before
     for g in got:
         assert set(g) == {
-            "game", "seed", "a_seat", "winner", "drawn", "turn", "steps", "ended_by", "seconds",
+            "game",
+            "seed",
+            "a_seat",
+            "winner",
+            "drawn",
+            "turn",
+            "steps",
+            "ended_by",
+            "seconds",
         }
         assert g["winner"] in ("a", "b", None)
 
@@ -249,3 +259,69 @@ def test_wall_cap_kills_and_keeps_partial_results(monkeypatch):
     assert out["requested_games"] == 3
     assert out["seed"] == 5
     assert out["elapsed_s"] >= 12 - 1
+
+
+def test_worker_death_mid_batch_fails_it_and_frees_the_slot():
+    from magic_cards_model_api.sim.handle import WorkerDied
+
+    class Dying(FakeHandle):
+        def request(self, op, args, timeout):
+            raise WorkerDied("exit code -9")
+
+    made = []
+
+    def factory():
+        made.append(Dying() if not made else FakeHandle())
+        return made[-1]
+
+    from magic_cards_model_api.sim.config import SimLimits
+    from magic_cards_model_api.sim.manager import BatchManager
+
+    batches = BatchManager(SimLimits.from_env({}), handle_factory=factory)
+    bid = batches.start(RED, GREEN, 2, 1)
+    out = batches.status(bid, 5)
+    assert out["status"] == "failed"
+    assert "worker stopped" in out["error"] and "exit code -9" in out["error"]
+    assert made[0].killed
+    second = batches.start(RED, GREEN, 2, 1)  # the slot is free again
+    assert second != bid
+    made[1].release.set()
+    assert batches.status(second, 5)["status"] == "done"
+    batches.shutdown()
+
+
+def test_shutdown_before_the_worker_spawns_never_leaves_an_orphan():
+    import threading
+
+    entered, gate = threading.Event(), threading.Event()
+    made = []
+
+    class Late(FakeHandle):
+        def __init__(self):
+            super().__init__()
+            self.requested = False
+
+        def request(self, op, args, timeout):
+            self.requested = True
+            return super().request(op, args, timeout)
+
+    def factory():
+        entered.set()
+        gate.wait(5)
+        made.append(Late())
+        return made[-1]
+
+    from magic_cards_model_api.sim.config import SimLimits
+    from magic_cards_model_api.sim.manager import BatchManager
+
+    batches = BatchManager(SimLimits.from_env({}), handle_factory=factory)
+    bid = batches.start(RED, GREEN, 2, 1)
+    assert entered.wait(5)
+    stopper = threading.Thread(target=batches.shutdown)
+    stopper.start()
+    time.sleep(0.3)
+    gate.set()
+    stopper.join(15)
+    assert not stopper.is_alive()
+    assert made[0].killed and not made[0].requested
+    assert batches.status(bid, 0)["status"] == "failed"
