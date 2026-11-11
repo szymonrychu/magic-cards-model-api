@@ -150,8 +150,14 @@ def test_status_is_live_while_the_self_dispatch_is_still_booting(world, tmp_path
             entered.set()
             outcome["during_boot"] = client.get("/status").json()
             gate.set()
+            # `gameId` is set before `pending` clears, so on a loaded runner a
+            # poll can land between the two; wait for the settled shape.
             outcome["after_dispatch"] = wait_for(
-                lambda: status_of(client) if status_of(client).get("gameId") else None
+                lambda: (
+                    status_of(client)
+                    if status_of(client).get("gameId") and status_of(client).get("pending") is False
+                    else None
+                )
             )
 
     thread = threading.Thread(target=boot_and_probe, daemon=True)
