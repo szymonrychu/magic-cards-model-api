@@ -190,14 +190,16 @@ def test_max_thinking_tokens_absent_renders_as_empty_string() -> None:
 
 def test_seat_containers_have_headroom_over_their_measured_peak() -> None:
     """Owner 2026-10-11 raised the seat pod's cpu/mem: the agent's 7-day peak
-    was 1.35 GB and 0.87 CPU, the driver's 296 MB against a 512Mi limit."""
+    was 1.35 GB and 0.87 CPU, the driver's 296 MB against a 512Mi limit.
+    T-111 (2026-11-11) right-sized only the requests to the measured 7-day peaks
+    (agent 1.18 GiB / 0.95 CPU burst, driver 219 MiB / 0.06 CPU); limits stay."""
     containers = {c["name"]: c for c in _build()["spec"]["template"]["spec"]["containers"]}
     assert containers["agent"]["resources"] == {
-        "requests": {"cpu": "500m", "memory": "2Gi"},
+        "requests": {"cpu": "400m", "memory": "1.5Gi"},
         "limits": {"cpu": "3", "memory": "4Gi"},
     }
     assert containers["driver"]["resources"] == {
-        "requests": {"cpu": "100m", "memory": "512Mi"},
+        "requests": {"cpu": "50m", "memory": "256Mi"},
         "limits": {"cpu": "1", "memory": "1Gi"},
     }
 
