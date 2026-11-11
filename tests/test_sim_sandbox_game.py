@@ -145,3 +145,51 @@ def test_close_deletes_the_game(sandbox):
     game_id = sandbox._game_id
     sandbox.close()
     assert TestClient(app).get(f"/api/games/{game_id}").status_code == 404
+
+
+def test_create_closes_the_half_built_game_when_a_card_is_unresolvable(sandbox, monkeypatch):
+    closed = []
+    real_close = SandboxGame.close
+
+    def spy(self):
+        closed.append(self._game_id)
+        real_close(self)
+
+    monkeypatch.setattr(SandboxGame, "close", spy)
+    spec = {
+        "players": [{"name": "alice"}, {"name": "bob"}],
+        "cards": [
+            {"card": "Mountain", "player": "alice"},
+            {"card": "Nonexistent", "player": "alice"},
+        ],
+    }
+    with pytest.raises(ValueError, match="Nonexistent"):
+        sandbox.create(spec)
+    game_id = closed[-1]
+    assert game_id is not None and sandbox._game_id is None
+    assert TestClient(app).get(f"/api/games/{game_id}").status_code == 404
+    with pytest.raises(RuntimeError):
+        sandbox.state()
+
+
+def test_pending_decision_for_the_opponent_names_that_player(sandbox):
+    sandbox.create(
+        {
+            "players": [{"name": "alice"}, {"name": "bob"}],
+            "cards": [
+                {"card": "Mind Rot", "player": "alice", "label": "rot"},
+                {"card": "Grizzly Bears", "player": "bob"},
+                {"card": "Forest", "player": "bob"},
+                {"card": "Island", "player": "bob"},
+            ],
+            "mana_pool": {"alice": "BBB"},
+        }
+    )
+    sandbox.act("cast", "alice", {"card_id": "@rot", "targets": ["bob"]})
+    out = sandbox.act("pass", "alice", {})
+    assert out["state"]["pending_decision"] is None
+    out = sandbox.act("pass", "bob", {})
+    pending = out["state"]["pending_decision"]
+    assert pending["player"] == "bob"
+    assert pending["kind"] == "choose_cards"
+    assert len(pending["cards"]) == 3 and pending["amount"] == 2

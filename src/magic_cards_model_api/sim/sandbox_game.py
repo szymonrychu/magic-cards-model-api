@@ -251,13 +251,17 @@ class SandboxGame:
         self._admin_key = data["admin_key"]
         self._seat_uids = dict(data["seat_uids"])
         self._labels = {}
-        for card in parsed.cards:
-            self._add_spec_card(card)
-        for player, mana in parsed.mana_pool.items():
-            floating: dict[str, int] = {}
-            for color in mana.upper():
-                floating[color] = floating.get(color, 0) + 1
-            self._admin("PUT", ACTIONS["mana_pool"][1], {"set": floating}, username=player)
+        try:
+            for card in parsed.cards:
+                self._add_spec_card(card)
+            for player, mana in parsed.mana_pool.items():
+                floating: dict[str, int] = {}
+                for color in mana.upper():
+                    floating[color] = floating.get(color, 0) + 1
+                self._admin("PUT", ACTIONS["mana_pool"][1], {"set": floating}, username=player)
+        except Exception:
+            self.close()
+            raise
         return self.answer()
 
     def _add_spec_card(self, card: SpecCard) -> None:
