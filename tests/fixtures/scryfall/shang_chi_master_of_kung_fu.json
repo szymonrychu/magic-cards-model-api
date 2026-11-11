@@ -104,9 +104,7 @@
   "collector_number": "187",
   "digital": false,
   "rarity": "mythic",
-  "flavor_text": "\"Many underestimate me because I carry no weapon. But I am the weapon.\"",
   "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
-  "artist": "Lee Woo-chul",
   "artist_ids": [
     "13ed77ae-7f9e-4288-893e-12e3ac984167"
   ],
@@ -125,22 +123,9 @@
     "universesbeyond"
   ],
   "edhrec_rank": 6874,
-  "prices": {
-    "usd": "11.81",
-    "usd_foil": "13.11",
-    "usd_etched": null,
-    "eur": "8.47",
-    "eur_foil": "9.35",
-    "tix": "3.77"
-  },
   "related_uris": {
     "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DShang-Chi%252C%2BMaster%2Bof%2BKung%2BFu",
     "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DShang-Chi%252C%2BMaster%2Bof%2BKung%2BFu",
     "edhrec": "https://edhrec.com/route/?cc=Shang-Chi%2C+Master+of+Kung+Fu"
-  },
-  "purchase_uris": {
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F697059%3Fpage%3D1",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=891584&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "cardhoarder": "https://www.cardhoarder.com/cards/152561?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall"
   }
 }

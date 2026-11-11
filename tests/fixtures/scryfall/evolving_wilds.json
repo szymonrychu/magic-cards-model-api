@@ -1,5 +1,4 @@
 {
-  "artist": "Rytis Sabaliauskas",
   "artist_ids": [
     "6fb39816-7d41-4419-8e27-27ace87fb092"
   ],
@@ -17,7 +16,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "\"The mechanisms of evolution do their work upon the Savage Land, as they do everywhere. I only hasten the process.\"\n\u2014High Evolutionary, Herbert Wyndham",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -82,25 +80,12 @@
   "oracle_text": "{T}, Sacrifice this land: Search your library for a basic land card, put it onto the battlefield tapped, then shuffle.",
   "oversized": false,
   "penny_rank": 90,
-  "prices": {
-    "eur": "0.10",
-    "eur_foil": null,
-    "tix": "0.04",
-    "usd": "0.25",
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Aa75445d3-1303-4bb5-89ad-26ea93fecd48&unique=prints",
   "promo": false,
   "promo_types": [
     "surgefoil",
     "universesbeyond"
   ],
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/150949?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=891879&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F697968%3Fpage%3D1"
-  },
   "rarity": "common",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Evolving+Wilds",

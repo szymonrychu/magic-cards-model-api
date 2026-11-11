@@ -1,5 +1,4 @@
 {
-  "artist": "Noah Bradley",
   "artist_ids": [
     "81995d11-da98-4f8b-89bd-b88ca2ddb06b"
   ],
@@ -20,7 +19,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "New life is born within its shadows.",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -91,25 +89,12 @@
     "source": "Wizards of the Coast",
     "source_uri": "https://magic.wizards.com/en/articles/archive/card-preview/lands-horizon-2019-05-21"
   },
-  "prices": {
-    "eur": "5.70",
-    "eur_foil": "10.80",
-    "tix": "1.92",
-    "usd": "6.76",
-    "usd_etched": null,
-    "usd_foil": "13.05"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A8ed932ff-986c-4592-ad70-53b3fac80d69&unique=prints",
   "produced_mana": [
     "B",
     "G"
   ],
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/72858?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=374511&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F190787%3Fpage%3D1"
-  },
   "rarity": "rare",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Nurturing+Peatland",

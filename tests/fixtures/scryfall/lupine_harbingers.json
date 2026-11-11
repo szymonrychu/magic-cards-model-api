@@ -98,7 +98,6 @@
   "rarity": "rare",
   "watermark": "foretell",
   "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
-  "artist": "Filip Burburan",
   "artist_ids": [
     "66082c3b-a623-4d34-be51-2475214b85d3"
   ],
@@ -117,14 +116,6 @@
     "source": "Ali Eldrazi",
     "source_uri": "https://twitter.com/AliEldrazi/status/1468377587181309954",
     "previewed_at": "2021-12-07"
-  },
-  "prices": {
-    "usd": null,
-    "usd_foil": null,
-    "usd_etched": null,
-    "eur": null,
-    "eur_foil": null,
-    "tix": null
   },
   "related_uris": {
     "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=548280&printed=false",

@@ -1,5 +1,4 @@
 {
-  "artist": "Myles Wohl",
   "artist_ids": [
     "d08c97ce-ffe1-46ca-a06c-27ed6a5baf42"
   ],
@@ -20,7 +19,6 @@
   "finishes": [
     "nonfoil"
   ],
-  "flavor_text": "\"You wish to get up, brother? It is very simple! All you have to do is be worthy!\"\n\u2014Thor",
   "foil": false,
   "frame": "2015",
   "frame_effects": [
@@ -91,24 +89,11 @@
   "oracle_text": "Enchant creature\nEnchanted creature can't attack or block.",
   "oversized": false,
   "penny_rank": 5827,
-  "prices": {
-    "eur": "0.27",
-    "eur_foil": null,
-    "tix": "0.01",
-    "usd": "0.16",
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A5f5e0b10-c8cf-450c-bfd3-bcb0528ec330&unique=prints",
   "promo": false,
   "promo_types": [
     "universesbeyond"
   ],
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/151175?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=892276&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F697117%3Fpage%3D1"
-  },
   "rarity": "common",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Pacifism",

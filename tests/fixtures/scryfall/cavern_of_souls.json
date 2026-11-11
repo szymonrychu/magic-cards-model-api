@@ -1,6 +1,5 @@
 {
   "arena_id": 87435,
-  "artist": "Alayna Danner",
   "artist_ids": [
     "bb677b1a-ce51-4888-83d6-5a94de461ff9"
   ],
@@ -84,14 +83,6 @@
   "oracle_id": "89ca686a-7c72-4d8f-9290-e89635624a83",
   "oracle_text": "As this land enters, choose a creature type.\n{T}: Add {C}.\n{T}: Add one mana of any color. Spend this mana only to cast a creature spell of the chosen type, and that spell can't be countered.",
   "oversized": false,
-  "prices": {
-    "eur": "39.79",
-    "eur_foil": "50.00",
-    "tix": "0.91",
-    "usd": "50.03",
-    "usd_etched": null,
-    "usd_foil": "52.36"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A89ca686a-7c72-4d8f-9290-e89635624a83&unique=prints",
   "produced_mana": [
     "B",
@@ -102,11 +93,6 @@
     "W"
   ],
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/118386?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=734675&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F517603%3Fpage%3D1"
-  },
   "rarity": "mythic",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Cavern+of+Souls",

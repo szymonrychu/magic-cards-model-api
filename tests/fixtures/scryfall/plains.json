@@ -1,5 +1,4 @@
 {
-  "artist": "Bastien Grivet",
   "artist_ids": [
     "434a6cf6-c6bf-4f87-84db-d0a902393b9e"
   ],
@@ -80,14 +79,6 @@
   "oracle_id": "bc71ebf6-2056-41f7-be35-b2e5c34afa99",
   "oracle_text": "({T}: Add {W}.)",
   "oversized": false,
-  "prices": {
-    "eur": null,
-    "eur_foil": null,
-    "tix": null,
-    "usd": null,
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Abc71ebf6-2056-41f7-be35-b2e5c34afa99&unique=prints",
   "produced_mana": [
     "W"
@@ -96,11 +87,6 @@
   "promo_types": [
     "universesbeyond"
   ],
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards?affiliate_id=scryfall&data%5Bsearch%5D=Plains&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products/Search?referrer=scryfall&searchString=Plains&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fmagic%2Fproduct%3FproductLineName%3Dmagic%26q%3DPlains%26view%3Dgrid"
-  },
   "rarity": "common",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Plains",

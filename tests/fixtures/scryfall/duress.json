@@ -1,6 +1,5 @@
 {
   "arena_id": 94034,
-  "artist": "PINDURSKI",
   "artist_ids": [
     "f333a7f0-7330-40e9-8c58-667eea2f0f60"
   ],
@@ -21,7 +20,6 @@
   "finishes": [
     "nonfoil"
   ],
-  "flavor_text": "\"Give of yourself, for *compleation* awaits the cleansed.\"\n\u2014Nokar, priest of Sheoldred",
   "foil": false,
   "frame": "2015",
   "full_art": false,
@@ -89,24 +87,11 @@
   "oracle_text": "Target opponent reveals their hand. You choose a noncreature, nonland card from it. That player discards that card.",
   "oversized": false,
   "penny_rank": 33,
-  "prices": {
-    "eur": "0.23",
-    "eur_foil": null,
-    "tix": "0.03",
-    "usd": "0.09",
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A33d405ea-7a9a-4970-b70f-9c05d90dd6f0&unique=prints",
   "promo": false,
   "promo_types": [
     "startercollection"
   ],
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/134548?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=795896&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F589335%3Fpage%3D1"
-  },
   "rarity": "common",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Duress",

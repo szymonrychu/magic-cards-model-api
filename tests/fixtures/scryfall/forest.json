@@ -17,7 +17,6 @@
       "uri": "https://api.scryfall.com/cards/aed8ae06-ae54-4a16-8830-6547164ce6ae"
     }
   ],
-  "artist": "Bastien Grivet",
   "artist_ids": [
     "434a6cf6-c6bf-4f87-84db-d0a902393b9e"
   ],
@@ -98,14 +97,6 @@
   "oracle_id": "b34bb2dc-c1af-4d77-b0b3-a0fb342a5fc6",
   "oracle_text": "({T}: Add {G}.)",
   "oversized": false,
-  "prices": {
-    "eur": null,
-    "eur_foil": null,
-    "tix": null,
-    "usd": null,
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Ab34bb2dc-c1af-4d77-b0b3-a0fb342a5fc6&unique=prints",
   "produced_mana": [
     "G"
@@ -114,11 +105,6 @@
   "promo_types": [
     "universesbeyond"
   ],
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards?affiliate_id=scryfall&data%5Bsearch%5D=Forest&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products/Search?referrer=scryfall&searchString=Forest&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fmagic%2Fproduct%3FproductLineName%3Dmagic%26q%3DForest%26view%3Dgrid"
-  },
   "rarity": "common",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Forest",

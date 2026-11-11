@@ -1,5 +1,4 @@
 {
-  "artist": "Kev Walker",
   "artist_ids": [
     "f366a0ee-a0cd-466d-ba6a-90058c7a31a6"
   ],
@@ -90,21 +89,8 @@
   "oversized": false,
   "penny_rank": 2618,
   "power": "6",
-  "prices": {
-    "eur": "0.07",
-    "eur_foil": "0.18",
-    "tix": "0.04",
-    "usd": "0.16",
-    "usd_etched": null,
-    "usd_foil": "0.35"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A82406175-63b3-4972-be8b-db0e70c908cb&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/114833?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=723635&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F507226%3Fpage%3D1"
-  },
   "rarity": "common",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Krosan+Tusker",

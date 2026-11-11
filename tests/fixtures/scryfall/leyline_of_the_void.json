@@ -1,6 +1,5 @@
 {
   "arena_id": 92184,
-  "artist": "Sergey Glushakov",
   "artist_ids": [
     "8df4596a-1d88-4b6a-9ce8-5c8089c3946c"
   ],
@@ -22,7 +21,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "Cracks in the facade of the House lead not to escape but to oblivion.",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -94,21 +92,8 @@
     "source": "Wizards of the Coast",
     "source_uri": "https://www.youtube.com/watch?v=8mYQLkstDs8"
   },
-  "prices": {
-    "eur": "0.67",
-    "eur_foil": "0.71",
-    "tix": "0.21",
-    "usd": "0.67",
-    "usd_etched": null,
-    "usd_foil": "0.76"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Af4e32fc1-1b8d-441e-8e76-71f19f98e925&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/130343?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=786498&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F575262%3Fpage%3D1"
-  },
   "rarity": "rare",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Leyline+of+the+Void",

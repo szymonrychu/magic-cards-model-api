@@ -1,5 +1,4 @@
 {
-  "artist": "Shahab Alizadeh",
   "artist_ids": [
     "0bab3964-6224-4a02-acb3-f46d92dfc45d"
   ],
@@ -19,7 +18,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "As one of the Galaxy's few ectothermic sapient species, Cardassians prefer high temperatures. Many use sweltering saunas to \"charge\" themselves before interacting with other species.",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -83,14 +81,6 @@
   "oracle_id": "17039058-822d-409f-938c-b727a366ba63",
   "oracle_text": "({T}: Add {U} or {R}.)\nAs this land enters, you may pay 2 life. If you don't, it enters tapped.",
   "oversized": false,
-  "prices": {
-    "eur": null,
-    "eur_foil": null,
-    "tix": null,
-    "usd": null,
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A17039058-822d-409f-938c-b727a366ba63&unique=prints",
   "produced_mana": [
     "R",
@@ -100,11 +90,6 @@
   "promo_types": [
     "universesbeyond"
   ],
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards?affiliate_id=scryfall&data%5Bsearch%5D=Steam+Vents&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products/Search?referrer=scryfall&searchString=Steam+Vents&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fmagic%2Fproduct%3FproductLineName%3Dmagic%26q%3DSteam%2BVents%26view%3Dgrid"
-  },
   "rarity": "rare",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Steam+Vents",

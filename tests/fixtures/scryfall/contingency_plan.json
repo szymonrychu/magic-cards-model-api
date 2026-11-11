@@ -1,5 +1,4 @@
 {
-  "artist": "Ryan Yee",
   "artist_ids": [
     "8955dca7-3e37-42b4-83a9-167c78a2178f"
   ],
@@ -21,7 +20,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "\"Improvisation is for those who failed to prepare.\"\n\u2014Jace Beleren",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -91,21 +89,8 @@
   "oracle_text": "Surveil 5. (Look at the top five cards of your library, then put any number of them into your graveyard and the rest on top of your library in any order.)",
   "oversized": false,
   "penny_rank": 7205,
-  "prices": {
-    "eur": "0.18",
-    "eur_foil": "0.69",
-    "tix": "0.03",
-    "usd": "0.16",
-    "usd_etched": null,
-    "usd_foil": "0.55"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A67bc4116-539e-4748-95e1-033df78173ec&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/61112?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=291117&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F120471%3Fpage%3D1"
-  },
   "rarity": "common",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Contingency+Plan",

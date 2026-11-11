@@ -1,5 +1,4 @@
 {
-  "artist": "Scott Murphy",
   "artist_ids": [
     "07c7ac65-dfa6-4273-9c66-ec9d8f3e2226"
   ],
@@ -21,7 +20,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "Seen through Rakdos eyes, a cruel betrayal is a hilarious stunt.",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -88,21 +86,8 @@
   "oracle_text": "Gain control of target creature until end of turn. Untap that creature. It gains haste until end of turn. (It can attack and {T} this turn.)",
   "oversized": false,
   "penny_rank": 8739,
-  "prices": {
-    "eur": "0.09",
-    "eur_foil": "0.18",
-    "tix": "0.04",
-    "usd": "0.26",
-    "usd_etched": null,
-    "usd_foil": "0.27"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A9d08af23-9f4a-4097-9abc-3b17475ab744&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/120725?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=748447&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F531241%3Fpage%3D1"
-  },
   "rarity": "common",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Act+of+Treason",

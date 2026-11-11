@@ -1,5 +1,4 @@
 {
-  "artist": "Rob Alexander",
   "artist_ids": [
     "35906871-6c78-4ab2-9ed1-e6792c8efb74"
   ],
@@ -87,14 +86,6 @@
   "oracle_id": "af0ad159-8264-4526-9a95-eddd32c0a13f",
   "oracle_text": "This land enters tapped.\n{T}: Add {G}.\n{T}, Sacrifice this land: Add {R}{W}.",
   "oversized": false,
-  "prices": {
-    "eur": "0.20",
-    "eur_foil": "3.84",
-    "tix": "0.09",
-    "usd": "0.18",
-    "usd_etched": null,
-    "usd_foil": "6.36"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Aaf0ad159-8264-4526-9a95-eddd32c0a13f&unique=prints",
   "produced_mana": [
     "G",
@@ -102,11 +93,6 @@
     "W"
   ],
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/14835?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=3698&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F7706%3Fpage%3D1"
-  },
   "rarity": "common",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Tinder+Farm",

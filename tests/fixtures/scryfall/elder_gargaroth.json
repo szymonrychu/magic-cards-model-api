@@ -18,7 +18,6 @@
     }
   ],
   "arena_id": 71961,
-  "artist": "Nicholas Gregory",
   "artist_ids": [
     "a1bba8ff-63b4-4786-b1c4-f1bfe5d3ab1c"
   ],
@@ -116,21 +115,8 @@
     "source": "HobbyJapan",
     "source_uri": "https://twitter.com/cardgamer_hj/status/1269934246346371072"
   },
-  "prices": {
-    "eur": "3.88",
-    "eur_foil": "6.28",
-    "tix": "0.71",
-    "usd": "2.43",
-    "usd_etched": null,
-    "usd_foil": "5.55"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A397b9dcf-690a-4a58-8637-bb9baab7cc2f&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/81585?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=467089&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F215477%3Fpage%3D1"
-  },
   "rarity": "mythic",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Elder+Gargaroth",

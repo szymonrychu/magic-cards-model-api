@@ -18,7 +18,6 @@
     }
   ],
   "arena_id": 90498,
-  "artist": "Borja Pindado",
   "artist_ids": [
     "1624a1a8-3492-4c0b-9abc-83dcf2653111"
   ],
@@ -116,21 +115,8 @@
     "source": "Softonic",
     "source_uri": "https://en.softonic.com/articles/we-present-you-two-new-cards-from-outlaws-of-cross-thunder-the-new-magic-the-gathering-collection"
   },
-  "prices": {
-    "eur": "0.13",
-    "eur_foil": "0.24",
-    "tix": "0.03",
-    "usd": "0.15",
-    "usd_etched": null,
-    "usd_foil": "0.29"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A97489ef7-98c3-4700-bbe6-185215d41b25&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/124215?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=763942&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F544389%3Fpage%3D1"
-  },
   "rarity": "uncommon",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Aloe+Alchemist",

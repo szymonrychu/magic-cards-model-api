@@ -1,5 +1,4 @@
 {
-  "artist": "Piotr Dura",
   "artist_ids": [
     "aff176e8-1d15-432e-ad1d-207a474decba"
   ],
@@ -19,7 +18,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "The metaphasic radiation of the Ba'ku planet promised medical marvels, as long as the locals could be quietly removed.",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -84,14 +82,6 @@
   "oracle_text": "({T}: Add {W} or {U}.)\nAs this land enters, you may pay 2 life. If you don't, it enters tapped.",
   "oversized": false,
   "penny_rank": 17,
-  "prices": {
-    "eur": null,
-    "eur_foil": null,
-    "tix": null,
-    "usd": null,
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Af1750962-a87c-49f6-b731-02ae971ac6ea&unique=prints",
   "produced_mana": [
     "U",
@@ -101,11 +91,6 @@
   "promo_types": [
     "universesbeyond"
   ],
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards?affiliate_id=scryfall&data%5Bsearch%5D=Hallowed+Fountain&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products/Search?referrer=scryfall&searchString=Hallowed+Fountain&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fmagic%2Fproduct%3FproductLineName%3Dmagic%26q%3DHallowed%2BFountain%26view%3Dgrid"
-  },
   "rarity": "rare",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Hallowed+Fountain",
