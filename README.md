@@ -655,6 +655,23 @@ contributes to no metric. Grading outcomes (who won, how many turns, how many
 attempts were refused) is arithmetic over what the server wrote down; grading a
 prediction would be a judgement dressed as arithmetic.
 
+## Chat simulation MCP (`/sim/mcp`)
+
+A bearer-protected MCP endpoint (streamable HTTP, stateless) for chat agents that want to study
+a position: build a sandbox board from a spec and drive the real engine through it. It is a
+sandbox only, never a live game: each sandbox runs in its own worker process with a stripped
+environment, no database and a memory cap.
+
+- Auth: `Authorization: Bearer <MTG_SIM_TOKEN>`. Unset token answers 503 (disabled), a wrong or
+  missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
+- Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
+- Tools (S1): `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_end`. Cards carry
+  labels (`"label": "bolt"` in the spec, `"@bolt"` in action bodies).
+- Caps (env `MTG_SIM_*`, see `sim/config.py`): one sandbox slot, 1800 s idle TTL, 25 s per call,
+  1024 MB worker RSS.
+
+The full guide lands with slice S7.
+
 ## Run it
 
 One command, from this repo:

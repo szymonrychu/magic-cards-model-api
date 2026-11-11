@@ -174,6 +174,7 @@ from .schemas import (
     UserPreferencesResponse,
 )
 from .serialize import FIRST_STRIKE_DAMAGE, state_view, step_position
+from .sim import server as sim_server
 from .store import known_players, new_seat_uids, player_for_advisor_uid, store
 
 logger = logging.getLogger(__name__)
@@ -182,7 +183,7 @@ logger = logging.getLogger(__name__)
 # naming the env var, instead of failing at the first lobby or seat creation.
 validate_agent_env(os.environ)
 
-app = FastAPI(title="magic-cards-model-api", version="0.1.0")
+app = FastAPI(title="magic-cards-model-api", version="0.1.0", lifespan=sim_server.lifespan)
 # `FastAPI.__init__` has no `route_class` parameter of its own (it silently
 # swallows an unknown keyword into `**extra` rather than raising, which is
 # its own trap) - the router it builds internally is what actually carries
@@ -197,6 +198,9 @@ app.include_router(api_decks.router)
 app.include_router(ai_seat_api.router)
 app.include_router(symbology.router)
 app.include_router(assets.router)
+# Mounted before every static mount at the end of this file: a StaticFiles mount at "/" would
+# otherwise swallow /sim. The mount carries its own bearer check (MTG_SIM_TOKEN).
+app.mount("/sim", sim_server.mount)
 
 
 # -- error mapping ---------------------------------------------------------

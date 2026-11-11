@@ -214,6 +214,16 @@ spec:
                   name: mtg-ops
                   key: OPS_TOKEN
                   optional: true
+            # Bearer token of the chat sandbox MCP endpoint (`/sim/mcp`). Its own Secret,
+            # `mtg-sim` (see `deploy/k8s/10-secret.template.yaml`), not `OPS_TOKEN`, which
+            # reads every game. `optional: true` so the Pod starts without the Secret; the
+            # endpoint then answers 503 "sim disabled" (fail closed).
+            - name: MTG_SIM_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-sim
+                  key: MTG_SIM_TOKEN
+                  optional: true
             - name: SPELLSLINGER_MCP_URL
               value: http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp
             - name: MAX_LIVE_GAMES
@@ -327,10 +337,17 @@ spec:
             # A uvicorn app serving the lobby's games. Requests are what the
             # scheduler reserves, limits are where it gets throttled/OOMed. A
             # live game sits at 350-400 MB (OM1); raised 2026-10-11 for headroom
-            # over the 7-day peak (335 MB, 0.65 CPU).
+            # over the 7-day peak (335 MB, 0.65 CPU). The 2Gi limit OOMed on
+            # 2026-09-27; T-123 chat sims add at most one sandbox worker (about
+            # 250 MB interpreter+engine+app import plus one live game at 350-400
+            # MB, capped at MTG_SIM_WORKER_MAX_RSS_MB=1024), one batch worker
+            # (same cap, games played sequentially and deleted), and one
+            # Claude-match game in the main process (350-400 MB). Worst case
+            # about 2.4 GiB, so the limit is 4Gi. The request stays 1Gi: the
+            # cluster is full on reservations and the 7-day peak is 335 MB.
             requests:
               cpu: 500m
               memory: 1Gi
             limits:
               cpu: "2"
-              memory: 2Gi
+              memory: 4Gi

@@ -480,12 +480,14 @@ def test_the_api_caps_glibc_malloc_arenas() -> None:
 def test_the_api_engine_container_has_headroom_over_its_measured_peak() -> None:
     """OM1: a live game sits at 350-400 MB. Owner 2026-10-11 raised the engine
     pod's cpu/mem: the 7-day peak was 335 MB and 0.65 CPU against a 1 CPU
-    limit, so the request now reserves 1Gi/500m and the limit is 2Gi/2 CPU."""
+    limit, so the request now reserves 1Gi/500m. T-123 (chat sims) raised the
+    limit to 4Gi: the 2Gi limit OOMed on 2026-09-27 and the sim workers add
+    up to about 2.4 GiB on top of it; the request stays 1Gi."""
     docs = rendered()
     deploy = by_name(docs, "Deployment", "mtg-stack")
     (game,) = deploy["spec"]["template"]["spec"]["containers"]
     assert game["resources"]["requests"] == {"cpu": "500m", "memory": "1Gi"}
-    assert game["resources"]["limits"] == {"cpu": "2", "memory": "2Gi"}
+    assert game["resources"]["limits"] == {"cpu": "2", "memory": "4Gi"}
 
 
 def _api_deployment() -> dict:
@@ -530,6 +532,20 @@ def test_the_public_ingresses_do_not_route_metrics_to_the_api() -> None:
         assert paths["/metrics"]["backend"]["service"]["name"] == "mtg-metrics-deny", ingress[
             "metadata"
         ]["name"]
+
+
+def test_the_public_ingress_denies_the_sim_endpoint() -> None:
+    for ingress in by_kind(rendered(), "Ingress"):
+        (rule,) = ingress["spec"]["rules"]
+        paths = {p["path"]: p for p in rule["http"]["paths"]}
+        assert paths["/sim"]["backend"]["service"]["name"] == "mtg-metrics-deny", ingress[
+            "metadata"
+        ]["name"]
+
+
+def test_the_api_publishes_the_sim_token_from_its_own_secret() -> None:
+    ref = _api_env()["MTG_SIM_TOKEN"]["valueFrom"]["secretKeyRef"]
+    assert ref == {"name": "mtg-sim", "key": "MTG_SIM_TOKEN", "optional": True}
 
 
 # ---- `mise run k8s:render` also renders a seat Job and a buddy Job --------

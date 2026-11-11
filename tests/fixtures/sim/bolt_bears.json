@@ -1,0 +1,11 @@
+{
+  "players": [{"name": "alice", "life": 20}, {"name": "bob", "life": 20}],
+  "active_player": "alice",
+  "step": "precombat_main",
+  "cards": [
+    {"card": "Lightning Bolt", "player": "alice", "zone": "hand", "label": "bolt"},
+    {"card": "Mountain", "player": "alice", "zone": "battlefield"},
+    {"card": "Grizzly Bears", "player": "bob", "zone": "battlefield", "label": "bears"}
+  ],
+  "mana_pool": {"alice": "R"}
+}
