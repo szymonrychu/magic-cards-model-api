@@ -8,40 +8,13 @@
 # outside, so this host works from both with NO extra DNS record. That also
 # means this is genuinely reachable from the internet.
 #
-# PHASE 2B CUTOVER: this host used to carry basic auth directly. It now routes
-# to oauth2-proxy (55-oauth2-proxy.yaml) instead, in front of Keycloak - see
-# the mtg-stack-sso Ingress below. `pl.szymonrichert.pl`, further down, keeps
-# the basic auth this Secret protects as the cutover's escape hatch.
----
-# The basic-auth credentials, in the htpasswd format nginx-ingress expects
-# (Secret key `auth`, one `user:hash` line).
-#
-# THESE CREDENTIALS ARE PUBLIC BY DESIGN. user `play`, password `magic`, asked
-# for explicitly and deliberately weak. Because the password is intentionally
-# public there is no point hiding the hash, so it is committed and
-# `kubectl apply` is one step instead of two. Treat this as a speed bump
-# against crawlers and drive-by scanners, NOT as security. Anyone who wants in
-# is in. Do not put anything behind this host that you would mind a stranger
-# clicking, and if that ever changes, change the password first.
-#
-# The hash is bcrypt, generated with `htpasswd -nbB play magic` and verified
-# with `htpasswd -vb` before being committed.
-#
-# STILL USED (phase 2b): no longer on the production host, but kept alive on
-# the pl.szymonrichert.pl escape hatch below until the Keycloak cutover is
-# confirmed working.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: play-magic-auth
-  namespace: mtg-engine
-type: Opaque
-stringData:
-  auth: "play:$2y$05$BrvggN09btljyXYK9nww9e1YqFO/JIPRfeP.e6kRoEThvfhwcytBq"
+# This host routes to oauth2-proxy (55-oauth2-proxy.yaml), in front of
+# Keycloak - see the mtg-stack-sso Ingress below.
+
 ---
 # /metrics is the game API's Prometheus endpoint and has NO authentication of
 # its own; oauth2-proxy only gates the browser path, and forwards every
-# authenticated path on to mtg-stack:8000. Both Ingresses below therefore send
+# authenticated path on to mtg-stack:8000. The Ingress below therefore sends
 # /metrics to this Service, whose selector matches no Pod: nginx answers 503
 # and the endpoint is reachable only in-cluster (the game Pod's
 # prometheus.io/* annotations). Deliberately not an auth-url/auth-signin
@@ -114,89 +87,6 @@ spec:
     - hosts:
         - play-magic.szymonrichert.pl
       # REUSES the existing play-magic-tls Secret deliberately: it already
-      # carries a valid SAN for this host, so this cutover has ZERO TLS gap on
-      # the production host - no window where the host serves a self-signed
-      # or mismatched cert. cert-manager will later renew this Secret down to
-      # the single remaining SAN once pl.szymonrichert.pl's own Ingress
-      # (below) stops naming it.
+      # carries a valid SAN for this host, so the SSO cutover had ZERO TLS gap
+      # on the production host.
       secretName: play-magic-tls
----
-# mtg-stack: the escape hatch, on pl.szymonrichert.pl - keeps the pre-cutover
-# object name, but now scoped to one host instead of two.
-#
-# This is the lockout insurance for the Keycloak cutover. If the SSO path
-# fails for any reason - wrong client, missing group membership, Keycloak
-# down, a bad OIDC issuer URL - pl.szymonrichert.pl with the same play:magic
-# basic auth as before still works exactly as it does today, no Keycloak
-# involved at all. It is expected to be DELETED once SSO is confirmed
-# working; until then it is a public-password door into the same
-# unauthenticated API as play-magic.szymonrichert.pl and must not outlive the
-# cutover.
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: mtg-stack
-  namespace: mtg-engine
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    kubernetes.io/tls-acme: "true"
-    nginx.ingress.kubernetes.io/auth-type: basic
-    nginx.ingress.kubernetes.io/auth-secret: play-magic-auth
-    # KEEP THIS BORING. ingress-nginx runs annotation values through a
-    # risk-based validator, and a realm carrying punctuation ("play-magic -
-    # user play, password magic") is REJECTED - not the annotation, the whole
-    # Ingress. It is then dropped from the controller's store, so it gets no
-    # ADDRESS, serves nginx's fake certificate, and answers 404 with no auth
-    # challenge at all. That failure looks nothing like a bad annotation; the
-    # only place it is visible is the controller log:
-    #   validation error on ingress mtg-engine/mtg-stack:
-    #   annotation auth-realm contains invalid value
-    # The credentials belong in the README, not in the realm string.
-    nginx.ingress.kubernetes.io/auth-realm: "Authentication Required"
-    # The game UI polls a couple of routes about every 1.2s for as long as a
-    # browser tab is open, and a turn the agent is thinking through can hold a
-    # request open for a while. The nginx default 60s read timeout would cut
-    # those off, so both directions get an hour. Nothing else here throttles:
-    # deliberately NO rate-limit, NO limit-connections, NO auth-cache
-    # annotations - a per-second poll would trip a rate limit almost
-    # immediately, and basic auth is re-evaluated per request cheaply.
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
-spec:
-  ingressClassName: nginx
-  rules:
-    - host: pl.szymonrichert.pl
-      http:
-        paths:
-          # PORT 8000 ONLY. The Service also carries 8080 (agent) and 8090
-          # (driver), and neither is routed here on purpose: as 60-service.yaml
-          # says, NEITHER HAS ANY AUTHENTICATION OF ITS OWN. The agent port
-          # exposes full turn transcripts and an /v1/interrupt that anyone
-          # could call; the driver port exposes match control. Basic auth in
-          # front of them would be the only thing between the internet and
-          # that, and this password is public. Use port-forward for those two.
-          - path: /metrics
-            pathType: Prefix
-            backend:
-              service:
-                name: mtg-metrics-deny
-                port:
-                  number: 80
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: mtg-stack
-                port:
-                  number: 8000
-  tls:
-    - hosts:
-        - pl.szymonrichert.pl
-      # A NEW Secret, distinct from play-magic-tls - cert-manager must issue
-      # it via DNS-01. For a couple of minutes after the flip this host
-      # serves the controller's default certificate and a browser shows a
-      # name-mismatch warning: deliberately placed on this insurance host
-      # rather than the production one, which reuses its existing cert (see
-      # mtg-stack-sso above) and has zero TLS gap.
-      secretName: pl-magic-tls

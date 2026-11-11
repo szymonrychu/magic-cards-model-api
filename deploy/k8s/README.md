@@ -20,7 +20,7 @@ Plain YAML, no Helm, no Kustomize, no operator.
 | `50-deployment.yaml` | the API Deployment - one replica, `Recreate` strategy, one `game` container: ports, env, probes, resources |
 | `55-oauth2-proxy.yaml` | oauth2-proxy Deployment + Service, fronting the play UI host only - see [Login: oauth2-proxy and Keycloak](#login-oauth2-proxy-and-keycloak) |
 | `60-service.yaml` | ClusterIP Service for port 8000 only |
-| `70-ingress.yaml` | the basic-auth Secret, the `mtg-stack-sso` Ingress on `play-magic.szymonrichert.pl` (no auth annotations - routes to oauth2-proxy) and the `mtg-stack` Ingress on `pl.szymonrichert.pl` (basic auth, the cutover's escape hatch) - see [Login: oauth2-proxy and Keycloak](#login-oauth2-proxy-and-keycloak) |
+| `70-ingress.yaml` | the `mtg-stack-sso` Ingress on `play-magic.szymonrichert.pl` (no auth annotations - routes to oauth2-proxy) and the `mtg-metrics-deny` Service - see [Login: oauth2-proxy and Keycloak](#login-oauth2-proxy-and-keycloak) |
 
 There is no `20-configmap-mcp.yaml` any more. The old ConfigMap supplied a
 loopback-pointed `mcp.base.json` to the one Pod's agent container; per-seat
@@ -386,14 +386,6 @@ working off the checkout it already has.
 `10-secret.template.yaml` exists for people who want either declarative; copy it
 to `10-secret.yaml` (gitignored) and fill in the placeholders.
 
-### The basic-auth Secret is already in git, on purpose
-
-`70-ingress.yaml` carries `play-magic-auth` with a real, verified bcrypt hash
-for user `play` / password `magic`. That password was asked for explicitly and
-is deliberately weak, so there is nothing to protect by hiding the hash, and
-committing it makes `kubectl apply` one step. It is a speed bump against
-crawlers, not security. See the blunt comment on the Secret itself.
-
 ## Login: oauth2-proxy and Keycloak
 
 Phase 2b. The play UI host moved off basic auth and behind oauth2-proxy in
@@ -503,8 +495,8 @@ because it fires inside `api()` before the throw.
 Two steps. Production is untouched by step 1.
 
 **Step 1 - stand the proxy up, change nothing at the edge.** Apply with
-`70-ingress.yaml` still at its pre-cutover state: both hosts keep basic auth
-and keep pointing at the app, and `55-oauth2-proxy.yaml` just adds a
+`70-ingress.yaml` still at its pre-cutover state: the host keeps its old
+auth and keeps pointing at the app, and `55-oauth2-proxy.yaml` just adds a
 Deployment and Service that nothing routes to yet. Verify without a browser:
 
 ```sh
@@ -521,31 +513,15 @@ resolved, and that the `magic-trainer-webui-proxy` Secret mounted. The second pr
 for any user yet - fix it before step 2.
 
 **Step 2 - flip the edge.** Apply the `70-ingress.yaml` change: the host
-`play-magic.szymonrichert.pl` moves to `mtg-stack-sso`, the new Ingress
-pointing at the proxy with no auth annotations, and the existing `mtg-stack`
-Ingress shrinks to `pl.szymonrichert.pl` alone, keeping basic auth and
-pointing straight at the app.
-
-**The lockout insurance is `pl.szymonrichert.pl`.** It keeps `play:magic`
-basic auth straight to the app, no Keycloak involved at all - if the SSO path
-fails for any reason (wrong client, missing group membership, Keycloak down,
-a bad OIDC issuer URL), this host still works with zero dependency on
-Keycloak. `kubectl port-forward` is the second, unconditional fallback.
-
-The escape hatch is expected to be **deleted** once SSO is confirmed trusted
-- deleting the `mtg-stack` Ingress object is a one-line change once that
-happens. Until then, `pl.szymonrichert.pl` is a public password reaching the
-exact same unauthenticated API as `play-magic.szymonrichert.pl`, which is the
-status quo but is not the end state.
+`play-magic.szymonrichert.pl` moves to `mtg-stack-sso`, the Ingress
+pointing at the proxy with no auth annotations. The old basic-auth escape
+hatch (`mtg-stack` Ingress on `pl.szymonrichert.pl`, `play-magic-auth` Secret)
+has been removed from the manifests; `kubectl port-forward` is the
+unconditional fallback if the SSO path fails.
 
 **TLS.** `mtg-stack-sso` deliberately reuses the existing `play-magic-tls`
 Secret, which already carries a valid SAN for `play-magic.szymonrichert.pl`,
 so the production host has **zero TLS gap** through this cutover.
-`pl.szymonrichert.pl` gets a new `pl-magic-tls` Secret that cert-manager must
-issue via DNS-01, so for a couple of minutes after the flip that host serves
-the controller's default certificate and a browser shows a click-through
-name-mismatch warning. That gap is placed on the insurance host on purpose,
-not the production one.
 
 **Rollback** is one file: revert the `70-ingress.yaml` change and re-run
 `mise run k8s:deploy`. The `mtg-oauth2-proxy` Deployment can stay running,
@@ -662,7 +638,6 @@ live volume and was left for whoever actually cuts the cluster over.
 | what | where |
 |---|---|
 | play (production) | `https://play-magic.szymonrichert.pl/` - Keycloak login via oauth2-proxy, see [Login: oauth2-proxy and Keycloak](#login-oauth2-proxy-and-keycloak). `/play/` redirects here |
-| play (escape hatch) | `https://pl.szymonrichert.pl/` - user `play`, password `magic`, straight to the app, no Keycloak involved |
 | a seat's driver status | port-forward that seat Job's Pod, then `http://127.0.0.1:8090/status` |
 | a seat's agent turns, probe, interrupt | port-forward that seat Job's Pod, then `http://127.0.0.1:8080/v1/...` |
 
@@ -671,7 +646,7 @@ kubectl -n mtg-engine port-forward deploy/mtg-stack 8000
 kubectl -n mtg-engine port-forward job/<seat-job-name> 8080 8090
 ```
 
-Neither 8080 nor 8090 is on the `mtg-stack` Service or either ingress -
+Neither 8080 nor 8090 is on the `mtg-stack` Service or the ingress -
 there is no longer one fixed agent/driver pair behind that Service to route
 to, and both remain unauthenticated, so a seat Job's debug ports are
 reachable only by port-forward (or from inside the cluster, and only from the
@@ -679,21 +654,17 @@ API Pod - see the NetworkPolicy above).
 
 In-cluster callers - AI seat Jobs, the driver, the MCP server - always reach
 the API at `http://mtg-stack.mtg-engine.svc.cluster.local:8000` directly,
-never through either ingress or through oauth2-proxy. Nothing about the login
+never through the ingress or through oauth2-proxy. Nothing about the login
 change touches this: `60-service.yaml` is unchanged, and a test now pins that
 the `mtg-stack` Service still exposes exactly `[8000]` selecting
 `app: mtg-stack`.
 
 `*.szymonrichert.pl` resolves to the LAN IP at home and to the public IP from
-outside, so both hosts work from both with no extra DNS record - and are
-really on the internet, which is why each is fronted by something
-(oauth2-proxy/Keycloak on `play-magic.szymonrichert.pl`, basic auth on
-`pl.szymonrichert.pl`) rather than reaching `mtg-stack:8000` unauthenticated.
-cert-manager issues both certificates from the `letsencrypt-prod`
-ClusterIssuer: `play-magic.szymonrichert.pl` reuses the pre-existing
-`play-magic-tls` Secret with zero gap, while `pl.szymonrichert.pl`'s
-`pl-magic-tls` Secret is issued fresh via DNS-01 and can serve a self-signed
-or mismatched cert for a couple of minutes after that host's first apply.
+outside, so the host works from both with no extra DNS record - and is
+really on the internet, which is why it is fronted by oauth2-proxy/Keycloak
+rather than reaching `mtg-stack:8000` unauthenticated. cert-manager issues the
+certificate from the `letsencrypt-prod` ClusterIssuer; `play-magic.szymonrichert.pl`
+reuses the pre-existing `play-magic-tls` Secret with zero gap.
 
 ## Logs
 
