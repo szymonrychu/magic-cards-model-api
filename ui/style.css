@@ -464,7 +464,6 @@ h3 { font-size: 14px; }
 #phase-track {
   order: -1;
   flex: 1 1 auto;
-  min-width: 0;
   display: flex;
   flex-wrap: nowrap;
   gap: 2px;
@@ -474,7 +473,15 @@ h3 { font-size: 14px; }
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  /* Never squeezed to nothing: one step stays on show. The armed Concede
+     label ("Concede - click again to confirm") is the widest thing in the row
+     and, in a wide-glyph font on a phone, used to take all of it. */
+  min-width: 72px;
 }
+/* The slot gives way instead of the track: the label is clipped, not the
+   phase. */
+#concede-slot { min-width: 0; flex: 0 1 auto; }
+#concede-slot button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #phase-track li {
   flex: 0 0 auto;
   font-size: 10px;
