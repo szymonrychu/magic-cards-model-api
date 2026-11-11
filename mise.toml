@@ -359,10 +359,16 @@ depends = ["docker:push:api", "docker:push:agent"]
 
 # The manifests carry the literal placeholder __TAG__ on every image: line.
 [tasks."k8s:render"]
+usage = 'arg "[version]" env="MTG_VERSION"'
 description = "Render deploy/k8s with the sha substituted, to stdout - a single concatenated dump for looking, NOT the apply order k8s:deploy actually uses (that task applies in phases: pre-req objects, then the database, then a migration Job it waits on, then the Deployment/Service/Ingress - see its own comment)"
 run = """
 set -eu
-TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
+VERSION="${usage_version:-}"
+case "$VERSION" in
+  ""|*[!0-9.]*) echo "k8s: pass an X.Y.Z release version (argument or MTG_VERSION), got '${VERSION}'" >&2; exit 1 ;;
+esac
+printf '%s' "$VERSION" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$' || { echo "k8s: version must be X.Y.Z (digits), got '${VERSION}'" >&2; exit 1; }
+TAG="$VERSION"
 for f in deploy/k8s/*.yaml; do
   case "$f" in *.template.yaml) continue ;; esac
   echo "---"
@@ -374,13 +380,12 @@ uv run python scripts/render_seat_jobs.py
 """
 
 [tasks."k8s:deploy"]
-description = "Push both images at the current sha, then apply in phases: prerequisites, the database, a migration Job (waited on), then the app"
-# `depends` on the push because the tag IS the sha: every commit - including a
-# commit that only touches a manifest or the README - moves HEAD, and the
-# rendered image reference then names a tag nobody has built. The Pod sits in
-# ImagePullBackOff and the cause is three commits back. The push is cached, so
-# a manifest-only change re-pushes in seconds; correctness is worth those
-# seconds. Use `k8s:render` if you only want to look.
+usage = 'arg "<version>" env="MTG_VERSION"'
+description = "Apply the released X.Y.Z images (pushed by CI), then apply in phases: prerequisites, the database, a migration Job (waited on), then the app"
+# No push here: CI (the `images` job) publishes both images as X.Y.Z on every
+# main push, so the version argument (or MTG_VERSION) names images that already
+# exist. Anything not matching ^[0-9]+[.][0-9]+[.][0-9]+$ is refused. Use
+# `k8s:render` if you only want to look.
 #
 # THIS IS NOT A SINGLE `kubectl apply -f -` OF THE WHOLE DIRECTORY ANY MORE,
 # and a future edit must not collapse it back into one. Alembic takes no lock
@@ -426,10 +431,14 @@ description = "Push both images at the current sha, then apply in phases: prereq
 #   5. Only once step 4 reports success: apply the Deployment, Service,
 #      Ingress trio - exactly what the old single-shot apply did for these
 #      three, unchanged.
-depends = ["docker:push"]
 run = """
 set -eu
-TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
+VERSION="${usage_version:-}"
+case "$VERSION" in
+  ""|*[!0-9.]*) echo "k8s: pass an X.Y.Z release version (argument or MTG_VERSION), got '${VERSION}'" >&2; exit 1 ;;
+esac
+printf '%s' "$VERSION" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$' || { echo "k8s: version must be X.Y.Z (digits), got '${VERSION}'" >&2; exit 1; }
+TAG="$VERSION"
 NS=mtg-engine
 JOB_NAME="mtg-migrate-${TAG}"
 
