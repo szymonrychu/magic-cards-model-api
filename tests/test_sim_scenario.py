@@ -126,3 +126,115 @@ def test_check_expect_player_name_with_dot_and_bad_zone():
     assert check_expect({"zones": {"a.b.nowhere": ["Elf"]}}, state, {})
     assert check_expect({"zones": {"ghost.hand": []}}, state, {})
     assert check_expect({"zones": {"alice.hand": ["@nope"]}}, state, {})
+
+
+# -- run_scenario against the real engine ------------------------------------
+
+import json  # noqa: E402
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from magic_cards_model_api.main import app  # noqa: E402
+from magic_cards_model_api.sim.sandbox_game import SandboxGame  # noqa: E402
+from magic_cards_model_api.sim.scenario import run_scenario  # noqa: E402
+
+FIXTURES = Path(__file__).parent / "fixtures" / "sim"
+BOLT_SCRIPT = json.loads((FIXTURES / "bolt_bears_script.json").read_text())
+
+CYCLER_SETUP = {
+    "players": [{"name": "alice"}, {"name": "bob"}],
+    "cards": [
+        {"card": "Lórien Revealed", "player": "alice", "zone": "hand", "label": "cycler"},
+        {"card": "Forest", "player": "alice", "zone": "battlefield", "label": "forest"},
+        {"card": "Mountain", "player": "alice", "zone": "library", "position": "bottom"},
+        {"card": "Island", "player": "alice", "zone": "library", "position": "bottom"},
+        {"card": "Island", "player": "alice", "zone": "library", "position": "bottom"},
+    ],
+}
+CYCLE = [
+    {"act": {"action": "activate", "player": "alice",
+             "body": {"card_id": "@cycler", "ability_index": 0, "mana_sources": ["@forest"]}}},
+    {"act": {"action": "resolve_top"}},
+]
+
+
+@pytest.fixture
+def game():
+    sandbox = SandboxGame(TestClient(app))
+    yield sandbox
+    sandbox.close()
+
+
+def run(game, data, budget=60.0):
+    scenario = validate_scenario(data, 200)
+    return run_scenario(game, scenario, time.monotonic() + budget)
+
+
+def test_script_bolt_kills_bears_and_reports_diff(game):
+    out = run(game, BOLT_SCRIPT)
+    assert out["stopped_at"] is None and out["stop_reason"] is None
+    assert [s["ok"] for s in out["steps"]] == [True, True, True, True]
+    assert [s["index"] for s in out["steps"]] == [0, 1, 2, 3]
+    # The card keeps its id across the zone move in the real engine, so it is one "moved"
+    # entry (not removed + added). The label and the "<player>.<zone>" form are the format
+    # pinned by the Task 7 state_diff tests.
+    assert out["diff"]["moved"] == [
+        {"card": "@bolt", "from": "alice.hand", "to": "alice.graveyard"},
+        {"card": "@bears", "from": "bob.battlefield", "to": "bob.graveyard"},
+    ]
+    assert set(out["diff"]) == {"moved"}
+    assert "support_warnings" in out
+    assert out["initial_state"]["players"]["bob"]["battlefield"][0]["name"] == "Grizzly Bears"
+    assert out["final_state"]["players"]["bob"]["graveyard"][0]["name"] == "Grizzly Bears"
+
+
+def test_script_stops_at_an_unanswered_decision(game):
+    steps = [*CYCLE, {"act": {"action": "pass", "player": "alice"}}]
+    out = run(game, {"setup": CYCLER_SETUP, "steps": steps})
+    assert out["stopped_at"] == 2
+    assert "choose_cards" in out["stop_reason"]
+    assert out["final_state"]["pending_decision"]["kind"] == "choose_cards"
+    assert len(out["steps"]) == 2
+
+
+def test_script_baseline_answers_fill_in_decisions(game):
+    steps = [*CYCLE, {"act": {"action": "pass", "player": "alice"}}]
+    out = run(game, {"setup": CYCLER_SETUP, "steps": steps, "answers": "baseline"})
+    assert out["stopped_at"] is None, out["stop_reason"]
+    assert [s["kind"] for s in out["steps"]] == ["act", "act", "auto_decide", "act"]
+    assert out["final_state"]["pending_decision"] is None
+
+
+def test_script_stops_on_refusal_with_engine_reason(game):
+    steps = [
+        {"act": {"action": "cast", "player": "alice", "body": {"card_id": "@bolt"}}},
+        {"act": {"action": "pass", "player": "alice"}},
+    ]
+    out = run(game, {"setup": BOLT_SCRIPT["setup"], "steps": steps})
+    assert out["stopped_at"] == 0
+    assert out["steps"][0]["ok"] is False
+    assert "too few targets" in out["steps"][0]["error"]
+    assert "too few targets" in out["stop_reason"]
+    assert len(out["steps"]) == 1
+
+
+def test_failed_expect_is_reported_not_fatal(game):
+    steps = [
+        {"expect": {"life": {"alice": 5}}},
+        {"act": {"action": "pass", "player": "alice"}},
+    ]
+    out = run(game, {"setup": BOLT_SCRIPT["setup"], "steps": steps})
+    assert out["stopped_at"] is None
+    assert out["steps"][0]["ok"] is False
+    assert out["steps"][0]["expect_failures"] == ["life.alice: expected 5, got 20"]
+    assert out["steps"][1]["ok"] is True
+
+
+def test_script_stops_when_the_time_budget_is_used_up(game):
+    steps = [{"note": "a"}, {"act": {"action": "pass", "player": "alice"}}]
+    out = run(game, {"setup": BOLT_SCRIPT["setup"], "steps": steps}, budget=-1.0)
+    assert out["stopped_at"] == 0
+    assert out["stop_reason"].startswith("time budget of ")
+    assert out["stop_reason"].endswith(" s used up")

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from magic_cards_model_api.sim.sandbox_game import ACTIONS, SandboxSpec
+from magic_cards_model_api.baseline_seat import decide_body
+from magic_cards_model_api.sim.sandbox_game import ACTIONS, SandboxGame, SandboxSpec
 
 ZONES = ("hand", "battlefield", "graveyard", "exile")
 
@@ -201,3 +203,104 @@ def decide_as_act(step: DecideStep) -> ActStep:
     """`decide` is sugar for `act decide`."""
     return ActStep(act=ActArgs(action="decide", player=step.decide.player,
                                body=step.decide.answer))
+
+
+# -- runner ----------------------------------------------------------------
+
+_MAX_AUTO_DECISIONS = 50  # per gap between two steps; a decision loop must not eat the budget
+
+
+def _refusal(result: Any) -> str | None:
+    """The engine's reason when an action result is a refusal, else None."""
+    if isinstance(result, dict) and False in (result.get("allowed"), result.get("accepted")):
+        return str(result.get("reason") or "refused")
+    return None
+
+
+def _describe_decision(pending: dict[str, Any]) -> str:
+    options = pending.get("options") or pending.get("cards") or []
+    text = f"pending decision {pending.get('kind')} for {pending.get('player')}"
+    if pending.get("prompt"):
+        text += f" ({pending['prompt']})"
+    if options:
+        text += f"; options: {options}"
+    return text
+
+
+def run_scenario(game: SandboxGame, scenario: Scenario, deadline: float) -> dict[str, Any]:
+    """Create the sandbox from `scenario.setup` and run its steps against the real engine.
+
+    `deadline` is a `time.monotonic()` instant. Stops at the first refused act, at a pending
+    decision the next act does not answer (`answers == "stop"`), or at the deadline; failed
+    expectations are recorded and never stop the run.
+    """
+    budget = max(0.0, deadline - time.monotonic())
+    created = game.create(scenario.setup.model_dump())
+    initial = created["state"]
+    state, labels = initial, created["labels"]
+    records: list[dict[str, Any]] = []
+    stopped_at: int | None = None
+    stop_reason: str | None = None
+
+    def stop(index: int, reason: str) -> None:
+        nonlocal stopped_at, stop_reason
+        stopped_at, stop_reason = index, reason
+
+    for index, step in enumerate(scenario.steps):
+        if time.monotonic() >= deadline:
+            stop(index, f"time budget of {budget:g} s used up")
+            break
+        if isinstance(step, NoteStep):
+            records.append({"index": index, "kind": "note", "ok": True, "result": step.note})
+            continue
+        if isinstance(step, ExpectStep):
+            fails = check_expect(step.expect.model_dump(exclude_none=True), state, labels)
+            record: dict[str, Any] = {"index": index, "kind": "expect", "ok": not fails}
+            if fails:
+                record["expect_failures"] = fails
+            records.append(record)
+            continue
+        act = decide_as_act(step) if isinstance(step, DecideStep) else step
+        if act.act.action != "decide":
+            pending = state.get("pending_decision")
+            auto = 0
+            while pending and scenario.answers == "baseline" and auto < _MAX_AUTO_DECISIONS:
+                body = decide_body(pending, pending["player"])
+                answer = game.act("decide", pending["player"], body)
+                state, labels = answer["state"], answer["labels"]
+                reason = _refusal(answer["result"])
+                records.append(
+                    {"index": index, "kind": "auto_decide", "ok": reason is None,
+                     "result": answer["result"], **({"error": reason} if reason else {})}
+                )
+                if reason:
+                    break
+                auto += 1
+                pending = state.get("pending_decision")
+            if pending:
+                stop(index, _describe_decision(pending) + "; answer it with a decide step first")
+                break
+        args = act.act
+        answer = game.act(args.action, args.player, args.body, args.dry_run)
+        state, labels = answer["state"], answer["labels"]
+        reason = _refusal(answer["result"])
+        record = {"index": index, "kind": "decide" if isinstance(step, DecideStep) else "act",
+                  "ok": reason is None, "result": answer["result"]}
+        if reason:
+            record["error"] = reason
+        records.append(record)
+        if reason:
+            stop(index, f"step {index} ({args.action}) was refused: {reason}")
+            break
+
+    final = game.state()
+    return {
+        "steps": records,
+        "stopped_at": stopped_at,
+        "stop_reason": stop_reason,
+        "initial_state": initial,
+        "final_state": final["state"],
+        "diff": state_diff(initial, final["state"]),
+        "labels": final["labels"],
+        **{k: v for k, v in final.items() if k in ("support_warnings", "support_note")},
+    }

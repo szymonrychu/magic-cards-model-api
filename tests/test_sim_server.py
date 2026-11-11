@@ -194,3 +194,35 @@ def test_sim_path_does_not_shadow_the_ui(monkeypatch):
     monkeypatch.setenv("MTG_SIM_TOKEN", "t0k")
     with TestClient(app) as c:
         assert c.get("/").status_code == 200
+
+
+SCRIPT_FILE = Path(__file__).parent / "fixtures" / "sim" / "bolt_bears_script.json"
+SCRIPT = json.loads(SCRIPT_FILE.read_text())
+
+
+def test_run_script_tool_frees_the_slot_unless_keep(sim):
+    done = call(sim, "sim_run_script", script=SCRIPT)
+    assert done["stopped_at"] is None and "sandbox" not in done
+    again = call(sim, "sim_run_script", script=SCRIPT, keep=True)
+    sid = again["sandbox"]["id"]
+    assert call(sim, "sim_new", spec=BOLT_SPEC)["error"].startswith("The sandbox slot is in use")
+    state = call(sim, "sim_state", sandbox_id=sid)
+    assert [c["name"] for c in state["state"]["players"]["bob"]["graveyard"]] == ["Grizzly Bears"]
+    assert call(sim, "sim_end", sandbox_id=sid) == {"ended": True}
+
+
+def test_run_script_refuses_an_invalid_script_as_text(sim):
+    out = call(sim, "sim_run_script", script={"setup": BOLT_SPEC, "steps": [{"explode": {}}]})
+    assert "error" in out
+    assert "sandbox" not in call(sim, "sim_run_script", script=SCRIPT)
+
+
+def test_run_script_answers_have_no_credentials(sim):
+    answers = [call(sim, "sim_run_script", script=SCRIPT, keep=True)]
+    text = json.dumps(answers)
+    for key in ("admin_key", "seat_uids", "uid", "key"):
+        assert f'"{key}"' not in text
+    stray = set(re.findall(r"\b[0-9a-f]{32}\b", text)) - _card_ids(answers)
+    stray -= {s.removeprefix("sim-") for s in re.findall(r"sim-[0-9a-f]{32}", text)}
+    assert not stray
+    call(sim, "sim_end", sandbox_id=answers[0]["sandbox"]["id"])

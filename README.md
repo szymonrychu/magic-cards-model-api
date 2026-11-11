@@ -665,8 +665,28 @@ environment, no database and a memory cap.
 - Auth: `Authorization: Bearer <MTG_SIM_TOKEN>`. Unset token answers 503 (disabled), a wrong or
   missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
-- Tools (S1): `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_end`. Cards carry
-  labels (`"label": "bolt"` in the spec, `"@bolt"` in action bodies).
+- Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`, `sim_end`.
+  Cards carry labels (`"label": "bolt"` in the spec, `"@bolt"` in action bodies).
+- Scenarios: `sim_run_script(script, keep=False)` builds the sandbox from `setup` and runs
+  `steps` in one call, returning per-step results, the initial and final board and a diff. It
+  stops at the first refused act, at a decision the next step does not answer (`answers:
+  "stop"`, the default; `"baseline"` answers it with the baseline seat) or when the time
+  budget is used up. A failed `expect` is reported, not fatal. The slot is freed afterwards
+  unless `keep=true`, which returns a `sandbox` id to continue with `sim_act`. Example:
+
+  ```json
+  {"setup": {"players": [{"name": "alice"}, {"name": "bob"}],
+             "cards": [{"card": "Lightning Bolt", "player": "alice", "label": "bolt"},
+                       {"card": "Mountain", "player": "alice", "zone": "battlefield"},
+                       {"card": "Grizzly Bears", "player": "bob", "zone": "battlefield",
+                        "label": "bears"}],
+             "mana_pool": {"alice": "R"}},
+   "steps": [{"act": {"action": "cast", "player": "alice",
+                      "body": {"card_id": "@bolt", "targets": ["@bears"]}}},
+             {"act": {"action": "pass", "player": "alice"}},
+             {"act": {"action": "pass", "player": "bob"}},
+             {"expect": {"zones": {"bob.graveyard": ["Grizzly Bears"]}}}]}
+  ```
 - Caps (env `MTG_SIM_*`, see `sim/config.py`): one sandbox slot, 1800 s idle TTL, 25 s per call,
   1024 MB worker RSS.
 

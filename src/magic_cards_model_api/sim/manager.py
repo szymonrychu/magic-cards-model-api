@@ -21,6 +21,7 @@ from magic_cards_model_api.sim.handle import WorkerDied, WorkerError, WorkerHand
 logger = logging.getLogger(__name__)
 
 _SHUTTING_DOWN = "The sandbox service is shutting down. Try again later."
+_SCRIPT_MARGIN_S = 3.0  # scenario budget = call cap left after start-up, minus this
 _BUSY = "The sandbox is busy with another call; retry in a few seconds."
 
 
@@ -51,7 +52,26 @@ class SandboxManager:
         self._starting = 0  # slots reserved by a `new` still in flight
 
     def new(self, spec: dict[str, Any], *, mode: str = "board") -> dict[str, Any]:
-        # Worker start and the `new` request share one deadline: the call cap.
+        return self._open("new", lambda _remaining: spec, mode=mode)
+
+    def run_script(self, script: dict[str, Any], keep: bool = False) -> dict[str, Any]:
+        """Take the slot, run a scenario in a fresh worker, end the sandbox unless `keep`."""
+
+        def args(remaining: float) -> dict[str, Any]:
+            # Leave room under the call cap for the reply; start-up already used part of it.
+            return {"script": script, "budget_s": max(0.5, remaining - _SCRIPT_MARGIN_S)}
+
+        return self._open("run_script", args, mode="board", keep=keep)
+
+    def _open(
+        self,
+        op: str,
+        make_args: Callable[[float], dict[str, Any]],
+        *,
+        mode: str,
+        keep: bool = True,
+    ) -> dict[str, Any]:
+        # Worker start and the first request share one deadline: the call cap.
         cap = self._limits.call_timeout_s
         deadline = time.monotonic() + cap
         with self._lock:
@@ -68,18 +88,20 @@ class SandboxManager:
         try:
             handle = self._factory()
             handle.start(cap)
-            answer = handle.request("new", spec, max(0.0, deadline - time.monotonic()))
+            remaining = max(0.0, deadline - time.monotonic())
+            answer = handle.request(op, make_args(remaining), remaining)
             with self._lock:
                 if self._closed:
                     raise SimRefused(_SHUTTING_DOWN)
-                self._sandboxes[sandbox_id] = _Sandbox(handle, self._clock())
+                if keep:
+                    self._sandboxes[sandbox_id] = _Sandbox(handle, self._clock())
         except WorkerError as exc:
             self._abort_new(handle)
             raise SimRefused(str(exc)) from exc
         except WorkerTimeout as exc:
             self._abort_new(handle)
             raise SimRefused(
-                f"Starting the sandbox exceeded the {cap:g} s call limit. Try again."
+                f"Starting the sandbox ({op}) exceeded the {cap:g} s call limit. Try again."
             ) from exc
         except WorkerDied as exc:
             self._abort_new(handle)
@@ -93,8 +115,12 @@ class SandboxManager:
         except BaseException:
             self._abort_new(handle)
             raise
+        if not keep:
+            handle.kill()
         with self._lock:
             self._starting -= 1
+        if not keep:
+            return answer
         return {
             **answer,
             "sandbox": {
