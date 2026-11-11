@@ -610,7 +610,7 @@ def test_a_staged_draft_posts_within_one_poll_of_the_human_holding_priority(
     answer = json.loads(raw.content[0].text)
 
     assert answer["draft"]["status"] == "posted", answer.get("draft")
-    assert elapsed < 2.5, f"took {elapsed:.2f}s after handoff - should post within one poll, not the whole bound"
+    assert elapsed < 2.5, f"took {elapsed:.2f}s after handoff - should post within one poll"
     rows = advice_rows(game)
     assert len(rows) == 1
     assert rows[0]["detail"]["player"] == "bob"
