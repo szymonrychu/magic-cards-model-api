@@ -370,8 +370,10 @@ def build_world(tmp_path, clock=None, sleep=None, channel=Channel.OFF) -> Simple
     def delete_session():
         if state["agent"] == "down":
             raise httpx.ConnectError("connection refused")
-        state["deleted"] += 1
+        # Marker first, count second: tests poll `deleted` from another thread
+        # and then read `marker_at_delete`, which must already be set by then.
         state["marker_at_delete"] = (workspace / "handover.done").exists()
+        state["deleted"] += 1
         events.append("delete")
         # A real wrapper exits here; the replacement container boots for a
         # while before it can take a turn.
