@@ -88,24 +88,20 @@ def test_a_hand_corrupted_fixture_is_caught() -> None:
     """The regression this whole task exists to make impossible, reproduced
     directly: hand-editing a committed fixture the way the reported bug
     hand-wrote one - flipping a real value to `None` the engine would never
-    emit - must turn the drift test red. Written to a *copy*, never the real
-    committed file, and always restored: this proves the guard exists
+    emit - must turn the drift test red. Applied to an in-memory copy, never
+    the real committed file: this proves the guard exists
     without leaving a corrupted fixture behind for a real run to trip over."""
     name = "split_card_labels"
-    path = case_path(name)
-    original = path.read_text()
-    payload = json.loads(original)
+    committed = {n: case_path(n).read_text() for n in CASES}
+    payload = json.loads(committed[name])
     assert payload["pending_decision"]["target_minimum"] == 0, payload["pending_decision"]
     payload["pending_decision"]["target_minimum"] = None
-    try:
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-        committed = {n: case_path(n).read_text() for n in CASES}
-        fresh = render_all(build_all())
-        assert fresh != committed, (
-            "corrupting a committed fixture by hand did not turn the drift "
-            "test red - it is not actually guarding anything"
-        )
-        assert fresh[name] != committed[name]
-    finally:
-        path.write_text(original)
-    assert path.read_text() == original
+    # In memory only: the committed file is shared by every xdist worker, so
+    # writing it (even with a restore) races the other fixture-shape tests.
+    committed[name] = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    fresh = render_all(build_all())
+    assert fresh != committed, (
+        "corrupting a committed fixture by hand did not turn the drift "
+        "test red - it is not actually guarding anything"
+    )
+    assert fresh[name] != committed[name]
