@@ -1630,7 +1630,9 @@ def test_a_background_wait_does_not_block_a_foreground_stage_advice(
     assert seat_cli.run(["--uid", uid, "--game", game, "stage-advice", "declare_attackers"]) == 0
     elapsed = time.monotonic() - start
 
-    assert elapsed < 1.0, (
+    # 2.0 rather than 1.0: a loaded CI runner took 1.34s; the un-fixed code
+    # blocks until the wait's 3s bound ends (about 2.7s after this point).
+    assert elapsed < 2.0, (
         f"a foreground stage-advice took {elapsed:.2f}s while a background wait was "
         "still polling - the CLI draft lock is still held across the wait"
     )
