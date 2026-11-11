@@ -391,7 +391,9 @@ def test_retire_arms_a_daemon_timer_that_releases_an_overrunning_seat(
     subprocess_seats: ai_seat.AiSeatRegistry,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(lobby, "POSTGAME_RELEASE_SECONDS", 0.3)
+    monkeypatch.setattr(lobby, "POSTGAME_RELEASE_SECONDS", 5.0)
+    # Long enough that the timer is still pending when the test reads it back
+    # on a loaded runner (0.3s fired before the lookup); the test waits for it.
     booted = boot(client)
     runner = start_bob(client, booted)
 

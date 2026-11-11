@@ -127,7 +127,11 @@ def test_the_phase_track_stays_on_one_line_and_scrolls_inside_itself() -> None:
     track = _rule(css, "#phase-track")
     assert "flex-wrap: nowrap" in track, track
     assert "overflow-x: auto" in track, track
-    assert "min-width: 0" in track, track
+    # A fixed floor, not `min-width: 0`: the track shrinks and scrolls inside
+    # itself, but is never squeezed to nothing by the armed Concede label.
+    assert re.search(r"min-width:\s*\d+px", track), track
+    concede = _rule(css, "#concede-slot")
+    assert "min-width: 0" in concede, concede
     bar = re.search(r"\n\.game-toolbar \{(.*?)\}", css, re.S)
     assert bar and "flex-wrap: nowrap" in bar.group(1), (
         "the top row must never wrap into a second line"
