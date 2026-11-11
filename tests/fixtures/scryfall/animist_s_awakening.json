@@ -1,5 +1,4 @@
 {
-  "artist": "Chris Rahn",
   "artist_ids": [
     "7742047e-0f80-4c0f-a530-d07460165e86"
   ],
@@ -86,21 +85,8 @@
   "oracle_text": "Reveal the top X cards of your library. Put all land cards from among them onto the battlefield tapped and the rest on the bottom of your library in a random order.\nSpell mastery \u2014 If there are two or more instant and/or sorcery cards in your graveyard, untap those lands.",
   "oversized": false,
   "penny_rank": 4320,
-  "prices": {
-    "eur": "0.45",
-    "eur_foil": null,
-    "tix": "0.04",
-    "usd": "0.35",
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A6f1bfe50-b61a-4fdd-963c-40d59117bdf4&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/148989?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=881585&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F687470%3Fpage%3D1"
-  },
   "rarity": "rare",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Animist%27s+Awakening",

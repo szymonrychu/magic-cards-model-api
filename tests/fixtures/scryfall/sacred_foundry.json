@@ -1,5 +1,4 @@
 {
-  "artist": "Jessica Rossier",
   "artist_ids": [
     "8ecdb26a-31a7-4f62-88cd-ac98c6e3430b"
   ],
@@ -19,7 +18,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "Sooner or later, every Starfleet vessel passes through Spacedock, whether for resupply, repairs, or complete retrofit.",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -84,14 +82,6 @@
   "oracle_text": "({T}: Add {R} or {W}.)\nAs this land enters, you may pay 2 life. If you don't, it enters tapped.",
   "oversized": false,
   "penny_rank": 112,
-  "prices": {
-    "eur": null,
-    "eur_foil": null,
-    "tix": null,
-    "usd": null,
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A45181cb8-2090-4471-ba90-e5a8f04d525f&unique=prints",
   "produced_mana": [
     "R",
@@ -101,11 +91,6 @@
   "promo_types": [
     "universesbeyond"
   ],
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards?affiliate_id=scryfall&data%5Bsearch%5D=Sacred+Foundry&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products/Search?referrer=scryfall&searchString=Sacred+Foundry&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fmagic%2Fproduct%3FproductLineName%3Dmagic%26q%3DSacred%2BFoundry%26view%3Dgrid"
-  },
   "rarity": "rare",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Sacred+Foundry",

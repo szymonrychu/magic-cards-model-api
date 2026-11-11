@@ -1,5 +1,4 @@
 {
-  "artist": "Eric Fortune",
   "artist_ids": [
     "c5562592-3387-495a-96fb-618a6a424a45"
   ],
@@ -23,7 +22,6 @@
   "finishes": [
     "nonfoil"
   ],
-  "flavor_text": "\"Touch no tree, break no branch, and speak only the question you wish answered.\"\n\u2014Von Yomm, elder druid, to her initiates",
   "foil": false,
   "frame": "2015",
   "full_art": false,
@@ -90,24 +88,11 @@
   "oracle_text": "(This land isn't a spell, it's affected by summoning sickness, and it has \"{T}: Add {G}.\")",
   "oversized": false,
   "power": "1",
-  "prices": {
-    "eur": "2.89",
-    "eur_foil": null,
-    "tix": "7.59",
-    "usd": "3.90",
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Ae996cd67-739c-40f4-b276-0042acf26c71&unique=prints",
   "produced_mana": [
     "G"
   ],
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/131171?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=789011&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F579308%3Fpage%3D1"
-  },
   "rarity": "rare",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Dryad+Arbor",

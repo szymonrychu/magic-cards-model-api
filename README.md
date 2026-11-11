@@ -900,3 +900,9 @@ so a seat can *see* the grant it is about to use.
   targeting parser.
 - Modal targeting checks go through the card's whole spell text; choose modes
   on the cast itself for exact modal answers.
+
+## Fan Content notice
+
+unofficial Fan Content permitted under the Fan Content Policy. Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast. (c)Wizards of the Coast LLC.
+
+Card data comes from [Scryfall](https://scryfall.com).

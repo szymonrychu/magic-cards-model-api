@@ -94,9 +94,7 @@
   "collector_number": "236",
   "digital": false,
   "rarity": "rare",
-  "flavor_text": "A weapon of darkness for a warrior of light.",
   "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
-  "artist": "Yeong-Hao Han",
   "artist_ids": [
     "f8e7f8d6-6dde-4059-973c-30f1fd1bbe4e"
   ],
@@ -117,23 +115,10 @@
     "source_uri": "https://www.youtube.com/watch?v=n3cQj0KnKAg",
     "previewed_at": "2020-01-09"
   },
-  "prices": {
-    "usd": "34.39",
-    "usd_foil": "43.62",
-    "usd_etched": null,
-    "eur": "24.00",
-    "eur_foil": "28.80",
-    "tix": "0.44"
-  },
   "related_uris": {
     "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=476487&printed=false",
     "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DShadowspear",
     "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DShadowspear",
     "edhrec": "https://edhrec.com/route/?cc=Shadowspear"
-  },
-  "purchase_uris": {
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F206978%3Fpage%3D1",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=431404&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "cardhoarder": "https://www.cardhoarder.com/cards/79596?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall"
   }
 }

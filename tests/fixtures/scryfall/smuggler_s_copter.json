@@ -1,5 +1,4 @@
 {
-  "artist": "Florian de Gesincourt",
   "artist_ids": [
     "f28c54ff-bbe3-485d-81a4-b2cb49430a52"
   ],
@@ -86,21 +85,8 @@
   "oversized": false,
   "penny_rank": 141,
   "power": "3",
-  "prices": {
-    "eur": "1.20",
-    "eur_foil": null,
-    "tix": "0.40",
-    "usd": "1.71",
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A49136bdc-bc50-49a2-999a-1ef9c16ea130&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/97700?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=608974&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F263086%3Fpage%3D1"
-  },
   "rarity": "rare",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Smuggler%27s+Copter",

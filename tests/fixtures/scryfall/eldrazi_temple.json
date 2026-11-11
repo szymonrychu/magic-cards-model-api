@@ -1,5 +1,4 @@
 {
-  "artist": "James Paick",
   "artist_ids": [
     "1a7be0a2-d8ac-45c7-b0a0-eb0886f47b5f"
   ],
@@ -16,7 +15,6 @@
   "finishes": [
     "nonfoil"
   ],
-  "flavor_text": "Each temple is a door to a horrible future.",
   "foil": false,
   "frame": "2015",
   "full_art": false,
@@ -88,24 +86,11 @@
     "source": "LoadingReadyRun",
     "source_uri": "https://www.youtube.com/watch?v=MHeLpN0k7WQ"
   },
-  "prices": {
-    "eur": "2.97",
-    "eur_foil": null,
-    "tix": "3.70",
-    "usd": "3.43",
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A7fab8d65-af51-47d3-8f10-2676bf6e8ba3&unique=prints",
   "produced_mana": [
     "C"
   ],
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/114325?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=723173&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F506706%3Fpage%3D1"
-  },
   "rarity": "uncommon",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Eldrazi+Temple",

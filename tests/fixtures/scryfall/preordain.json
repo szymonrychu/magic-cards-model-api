@@ -1,5 +1,4 @@
 {
-  "artist": "Svetlin Velinov",
   "artist_ids": [
     "ffd063ae-c097-4f26-b2e6-b1e2137708bc"
   ],
@@ -87,21 +86,8 @@
   "oracle_id": "ac641490-ca14-48d7-8cc4-b69ce984befa",
   "oracle_text": "Scry 2, then draw a card. (To scry 2, look at the top two cards of your library, then put any number of them on the bottom and the rest on top in any order.)",
   "oversized": false,
-  "prices": {
-    "eur": "1.12",
-    "eur_foil": null,
-    "tix": "10.14",
-    "usd": "0.69",
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Aac641490-ca14-48d7-8cc4-b69ce984befa&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/138259?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=818773&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F624170%3Fpage%3D1"
-  },
   "rarity": "common",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Preordain",

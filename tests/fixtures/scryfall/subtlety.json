@@ -1,5 +1,4 @@
 {
-  "artist": "Anastasia Ovchinnikova",
   "artist_ids": [
     "3605d81f-5c97-4958-9dcc-d44a85e10305"
   ],
@@ -96,21 +95,8 @@
     "source": "Wizards of the Coast",
     "source_uri": "https://twitter.com/wizards_magic/status/1397308555561250816/photo/1"
   },
-  "prices": {
-    "eur": "10.68",
-    "eur_foil": "14.70",
-    "tix": "9.23",
-    "usd": "11.38",
-    "usd_etched": null,
-    "usd_foil": "14.73"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A377179d5-ac83-4d34-b5b1-f3d8caa60f79&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/90507?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=566161&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F239741%3Fpage%3D1"
-  },
   "rarity": "mythic",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Subtlety",

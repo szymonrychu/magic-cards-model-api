@@ -18,7 +18,6 @@
     }
   ],
   "arena_id": 90464,
-  "artist": "David Auden Nash",
   "artist_ids": [
     "092827e0-03f2-4e73-852e-d95eba0fef20"
   ],
@@ -116,21 +115,8 @@
     "source": "bilibili",
     "source_uri": "https://space.bilibili.com/5296492"
   },
-  "prices": {
-    "eur": "0.10",
-    "eur_foil": "0.22",
-    "tix": "0.03",
-    "usd": "0.17",
-    "usd_etched": null,
-    "usd_foil": "0.28"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Aa38eba6a-db90-48ac-bb49-889a7fd90ce9&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/124147?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=763884&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F544350%3Fpage%3D1"
-  },
   "rarity": "uncommon",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Cunning+Coyote",

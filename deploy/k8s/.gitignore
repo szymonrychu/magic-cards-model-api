@@ -1,4 +1,3 @@
 # The filled-in copy of 10-secret.template.yaml holds a real Claude credential
-# and a real GitHub PAT. (70-ingress.yaml's basic-auth hash is committed on
-# purpose - those credentials are public by design; see the file.)
+# and a real GitHub PAT.
 10-secret.yaml

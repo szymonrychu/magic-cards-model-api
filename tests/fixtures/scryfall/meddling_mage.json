@@ -1,5 +1,4 @@
 {
-  "artist": "Todd Lockwood",
   "artist_ids": [
     "d0b9f3cc-13fb-42b6-bc43-b034728e5c7b"
   ],
@@ -23,7 +22,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "\"This violent wasteland is an indictment of its people. These cowards lack the will to oppose disorder.\"",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -91,21 +89,8 @@
   "oversized": false,
   "penny_rank": 339,
   "power": "2",
-  "prices": {
-    "eur": "2.15",
-    "eur_foil": "2.54",
-    "tix": "0.85",
-    "usd": "2.08",
-    "usd_etched": null,
-    "usd_foil": "3.48"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Aa5d02339-9f6d-486e-87d8-5ec2274cf680&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/82454?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=483969&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F218464%3Fpage%3D1"
-  },
   "rarity": "rare",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Meddling+Mage",

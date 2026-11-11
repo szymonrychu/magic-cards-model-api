@@ -1,6 +1,5 @@
 {
   "arena_id": 89131,
-  "artist": "Eli Minaya",
   "artist_ids": [
     "fee369ac-08b5-4a69-8ef8-f2b42b81e807"
   ],
@@ -24,7 +23,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "After heavy casualties in the Phyrexian invasion, the Boros mage-priests trained as many rank-and-file soldiers as possible to wield the Legion's legendary battle magic.",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -92,21 +90,8 @@
   "oracle_text": "Lightning Helix deals 3 damage to any target and you gain 3 life.",
   "oversized": false,
   "penny_rank": 337,
-  "prices": {
-    "eur": "0.18",
-    "eur_foil": "0.17",
-    "tix": "0.03",
-    "usd": "0.28",
-    "usd_etched": null,
-    "usd_foil": "0.37"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A800c258a-cfc4-4a54-a667-065ea8dea69e&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/121910?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=750677&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F530010%3Fpage%3D1"
-  },
   "rarity": "uncommon",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Lightning+Helix",

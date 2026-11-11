@@ -1,6 +1,5 @@
 {
   "arena_id": 71897,
-  "artist": "Seb McKinnon",
   "artist_ids": [
     "ad4caca0-8d89-44ce-a1a6-d5ca905bd6fb"
   ],
@@ -22,7 +21,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "Many an inventor has collapsed under the pressure to create a flawless design.",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -95,21 +93,8 @@
     "source": "Wizards of the Coast",
     "source_uri": ""
   },
-  "prices": {
-    "eur": "0.08",
-    "eur_foil": "0.11",
-    "tix": "0.03",
-    "usd": "0.19",
-    "usd_etched": null,
-    "usd_foil": "0.05"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Aad44cf74-b717-48fb-9fa2-77512024d76a&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/81457?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=472099&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F215873%3Fpage%3D1"
-  },
   "rarity": "common",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Mind+Rot",

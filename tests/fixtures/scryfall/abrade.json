@@ -1,5 +1,4 @@
 {
-  "artist": "Jonas De Ro",
   "artist_ids": [
     "561ebf9e-8d93-4b57-8156-8826d0c19601"
   ],
@@ -20,7 +19,6 @@
   "finishes": [
     "nonfoil"
   ],
-  "flavor_text": "The desert is a voracious beast, devouring both flesh and stone.",
   "foil": false,
   "frame": "2015",
   "full_art": false,
@@ -85,21 +83,8 @@
   "oracle_text": "Choose one \u2014\n\u2022 Abrade deals 3 damage to target creature.\n\u2022 Destroy target artifact.",
   "oversized": false,
   "penny_rank": 241,
-  "prices": {
-    "eur": "0.14",
-    "eur_foil": null,
-    "tix": "0.06",
-    "usd": "0.34",
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Af9db72dc-9a5b-48a4-a86e-7464d9a2166a&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/148935?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=881553&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F687490%3Fpage%3D1"
-  },
   "rarity": "uncommon",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Abrade",

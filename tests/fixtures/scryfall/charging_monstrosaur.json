@@ -1,6 +1,5 @@
 {
   "arena_id": 66241,
-  "artist": "Zack Stella",
   "artist_ids": [
     "17bc7f55-958b-43f4-bb40-09746d05b3f9"
   ],
@@ -22,7 +21,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "\"I knew I should have stayed with the boat. Always stay with the boat!\"",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -95,21 +93,8 @@
   "oversized": false,
   "penny_rank": 5856,
   "power": "5",
-  "prices": {
-    "eur": "0.20",
-    "eur_foil": "0.65",
-    "tix": "0.03",
-    "usd": "0.26",
-    "usd_etched": null,
-    "usd_foil": "0.97"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A21dd60d5-76c8-469e-8c4e-112e377d2d59&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/65292?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=301692&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F145585%3Fpage%3D1"
-  },
   "rarity": "uncommon",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Charging+Monstrosaur",

@@ -1,5 +1,4 @@
 {
-  "artist": "Monte Michael Moore",
   "artist_ids": [
     "a77227ad-26f9-40da-b0f2-664b5196cea0"
   ],
@@ -19,7 +18,6 @@
   "finishes": [
     "nonfoil"
   ],
-  "flavor_text": "Murky Otarian tides hide the forgotten treacheries of the Phyrexian war.",
   "foil": false,
   "frame": "2015",
   "full_art": false,
@@ -85,25 +83,12 @@
   "oracle_id": "4869a530-757f-4364-8d8e-4dc8001f433c",
   "oracle_text": "{1}, {T}: Add {U}{B}.",
   "oversized": false,
-  "prices": {
-    "eur": "0.28",
-    "eur_foil": null,
-    "tix": "0.62",
-    "usd": "0.30",
-    "usd_etched": null,
-    "usd_foil": null
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A4869a530-757f-4364-8d8e-4dc8001f433c&unique=prints",
   "produced_mana": [
     "B",
     "U"
   ],
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/138651?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=818923&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F624454%3Fpage%3D1"
-  },
   "rarity": "rare",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Darkwater+Catacombs",

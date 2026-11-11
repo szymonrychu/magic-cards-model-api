@@ -159,8 +159,7 @@ def test_database_cluster_uses_rook_ceph_and_no_manual_credentials() -> None:
 # ---------------------------------------------------------- phase 2b oauth2-proxy --
 #
 # The play UI host moves from nginx basic auth to oauth2-proxy in front of
-# Keycloak; the escape-hatch host keeps basic auth so a Keycloak/client
-# misconfiguration cannot lock everyone out at once. See 55-oauth2-proxy.yaml
+# Keycloak; no basic-auth escape hatch remains. See 55-oauth2-proxy.yaml
 # and 70-ingress.yaml for the manifests these tests are pinning.
 
 NO_EXTERNAL_AUTH_ANNOTATIONS = {
@@ -197,17 +196,14 @@ def test_no_ingress_anywhere_carries_an_external_auth_annotation() -> None:
             assert not key.endswith("auth-signin"), ingress["metadata"]["name"]
 
 
-def test_the_escape_hatch_keeps_basic_auth_on_its_own_host() -> None:
+def test_no_basic_auth_escape_hatch_remains() -> None:
     docs = rendered()
-    ingress = by_name(docs, "Ingress", "mtg-stack")
-    (rule,) = ingress["spec"]["rules"]
-    assert rule["host"] == "pl.szymonrichert.pl"
-    path = next(p for p in rule["http"]["paths"] if p["path"] == "/")
-    assert path["backend"]["service"]["name"] == "mtg-stack"
-    assert path["backend"]["service"]["port"]["number"] == 8000
-    annotations = ingress["metadata"]["annotations"]
-    assert annotations["nginx.ingress.kubernetes.io/auth-type"] == "basic"
-    assert annotations["nginx.ingress.kubernetes.io/auth-secret"] == "play-magic-auth"
+    names = {i["metadata"]["name"] for i in by_kind(docs, "Ingress")}
+    assert "mtg-stack" not in names
+    assert not [s for s in by_kind(docs, "Secret") if s["metadata"]["name"] == "play-magic-auth"]
+    for ingress in by_kind(docs, "Ingress"):
+        annotations = set(ingress["metadata"].get("annotations", {}))
+        assert not annotations & NO_EXTERNAL_AUTH_ANNOTATIONS, ingress["metadata"]["name"]
 
 
 def test_oauth2_proxy_satisfies_the_restricted_pod_security_standard() -> None:

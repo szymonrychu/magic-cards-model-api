@@ -18,7 +18,6 @@
     }
   ],
   "arena_id": 91071,
-  "artist": "Alexander Forssberg",
   "artist_ids": [
     "85908891-3cc7-42b0-9b54-27ed0fe89c53"
   ],
@@ -36,7 +35,6 @@
     "nonfoil",
     "foil"
   ],
-  "flavor_text": "Once a prosperous Vantress town, now swept clean and reclaimed by the waters of the wilds.",
   "foil": true,
   "frame": "2015",
   "full_art": false,
@@ -103,21 +101,8 @@
   "oracle_id": "f3c7af78-a77d-4134-82a2-a5ce84285a84",
   "oracle_text": "{T}, Pay 1 life, Sacrifice this land: Search your library for a Plains or Island card, put it onto the battlefield, then shuffle.",
   "oversized": false,
-  "prices": {
-    "eur": "15.19",
-    "eur_foil": "15.82",
-    "tix": "2.53",
-    "usd": "14.45",
-    "usd_etched": null,
-    "usd_foil": "16.53"
-  },
   "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Af3c7af78-a77d-4134-82a2-a5ce84285a84&unique=prints",
   "promo": false,
-  "purchase_uris": {
-    "cardhoarder": "https://www.cardhoarder.com/cards/126459?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
-    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=759786&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
-    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F541276%3Fpage%3D1"
-  },
   "rarity": "rare",
   "related_uris": {
     "edhrec": "https://edhrec.com/route/?cc=Flooded+Strand",
