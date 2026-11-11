@@ -587,21 +587,30 @@ def test_a_staged_draft_posts_within_one_poll_of_the_human_holding_priority(
     seat.stage_advice("declare_attackers", "mine")
     capture_a_pass_draft(seat, game, reasoning="pass until my attack step")
 
+    handed_at: list[float] = []
+
     def hand_bob_priority() -> None:
         time.sleep(0.2)
         force_turn_position(game, Step.DECLARE_ATTACKERS, "bob")
+        handed_at.append(time.monotonic())
 
     threading.Thread(target=hand_bob_priority, daemon=True).start()
 
-    started = time.monotonic()
+    # Latency is measured from the moment priority is handed over, not from the
+    # call start, so a slow runner (setup, event loop start) cannot eat the
+    # margin. Healthy: a few polls (0.05s each) after the handoff. The bug this
+    # guards (draft posted only when the whole wait bound lapses) returns about
+    # `max_seconds` after the call start, i.e. ~4.8s after the handoff.
     raw = asyncio.run(
-        server.call_tool("wait_for_priority", {"player_uid": uid, "max_seconds": 2.0})
+        server.call_tool("wait_for_priority", {"player_uid": uid, "max_seconds": 5.0})
     )
-    elapsed = time.monotonic() - started
+    returned_at = time.monotonic()
+    assert handed_at, "priority was never handed over during the wait"
+    elapsed = returned_at - handed_at[0]
     answer = json.loads(raw.content[0].text)
 
     assert answer["draft"]["status"] == "posted", answer.get("draft")
-    assert elapsed < 1.0, f"took {elapsed:.2f}s - should post within one poll, not the whole bound"
+    assert elapsed < 2.5, f"took {elapsed:.2f}s after handoff - should post within one poll"
     rows = advice_rows(game)
     assert len(rows) == 1
     assert rows[0]["detail"]["player"] == "bob"
