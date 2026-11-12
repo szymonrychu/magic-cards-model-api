@@ -1,0 +1,29 @@
+# Reanimator - pilot ejk, 2026-11-11, source mtgtop8-911435
+# mainboard 60, sideboard 15
+4 Flooded Strand
+1 Godless Shrine
+1 Hallowed Fountain
+1 Island
+4 Marsh Flats
+1 Meticulous Archive
+1 Plains
+4 Polluted Delta
+1 Shadowy Backstreet
+1 Swamp
+1 Undercity Sewers
+1 Watery Grave
+4 Archon of Cruelty
+3 Emperor of Bones
+4 Psychic Frog
+4 Quantum Riddler
+4 Solitude
+4 Ephemerate
+4 Faithful Mending
+4 Persist
+4 Prismatic Ending
+4 Thoughtseize
+
+3 Break the Ice
+4 Consign to Memory
+4 Force of Negation
+4 Wrath of the Skies

@@ -1,0 +1,31 @@
+# UR cutter prowess - pilot Ryuji, 2026-11-10, source mtgtop8-911155
+# mainboard 60, sideboard 15
+3 Bloodstained Mire
+2 Fiery Islet
+3 Mountain
+4 Scalding Tarn
+3 Steam Vents
+1 Thundering Falls
+2 Wooded Foothills
+4 Dragon's Rage Channeler
+4 Monastery Swiftspear
+2 Pompous Battlemage
+3 Slickshot Show-Off
+2 Boomerang Basics
+3 Expressive Iteration
+4 Lava Dart
+4 Lightning Bolt
+2 Mutagenic Growth
+4 Preordain
+1 Violent Urge
+4 Cori-Steel Cutter
+4 Mishra's Bauble
+1 Tormod's Crypt
+
+3 Consign to Memory
+2 Meltdown
+2 Obsidian Charmaw
+1 Spell Pierce
+2 Spell Snare
+1 Tormod's Crypt
+4 Unholy Heat
