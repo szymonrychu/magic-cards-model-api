@@ -447,8 +447,8 @@ class _Converter:
             self._block_step = None
         if kind == "turn":
             return
-        if kind == "reveal" and e.card is not None and e.player in self.names:
-            self.known_hand[self.names[e.player]] = list(e.targets)
+        # A reveal inside the target turn is not recorded as known: the card is public only
+        # from that step on, so a later play adds it with `add_card` then, not in the setup.
         if kind == "land":
             player = self.player(e.player)
             self.type_of(e.card)

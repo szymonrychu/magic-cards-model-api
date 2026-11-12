@@ -338,3 +338,41 @@ def test_review_guide_is_in_the_instructions_and_the_readme():
         needles = ("sim_review_mtgo_log", "decisive", "mistake", "could see", "player=", "SUBAGENT")
         for needle in needles:
             assert needle in text, needle
+
+
+_IN_TURN_REVEAL = """\
+@Palpha rolled a 5.
+@Pbeta rolled a 3.
+@Palpha chooses to play first.
+@PTurn 1: alpha
+@Palpha plays @[Mountain@:1,601:@].
+@PTurn 2: beta
+@Pbeta plays @[Swamp@:2,602:@].
+@Pbeta casts @[Thoughtseize@:3,603:@] targeting alpha.
+@Palpha reveals their hand to @[Thoughtseize@:3,603:@], containing @[Lightning Bolt@:4,604:@].
+@Palpha casts @[Lightning Bolt@:4,604:@] targeting beta.
+@PTurn 3: alpha
+@Palpha plays @[Mountain@:1,605:@].
+@Palpha casts @[Thoughtseize@:3,606:@] targeting beta.
+@Pbeta reveals their hand to @[Thoughtseize@:3,606:@], containing @[Duress@:5,607:@].
+@Pbeta casts @[Duress@:5,607:@] targeting alpha.
+"""
+
+
+@pytest.mark.parametrize(
+    ("turn", "reviewer", "hidden", "card"),
+    [(2, "beta", "alpha", "Lightning Bolt"), (3, "alpha", "beta", "Duress")],
+)
+def test_a_reveal_inside_the_target_turn_does_not_put_the_card_in_the_setup(
+    turn, reviewer, hidden, card
+):
+    players, events, _ = parse_mtgo_log(_IN_TURN_REVEAL)
+    scenario, _ = to_scenario(
+        players, events, turn, type_lines=_types(players, events), player=reviewer
+    )
+    assert card not in _hand(scenario, hidden)  # not known when the turn starts
+    acts = _acts(scenario)
+    adds = [a for a in acts if a[0] == "add_card" and a[2]["card"] == card]
+    assert len(adds) == 1  # added only now, right before it is cast
+    i = acts.index(adds[0])
+    assert acts[i + 1][:2] == ("cast", hidden)
