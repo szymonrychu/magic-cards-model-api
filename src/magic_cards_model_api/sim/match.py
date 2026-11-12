@@ -104,6 +104,18 @@ def play_match(
             emit(_play_one(client, deck_a, deck_b, seed, i, max_steps))
 
 
+def deck_support(deck_a_text: str, deck_b_text: str) -> dict[str, Any]:
+    """The support block (`support_warnings`, `support_note`) for both decks.
+
+    This resolves cards through Scryfall, so callers compute it once per batch, never per poll.
+    """
+    names: set[str] = set()
+    for text in (deck_a_text, deck_b_text):
+        main, side = parse_decklist(text)
+        names.update(name for _, name in main + side)
+    return support_block(names)
+
+
 def aggregate(
     deck_a_label: str,
     deck_b_label: str,
@@ -112,20 +124,20 @@ def aggregate(
     status: str,
     deck_a_text: str,
     deck_b_text: str,
+    support: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Win counts and 95% intervals over the decided games, with the per-game rows.
 
-    The deck texts are required: they feed the support block (cards the engine cannot play).
+    The support block (cards the engine cannot play) comes from `support` when given, else it
+    is computed from the deck texts, which may look cards up over the network.
     """
     wins_a = sum(1 for g in per_game if g.get("winner") == "a")
     wins_b = sum(1 for g in per_game if g.get("winner") == "b")
     draws = sum(1 for g in per_game if g.get("drawn") and not g.get("winner"))
     unfinished = sum(1 for g in per_game if not g.get("winner") and not g.get("drawn"))
     decided = wins_a + wins_b
-    names: set[str] = set()
-    for text in (deck_a_text, deck_b_text):
-        main, side = parse_decklist(text)
-        names.update(name for _, name in main + side)
+    if support is None:
+        support = deck_support(deck_a_text, deck_b_text)
     return {
         "status": status,
         "requested_games": requested,
@@ -144,5 +156,5 @@ def aggregate(
         "unfinished": unfinished,
         "games": per_game,
         "note": NOTE,
-        **support_block(names),
+        **support,
     }

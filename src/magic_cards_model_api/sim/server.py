@@ -164,7 +164,8 @@ def build_sim_server(
     @server.tool()
     async def sim_match_status(batch_id: str) -> dict[str, Any]:
         """Poll a sim_match batch: status running, done, capped (partial) or failed, with the
-        win counts of the games finished so far. Waits a few seconds for news."""
+        win counts of the games finished so far. Waits for news (up to the call timeout minus
+        5 s)."""
         return await _tool(lambda: batches.status(batch_id, wait_s))
 
     @server.tool()

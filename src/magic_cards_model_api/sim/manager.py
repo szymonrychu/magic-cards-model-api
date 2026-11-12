@@ -6,6 +6,7 @@ The slot is global, not per caller (see MEMORY).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import random
@@ -18,7 +19,7 @@ from typing import Any
 
 from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.handle import WorkerDied, WorkerError, WorkerHandle, WorkerTimeout
-from magic_cards_model_api.sim.match import aggregate, resolve_deck
+from magic_cards_model_api.sim.match import aggregate, deck_support, resolve_deck
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,7 @@ class SandboxManager:
         return max(0, math.ceil(self._limits.sandbox_idle_ttl_s - (now - oldest)))
 
 
+_SUPPORT_JOIN_S = 10.0  # most a finished batch waits for its card lookups
 _START_TIMEOUT_S = 60.0  # worker start-up for a batch; not bound by the tool call cap
 
 
@@ -230,6 +232,9 @@ class _Batch:
     error: str | None = None
     play_started: float | None = None  # time.monotonic() when the worker op was sent
     finished: float | None = None  # manager clock
+    # Computed once by `_run` (it may look cards up over the network); polls only read it.
+    # Until it is ready the placeholder says no warnings are known yet.
+    support: dict[str, Any] = field(default_factory=lambda: {"support_warnings": []})
     done: threading.Event = field(default_factory=threading.Event)
 
 
@@ -301,9 +306,17 @@ class BatchManager:
     def _run(self, batch: _Batch, args: dict[str, Any]) -> None:
         status, error = "done", None
         handle: WorkerHandle | None = None
+        support: threading.Thread | None = None
         try:
             handle = self._factory()
             batch.handle = handle
+            support = threading.Thread(
+                target=self._compute_support,
+                args=(batch,),
+                daemon=True,
+                name=f"{batch.batch_id}-support",
+            )
+            support.start()  # card lookups run beside the games, off every poll's path
             self._refuse_if_closed()  # shutdown ran before the worker existed
             handle.start(_START_TIMEOUT_S)
             self._refuse_if_closed()  # shutdown ran during start-up
@@ -321,11 +334,18 @@ class BatchManager:
         finally:
             if handle is not None:
                 handle.kill()
+            if support is not None:
+                support.join(_SUPPORT_JOIN_S)  # a finished batch carries its warnings
             with self._lock:
                 batch.error = error
                 batch.status = status
                 batch.finished = self._clock()
             batch.done.set()
+
+    @staticmethod
+    def _compute_support(batch: _Batch) -> None:
+        with contextlib.suppress(Exception):  # advisory; never fail the batch
+            batch.support = deck_support(*batch.texts)
 
     def _refuse_if_closed(self) -> None:
         with self._lock:
@@ -345,11 +365,11 @@ class BatchManager:
             batch.done.wait(timeout=wait_s)
         with self._lock:
             status, error, finished = batch.status, batch.error, batch.finished
-            rows = list(batch.rows)
+            rows, support = list(batch.rows), batch.support
         end = finished if finished is not None else self._clock()
         out = aggregate(
             batch.labels[0], batch.labels[1], rows, batch.requested, status,
-            batch.texts[0], batch.texts[1],
+            batch.texts[0], batch.texts[1], support,
         )
         out.update(
             batch_id=batch.batch_id, seed=batch.seed, elapsed_s=round(end - batch.created, 1)

@@ -325,3 +325,31 @@ def test_shutdown_before_the_worker_spawns_never_leaves_an_orphan():
     assert not stopper.is_alive()
     assert made[0].killed and not made[0].requested
     assert batches.status(bid, 0)["status"] == "failed"
+
+
+def test_support_warnings_are_computed_once_per_batch_not_per_poll(monkeypatch):
+    from magic_cards_model_api.sim import match
+
+    calls: list[set[str]] = []
+
+    def fake_block(names):
+        calls.append(set(names))
+        return {"support_warnings": [{"card": "X"}], "support_note": "note"}
+
+    monkeypatch.setattr(match, "support_block", fake_block)
+    batches, made = _batches()
+    bid = batches.start(RED, GREEN, 2, 1)
+    try:
+        for _ in range(3):
+            out = batches.status(bid, 0.2)
+            assert "support_warnings" in out
+        made[0].release.set()
+        done = batches.status(bid, 5)
+        assert done["status"] == "done"
+        assert done["support_warnings"] == [{"card": "X"}]
+        assert done["support_note"] == "note"
+        batches.status(bid, 0)
+        batches.status(bid, 0)
+    finally:
+        batches.shutdown()
+    assert len(calls) == 1
