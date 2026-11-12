@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 _SHUTTING_DOWN = "The sandbox service is shutting down. Try again later."
 _SCRIPT_MARGIN_S = 3.0  # scenario budget = call cap left after start-up, minus this
+BASELINE_OFF = (
+    "The engine baseline AI is off as an opponent here (MTG_SIM_BASELINE_ENABLED is not set)."
+    " Use sim_new and sim_act for a board you drive yourself, or sim_match_claude_start."
+)
 _BUSY = "The sandbox is busy with another call; retry in a few seconds."
 MAX_LOG_CHARS = 1_000_000  # of log_text for sim_import_mtgo_log; parsing costs ~1.4 s per MB
 _WHAT = {"run_script": "Running the script", "import_mtgo": "Importing the log"}
@@ -66,6 +70,8 @@ class SandboxManager:
         """Open a sandbox. `mode="play"`: `spec` is deck_me, deck_opponent, seed, me_first."""
         if mode != "play":
             return self._open("new", lambda _remaining: spec, mode=mode)
+        if not self._limits.baseline_enabled:
+            raise SimRefused(BASELINE_OFF)
         try:
             texts = {
                 "deck_me": resolve_deck(spec["deck_me"])[1],
@@ -216,8 +222,7 @@ class SandboxManager:
             known = sandbox_id in self._sandboxes
         if not known:
             raise SimRefused(
-                f"No sandbox {sandbox_id}; it may have expired or already ended."
-                " Nothing was ended."
+                f"No sandbox {sandbox_id}; it may have expired or already ended. Nothing was ended."
             )
         self._drop(sandbox_id, kill=True)
         return {"ended": True}
@@ -309,6 +314,8 @@ class BatchManager:
 
     def start(self, deck_a: str, deck_b: str, games: int, seed: int | None) -> str:
         lim = self._limits
+        if not lim.baseline_enabled:
+            raise SimRefused(BASELINE_OFF)
         if games < 1:
             raise SimRefused("games must be at least 1.")
         if games > lim.max_match_games:

@@ -194,7 +194,7 @@ def test_bad_names_are_refused(game):
 
 @pytest.fixture
 def sim():
-    limits = SimLimits.from_env({})
+    limits = SimLimits.from_env({"MTG_SIM_BASELINE_ENABLED": "1"})
     manager = SandboxManager(limits)
     server = build_sim_server(manager, limits)
     yield manager, server

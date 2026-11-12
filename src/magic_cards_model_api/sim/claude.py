@@ -31,9 +31,10 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, get_args
 
 from magic_cards_model_api import ai_seat
+from magic_cards_model_api.agent_settings import Effort
 from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.manager import SimRefused
 from magic_cards_model_api.sim.match import checked_support, resolve_deck
@@ -50,6 +51,7 @@ _PREFIX_LEN = 8  # k8s Job names carry `uid[:8]` (`k8s_seats.job_name`)
 #: `K8sSeats.status` states in which nothing plays the seat any more.
 _DEAD_STATES = frozenset({"gone", "error"})
 _ACTIVE = ("starting", "running")
+_EFFORTS = get_args(Effort)
 #: A start (boot with cold card resolution, two seat Job creates) that has not finished after
 #: this long is failed by the reaper and its slot freed; a healthy start takes seconds.
 START_DEADLINE_S = 300.0
@@ -61,6 +63,7 @@ class _ClaudeMatch:
     decks: dict[str, str]  # seat -> deck label
     seed: int
     started: float
+    seat_settings: dict[str, tuple[str, str]]  # seat -> (model, effort)
     game_id: str | None = None  # set once the background boot has booted the game
     uids: dict[str, str] = field(default_factory=dict)  # seat -> uid; a credential, never answered
     status: str = "starting"
@@ -86,7 +89,16 @@ class ClaudeMatchManager:
         self._lock = threading.Lock()
         self._matches: dict[str, _ClaudeMatch] = {}
 
-    def start(self, deck_a: str, deck_b: str, seed: int | None) -> dict[str, Any]:
+    def start(
+        self,
+        deck_a: str,
+        deck_b: str,
+        seed: int | None,
+        model: str | None = None,
+        effort: str | None = None,
+        seat_a: dict[str, Any] | None = None,
+        seat_b: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         mode = ai_seat.ai_seat_mode()
         if mode != "kubernetes":
             raise SimRefused(
@@ -98,10 +110,15 @@ class ClaudeMatchManager:
             label_b, text_b = resolve_deck(deck_b)
         except ValueError as exc:
             raise SimRefused(str(exc)) from exc
+        settings = self._seat_settings(model, effort, {"a": seat_a, "b": seat_b})
         if seed is None:
             seed = random.SystemRandom().randrange(2**31)
         match = _ClaudeMatch(
-            f"claude-{uuid.uuid4().hex}", {"a": label_a, "b": label_b}, seed, self._clock()
+            f"claude-{uuid.uuid4().hex}",
+            {"a": label_a, "b": label_b},
+            seed,
+            self._clock(),
+            settings,
         )
         with self._lock:
             active = [m for m in self._matches.values() if m.status in _ACTIVE]
@@ -129,7 +146,42 @@ class ClaudeMatchManager:
             "poll_every_s": POLL_EVERY_S,
             "seed": seed,
             "decks": dict(match.decks),
+            "seats": _seat_echo(settings),
         }
+
+    def _seat_settings(
+        self, model: str | None, effort: str | None, seats: dict[str, dict[str, Any] | None]
+    ) -> dict[str, tuple[str, str]]:
+        """Each seat's (model, effort): the seat override, else the call's, else the env default.
+
+        Refuses a model outside `MTG_SIM_CLAUDE_MODELS` and an effort outside `Effort`, naming
+        the allowed values.
+        """
+        lim = self._limits
+        call_model, call_effort = model or lim.claude_model, effort or lim.claude_effort
+        out: dict[str, tuple[str, str]] = {}
+        for seat, override in seats.items():
+            where = f"seat_{seat}"
+            unknown = set(override or {}) - {"model", "effort"}
+            if unknown:
+                raise SimRefused(
+                    f"{where}: unknown field(s) {sorted(unknown)}; only model and effort"
+                    " are allowed."
+                )
+            seat_model = (override or {}).get("model") or call_model
+            seat_effort = (override or {}).get("effort") or call_effort
+            if seat_model not in lim.claude_models:
+                raise SimRefused(
+                    f"{where}: model {seat_model!r} is not allowed; use one of"
+                    f" {', '.join(lim.claude_models)}."
+                )
+            if seat_effort not in _EFFORTS:
+                raise SimRefused(
+                    f"{where}: effort {seat_effort!r} is not allowed; use one of"
+                    f" {', '.join(_EFFORTS)}."
+                )
+            out[seat] = (seat_model, seat_effort)
+        return out
 
     def _start_in_background(self, match: _ClaudeMatch, text_a: str, text_b: str) -> None:
         """Boot, start the pregame backstop and both seats; on any failure fail the match.
@@ -169,11 +221,17 @@ class ClaudeMatchManager:
             daemon=True,
             name=f"{match.match_id}-support",
         ).start()
+        base = AgentSettings.default(os.environ)
+        agents = {
+            seat: base.model_copy(update={"model": model, "effort": effort})
+            for seat, (model, effort) in match.seat_settings.items()
+        }
         try:
             game_id, by_name, _ = boot_decklist_game(
                 [(_SEATS[0], texts[0], True), (_SEATS[1], texts[1], True)],
                 match.seed,
                 SIM_OWNER,
+                agents,
             )
         except ValueError as exc:  # an illegal list: the message names the cards
             return str(exc)
@@ -187,7 +245,6 @@ class ClaudeMatchManager:
         # The bot seats' pregame backstop, as the lobby route starts it: a seat that exits
         # after its keep would otherwise leave the game in PREGAME_ACTIONS until the deadline.
         ai_pregame.start(game_id, list(_SEATS))
-        agent = AgentSettings.default(os.environ)
         api_base = ai_seat.api_service_url()
         for seat in _SEATS:
             if match.status != "starting":
@@ -198,7 +255,7 @@ class ClaudeMatchManager:
                     game_id=game_id,
                     player=seat,
                     api_base=api_base,
-                    agent=agent,
+                    agent=agents[seat],
                 )
             except Exception as exc:  # noqa: BLE001 - registry.start should never raise
                 logger.warning("claude sim seat start raised (%s)", type(exc).__name__)
@@ -325,11 +382,13 @@ class ClaudeMatchManager:
             result, error, finished = match.result, match.error, match.finished
             seat_states, checked = dict(match.seat_states), match.checked
         if status == "starting":
-            seats = {seat: {"state": "starting"} for seat in _SEATS}
+            states = {seat: "starting" for seat in _SEATS}
         elif status == "running":
-            seats = {seat: {"state": seat_states.get(seat, "unknown")} for seat in _SEATS}
+            states = {seat: seat_states.get(seat, "unknown") for seat in _SEATS}
         else:
-            seats = {seat: {"state": "stopped"} for seat in _SEATS}
+            states = {seat: "stopped" for seat in _SEATS}
+        echo = _seat_echo(match.seat_settings)
+        seats = {seat: {"state": states[seat], **echo[seat]} for seat in _SEATS}
         end = finished if finished is not None else self._clock()
         out: dict[str, Any] = {
             "match_id": match.match_id,
@@ -403,6 +462,10 @@ class ClaudeMatchManager:
         if swept:
             logger.info("claude sim sweep deleted %d orphaned game(s)", len(swept))
         return swept
+
+
+def _seat_echo(settings: dict[str, tuple[str, str]]) -> dict[str, dict[str, str]]:
+    return {seat: {"model": model, "effort": effort} for seat, (model, effort) in settings.items()}
 
 
 def _seat_state(uid: str) -> str:

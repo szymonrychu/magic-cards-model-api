@@ -66,20 +66,11 @@ def _resolve(game_id: str, req: StartAiSeat) -> tuple[str, str, str, AgentSettin
     *reads*. Anything else is a 404, indistinguishable from a game that does
     not exist, the same refusal this route has always given an unknown uid.
 
-    **`agent` is always the CURRENT `AgentSettings.default()` (`advisor_default()`
-    for a buddy: Opus), never
-    whatever this game's seat or advisor entry has stored** (2026-09-19,
-    owner direction, cost cutting). `store.agent_settings`/`repository.
-    Advisor.agent` still carry the historical value a game was actually
-    created with - `GET .../seats` and the review page read those directly,
-    and must keep showing it verbatim - but `_resolve` answers a different
-    question: what should the runner this call is about to (re)start
-    actually be DISPATCHED with, right now. `AiSeatRegistry` is entirely
-    process-local (see its own module docstring), so every server restart
-    forgets which seats were ever running; without this, a seat from a game
-    created before the deployment's default changed would run on whatever
-    it was created with forever, resurrecting an old, more expensive choice
-    every time an operator restarts it long after the fact."""
+    **`agent` for a seat is the settings the game recorded for it** (T-156: a
+    lobby seat may name its own model and effort, and a restart keeps them);
+    the current `AgentSettings.default()` only for a seat with no record. A
+    buddy is always the current `advisor_default()` (Opus). `AiSeatRegistry`
+    is entirely process-local, so a restart forgets what ran."""
     uid, role = req.target()
     if role == ai_seat.ROLE_ADVISOR:
         advisor = store.advisor_uids(game_id).get(uid)
@@ -89,7 +80,10 @@ def _resolve(game_id: str, req: StartAiSeat) -> tuple[str, str, str, AgentSettin
     player = store.player_for_uid(game_id, uid)
     if player is None:
         raise KeyError("that uid is no seat in this game")
-    return uid, role, player, AgentSettings.default(os.environ)
+    # The seat's recorded settings (a lobby seat may have named its own model
+    # and effort); the deployment default for a game that recorded none.
+    recorded = store.agent_settings(game_id).get(player)
+    return uid, role, player, recorded or AgentSettings.default(os.environ)
 
 
 @router.post("/games/{game_id}/ai-seat/start")

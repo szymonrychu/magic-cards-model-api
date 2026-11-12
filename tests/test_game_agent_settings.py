@@ -129,3 +129,62 @@ def test_buddy_agent_field_is_rejected(client: TestClient) -> None:
         },
     )
     assert response.status_code == 422
+
+
+# -- per-seat model and effort on the lobby (T-156) ----------------------------------
+
+
+def create_with(client: TestClient, **seat: object) -> object:
+    bot = {"username": "bot", "decklist_text": DECK_B, "ai": True, **seat}
+    return client.post(
+        "/api/lobby/games", json={"players": [{"username": "you", "decklist_text": DECK_A}, bot]}
+    )
+
+
+def test_an_ai_seat_may_name_its_model_and_effort(client: TestClient) -> None:
+    response = create_with(client, model="claude-haiku-4-5", effort="max")
+    assert response.status_code == 200
+    created = response.json()
+    expected = {"model": "claude-haiku-4-5", "effort": "max", "max_thinking_tokens": None}
+    assert created["agents"] == {"bot": expected}
+    seats = client.get(f"/api/lobby/games/{created['game_id']}/seats").json()["seats"]
+    assert next(s for s in seats if s["player"] == "bot")["agent"] == expected
+
+
+def test_a_seat_naming_only_one_keeps_the_deployment_default_for_the_other(
+    client: TestClient,
+) -> None:
+    created = create_with(client, effort="low").json()
+    assert created["agents"]["bot"]["model"] == "claude-sonnet-5"
+    assert created["agents"]["bot"]["effort"] == "low"
+
+
+def test_a_bad_model_or_effort_is_refused_naming_the_allowed_values(client: TestClient) -> None:
+    bad_model = create_with(client, model="gpt-9")
+    assert bad_model.status_code == 422
+    assert "claude-opus-5-5" in bad_model.text
+    assert create_with(client, effort="extreme").status_code == 422
+
+
+def test_model_and_effort_on_a_human_seat_are_refused(client: TestClient) -> None:
+    response = client.post(
+        "/api/lobby/games",
+        json={
+            "players": [
+                {"username": "you", "decklist_text": DECK_A, "effort": "low"},
+                {"username": "bot", "decklist_text": DECK_B, "ai": True},
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_ai_seat_restart_keeps_the_seats_model_and_effort(client: TestClient, monkeypatch) -> None:
+    from magic_cards_model_api import ai_seat
+
+    created = create_with(client, model="claude-haiku-4-5", effort="max").json()
+    started: list = []
+    monkeypatch.setattr(ai_seat.registry, "start", lambda **kw: started.append(kw) or {})
+    uid = created["seat_uids"]["bot"]
+    client.post(f"/api/lobby/games/{created['game_id']}/ai-seat/start", json={"uid": uid})
+    assert (started[-1]["agent"].model, started[-1]["agent"].effort) == ("claude-haiku-4-5", "max")

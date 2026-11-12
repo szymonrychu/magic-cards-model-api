@@ -219,20 +219,14 @@ def test_creation_starts_the_ai_seat_in_subprocess_mode(monkeypatch, client: Tes
     assert ai_seat.registry._runners[bot_uid] is runner
 
 
-def test_resolving_a_seat_uses_the_current_default_not_the_stored_one(client: TestClient) -> None:
-    """A game created before 2026-09-19 could have `opus`/`max` stored
-    against its AI seat (the old per-request default, or a request-chosen
-    value from before the picker was removed) - `store.register_agent_
-    settings` still accepts any value, and reads of it (`GET .../seats`,
-    the review page) must still show that old value verbatim. But
-    `ai_seat_api._resolve` - the one lookup `start`/`stop` share to decide
-    what to actually DISPATCH the runner with - is a *dispatch* decision,
-    not a history lookup: `AiSeatRegistry` is process-local (`ai_seat.py`'s
-    own docstring), so every server restart forgets which seats were
-    running, and the next `POST .../ai-seat/start` for an old game must run
-    it on the CURRENT deployment default, never resurrect whatever cost the
-    stored row happens to name."""
-    from magic_cards_model_api.ai_seat_api import _resolve
+def test_resolving_a_seat_uses_the_stored_settings_and_the_default_without_a_record(
+    client: TestClient,
+) -> None:
+    """T-156 (2026-11-12) reversed the 2026-09-19 rule: `ai_seat_api._resolve`
+    dispatches an AI seat with the settings the game recorded for it (a lobby
+    seat may name its own model and effort and a restart must keep them), and
+    with the current deployment default only for a seat with no record."""
+    from magic_cards_model_api.ai_seat_api import StartAiSeat, _resolve
     from magic_cards_model_api.store import store
 
     response = client.post(
@@ -248,19 +242,15 @@ def test_resolving_a_seat_uses_the_current_default_not_the_stored_one(client: Te
     body = response.json()
     game_id, bot_uid = body["game_id"], body["seat_uids"]["bob"]
 
-    # Simulate an old game: overwrite the stored settings the way a
-    # pre-2026-09-19 create request could have.
     store.register_agent_settings(game_id, {"bob": AgentSettings(model="opus", effort="max")})
-
-    from magic_cards_model_api.ai_seat_api import StartAiSeat
-
     _uid, _role, player, agent = _resolve(game_id, StartAiSeat(uid=bot_uid))
     assert player == "bob"
+    assert (agent.model, agent.effort) == ("opus", "max")
+
+    store.register_agent_settings(game_id, {})
+    _uid, _role, _player, agent = _resolve(game_id, StartAiSeat(uid=bot_uid))
     assert agent.model == "claude-sonnet-5"
     assert agent.effort == "high"
-    # The stored row itself is untouched - resolving what to dispatch with
-    # is not a rewrite of what the seat shows as.
-    assert store.agent_settings(game_id)["bob"] == AgentSettings(model="opus", effort="max")
 
 
 def test_resolving_a_buddy_also_uses_the_current_default_not_the_stored_one(

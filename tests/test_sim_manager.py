@@ -411,3 +411,10 @@ def test_run_script_timeout_names_the_operation(clock):
         m.run_script({"setup": SPEC, "steps": []})
     with pytest.raises(SimRefused, match="Starting the sandbox exceeded the 1 s call limit"):
         m.new(SPEC)
+
+
+def test_play_mode_is_refused_while_the_baseline_is_off(clock, made):
+    m = manager(clock, made)
+    with pytest.raises(SimRefused, match="MTG_SIM_BASELINE_ENABLED"):
+        m.new({"deck_me": "a", "deck_opponent": "b"}, mode="play")
+    assert made == []

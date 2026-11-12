@@ -172,7 +172,7 @@ def _batches(env=None, handles=None, **kw):
     from magic_cards_model_api.sim.config import SimLimits
     from magic_cards_model_api.sim.manager import BatchManager
 
-    limits = SimLimits.from_env(env or {})
+    limits = SimLimits.from_env({"MTG_SIM_BASELINE_ENABLED": "1", **(env or {})})
     made = handles if handles is not None else []
 
     def factory():
@@ -246,7 +246,7 @@ def test_wall_cap_kills_and_keeps_partial_results(monkeypatch):
     from magic_cards_model_api.sim.manager import BatchManager
 
     monkeypatch.setenv("MTG_SIM_TEST_OPS", "1")
-    limits = SimLimits.from_env({"MTG_SIM_MATCH_WALL_S": "12"})
+    limits = SimLimits.from_env({"MTG_SIM_MATCH_WALL_S": "12", "MTG_SIM_BASELINE_ENABLED": "1"})
     batches = BatchManager(limits, op="match_slow")
     bid = batches.start(RED, GREEN, 3, 5)
     try:
@@ -277,7 +277,9 @@ def test_worker_death_mid_batch_fails_it_and_frees_the_slot():
     from magic_cards_model_api.sim.config import SimLimits
     from magic_cards_model_api.sim.manager import BatchManager
 
-    batches = BatchManager(SimLimits.from_env({}), handle_factory=factory)
+    batches = BatchManager(
+        SimLimits.from_env({"MTG_SIM_BASELINE_ENABLED": "1"}), handle_factory=factory
+    )
     bid = batches.start(RED, GREEN, 2, 1)
     out = batches.status(bid, 5)
     assert out["status"] == "failed"
@@ -314,7 +316,9 @@ def test_shutdown_before_the_worker_spawns_never_leaves_an_orphan():
     from magic_cards_model_api.sim.config import SimLimits
     from magic_cards_model_api.sim.manager import BatchManager
 
-    batches = BatchManager(SimLimits.from_env({}), handle_factory=factory)
+    batches = BatchManager(
+        SimLimits.from_env({"MTG_SIM_BASELINE_ENABLED": "1"}), handle_factory=factory
+    )
     bid = batches.start(RED, GREEN, 2, 1)
     assert entered.wait(5)
     stopper = threading.Thread(target=batches.shutdown)
@@ -429,3 +433,14 @@ def test_ok_support_keeps_warnings_and_note(monkeypatch):
     assert done["support_status"] == "ok"
     assert done["support_warnings"] == [{"card": "X"}]
     assert done["support_note"] == "note"
+
+
+def test_batches_are_refused_while_the_baseline_is_off():
+    from magic_cards_model_api.sim.config import SimLimits
+    from magic_cards_model_api.sim.manager import BatchManager, SimRefused
+
+    made: list = []
+    batches = BatchManager(SimLimits.from_env({}), handle_factory=lambda: made.append(1))
+    with pytest.raises(SimRefused, match="MTG_SIM_BASELINE_ENABLED"):
+        batches.start("a", "b", 1, 1)
+    assert made == []

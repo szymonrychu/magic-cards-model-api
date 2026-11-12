@@ -9081,6 +9081,35 @@
             "title": "Decklist Text",
             "type": "string"
           },
+          "effort": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effort"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "username": {
             "minLength": 1,
             "pattern": "\\A[^\\x00-\\x1f\\x7f]+\\z",
