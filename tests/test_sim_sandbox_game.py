@@ -223,3 +223,16 @@ def test_path_params_with_traversal_are_refused_and_nothing_is_sent(
     assert f"invalid {param}" in out["result"]["reason"]
     mutating = [s for s in sent if s[0] != "GET"]
     assert mutating == [], mutating
+
+
+def test_add_card_with_a_label_registers_it_for_later_acts(sandbox):
+    sandbox.create(BOLT_SPEC)
+    out = sandbox.act("add_card", None, {"card": "Shock", "player": "alice", "label": "shock"})
+    assert out["result"]["added"]["name"] == "Shock"
+    assert out["labels"]["shock"] == out["result"]["added"]["card_id"]
+    hand = out["state"]["players"]["alice"]["hand"]
+    assert {"Shock": "shock"}.items() <= {c["name"]: c.get("label") for c in hand}.items()
+    again = sandbox.act("add_card", None, {"card": "Shock", "player": "alice", "label": "shock"})
+    assert again["result"] == {"allowed": False, "reason": "duplicate label shock"}
+    assert "Shock" in names(sandbox.state()["state"]["players"]["alice"]["hand"])
+    assert names(sandbox.state()["state"]["players"]["alice"]["hand"]).count("Shock") == 1

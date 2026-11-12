@@ -19,6 +19,8 @@ from typing import Any
 from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.handle import WorkerDied, WorkerError, WorkerHandle, WorkerTimeout
 from magic_cards_model_api.sim.match import aggregate, checked_support, resolve_deck
+from magic_cards_model_api.sim.mtgo import parse_mtgo_log
+from magic_cards_model_api.sim.mtgo_convert import require_player
 from magic_cards_model_api.sim.redact import support_unknown
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,15 @@ def _budget(remaining: float) -> float:
 
 class SimRefused(Exception):
     """A user-facing refusal; the message is meant to be shown to the caller as is."""
+
+
+def check_log_size(text: str) -> None:
+    """Refuse an MTGO log over MAX_LOG_CHARS before any parsing."""
+    if len(text) > MAX_LOG_CHARS:
+        raise SimRefused(
+            f"log_text is too large ({len(text)} characters; the limit is {MAX_LOG_CHARS})."
+            " Paste the one game you want, or the turns around it."
+        )
 
 
 @dataclass
@@ -95,18 +106,28 @@ class SandboxManager:
 
         return self._open("run_script", args, mode="board", keep=keep)
 
-    def import_mtgo(self, text: str, upto_turn: int | None, run: bool) -> dict[str, Any]:
+    def import_mtgo(
+        self, text: str, upto_turn: int | None, run: bool, player: str | None = None
+    ) -> dict[str, Any]:
         """Convert an MTGO log in a fresh worker (it needs card data); `run` also plays the
-        scenario there. Takes the slot for the call and always ends the sandbox."""
-        if len(text) > MAX_LOG_CHARS:
-            raise SimRefused(
-                f"log_text is too large ({len(text)} characters; the limit is {MAX_LOG_CHARS})."
-                " Paste the one game you want, or the turns around it."
-            )
+        scenario there; `player` is the seat it is seen from. Takes the slot for the call and
+        always ends the sandbox."""
+        check_log_size(text)
+        if player is not None:
+            try:  # before the slot: a wrong name needs no worker
+                require_player(parse_mtgo_log(text)[0], player)
+            except ValueError as exc:
+                raise SimRefused(str(exc)) from exc
 
         def args(remaining: float) -> dict[str, Any]:
             budget = _budget(remaining)
-            return {"text": text, "upto_turn": upto_turn, "run": run, "budget_s": budget}
+            return {
+                "text": text,
+                "upto_turn": upto_turn,
+                "run": run,
+                "player": player,
+                "budget_s": budget,
+            }
 
         return self._open("import_mtgo", args, mode="board", keep=False)
 

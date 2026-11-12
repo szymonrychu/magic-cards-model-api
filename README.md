@@ -677,7 +677,7 @@ environment, no database and a memory cap.
   missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
 - Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`,
-  `sim_import_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`; and,
+  `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`; and,
   only when `MTG_SIM_BASELINE_ENABLED` is set, `sim_play_new`, `sim_match`, `sim_match_status`.
   The engine baseline AI is off as an opponent by default: with the flag unset those three tools
   are not registered and `BatchManager.start` / `SandboxManager.new(mode="play")` refuse with a
@@ -744,6 +744,21 @@ environment, no database and a memory cap.
   died may still be on the rebuilt battlefield and life totals stay at 20 unless a logged line
   changes them. Correct the setup before trusting a result. `run=true` also runs the scenario
   (it uses the sandbox slot and ends it) and adds `run` with the `sim_run_script` answer.
+  `player` (a player name as in the log) rebuilds the turn from that seat: the opponent's hand
+  cards the log first shows in that turn stay out of the setup, and an `add_card` step (which
+  takes a `label`) adds each one right before the opponent plays or casts it, so the opponent's
+  own actions still come from the log. Cards the opponent revealed earlier or got back to hand
+  stay in the setup. `perspective` in the answer says how many cards were hidden; without
+  `player` the scenario names every card the turn uses.
+- MTGO review: `sim_review_mtgo_log(log_text, player)` answers at once (no worker, no slot) with
+  a compact per-turn timeline of the first game seen from `player`'s seat: `players`, `you`,
+  `opponent`, `winner` (if logged), `turns`, `notes`, `pregame` and `timeline`. Each turn has the
+  active player, the events in log order as `"<line>: <text>"` (reminder text dropped),
+  `opp_known_hand` (the opponent's hand cards known at the end of the turn, from full-hand
+  reveals and bounces, minus what they played since) and `unmapped` (lines the parser could not
+  read, with the reason). Opponent cards are named only from the line that made them public;
+  in a line the parser could not read and that is not the reviewed player's, a card name stays only if an earlier line made it public (else "a card"). The full game is the default view; optional `upto_turn` cuts the timeline after that turn and gives no winner. Export
+  headers (which name both decks) lose their text. MTGO logs no life totals, so there are none.
 - Claude matches: `sim_match_claude_start(deck_a, deck_b, seed=None, model=None, effort=None,
   seat_a=None, seat_b=None)` starts one game between two
   Claude AI seat Jobs (kubernetes seat mode only) and answers a `match_id` at once. `model` and
@@ -813,6 +828,17 @@ is the same file; the value goes to the preset env) is in `deploy/k8s/README.md`
 - An MTGO log the user pasted: `sim_import_mtgo_log`, read `unsupported` and `board_caveats`,
   tell the user what could not be used and fix dead creatures and life totals in the setup, then
   call again with `run=true` (or feed `scenario` to `sim_run_script`).
+- Reviewing an MTGO game: never review in the main agent. Hand the review to a SUBAGENT (the
+  chat agent's own Agent/Task tool); the subagent calls `sim_review_mtgo_log(log_text, player=...)`
+  with the user's player name as in the log. Skip obvious or forced decisions (the only land drop, the only
+  legal play, a forced discard). Name only the decisive moments, the turns that swung the game
+  in life, board, cards or tempo, and the mistakes; for each give the turn, what happened, the
+  better line and why. The review subagent judges each decision with what the player could see,
+  the information public up to that turn: their own cards, the public events so far and `opp_known_hand`, never a
+  card the log shows later (it may fetch the prefix with `sim_review_mtgo_log(..., upto_turn=N)`). To test an
+  alternative line, `sim_import_mtgo_log(log_text, upto_turn=N, player=...)` (the opponent's
+  unseen hand cards are added only when the log shows them played), then `sim_run_script` or
+  `sim_run_script(keep=true)` plus `sim_act`. Keep the review short: a few lines per moment.
 - List against list (only when the baseline is enabled): `sim_match`; if it answers `running`, poll `sim_match_status` every 20 s or
   so. Say that the baseline plays weakly and that a `capped` batch is partial.
 - "Let me play it" (only when the baseline is enabled): `sim_play_new`, keep with `mulligan` `{"take": false}`, play with `sim_act`

@@ -95,7 +95,10 @@ def _import_mtgo(game: Any, args: dict[str, Any], max_steps: int) -> dict[str, A
     run = bool(args.get("run", False))
     share = _LOOKUP_SHARE if run else 1.0
     answer, resolved = import_log(
-        args["text"], args.get("upto_turn"), lookup_timeout_s=float(args["budget_s"]) * share
+        args["text"],
+        args.get("upto_turn"),
+        lookup_timeout_s=float(args["budget_s"]) * share,
+        player=args.get("player"),
     )
     answer.update(support_block(resolved))  # resolved names are cached: no network wait
     if not run:

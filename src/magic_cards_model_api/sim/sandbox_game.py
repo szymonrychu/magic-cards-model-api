@@ -35,6 +35,7 @@ def _check_name(value: str, field: str) -> str:
         raise ValueError(f"invalid {field} {value!r}: use letters, digits and _ . : - only")
     return value
 
+
 ACTIONS: dict[str, ActionRoute] = {
     # seat actions: the acting player's own uid
     "cast": ("POST", f"{_G}/actions/cast", "seat"),
@@ -394,6 +395,10 @@ class SandboxGame:
             payload = resolve_labels(dict(body), self._labels)
         except ValueError as exc:
             return self.answer(_refusal(str(exc)))
+        # add_card may name the new card like a spec card does, so later steps can address it
+        label = payload.pop("label", None) if action == "add_card" else None
+        if label is not None and label in self._labels:
+            return self.answer(_refusal(f"duplicate label {label}"))
         path: dict[str, str] = {}
         if "{card_id}" in template:
             path["card_id"] = str(payload.pop("card_id", ""))
@@ -420,6 +425,8 @@ class SandboxGame:
             return self.answer(_refusal(_error_text(data)))
         if isinstance(data, dict) and "players" in data and "battlefield" in data:
             data = {k: v for k, v in data.items() if k not in _VIEW_FIELDS}
+        if label is not None:
+            self._labels[str(label)] = data["added"]["card_id"]
         if self._me is not None:
             self._log_mark = self._read_log(self._log_mark)[1]  # the chat's own entries
         return self.answer(data)
