@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -18,11 +19,14 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
+from magic_cards_model_api.sim.claude import ClaudeMatchManager
 from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.manager import BatchManager, Reaper, SandboxManager, SimRefused
 from magic_cards_model_api.sim.redact import redact
 from magic_cards_model_api.sim.sandbox_game import ACTIONS
 from magic_cards_model_api.sim.scenario import validate_scenario
+
+logger = logging.getLogger(__name__)
 
 INSTRUCTIONS = """\
 mtg-sim: throwaway Magic engine sandboxes for studying lines of play.
@@ -31,6 +35,7 @@ There is one sandbox slot for everyone and it frees after an idle TTL: end yours
 Build a board with sim_new (players, cards, step), then act with sim_act and read with sim_state.
 Or play a game against the baseline opponent with sim_play_new (you hold one seat).
 Or run a whole scripted line with sim_run_script (setup, steps, expectations) in one call.
+Or watch two Claude seats play one real game with sim_match_claude_start (slow: poll it).
 Cards carry labels: give a card "label": "bolt" in the spec and address it as "@bolt" afterwards.
 Always relay support_warnings (cards the engine does not fully support) to the user, and treat
 any result that depends on them as unreliable.
@@ -62,9 +67,13 @@ def _tool(call: Callable[[], dict[str, Any]], secrets: list[str] | None = None) 
 
 
 def build_sim_server(
-    manager: SandboxManager, limits: SimLimits, batches: BatchManager | None = None
+    manager: SandboxManager,
+    limits: SimLimits,
+    batches: BatchManager | None = None,
+    claude: ClaudeMatchManager | None = None,
 ) -> MCPServer:
     batches = batches or BatchManager(limits)
+    claude = claude or ClaudeMatchManager(limits)
     wait_s = max(0.0, limits.call_timeout_s - 5)  # leave room for the answer under the cap
     server = MCPServer(name="mtg-sim", instructions=INSTRUCTIONS)
 
@@ -209,6 +218,42 @@ def build_sim_server(
             )
         )
 
+    @server.tool(
+        description=(
+            "Start one game between two Claude AI seats (each a kubernetes seat Job of about"
+            " 1.5Gi, playing like a real AI seat) and return a match_id at once.\n"
+            "deck_a / deck_b: a bundled deck name or the decklist text (multi-line); seed makes"
+            " the shuffle repeatable (random when omitted, and reported).\n"
+            f"Only {limits.max_claude_matches} match runs at a time; a second start is refused."
+            " A game takes about 33-55 min. The two seat Jobs may stay Pending while the"
+            " cluster is full, which counts toward the time. A match is bounded by the seat"
+            f" deadline ({limits.claude_deadline_s:g} s, env MTG_SIM_CLAUDE_DEADLINE_S), not by"
+            " the 5-minute engine-only cap of sim_match. Poll sim_match_claude_status(match_id)"
+            " about every 300 s; do not poll in a tight loop."
+        )
+    )
+    async def sim_match_claude_start(
+        deck_a: str, deck_b: str, seed: int | None = None
+    ) -> dict[str, Any]:
+        return await _tool(lambda: claude.start(deck_a, deck_b, seed))
+
+    @server.tool(
+        description=(
+            "Poll a Claude-seat match; answers at once from the last background check (every"
+            " 30 s, checked_s_ago). status: starting (booting the game and creating the seat"
+            " Jobs; failed if not done within 5 minutes), running (turn, step and each seat's"
+            " state: pending while the cluster is full, then thinking or idle), done"
+            " (result: winner a or b or null, drawn, turns, the last 10 log lines), deadline"
+            f" (stopped at the {limits.claude_deadline_s:g} s seat deadline, result so far) or"
+            " failed (error: the start failed, or both seats are gone or in error). On done,"
+            " deadline or failed both seats are stopped and the game deleted;"
+            f" the result is kept {limits.result_ttl_s:g} s. Relay support_warnings to the"
+            " user; support_status 'pending' or 'unavailable' means card support is unchecked."
+        )
+    )
+    async def sim_match_claude_status(match_id: str) -> dict[str, Any]:
+        return await _tool(lambda: claude.status(match_id))
+
     @server.tool()
     async def sim_end(sandbox_id: str) -> dict[str, Any]:
         """End the sandbox now and free the slot."""
@@ -274,11 +319,16 @@ class SimMount:
     """
 
     def __init__(
-        self, server: MCPServer, manager: SandboxManager, batches: BatchManager | None = None
+        self,
+        server: MCPServer,
+        manager: SandboxManager,
+        batches: BatchManager | None = None,
+        claude: ClaudeMatchManager | None = None,
     ) -> None:
         self._server = server
         self._manager = manager
         self._batches = batches
+        self._claude = claude
         self._current: Any = None
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
@@ -303,6 +353,10 @@ class SimMount:
         if self._batches is not None:
             self._batches.reopen()
             reaper.register(self._batches.reap)
+        if self._claude is not None:
+            # A restart forgot every Claude match: stop and delete their games now.
+            await asyncio.to_thread(_sweep_quietly, self._claude)
+            reaper.register(self._claude.reap)
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(starlette_app.router.lifespan_context(starlette_app))
             self._current = SimAuth(starlette_app, _env_token)
@@ -317,8 +371,16 @@ class SimMount:
                     await asyncio.to_thread(self._batches.shutdown)
 
 
+def _sweep_quietly(claude: ClaudeMatchManager) -> None:
+    try:
+        claude.sweep_orphans()
+    except Exception as exc:  # noqa: BLE001 - a failed sweep must not stop the app
+        logger.warning("claude sim orphan sweep failed (%s)", type(exc).__name__)
+
+
 limits = SimLimits.from_env()
 manager = SandboxManager(limits)
 batches = BatchManager(limits)
-mount = SimMount(build_sim_server(manager, limits, batches), manager, batches)
+claude = ClaudeMatchManager(limits)
+mount = SimMount(build_sim_server(manager, limits, batches, claude), manager, batches, claude)
 lifespan = mount.lifespan

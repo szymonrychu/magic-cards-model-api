@@ -35,6 +35,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
+from magic_cards_model.models import Match
 from pydantic import BaseModel, Field
 
 from . import ai_pregame, ai_seat, audit, game_access, lobby, oidc
@@ -115,6 +116,49 @@ class NewUiGameResponse(BaseModel):
     before booting - no second pass over the deck. Never a gate: a player
     with cards the engine does not fully support still boots, same as
     before this field existed."""
+
+
+def boot_decklist_game(
+    players: list[tuple[str, str, bool]], seed: int | None, owner_user_id: str | None
+) -> tuple[str, dict[str, str], Match]:
+    """Boot one game from `(username, decklist_text, ai)` seats.
+
+    Returns `(game_id, {player: seat_uid}, match)`. Does the boot the lobby
+    route shares with Claude sim matches: `load_deck_into_game`, `store.create`,
+    seat uids, decklists, AI seat settings and AI player registration, and the
+    `create_game` audit record. It never reserves or attaches a lobby slot, so
+    the game is not a UI game, is not listed by the lobby and does not count
+    against `MAX_LIVE_GAMES`; the caller owns that and starting any seat.
+
+    `store.create` is the api half's plain, cap-unaware create (M8: "the api
+    half keeps a plain `create`") - not routed through `api_client.ApiClient`,
+    which has no game-creation method of its own.
+
+    Nothing runs CR 103.5 or CR 103.6 here. `Match.start_game` has already
+    left the game resting in `Step.MULLIGAN` (turn 0), and the seats drive it
+    from there through `POST /api/games/{id}/pregame/...` - see `opening.py`
+    for why this used to be a background thread and why it must not be one.
+    """
+    match = load_deck_into_game([(name, text) for name, text, _ in players], seed=seed)
+    game = match.games[-1]
+    game_id = store.create(game, owner_user_id=owner_user_id)
+    uids = new_seat_uids(game)
+    store.register_seats(game_id, uids)
+    store.register_decklists(game_id, {name: text for name, text, _ in players})
+    store.register_agent_settings(
+        game_id, {name: AgentSettings.default(os.environ) for name, _, ai in players if ai}
+    )
+    ai_players = [name for name, _, ai in players if ai]
+    if ai_players:
+        store.register_ai_players(game_id, ai_players)
+    audit.record(
+        game_id,
+        "create_game",
+        players=[name for name, _, _ in players],
+        source="ui",
+        seed=str(match.seed),
+    )
+    return game_id, {name: uid for uid, name in uids.items()}, match
 
 
 @router.post("/games", response_model=NewUiGameResponse, response_model_exclude_unset=True)
@@ -199,18 +243,13 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
             ),
         )
     try:
-        # `store.create` is the api half's plain, cap-unaware create (M8:
-        # "the api half keeps a plain `create`") - not routed through
-        # `api_client.ApiClient`, which pre-cut is still an in-process call
-        # to this same module's own functions and has no game-creation
-        # method of its own; that seam is for the extraction itself
-        # (stage B), not this task.
-        match = load_deck_into_game(
-            [(player.username, player.decklist_text) for player in req.players],
+        game_id, seat_uids, _match = boot_decklist_game(
+            [(player.username, player.decklist_text, player.ai) for player in req.players],
             seed=req.seed,
+            owner_user_id=user.sub if user is not None else None,
         )
-        game = match.games[-1]
-        game_id = store.create(game, owner_user_id=user.sub if user is not None else None)
+        if advisors:
+            store.register_advisors(game_id, advisors)
         store.attach(token, game_id)
     finally:
         # A no-op once `attach` above already resolved `token` on the
@@ -218,26 +257,6 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
         # the one call standing between a failed or raised create and a
         # permanently leaked reservation.
         store.release(token)
-    uids = new_seat_uids(game)
-    store.register_seats(game_id, uids)
-    store.register_decklists(
-        game_id, {player.username: player.decklist_text for player in req.players}
-    )
-    store.register_agent_settings(game_id, agents)
-    if advisors:
-        store.register_advisors(game_id, advisors)
-    # Nothing runs CR 103.5 or CR 103.6 here. `Match.start_game` has already
-    # left the game resting in `Step.MULLIGAN` (turn 0), and the seats drive it
-    # from there through `POST /api/games/{id}/pregame/...` - see `opening.py`
-    # for why this used to be a background thread and why it must not be one.
-    audit.record(
-        game_id,
-        "create_game",
-        players=[player.username for player in req.players],
-        source="ui",
-        seed=str(match.seed),
-    )
-    seat_uids = {name: uid for uid, name in uids.items()}
     ai_players = [player.username for player in req.players if player.ai]
     # The bot seats' pregame backstop. CR 103.5 needs every seat's declaration
     # and CR 103.6 hands the window to one seat at a time, so a bot seat that
