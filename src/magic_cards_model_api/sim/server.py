@@ -36,6 +36,7 @@ Build a board with sim_new (players, cards, step), then act with sim_act and rea
 Or play a game against the baseline opponent with sim_play_new (you hold one seat).
 Or run a whole scripted line with sim_run_script (setup, steps, expectations) in one call.
 Or watch two Claude seats play one real game with sim_match_claude_start (slow: poll it).
+Or turn an MTGO game log into a scenario with sim_import_mtgo_log (and run it with run=True).
 Cards carry labels: give a card "label": "bolt" in the spec and address it as "@bolt" afterwards.
 Always relay support_warnings (cards the engine does not fully support) to the user, and treat
 any result that depends on them as unreliable.
@@ -143,6 +144,28 @@ def build_sim_server(
             return manager.run_script(script, keep)
 
         return await _tool(run)
+
+    @server.tool(
+        description=(
+            "Turn an MTGO game log (the client's Match_GameLog text, or the copied/rendered log)"
+            " into a sim_run_script scenario. Only the first game of the log is read.\n"
+            "A log hides hands and libraries, so the game is not replayed action by action: the"
+            " board at the START of upto_turn (default: the last turn; turns count across both"
+            " players, 1, 2, 3...) is rebuilt from the earlier lines, and that turn's own lands,"
+            " casts, activations, attacks and blocks become steps (answers: baseline). Player"
+            " names are made sandbox-safe; cards get labels <player>_<card>_<n>.\n"
+            "Answer: players, turns_seen, scenario, unsupported (every line that could not be"
+            " used, with line_no, text and reason), summary, board_caveats and support_warnings."
+            " MTGO logs no deaths, damage or life changes: read board_caveats and fix the setup"
+            " (dead creatures, life totals) before trusting a result.\n"
+            "run=True also runs the scenario in the sandbox (uses the slot, ends it) and adds"
+            " 'run' with the sim_run_script answer. Relay support_warnings to the user."
+        )
+    )
+    async def sim_import_mtgo_log(
+        log_text: str, upto_turn: int | None = None, run: bool = False
+    ) -> dict[str, Any]:
+        return await _tool(lambda: manager.import_mtgo(log_text, upto_turn, run))
 
     @server.tool(
         description=(

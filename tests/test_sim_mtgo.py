@@ -479,3 +479,312 @@ def test_join_after_game_end_starts_a_later_game():
     _, events, unmapped = parse_mtgo_log(text)
     assert events[-1].kind == "concede"
     assert [u.reason for u in unmapped] == [mtgo.LATER_GAME] * 2
+
+
+# -- Task 17: conversion to a scenario and the sim_import_mtgo_log tool ------
+
+COMBAT_TYPES = {
+    "Forest": "Basic Land - Forest",
+    "Plains": "Basic Land - Plains",
+    "Llanowar Elves": "Creature - Elf Druid",
+    "Thraben Inspector": "Creature - Human Soldier",
+    "Tarmogoyf": "Creature - Lhurgoyf",
+    "Adanto Vanguard": "Creature - Vampire Soldier",
+    "Scavenging Ooze": "Creature - Ooze",
+    "Swords to Plowshares": "Instant",
+    "Thragtusk": "Creature - Beast",
+    "Path to Exile": "Instant",
+    "Brave the Elements": "Instant",
+}
+
+
+def _convert(name: str, upto_turn: int | None, types=None):
+    from magic_cards_model_api.sim.mtgo_convert import to_scenario
+
+    players, events, _ = parse_mtgo_log((FIXTURES / name).read_text())
+    if types is None:
+        return to_scenario(players, events, upto_turn)
+    return to_scenario(players, events, upto_turn, type_lines=types)
+
+
+def _zone(scenario: dict, player: str, zone: str) -> list[str]:
+    return sorted(
+        c["card"]
+        for c in scenario["setup"]["cards"]
+        if c["player"] == player and c.get("zone", "hand") == zone
+    )
+
+
+def test_board_reconstruction_at_turn():
+    scenario, unmapped = _convert("dat_combat_game.txt", 6, COMBAT_TYPES)
+    setup = scenario["setup"]
+    assert setup["active_player"] == "kessig_wolf" and setup["step"] == "precombat_main"
+    assert {p["name"]: p["life"] for p in setup["players"]} == {
+        "Brightwater": 20,
+        "kessig_wolf": 20,
+    }
+    assert _zone(scenario, "Brightwater", "battlefield") == sorted(
+        ["Forest", "Forest", "Forest", "Llanowar Elves", "Tarmogoyf", "Scavenging Ooze"]
+    )
+    assert _zone(scenario, "kessig_wolf", "battlefield") == sorted(
+        ["Plains", "Plains", "Thraben Inspector", "Adanto Vanguard"]
+    )
+    # the turn's own land and spell start in hand; nothing reached a graveyard yet
+    assert _zone(scenario, "kessig_wolf", "hand") == ["Plains", "Swords to Plowshares"]
+    assert _zone(scenario, "Brightwater", "graveyard") == []
+    labels = [c["label"] for c in setup["cards"]]
+    assert len(labels) == len(set(labels)) and "Brightwater_Forest_3" in labels
+    assert scenario["answers"] == "baseline"
+    # the Clue token cannot be recreated: reported, not silently dropped
+    assert any(u.line_no == 16 and "token" in u.reason for u in unmapped)
+
+
+def test_board_reconstruction_moves_spells_and_sacrifices_to_graveyards():
+    scenario, _ = _convert("dat_two_games_spaced_names.txt", None)
+    setup = scenario["setup"]
+    assert setup["active_player"] == "Mr._Grim"
+    assert _zone(scenario, "Lotus_Eater_5", "graveyard") == ["Duress"]
+    assert _zone(scenario, "Mr._Grim", "graveyard") == ["Llanowar Elves"]
+    assert _zone(scenario, "Lotus_Eater_5", "battlefield") == [
+        "Liliana of the Veil",
+        "Swamp",
+        "Swamp",
+    ]
+
+
+def _acts(scenario: dict) -> list[tuple]:
+    out = []
+    for step in scenario["steps"]:
+        if "act" in step:
+            a = step["act"]
+            out.append((a["action"], a.get("player"), a.get("body", {})))
+        elif "decide" in step:
+            d = step["decide"]
+            out.append(("decide", d["player"], d["answer"]))
+    return out
+
+
+def test_turn_actions_become_act_steps():
+    scenario, unmapped = _convert("dat_short_game.txt", None)
+    assert unmapped == []
+    assert scenario["setup"]["active_player"] == "river_kite"
+    guide = "@river_kite_Goblin_Guide_1"
+    assert _acts(scenario) == [
+        ("play_land", "river_kite", {"card_id": "@river_kite_Mountain_3"}),
+        ("cast", "river_kite", {"card_id": guide}),
+        ("pass", "river_kite", {}),
+        ("pass", "stone_owl", {}),
+        ("pass", "river_kite", {}),
+        ("pass", "stone_owl", {}),
+        ("advance", "river_kite", {}),
+        ("decide", "river_kite", {"pairs": [{"creature": guide, "defender": "stone_owl"}]}),
+        ("concede", "stone_owl", {}),
+    ]
+    assert _zone(scenario, "river_kite", "hand") == ["Goblin Guide", "Mountain"]
+    # Fatal Push's kill is not in the log: the Swiftspear is still on the battlefield
+    assert "Monastery Swiftspear" in _zone(scenario, "river_kite", "battlefield")
+    assert _zone(scenario, "river_kite", "graveyard") == ["Lava Spike", "Lightning Bolt"]
+
+
+def test_targets_and_blocks_resolve_to_labels():
+    scenario, unmapped = _convert("dat_combat_game.txt", 6, COMBAT_TYPES)
+    acts = _acts(scenario)
+    assert (
+        "cast",
+        "kessig_wolf",
+        {"card_id": "@kessig_wolf_Swords_to_Plowshares_1", "targets": ["@Brightwater_Tarmogoyf_1"]},
+    ) in acts
+    assert acts[-1] == (
+        "decide",
+        "kessig_wolf",
+        {"pairs": [{"creature": "@kessig_wolf_Adanto_Vanguard_1", "defender": "Brightwater"}]},
+    )
+    scenario, _ = _convert("dat_combat_game.txt", 5, COMBAT_TYPES)
+    blocks = [a for a in _acts(scenario) if a[0] == "decide" and a[1] == "kessig_wolf"]
+    assert blocks == [
+        (
+            "decide",
+            "kessig_wolf",
+            {
+                "pairs": [
+                    {
+                        "creature": "@kessig_wolf_Thraben_Inspector_1",
+                        "defender": "@Brightwater_Llanowar_Elves_1",
+                    },
+                    {
+                        "creature": "@kessig_wolf_Adanto_Vanguard_1",
+                        "defender": "@Brightwater_Tarmogoyf_1",
+                    },
+                ]
+            },
+        )
+    ]
+
+
+def test_unresolvable_target_is_reported_not_dropped():
+    from magic_cards_model_api.sim.mtgo_convert import to_scenario
+
+    text = PREFIX + "A plays [Mountain].\nA casts [Lightning Bolt] targeting [Grizzly Bears].\n"
+    players, events, _ = parse_mtgo_log(text)
+    scenario, unmapped = to_scenario(players, events, None)
+    assert [(u.line_no, "Grizzly Bears" in u.reason) for u in unmapped] == [(5, True)]
+    assert unmapped[0].text.startswith("A casts")
+    assert not any(a[0] == "cast" for a in _acts(scenario))
+
+    ambiguous = (
+        "A joined the game.\nB joined the game.\nTurn 1: A\nA casts [Grizzly Bears].\n"
+        "Turn 1: B\nB casts [Grizzly Bears].\nTurn 2: A\n"
+        "A casts [Lightning Bolt] targeting [Grizzly Bears].\n"
+    )
+    players, events, _ = parse_mtgo_log(ambiguous)
+    scenario, unmapped = to_scenario(players, events, None)
+    assert [(u.line_no, "ambiguous" in u.reason) for u in unmapped] == [(8, True)]
+
+
+def test_slow_card_lookups_are_bounded_and_reported(monkeypatch):
+    import time
+
+    from magic_cards_model_api import scryfall
+    from magic_cards_model_api.sim import mtgo_convert
+
+    real = scryfall.fetch_card
+
+    def slow(name):
+        if name == "Grizzly Bears":
+            time.sleep(3)
+        return real(name)
+
+    monkeypatch.setattr(scryfall, "fetch_card", slow)
+    started = time.monotonic()
+    types = mtgo_convert.lookup_type_lines(["Mountain", "Grizzly Bears"], timeout_s=0.3)
+    assert time.monotonic() - started < 1.5
+    assert types["Grizzly Bears"] is None and types["Mountain"].startswith("Basic Land")
+    players, events, _ = parse_mtgo_log(PREFIX + "A plays [Mountain].\nA casts [Grizzly Bears].\n")
+    _, unmapped = mtgo_convert.to_scenario(players, events, None, type_lines=types)
+    assert [u.line_no for u in unmapped] == [5] and "Grizzly Bears" in unmapped[0].reason
+
+
+def test_upto_turn_outside_the_log_is_refused():
+    from magic_cards_model_api.sim.mtgo_convert import to_scenario
+
+    players, events, _ = parse_mtgo_log((FIXTURES / "dat_short_game.txt").read_text())
+    with pytest.raises(ValueError, match="turns 1 to 5"):
+        to_scenario(players, events, 6)
+    with pytest.raises(ValueError, match="no turn"):
+        to_scenario(["A", "B"], [], None)
+
+
+@pytest.mark.parametrize("path", ALL_FIXTURES, ids=lambda p: p.name)
+def test_scenario_validates_against_the_schema(path):
+    from magic_cards_model_api.sim.mtgo_convert import card_names, to_scenario
+    from magic_cards_model_api.sim.scenario import validate_scenario
+
+    players, events, _ = parse_mtgo_log(path.read_text())
+    types = {name: "Creature" for name in card_names(players, events)}
+    turns = sorted({e.turn for e in events if e.kind == "turn"})
+    assert turns
+    for turn in turns:
+        scenario, _ = to_scenario(players, events, turn, type_lines=types)
+        validate_scenario(scenario, 10_000)
+
+
+@pytest.fixture
+def sim():
+    from magic_cards_model_api.sim.config import SimLimits
+    from magic_cards_model_api.sim.manager import SandboxManager
+    from magic_cards_model_api.sim.server import build_sim_server
+
+    limits = SimLimits.from_env({})
+    manager = SandboxManager(limits)
+    yield build_sim_server(manager, limits)
+    manager.shutdown()
+
+
+def _call(server, name: str, **kw):
+    import asyncio
+    import json
+
+    result = asyncio.run(server.call_tool(name, kw))
+    return json.loads(str(result.content[0].text))
+
+
+def test_import_tool_reports_unsupported_and_can_run(sim):
+    import json
+    import re
+
+    text = (FIXTURES / "dat_two_games_spaced_names.txt").read_text()
+    _, _, parser_unmapped = parse_mtgo_log(text)
+    assert parser_unmapped
+    out = _call(sim, "sim_import_mtgo_log", log_text=text)
+    assert "error" not in out, out
+    assert out["players"] == ["Mr. Grim", "Lotus Eater 5"]
+    assert out["turns_seen"] == 4
+    reported = {(u["line_no"], u["text"]) for u in out["unsupported"]}
+    for u in parser_unmapped:
+        assert (u.line_no, u.text) in reported
+    mapped = out["summary"].split()[0]
+    assert out["summary"] == f"{mapped} lines mapped, {len(reported)} unsupported"
+    assert "deaths" in out["board_caveats"] and "life" in out["board_caveats"]
+    assert "support_warnings" in out and "run" not in out
+
+    ran = _call(sim, "sim_import_mtgo_log", log_text=text, run=True)
+    assert "error" not in ran, ran
+    run = ran["run"]
+    assert run["stopped_at"] is None or run["stop_reason"]
+    assert "support_warnings" in run
+    # run=True ends the sandbox: the slot is free again
+    assert "sandbox" not in ran and "sandbox" not in run
+    again = _call(sim, "sim_import_mtgo_log", log_text=text, upto_turn=3, run=True)
+    assert "error" not in again, again
+
+    answers = json.dumps([out, ran, again])
+    for key in ("admin_key", "seat_uids", "uid", "key", "advisor_uids"):
+        assert f'"{key}"' not in answers
+    card_ids = set()
+    for answer in (ran, again):
+        for state in (answer["run"]["initial_state"], answer["run"]["final_state"]):
+            card_ids |= set(re.findall(r'"id": "([0-9a-f-]{36})"', json.dumps(state)))
+        card_ids |= set(answer["run"]["labels"].values())
+    hex32 = {h for h in re.findall(r"\b[0-9a-f]{32}\b", answers)}
+    assert not hex32 - {c.replace("-", "") for c in card_ids}
+
+
+def test_import_tool_refuses_a_bad_turn_as_text(sim):
+    text = (FIXTURES / "dat_short_game.txt").read_text()
+    out = _call(sim, "sim_import_mtgo_log", log_text=text, upto_turn=99)
+    assert "turns 1 to 5" in out["error"]
+
+
+def test_later_zone_moves_reuse_the_known_copy():
+    from magic_cards_model_api.sim.mtgo_convert import to_scenario
+
+    text = PREFIX + (
+        "A casts [Grizzly Bears].\n"
+        "Turn 1: B\n"
+        "B returns [Grizzly Bears] to its owner's hand with [Unsummon].\n"
+        "Turn 2: A\n"
+        "A casts [Grizzly Bears].\n"
+        "B casts [Lightning Bolt] targeting A.\n"
+    )
+    players, events, _ = parse_mtgo_log(text)
+    scenario, unmapped = to_scenario(players, events, 3)
+    assert unmapped == []
+    # the bounced copy is the one in hand and the one cast again: no second Bears
+    assert scenario["setup"]["cards"][0] == {
+        "card": "Grizzly Bears",
+        "player": "A",
+        "zone": "hand",
+        "label": "A_Grizzly_Bears_1",
+    }
+    assert _zone(scenario, "A", "battlefield") == []
+    assert _zone(scenario, "B", "hand") == ["Lightning Bolt"]
+    # the non-active player casts after the active player passes
+    assert _acts(scenario) == [
+        ("cast", "A", {"card_id": "@A_Grizzly_Bears_1"}),
+        ("pass", "A", {}),
+        ("pass", "B", {}),
+        ("pass", "A", {}),
+        ("cast", "B", {"card_id": "@B_Lightning_Bolt_1", "targets": ["A"]}),
+        ("pass", "B", {}),
+        ("pass", "A", {}),
+    ]

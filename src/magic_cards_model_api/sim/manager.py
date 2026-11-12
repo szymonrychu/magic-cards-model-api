@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 _SHUTTING_DOWN = "The sandbox service is shutting down. Try again later."
 _SCRIPT_MARGIN_S = 3.0  # scenario budget = call cap left after start-up, minus this
 _BUSY = "The sandbox is busy with another call; retry in a few seconds."
+_WHAT = {"run_script": "Running the script", "import_mtgo": "Importing the log"}
 
 
 def _budget(remaining: float) -> float:
@@ -87,6 +88,16 @@ class SandboxManager:
 
         return self._open("run_script", args, mode="board", keep=keep)
 
+    def import_mtgo(self, text: str, upto_turn: int | None, run: bool) -> dict[str, Any]:
+        """Convert an MTGO log in a fresh worker (it needs card data); `run` also plays the
+        scenario there. Takes the slot for the call and always ends the sandbox."""
+
+        def args(remaining: float) -> dict[str, Any]:
+            budget = _budget(remaining)
+            return {"text": text, "upto_turn": upto_turn, "run": run, "budget_s": budget}
+
+        return self._open("import_mtgo", args, mode="board", keep=False)
+
     def _open(
         self,
         op: str,
@@ -124,7 +135,7 @@ class SandboxManager:
             raise SimRefused(str(exc)) from exc
         except WorkerTimeout as exc:
             self._abort_new(handle)
-            what = "Running the script" if op == "run_script" else "Starting the sandbox"
+            what = _WHAT.get(op, "Starting the sandbox")
             raise SimRefused(f"{what} exceeded the {cap:g} s call limit. Try again.") from exc
         except WorkerDied as exc:
             self._abort_new(handle)
