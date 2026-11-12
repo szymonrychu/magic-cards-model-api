@@ -291,7 +291,7 @@ def test_hidden_zone_lines_of_the_opponent_lose_their_card_names():
     seen_by_a = _review("", "A", text)
     unmapped = seen_by_a["timeline"][0]["unmapped"]
     assert "Forest" not in str(seen_by_a) and "Island" in str(unmapped)
-    assert "hidden" in unmapped[0]["text"]
+    assert unmapped[0]["text"] == "B puts a card in their hand."  # was a "hidden" wording
     seen_by_b = _review("", "B", text)
     assert "Forest" in str(seen_by_b) and "Island" not in str(seen_by_b)
 
@@ -376,3 +376,57 @@ def test_a_reveal_inside_the_target_turn_does_not_put_the_card_in_the_setup(
     assert len(adds) == 1  # added only now, right before it is cast
     i = acts.index(adds[0])
     assert acts[i + 1][:2] == ("cast", hidden)
+
+
+_UNMAPPED_OPPONENT = (
+    PREFIX_REVIEW
+    + "A plays [Mountain].\n"
+    + "A casts [Lightning Bolt] targeting B.\n"
+    + "B looks at the top card of their library and exiles [Secret Tech] face down.\n"
+    + "B puts [Hidden Gem] on top of their library.\n"
+    + "A looks at [Hidden Gem].\n"
+    + "B glances at [Lightning Bolt].\n"
+    + "Turn 2: B\n"
+    + "B plays [Swamp].\n"
+    + "B tucks [Swamp] away.\n"
+)
+
+
+def test_unmapped_opponent_lines_keep_only_public_card_names():
+    review = _review("", "A", _UNMAPPED_OPPONENT)
+    lines = [u["text"] for t in review["timeline"] for u in t.get("unmapped", [])]
+    shown = " | ".join(line for line in lines if line.startswith("B "))
+    assert "Secret Tech" not in shown and "Hidden Gem" not in shown
+    assert "B looks at the top card of their library and exiles a card face down." in lines
+    assert "B puts a card on top of their library." in lines
+    assert "B glances at Lightning Bolt." in lines  # public: A cast it
+    assert "A looks at Hidden Gem." in lines  # the reviewed player's own line is untouched
+    # from the owner's seat their own lines are untouched
+    seen_by_b = _review("", "B", _UNMAPPED_OPPONENT)["timeline"]
+    own = " | ".join(u["text"] for t in seen_by_b for u in t.get("unmapped", []))
+    assert "Secret Tech" in own and "Hidden Gem" in own
+
+
+def test_a_name_becomes_public_only_after_a_mapped_line_names_it():
+    review = _review("", "A", _UNMAPPED_OPPONENT)
+    turn2 = [u["text"] for u in review["timeline"][1].get("unmapped", [])]
+    assert turn2 == ["B tucks Swamp away."]  # B played the Swamp one line earlier
+
+
+def test_upto_turn_cuts_the_timeline_and_the_winner():
+    full = _review("dat_short_game.txt", "river_kite")
+    assert full["winner"] == "river_kite" and full["turns"] == 5
+    from magic_cards_model_api.sim.review_mtgo import review_log
+
+    cut = review_log((FIXTURES / "dat_short_game.txt").read_text(), "river_kite", upto_turn=2)
+    assert cut["turns"] == 2 and cut["winner"] is None and "upto_turn" in cut
+    assert cut["timeline"] == full["timeline"][:2]
+    assert "conceded" not in str(cut)
+    with pytest.raises(ValueError, match="upto_turn"):
+        review_log("x", "A", upto_turn=0)
+
+
+def test_review_tool_takes_upto_turn(sim):
+    text = (FIXTURES / "dat_short_game.txt").read_text()
+    out = _call(sim, "sim_review_mtgo_log", log_text=text, player="river_kite", upto_turn=3)
+    assert out["turns"] == 3 and out["winner"] is None

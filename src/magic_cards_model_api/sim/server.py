@@ -202,19 +202,25 @@ def build_sim_server(
             " no slot, answers at once.\n"
             "player: the reviewed player's name exactly as in the log (an unknown name is"
             " refused with the log's player names).\n"
+            "upto_turn (optional): cut the timeline after that turn (turns count across both"
+            " players) and give no winner; the default is the whole game. To judge a decision"
+            " with only the information public up to its turn, fetch the prefix with upto_turn.\n"
             "Answer: players, you, opponent, winner (if logged), turns, notes, pregame and"
             " timeline: per turn the active player, events in log order ('<line>: <text>';"
             " opponent cards only from the line that made them public, draws as counts),"
             " opp_known_hand (the opponent's hand cards you knew at the end of the turn, from"
-            " reveals and bounces) and unmapped (lines the parser could not read; opponent"
-            " hidden-zone moves lose their card names). MTGO logs no life totals or damage."
+            " reveals and bounces) and unmapped (lines the parser could not read; in the"
+            " opponent's lines a card name stays only if it was already public, else 'a card')."
+            " MTGO logs no life totals or damage."
         )
     )
-    async def sim_review_mtgo_log(log_text: str, player: str) -> dict[str, Any]:
+    async def sim_review_mtgo_log(
+        log_text: str, player: str, upto_turn: int | None = None
+    ) -> dict[str, Any]:
         def run() -> dict[str, Any]:
             check_log_size(log_text)
             try:
-                return review_log(log_text, player)
+                return review_log(log_text, player, upto_turn)
             except ValueError as exc:
                 raise SimRefused(str(exc)) from exc
 

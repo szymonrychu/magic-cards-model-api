@@ -757,7 +757,7 @@ environment, no database and a memory cap.
   `opp_known_hand` (the opponent's hand cards known at the end of the turn, from full-hand
   reveals and bounces, minus what they played since) and `unmapped` (lines the parser could not
   read, with the reason). Opponent cards are named only from the line that made them public;
-  an opponent line moving a card into or out of a hidden zone loses its card names, and export
+  in a line the parser could not read and that is not the reviewed player's, a card name stays only if an earlier line made it public (else "a card"). The full game is the default view; optional `upto_turn` cuts the timeline after that turn and gives no winner. Export
   headers (which name both decks) lose their text. MTGO logs no life totals, so there are none.
 - Claude matches: `sim_match_claude_start(deck_a, deck_b, seed=None, model=None, effort=None,
   seat_a=None, seat_b=None)` starts one game between two
@@ -833,8 +833,9 @@ is the same file; the value goes to the preset env) is in `deploy/k8s/README.md`
   with the user's player name as in the log. Skip obvious or forced decisions (the only land drop, the only
   legal play, a forced discard). Name only the decisive moments, the turns that swung the game
   in life, board, cards or tempo, and the mistakes; for each give the turn, what happened, the
-  better line and why. Judge only from what the player could see then: their own cards, the
-  public events so far and `opp_known_hand`, never a card the log shows later. To test an
+  better line and why. The review subagent judges each decision with what the player could see,
+  the information public up to that turn: their own cards, the public events so far and `opp_known_hand`, never a
+  card the log shows later (it may fetch the prefix with `sim_review_mtgo_log(..., upto_turn=N)`). To test an
   alternative line, `sim_import_mtgo_log(log_text, upto_turn=N, player=...)` (the opponent's
   unseen hand cards are added only when the log shows them played), then `sim_run_script` or
   `sim_run_script(keep=true)` plus `sim_act`. Keep the review short: a few lines per moment.

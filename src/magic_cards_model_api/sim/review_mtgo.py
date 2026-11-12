@@ -6,13 +6,17 @@ shows later is pulled forward. What a log line says was public at that moment (c
 reveals, discards, mills...); draws are counts in the log already. What the reviewed player
 could not see is taken out:
 
-- an opponent line that moves a card into or out of a hidden zone (hand, library) and that
-  the parser does not map keeps no card names;
+- an unmapped line that is not the reviewed player's keeps a card name only when that card
+  is already public at that point of the timeline (named by an earlier mapped line); any
+  other name becomes "a card";
 - export header lines (the PDBot "[League]" line names both decks) keep no text.
 
 Per turn the answer also lists the opponent's hand cards known at the end of that turn: the
 last full-hand reveal, plus their cards bounced to hand, minus what they played, cast or
 discarded since.
+
+`upto_turn` cuts the timeline after that turn (no winner is given), so a reviewer can judge a
+decision with the information public up to then.
 """
 
 from __future__ import annotations
@@ -37,9 +41,7 @@ NOTES = (
     " 'unmapped' lists lines the parser could not read (check them yourself)."
 )
 _PREGAME_SKIP = frozenset({"roll", "join"})
-_HIDDEN_MOVE = re.compile(
-    r" (?:in|into|from|to) their hand\b|(?:of|into|in) their library\b", re.IGNORECASE
-)
+_MARKED_CARD = re.compile(r"@\[([^@]+)@:[^@]*:@\]|\[([^\[\]]+)\]")
 _HEADER = "export header"
 _SKIP_REASONS = ("continuation of line",)
 
@@ -98,21 +100,45 @@ class _KnownHand:
             self.cards += [c for c in e.targets if self.owner.get(c) == self.opponent]
 
 
-def _unmapped_entry(u: Unmapped, opponent: str) -> dict[str, Any]:
+def _public_names(e: Event) -> set[str]:
+    return {n for n in (e.card, *e.targets) if n}
+
+
+def _redact_cards(raw: str, public: set[str], logged: set[str]) -> str:
+    """The line as plain text; a card name that is not public becomes "a card".
+
+    Names are found by their markup ("[Name]", "@[Name@:..:@]") and, for bare-text logs, by
+    the names the log's mapped lines use anywhere (`logged`).
+    """
+
+    def hide(match: re.Match[str]) -> str:
+        name = match.group(1) or match.group(2)
+        return name if name in public else "a card"
+
+    text = plain_line(_MARKED_CARD.sub(hide, raw))
+    for name in sorted(logged - public, key=len, reverse=True):
+        text = re.sub(rf"(?<![\w]){re.escape(name)}(?![\w])", "a card", text)
+    return text
+
+
+def _unmapped_entry(u: Unmapped, you: str, public: set[str], logged: set[str]) -> dict[str, Any]:
     text = plain_line(u.text)
     if u.reason == _HEADER:
         text = "export header, hidden"
-    elif text.startswith(opponent + " ") and _HIDDEN_MOVE.search(text):
-        text = f"{opponent} moves a card between hidden zones (names hidden)"
+    elif not text.startswith(you + " "):
+        text = _redact_cards(u.text, public, logged)
     return {"line": u.line_no, "text": _cap(text), "reason": u.reason}
 
 
-def review_log(text: str, player: str) -> dict[str, Any]:
+def review_log(text: str, player: str, upto_turn: int | None = None) -> dict[str, Any]:
     """The timeline of the first game in `text` from `player`'s seat.
 
-    Raises ValueError for a log without exactly 2 players, without turns, or an unknown
-    `player` (the message names the log's players).
+    `upto_turn` keeps the turns up to and including that one (game-wide turn index) and no
+    winner. Raises ValueError for a log without exactly 2 players, without turns, an unknown
+    `player` (the message names the log's players) or an `upto_turn` below 1.
     """
+    if upto_turn is not None and upto_turn < 1:
+        raise ValueError("upto_turn must be at least 1")
     players, events, unmapped = parse_mtgo_log(text)
     require_two_players(players)
     require_player(players, player)
@@ -127,6 +153,8 @@ def review_log(text: str, player: str) -> dict[str, Any]:
     pregame: list[str] = []
     timeline: list[dict[str, Any]] = []
     known = _KnownHand(opponent)
+    public: set[str] = set()  # card names a mapped line has named so far
+    logged = set().union(*(_public_names(e) for e in events)) - set(players)
     later = 0
     current: dict[str, Any] | None = None
 
@@ -141,7 +169,7 @@ def review_log(text: str, player: str) -> dict[str, Any]:
                 continue
             if item.reason.startswith(_SKIP_REASONS):
                 continue
-            entry = _unmapped_entry(item, opponent)
+            entry = _unmapped_entry(item, player, public, logged)
             if current is None:
                 pregame.append(f"{line_no}: {entry['text']} [unmapped: {entry['reason']}]")
             else:
@@ -149,10 +177,13 @@ def review_log(text: str, player: str) -> dict[str, Any]:
             continue
         if item.kind == "turn":
             close_turn()
+            if upto_turn is not None and item.turn is not None and item.turn > upto_turn:
+                break
             current = {"turn": item.turn, "active": item.player, "events": []}
             timeline.append(current)
             continue
         known.see(item)
+        public |= _public_names(item)
         line = f"{line_no}: {_short(line_text(item))}"
         if current is None:
             if item.kind not in _PREGAME_SKIP:
@@ -165,8 +196,9 @@ def review_log(text: str, player: str) -> dict[str, Any]:
         "players": players,
         "you": player,
         "opponent": opponent,
-        "winner": _winner(players, events),
+        "winner": None if upto_turn is not None else _winner(players, events),
         "turns": len(timeline),
+        **({"upto_turn": upto_turn} if upto_turn is not None else {}),
         "notes": NOTES,
         "pregame": pregame,
         "timeline": timeline,
