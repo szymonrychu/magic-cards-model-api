@@ -443,7 +443,9 @@ self-play loop; the post-game review stays the fixed Opus-`high`
 on a human seat or a value outside the lists); unset fields fall back to the
 deployment default (`AGENT_DEFAULT_MODEL` / `AGENT_DEFAULT_EFFORT`, prod now
 `claude-opus-5-5` at `low`). The seat's choice is recorded and kept across
-`ai-seat/start`. The `agent`/`buddy_agent` objects stay refused. The history
+`ai-seat/start`: a restart reuses the seat's recorded model and effort
+(owner decision Q2), so an old game keeps the settings it was created with,
+not the current default. The `agent`/`buddy_agent` objects stay refused. The history
 below describes the earlier fixed-default rule.
 
 **2026-09-19 (owner direction, cost cutting): model, effort and thinking

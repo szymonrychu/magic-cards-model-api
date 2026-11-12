@@ -132,20 +132,16 @@ spec:
               value: kubernetes
             # The one server-side config for what an AI seat plays as
             # (`agent_settings.AgentSettings.default`) - 2026-09-19, owner
-            # direction, cost cutting: Sonnet at high effort, for an AI seat
-            # and a buddy alike. 2026-09-22, owner: prod playtesting plays on
-            # Opus instead; the code default (`DEFAULT_MODEL`) stays Sonnet. No request may choose anything else any
-            # more (`decks_api.NewUiPlayer` carries no `agent`/`buddy_agent`
-            # field). The post-game review is a separate, fixed choice
-            # (`claude-opus-5` at `high`, `AgentSettings.review_default`)
-            # that does not read either of these.
-            # T6: the seat orchestrator is Sonnet in every mode; the seat's
-            # `seat-player` subagents (SEAT_SUBAGENT_MODEL) do the Opus work.
-            # 2026-10-04: seat pair disabled in prod until seat round 3 meets
-            # the speed target; seats play as before on the new engine: Opus
-            # at medium effort, no thinking cap (SEAT_AGENT_CHANNEL=off).
-            # 2026-11-12, owner (T-156): lobby Claude seats default to
-            # claude-opus-5-5 at low effort; a seat may name its own.
+            # direction, cost cutting: Sonnet at high effort (code default,
+            # `DEFAULT_MODEL`). Prod overrides it below (2026-11-12, owner,
+            # T-156: lobby Claude seats default to claude-opus-5-5 at low
+            # effort; a seat may name its own model and effort, validated
+            # against MTG_SIM_CLAUDE_MODELS). The `agent`/`buddy_agent`
+            # objects are still refused. The post-game review is a separate,
+            # fixed choice (`claude-opus-5` at `high`,
+            # `AgentSettings.review_default`) that reads neither of these.
+            # The seat's `seat-player` subagents use SEAT_SUBAGENT_MODEL;
+            # the seat pair channel is off in prod (SEAT_AGENT_CHANNEL=off).
             - name: AGENT_DEFAULT_MODEL
               value: claude-opus-5-5
             # Owner decision (T6): the buddy/advisor stays pinned to Opus
@@ -161,9 +157,9 @@ spec:
               value: claude-opus-5
             - name: SEAT_SUBAGENT_EFFORT
               value: ""
-            # 2026-10-04, owner: pre-pair prod effort (medium) and no
-            # MAX_THINKING_TOKENS cap for seats; the buddy keeps medium via
-            # ADVISOR_EFFORT. AGENT_DEFAULT_MAX_THINKING_TOKENS is unset.
+            # Seat default effort: low (T-156). No MAX_THINKING_TOKENS cap
+            # for seats (AGENT_DEFAULT_MAX_THINKING_TOKENS is unset); the
+            # buddy keeps medium via ADVISOR_EFFORT.
             - name: AGENT_DEFAULT_EFFORT
               value: low
             - name: ADVISOR_EFFORT

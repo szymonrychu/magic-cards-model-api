@@ -64,6 +64,12 @@ def max_live_games() -> int:
     return int(os.environ.get("MAX_LIVE_GAMES", "4") or 4)
 
 
+#: The models a lobby AI seat may name (`MTG_SIM_CLAUDE_MODELS`), read once at
+#: import so a bad sim env fails the process at startup, not as a 422 that
+#: blames the player on every request.
+ALLOWED_SEAT_MODELS: tuple[str, ...] = SimLimits.from_env(os.environ).claude_models
+
+
 class NewUiPlayer(RequestModel):
     username: Username
     decklist_text: str = Field(min_length=1)
@@ -94,7 +100,7 @@ class NewUiPlayer(RequestModel):
         if (self.model or self.effort) and not self.ai:
             raise ValueError(f"{self.username}: model and effort apply to an ai seat only")
         if self.model:
-            allowed = SimLimits.from_env(os.environ).claude_models
+            allowed = ALLOWED_SEAT_MODELS
             if self.model not in allowed:
                 raise ValueError(
                     f"{self.username}: model {self.model!r} is not allowed;"
