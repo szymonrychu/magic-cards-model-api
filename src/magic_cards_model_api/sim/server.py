@@ -65,7 +65,8 @@ Board photo, "what should I play now?":
 1. Read the photo (crop per zone when small): both battlefields (tapped, counters, tokens),
    graveyards, exile, your hand, life totals, the phase if told.
 2. Verify every name with sim_card_lookup. Ask the user to confirm the recognised cards only
-   when a card is uncertain (not_found, doubtful read); otherwise proceed without asking.
+   when a card is uncertain (not_found, status fuzzy = Scryfall guessed a different spelling,
+   doubtful read); otherwise proceed without asking.
 3. Build only what the player can see with sim_new (tapped, counters, face_up; library_filler so
    draws do not lose); never invent cards for the opponent's hidden hand. Then sim_snapshot the
    root.
@@ -403,11 +404,13 @@ def build_sim_server(
         description=(
             f"Check up to {MAX_LOOKUP_NAMES} card names (read from a photo or a chat) before"
             " building a board. Each resolves through Scryfall (exact, then fuzzy, so loose"
-            " spellings work) and comes back as {query, status: found, name, mana_cost,"
-            " type_line, oracle_text (short), power_toughness or loyalty, engine_support:"
-            " handled | notice | unaudited | silent | unloadable, unsupported_clauses} or"
-            " {query, status: not_found} (unknown or ambiguous: give more of the name), error or"
-            " not_checked (time ran out: ask again for those). Uses no sandbox slot."
+            " spellings work) and comes back as {query, status: found | fuzzy, exact, name,"
+            " mana_cost, type_line, oracle_text (short), power_toughness or loyalty,"
+            " engine_support: handled | notice | unaudited | silent | unloadable,"
+            " unsupported_clauses} or {query, status: not_found} (unknown or ambiguous: give more"
+            " of the name), error or not_checked (time ran out: ask again for those). fuzzy"
+            " (exact false) means the name differs from the query and the card may be another"
+            " one: treat it as uncertain. Uses no sandbox slot."
         )
     )
     async def sim_card_lookup(names: list[str]) -> dict[str, Any]:

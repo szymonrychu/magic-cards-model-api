@@ -523,6 +523,10 @@ class SandboxGame:
         from magic_cards_model_api.store import store
 
         self._require_game()
+        if label is not None:
+            _check_name(label, "label")
+            if re.fullmatch(r"s\d+", label):
+                raise ValueError(f"invalid label {label!r}: it looks like a snapshot id")
         if self._me is not None:
             return self.answer(_refusal(SNAPSHOT_PLAY_REFUSAL))
         sid = next((k for k, v in self._snapshots.items() if label and v.label == label), None)

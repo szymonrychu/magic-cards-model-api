@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from magic_cards_model_api import decks, scryfall
+from magic_cards_model_api.sim import lookup
 from magic_cards_model_api.sim.lookup import MAX_LOOKUP_NAMES, card_lookup
 from magic_cards_model_api.sim.manager import SimRefused
 from tests.test_sim_config import SILENT_CARD_NAME, SILENT_CARD_RAW
@@ -47,6 +48,21 @@ def test_a_loose_spelling_resolves_through_fuzzy(offline):
     (card,) = card_lookup(["lightnin bolt"], budget_s=10)["cards"]
     assert (card["query"], card["name"]) == ("lightnin bolt", "Lightning Bolt")
     assert {"fuzzy": "lightnin bolt"} in offline
+
+
+def test_a_fuzzy_match_is_not_reported_as_found(offline):
+    (card,) = card_lookup(["lightnin bolt"], budget_s=10)["cards"]
+    assert card["status"] == "fuzzy" and card["exact"] is False
+
+
+def test_an_exact_match_ignores_case_and_punctuation():
+    assert lookup._is_exact("lightning  BOLT!", "Lightning Bolt")
+    assert not lookup._is_exact("Lightning Blot", "Lightning Bolt")
+
+
+def test_the_front_face_of_a_double_faced_card_is_exact():
+    assert lookup._is_exact("Delver of Secrets", "Delver of Secrets // Insectile Aberration")
+    assert not lookup._is_exact("Insectile", "Delver of Secrets // Insectile Aberration")
 
 
 def test_an_unknown_or_ambiguous_name_is_not_found(offline):

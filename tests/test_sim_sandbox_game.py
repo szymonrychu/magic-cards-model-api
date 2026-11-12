@@ -417,3 +417,10 @@ def test_an_opponent_answer_can_be_added_mid_sandbox_and_restore_removes_it(sand
     back = _board(sandbox.restore("bob-to-respond"))
     assert names(back["players"]["bob"]["hand"]) == []
     assert len(back["stack"]) == 1
+
+
+def test_a_snapshot_label_must_be_safe_and_not_look_like_an_id(sandbox):
+    sandbox.create(BOLT_SPEC)
+    for bad in ("bad label", "s2"):
+        with pytest.raises(ValueError):
+            sandbox.snapshot(bad)

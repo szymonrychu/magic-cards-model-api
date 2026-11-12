@@ -7,6 +7,7 @@ then fuzzy) and the engine's card-support verdict the sandboxes already report a
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -21,7 +22,9 @@ _ORACLE_CHARS = 400
 
 
 def card_lookup(names: list[str], budget_s: float) -> dict[str, Any]:
-    """One entry per distinct name, in order; names reached after `budget_s` are `not_checked`."""
+    """One entry per distinct name, in order; names reached after `budget_s` are `not_checked`.
+
+    The budget is checked between names only: one slow Scryfall call can overrun it."""
     if not 1 <= len(names) <= MAX_LOOKUP_NAMES:
         raise SimRefused(f"Give 1 to {MAX_LOOKUP_NAMES} names (got {len(names)}).")
     deadline = time.monotonic() + budget_s
@@ -41,9 +44,12 @@ def _lookup_one(query: str) -> dict[str, Any]:
         return {"query": query, "status": "not_found"}
     except scryfall.ScryfallError:
         return {"query": query, "status": "error", "reason": "Scryfall could not be reached"}
+    exact = _is_exact(query, str(raw.get("name") or ""))
     out: dict[str, Any] = {
         "query": query,
-        "status": "found",
+        # "fuzzy": Scryfall guessed; the card may differ from the one meant (treat as uncertain)
+        "status": "found" if exact else "fuzzy",
+        "exact": exact,
         "name": raw.get("name"),
         "mana_cost": _faces(raw, "mana_cost"),
         "type_line": raw.get("type_line") or _faces(raw, "type_line"),
@@ -65,6 +71,16 @@ def _lookup_one(query: str) -> dict[str, Any]:
     out["engine_support"] = warnings[0]["status"]
     out["unsupported_clauses"] = [clause["text"] for clause in warnings[0]["clauses"]]
     return out
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text.casefold())
+
+
+def _is_exact(query: str, name: str) -> bool:
+    """The canonical name (or its front face) equals the query, ignoring case and punctuation."""
+    wanted = _norm(query)
+    return bool(wanted) and wanted in {_norm(name), _norm(name.split(" // ")[0])}
 
 
 def _faces(raw: dict[str, Any], key: str) -> str:

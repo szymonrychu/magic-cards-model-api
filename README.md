@@ -686,7 +686,8 @@ environment, no database and a memory cap.
   Cards carry labels (`"label": "bolt"` in the spec, `"@bolt"` in action bodies).
 - Card names: `sim_card_lookup(names)` checks up to 40 names through the Scryfall lookup the
   sandboxes use (cache first; exact, then fuzzy) and answers per name the canonical name, mana
-  cost, type line, a short oracle text, power/toughness or loyalty and `engine_support`
+  cost, type line, `exact` (false and status `fuzzy` when the canonical name differs from the query),
+  a short oracle text, power/toughness or loyalty and `engine_support`
   (`handled`, or the `support_warnings` status with the unsupported clauses), or `not_found`
   (unknown or ambiguous). It uses no sandbox slot.
 - Snapshots: `sim_snapshot(sandbox_id, label=None)` saves the board (a pending decision
@@ -839,7 +840,7 @@ is the same file; the value goes to the preset env) is in `deploy/k8s/README.md`
 - A board photo with "what should I play now?": read the zones from the photo (both battlefields
   with tapped state and counters, graveyards, exile, your hand, life totals, the phase if told;
   crop per zone when cards are small) and verify every name with `sim_card_lookup`. Ask the user
-  to confirm the recognised cards only when a card is uncertain (`not_found`, a doubtful read);
+  to confirm the recognised cards only when a card is uncertain (`not_found`, status `fuzzy`, a doubtful read);
   otherwise proceed. Build only what the player can see with `sim_new` (`tapped`, `counters`,
   `face_up`, and `library_filler` so a draw step does not lose to an empty library); never invent
   the opponent's hidden hand. `sim_snapshot` the root and compare the candidate plays inside that
