@@ -35,6 +35,7 @@ def _check_name(value: str, field: str) -> str:
         raise ValueError(f"invalid {field} {value!r}: use letters, digits and _ . : - only")
     return value
 
+
 ACTIONS: dict[str, ActionRoute] = {
     # seat actions: the acting player's own uid
     "cast": ("POST", f"{_G}/actions/cast", "seat"),

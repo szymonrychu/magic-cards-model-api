@@ -122,8 +122,11 @@ def state_diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
             (tapped if card.get("tapped") else untapped).append(_ref(card))
         if (card.get("counters") or {}) != (was.get("counters") or {}):
             counters.append(
-                {"card": _ref(card), "from": was.get("counters") or {},
-                 "to": card.get("counters") or {}}
+                {
+                    "card": _ref(card),
+                    "from": was.get("counters") or {},
+                    "to": card.get("counters") or {},
+                }
             )
     removed = [
         {"card": _ref(card), "zone": where}
@@ -131,8 +134,13 @@ def state_diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
         if card_id not in new
     ]
     for key, value in (
-        ("life", life), ("moved", moved), ("added", added), ("removed", removed),
-        ("tapped", tapped), ("untapped", untapped), ("counters", counters),
+        ("life", life),
+        ("moved", moved),
+        ("added", added),
+        ("removed", removed),
+        ("tapped", tapped),
+        ("untapped", untapped),
+        ("counters", counters),
     ):
         if value:
             diff[key] = value
@@ -201,8 +209,7 @@ def check_expect(
 
 def decide_as_act(step: DecideStep) -> ActStep:
     """`decide` is sugar for `act decide`."""
-    return ActStep(act=ActArgs(action="decide", player=step.decide.player,
-                               body=step.decide.answer))
+    return ActStep(act=ActArgs(action="decide", player=step.decide.player, body=step.decide.answer))
 
 
 # -- runner ----------------------------------------------------------------
@@ -272,8 +279,13 @@ def run_scenario(game: SandboxGame, scenario: Scenario, deadline: float) -> dict
                 state, labels = answer["state"], answer["labels"]
                 reason = _refusal(answer["result"])
                 records.append(
-                    {"index": index, "kind": "auto_decide", "ok": reason is None,
-                     "result": answer["result"], **({"error": reason} if reason else {})}
+                    {
+                        "index": index,
+                        "kind": "auto_decide",
+                        "ok": reason is None,
+                        "result": answer["result"],
+                        **({"error": reason} if reason else {}),
+                    }
                 )
                 if reason:
                     break
@@ -289,8 +301,12 @@ def run_scenario(game: SandboxGame, scenario: Scenario, deadline: float) -> dict
         answer = game.act(args.action, args.player, args.body, args.dry_run)
         state, labels = answer["state"], answer["labels"]
         reason = _refusal(answer["result"])
-        record = {"index": index, "kind": "decide" if isinstance(step, DecideStep) else "act",
-                  "ok": reason is None, "result": answer["result"]}
+        record = {
+            "index": index,
+            "kind": "decide" if isinstance(step, DecideStep) else "act",
+            "ok": reason is None,
+            "result": answer["result"],
+        }
         if reason:
             record["error"] = reason
         records.append(record)

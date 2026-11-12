@@ -2521,6 +2521,21 @@ def tap_card(game_id: str, card_id: UUID, req: dict[str, bool]) -> dict[str, Any
         return audit_outcome(game_id, "tap", outcome, **keys)
 
 
+def parsed_counters(counters: dict[str, int] | None) -> list[tuple[Any, int]]:
+    """A PATCH's counters, all validated before any is applied: a bad name, a
+    negative count, or one counter named twice (after trimming and lower-casing)
+    refuses the whole request with ValueError (400) and leaves the game untouched."""
+    parsed: dict[Any, int] = {}
+    for name, amount in (counters or {}).items():
+        kind = engine_api.parse_counter_kind(name)
+        if amount < 0:
+            raise ValueError("a permanent cannot have a negative number of counters")
+        if kind in parsed:
+            raise ValueError(f"counter {name.strip()!r} is named twice")
+        parsed[kind] = amount
+    return list(parsed.items())
+
+
 @app.patch(
     "/api/games/{game_id}/cards/{card_id}",
     response_model=PatchCardResponse,
@@ -2529,15 +2544,15 @@ def tap_card(game_id: str, card_id: UUID, req: dict[str, bool]) -> dict[str, Any
 def patch_card(game_id: str, card_id: UUID, req: PatchCard) -> dict[str, Any]:
     with store.locked(game_id) as game:
         state = card_or_404(game, card_id)
+        counters = parsed_counters(req.counters)  # every check before the first write
         if req.face_up is not None:
             state.face_up = req.face_up
         if req.damage is not None:
             state.damage = req.damage
         if req.summoning_sick is not None:
             state.summoning_sick = req.summoning_sick
-        if req.counters:
-            for kind, amount in req.counters.items():
-                state.counters.set(engine_api.parse_counter_kind(kind), amount)
+        for kind, amount in counters:
+            state.counters.set(kind, amount)
         changed = {key: value for key, value in req.model_dump().items() if value is not None}
         audit.record(game_id, "patch_card", card_id=str(card_id), card=state.card.name, **changed)
         view = state_view(game, game_id)
@@ -2553,11 +2568,11 @@ def patch_card(game_id: str, card_id: UUID, req: PatchCard) -> dict[str, Any]:
 def patch_player(game_id: str, username: str, req: PatchPlayer) -> dict[str, Any]:
     with store.locked(game_id) as game:
         player = game.player(username)
+        counters = parsed_counters(req.counters)  # every check before the first write
         if req.life is not None:
             player.life = req.life
-        if req.counters:
-            for kind, amount in req.counters.items():
-                player.counters.set(engine_api.parse_counter_kind(kind), amount)
+        for kind, amount in counters:
+            player.counters.set(kind, amount)
         changed = {key: value for key, value in req.model_dump().items() if value is not None}
         audit.record(game_id, "patch_player", player=username, **changed)
         return state_view(game, game_id)

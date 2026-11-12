@@ -2809,7 +2809,7 @@ def put_card_in_zone(
 #: the rules leave every name but a few to the card that invents it): the printed
 #: kinds are words ("chorus", "ki"), keyword counters two words ("double strike"),
 #: and the power/toughness kinds the signed pair "+1/+1".
-_COUNTER_NAME = re.compile(r"[a-z0-9+/'-]+(?: [a-z0-9+/'-]+)*")
+_COUNTER_NAME = re.compile(r"(?=.*[a-z0-9])[a-z0-9+/'-]+(?: [a-z0-9+/'-]+)*")
 
 
 def parse_counter_kind(kind: str) -> CounterKind:

@@ -94,7 +94,19 @@ def test_a_player_may_hold_a_named_counter(client, game):
 
 @pytest.mark.parametrize(
     "kind",
-    ["", "   ", "x" * 41, "bad\nname", "<script>", "a;b", "chorus counter!", "chörus"],
+    [
+        "",
+        "   ",
+        "x" * 41,
+        "bad\nname",
+        "<script>",
+        "a;b",
+        "chorus counter!",
+        "chörus",
+        "+",
+        "///",
+        "'",
+    ],
 )
 def test_a_name_that_cannot_be_a_counter_is_refused_with_400(client, game, kind):
     host = staged(client, game, BAKU)
@@ -119,3 +131,48 @@ def test_parse_counter_kind_keeps_the_engine_enum_for_the_names_it_lists():
     assert parse_counter_kind("loyalty") is Counter.LOYALTY
     assert parse_counter_kind("+1/+1") is Counter.PLUS_ONE
     assert parse_counter_kind("chorus") == "chorus"
+
+
+def test_a_rejected_counter_leaves_the_whole_card_patch_unapplied(client, game):
+    """One bad name among several refuses the request before anything is written."""
+    host = staged(client, game, BAKU)
+
+    response = client.patch(
+        f"/api/games/{game}/cards/{host}",
+        json={"counters": {"chorus": 1, "bad!": 1}, "damage": 3, "face_up": False},
+    )
+
+    assert response.status_code == 400, response.text
+    card = find(state(client, game)["battlefield"], BAKU)
+    assert card["counters"] == {}
+    assert card["damage"] == 0
+
+
+def test_a_negative_amount_after_a_good_one_applies_nothing(client, game):
+    host = staged(client, game, BAKU)
+
+    response = patch(client, game, host, {"chorus": 2, "ki": -1})
+
+    assert response.status_code == 400, response.text
+    assert counters_of(client, game, BAKU) == {}
+
+
+def test_a_rejected_counter_leaves_the_whole_player_patch_unapplied(client, game):
+    response = client.patch(
+        f"/api/games/{game}/players/alice",
+        json={"life": 3, "counters": {"rad": 2, "bad!": 1}},
+    )
+
+    assert response.status_code == 400, response.text
+    alice = next(p for p in state(client, game)["players"] if p["username"] == "alice")
+    assert alice["counters"] == {}
+    assert alice["life"] != 3
+
+
+def test_one_counter_named_twice_is_refused_not_last_wins(client, game):
+    host = staged(client, game, BAKU)
+
+    response = patch(client, game, host, {"Chorus": 1, "chorus": 2})
+
+    assert response.status_code == 400, response.text
+    assert counters_of(client, game, BAKU) == {}
