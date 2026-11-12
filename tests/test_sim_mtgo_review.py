@@ -335,5 +335,6 @@ def test_review_guide_is_in_the_instructions_and_the_readme():
     readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
     guide = readme[readme.index("### Usage guide (for the agent)") :]
     for text in (INSTRUCTIONS, guide):
-        for needle in ("sim_review_mtgo_log", "decisive", "mistake", "could see", "player="):
+        needles = ("sim_review_mtgo_log", "decisive", "mistake", "could see", "player=", "SUBAGENT")
+        for needle in needles:
             assert needle in text, needle
