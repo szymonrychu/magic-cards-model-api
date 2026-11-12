@@ -63,16 +63,24 @@ it blindly, and never loop on a refusal.
 
 Board photo, "what should I play now?":
 1. Read the photo (crop per zone when small): both battlefields (tapped, counters, tokens),
-   graveyards, exile, your hand, life totals, the phase if told. The opponent's hand is unknown:
-   never invent cards for it.
-2. Verify every name with sim_card_lookup; flag not_found or doubtful cards, do not guess.
-3. Build it with sim_new (tapped, counters, face_up; library_filler so draws do not lose),
-   then sim_snapshot the root.
-4. Per candidate line: sim_act the steps, read the end state (life, board, cards, mana left),
-   then sim_restore the root and try the next. Weigh what the opponent's open mana and colours
-   could answer.
-5. Reply: the recognised board with doubts, the best play as ordered steps, a short why, the
-   alternatives tried, caveats (support_warnings, guesses). sim_end when done.
+   graveyards, exile, your hand, life totals, the phase if told.
+2. Verify every name with sim_card_lookup. Ask the user to confirm the recognised cards only
+   when a card is uncertain (not_found, doubtful read); otherwise proceed without asking.
+3. Build only what the player can see with sim_new (tapped, counters, face_up; library_filler so
+   draws do not lose); never invent cards for the opponent's hidden hand. Then sim_snapshot the
+   root.
+4. Compare the candidate plays inside this one sandbox: per line sim_act the steps of the
+   CURRENT turn only, read the end state (life, board, cards, mana left), then sim_restore the
+   root and try the next. Do not simulate the opponent's next turn: reason about it in text
+   (their open mana, colours, likely plays).
+5. If the user names the opponent's deck or archetype, test each candidate line against a few
+   likely answers from that deck: after your line, pass priority so the opponent holds it,
+   sim_snapshot, then sim_act add_card (card, player = the opponent, zone hand, plus a land or
+   two on the battlefield for mana; the answer gives the new card_id) and let the opponent cast
+   it with sim_act cast; read the outcome and sim_restore for the next answer or line.
+6. Reply: the recognised board with doubts, the best play as ordered steps, a short why, the
+   alternatives and answers tried, the expected opponent turn (reasoned, not simulated), caveats
+   (support_warnings, guesses). sim_end when done.
 """
 
 BASELINE_INSTRUCTIONS = """\

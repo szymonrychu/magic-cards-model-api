@@ -838,14 +838,20 @@ is the same file; the value goes to the preset env) is in `deploy/k8s/README.md`
   `sim_end` when done. Free the slot always.
 - A board photo with "what should I play now?": read the zones from the photo (both battlefields
   with tapped state and counters, graveyards, exile, your hand, life totals, the phase if told;
-  crop per zone when cards are small), verify every name with `sim_card_lookup` and flag
-  `not_found` or doubtful cards, then build the board with `sim_new` (`tapped`, `counters`,
-  `face_up`, and `library_filler` so a draw step does not lose to an empty library). The
-  opponent's hand is unknown: never invent cards for it. `sim_snapshot` the root, try each
-  candidate line with `sim_act`, read the end state (life, board, cards, mana left), `sim_restore`
-  the root and try the next; weigh what the opponent's visible open mana and colours could answer.
-  Reply with the recognised board and its doubts, the best play as ordered steps, a short why,
-  the alternatives considered and caveats (unsupported cards, guesses).
+  crop per zone when cards are small) and verify every name with `sim_card_lookup`. Ask the user
+  to confirm the recognised cards only when a card is uncertain (`not_found`, a doubtful read);
+  otherwise proceed. Build only what the player can see with `sim_new` (`tapped`, `counters`,
+  `face_up`, and `library_filler` so a draw step does not lose to an empty library); never invent
+  the opponent's hidden hand. `sim_snapshot` the root and compare the candidate plays inside that
+  one sandbox: `sim_act` the steps of the current turn, read the end state (life, board, cards,
+  mana left), `sim_restore` the root and try the next. The opponent's next turn is not
+  simulated: reason about it in text. If the user names the opponent's deck or archetype, test
+  each line against a few likely answers from it: pass priority to the opponent, `sim_snapshot`,
+  `sim_act` `add_card` (the answer, `player` the opponent, `zone` hand, plus lands on the
+  battlefield for mana; the answer carries the new `card_id`), cast it as the opponent, read the
+  result and `sim_restore` for the next answer or line. Reply with the recognised board and its
+  doubts, the best play as ordered steps, a short why, the alternatives and answers tried, the
+  expected opponent turn and caveats (unsupported cards, guesses).
 - Reproducing a game someone described: write the scenario and call `sim_run_script`.
 - An MTGO log the user pasted: `sim_import_mtgo_log`, read `unsupported` and `board_caveats`,
   tell the user what could not be used and fix dead creatures and life totals in the setup, then

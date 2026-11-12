@@ -397,3 +397,23 @@ def test_a_new_board_forgets_the_snapshots(sandbox):
     out = sandbox.create(BOLT_SPEC)
     assert "snapshots" not in out
     assert sandbox.restore("root")["result"]["allowed"] is False
+
+
+def test_an_opponent_answer_can_be_added_mid_sandbox_and_restore_removes_it(sandbox):
+    sandbox.create(BOLT_SPEC)
+    sandbox.act("cast", "alice", {"card_id": "@bolt", "targets": ["@bears"]})
+    sandbox.act("pass", "alice", {})
+    sandbox.snapshot("bob-to-respond")
+    added = sandbox.act(
+        "add_card", None, {"card": "Lightning Bolt", "player": "bob", "zone": "hand"}
+    )
+    assert added["result"].get("allowed") is not False, added["result"]
+    card_id = added["result"]["added"]["card_id"]
+    assert names(_board(added)["players"]["bob"]["hand"]) == ["Lightning Bolt"]
+    sandbox.act("add_card", None, {"card": "Mountain", "player": "bob", "zone": "battlefield"})
+    cast = sandbox.act("cast", "bob", {"card_id": card_id, "targets": ["alice"]})
+    assert cast["result"].get("allowed") is not False, cast["result"]
+    assert len(_board(cast)["stack"]) == 2
+    back = _board(sandbox.restore("bob-to-respond"))
+    assert names(back["players"]["bob"]["hand"]) == []
+    assert len(back["stack"]) == 1
