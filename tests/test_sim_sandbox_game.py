@@ -306,3 +306,94 @@ def test_face_down_card_is_marked_and_hidden_from_the_other_seat(sandbox):
     assert status == 200
     seen = [c.get("name") for c in view["exile"]]
     assert "Shock" not in seen and "Lightning Bolt" in seen
+
+
+def _board(answer):
+    return answer["state"]
+
+
+def _bolt_the_bears(sandbox):
+    sandbox.act("cast", "alice", {"card_id": "@bolt", "targets": ["@bears"]})
+    sandbox.act("pass", "alice", {})
+    return sandbox.act("pass", "bob", {})
+
+
+def test_restore_gives_back_the_snapshot_board_every_time(sandbox):
+    root = sandbox.create(BOLT_SPEC)
+    snap = sandbox.snapshot("root")
+    assert snap["result"] == {"snapshot": "s1", "label": "root"}
+    assert snap["snapshots"] == [{"id": "s1", "label": "root", "turn": 1, "step": "precombat_main"}]
+    after = _bolt_the_bears(sandbox)
+    assert names(_board(after)["players"]["bob"]["graveyard"]) == ["Grizzly Bears"]
+
+    back = sandbox.restore("root")
+    assert back["result"] == {"restored": "s1", "label": "root"}
+    assert _board(back) == _board(root)
+    # The restored game is independent: playing the line again leaves the snapshot intact.
+    again = _bolt_the_bears(sandbox)
+    assert _board(again) == _board(after)
+    assert _board(sandbox.restore("s1")) == _board(root)
+    assert _board(sandbox.state()) == _board(root)
+
+
+def test_restore_brings_back_a_pending_decision(sandbox):
+    sandbox.create(
+        {
+            "players": [{"name": "alice"}, {"name": "bob"}],
+            "cards": [
+                {"card": "Mind Rot", "player": "alice", "label": "rot"},
+                {"card": "Grizzly Bears", "player": "bob", "label": "bears"},
+                {"card": "Forest", "player": "bob"},
+                {"card": "Island", "player": "bob"},
+            ],
+            "mana_pool": {"alice": "BBB"},
+        }
+    )
+    sandbox.act("cast", "alice", {"card_id": "@rot", "targets": ["bob"]})
+    sandbox.act("pass", "alice", {})
+    pending = _board(sandbox.act("pass", "bob", {}))["pending_decision"]
+    assert pending["kind"] == "choose_cards"
+    sandbox.snapshot()
+    chosen = pending["cards"][:2]
+    done = sandbox.act("decide", "bob", {"card_ids": chosen})
+    assert done["result"].get("allowed") is not False, done["result"]
+    assert _board(done)["pending_decision"] is None
+    back = _board(sandbox.restore("s1"))
+    assert back["pending_decision"]["kind"] == "choose_cards"
+    assert len(back["players"]["bob"]["hand"]) == 3
+    again = sandbox.act("decide", "bob", {"card_ids": chosen})
+    assert again["result"].get("allowed") is not False, again["result"]
+    assert len(_board(again)["players"]["bob"]["graveyard"]) == 2
+
+
+def test_snapshot_cap_is_enforced_and_a_reused_label_replaces():
+    sandbox = SandboxGame(TestClient(app), max_snapshots=2)
+    try:
+        sandbox.create(BOLT_SPEC)
+        sandbox.snapshot("root")
+        sandbox.snapshot("line")
+        refused = sandbox.snapshot()
+        assert refused["result"]["allowed"] is False
+        assert "MTG_SIM_MAX_SNAPSHOTS" in refused["result"]["reason"]
+        _bolt_the_bears(sandbox)
+        replaced = sandbox.snapshot("line")
+        assert replaced["result"] == {"snapshot": "s2", "label": "line"}
+        assert [s["id"] for s in replaced["snapshots"]] == ["s1", "s2"]
+        restored = _board(sandbox.restore("line"))
+        assert names(restored["players"]["bob"]["graveyard"]) == ["Grizzly Bears"]
+    finally:
+        sandbox.close()
+
+
+def test_restore_of_an_unknown_snapshot_is_refused(sandbox):
+    sandbox.create(BOLT_SPEC)
+    out = sandbox.restore("nope")
+    assert out["result"]["allowed"] is False and "nope" in out["result"]["reason"]
+
+
+def test_a_new_board_forgets_the_snapshots(sandbox):
+    sandbox.create(BOLT_SPEC)
+    sandbox.snapshot("root")
+    out = sandbox.create(BOLT_SPEC)
+    assert "snapshots" not in out
+    assert sandbox.restore("root")["result"]["allowed"] is False

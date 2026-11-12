@@ -676,14 +676,20 @@ environment, no database and a memory cap.
 - Auth: `Authorization: Bearer <MTG_SIM_TOKEN>`. Unset token answers 503 (disabled), a wrong or
   missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
-- Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`,
-  `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`; and,
+- Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_snapshot`, `sim_restore`,
+  `sim_run_script`, `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`; and,
   only when `MTG_SIM_BASELINE_ENABLED` is set, `sim_play_new`, `sim_match`, `sim_match_status`.
   The engine baseline AI is off as an opponent by default: with the flag unset those three tools
   are not registered and `BatchManager.start` / `SandboxManager.new(mode="play")` refuse with a
   message naming the flag. `answers: "baseline"` of `sim_run_script` (the engine's default
   decision answer) and the MTGO import are not affected.
   Cards carry labels (`"label": "bolt"` in the spec, `"@bolt"` in action bodies).
+- Snapshots: `sim_snapshot(sandbox_id, label=None)` saves the board (a pending decision
+  included) inside the sandbox's own worker and answers its id (`s1`, `s2`, ...);
+  `sim_restore(sandbox_id, snapshot)` (id or label) puts a fresh copy back, so the snapshot can be
+  restored again after acting. A label used again replaces that snapshot. Board mode only, at most
+  `MTG_SIM_MAX_SNAPSHOTS` per sandbox, gone when the sandbox ends. Every answer lists them under
+  `snapshots`.
 - Scenarios: `sim_run_script(script, keep=False)` builds the sandbox from `setup` and runs
   `steps` in one call, returning per-step results, the initial and final board and a diff. It
   stops at the first refused act, at a decision the next step does not answer (`answers:
@@ -790,6 +796,7 @@ environment, no database and a memory cap.
   | `MTG_SIM_CLAUDE_EFFORT` | low | default effort of a Claude match seat |
   | `MTG_SIM_CLAUDE_MODELS` | claude-opus-5-5, claude-opus-5, claude-sonnet-5-5, claude-sonnet-5, claude-haiku-4-5 | allowed models (comma list) |
   | `MTG_SIM_RESULT_TTL_S` | 86400 | how long finished batch and match results are kept |
+  | `MTG_SIM_MAX_SNAPSHOTS` | 16 | snapshots per sandbox (`sim_snapshot`) |
 
 ### Preset entry (operator)
 

@@ -150,6 +150,25 @@ def build_sim_server(
 
     @server.tool(
         description=(
+            "Save the sandbox board (with any pending decision) as a snapshot and return its id."
+            " Try a candidate line with sim_act, then sim_restore the snapshot and try the next."
+            " Board mode only (sim_new, sim_run_script keep=True). label names it; a label used"
+            " again replaces that snapshot. At most"
+            f" {limits.max_snapshots} per sandbox (MTG_SIM_MAX_SNAPSHOTS); they end with the"
+            " sandbox. Answers list the snapshots under `snapshots`."
+        )
+    )
+    async def sim_snapshot(sandbox_id: str, label: str | None = None) -> dict[str, Any]:
+        return await _tool(lambda: manager.call(sandbox_id, "snapshot", {"label": label}))
+
+    @server.tool()
+    async def sim_restore(sandbox_id: str, snapshot: str) -> dict[str, Any]:
+        """Put a snapshot (its id or label) back as the sandbox board. The snapshot stays: acting
+        afterwards does not change it, so it can be restored again for the next line."""
+        return await _tool(lambda: manager.call(sandbox_id, "restore", {"snapshot": snapshot}))
+
+    @server.tool(
+        description=(
             "Run a whole scenario in a fresh sandbox in one call and return per-step results,"
             " the initial and final board and a diff. The slot is freed afterwards unless"
             " keep=True (then the answer carries `sandbox` and you continue with sim_act).\n"

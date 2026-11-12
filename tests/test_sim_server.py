@@ -111,6 +111,27 @@ def test_full_interaction_over_tools_and_no_credentials_leak(sim):
     assert not stray, [text[text.index(x) - 80 : text.index(x) + 40] for x in stray]
 
 
+def test_snapshot_and_restore_over_tools(sim, monkeypatch):
+    monkeypatch.setenv("MTG_SIM_MAX_SNAPSHOTS", "1")  # read by the worker at start
+    created = call(sim, "sim_new", spec=BOLT_SPEC)
+    sid = created["sandbox"]["id"]
+    snap = call(sim, "sim_snapshot", sandbox_id=sid, label="root")
+    assert snap["result"] == {"snapshot": "s1", "label": "root"}
+    over = call(sim, "sim_snapshot", sandbox_id=sid)
+    assert (
+        over["result"]["allowed"] is False and "MTG_SIM_MAX_SNAPSHOTS" in over["result"]["reason"]
+    )
+    body = {"card_id": "@bolt", "targets": ["@bears"]}
+    call(sim, "sim_act", sandbox_id=sid, action="cast", player="alice", body=body)
+    call(sim, "sim_act", sandbox_id=sid, action="pass", player="alice")
+    call(sim, "sim_act", sandbox_id=sid, action="pass", player="bob")
+    back = call(sim, "sim_restore", sandbox_id=sid, snapshot="root")
+    assert back["state"] == created["state"]
+    assert call(sim, "sim_state", sandbox_id=sid)["snapshots"][0]["label"] == "root"
+    assert call(sim, "sim_end", sandbox_id=sid) == {"ended": True}
+    assert "No sandbox" in call(sim, "sim_restore", sandbox_id=sid, snapshot="root")["error"]
+
+
 def _card_ids(value: Any) -> set[str]:
     """Every card id a state shows (under "id", as a label target) and the worker-local game_id."""
     if isinstance(value, dict):

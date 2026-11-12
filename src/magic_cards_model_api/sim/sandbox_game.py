@@ -7,9 +7,11 @@ never leave this object: every answer is redacted, and cards are addressed by la
 
 from __future__ import annotations
 
+import copy
 import random
 import re
 import time
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Literal
 from urllib.parse import quote
@@ -70,6 +72,8 @@ ACTIONS: dict[str, ActionRoute] = {
 }
 
 PLAY_REFUSAL = "setup and engine actions are disabled in play mode"
+SNAPSHOT_PLAY_REFUSAL = "snapshots are for board mode (sim_new); play mode cannot rewind"
+DEFAULT_MAX_SNAPSHOTS = 16
 OPPONENT_STILL_PLAYING = "opponent still playing; call sim_state to continue"
 NO_PROGRESS = "no progress: neither seat can move; consider concede"
 _MAX_OPPONENT_MOVES = 40  # headlines kept per answer; a whole baseline turn is well below it
@@ -231,6 +235,17 @@ def _all_card_names(view: dict[str, Any]) -> set[str]:
     return names
 
 
+@dataclass(frozen=True)
+class _Snapshot:
+    """A saved copy of the game and its paused command (a pending decision lives there)."""
+
+    label: str | None
+    game: Any  # engine Game, never handed out: restore stores a fresh copy
+    paused: Any
+    turn: int
+    step: str
+
+
 def _refusal(reason: str) -> dict[str, Any]:
     return {"allowed": False, "reason": reason}
 
@@ -238,8 +253,11 @@ def _refusal(reason: str) -> dict[str, Any]:
 class SandboxGame:
     """One sandbox board. `http` is an httpx-compatible client (`TestClient(app)`)."""
 
-    def __init__(self, http: Any) -> None:
+    def __init__(self, http: Any, max_snapshots: int = DEFAULT_MAX_SNAPSHOTS) -> None:
         self._http = http
+        self._max_snapshots = max_snapshots
+        self._snapshots: dict[str, _Snapshot] = {}
+        self._snapshot_seq = 0
         self._game_id: str | None = None
         self._admin_key = ""
         self._seat_uids: dict[str, str] = {}
@@ -466,6 +484,8 @@ class SandboxGame:
             self._request("DELETE", _G, query={"key": self._admin_key})
         self._game_id = None
         self._labels = {}
+        self._snapshots = {}
+        self._snapshot_seq = 0
         self._me = None
         self._opponent = None
         self._seam = None
@@ -482,12 +502,68 @@ class SandboxGame:
                 if name != self._me:  # the seat view holds no opponent hand: show the count
                     del board["hand"]
                     board["hand_count"] = counts[name]
-        return {
+        out = {
             "result": redact(result, self._secrets()),
             "state": redact(state, self._secrets()),
             "labels": dict(self._labels),
             **self._support(view),
         }
+        if self._snapshots:
+            out["snapshots"] = [
+                {"id": sid, "label": snap.label, "turn": snap.turn, "step": snap.step}
+                for sid, snap in self._snapshots.items()
+            ]
+        return out
+
+    # -- snapshots (board mode) ---------------------------------------------
+
+    def snapshot(self, label: str | None = None) -> dict[str, Any]:
+        """Save the board under a new id (or replace the snapshot that has `label`)."""
+        from magic_cards_model_api.engine_api import copy_game
+        from magic_cards_model_api.store import store
+
+        self._require_game()
+        if self._me is not None:
+            return self.answer(_refusal(SNAPSHOT_PLAY_REFUSAL))
+        sid = next((k for k, v in self._snapshots.items() if label and v.label == label), None)
+        if sid is None and len(self._snapshots) >= self._max_snapshots:
+            return self.answer(
+                _refusal(
+                    f"snapshot cap of {self._max_snapshots} reached (MTG_SIM_MAX_SNAPSHOTS):"
+                    " reuse a label to replace a snapshot, or start a new sandbox"
+                )
+            )
+        view = self._view()
+        with store.locked(self._game_id) as game:
+            saved = copy_game(game)
+            paused = copy.deepcopy(store.paused_command(self._game_id))
+        if sid is None:
+            self._snapshot_seq += 1
+            sid = f"s{self._snapshot_seq}"
+        self._snapshots[sid] = _Snapshot(label, saved, paused, view["turn_number"], view["step"])
+        return self.answer({"snapshot": sid, "label": label}, view=view)
+
+    def restore(self, snapshot: str) -> dict[str, Any]:
+        """Put a fresh copy of a snapshot back as the game; the snapshot stays reusable."""
+        from magic_cards_model_api.engine_api import copy_game
+        from magic_cards_model_api.store import store
+
+        self._require_game()
+        if self._me is not None:
+            return self.answer(_refusal(SNAPSHOT_PLAY_REFUSAL))
+        sid = snapshot if snapshot in self._snapshots else None
+        sid = sid or next((k for k, v in self._snapshots.items() if v.label == snapshot), None)
+        if sid is None:
+            known = ", ".join(self._snapshots) or "none"
+            return self.answer(_refusal(f"unknown snapshot {snapshot!r}; known: {known}"))
+        snap = self._snapshots[sid]
+        with store.locked(self._game_id):
+            store.replace(self._game_id, copy_game(snap.game))
+            if snap.paused is None:
+                store.clear_paused_command(self._game_id)
+            else:
+                store.store_paused_command(self._game_id, *copy.deepcopy(snap.paused))
+        return self.answer({"restored": sid, "label": snap.label})
 
     def _support(self, view: dict[str, Any]) -> dict[str, Any]:
         names = _all_card_names(view)
