@@ -10,6 +10,7 @@ This module never invents a refusal of its own except where marked.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
@@ -26,7 +27,12 @@ from magic_cards_model.machines.casting import (
 from magic_cards_model.machines.cost import additional_cost_phrases
 from magic_cards_model.machines.targeting import profile_for_text, targeting_profile
 from magic_cards_model.models import CardState, Color, Game, Layout, Zone
-from magic_cards_model.models.card_state import Counter, ExileMarker, counter_state_based_actions
+from magic_cards_model.models.card_state import (
+    Counter,
+    CounterKind,
+    ExileMarker,
+    counter_state_based_actions,
+)
 from pydantic import ValidationError
 
 from . import alternative_cost_names
@@ -2799,9 +2805,26 @@ def put_card_in_zone(
             player.library.insert(0, card)
 
 
-def parse_counter_kind(kind: str) -> Counter:
+#: A counter name (CR 122.1: counters with the same name are interchangeable, and
+#: the rules leave every name but a few to the card that invents it): the printed
+#: kinds are words ("chorus", "ki"), keyword counters two words ("double strike"),
+#: and the power/toughness kinds the signed pair "+1/+1".
+_COUNTER_NAME = re.compile(r"[a-z0-9+/'-]+(?: [a-z0-9+/'-]+)*")
+
+
+def parse_counter_kind(kind: str) -> CounterKind:
+    """The engine's key for a counter name written in a request.
+
+    The names the engine models (`Counter`) come back as the enum; any other
+    well-formed name is its own kind, lower-cased and trimmed like the oracle
+    readers key it. Only a name that could not be printed on a card is refused."""
+    name = kind.strip().lower()
+    if len(name) > 40 or _COUNTER_NAME.fullmatch(name) is None:
+        raise ValueError(
+            f"invalid counter kind {kind!r}: a counter name is 1 to 40 letters, digits, "
+            "spaces, apostrophes, hyphens, plus signs or slashes"
+        )
     try:
-        return Counter(kind)
-    except ValueError as exc:
-        known = ", ".join(value for value in Counter)
-        raise ValueError(f"unknown counter kind {kind!r}; known kinds: {known}") from exc
+        return Counter(name)
+    except ValueError:
+        return name

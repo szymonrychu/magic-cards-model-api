@@ -171,13 +171,13 @@ class PatchCard(RequestModel):
     damage: int | None = None
     summoning_sick: bool | None = None
     counters: dict[str, int] | None = None
-    """Counter kind (e.g. "+1/+1", "loyalty") -> count to set."""
+    """Counter kind -> count to set; any name is accepted (e.g. "+1/+1", "chorus"; CR 122.1)."""
 
 
 class PatchPlayer(RequestModel):
     life: int | None = None
     counters: dict[str, int] | None = None
-    """Counter kind (e.g. "poison", "energy") -> count to set."""
+    """Counter kind -> count to set; any name is accepted (e.g. "poison", "energy", "rad")."""
 
 
 class ManaPoolUpdate(RequestModel):
