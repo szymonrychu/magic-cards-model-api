@@ -353,3 +353,79 @@ def test_support_warnings_are_computed_once_per_batch_not_per_poll(monkeypatch):
     finally:
         batches.shutdown()
     assert len(calls) == 1
+
+
+def test_poll_before_support_is_computed_says_pending_not_an_empty_all_clear(monkeypatch):
+    import threading
+
+    from magic_cards_model_api.sim import match
+
+    gate = threading.Event()
+
+    def slow_block(names):
+        gate.wait(10)
+        return {"support_warnings": []}
+
+    monkeypatch.setattr(match, "support_block", slow_block)
+    batches, made = _batches()
+    bid = batches.start(RED, GREEN, 2, 1)
+    try:
+        out = batches.status(bid, 0)
+        assert out["support_status"] == "pending"
+        assert out["support_warnings"] == []
+        assert "could not be checked yet" in out["support_note"]
+        assert "not" in out["support_note"] and "reliable" in out["support_note"]
+        gate.set()
+        made[0].release.set()
+        done = batches.status(bid, 5)
+        assert done["support_status"] == "ok"
+        assert "support_note" not in done
+    finally:
+        gate.set()
+        batches.shutdown()
+
+
+def test_failed_support_lookup_says_unavailable_and_logs_once(monkeypatch, caplog):
+    from magic_cards_model_api.sim import match
+
+    def boom(names):
+        raise RuntimeError("scryfall down SECRETCARD")
+
+    monkeypatch.setattr(match, "support_block", boom)
+    batches, made = _batches()
+    with caplog.at_level("WARNING"):
+        bid = batches.start(RED, GREEN, 2, 1)
+        try:
+            made[0].release.set()
+            done = batches.status(bid, 5)
+            assert done["status"] == "done"
+            batches.status(bid, 0)
+        finally:
+            batches.shutdown()
+    assert done["support_status"] == "unavailable"
+    assert "could not be checked at all" in done["support_note"]
+    assert "reliable" in done["support_note"]
+    warns = [r for r in caplog.records if r.levelname == "WARNING" and "support" in r.getMessage()]
+    assert len(warns) == 1
+    assert "SECRETCARD" not in warns[0].getMessage()
+    assert warns[0].exc_info is None
+
+
+def test_ok_support_keeps_warnings_and_note(monkeypatch):
+    from magic_cards_model_api.sim import match
+
+    monkeypatch.setattr(
+        match,
+        "support_block",
+        lambda names: {"support_warnings": [{"card": "X"}], "support_note": "note"},
+    )
+    batches, made = _batches()
+    bid = batches.start(RED, GREEN, 2, 1)
+    try:
+        made[0].release.set()
+        done = batches.status(bid, 5)
+    finally:
+        batches.shutdown()
+    assert done["support_status"] == "ok"
+    assert done["support_warnings"] == [{"card": "X"}]
+    assert done["support_note"] == "note"

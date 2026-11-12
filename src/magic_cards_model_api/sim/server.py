@@ -150,7 +150,9 @@ def build_sim_server(
             " requested_games).\n"
             "Answers at once or within the call limit: status 'running' with a batch_id means"
             " poll sim_match_status(batch_id) every 20 s or so; do not start a second batch,"
-            " only one runs at a time. Relay support_warnings to the user."
+            " only one runs at a time. Relay support_warnings to the user;"
+            " support_status 'pending' or 'unavailable' means card support is unchecked, so do"
+            " not trust the results."
         )
     )
     async def sim_match(

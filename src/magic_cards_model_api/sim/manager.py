@@ -6,7 +6,6 @@ The slot is global, not per caller (see MEMORY).
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import math
 import random
@@ -218,6 +217,21 @@ _SUPPORT_JOIN_S = 10.0  # most a finished batch waits for its card lookups
 _START_TIMEOUT_S = 60.0  # worker start-up for a batch; not bound by the tool call cap
 
 
+_SUPPORT_NOTES = {
+    "pending": "Card support could not be checked yet.",
+    "unavailable": "Card support could not be checked at all.",
+}
+
+
+def _support_unknown(state: str) -> dict[str, Any]:
+    return {
+        "support_status": state,
+        "support_warnings": [],
+        "support_note": _SUPPORT_NOTES[state]
+        + " Do not treat these results as reliable until support is checked.",
+    }
+
+
 @dataclass
 class _Batch:
     batch_id: str
@@ -233,8 +247,8 @@ class _Batch:
     play_started: float | None = None  # time.monotonic() when the worker op was sent
     finished: float | None = None  # manager clock
     # Computed once by `_run` (it may look cards up over the network); polls only read it.
-    # Until it is ready the placeholder says no warnings are known yet.
-    support: dict[str, Any] = field(default_factory=lambda: {"support_warnings": []})
+    # Until it is ready the placeholder says so: an empty list alone reads as "all supported".
+    support: dict[str, Any] = field(default_factory=lambda: _support_unknown("pending"))
     done: threading.Event = field(default_factory=threading.Event)
 
 
@@ -344,8 +358,12 @@ class BatchManager:
 
     @staticmethod
     def _compute_support(batch: _Batch) -> None:
-        with contextlib.suppress(Exception):  # advisory; never fail the batch
+        try:  # advisory; never fail the batch
             batch.support = deck_support(*batch.texts)
+        except Exception as exc:  # noqa: BLE001
+            # Type only: the message may carry card text or a request URL.
+            logger.warning("sim support lookup failed (%s)", type(exc).__name__)
+            batch.support = _support_unknown("unavailable")
 
     def _refuse_if_closed(self) -> None:
         with self._lock:

@@ -105,7 +105,7 @@ def play_match(
 
 
 def deck_support(deck_a_text: str, deck_b_text: str) -> dict[str, Any]:
-    """The support block (`support_warnings`, `support_note`) for both decks.
+    """The support block (`support_status`, `support_warnings`, `support_note`) for both decks.
 
     This resolves cards through Scryfall, so callers compute it once per batch, never per poll.
     """
@@ -113,7 +113,7 @@ def deck_support(deck_a_text: str, deck_b_text: str) -> dict[str, Any]:
     for text in (deck_a_text, deck_b_text):
         main, side = parse_decklist(text)
         names.update(name for _, name in main + side)
-    return support_block(names)
+    return {"support_status": "ok", **support_block(names)}
 
 
 def aggregate(

@@ -692,7 +692,8 @@ environment, no database and a memory cap.
   alternating who goes first, and reports wins, 95% intervals, draws, per-game rows and the
   seed. It answers within the call limit: `status: "running"` plus a `batch_id` means poll
   `sim_match_status(batch_id)`. One batch runs at a time (a second is refused with the time
-  left); batches do not use the sandbox slot. Caveats: the baseline plays weakly, so rates say
+  left); batches do not use the sandbox slot. `support_status` is `ok`, `pending` (not checked yet) or
+  `unavailable` (lookup failed), and then `support_note` says results are not reliable. Caveats: the baseline plays weakly, so rates say
   little about real matchups, and a baseline game measured 85-140 s on the small fixture
   decks, and the bundled 45c_aggro vs 45c_control finished 0 of 10 games in 300 s (about 0.55 s
   per step). At the default 300 s wall-clock cap (`MTG_SIM_MATCH_WALL_S`, configurable by env)
