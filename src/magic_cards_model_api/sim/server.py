@@ -57,7 +57,8 @@ _SPEC_DOC = (
 )
 _LABELS_DOC = (
     'Labels: a card with "label": "x" is addressed as "@x" anywhere a card id is expected,'
-    " in action bodies at any depth."
+    " in action bodies at any depth. add_card takes a \"label\" too, so later acts can address"
+    " the added card."
 )
 _ACTIONS_DOC = "Actions: " + ", ".join(ACTIONS) + "."
 
