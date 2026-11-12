@@ -45,6 +45,13 @@ Or run a whole scripted line with sim_run_script (setup, steps, expectations) in
 Or watch two Claude seats play one real game with sim_match_claude_start (slow: poll it).
 Or turn an MTGO game log into a scenario with sim_import_mtgo_log (and run it with run=True).
 Or review an MTGO game log from one player's seat with sim_review_mtgo_log (a timeline, no sandbox).
+Reviewing an MTGO game: call sim_review_mtgo_log(log_text, player=<the user's name in the log>).
+Skip obvious or forced decisions. Name only the decisive moments (turns that swung the game in
+life, board, cards or tempo) and the mistakes: for each give the turn, what happened, the better
+line and why. Judge only from what the player could see then (their own cards, the public
+events so far, opp_known_hand), never from what the log shows later. To test an alternative
+line, sim_import_mtgo_log(log_text, upto_turn=N, player=...) and then sim_run_script or sim_act.
+Keep the review short.
 Cards carry labels: give a card "label": "bolt" in the spec and address it as "@bolt" afterwards.
 Always relay support_warnings (cards the engine does not fully support) to the user, and treat
 any result that depends on them as unreliable.

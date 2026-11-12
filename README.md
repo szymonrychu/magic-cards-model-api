@@ -828,6 +828,14 @@ is the same file; the value goes to the preset env) is in `deploy/k8s/README.md`
 - An MTGO log the user pasted: `sim_import_mtgo_log`, read `unsupported` and `board_caveats`,
   tell the user what could not be used and fix dead creatures and life totals in the setup, then
   call again with `run=true` (or feed `scenario` to `sim_run_script`).
+- Reviewing an MTGO game: call `sim_review_mtgo_log(log_text, player=...)` with the user's
+  player name as in the log. Skip obvious or forced decisions (the only land drop, the only
+  legal play, a forced discard). Name only the decisive moments, the turns that swung the game
+  in life, board, cards or tempo, and the mistakes; for each give the turn, what happened, the
+  better line and why. Judge only from what the player could see then: their own cards, the
+  public events so far and `opp_known_hand`, never a card the log shows later. To test an
+  alternative line, `sim_import_mtgo_log(log_text, upto_turn=N, player=...)` (the opponent's
+  unseen hand cards are added only when the log shows them played), then `sim_run_script` or
 - List against list (only when the baseline is enabled): `sim_match`; if it answers `running`, poll `sim_match_status` every 20 s or
   so. Say that the baseline plays weakly and that a `capped` batch is partial.
 - "Let me play it" (only when the baseline is enabled): `sim_play_new`, keep with `mulligan` `{"take": false}`, play with `sim_act`

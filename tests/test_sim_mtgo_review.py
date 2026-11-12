@@ -327,3 +327,13 @@ def test_review_tool_answers_without_a_worker(sim):
 
     big = _call(sim, "sim_review_mtgo_log", log_text="x" * (MAX_LOG_CHARS + 1), player="A")
     assert "too large" in big["error"]
+
+
+def test_review_guide_is_in_the_instructions_and_the_readme():
+    from magic_cards_model_api.sim.server import INSTRUCTIONS
+
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    guide = readme[readme.index("### Usage guide (for the agent)") :]
+    for text in (INSTRUCTIONS, guide):
+        for needle in ("sim_review_mtgo_log", "decisive", "mistake", "could see", "player="):
+            assert needle in text, needle
