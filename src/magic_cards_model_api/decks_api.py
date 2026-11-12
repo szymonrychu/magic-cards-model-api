@@ -36,14 +36,15 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from magic_cards_model.models import Match
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from . import ai_pregame, ai_seat, audit, game_access, lobby, oidc
-from .agent_settings import AgentSettings
+from .agent_settings import AgentSettings, Effort
 from .api_client import ApiClient, InProcessApiClient
 from .decks import deck_support_warnings, load_deck_into_game, parse_decklist
 from .repository import RECENT_RECORDS_WINDOW, Advisor, GameUnloadable
 from .schemas import DeckSupportWarning, RequestModel, Username
+from .sim.config import SimLimits
 from .store import known_players, new_seat_uids, player_for_advisor_uid, store
 
 router = APIRouter(prefix="/api/lobby", tags=["lobby"], route_class=game_access.GameAccessRoute)
@@ -82,6 +83,31 @@ class NewUiPlayer(RequestModel):
     **Only with `ai: false`.** A buddy advises a human; an AI seat acts
     through its own seat uid and never reads the advice ledger, so the pair
     is refused rather than minting an advisor nothing would read."""
+    model: str | None = None
+    """This AI seat's Claude model (T-156), one of `MTG_SIM_CLAUDE_MODELS`;
+    unset = the deployment default (`AGENT_DEFAULT_MODEL`). AI seats only."""
+    effort: Effort | None = None
+    """This AI seat's effort; unset = `AGENT_DEFAULT_EFFORT`. AI seats only."""
+
+    @model_validator(mode="after")
+    def _model_and_effort_need_an_ai_seat(self) -> NewUiPlayer:
+        if (self.model or self.effort) and not self.ai:
+            raise ValueError(f"{self.username}: model and effort apply to an ai seat only")
+        if self.model:
+            allowed = SimLimits.from_env(os.environ).claude_models
+            if self.model not in allowed:
+                raise ValueError(
+                    f"{self.username}: model {self.model!r} is not allowed;"
+                    f" use one of {', '.join(allowed)}"
+                )
+        return self
+
+    def agent_settings(self) -> AgentSettings:
+        """The settings this AI seat plays with: its own choices over the default."""
+        base = AgentSettings.default(os.environ)
+        return base.model_copy(
+            update={"model": self.model or base.model, "effort": self.effort or base.effort}
+        )
 
 
 class NewUiGame(RequestModel):
@@ -119,7 +145,10 @@ class NewUiGameResponse(BaseModel):
 
 
 def boot_decklist_game(
-    players: list[tuple[str, str, bool]], seed: int | None, owner_user_id: str | None
+    players: list[tuple[str, str, bool]],
+    seed: int | None,
+    owner_user_id: str | None,
+    agents: dict[str, AgentSettings] | None = None,
 ) -> tuple[str, dict[str, str], Match]:
     """Boot one game from `(username, decklist_text, ai)` seats.
 
@@ -129,6 +158,8 @@ def boot_decklist_game(
     `create_game` audit record. It never reserves or attaches a lobby slot, so
     the game is not a UI game, is not listed by the lobby and does not count
     against `MAX_LIVE_GAMES`; the caller owns that and starting any seat.
+    `agents` (player name to settings) overrides the recorded AI seat settings,
+    which default to `AgentSettings.default`; the sim's Claude matches use it.
 
     `store.create` is the api half's plain, cap-unaware create (M8: "the api
     half keeps a plain `create`") - not routed through `api_client.ApiClient`,
@@ -146,7 +177,12 @@ def boot_decklist_game(
     store.register_seats(game_id, uids)
     store.register_decklists(game_id, {name: text for name, text, _ in players})
     store.register_agent_settings(
-        game_id, {name: AgentSettings.default(os.environ) for name, _, ai in players if ai}
+        game_id,
+        {
+            name: (agents or {}).get(name) or AgentSettings.default(os.environ)
+            for name, _, ai in players
+            if ai
+        },
     )
     ai_players = [name for name, _, ai in players if ai]
     if ai_players:
@@ -205,13 +241,10 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
                 f"{player.username}: a buddy advises a human seat - an ai seat plays "
                 "through its own uid and never reads the advice its buddy would write"
             )
-    # Always `AgentSettings.default(os.environ)` (2026-09-19): model, effort
-    # and thinking budget are a fixed server-side deployment choice now, for
-    # an AI seat and a buddy alike - `NewUiPlayer` carries no field a request
-    # could use to ask for anything else.
-    agents = {
-        player.username: AgentSettings.default(os.environ) for player in req.players if player.ai
-    }
+    # `AgentSettings.default(os.environ)` unless the AI seat names its own
+    # model and/or effort (T-156, reversing 2026-09-19); the thinking budget
+    # and a buddy's settings stay a deployment choice.
+    agents = {player.username: player.agent_settings() for player in req.players if player.ai}
     # Keyed by uid, never by name - `repository.Advisor`'s own docstring
     # gives the reason (two advisors on one seat, and an advisor on a seat
     # that is itself an AI seat, both collide in a name-keyed map), which is
@@ -247,6 +280,7 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
             [(player.username, player.decklist_text, player.ai) for player in req.players],
             seed=req.seed,
             owner_user_id=user.sub if user is not None else None,
+            agents=agents,
         )
         if advisors:
             store.register_advisors(game_id, advisors)

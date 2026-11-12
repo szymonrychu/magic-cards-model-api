@@ -437,6 +437,15 @@ self-play loop; the post-game review stays the fixed Opus-`high`
 
 ### Agent settings, per game
 
+**2026-11-12 (owner, T-156): an AI seat may name its own `model` and `effort`.**
+`NewUiPlayer` takes optional `model` (one of `MTG_SIM_CLAUDE_MODELS`) and
+`effort` (`low`, `medium`, `high`, `xhigh`, `max`) on an `ai: true` seat (422
+on a human seat or a value outside the lists); unset fields fall back to the
+deployment default (`AGENT_DEFAULT_MODEL` / `AGENT_DEFAULT_EFFORT`, prod now
+`claude-opus-5-5` at `low`). The seat's choice is recorded and kept across
+`ai-seat/start`. The `agent`/`buddy_agent` objects stay refused. The history
+below describes the earlier fixed-default rule.
+
 **2026-09-19 (owner direction, cost cutting): model, effort and thinking
 budget are a fixed server-side deployment choice, not a per-request one any
 more.** `POST /api/ui/games`'s `NewUiPlayer` carries no `agent`/`buddy_agent`
@@ -733,8 +742,13 @@ environment, no database and a memory cap.
   died may still be on the rebuilt battlefield and life totals stay at 20 unless a logged line
   changes them. Correct the setup before trusting a result. `run=true` also runs the scenario
   (it uses the sandbox slot and ends it) and adds `run` with the `sim_run_script` answer.
-- Claude matches: `sim_match_claude_start(deck_a, deck_b, seed=None)` starts one game between two
-  Claude AI seat Jobs (kubernetes seat mode only) and answers a `match_id` at once;
+- Claude matches: `sim_match_claude_start(deck_a, deck_b, seed=None, model=None, effort=None,
+  seat_a=None, seat_b=None)` starts one game between two
+  Claude AI seat Jobs (kubernetes seat mode only) and answers a `match_id` at once. `model` and
+  `effort` apply to both seats (defaults `claude-opus-5-5` at `low`); `seat_a` / `seat_b`
+  (`{"model": ..., "effort": ...}`) override one seat. A model outside `MTG_SIM_CLAUDE_MODELS` or an
+  effort outside the five levels is refused, and the start and status answers echo each seat's
+  model and effort;
   `sim_match_claude_status(match_id)` answers from the last background check (every 30 s). One
   match at a time. A game takes about 33-55 min, and the match is bounded by the seat deadline
   (`MTG_SIM_CLAUDE_DEADLINE_S`), not by the engine-only batch cap.
@@ -755,6 +769,9 @@ environment, no database and a memory cap.
   | `MTG_SIM_WORKER_MAX_RSS_MB` | 1024 | resident memory cap of a sim worker process |
   | `MTG_SIM_MAX_CLAUDE_MATCHES` | 1 | Claude matches at once |
   | `MTG_SIM_CLAUDE_DEADLINE_S` | 14400 | seat deadline of a Claude match (not the batch cap) |
+  | `MTG_SIM_CLAUDE_MODEL` | claude-opus-5-5 | default model of a Claude match seat |
+  | `MTG_SIM_CLAUDE_EFFORT` | low | default effort of a Claude match seat |
+  | `MTG_SIM_CLAUDE_MODELS` | claude-opus-5-5, claude-opus-5, claude-sonnet-5-5, claude-sonnet-5, claude-haiku-4-5 | allowed models (comma list) |
   | `MTG_SIM_RESULT_TTL_S` | 86400 | how long finished batch and match results are kept |
 
 ### Preset entry (operator)

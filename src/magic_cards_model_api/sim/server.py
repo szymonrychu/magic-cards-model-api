@@ -14,11 +14,12 @@ import logging
 import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any
+from typing import Any, get_args
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
+from magic_cards_model_api.agent_settings import Effort
 from magic_cards_model_api.sim.claude import ClaudeMatchManager
 from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.manager import BatchManager, Reaper, SandboxManager, SimRefused
@@ -257,6 +258,11 @@ def build_sim_server(
             " 1.5Gi, playing like a real AI seat) and return a match_id at once.\n"
             "deck_a / deck_b: a bundled deck name or the decklist text (multi-line); seed makes"
             " the shuffle repeatable (random when omitted, and reported).\n"
+            "model / effort: the Claude model and effort of both seats (defaults"
+            f" {limits.claude_model} at {limits.claude_effort}, env MTG_SIM_CLAUDE_MODEL and"
+            " MTG_SIM_CLAUDE_EFFORT). seat_a / seat_b: {model?, effort?} overrides for one seat."
+            f" Models: {', '.join(limits.claude_models)}; efforts: {', '.join(get_args(Effort))}."
+            " Anything else is refused. The answer echoes each seat's model and effort.\n"
             f"Only {limits.max_claude_matches} match runs at a time; a second start is refused."
             " A game takes about 33-55 min. The two seat Jobs may stay Pending while the"
             " cluster is full, which counts toward the time. A match is bounded by the seat"
@@ -266,9 +272,17 @@ def build_sim_server(
         )
     )
     async def sim_match_claude_start(
-        deck_a: str, deck_b: str, seed: int | None = None
+        deck_a: str,
+        deck_b: str,
+        seed: int | None = None,
+        model: str | None = None,
+        effort: str | None = None,
+        seat_a: dict[str, str] | None = None,
+        seat_b: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        return await _tool(lambda: claude.start(deck_a, deck_b, seed))
+        return await _tool(
+            lambda: claude.start(deck_a, deck_b, seed, model, effort, seat_a, seat_b)
+        )
 
     @server.tool(
         description=(

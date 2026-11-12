@@ -144,8 +144,10 @@ spec:
             # 2026-10-04: seat pair disabled in prod until seat round 3 meets
             # the speed target; seats play as before on the new engine: Opus
             # at medium effort, no thinking cap (SEAT_AGENT_CHANNEL=off).
+            # 2026-11-12, owner (T-156): lobby Claude seats default to
+            # claude-opus-5-5 at low effort; a seat may name its own.
             - name: AGENT_DEFAULT_MODEL
-              value: claude-opus-5
+              value: claude-opus-5-5
             # Owner decision (T6): the buddy/advisor stays pinned to Opus
             # (`AgentSettings.advisor_default`), unaffected by the line above.
             - name: ADVISOR_MODEL
@@ -163,7 +165,7 @@ spec:
             # MAX_THINKING_TOKENS cap for seats; the buddy keeps medium via
             # ADVISOR_EFFORT. AGENT_DEFAULT_MAX_THINKING_TOKENS is unset.
             - name: AGENT_DEFAULT_EFFORT
-              value: medium
+              value: low
             - name: ADVISOR_EFFORT
               value: medium
             - name: AGENT_NAMESPACE

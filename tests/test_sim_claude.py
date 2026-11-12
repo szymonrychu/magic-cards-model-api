@@ -7,6 +7,7 @@ from pathlib import Path
 FIXTURES = Path(__file__).parent / "fixtures" / "sim"
 RED = (FIXTURES / "red_burn.txt").read_text()
 GREEN = (FIXTURES / "green_stompy.txt").read_text()
+OPUS_LOW = {"model": "claude-opus-5-5", "effort": "low"}
 
 
 def test_boot_decklist_game_registers_no_ui_game():
@@ -182,7 +183,10 @@ def test_status_reports_running_then_done_and_cleans_up(fake_registry):
     manager.reap()  # the reaper reads the seats; a poll answers from its cache
     running = manager.status(match_id)
     assert running["status"] == "running"
-    assert running["seats"] == {"a": {"state": "thinking"}, "b": {"state": "thinking"}}
+    assert running["seats"] == {
+        "a": {"state": "thinking", **OPUS_LOW},
+        "b": {"state": "thinking", **OPUS_LOW},
+    }
     assert "support_warnings" in running
     assert fake_registry.stopped == []
 
@@ -365,7 +369,10 @@ def test_start_answers_starting_while_boot_is_slow(fake_registry, monkeypatch):
     assert set(out) >= {"match_id", "expected_minutes", "poll_every_s"}
     polled = manager.status(out["match_id"])
     assert polled["status"] == "starting"
-    assert polled["seats"] == {"a": {"state": "starting"}, "b": {"state": "starting"}}
+    assert polled["seats"] == {
+        "a": {"state": "starting", **OPUS_LOW},
+        "b": {"state": "starting", **OPUS_LOW},
+    }
     assert fake_registry.started == []
     with pytest.raises(SimRefused, match="being started"):
         manager.start(RED, GREEN, seed=2)  # the slot is held while booting
@@ -374,7 +381,10 @@ def test_start_answers_starting_while_boot_is_slow(fake_registry, monkeypatch):
     manager.reap()
     running = manager.status(out["match_id"])
     assert running["status"] == "running"
-    assert running["seats"] == {"a": {"state": "thinking"}, "b": {"state": "thinking"}}
+    assert running["seats"] == {
+        "a": {"state": "thinking", **OPUS_LOW},
+        "b": {"state": "thinking", **OPUS_LOW},
+    }
     assert len(fake_registry.started) == 2
     _finish(manager, out["match_id"])
 
@@ -519,7 +529,10 @@ def test_status_answers_from_cache_while_a_seat_read_blocks(fake_registry):
     reaper.join(timeout=30)
     assert took < 2, took
     assert out["status"] == "running"
-    assert out["seats"] == {"a": {"state": "thinking"}, "b": {"state": "thinking"}}
+    assert out["seats"] == {
+        "a": {"state": "thinking", **OPUS_LOW},
+        "b": {"state": "thinking", **OPUS_LOW},
+    }
     assert out["checked_s_ago"] == 7
     assert out["turn"] is not None
     reads.clear()
@@ -579,10 +592,10 @@ def test_start_stuck_past_the_start_deadline_fails_and_late_thread_cleans_up(
     real = decks_api.boot_decklist_game
     booted: dict[int, tuple[str, dict[str, str]]] = {}
 
-    def boot(seats: Any, seed: int, owner: Any):
+    def boot(seats: Any, seed: int, owner: Any, agents: Any = None):
         if seed == 1:  # only the first match hangs (cold card resolution)
             assert gate.wait(30)
-        game_id, uids, match = real(seats, seed, owner)
+        game_id, uids, match = real(seats, seed, owner, agents)
         booted[seed] = (game_id, uids)
         return game_id, uids, match
 
@@ -598,7 +611,10 @@ def test_start_stuck_past_the_start_deadline_fails_and_late_thread_cleans_up(
     out = manager.status(stuck)
     assert out["status"] == "failed"
     assert "start" in out["error"]
-    assert out["seats"] == {"a": {"state": "stopped"}, "b": {"state": "stopped"}}
+    assert out["seats"] == {
+        "a": {"state": "stopped", **OPUS_LOW},
+        "b": {"state": "stopped", **OPUS_LOW},
+    }
 
     again = _start(manager, RED, GREEN, seed=2)  # the slot is free
     assert manager.status(again["match_id"])["status"] == "running"
@@ -653,3 +669,114 @@ def test_seat_start_stuck_past_the_start_deadline_cleans_up_the_game(fake_regist
     # never started seat b.
     assert [s["player"] for s in fake_registry.started] == ["a"]
     assert fake_registry.stopped.count(match.uids["a"]) == 2
+
+
+# -- per-call model and effort of the Claude seats --------------------------------
+
+
+def _seat_agents(fake_registry) -> dict[str, Any]:
+    return {s["player"]: s["agent"] for s in fake_registry.started}
+
+
+def test_default_seat_settings_come_from_the_sim_env(fake_registry, monkeypatch):
+    monkeypatch.setenv("AGENT_DEFAULT_MAX_THINKING_TOKENS", "1234")
+    manager = _manager()
+    out = _start(manager, RED, GREEN, seed=1)
+    agents = _seat_agents(fake_registry)
+    for seat in ("a", "b"):
+        assert (agents[seat].model, agents[seat].effort) == ("claude-opus-5-5", "low")
+        assert agents[seat].max_thinking_tokens == 1234  # other fields stay from the default
+        assert out["seats"][seat] == {"model": "claude-opus-5-5", "effort": "low"}
+    assert manager.status(out["match_id"])["seats"]["a"]["model"] == "claude-opus-5-5"
+    _finish(manager, out["match_id"])
+
+
+def test_env_defaults_and_call_overrides_and_per_seat_overrides(fake_registry):
+    from magic_cards_model_api.store import store
+
+    manager = _manager(MTG_SIM_CLAUDE_MODEL="claude-sonnet-5", MTG_SIM_CLAUDE_EFFORT="medium")
+    out = _start(
+        manager,
+        RED,
+        GREEN,
+        seed=1,
+        model="claude-opus-5",
+        effort="high",
+        seat_b={"model": "claude-haiku-4-5"},
+    )
+    agents = _seat_agents(fake_registry)
+    assert (agents["a"].model, agents["a"].effort) == ("claude-opus-5", "high")
+    assert (agents["b"].model, agents["b"].effort) == ("claude-haiku-4-5", "high")
+    assert out["seats"] == {
+        "a": {"model": "claude-opus-5", "effort": "high"},
+        "b": {"model": "claude-haiku-4-5", "effort": "high"},
+    }
+    status = manager.status(out["match_id"])
+    assert status["seats"]["b"] == {
+        "state": status["seats"]["b"]["state"],
+        "model": "claude-haiku-4-5",
+        "effort": "high",
+    }
+    game_id = _game_id(manager, out["match_id"])
+    recorded = store.agent_settings(game_id)
+    assert recorded["b"].model == "claude-haiku-4-5" and recorded["a"].model == "claude-opus-5"
+    _finish(manager, out["match_id"])
+
+
+def test_env_defaults_apply_without_call_arguments(fake_registry):
+    manager = _manager(MTG_SIM_CLAUDE_MODEL="claude-sonnet-5", MTG_SIM_CLAUDE_EFFORT="medium")
+    out = _start(manager, RED, GREEN, seed=1, seat_a={"effort": "max"})
+    agents = _seat_agents(fake_registry)
+    assert (agents["a"].model, agents["a"].effort) == ("claude-sonnet-5", "max")
+    assert (agents["b"].model, agents["b"].effort) == ("claude-sonnet-5", "medium")
+    _finish(manager, out["match_id"])
+
+
+@pytest.mark.parametrize(
+    ("kw", "needle"),
+    [
+        ({"model": "gpt-9"}, "claude-opus-5-5"),
+        ({"effort": "extreme"}, "xhigh"),
+        ({"seat_a": {"model": "gpt-9"}}, "seat_a"),
+        ({"seat_b": {"effort": "extreme"}}, "seat_b"),
+        ({"seat_a": {"temperature": 1}}, "seat_a"),
+    ],
+)
+def test_bad_model_or_effort_is_refused_listing_the_allowed_values(fake_registry, kw, needle):
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    manager = _manager()
+    with pytest.raises(SimRefused, match=needle):
+        manager.start(RED, GREEN, 1, **kw)
+    assert fake_registry.started == []
+    assert manager._matches == {}  # a refused call holds no slot
+
+
+def test_model_allow_list_is_configurable(fake_registry):
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    manager = _manager(MTG_SIM_CLAUDE_MODELS="claude-sonnet-5")
+    with pytest.raises(SimRefused, match="claude-sonnet-5"):
+        manager.start(RED, GREEN, 1, model="claude-opus-5")
+
+
+def test_start_tool_takes_model_effort_and_seat_overrides(fake_registry):
+    from magic_cards_model_api.sim.config import SimLimits
+    from magic_cards_model_api.sim.manager import SandboxManager
+    from magic_cards_model_api.sim.server import build_sim_server
+
+    limits = SimLimits.from_env({})
+    manager = _manager()
+    server = build_sim_server(SandboxManager(limits), limits, claude=manager)
+
+    def call(**kw: Any) -> dict[str, Any]:
+        result = asyncio.run(server.call_tool("sim_match_claude_start", kw))
+        return json.loads(str(result.content[0].text))
+
+    refused = call(deck_a=RED, deck_b=GREEN, model="gpt-9")
+    assert "claude-haiku-4-5" in refused["error"]
+    out = call(deck_a=RED, deck_b=GREEN, seed=1, effort="high", seat_a={"model": "claude-opus-5"})
+    assert out["seats"]["a"] == {"model": "claude-opus-5", "effort": "high"}
+    assert out["seats"]["b"] == {"model": "claude-opus-5-5", "effort": "high"}
+    _wait(manager, out["match_id"])
+    _finish(manager, out["match_id"])
