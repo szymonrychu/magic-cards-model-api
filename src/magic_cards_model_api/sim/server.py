@@ -22,6 +22,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from magic_cards_model_api.agent_settings import Effort
 from magic_cards_model_api.sim.claude import ClaudeMatchManager
 from magic_cards_model_api.sim.config import SimLimits
+from magic_cards_model_api.sim.lookup import MAX_LOOKUP_NAMES, card_lookup
 from magic_cards_model_api.sim.manager import (
     BatchManager,
     Reaper,
@@ -376,6 +377,20 @@ def build_sim_server(
     )
     async def sim_match_claude_status(match_id: str) -> dict[str, Any]:
         return await _tool(lambda: claude.status(match_id))
+
+    @server.tool(
+        description=(
+            f"Check up to {MAX_LOOKUP_NAMES} card names (read from a photo or a chat) before"
+            " building a board. Each resolves through Scryfall (exact, then fuzzy, so loose"
+            " spellings work) and comes back as {query, status: found, name, mana_cost,"
+            " type_line, oracle_text (short), power_toughness or loyalty, engine_support:"
+            " handled | notice | unaudited | silent | unloadable, unsupported_clauses} or"
+            " {query, status: not_found} (unknown or ambiguous: give more of the name), error or"
+            " not_checked (time ran out: ask again for those). Uses no sandbox slot."
+        )
+    )
+    async def sim_card_lookup(names: list[str]) -> dict[str, Any]:
+        return await _tool(lambda: card_lookup(names, wait_s))
 
     @server.tool()
     async def sim_end(sandbox_id: str) -> dict[str, Any]:

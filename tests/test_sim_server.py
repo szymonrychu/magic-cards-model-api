@@ -132,6 +132,14 @@ def test_snapshot_and_restore_over_tools(sim, monkeypatch):
     assert "No sandbox" in call(sim, "sim_restore", sandbox_id=sid, snapshot="root")["error"]
 
 
+def test_card_lookup_tool_needs_no_sandbox(sim):
+    out = call(sim, "sim_card_lookup", names=["Lightning Bolt", "Grizzly Bears"])
+    assert [c["name"] for c in out["cards"]] == ["Lightning Bolt", "Grizzly Bears"]
+    assert all(c["engine_support"] == "handled" for c in out["cards"])
+    too_many = call(sim, "sim_card_lookup", names=["Shock"] * 41)
+    assert "1 to 40 names" in too_many["error"]
+
+
 def _card_ids(value: Any) -> set[str]:
     """Every card id a state shows (under "id", as a label target) and the worker-local game_id."""
     if isinstance(value, dict):

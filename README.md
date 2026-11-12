@@ -676,7 +676,7 @@ environment, no database and a memory cap.
 - Auth: `Authorization: Bearer <MTG_SIM_TOKEN>`. Unset token answers 503 (disabled), a wrong or
   missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
-- Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_snapshot`, `sim_restore`,
+- Tools: `sim_card_lookup`, `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_snapshot`, `sim_restore`,
   `sim_run_script`, `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`; and,
   only when `MTG_SIM_BASELINE_ENABLED` is set, `sim_play_new`, `sim_match`, `sim_match_status`.
   The engine baseline AI is off as an opponent by default: with the flag unset those three tools
@@ -684,6 +684,11 @@ environment, no database and a memory cap.
   message naming the flag. `answers: "baseline"` of `sim_run_script` (the engine's default
   decision answer) and the MTGO import are not affected.
   Cards carry labels (`"label": "bolt"` in the spec, `"@bolt"` in action bodies).
+- Card names: `sim_card_lookup(names)` checks up to 40 names through the Scryfall lookup the
+  sandboxes use (cache first; exact, then fuzzy) and answers per name the canonical name, mana
+  cost, type line, a short oracle text, power/toughness or loyalty and `engine_support`
+  (`handled`, or the `support_warnings` status with the unsupported clauses), or `not_found`
+  (unknown or ambiguous). It uses no sandbox slot.
 - Snapshots: `sim_snapshot(sandbox_id, label=None)` saves the board (a pending decision
   included) inside the sandbox's own worker and answers its id (`s1`, `s2`, ...);
   `sim_restore(sandbox_id, snapshot)` (id or label) puts a fresh copy back, so the snapshot can be
