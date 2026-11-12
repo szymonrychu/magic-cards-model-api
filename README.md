@@ -754,8 +754,9 @@ environment, no database and a memory cap.
 ### Preset entry (operator)
 
 The tools reach an agent through its preset. Add this to the `mtg`, `marek-mtg` and any future
-MTG preset (the orchestrator or a human applies it; an existing session needs `session_patch`
-to pick it up). Claude Code expands `${MTG_SIM_TOKEN}` in the header from the session env, which
+MTG preset (the orchestrator or a human applies it). The `mcp_servers` entry and the env vault ref reach
+new sessions only; existing MTG sessions must be recreated (`session_patch` does not change
+vault refs). Claude Code expands `${MTG_SIM_TOKEN}` in the header from the session env, which
 the vault entry fills:
 
 ```json
