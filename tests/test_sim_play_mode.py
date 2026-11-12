@@ -237,3 +237,34 @@ def test_play_new_uses_the_single_sandbox_slot(sim):
     manager.new({"deck_me": RED, "deck_opponent": GREEN, "seed": 1, "me_first": True}, mode="play")
     with pytest.raises(SimRefused, match="slot is in use"):
         manager.new({"deck_me": RED, "deck_opponent": GREEN}, mode="play")
+
+
+def test_opponent_error_after_accepted_act_keeps_allowed_true(game, monkeypatch):
+    start(game)
+
+    def boom(*a, **k):
+        raise RuntimeError("secret detail")
+
+    monkeypatch.setattr(game._opponent, "step", boom)
+    out = play(game, "mulligan", KEEP)
+    assert out["result"].get("allowed") is not False
+    assert "RuntimeError" in out["note"]
+    assert "secret detail" not in out["note"]
+    assert out["your_turn"] is False and out["game_over"] is False
+    text = json.dumps(out)
+    for uid in game._seat_uids.values():
+        assert uid not in text
+    for key in ("admin_key", "seat_uids", "advisor_uids", '"uid"'):
+        assert key not in text
+
+
+def test_opponent_error_on_state_read_keeps_the_state(game, monkeypatch):
+    start(game)
+    game.act("mulligan", "you", KEEP)
+
+    def boom(*a, **k):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(game._opponent, "step", boom)
+    out = game.settle_play(game.state(), 30)
+    assert "RuntimeError" in out["note"] and "state" in out

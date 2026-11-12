@@ -568,8 +568,17 @@ class SandboxGame:
         """
         if not advance:
             return {**out, **self.play_status(), "opponent_moves": []}
-        adv = self.advance_opponent(budget_s)
-        return {**self.answer(out["result"]), **adv}
+        try:
+            adv = self.advance_opponent(budget_s)
+            return {**self.answer(out["result"]), **adv}
+        except Exception as exc:  # noqa: BLE001 - the accepted action must not read as refused
+            reason = f"opponent could not continue ({type(exc).__name__}); call sim_state"
+            try:
+                status = self.play_status()
+            except Exception:  # noqa: BLE001 - status is best effort here
+                status = {}
+            note = redact(reason, self._secrets())
+            return {**out, **status, "opponent_moves": [], "note": note}
 
 
 def _error_text(data: Any) -> str:
