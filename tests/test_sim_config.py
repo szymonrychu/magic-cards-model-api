@@ -39,7 +39,7 @@ def test_defaults_match_the_owner_answers():
         1800,
         25,
     )
-    assert (lim.max_match_games, lim.match_wall_s, lim.max_batches) == (10, 300, 1)
+    assert (lim.max_match_games, lim.match_wall_s, lim.max_batches) == (10, 1500, 1)
     assert (lim.max_script_steps, lim.worker_max_rss_mb) == (200, 1024)
     assert (lim.max_claude_matches, lim.claude_deadline_s, lim.result_ttl_s) == (1, 14400, 86400)
 

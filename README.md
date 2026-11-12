@@ -698,8 +698,9 @@ environment, no database and a memory cap.
   `unavailable` (lookup failed), and then `support_note` says results are not reliable. Caveats: the baseline plays weakly, so rates say
   little about real matchups, and a baseline game measured 85-140 s on the small fixture
   decks, and the bundled 45c_aggro vs 45c_control finished 0 of 10 games in 300 s (about 0.55 s
-  per step). At the default 300 s wall-clock cap (`MTG_SIM_MATCH_WALL_S`, configurable by env)
-  a match therefore usually returns few or no finished games: status `capped` returns the
+  per step). The default wall-clock cap is 1500 s (about 25 min, `MTG_SIM_MATCH_WALL_S`,
+  configurable by env; owner decision Q7), so 10 games normally finish and the chat polls
+  `sim_match_status` meanwhile; slow decks can still hit the cap: status `capped` returns the
   partial results of the finished games. Finished batches are kept
   86400 s (`MTG_SIM_RESULT_TTL_S`).
 - Play mode: `sim_play_new(deck_me, deck_opponent, seed=None, me_first=None)` starts a game from
@@ -743,7 +744,7 @@ environment, no database and a memory cap.
   | `MTG_SIM_SANDBOX_IDLE_TTL_S` | 1800 | idle seconds before a sandbox is reaped |
   | `MTG_SIM_CALL_TIMEOUT_S` | 25 | a tool call never blocks longer; long work answers `running` |
   | `MTG_SIM_MAX_MATCH_GAMES` | 10 | games per `sim_match` |
-  | `MTG_SIM_MATCH_WALL_S` | 300 | wall clock of one engine-only batch; set by env, the owner has not settled the value |
+  | `MTG_SIM_MATCH_WALL_S` | 1500 | wall clock of one engine-only batch; set by env (Q7 decided 1500 s) |
   | `MTG_SIM_MAX_BATCHES` | 1 | engine-only batches at once |
   | `MTG_SIM_MAX_SCRIPT_STEPS` | 200 | steps of one `sim_run_script` scenario |
   | `MTG_SIM_WORKER_MAX_RSS_MB` | 1024 | resident memory cap of a sim worker process |

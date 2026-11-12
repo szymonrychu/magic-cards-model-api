@@ -42,7 +42,7 @@ class SimLimits:
             sandbox_idle_ttl_s=_number(env, "MTG_SIM_SANDBOX_IDLE_TTL_S", 1800, float),
             call_timeout_s=_number(env, "MTG_SIM_CALL_TIMEOUT_S", 25, float),
             max_match_games=_number(env, "MTG_SIM_MAX_MATCH_GAMES", 10, int),
-            match_wall_s=_number(env, "MTG_SIM_MATCH_WALL_S", 300, float),
+            match_wall_s=_number(env, "MTG_SIM_MATCH_WALL_S", 1500, float),
             max_batches=_number(env, "MTG_SIM_MAX_BATCHES", 1, int),
             max_script_steps=_number(env, "MTG_SIM_MAX_SCRIPT_STEPS", 200, int),
             worker_max_rss_mb=_number(env, "MTG_SIM_WORKER_MAX_RSS_MB", 1024, int),
