@@ -17,10 +17,13 @@ def test_boot_decklist_game_registers_no_ui_game():
     game_id, seat_uids, match = boot_decklist_game(
         [("a", RED, True), ("b", GREEN, True)], seed=1, owner_user_id=None
     )
-    assert game_id not in store.ui_games()
-    assert store.ai_players(game_id) == {"a", "b"}
-    assert set(seat_uids) == {"a", "b"}
-    assert match.games[-1] is not None
+    try:
+        assert game_id not in store.ui_games()
+        assert store.ai_players(game_id) == {"a", "b"}
+        assert set(seat_uids) == {"a", "b"}
+        assert match.games[-1] is not None
+    finally:
+        store.delete(game_id)
 
 
 # -- ClaudeMatchManager and the sim_match_claude_* tools (Task 14) ----------
@@ -248,12 +251,14 @@ def test_sweep_orphans_deletes_marked_games(fake_registry):
     other, _, _ = boot_decklist_game(
         [("a", RED, True), ("b", GREEN, True)], seed=1, owner_user_id="someone"
     )
-    swept = _manager().sweep_orphans()
-    assert orphan in swept and other not in swept
-    assert store.get(orphan) is None
-    assert store.get(other) is not None
-    assert set(orphan_uids.values()) <= set(fake_registry.stopped)
-    store.delete(other)
+    try:
+        swept = _manager().sweep_orphans()
+        assert orphan in swept and other not in swept
+        assert store.get(orphan) is None
+        assert store.get(other) is not None
+        assert set(orphan_uids.values()) <= set(fake_registry.stopped)
+    finally:
+        store.delete(other)
 
 
 def test_claude_answers_have_no_seat_uids(fake_registry):
