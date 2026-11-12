@@ -36,6 +36,14 @@ BOARD_CAVEATS = (
 LOOKUP_WORKERS = 4
 MAX_UNSUPPORTED = 200  # entries of `unsupported` echoed per answer; the rest are only counted
 MAX_UNSUPPORTED_TEXT = 300  # chars of one unsupported line echoed back
+SEAT_HOW = (
+    "The setup holds only what {player} could see at the start of the turn: the opponent's"
+    " hand cards that the log first shows later (played or cast in this turn) are not in it."
+    " The opponent's own actions in the turn come from the log: each such card is added to"
+    " their hand by an add_card step right before the step that plays or casts it. Cards the"
+    " opponent revealed earlier (and still holds) or got back to hand stay in the setup."
+    " When you change the line, keep or drop those add_card steps with the opponent's plays."
+)
 _PERMANENT_TYPES = ("Artifact", "Battle", "Creature", "Enchantment", "Land", "Planeswalker")
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_.:-]+")
 _LABEL_CHARS = re.compile(r"[^A-Za-z0-9]+")
@@ -242,6 +250,9 @@ class _Converter:
     active: str = ""
     steps: list[dict[str, Any]] = field(default_factory=list)
     setup_adds: list[tuple[_Obj, str]] = field(default_factory=list)  # (object, setup zone)
+    hidden_hand: str | None = None  # the player whose hand the reviewed seat cannot see
+    known_hand: dict[str, list[str]] = field(default_factory=dict)  # revealed, still in hand
+    hidden_added: int = 0
     _block_step: dict[str, Any] | None = None
 
     # -- helpers ------------------------------------------------------------
@@ -300,12 +311,31 @@ class _Converter:
         self.act("pass", self.opponent(first))
 
     def source_card(self, name: str, owner: str, zone: str = "hand") -> _Obj:
-        """The owner's copy in `zone`, put there by the setup when the board holds none."""
+        """The owner's copy in `zone`, put there by the setup when the board holds none.
+
+        A hand card of the hidden hand that the log has not made public (by a reveal) is not
+        put in the setup: an `add_card` step adds it now, right before it is used.
+        """
         obj = self.board.take(name, owner, (zone,))
-        if obj is None:
-            obj = self.board.new(name, owner, zone)
+        if obj is not None:
+            return obj
+        obj = self.board.new(name, owner, zone)
+        known = self.known_hand.get(owner, [])
+        if owner != self.hidden_hand or zone != "hand" or name in known:
+            if name in known:
+                known.remove(name)
             self.setup_adds.append((obj, zone))
+            return obj
+        body = {"card": name, "player": owner, "zone": zone, "label": obj.label}
+        self.act("add_card", None, body)
+        self.hidden_added += 1
         return obj
+
+    def leave_hand(self, name: str, owner: str) -> None:
+        """A publicly known hand card was played, cast or discarded."""
+        known = self.known_hand.get(owner, [])
+        if name in known:
+            known.remove(name)
 
     def activated_index(self, e: Event) -> int | None:
         """The ability number to send for an activation: None keeps the default (0) for a
@@ -336,6 +366,9 @@ class _Converter:
 
     def replay(self, e: Event) -> None:
         kind = e.kind
+        if kind == "reveal" and e.card is not None and e.player in self.names:
+            # "reveals their hand to C, containing ...": the whole hand, now public
+            self.known_hand[self.names[e.player]] = list(e.targets)
         if kind in _NO_ZONE_CHANGE:
             return
         if kind == "token":
@@ -352,6 +385,8 @@ class _Converter:
             elif kind == "cast":
                 sources = (_cast_zone(e),)
             obj = self.board.take(e.card, player, sources)
+            if obj is None and "hand" in sources:
+                self.leave_hand(e.card, player)
             obj = obj or self.board.new(e.card, player, zone)
             obj.zone = zone
         elif kind == "sacrifice":
@@ -412,6 +447,8 @@ class _Converter:
             self._block_step = None
         if kind == "turn":
             return
+        if kind == "reveal" and e.card is not None and e.player in self.names:
+            self.known_hand[self.names[e.player]] = list(e.targets)
         if kind == "land":
             player = self.player(e.player)
             self.type_of(e.card)
@@ -425,6 +462,8 @@ class _Converter:
             assert e.card is not None
             targets = [self.target(t) for t in e.targets]
             zone = _cast_zone(e)
+            if player != self.active:
+                self.act("pass", self.active)
             obj = self.source_card(e.card, player, zone)
             body: dict[str, Any] = {"card_id": f"@{obj.label}"}
             if zone != "hand":
@@ -433,8 +472,6 @@ class _Converter:
                 body["targets"] = targets
             if e.amount is not None:
                 body["x_value"] = e.amount
-            if player != self.active:
-                self.act("pass", self.active)
             self.act("cast", player, body)
             self.passes(player)
             obj.zone = "battlefield" if is_permanent(type_line) else "graveyard"
@@ -510,6 +547,13 @@ def require_two_players(players: list[str]) -> None:
         )
 
 
+def require_player(players: list[str], player: str | None) -> None:
+    """`player` must be one of the log's players (None means no seat)."""
+    if player is not None and player not in players:
+        shown = ", ".join(repr(p) for p in players)
+        raise ValueError(f"unknown player {player!r}; the players in the log are {shown}")
+
+
 def turn_players(events: list[Event]) -> dict[int, str]:
     return {e.turn: e.player for e in events if e.kind == "turn" and e.turn and e.player}
 
@@ -537,15 +581,21 @@ def to_scenario(
     type_lines: Mapping[str, str | None] | None = None,
     oracle_texts: Mapping[str, str | None] | None = None,
     lookup_timeout_s: float = 10.0,
+    player: str | None = None,
 ) -> tuple[dict[str, Any], list[Unmapped]]:
     """The scenario for the board at the start of `upto_turn` plus that turn's actions.
 
     `type_lines` maps card names to type lines and `oracle_texts` the names of activated
     cards to oracle text; when omitted they are looked up (bounded by `lookup_timeout_s`).
-    Raises ValueError for a turn the log does not have or a log without exactly 2 players.
+    `player` (a log name) is the seat the scenario is seen from: the opponent's hand cards
+    the log has not made public by the start of the turn stay out of the setup and are added
+    by an `add_card` step right before they are played or cast.
+    Raises ValueError for a turn the log does not have, a log without exactly 2 players or
+    an unknown `player`.
     """
     turn = target_turn(events, upto_turn)
     require_two_players(players)
+    require_player(players, player)
     names = safe_player_names(players)
     if type_lines is None:
         type_lines = lookup_type_lines(card_names(players, events), lookup_timeout_s)
@@ -556,6 +606,8 @@ def to_scenario(
         names=names, types=type_lines, tokens=token_names(events), oracle=oracle_texts
     )
     conv.active = names[turn_players(events)[turn]]
+    if player is not None:
+        conv.hidden_hand = conv.opponent(names[player])
     unmapped: list[Unmapped] = []
 
     for e in events:
@@ -578,6 +630,17 @@ def to_scenario(
             del conv.steps[mark:]
             unmapped.append(Unmapped(e.line_no, e.raw, str(exc)))
     start += [(o, zone, {}) for o, zone in conv.setup_adds]
+    if player is not None:
+        n = conv.hidden_added
+        conv.steps.insert(
+            0,
+            {
+                "note": f"seen from {names[player]}'s seat: {n} opponent hand"
+                f" card{'' if n == 1 else 's'} not public at the start of turn {turn} left out"
+                " of the setup; each is added (add_card) right before the log shows it played"
+                " or cast"
+            },
+        )
 
     cards = []
     for obj, zone, counters in start:
@@ -610,20 +673,31 @@ def import_log(
     upto_turn: int | None,
     *,
     lookup_timeout_s: float,
+    player: str | None = None,
 ) -> tuple[dict[str, Any], set[str]]:
     """The `sim_import_mtgo_log` answer without `run` and support fields, plus the card names
-    whose data resolved (the names a support check may read without blocking)."""
+    whose data resolved (the names a support check may read without blocking). `player` is
+    the seat the scenario is seen from (see `to_scenario`)."""
     players, events, parse_unmapped = parse_mtgo_log(text)
     turn = target_turn(events, upto_turn)
     require_two_players(players)
+    require_player(players, player)
     types = lookup_type_lines(card_names(players, events), lookup_timeout_s)
     scenario, convert_unmapped = to_scenario(
-        players, events, turn, type_lines=types, lookup_timeout_s=lookup_timeout_s
+        players,
+        events,
+        turn,
+        type_lines=types,
+        lookup_timeout_s=lookup_timeout_s,
+        player=player,
     )
     unsupported = sorted(parse_unmapped + convert_unmapped, key=lambda u: u.line_no)
     considered = sum(1 for e in events if e.turn is None or e.turn <= turn)
     mapped = considered - len(convert_unmapped)
-    used = {c["card"] for c in scenario["setup"]["cards"]}
+    added = [
+        s["act"]["body"] for s in scenario["steps"] if s.get("act", {}).get("action") == "add_card"
+    ]
+    used = {c["card"] for c in scenario["setup"]["cards"]} | {b["card"] for b in added}
     answer = {
         "players": players,
         "turns_seen": max(turn_players(events)),
@@ -635,6 +709,12 @@ def import_log(
         "summary": f"{mapped} lines mapped, {len(unsupported)} unsupported",
         "board_caveats": BOARD_CAVEATS,
     }
+    if player is not None:
+        answer["perspective"] = {
+            "player": player,
+            "hidden_opponent_cards": len(added),
+            "how": SEAT_HOW.format(player=player),
+        }
     if len(unsupported) > MAX_UNSUPPORTED:
         answer["unsupported_omitted"] = len(unsupported) - MAX_UNSUPPORTED
     return answer, {n for n in used if types.get(n)}

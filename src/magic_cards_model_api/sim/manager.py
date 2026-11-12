@@ -95,9 +95,12 @@ class SandboxManager:
 
         return self._open("run_script", args, mode="board", keep=keep)
 
-    def import_mtgo(self, text: str, upto_turn: int | None, run: bool) -> dict[str, Any]:
+    def import_mtgo(
+        self, text: str, upto_turn: int | None, run: bool, player: str | None = None
+    ) -> dict[str, Any]:
         """Convert an MTGO log in a fresh worker (it needs card data); `run` also plays the
-        scenario there. Takes the slot for the call and always ends the sandbox."""
+        scenario there; `player` is the seat it is seen from. Takes the slot for the call and
+        always ends the sandbox."""
         if len(text) > MAX_LOG_CHARS:
             raise SimRefused(
                 f"log_text is too large ({len(text)} characters; the limit is {MAX_LOG_CHARS})."
@@ -106,7 +109,13 @@ class SandboxManager:
 
         def args(remaining: float) -> dict[str, Any]:
             budget = _budget(remaining)
-            return {"text": text, "upto_turn": upto_turn, "run": run, "budget_s": budget}
+            return {
+                "text": text,
+                "upto_turn": upto_turn,
+                "run": run,
+                "player": player,
+                "budget_s": budget,
+            }
 
         return self._open("import_mtgo", args, mode="board", keep=False)
 

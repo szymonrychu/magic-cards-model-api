@@ -165,14 +165,18 @@ def build_sim_server(
             " used, with line_no, text and reason), summary, board_caveats and support_warnings."
             " MTGO logs no deaths, damage or life changes: read board_caveats and fix the setup"
             " (dead creatures, life totals) before trusting a result.\n"
+            "player (a player name as in the log) sees the turn from that seat: the"
+            " opponent's hand cards the log first shows in that turn are not in the setup but"
+            " added by an add_card step right before the opponent plays or casts them; the"
+            " answer's 'perspective' says how many and how to read it. Use it for a review.\n"
             "run=True also runs the scenario in the sandbox (uses the slot, ends it) and adds"
             " 'run' with the sim_run_script answer. Relay support_warnings to the user."
         )
     )
     async def sim_import_mtgo_log(
-        log_text: str, upto_turn: int | None = None, run: bool = False
+        log_text: str, upto_turn: int | None = None, run: bool = False, player: str | None = None
     ) -> dict[str, Any]:
-        return await _tool(lambda: manager.import_mtgo(log_text, upto_turn, run))
+        return await _tool(lambda: manager.import_mtgo(log_text, upto_turn, run, player))
 
     if limits.baseline_enabled:  # the engine baseline AI is off as an opponent by default
 
