@@ -677,7 +677,7 @@ environment, no database and a memory cap.
   missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
 - Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`,
-  `sim_import_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`; and,
+  `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`; and,
   only when `MTG_SIM_BASELINE_ENABLED` is set, `sim_play_new`, `sim_match`, `sim_match_status`.
   The engine baseline AI is off as an opponent by default: with the flag unset those three tools
   are not registered and `BatchManager.start` / `SandboxManager.new(mode="play")` refuse with a
@@ -744,6 +744,21 @@ environment, no database and a memory cap.
   died may still be on the rebuilt battlefield and life totals stay at 20 unless a logged line
   changes them. Correct the setup before trusting a result. `run=true` also runs the scenario
   (it uses the sandbox slot and ends it) and adds `run` with the `sim_run_script` answer.
+  `player` (a player name as in the log) rebuilds the turn from that seat: the opponent's hand
+  cards the log first shows in that turn stay out of the setup, and an `add_card` step (which
+  takes a `label`) adds each one right before the opponent plays or casts it, so the opponent's
+  own actions still come from the log. Cards the opponent revealed earlier or got back to hand
+  stay in the setup. `perspective` in the answer says how many cards were hidden; without
+  `player` the scenario names every card the turn uses.
+- MTGO review: `sim_review_mtgo_log(log_text, player)` answers at once (no worker, no slot) with
+  a compact per-turn timeline of the first game seen from `player`'s seat: `players`, `you`,
+  `opponent`, `winner` (if logged), `turns`, `notes`, `pregame` and `timeline`. Each turn has the
+  active player, the events in log order as `"<line>: <text>"` (reminder text dropped),
+  `opp_known_hand` (the opponent's hand cards known at the end of the turn, from full-hand
+  reveals and bounces, minus what they played since) and `unmapped` (lines the parser could not
+  read, with the reason). Opponent cards are named only from the line that made them public;
+  an opponent line moving a card into or out of a hidden zone loses its card names, and export
+  headers (which name both decks) lose their text. MTGO logs no life totals, so there are none.
 - Claude matches: `sim_match_claude_start(deck_a, deck_b, seed=None, model=None, effort=None,
   seat_a=None, seat_b=None)` starts one game between two
   Claude AI seat Jobs (kubernetes seat mode only) and answers a `match_id` at once. `model` and

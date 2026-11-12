@@ -22,8 +22,15 @@ from mcp.server.transport_security import TransportSecuritySettings
 from magic_cards_model_api.agent_settings import Effort
 from magic_cards_model_api.sim.claude import ClaudeMatchManager
 from magic_cards_model_api.sim.config import SimLimits
-from magic_cards_model_api.sim.manager import BatchManager, Reaper, SandboxManager, SimRefused
+from magic_cards_model_api.sim.manager import (
+    BatchManager,
+    Reaper,
+    SandboxManager,
+    SimRefused,
+    check_log_size,
+)
 from magic_cards_model_api.sim.redact import redact
+from magic_cards_model_api.sim.review_mtgo import review_log
 from magic_cards_model_api.sim.sandbox_game import ACTIONS
 from magic_cards_model_api.sim.scenario import validate_scenario
 
@@ -37,6 +44,7 @@ Build a board with sim_new (players, cards, step), then act with sim_act and rea
 Or run a whole scripted line with sim_run_script (setup, steps, expectations) in one call.
 Or watch two Claude seats play one real game with sim_match_claude_start (slow: poll it).
 Or turn an MTGO game log into a scenario with sim_import_mtgo_log (and run it with run=True).
+Or review an MTGO game log from one player's seat with sim_review_mtgo_log (a timeline, no sandbox).
 Cards carry labels: give a card "label": "bolt" in the spec and address it as "@bolt" afterwards.
 Always relay support_warnings (cards the engine does not fully support) to the user, and treat
 any result that depends on them as unreliable.
@@ -57,7 +65,7 @@ _SPEC_DOC = (
 )
 _LABELS_DOC = (
     'Labels: a card with "label": "x" is addressed as "@x" anywhere a card id is expected,'
-    " in action bodies at any depth. add_card takes a \"label\" too, so later acts can address"
+    ' in action bodies at any depth. add_card takes a "label" too, so later acts can address'
     " the added card."
 )
 _ACTIONS_DOC = "Actions: " + ", ".join(ACTIONS) + "."
@@ -177,6 +185,31 @@ def build_sim_server(
         log_text: str, upto_turn: int | None = None, run: bool = False, player: str | None = None
     ) -> dict[str, Any]:
         return await _tool(lambda: manager.import_mtgo(log_text, upto_turn, run, player))
+
+    @server.tool(
+        description=(
+            "Review an MTGO game log from one player's seat: a compact per-turn timeline of"
+            " the first game, for finding the decisive moments and the mistakes. No sandbox,"
+            " no slot, answers at once.\n"
+            "player: the reviewed player's name exactly as in the log (an unknown name is"
+            " refused with the log's player names).\n"
+            "Answer: players, you, opponent, winner (if logged), turns, notes, pregame and"
+            " timeline: per turn the active player, events in log order ('<line>: <text>';"
+            " opponent cards only from the line that made them public, draws as counts),"
+            " opp_known_hand (the opponent's hand cards you knew at the end of the turn, from"
+            " reveals and bounces) and unmapped (lines the parser could not read; opponent"
+            " hidden-zone moves lose their card names). MTGO logs no life totals or damage."
+        )
+    )
+    async def sim_review_mtgo_log(log_text: str, player: str) -> dict[str, Any]:
+        def run() -> dict[str, Any]:
+            check_log_size(log_text)
+            try:
+                return review_log(log_text, player)
+            except ValueError as exc:
+                raise SimRefused(str(exc)) from exc
+
+        return await _tool(run)
 
     if limits.baseline_enabled:  # the engine baseline AI is off as an opponent by default
 

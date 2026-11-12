@@ -203,3 +203,127 @@ def test_import_tool_refuses_an_unknown_player_as_text(sim):
     text = (FIXTURES / "dat_short_game.txt").read_text()
     out = _call(sim, "sim_import_mtgo_log", log_text=text, player="nobody")
     assert "unknown player 'nobody'" in out["error"] and "'river_kite'" in out["error"]
+
+
+# -- sim_review_mtgo_log: the per-turn timeline from one seat -----------------
+
+
+def _review(name: str, player: str, text: str | None = None) -> dict:
+    from magic_cards_model_api.sim.review_mtgo import review_log
+
+    return review_log(text if text is not None else (FIXTURES / name).read_text(), player)
+
+
+def _flat(review: dict) -> list[tuple[int, str]]:
+    """(line_no, text) of every item the timeline shows, in the order it shows them."""
+    out = [(int(s.split(":", 1)[0]), s) for s in review["pregame"]]
+    for turn in review["timeline"]:
+        items = [(int(s.split(":", 1)[0]), s) for s in turn["events"]]
+        items += [(u["line"], u["text"]) for u in turn.get("unmapped", [])]
+        out += sorted(items)
+        last = max((n for n, _ in items), default=0)
+        out += [(last, f"known: {c}") for c in turn.get("opp_known_hand", [])]
+    return out
+
+
+def test_review_header_and_turns():
+    review = _review("dat_short_game.txt", "river_kite")
+    assert review["players"] == ["river_kite", "stone_owl"]
+    assert (review["you"], review["opponent"]) == ("river_kite", "stone_owl")
+    assert review["winner"] == "river_kite" and review["turns"] == 5
+    assert [(t["turn"], t["active"]) for t in review["timeline"]] == [
+        (1, "river_kite"), (2, "stone_owl"), (3, "river_kite"), (4, "stone_owl"),
+        (5, "river_kite"),
+    ]  # fmt: skip
+    assert "life" in review["notes"]
+    assert review["timeline"][0]["events"] == [
+        "10: river_kite skips their draw step.",
+        "11: river_kite plays Mountain.",
+        "12: river_kite casts Monastery Swiftspear.",
+    ]
+    assert review["pregame"][-1].startswith("8: stone_owl puts a card on the bottom")
+    # reminder text is dropped to keep the timeline short
+    assert review["timeline"][2]["events"][2] == (
+        "21: river_kite puts triggered ability from Monastery Swiftspear onto the stack."
+    )
+    rendered = _review("rendered_chatter_names.txt", "Dara O'Brien Jr")
+    assert rendered["winner"] == "Old Man Hemlock"
+    assert "34: Old Man Hemlock casts Stonecoil Serpent. (X is 2)." in str(rendered)
+
+
+def test_opponent_cards_appear_only_from_the_line_that_makes_them_public():
+    review = _review("dat_short_game.txt", "river_kite")
+    flat = _flat(review)
+    first = next(i for i, (_, s) in enumerate(flat) if "Fatal Push" in s)
+    assert flat[first][0] == 25 and all(n < 25 for n, _ in flat[:first])
+
+    owl = _review("dat_short_game.txt", "stone_owl")
+    turns = {t["turn"]: t for t in owl["timeline"]}
+    assert "Goblin Guide" not in str(turns[1])
+    assert sorted(turns[2]["opp_known_hand"]) == ["Goblin Guide", "Lava Spike", "Mountain"]
+    assert turns[3]["opp_known_hand"] == ["Goblin Guide"]
+    assert "opp_known_hand" not in turns[5]
+
+
+@pytest.mark.parametrize("path", ALL_FIXTURES, ids=lambda p: p.name)
+def test_review_never_names_an_opponent_card_before_the_log_does(path):
+    text = path.read_text()
+    players, events, _ = parse_mtgo_log(text)
+    for me in players:
+        opp = next(p for p in players if p != me)
+        mine = {e.card for e in events if e.player == me and e.kind in ("cast", "land")}
+        theirs = (
+            {e.card for e in events if e.player == opp and e.kind in ("cast", "land", "discard")}
+            - mine
+            - {None}
+        )
+        flat = _flat(_review(path.name, me))
+        lines = [n for n, _ in flat]
+        assert lines == sorted(lines), (me, flat)  # log order, nothing pulled forward
+        for card in theirs:
+            public = min(e.line_no for e in events if card == e.card or card in e.targets)
+            shown = [n for n, s in flat if card in s]
+            assert not shown or min(shown) >= public, (me, card, public, shown)
+
+
+def test_hidden_zone_lines_of_the_opponent_lose_their_card_names():
+    text = PREFIX_REVIEW + "B puts [Forest] in their hand.\nA puts [Island] in their hand.\n"
+    seen_by_a = _review("", "A", text)
+    unmapped = seen_by_a["timeline"][0]["unmapped"]
+    assert "Forest" not in str(seen_by_a) and "Island" in str(unmapped)
+    assert "hidden" in unmapped[0]["text"]
+    seen_by_b = _review("", "B", text)
+    assert "Forest" in str(seen_by_b) and "Island" not in str(seen_by_b)
+
+
+PREFIX_REVIEW = "A joined the game.\nB joined the game.\nTurn 1: A\n"
+
+
+def test_export_headers_do_not_leak_the_opponent_deck_and_chat_is_kept():
+    review = _review("rendered_chatter_names.txt", "Old Man Hemlock")
+    assert "Rakdos Midrange" not in str(review)
+    assert "rude" in str(review)
+
+
+def test_unknown_review_player_is_refused_with_the_names():
+    with pytest.raises(ValueError, match="'river_kite', 'stone_owl'"):
+        _review("dat_short_game.txt", "nobody")
+
+
+def test_review_is_compact():
+    import json
+
+    review = _review("rendered_chatter_names.txt", "Old Man Hemlock")
+    assert len(json.dumps(review)) < 9000
+
+
+def test_review_tool_answers_without_a_worker(sim):
+    text = (FIXTURES / "dat_combat_game.txt").read_text()
+    out = _call(sim, "sim_review_mtgo_log", log_text=text, player="kessig_wolf")
+    assert out["you"] == "kessig_wolf" and out["winner"] == "Brightwater"
+    bad = _call(sim, "sim_review_mtgo_log", log_text=text, player="nobody")
+    assert "unknown player 'nobody'" in bad["error"]
+    from magic_cards_model_api.sim.manager import MAX_LOG_CHARS
+
+    big = _call(sim, "sim_review_mtgo_log", log_text="x" * (MAX_LOG_CHARS + 1), player="A")
+    assert "too large" in big["error"]

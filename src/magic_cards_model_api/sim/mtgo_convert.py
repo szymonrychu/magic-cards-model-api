@@ -351,7 +351,7 @@ class _Converter:
         effects = activated_effects(oracle)
         if len(effects) <= 1:
             return None
-        logged = _LOGGED_ABILITY.search(_text(e))
+        logged = _LOGGED_ABILITY.search(line_text(e))
         wanted = _plain(logged["text"]) if logged else ""
         hits = [i for i, fx in enumerate(effects) if wanted and _plain(fx) in wanted or
                 wanted and wanted in _plain(fx)]  # fmt: skip
@@ -518,7 +518,7 @@ class _Converter:
         else:
             self.steps.append(
                 {
-                    "note": f"line {e.line_no}: {_text(e)} (not replayed: the engine does this"
+                    "note": f"line {e.line_no}: {line_text(e)} (not replayed: the engine does this"
                     " itself, or the log hides it)"
                 }
             )
@@ -529,13 +529,17 @@ def _cast_zone(e: Event) -> str:
     return "graveyard" if "from the graveyard" in e.raw else "hand"
 
 
-def _text(e: Event) -> str:
+def line_text(e: Event) -> str:
     """The event's line(s) as plain text: no markup, timestamps or card brackets."""
+    return plain_line(e.raw) or e.kind
+
+
+def plain_line(raw: str) -> str:
+    """Log line(s) as plain text, physical lines joined with " / "."""
     parts = (
-        _BRACKETS.sub(r"\1", _TIMESTAMP.sub("", strip_markup(p))).strip()
-        for p in e.raw.splitlines()
+        _BRACKETS.sub(r"\1", _TIMESTAMP.sub("", strip_markup(p))).strip() for p in raw.splitlines()
     )
-    return " / ".join(parts) or e.kind
+    return " / ".join(parts)
 
 
 def require_two_players(players: list[str]) -> None:
