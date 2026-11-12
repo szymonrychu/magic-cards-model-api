@@ -1,0 +1,51 @@
+@PBrightwater rolled a 6.
+@Pkessig_wolf rolled a 1.
+@P@Pkessig_wolf joined the game.
+@P@PBrightwater joined the game.
+@PBrightwater chooses to play first.
+@PBrightwater begins the game with seven cards in hand.
+@Pkessig_wolf begins the game with seven cards in hand.
+@PTurn 1: Brightwater
+@PBrightwater skips their draw step.
+@PBrightwater plays @[Forest@:128340,601:@].
+@PBrightwater casts @[Llanowar Elves@:100410,602:@].
+@PTurn 1: kessig_wolf
+@Pkessig_wolf plays @[Plains@:128332,604:@].
+@Pkessig_wolf casts @[Thraben Inspector@:62200,605:@].
+@Pkessig_wolf puts triggered ability from @[Thraben Inspector@:62200,605:@] onto the stack (When Thraben Inspector enters the battlefield, investigate.).
+@Pkessig_wolf's @[Thraben Inspector@:62200,605:@] creates a Clue token.
+@PTurn 2: Brightwater
+@PBrightwater plays @[Forest@:128340,608:@].
+@PBrightwater casts @[Tarmogoyf@:53688,609:@].
+@Pkessig_wolf is being attacked by @[Llanowar Elves@:100410,602:@].
+@PTurn 2: kessig_wolf
+@Pkessig_wolf plays @[Plains@:128332,612:@].
+@Pkessig_wolf casts @[Adanto Vanguard@:62236,613:@].
+@PTurn 3: Brightwater
+@PBrightwater plays @[Forest@:128340,616:@].
+@PBrightwater casts @[Scavenging Ooze@:98542,617:@].
+@Pkessig_wolf is being attacked by @[Tarmogoyf@:53688,609:@] and @[Llanowar Elves@:100410,602:@].
+@P@[Thraben Inspector@:62200,605:@] blocks @[Llanowar Elves@:100410,602:@].
+@P@[Adanto Vanguard@:62236,613:@] blocks @[Tarmogoyf@:53688,609:@].
+@Pkessig_wolf activates an ability of @[Adanto Vanguard@:62236,613:@] ( Adanto Vanguard gains indestructible until end of turn.).
+@PTurn 3: kessig_wolf
+@Pkessig_wolf plays @[Plains@:128332,620:@].
+@Pkessig_wolf casts @[Swords to Plowshares@:126086,621:@] targeting @[Tarmogoyf@:53688,609:@].
+@PBrightwater is being attacked by @[Adanto Vanguard@:62236,613:@].
+@PTurn 4: Brightwater
+@PBrightwater plays @[Forest@:128340,624:@].
+@PBrightwater casts @[Thragtusk@:46890,625:@].
+@PBrightwater puts triggered ability from @[Thragtusk@:46890,625:@] onto the stack (When Thragtusk enters the battlefield, you gain 5 life.).
+@PBrightwater activates an ability of @[Scavenging Ooze@:98542,617:@] targeting @[Llanowar Elves@:100410,628:@] ( Exile target card from a graveyard. If it was a creature card, put a +1/+1 counter on Scavenging ...).
+@Pkessig_wolf is being attacked by @[Scavenging Ooze@:98542,617:@].
+@PTurn 4: kessig_wolf
+@Pkessig_wolf casts @[Path to Exile@:126088,630:@] targeting @[Thragtusk@:46890,625:@].
+@PBrightwater puts triggered ability from @[Thragtusk@:46890,625:@] onto the stack (When Thragtusk leaves the battlefield, create a 3/3 green Beast creature token.).
+@PBrightwater's @[Thragtusk@:46890,625:@] creates a Beast token.
+@Pkessig_wolf activates an ability of @[Clue@:68630,606:@] token ( Draw a card.).
+@Pkessig_wolf draws a card with @[Clue@:68630,606:@] token's ability.
+@Pkessig_wolf casts @[Brave the Elements@:62218,634:@].
+@PTurn 5: Brightwater
+@Pkessig_wolf is being attacked by @[Scavenging Ooze@:98542,617:@].
+@P@[Adanto Vanguard@:62236,613:@] blocks @[Scavenging Ooze@:98542,617:@].
+@Pkessig_wolf has conceded from the game.

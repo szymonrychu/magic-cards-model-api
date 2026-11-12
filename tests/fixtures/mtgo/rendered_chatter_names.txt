@@ -1,0 +1,90 @@
+== Game 1 (912345678) ==
+[Time] 1794434258
+[20:00:00] PDBot has started watching.
+[20:00:00] Old Man Hemlock joined the game.
+[League] Izzet Tempo by old man hemlock (100001) vs Rakdos Midrange by dara o'brien jr (100002)
+[20:00:01] [CHAT] PDBot: [sD] Good luck in your League match!
+[20:00:05] Dara O'Brien Jr joined the game.
+[20:00:09] Old Man Hemlock chooses to play first.
+[20:00:12] Old Man Hemlock begins the game with seven cards in hand.
+[20:00:15] Dara O'Brien Jr begins the game with seven cards in hand.
+[20:00:15] Turn 1: Old Man Hemlock
+[20:00:15] Old Man Hemlock skips their draw step.
+[20:00:18] Old Man Hemlock plays [Island].
+[20:00:20] [CHAT] Old Man Hemlock: gl hf
+[20:00:22] Turn 1: Dara O'Brien Jr
+[20:00:22] Dara O'Brien Jr draws a card.
+[20:00:25] Dara O'Brien Jr plays [Blood Crypt].
+[20:00:27] Dara O'Brien Jr casts [Burst Lightning] targeting Old Man Hemlock.
+[20:00:31] Turn 2: Old Man Hemlock
+[20:00:31] Old Man Hemlock draws a card.
+[20:00:34] Old Man Hemlock plays [Steam Vents].
+[20:00:36] Old Man Hemlock casts [Opt].
+[20:00:38] Old Man Hemlock scrys 1 (0 top, 1 bottom).
+[20:00:38] Old Man Hemlock draws a card with [Opt].
+[20:00:41] Turn 2: Dara O'Brien Jr
+[20:00:41] Dara O'Brien Jr draws a card.
+[20:00:44] Dara O'Brien Jr plays [Mountain].
+[20:00:46] Dara O'Brien Jr casts [Kitesail Freebooter].
+[20:00:49] Old Man Hemlock counters [Kitesail Freebooter] with [Counterspell].
+[20:00:52] [CHAT] Dara O'Brien Jr: rude
+[20:00:58] Turn 3: Old Man Hemlock
+[20:00:58] Old Man Hemlock draws a card.
+[20:01:02] Old Man Hemlock plays [Island].
+[20:01:05] Old Man Hemlock casts [Stonecoil Serpent]. (X is 2).
+[20:01:11] Turn 3: Dara O'Brien Jr
+[20:01:11] Dara O'Brien Jr draws a card.
+[20:01:14] Dara O'Brien Jr plays [Swamp].
+[20:01:17] Dara O'Brien Jr casts [Bloodtithe Harvester].
+[20:01:18] Dara O'Brien Jr puts a triggered ability from [Bloodtithe Harvester] onto the stack (When this creature enters, create a Blood token.).
+[20:01:20] Dara O'Brien Jr's [Bloodtithe Harvester] creates a Blood Token.
+[20:01:26] Turn 4: Old Man Hemlock
+[20:01:26] Old Man Hemlock draws a card.
+[20:01:29] Old Man Hemlock plays [Island].
+[20:01:33] Dara O'Brien Jr is being attacked by [Stonecoil Serpent]
+[20:01:36] [Bloodtithe Harvester] blocks [Stonecoil Serpent].
+[20:01:36] 3 damage caused by [Bloodtithe Harvester] to [Stonecoil Serpent] is prevented.
+[20:01:44] Turn 4: Dara O'Brien Jr
+[20:01:44] Dara O'Brien Jr draws a card.
+[20:01:47] Dara O'Brien Jr plays [Swamp].
+[20:01:50] Dara O'Brien Jr casts [Walking Ballista]. (X is 1).
+[20:01:51] Dara O'Brien Jr puts a +1/+1 counter on [Walking Ballista].
+[20:01:55] Illegal attack.
+[20:01:56] Dara O'Brien Jr puts [Goblin Token] onto the battlefield attacking Old Man Hemlock
+[20:01:58] Dara O'Brien Jr removes a +1/+1 counter from [Walking Ballista].
+[20:01:58] Dara O'Brien Jr activates an ability of [Walking Ballista] ( Walking Ballista deals 1 damage to any target.) targeting Old Man Hemlock.
+[20:02:03] [CHAT] Dara O'Brien Jr: missclicked
+[20:02:07] Turn 5: Old Man Hemlock
+[20:02:07] Old Man Hemlock draws a card.
+[20:02:10] Old Man Hemlock plays [Island].
+[20:02:12] Old Man Hemlock casts [Thought Scour] targeting Old Man Hemlock.
+[20:02:14] Old Man Hemlock mills [Island] and [Snapcaster Mage].
+[20:02:14] Old Man Hemlock draws a card with [Thought Scour].
+[20:02:20] Old Man Hemlock exiles [Island], [Snapcaster Mage], [Thought Scour], and [Opt] with with [Murktide Regent].
+[20:02:20] Old Man Hemlock casts [Murktide Regent].
+[20:02:31] Turn 5: Dara O'Brien Jr
+[20:02:31] Dara O'Brien Jr draws a card.
+[20:02:34] Dara O'Brien Jr casts [Lightning Bolt] targeting [Stonecoil Serpent].
+[20:02:37] Old Man Hemlock casts [Fading Hope] targeting [Stonecoil Serpent].
+[20:02:37] Old Man Hemlock returns [Stonecoil Serpent] to its owner's hand with [Fading Hope].
+[20:02:38] Dara O'Brien Jr's [Lightning Bolt] is removed from the stack because it has no legal targets.
+[20:02:45] Dara O'Brien Jr sacrifices [Blood Token].
+[20:02:45] Dara O'Brien Jr discards [Swamp].
+[20:02:45] Dara O'Brien Jr draws a card with [Blood Token]'s ability.
+[20:02:51] Spectator Sam has started watching.
+[20:02:58] Turn 6: Old Man Hemlock
+[20:02:58] Old Man Hemlock draws a card.
+[20:03:00] Old Man Hemlock casts [Consider].
+[20:03:01] Old Man Hemlock puts [Island] into their graveyard.
+[20:03:01] Old Man Hemlock draws a card with [Consider].
+[20:03:04] Old Man Hemlock casts [Aether Channeler].
+[20:03:06] Old Man Hemlock puts a triggered ability from [Aether Channeler] onto the stack (When this creature enters, choose one
+ ** Create a 1/1 white Bird creature token with flying.
+ ...) choosing "Return another target nonland permanent to its owner's hand." targeting [Goblin Token].
+[20:03:09] Old Man Hemlock returns [Goblin Token] to its owner's hand with [Aether Channeler]'s ability.
+[20:03:03] Dara O'Brien Jr is being attacked by [Murktide Regent]
+[20:03:15] Dara O'Brien Jr has conceded from the game.
+[20:03:15] Old Man Hemlock wins the game.
+[20:03:15] Dara O'Brien Jr loses the game.
+[20:03:15] Dara O'Brien Jr has lost connection to the game.
+Game 1 Completed.

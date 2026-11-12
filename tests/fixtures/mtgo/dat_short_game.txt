@@ -1,0 +1,30 @@
+@Priver_kite rolled a 5.
+@Pstone_owl rolled a 3.
+@P@Pstone_owl joined the game.
+@P@Priver_kite joined the game.
+@Priver_kite chooses to play first.
+@Priver_kite begins the game with seven cards in hand.
+@Pstone_owl mulligans to six cards.
+@Pstone_owl puts a card on the bottom of their library and begins the game with six cards in hand.
+@PTurn 1: river_kite
+@Priver_kite skips their draw step.
+@Priver_kite plays @[Mountain@:129800,601:@].
+@Priver_kite casts @[Monastery Swiftspear@:126282,602:@].
+@PTurn 1: stone_owl
+@Pstone_owl plays @[Swamp@:129782,604:@].
+@Pstone_owl casts @[Thoughtseize@:100512,605:@] targeting river_kite.
+@Priver_kite discards @[Lightning Bolt@:129792,560:@].
+@Priver_kite reveals their hand to @[Thoughtseize@:100512,605:@], containing @[Mountain@:129800,561:@], @[Goblin Guide@:126254,562:@], and @[Lava Spike@:126416,563:@].
+@PTurn 2: river_kite
+@Priver_kite plays @[Mountain@:129800,561:@].
+@Priver_kite casts @[Lava Spike@:126416,563:@] targeting stone_owl.
+@Priver_kite puts triggered ability from @[Monastery Swiftspear@:126282,602:@] onto the stack (Prowess @i(Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn.)@i).
+@Pstone_owl is being attacked by @[Monastery Swiftspear@:126282,602:@].
+@PTurn 2: stone_owl
+@Pstone_owl plays @[Swamp@:129782,610:@].
+@Pstone_owl casts @[Fatal Push@:125378,611:@] targeting @[Monastery Swiftspear@:126282,602:@].
+@PTurn 3: river_kite
+@Priver_kite plays @[Mountain@:129800,614:@].
+@Priver_kite casts @[Goblin Guide@:126254,562:@].
+@Pstone_owl is being attacked by @[Goblin Guide@:126254,562:@].
+@Pstone_owl has conceded from the game.
