@@ -62,6 +62,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 
 NO_MAPPING = "no mapping for this line"
+TOO_LONG = "line too long"
+MAX_LINE = 2000  # chars of one folded entry; longer ones are never matched
 LATER_GAME = "later game in the same log; import one game at a time"
 
 KINDS = (
@@ -92,10 +94,10 @@ class Unmapped:
     reason: str
 
 
-_CARD_MARKUP = re.compile(r"@\[(.+?)@:.*?:@\]")
+_CARD_MARKUP = re.compile(r"@\[([^@]+)@:[^@]*:@\]")
 _BRACKET = re.compile(r"\[([^\[\]]+)\]")
 _TIMESTAMP = re.compile(r"^\[\d{1,2}:\d{2}:\d{2}\] ?")
-_RAW_DAT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\xff]")
+_RAW_DAT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _QUOTED = re.compile(r'"[^"]*"')
 _TARGETING = re.compile(r" targeting (.+?)\.?\s*$")
 _X_IS = re.compile(r"\(X is (\d+)\)")
@@ -144,20 +146,26 @@ _CAST_END = (
 )
 
 
-def strip_markup(line: str) -> str:
-    """Remove "@P", turn "@[Name@:...:@]" into "Name", drop "@i", drop non-printable bytes."""
+def strip_markup(line: str, keep_unicode: bool = False) -> str:
+    """Remove "@P", turn "@[Name@:...:@]" into "Name", drop "@i", drop non-printable bytes.
+
+    Raw .dat text is latin1 with framing bytes, so there only 0x20-0x7e survive; in decoded
+    text (keep_unicode) every printable character stays, so "Lim-Dul" with a circumflex parses.
+    """
     text = _CARD_MARKUP.sub(r"\1", line).replace("@P", "").replace("@i", "")
+    if keep_unicode:
+        return "".join(ch for ch in text if ch.isprintable())
     return "".join(ch for ch in text if " " <= ch <= "~")
 
 
 def _plain(line: str) -> str:
     """Matching form: no timestamp, no markup, no brackets around cards."""
-    return _BRACKET.sub(r"\1", strip_markup(_TIMESTAMP.sub("", line.strip())))
+    return _BRACKET.sub(r"\1", _headerish(line))
 
 
 def _headerish(line: str) -> str:
     """Like _plain but keeps brackets, so "[CHAT]" and "[League]" stay recognisable."""
-    return strip_markup(_TIMESTAMP.sub("", line.strip()))
+    return strip_markup(_TIMESTAMP.sub("", line.strip()), keep_unicode=True)
 
 
 def _spans(line: str) -> list[str]:
@@ -292,15 +300,24 @@ def _items(text: str | None, known: list[str]) -> list[str]:
     return _split_bare(text.rstrip("."))
 
 
-def _discover_players(plain_lines: list[str], dat_mode: bool) -> list[str]:
+def _non_game_reason(text: str) -> str | None:
+    """Why `text` (bracket-keeping form) is never a game action, or None."""
+    for rx, why in _NON_GAME:
+        if rx.search(text):
+            return why
+    return None
+
+
+def _discover_players(candidates: list[tuple[str, str]], dat_mode: bool) -> list[str]:
+    """Players from (folded text, head line text) pairs of lines that can be game actions."""
     players: list[str] = []
-    for text in plain_lines:
+    for text, _ in candidates:
         for rx in _PLAYER_SOURCES:
             m = rx.match(text)
             if m and m["n"] not in players:
                 players.append(m["n"])
-    for text in plain_lines:
-        m = _TURN_HEADER.match(text)
+    for _, head in candidates:
+        m = _TURN_HEADER.match(head)
         if not m:
             continue
         name = m["n"]
@@ -339,37 +356,45 @@ def parse_mtgo_log(text: str) -> tuple[list[str], list[Event], list[Unmapped]]:
         else:
             entries.append((no, [(no, ln)]))
 
-    players = _discover_players(
-        [_plain(" ".join(s.strip() for _, s in group)) for _, group in entries], dat_mode
-    )
+    joined_all = [" ".join(s.strip() for _, s in group) for _, group in entries]
+    candidates = [
+        (_plain(joined), _plain(group[0][1]))
+        for (_, group), joined in zip(entries, joined_all, strict=True)
+        if len(joined) <= MAX_LINE
+        and not _LATER_HEADER.match(_headerish(joined))
+        and _non_game_reason(_headerish(joined)) is None
+    ]
+    players = _discover_players(candidates, dat_mode)
     table = _table(tuple(players))
     events: list[Event] = []
     unmapped: list[Unmapped] = []
     turn = 0
     later = False
+    ended = False  # a concede, lose or win was seen: the next join or roll starts a new game
 
-    for head_no, group in entries:
+    for (head_no, group), joined in zip(entries, joined_all, strict=True):
         head_line = group[0][1]
-        joined = " ".join(s.strip() for _, s in group)
-        folded = _plain(joined)
         event, reason = None, NO_MAPPING
         if dat_mode and head_no == 1 and not head_line.startswith("@P"):
             reason = "dat header"
+        elif len(joined) > MAX_LINE:
+            reason = TOO_LONG
         elif later:
             reason = LATER_GAME
         elif _LATER_HEADER.match(_headerish(joined)):
             later, reason = True, LATER_GAME
         else:
-            for rx, why in _NON_GAME:
-                if rx.search(_headerish(joined)):
-                    reason = why
-                    break
+            why = _non_game_reason(_headerish(joined))
+            if why:
+                reason = why
             else:
-                event = _classify(head_no, group, folded, table, players, turn)
-                if event and event.kind in ("join", "roll") and turn > 0:
+                event = _classify(head_no, group, _plain(joined), table, players, turn)
+                if event and event.kind in ("join", "roll") and ended:
                     later, event, reason = True, None, LATER_GAME
                 elif event and event.kind == "turn":
                     turn += 1
+                elif event and event.kind in ("concede", "lose", "win"):
+                    ended = True
         if event:
             events.append(event)
         else:

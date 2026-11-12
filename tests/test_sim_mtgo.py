@@ -397,3 +397,85 @@ def test_fixture_event_shapes():
     assert events[-1].kind == "concede"
     kinds = {e.kind for e in events}
     assert {"mulligan", "keep", "skip_draw", "reveal", "discard", "trigger", "attack"} <= kinds
+
+
+def test_non_ascii_names_parse_as_normal_text():
+    text = (
+        "A joined the game.\nB\u00e9 joined the game.\nTurn 1: A\n"
+        "A casts [Lim-D\u00fbl's Vault] targeting B\u00e9.\n"
+        "B\u00e9 casts [S\u00e9ance].\n"
+    )
+    players, events, unmapped = parse_mtgo_log(text)
+    assert not unmapped
+    assert players == ["A", "B\u00e9"]
+    assert [e.kind for e in events] == ["join", "join", "turn", "cast", "cast"]
+    assert events[3].card == "Lim-D\u00fbl's Vault"
+    assert events[3].targets == ["B\u00e9"]
+    assert events[4].card == "S\u00e9ance"
+
+
+def test_overlong_line_is_unmapped_with_a_reason():
+    long = "A casts " + "x" * 5000 + "."
+    _, events, unmapped = parse_mtgo_log(PREFIX + long + "\nA draws a card.\n")
+    assert [e.kind for e in events][-1] == "draw"
+    assert [u.reason for u in unmapped] == ["line too long"]
+    assert unmapped[0].line_no == 4
+
+
+def test_pathological_lines_parse_fast():
+    import time
+
+    n = 20000
+    bad = [
+        "A exiles x with " * n,
+        "A returns x to its owner's hand with " * n,
+        "A puts a x counters on " * n,
+        "A removes a x counters from " * n,
+        "A 's x creates a y " * n,
+        "x blocks " * n,
+        "A casts @[" * n,
+        "@[" * n,
+        "[" * n,
+        "A puts x onto the battlefield attacking " * n,
+        "A counters x with " * n,
+        " c" * n,
+    ]
+    start = time.perf_counter()
+    for line in bad:
+        _, events, unmapped = parse_mtgo_log(PREFIX + line + "\n")
+        assert len(events) + len(unmapped) == 4
+    assert time.perf_counter() - start < 1.0
+
+
+def test_pathological_lines_below_the_cap_are_cheap():
+    import time
+
+    n = 80
+    bad = ["A exiles x with " * n, "x blocks " * n, "A puts a x counters on " * n, "@[" * 600]
+    start = time.perf_counter()
+    for line in bad:
+        assert len(line) < mtgo.MAX_LINE
+        parse_mtgo_log(PREFIX + line + "\n")
+    assert time.perf_counter() - start < 0.5
+
+
+def test_chat_lines_do_not_add_players():
+    text = PREFIX + "[CHAT] Z: hi joined the game.\nA draws a card.\n"
+    players, events, unmapped = parse_mtgo_log(text)
+    assert players == ["A", "B"]
+    assert [u.reason for u in unmapped] == ["chat line"]
+    assert events[-1].kind == "draw"
+
+
+def test_rejoin_mid_game_does_not_start_a_later_game():
+    text = PREFIX + "A draws a card.\nB joined the game.\nB draws a card.\nA plays [Island].\n"
+    _, events, unmapped = parse_mtgo_log(text)
+    assert not unmapped
+    assert [e.kind for e in events][-4:] == ["draw", "join", "draw", "land"]
+
+
+def test_join_after_game_end_starts_a_later_game():
+    text = PREFIX + "B has conceded from the game.\nA joined the game.\nA draws a card.\n"
+    _, events, unmapped = parse_mtgo_log(text)
+    assert events[-1].kind == "concede"
+    assert [u.reason for u in unmapped] == [mtgo.LATER_GAME] * 2
