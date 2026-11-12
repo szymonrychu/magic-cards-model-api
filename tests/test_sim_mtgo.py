@@ -788,3 +788,167 @@ def test_later_zone_moves_reuse_the_known_copy():
         ("pass", "B", {}),
         ("pass", "A", {}),
     ]
+
+
+# -- S6 final-review fix wave -------------------------------------------------
+
+LILIANA_TEXT = (
+    "+1: Each player discards a card.\n"
+    "-2: Target player sacrifices a creature.\n"
+    "-6: Separate all permanents target player controls into two piles."
+)
+ACTIVATE_LOG = PREFIX + (
+    "A casts [Liliana of the Veil].\n"
+    "Turn 2: B\n"
+    "Turn 3: A\n"
+    "A activates an ability of [Liliana of the Veil] targeting B ( {text}).\n"
+)
+
+
+def _activate(text: str, oracle: dict[str, str | None], log_text: str | None = None):
+    from magic_cards_model_api.sim.mtgo_convert import to_scenario
+
+    log = ACTIVATE_LOG.replace("{text}", text) if log_text is None else log_text
+    players, events, _ = parse_mtgo_log(log)
+    types = {"Liliana of the Veil": "Legendary Planeswalker - Liliana", "Ox": "Creature - Ox"}
+    return to_scenario(players, events, 3, type_lines=types, oracle_texts=oracle)
+
+
+def test_activation_sends_the_index_of_the_matching_ability():
+    scenario, unmapped = _activate(
+        "Target player sacrifices a creature.", {"Liliana of the Veil": LILIANA_TEXT}
+    )
+    assert unmapped == []
+    acts = [a for a in _acts(scenario) if a[0] == "activate"]
+    assert acts == [
+        (
+            "activate",
+            "A",
+            {"card_id": "@A_Liliana_of_the_Veil_1", "targets": ["B"], "ability_index": 1},
+        )
+    ]
+
+
+def test_activation_without_a_unique_match_on_a_multi_ability_card_is_unmapped():
+    for logged in ("Something else entirely.", ""):
+        scenario, unmapped = _activate(logged, {"Liliana of the Veil": LILIANA_TEXT})
+        assert not [a for a in _acts(scenario) if a[0] == "activate"]
+        assert len(unmapped) == 1 and "which ability" in unmapped[0].reason
+        assert "Liliana of the Veil" in unmapped[0].reason
+    # no oracle text in time: the number of abilities is unknown, so it is not guessed either
+    scenario, unmapped = _activate("Target player sacrifices a creature.", {})
+    assert len(unmapped) == 1 and "which ability" in unmapped[0].reason
+
+
+def test_single_ability_card_keeps_working_without_a_match():
+    scenario, unmapped = _activate(
+        "Whatever the log says.", {"Liliana of the Veil": "{T}: Draw a card."}
+    )
+    assert unmapped == []
+    (act,) = [a for a in _acts(scenario) if a[0] == "activate"]
+    assert "ability_index" not in act[2]
+
+
+def test_engine_ability_order_matches_the_oracle_order_for_liliana(sandbox_game):
+    from magic_cards_model_api.sim.mtgo_convert import activated_effects
+
+    spec = {
+        "players": [{"name": "alice"}, {"name": "bob"}],
+        "active_player": "alice",
+        "step": "precombat_main",
+        "cards": [
+            {
+                "card": "Liliana of the Veil",
+                "player": "alice",
+                "zone": "battlefield",
+                "label": "lili",
+            }  # fmt: skip
+        ],
+    }
+    sandbox_game.create(spec)
+    view = sandbox_game.state(full=True)["state"]
+    card = next(c for c in view["battlefield"] if c["name"] == "Liliana of the Veil")
+    engine = [a["text"] for a in card["abilities"]]
+    effects = activated_effects(LILIANA_TEXT)
+    assert len(engine) == len(effects) == 3
+    assert "sacrifices a creature" in engine[1] and "sacrifices a creature" in effects[1]
+
+
+def test_graveyard_cast_uses_the_graveyard_copy():
+    from magic_cards_model_api.sim.mtgo_convert import to_scenario
+
+    text = PREFIX + (
+        "A casts [Lightning Bolt] targeting B.\n"
+        "Turn 2: B\n"
+        "Turn 3: A\n"
+        "A casts [Lightning Bolt] from the graveyard targeting B.\n"
+    )
+    players, events, _ = parse_mtgo_log(text)
+    scenario, unmapped = to_scenario(players, events, 3, type_lines={"Lightning Bolt": "Instant"})
+    assert unmapped == []
+    bolts = [c for c in scenario["setup"]["cards"] if c["card"] == "Lightning Bolt"]
+    assert [(c["zone"], c["label"]) for c in bolts] == [("graveyard", "A_Lightning_Bolt_1")]
+    assert _acts(scenario)[0] == (
+        "cast",
+        "A",
+        {"card_id": "@A_Lightning_Bolt_1", "targets": ["B"], "from_zone": "graveyard"},
+    )
+
+
+def test_graveyard_cast_of_an_unknown_copy_is_created_in_the_graveyard_not_the_hand():
+    from magic_cards_model_api.sim.mtgo_convert import to_scenario
+
+    text = PREFIX + "Turn 2: B\nTurn 3: A\nA casts [Lightning Bolt] from the graveyard.\n"
+    players, events, _ = parse_mtgo_log(text)
+    scenario, _ = to_scenario(players, events, 3, type_lines={"Lightning Bolt": "Instant"})
+    assert _zone(scenario, "A", "graveyard") == ["Lightning Bolt"]
+    assert _zone(scenario, "A", "hand") == []
+
+
+def test_a_log_without_exactly_two_players_is_refused():
+    from magic_cards_model_api.sim.mtgo_convert import import_log, to_scenario
+
+    text = (
+        "A joined the game.\nB joined the game.\nC joined the game.\nTurn 1: A\nA plays [Forest].\n"
+    )
+    players, events, _ = parse_mtgo_log(text)
+    assert len(players) == 3
+    with pytest.raises(ValueError, match="exactly 2 players"):
+        to_scenario(players, events, None, type_lines={"Forest": "Basic Land - Forest"})
+    with pytest.raises(ValueError, match="exactly 2 players"):
+        import_log(text, None, lookup_timeout_s=1.0)
+
+
+def test_unsupported_text_and_list_are_capped():
+    from magic_cards_model_api.sim.mtgo_convert import (
+        MAX_UNSUPPORTED,
+        MAX_UNSUPPORTED_TEXT,
+        import_log,
+    )
+
+    chatter = "".join(f"A: {'x' * 500} {i}\n" for i in range(MAX_UNSUPPORTED + 20))
+    out, _ = import_log(PREFIX + chatter, None, lookup_timeout_s=1.0)
+    assert len(out["unsupported"]) == MAX_UNSUPPORTED
+    assert out["unsupported_omitted"] == 20
+    assert all(len(u["text"]) <= MAX_UNSUPPORTED_TEXT for u in out["unsupported"])
+    assert f"{MAX_UNSUPPORTED + 20} unsupported" in out["summary"]
+
+
+def test_oversize_log_text_is_refused_before_any_worker(sim):
+    from magic_cards_model_api.sim.manager import MAX_LOG_CHARS
+
+    out = _call(sim, "sim_import_mtgo_log", log_text="x" * (MAX_LOG_CHARS + 1))
+    assert "error" in out and "too large" in out["error"]
+    assert str(MAX_LOG_CHARS) in out["error"]
+
+
+@pytest.fixture
+def sandbox_game():
+    from fastapi.testclient import TestClient
+
+    from magic_cards_model_api.main import app
+    from magic_cards_model_api.sim.sandbox_game import SandboxGame
+
+    game = SandboxGame(TestClient(app))
+    yield game
+    game.close()

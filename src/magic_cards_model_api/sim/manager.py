@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 _SHUTTING_DOWN = "The sandbox service is shutting down. Try again later."
 _SCRIPT_MARGIN_S = 3.0  # scenario budget = call cap left after start-up, minus this
 _BUSY = "The sandbox is busy with another call; retry in a few seconds."
+MAX_LOG_CHARS = 1_000_000  # of log_text for sim_import_mtgo_log; parsing costs ~1.4 s per MB
 _WHAT = {"run_script": "Running the script", "import_mtgo": "Importing the log"}
 
 
@@ -91,6 +92,11 @@ class SandboxManager:
     def import_mtgo(self, text: str, upto_turn: int | None, run: bool) -> dict[str, Any]:
         """Convert an MTGO log in a fresh worker (it needs card data); `run` also plays the
         scenario there. Takes the slot for the call and always ends the sandbox."""
+        if len(text) > MAX_LOG_CHARS:
+            raise SimRefused(
+                f"log_text is too large ({len(text)} characters; the limit is {MAX_LOG_CHARS})."
+                " Paste the one game you want, or the turns around it."
+            )
 
         def args(remaining: float) -> dict[str, Any]:
             budget = _budget(remaining)
@@ -311,7 +317,11 @@ class BatchManager:
         if seed is None:
             seed = random.SystemRandom().randrange(2**31)
         batch = _Batch(
-            f"batch-{uuid.uuid4().hex}", (label_a, label_b), (text_a, text_b), games, seed,
+            f"batch-{uuid.uuid4().hex}",
+            (label_a, label_b),
+            (text_a, text_b),
+            games,
+            seed,
             self._clock(),
         )
         with self._lock:
@@ -401,8 +411,14 @@ class BatchManager:
             rows, support = list(batch.rows), batch.support
         end = finished if finished is not None else self._clock()
         out = aggregate(
-            batch.labels[0], batch.labels[1], rows, batch.requested, status,
-            batch.texts[0], batch.texts[1], support,
+            batch.labels[0],
+            batch.labels[1],
+            rows,
+            batch.requested,
+            status,
+            batch.texts[0],
+            batch.texts[1],
+            support,
         )
         out.update(
             batch_id=batch.batch_id, seed=batch.seed, elapsed_s=round(end - batch.created, 1)

@@ -20,7 +20,7 @@ Pure code apart from `lookup_type_lines`, which reads card data through `scryfal
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Any
@@ -34,6 +34,8 @@ BOARD_CAVEATS = (
     " the board and life with the setup before trusting the result."
 )
 LOOKUP_WORKERS = 4
+MAX_UNSUPPORTED = 200  # entries of `unsupported` echoed per answer; the rest are only counted
+MAX_UNSUPPORTED_TEXT = 300  # chars of one unsupported line echoed back
 _PERMANENT_TYPES = ("Artifact", "Battle", "Creature", "Enchantment", "Land", "Planeswalker")
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_.:-]+")
 _LABEL_CHARS = re.compile(r"[^A-Za-z0-9]+")
@@ -70,17 +72,42 @@ def _type_line(name: str) -> str | None:
     return _front_type_line(scryfall.fetch_card(name), name)
 
 
+def _front_oracle_text(raw: dict[str, Any], name: str) -> str | None:
+    """The oracle text of `name`'s front face, or None when it is another card."""
+    if _front_type_line(raw, name) is None:
+        return None
+    faces = raw.get("card_faces") or []
+    return raw.get("oracle_text") or (faces[0].get("oracle_text") if faces else "") or ""
+
+
+def _oracle_text(name: str) -> str | None:
+    from magic_cards_model_api import scryfall
+
+    return _front_oracle_text(scryfall.fetch_card(name), name)
+
+
 def lookup_type_lines(names: Iterable[str], timeout_s: float) -> dict[str, str | None]:
     """Type line per card name through `scryfall.fetch_card`, never waiting over `timeout_s`.
 
     A name that fails, names another card, or is still being fetched at the deadline maps to
     None; the converter then reports the events that need it as Unmapped.
     """
+    return _lookup(_type_line, names, timeout_s)
+
+
+def lookup_oracle_texts(names: Iterable[str], timeout_s: float) -> dict[str, str | None]:
+    """Front-face oracle text per card name, with the same bounds as `lookup_type_lines`."""
+    return _lookup(_oracle_text, names, timeout_s)
+
+
+def _lookup(
+    fetch: Callable[[str], str | None], names: Iterable[str], timeout_s: float
+) -> dict[str, str | None]:
     wanted = sorted(set(names))
     if not wanted:
         return {}
     pool = ThreadPoolExecutor(max_workers=LOOKUP_WORKERS, thread_name_prefix="mtgo-types")
-    futures = {name: pool.submit(_type_line, name) for name in wanted}
+    futures = {name: pool.submit(fetch, name) for name in wanted}
     wait(futures.values(), timeout=max(0.0, timeout_s))
     pool.shutdown(wait=False, cancel_futures=True)
     return {name: _result(future) for name, future in futures.items()}
@@ -90,6 +117,32 @@ def _result(future: Future[str | None]) -> str | None:
     if not future.done() or future.cancelled() or future.exception() is not None:
         return None
     return future.result()
+
+
+_REMINDER = re.compile(r"\([^()]*\)")
+_QUOTED = re.compile(r'"[^"]*"')
+_ABILITY_LINE = re.compile(r"^(?P<cost>[^:]+):\s+(?P<effect>.+)$")
+_LOGGED_ABILITY = re.compile(r" \((?P<text>[^()]*)\)\.?$")
+_WORDS = re.compile(r"[^a-z0-9]+")
+
+
+def _plain(text: str) -> str:
+    return _WORDS.sub(" ", text.lower().replace("\u2212", "-")).strip()
+
+
+def activated_effects(oracle_text: str) -> list[str]:
+    """The effect text of each activated ability in an oracle text, in printed order.
+
+    An activated ability is a line `<cost>: <effect>` (loyalty abilities `+1:` and `-2:`
+    included); reminder text and quoted granted abilities are not abilities of the card.
+    """
+    effects = []
+    for line in oracle_text.splitlines():
+        line = _QUOTED.sub("", _REMINDER.sub("", line)).strip()
+        hit = _ABILITY_LINE.match(line)
+        if hit:
+            effects.append(hit["effect"])
+    return effects
 
 
 def is_permanent(type_line: str) -> bool:
@@ -184,10 +237,11 @@ class _Converter:
     names: dict[str, str]
     types: Mapping[str, str | None]
     tokens: set[str]
+    oracle: Mapping[str, str | None] = field(default_factory=dict)
     board: _Board = field(default_factory=_Board)
     active: str = ""
     steps: list[dict[str, Any]] = field(default_factory=list)
-    hand_adds: list[_Obj] = field(default_factory=list)
+    setup_adds: list[tuple[_Obj, str]] = field(default_factory=list)  # (object, setup zone)
     _block_step: dict[str, Any] | None = None
 
     # -- helpers ------------------------------------------------------------
@@ -245,13 +299,38 @@ class _Converter:
         self.act("pass", first)
         self.act("pass", self.opponent(first))
 
-    def hand_card(self, name: str, owner: str) -> _Obj:
-        """The owner's copy in hand, put there by the setup when the board holds none."""
-        obj = self.board.take(name, owner, ("hand",))
+    def source_card(self, name: str, owner: str, zone: str = "hand") -> _Obj:
+        """The owner's copy in `zone`, put there by the setup when the board holds none."""
+        obj = self.board.take(name, owner, (zone,))
         if obj is None:
-            obj = self.board.new(name, owner, "hand")
-            self.hand_adds.append(obj)
+            obj = self.board.new(name, owner, zone)
+            self.setup_adds.append((obj, zone))
         return obj
+
+    def activated_index(self, e: Event) -> int | None:
+        """The ability number to send for an activation: None keeps the default (0) for a
+        card with at most one activated ability; a multi-ability card must match the logged
+        ability text to one ability, else the line is Unmapped."""
+        assert e.card is not None
+        card = e.card
+        oracle = self.oracle.get(card)
+        if oracle is None:
+            raise _Problem(
+                f"cannot tell which ability of {card!r} was activated: no card data found (in time)"
+            )
+        effects = activated_effects(oracle)
+        if len(effects) <= 1:
+            return None
+        logged = _LOGGED_ABILITY.search(_text(e))
+        wanted = _plain(logged["text"]) if logged else ""
+        hits = [i for i, fx in enumerate(effects) if wanted and _plain(fx) in wanted or
+                wanted and wanted in _plain(fx)]  # fmt: skip
+        if len(hits) != 1:
+            raise _Problem(
+                f"cannot tell which ability of {card!r} was activated: the logged text"
+                f" {wanted!r} does not match exactly one of its {len(effects)} abilities"
+            )
+        return hits[0]
 
     # -- before the turn: zone bookkeeping ------------------------------------
 
@@ -270,8 +349,8 @@ class _Converter:
             sources = ("hand",)  # a copy the board already knows there, e.g. a bounced one
             if kind == "put_onto_battlefield":
                 sources = ("hand", "graveyard", "exile")
-            elif kind == "cast" and "from the graveyard" in e.raw:
-                sources = ("hand", "graveyard")
+            elif kind == "cast":
+                sources = (_cast_zone(e),)
             obj = self.board.take(e.card, player, sources)
             obj = obj or self.board.new(e.card, player, zone)
             obj.zone = zone
@@ -337,7 +416,7 @@ class _Converter:
             player = self.player(e.player)
             self.type_of(e.card)
             assert e.card is not None
-            obj = self.hand_card(e.card, player)
+            obj = self.source_card(e.card, player)
             self.act("play_land", player, {"card_id": f"@{obj.label}"})
             obj.zone = "battlefield"
         elif kind == "cast":
@@ -345,8 +424,11 @@ class _Converter:
             type_line = self.type_of(e.card)
             assert e.card is not None
             targets = [self.target(t) for t in e.targets]
-            obj = self.hand_card(e.card, player)
+            zone = _cast_zone(e)
+            obj = self.source_card(e.card, player, zone)
             body: dict[str, Any] = {"card_id": f"@{obj.label}"}
+            if zone != "hand":
+                body["from_zone"] = zone
             if targets:
                 body["targets"] = targets
             if e.amount is not None:
@@ -364,6 +446,9 @@ class _Converter:
             body = {"card_id": f"@{source.label}"}
             if targets:
                 body["targets"] = targets
+            index = self.activated_index(e)
+            if index is not None:
+                body["ability_index"] = index
             if player != self.active:
                 self.act("pass", self.active)
             self.act("activate", player, body)
@@ -402,6 +487,11 @@ class _Converter:
             )
 
 
+def _cast_zone(e: Event) -> str:
+    """The zone a cast takes its card from: the graveyard for flashback-style casts."""
+    return "graveyard" if "from the graveyard" in e.raw else "hand"
+
+
 def _text(e: Event) -> str:
     """The event's line(s) as plain text: no markup, timestamps or card brackets."""
     parts = (
@@ -409,6 +499,15 @@ def _text(e: Event) -> str:
         for p in e.raw.splitlines()
     )
     return " / ".join(parts) or e.kind
+
+
+def require_two_players(players: list[str]) -> None:
+    """MTGO logs are 1v1 here: the sandbox seats exactly the two players."""
+    if len(players) != 2:
+        shown = ", ".join(repr(p) for p in players[:6]) + (", ..." if len(players) > 6 else "")
+        raise ValueError(
+            f"the import needs a log of exactly 2 players, found {len(players)}: {shown}"
+        )
 
 
 def turn_players(events: list[Event]) -> dict[int, str]:
@@ -436,19 +535,26 @@ def to_scenario(
     upto_turn: int | None,
     *,
     type_lines: Mapping[str, str | None] | None = None,
+    oracle_texts: Mapping[str, str | None] | None = None,
     lookup_timeout_s: float = 10.0,
 ) -> tuple[dict[str, Any], list[Unmapped]]:
     """The scenario for the board at the start of `upto_turn` plus that turn's actions.
 
-    `type_lines` maps card names to type lines; when omitted they are looked up
-    (`lookup_type_lines`, bounded by `lookup_timeout_s`). Raises ValueError for a turn the
-    log does not have.
+    `type_lines` maps card names to type lines and `oracle_texts` the names of activated
+    cards to oracle text; when omitted they are looked up (bounded by `lookup_timeout_s`).
+    Raises ValueError for a turn the log does not have or a log without exactly 2 players.
     """
     turn = target_turn(events, upto_turn)
+    require_two_players(players)
     names = safe_player_names(players)
     if type_lines is None:
         type_lines = lookup_type_lines(card_names(players, events), lookup_timeout_s)
-    conv = _Converter(names=names, types=type_lines, tokens=token_names(events))
+    if oracle_texts is None:
+        activated = {e.card for e in events if e.kind == "activate" and e.card}
+        oracle_texts = lookup_oracle_texts(activated, lookup_timeout_s)
+    conv = _Converter(
+        names=names, types=type_lines, tokens=token_names(events), oracle=oracle_texts
+    )
     conv.active = names[turn_players(events)[turn]]
     unmapped: list[Unmapped] = []
 
@@ -471,7 +577,7 @@ def to_scenario(
         except _Problem as exc:
             del conv.steps[mark:]
             unmapped.append(Unmapped(e.line_no, e.raw, str(exc)))
-    start += [(o, "hand", {}) for o in conv.hand_adds]
+    start += [(o, zone, {}) for o, zone in conv.setup_adds]
 
     cards = []
     for obj, zone, counters in start:
@@ -509,8 +615,11 @@ def import_log(
     whose data resolved (the names a support check may read without blocking)."""
     players, events, parse_unmapped = parse_mtgo_log(text)
     turn = target_turn(events, upto_turn)
+    require_two_players(players)
     types = lookup_type_lines(card_names(players, events), lookup_timeout_s)
-    scenario, convert_unmapped = to_scenario(players, events, turn, type_lines=types)
+    scenario, convert_unmapped = to_scenario(
+        players, events, turn, type_lines=types, lookup_timeout_s=lookup_timeout_s
+    )
     unsupported = sorted(parse_unmapped + convert_unmapped, key=lambda u: u.line_no)
     considered = sum(1 for e in events if e.turn is None or e.turn <= turn)
     mapped = considered - len(convert_unmapped)
@@ -520,9 +629,12 @@ def import_log(
         "turns_seen": max(turn_players(events)),
         "scenario": scenario,
         "unsupported": [
-            {"line_no": u.line_no, "text": u.text, "reason": u.reason} for u in unsupported
+            {"line_no": u.line_no, "text": u.text[:MAX_UNSUPPORTED_TEXT], "reason": u.reason}
+            for u in unsupported[:MAX_UNSUPPORTED]
         ],
         "summary": f"{mapped} lines mapped, {len(unsupported)} unsupported",
         "board_caveats": BOARD_CAVEATS,
     }
+    if len(unsupported) > MAX_UNSUPPORTED:
+        answer["unsupported_omitted"] = len(unsupported) - MAX_UNSUPPORTED
     return answer, {n for n in used if types.get(n)}
