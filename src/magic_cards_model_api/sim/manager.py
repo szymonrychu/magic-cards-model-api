@@ -19,12 +19,18 @@ from typing import Any
 from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.handle import WorkerDied, WorkerError, WorkerHandle, WorkerTimeout
 from magic_cards_model_api.sim.match import aggregate, deck_support, resolve_deck
+from magic_cards_model_api.sim.redact import support_unknown
 
 logger = logging.getLogger(__name__)
 
 _SHUTTING_DOWN = "The sandbox service is shutting down. Try again later."
 _SCRIPT_MARGIN_S = 3.0  # scenario budget = call cap left after start-up, minus this
 _BUSY = "The sandbox is busy with another call; retry in a few seconds."
+
+
+def _budget(remaining: float) -> float:
+    """Seconds of work a worker op may use: the call cap left, minus room for the reply."""
+    return max(0.5, remaining - _SCRIPT_MARGIN_S)
 
 
 class SimRefused(Exception):
@@ -35,6 +41,7 @@ class SimRefused(Exception):
 class _Sandbox:
     handle: WorkerHandle
     last_used: float
+    mode: str = "board"
     busy: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -54,14 +61,29 @@ class SandboxManager:
         self._starting = 0  # slots reserved by a `new` still in flight
 
     def new(self, spec: dict[str, Any], *, mode: str = "board") -> dict[str, Any]:
-        return self._open("new", lambda _remaining: spec, mode=mode)
+        """Open a sandbox. `mode="play"`: `spec` is deck_me, deck_opponent, seed, me_first."""
+        if mode != "play":
+            return self._open("new", lambda _remaining: spec, mode=mode)
+        try:
+            texts = {
+                "deck_me": resolve_deck(spec["deck_me"])[1],
+                "deck_opponent": resolve_deck(spec["deck_opponent"])[1],
+            }
+        except ValueError as exc:
+            raise SimRefused(str(exc)) from exc
+        rest = {k: v for k, v in spec.items() if k not in texts}
+        return self._open(
+            "play_new",
+            lambda remaining: {**rest, **texts, "budget_s": _budget(remaining)},
+            mode=mode,
+        )
 
     def run_script(self, script: dict[str, Any], keep: bool = False) -> dict[str, Any]:
         """Take the slot, run a scenario in a fresh worker, end the sandbox unless `keep`."""
 
         def args(remaining: float) -> dict[str, Any]:
             # Leave room under the call cap for the reply; start-up already used part of it.
-            return {"script": script, "budget_s": max(0.5, remaining - _SCRIPT_MARGIN_S)}
+            return {"script": script, "budget_s": _budget(remaining)}
 
         return self._open("run_script", args, mode="board", keep=keep)
 
@@ -96,7 +118,7 @@ class SandboxManager:
                 if self._closed:
                     raise SimRefused(_SHUTTING_DOWN)
                 if keep:
-                    self._sandboxes[sandbox_id] = _Sandbox(handle, self._clock())
+                    self._sandboxes[sandbox_id] = _Sandbox(handle, self._clock(), mode)
         except WorkerError as exc:
             self._abort_new(handle)
             raise SimRefused(str(exc)) from exc
@@ -156,6 +178,8 @@ class SandboxManager:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise SimRefused(_BUSY)
+            if sandbox.mode == "play" and op in ("state", "act"):
+                args = {**args, "budget_s": _budget(remaining)}  # the opponent's turn time
             return sandbox.handle.request(op, args, remaining)
         except WorkerError as exc:
             return {"allowed": False, "reason": str(exc)}
@@ -217,21 +241,6 @@ _SUPPORT_JOIN_S = 10.0  # most a finished batch waits for its card lookups
 _START_TIMEOUT_S = 60.0  # worker start-up for a batch; not bound by the tool call cap
 
 
-_SUPPORT_NOTES = {
-    "pending": "Card support could not be checked yet.",
-    "unavailable": "Card support could not be checked at all.",
-}
-
-
-def _support_unknown(state: str) -> dict[str, Any]:
-    return {
-        "support_status": state,
-        "support_warnings": [],
-        "support_note": _SUPPORT_NOTES[state]
-        + " Do not treat these results as reliable until support is checked.",
-    }
-
-
 @dataclass
 class _Batch:
     batch_id: str
@@ -248,7 +257,7 @@ class _Batch:
     finished: float | None = None  # manager clock
     # Computed once by `_run` (it may look cards up over the network); polls only read it.
     # Until it is ready the placeholder says so: an empty list alone reads as "all supported".
-    support: dict[str, Any] = field(default_factory=lambda: _support_unknown("pending"))
+    support: dict[str, Any] = field(default_factory=lambda: support_unknown("pending"))
     done: threading.Event = field(default_factory=threading.Event)
 
 
@@ -363,7 +372,7 @@ class BatchManager:
         except Exception as exc:  # noqa: BLE001
             # Type only: the message may carry card text or a request URL.
             logger.warning("sim support lookup failed (%s)", type(exc).__name__)
-            batch.support = _support_unknown("unavailable")
+            batch.support = support_unknown("unavailable")
 
     def _refuse_if_closed(self) -> None:
         with self._lock:

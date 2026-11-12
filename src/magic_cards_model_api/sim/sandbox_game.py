@@ -7,7 +7,9 @@ never leave this object: every answer is redacted, and cards are addressed by la
 
 from __future__ import annotations
 
+import random
 import re
+import time
 from functools import lru_cache
 from typing import Any, Literal
 from urllib.parse import quote
@@ -15,7 +17,7 @@ from urllib.parse import quote
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from magic_cards_model_api.schemas import GameStateView
-from magic_cards_model_api.sim.redact import redact, support_block
+from magic_cards_model_api.sim.redact import redact, support_block, support_unknown
 
 Credential = Literal["seat", "admin"]
 ActionRoute = tuple[str, str, Credential]
@@ -65,6 +67,11 @@ ACTIONS: dict[str, ActionRoute] = {
     "mana_pool": ("PUT", f"{_G}/players/{{username}}/mana-pool", "admin"),
     "set_step": ("PUT", f"{_G}/step", "admin"),
 }
+
+PLAY_REFUSAL = "setup and engine actions are disabled in play mode"
+OPPONENT_STILL_PLAYING = "opponent still playing; call sim_state to continue"
+NO_PROGRESS = "no progress: neither seat can move; consider concede"
+_MAX_OPPONENT_MOVES = 40  # headlines kept per answer; a whole baseline turn is well below it
 
 _VIEW_FIELDS = frozenset(GameStateView.model_fields)
 _ZONES = ("hands", "graveyards")
@@ -181,7 +188,7 @@ def compact_state(view: dict[str, Any], labels: dict[str, str] | None = None) ->
             "exile": cards([c for c in view["exile"] if c.get("owner", c["controller"]) == name]),
             "library_count": p["library_count"],
         }
-    return {
+    out: dict[str, Any] = {
         "turn": view["turn_number"],
         "step": view["step"],
         "active_player": view["active_player"],
@@ -193,6 +200,9 @@ def compact_state(view: dict[str, Any], labels: dict[str, str] | None = None) ->
         "combat": view["combat"],
         "pending_decision": view["pending_decision"],
     }
+    if view.get("pregame"):
+        out["pregame"] = view["pregame"]
+    return out
 
 
 def _all_card_names(view: dict[str, Any]) -> set[str]:
@@ -218,6 +228,16 @@ class SandboxGame:
         self._admin_key = ""
         self._seat_uids: dict[str, str] = {}
         self._labels: dict[str, str] = {}
+        # Play mode: the chat holds one seat, the baseline plays the other.
+        self._me: str | None = None
+        self._opponent: Any = None  # BaselineSeat
+        self._seam: Any = None  # HttpSeatApiClient over the same client
+        self._log_mark = 0  # last log seq the chat has been told about
+        self._deck_names: set[str] = set()
+
+    @property
+    def play_mode(self) -> bool:
+        return self._me is not None
 
     # -- plumbing ---------------------------------------------------------
 
@@ -257,7 +277,13 @@ class SandboxGame:
             raise RuntimeError("no sandbox game: call create first")
 
     def _view(self) -> dict[str, Any]:
-        return self._admin("GET", _G)
+        """The admin board, or in play mode the chat seat's own view (opponent hand hidden)."""
+        if self._me is None:
+            return self._admin("GET", _G)
+        status, data = self._request("GET", _G, uid=self._seat_uids[self._me])
+        if status >= 400:
+            raise ValueError(f"GET {_G} failed ({status}): {_error_text(data)}")
+        return data
 
     # -- public -----------------------------------------------------------
 
@@ -331,6 +357,8 @@ class SandboxGame:
         self._require_game()
         if player not in self._seat_uids:
             return self.answer(_refusal(f"unknown player {player}"))
+        if self._me is not None and player != self._me:
+            return self.answer(_refusal(f"play mode: you play {self._me}; only your own actions"))
         status, data = self._request(
             "GET", f"{_G}/legal-actions", uid=self._seat_uids[player], query={"player": player}
         )
@@ -350,6 +378,16 @@ class SandboxGame:
         if route is None:
             return self.answer(_refusal(f"unknown action {action}; known: {', '.join(ACTIONS)}"))
         method, template, credential = route
+        if self._me is not None:
+            if credential == "admin" and action != "advance":
+                return self.answer(_refusal(PLAY_REFUSAL))
+            # `advance` is admin-routed but is the seat's own way out of untap and cleanup
+            # (the baseline uses it too), so it stays allowed under the chat's own seat uid.
+            # Every other admin route (setup, engine actions) would cheat and is refused.
+            credential = "seat"
+            player = player or self._me
+            if player != self._me:
+                return self.answer(_refusal(f"play mode: you play {self._me}, not {player}"))
         if dry_run and template not in _dry_run_templates():
             return self.answer(_refusal(f"dry_run is not supported for {action}"))
         try:
@@ -382,24 +420,156 @@ class SandboxGame:
             return self.answer(_refusal(_error_text(data)))
         if isinstance(data, dict) and "players" in data and "battlefield" in data:
             data = {k: v for k, v in data.items() if k not in _VIEW_FIELDS}
+        if self._me is not None:
+            self._log_mark = self._read_log(self._log_mark)[1]  # the chat's own entries
         return self.answer(data)
 
     def close(self) -> None:
         if self._game_id is None:
             return
-        self._request("DELETE", _G, query={"key": self._admin_key})
+        if self._me is not None:
+            from magic_cards_model_api.store import store
+
+            store.delete(self._game_id)
+        else:
+            self._request("DELETE", _G, query={"key": self._admin_key})
         self._game_id = None
         self._labels = {}
+        self._me = None
+        self._opponent = None
+        self._seam = None
+        self._seat_uids = {}
+        self._deck_names = set()
 
     def answer(self, result: Any = None, view: dict[str, Any] | None = None) -> dict[str, Any]:
         self._require_game()
         view = view if view is not None else self._view()
+        state = compact_state(view, self._labels)
+        if self._me is not None:
+            counts = {p["username"]: p["hand_count"] for p in view["players"]}
+            for name, board in state["players"].items():
+                if name != self._me:  # the seat view holds no opponent hand: show the count
+                    del board["hand"]
+                    board["hand_count"] = counts[name]
         return {
             "result": redact(result, self._secrets()),
-            "state": redact(compact_state(view, self._labels), self._secrets()),
+            "state": redact(state, self._secrets()),
             "labels": dict(self._labels),
-            **support_block(_all_card_names(view)),
+            **self._support(view),
         }
+
+    def _support(self, view: dict[str, Any]) -> dict[str, Any]:
+        names = _all_card_names(view)
+        if self._me is None:
+            return support_block(names)
+        try:  # both whole decks, not only the cards in sight: the chat chose them
+            return {"support_status": "ok", **support_block(names | self._deck_names)}
+        except Exception:  # noqa: BLE001 - advisory; say so instead of failing the move
+            return support_unknown("unavailable")
+
+    # -- play mode ----------------------------------------------------------
+
+    def create_play(
+        self,
+        deck_me: str,
+        deck_opponent: str,
+        me: str = "you",
+        opponent: str = "baseline",
+        seed: int | None = None,
+        me_first: bool | None = None,
+    ) -> dict[str, Any]:
+        """Start a game from two decklists: the chat plays `me`, the baseline plays `opponent`.
+
+        The boot is `serve._boot_from_spec`'s, from text. `me_first=None` lets the seed pick
+        the seat order.
+        """
+        from magic_cards_model_api.baseline_seat import BaselineSeat
+        from magic_cards_model_api.decks import parse_decklist
+        from magic_cards_model_api.sim.match import boot_baseline_game
+
+        _check_name(me, "me")
+        _check_name(opponent, "opponent")
+        if me == opponent:
+            raise ValueError("me and opponent must be different names")
+        self.close()
+        if seed is None:
+            seed = random.SystemRandom().randrange(2**31)
+        if me_first is None:
+            me_first = random.Random(seed).random() < 0.5
+        lists = [(me, deck_me), (opponent, deck_opponent)]
+        if not me_first:
+            lists.reverse()
+        self._game_id, self._seat_uids, self._seam = boot_baseline_game(self._http, lists, seed)
+        self._me = me
+        uid = self._seat_uids[opponent]
+        self._opponent = BaselineSeat(self._seam, self._game_id, opponent, uid)
+        self._log_mark = 0
+        self._deck_names = set()
+        for text in (deck_me, deck_opponent):
+            main, side = parse_decklist(text)
+            self._deck_names.update(card for _, card in main + side)
+        first = me if me_first else opponent
+        return self.answer({"you": me, "opponent": opponent, "seed": seed, "first_player": first})
+
+    def _read_log(self, since: int) -> tuple[list[dict[str, Any]], int]:
+        status, data = self._request(
+            "GET", f"{_G}/log", uid=self._seat_uids[self._me or ""], query={"since": since}
+        )
+        if status >= 400:
+            return [], since
+        entries = [e for e in data.get("log", []) if isinstance(e, dict)]
+        return entries, int(data.get("last_seq", since))
+
+    def play_status(self) -> dict[str, Any]:
+        """`your_turn` and `game_over` from the chat seat's view."""
+        from magic_cards_model_api.baseline_seat import has_turn
+
+        self._require_game()
+        state = self._view()
+        over = bool(state.get("winner") or state.get("drawn"))
+        return {"your_turn": not over and has_turn(state, self._me or ""), "game_over": over}
+
+    def advance_opponent(self, budget_s: float) -> dict[str, Any]:
+        """Let the baseline play until it is the chat's move, the game ends or time runs out."""
+        from magic_cards_model_api.baseline_seat import STALL_ROUNDS, has_turn
+        from magic_cards_model_api.seatkit import log_headline
+
+        self._require_game()
+        deadline = time.monotonic() + budget_s
+        note: str | None = None
+        idle = 0
+        while True:
+            state = self._seam.game_state(self._game_id, self._seat_uids[self._me])
+            if state.get("winner") or state.get("drawn") or has_turn(state, self._me):
+                break
+            if time.monotonic() >= deadline:
+                note = OPPONENT_STILL_PLAYING
+                break
+            self._opponent.step()
+            idle = 0 if self._opponent.advanced else idle + 1
+            if idle >= STALL_ROUNDS:
+                note = NO_PROGRESS
+                break
+        entries, self._log_mark = self._read_log(self._log_mark)
+        moves = [log_headline(e) for e in entries]
+        out: dict[str, Any] = {**self.play_status(), "opponent_moves": moves[-_MAX_OPPONENT_MOVES:]}
+        if len(moves) > _MAX_OPPONENT_MOVES:
+            out["opponent_moves_omitted"] = len(moves) - _MAX_OPPONENT_MOVES
+        if note:
+            out["note"] = note
+        return out
+
+    def settle_play(
+        self, out: dict[str, Any], budget_s: float, advance: bool = True
+    ) -> dict[str, Any]:
+        """`out` after the opponent played on, plus `your_turn`, `opponent_moves`, `game_over`.
+
+        Skipped (flags only) when the chat's action was refused: nothing moved.
+        """
+        if not advance:
+            return {**out, **self.play_status(), "opponent_moves": []}
+        adv = self.advance_opponent(budget_s)
+        return {**self.answer(out["result"]), **adv}
 
 
 def _error_text(data: Any) -> str:
