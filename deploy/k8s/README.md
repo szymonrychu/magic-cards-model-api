@@ -393,28 +393,64 @@ is guarded by its own bearer token, not `OPS_TOKEN`. `50-deployment.yaml` reads 
 `optional: true`: without it the endpoint answers 503 (disabled). The agents need the same value
 through an agents-vault entry (write-only: the value goes in once and is never shown again).
 
-Create and rotate use the same idempotent block. Generate the value once into a shell variable,
-hand it to the Secret and to the vault, then drop it, without ever echoing it:
+Generate the value once into a shell variable, hand it to the Secret and to the vault, then
+drop it, without ever echoing it. The vault web API (`vault serve-web`, no bearer, source
+allowlist; loopback is allowed by default) is reached through a port-forward to the
+`agents-vault-web` Service in namespace `agents` (Service port 80, pod port 8000); the public
+`/vault` host sits behind browser SSO and is not meant for scripts. Routes and bodies are the
+agents-vault README "Web API": `POST /vault/v1/entries` with
+`{name, description, labels, envs: [{env, protected, value}]}`, and
+`PUT /vault/v1/entries/{entry_id}/value` with `{values: {ENV: value}}` (a protected value is at
+least 8 characters).
+
+First creation (Secret, then the vault entry; the returned `id` goes into the preset `env`
+reference):
 
 ```sh
 MTG_SIM_TOKEN="$(openssl rand -hex 32)"
 kubectl -n mtg-engine create secret generic mtg-sim \
   --from-literal=MTG_SIM_TOKEN="$MTG_SIM_TOKEN" \
   --dry-run=client -o yaml | kubectl apply -f -
-# first time: create the vault entry with the same variable through the agents-vault web
-# listener (the entry id goes into the preset `env`, see the README).
-# rotation: write the new value to the existing entry,
-# PUT /vault/v1/entries/{entry_id}/value with body {"values": {"MTG_SIM_TOKEN": <the variable>}}
-unset MTG_SIM_TOKEN
+kubectl -n agents port-forward svc/agents-vault-web 8000:80 >/dev/null &
+PF=$!
+sleep 3
+jq -n --arg v "$MTG_SIM_TOKEN" '{name: "mtg-sim", description: "Bearer token of the mtg-stack /sim/mcp endpoint", labels: [], envs: [{env: "MTG_SIM_TOKEN", protected: true, value: $v}]}' \
+  | curl -sS -X POST -H 'Content-Type: application/json' --data-binary @- \
+      http://127.0.0.1:8000/vault/v1/entries | jq '{id, name, version}'
+kill "$PF"
+unset MTG_SIM_TOKEN PF
+kubectl -n mtg-engine rollout restart deployment/mtg-stack
 ```
 
-**Rotating.** Run the block above again, then restart the Deployment: env from a Secret is read
-at pod start, not live-reloaded (`kubectl -n mtg-engine rollout restart deployment/mtg-stack`).
-The vault write creates a new entry version, but agents-vault pins the version at session create
-and a repeat pin returns the first pins, and `session_patch` cannot change vault refs. So
-existing sessions keep the old token until they are discarded and recreated. From the moment the
-Secret changes and the Deployment restarts until a session is recreated, that session gets 401
-from `/sim/mcp`. Never paste the value into a chat, a commit or a log.
+Rotation (same Secret apply, then a new vault version on the existing entry; set `ENTRY_ID` to
+the entry id, a uuid):
+
+```sh
+MTG_SIM_TOKEN="$(openssl rand -hex 32)"
+kubectl -n mtg-engine create secret generic mtg-sim \
+  --from-literal=MTG_SIM_TOKEN="$MTG_SIM_TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n agents port-forward svc/agents-vault-web 8000:80 >/dev/null &
+PF=$!
+sleep 3
+jq -n --arg v "$MTG_SIM_TOKEN" '{values: {MTG_SIM_TOKEN: $v}}' \
+  | curl -sS -X PUT -H 'Content-Type: application/json' --data-binary @- \
+      "http://127.0.0.1:8000/vault/v1/entries/$ENTRY_ID/value" | jq '{id, name, version}'
+kill "$PF"
+unset MTG_SIM_TOKEN PF
+kubectl -n mtg-engine rollout restart deployment/mtg-stack
+```
+
+**Restart after every Secret change, first creation included.** `50-deployment.yaml` reads the
+Secret as env with `optional: true`, and env from a Secret is read at pod start, not
+live-reloaded. A pod that started before the Secret existed keeps the endpoint disabled (503)
+until `kubectl -n mtg-engine rollout restart deployment/mtg-stack`.
+
+**Rotating.** The vault write creates a new entry version, but agents-vault pins the version at
+session create and a repeat pin returns the first pins, and `session_patch` cannot change vault
+refs. So existing sessions keep the old token until they are discarded and recreated. From the
+moment the Secret changes and the Deployment restarts until a session is recreated, that session
+gets 401 from `/sim/mcp`. Never paste the value into a chat, a commit or a log.
 
 ## Login: oauth2-proxy and Keycloak
 
