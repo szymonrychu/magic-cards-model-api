@@ -357,7 +357,7 @@ def test_sharing_the_cheap_spells_and_the_mana_is_low_not_none(corpus):
 # says.
 
 #: `deck file stem -> (confidence, resolved archetype slug or None)`. Every
-#: one of the 31 bundled lists appears; `none` means the corpus has no guide
+#: one of the 34 bundled lists appears; `none` means the corpus has no guide
 #: whose signature this list satisfies, which for two thirds of them is the
 #: correct answer rather than a miss.
 BUNDLED_EXPECTATIONS = {
@@ -393,12 +393,15 @@ BUNDLED_EXPECTATIONS = {
     "hollow_one": (NONE, None),
     "instant_reanimator": (CONFIDENT, "instant-reanimator"),
     "izzet_prowess": (CONFIDENT, "prowess"),
+    "jeskai_energy": (CONFIDENT, "boros-aggro"),
     "jeskai_aggro": (CONFIDENT, "boros-aggro"),
     "living_end": (CONFIDENT, "living-end"),
+    "reanimator": (LOW, "instant-reanimator"),
     "pinnacle_affinity": (CONFIDENT, "affinity"),
     "ruby_storm": (NONE, None),
     "scepter_chant": (NONE, None),
     "storm": (NONE, None),
+    "ur_cutter_prowess": (CONFIDENT, "prowess"),
     "ur_aggro": (CONFIDENT, "prowess"),
     "urzatron": (CONFIDENT, "prison-tron"),
     "uw_control": (NONE, None),
