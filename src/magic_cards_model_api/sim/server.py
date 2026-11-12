@@ -239,11 +239,13 @@ def build_sim_server(
 
     @server.tool(
         description=(
-            "Poll a Claude-seat match; answers at once. status: running (turn, step and each"
-            " seat's state: pending while the cluster is full, then thinking or idle), done"
+            "Poll a Claude-seat match; answers at once. status: starting (booting the game and"
+            " creating the seat Jobs), running (turn, step and each seat's state: pending while"
+            " the cluster is full, then thinking or idle), done"
             " (result: winner a or b or null, drawn, turns, the last 10 log lines), deadline"
             f" (stopped at the {limits.claude_deadline_s:g} s seat deadline, result so far) or"
-            " failed (error). On done or deadline both seats are stopped and the game deleted;"
+            " failed (error: the start failed, or both seats are gone or in error). On done,"
+            " deadline or failed both seats are stopped and the game deleted;"
             f" the result is kept {limits.result_ttl_s:g} s. Relay support_warnings to the"
             " user; support_status 'pending' or 'unavailable' means card support is unchecked."
         )
