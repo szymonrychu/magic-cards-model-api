@@ -5,11 +5,20 @@ The game is booted in this process (`decks_api.boot_decklist_game`), both seats 
 answers at once: the boot (card resolution may be cold) and the two seat Job creates run in a
 background thread, so the tool call stays under the call cap; `status` says `starting` until
 then and `failed` if they fail. The lobby's pregame backstop (`ai_pregame`) watches the game, and
-a match whose seats are both gone or in error fails at once instead of holding the slot. A match
-is bounded by `claude_deadline_s` (the seat Job deadline), not by the engine-only batch cap. On
-game over, at the deadline or on failure the seats are stopped and the game is deleted; the
-result is kept `result_ttl_s`. Seat uids are credentials: no answer carries one (or the Job
-names that embed their prefix) and nothing here logs one.
+a match whose seats are both gone or in error fails on the next reaper pass instead of holding
+the slot. A match is bounded by `claude_deadline_s` (the seat Job deadline), not by the
+engine-only batch cap. On game over, at the deadline or on failure the seats are stopped and the
+game is deleted; the result is kept `result_ttl_s`. A start that has not finished
+`START_DEADLINE_S` after the call fails and frees the slot; a start thread that finishes later
+cleans up what it created.
+
+`status` answers from cached match state only: no cluster read, no lock held across I/O, so a
+poll stays under MTG_SIM_CALL_TIMEOUT_S whatever the cluster does. The reaper (every 30 s) reads
+the seats and the game and applies the transitions; it claims a transition under the match lock
+and runs the cleanup I/O after releasing it.
+
+Seat uids are credentials: no answer carries one (or the Job names that embed their prefix) and
+nothing here logs one.
 """
 
 from __future__ import annotations
@@ -41,6 +50,9 @@ _PREFIX_LEN = 8  # k8s Job names carry `uid[:8]` (`k8s_seats.job_name`)
 #: `K8sSeats.status` states in which nothing plays the seat any more.
 _DEAD_STATES = frozenset({"gone", "error"})
 _ACTIVE = ("starting", "running")
+#: A start (boot with cold card resolution, two seat Job creates) that has not finished after
+#: this long is failed by the reaper and its slot freed; a healthy start takes seconds.
+START_DEADLINE_S = 300.0
 
 
 @dataclass
@@ -53,6 +65,7 @@ class _ClaudeMatch:
     uids: dict[str, str] = field(default_factory=dict)  # seat -> uid; a credential, never answered
     status: str = "starting"
     seat_states: dict[str, str] = field(default_factory=dict)
+    checked: float | None = None  # clock time of the reaper's last seat and game read
     booting: threading.Thread | None = None
     turn: int | None = None
     step: str | None = None
@@ -132,14 +145,17 @@ class ClaudeMatchManager:
             logger.warning("claude sim match start failed (%s)", type(exc).__name__)
             error = f"The match could not be started ({type(exc).__name__}). Try again."
         with match.lock:
-            if error is None:
+            claimed = match.status == "starting"
+            if claimed and error is None:
                 match.status = "running"
                 return
-            if match.game_id is not None:
-                self._cleanup(match)
-            match.error = error
-            match.status = "failed"
-            match.finished = self._clock()
+            if claimed:
+                match.error = error
+                match.status = "failed"
+                match.finished = self._clock()
+        # Failed here, or already failed by the start deadline while this thread hung: clean
+        # up everything it created (it may have created more after the deadline cleanup).
+        self._cleanup(match)
 
     def _boot(self, match: _ClaudeMatch, texts: tuple[str, str]) -> str | None:
         """The slow half of `start`. Returns `None` once both seats run, else the reason."""
@@ -166,12 +182,16 @@ class ClaudeMatchManager:
             return f"The match could not be booted ({type(exc).__name__}). Try again."
         with match.lock:
             match.game_id, match.uids = game_id, by_name
+            if match.status != "starting":
+                return "abandoned"  # the start deadline passed; the caller cleans up
         # The bot seats' pregame backstop, as the lobby route starts it: a seat that exits
         # after its keep would otherwise leave the game in PREGAME_ACTIONS until the deadline.
         ai_pregame.start(game_id, list(_SEATS))
         agent = AgentSettings.default(os.environ)
         api_base = ai_seat.api_service_url()
         for seat in _SEATS:
+            if match.status != "starting":
+                return "abandoned"
             try:
                 started = ai_seat.registry.start(
                     uid=by_name[seat],
@@ -196,7 +216,7 @@ class ClaudeMatchManager:
         match.support = checked_support(text_a, text_b)
 
     def status(self, match_id: str) -> dict[str, Any]:
-        """The match now; never waits. Applies the game-over, deadline and dead-seat transitions."""
+        """The match as the reaper last saw it; no cluster I/O, no lock held across I/O."""
         with self._lock:
             match = self._matches.get(match_id)
         if match is None:
@@ -204,57 +224,80 @@ class ClaudeMatchManager:
                 f"No Claude match {match_id}; finished results are kept"
                 f" {self._limits.result_ttl_s:g} s. Start one with sim_match_claude_start."
             )
-        self._advance(match)
         return self._answer(match)
 
     def _advance(self, match: _ClaudeMatch) -> None:
+        """The reaper's pass over one match: read seats and game, apply the transitions.
+
+        All reads and the cleanup run without `match.lock`; the lock only guards the cached
+        fields and the claim of a transition, so `status` never waits on cluster I/O.
+        """
         from magic_cards_model_api.repository import GameUnloadable
         from magic_cards_model_api.store import store
 
         with match.lock:
-            if match.status != "running":
+            start_timed_out = False
+            if match.status == "starting":
+                if self._clock() - match.started < self._start_deadline_s():
+                    return
+                start_timed_out = True
+                match.error = (
+                    f"The match did not finish starting within {self._start_deadline_s():g} s"
+                    " (card resolution or the seat Jobs hung), so it stopped. Try again."
+                )
+                match.status = "failed"
+                match.finished = self._clock()
+            elif match.status != "running":
                 return
-            uids = dict(match.uids)
-        # Read outside the lock: in kubernetes mode each read is a pod read.
+            else:
+                uids, game_id = dict(match.uids), match.game_id
+        if start_timed_out:
+            self._cleanup(match)  # what the start created so far; its thread cleans up the rest
+            return
         states = {seat: _seat_state(uid) for seat, uid in uids.items()}
+        try:
+            game = store.get(game_id)
+        except GameUnloadable:
+            game = None
+        turn = game.turn if game is not None else None
+        status, error = None, None
+        if game is None:
+            status = "failed"
+            error = "The game is gone (ended outside the sim), so the match stopped."
+        elif game.is_over:
+            status = "done"
+        elif self._clock() - match.started >= self._limits.claude_deadline_s:
+            status = "deadline"
+        elif states and all(state in _DEAD_STATES for state in states.values()):
+            status = "failed"
+            error = (
+                "Both seats stopped (gone or error) before the game ended, so the match"
+                " stopped; the result is the game so far."
+            )
+        last_log = self._last_log(game_id) if status is not None and game is not None else []
         with match.lock:
             if match.status != "running":
                 return
-            match.seat_states = states
-            try:
-                game = store.get(match.game_id)
-            except GameUnloadable:
-                game = None
-            if game is None:
-                match.error = "The game is gone (ended outside the sim), so the match stopped."
-                self._finish(match, "failed", None)
+            match.seat_states, match.checked = states, self._clock()
+            if game is not None:
+                match.turn = turn.turn_number if turn is not None else None
+                match.step = str(turn.step) if turn is not None else None
+            if status is None:
                 return
-            turn = game.turn
-            match.turn = turn.turn_number if turn is not None else None
-            match.step = str(turn.step) if turn is not None else None
-            if game.is_over:
-                self._finish(match, "done", game)
-            elif self._clock() - match.started >= self._limits.claude_deadline_s:
-                self._finish(match, "deadline", game)
-            elif states and all(state in _DEAD_STATES for state in states.values()):
-                match.error = (
-                    "Both seats stopped (gone or error) before the game ended, so the match"
-                    " stopped; the result is the game so far."
-                )
-                self._finish(match, "failed", game)
-
-    def _finish(self, match: _ClaudeMatch, status: str, game: Any) -> None:
-        """Capture the result, stop both seats, delete the game (caller holds `match.lock`)."""
-        if game is not None:
-            match.result = {
-                "winner": game.winner if game.winner in _SEATS else None,
-                "drawn": bool(game.drawn),
-                "turns": match.turn,
-                "last_log": self._last_log(match.game_id),
-            }
+            if game is not None:
+                match.result = {
+                    "winner": game.winner if game.winner in _SEATS else None,
+                    "drawn": bool(game.drawn),
+                    "turns": match.turn,
+                    "last_log": last_log,
+                }
+            match.error = error
+            match.status = status
+            match.finished = self._clock()
         self._cleanup(match)
-        match.status = status
-        match.finished = self._clock()
+
+    def _start_deadline_s(self) -> float:
+        return min(START_DEADLINE_S, self._limits.claude_deadline_s)
 
     @staticmethod
     def _last_log(game_id: str) -> list[dict[str, Any]]:
@@ -270,14 +313,17 @@ class ClaudeMatchManager:
 
     @staticmethod
     def _cleanup(match: _ClaudeMatch) -> None:
-        if match.game_id is not None:
-            _stop_and_delete(match.game_id, list(match.uids.values()))
+        """Stop the seats and delete the game; call without `match.lock` (cluster I/O)."""
+        with match.lock:
+            game_id, uids = match.game_id, list(match.uids.values())
+        if game_id is not None:
+            _stop_and_delete(game_id, uids)
 
     def _answer(self, match: _ClaudeMatch) -> dict[str, Any]:
         with match.lock:
             status, turn, step = match.status, match.turn, match.step
             result, error, finished = match.result, match.error, match.finished
-            seat_states = dict(match.seat_states)
+            seat_states, checked = dict(match.seat_states), match.checked
         if status == "starting":
             seats = {seat: {"state": "starting"} for seat in _SEATS}
         elif status == "running":
@@ -299,6 +345,9 @@ class ClaudeMatchManager:
         }
         if status in _ACTIVE:
             out["poll_every_s"] = POLL_EVERY_S
+        if status == "running":
+            # Seat states, turn and step are the reaper's last read (every 30 s).
+            out["checked_s_ago"] = None if checked is None else round(self._clock() - checked, 1)
         if result is not None:
             out["result"] = result
         if error is not None:
@@ -306,8 +355,8 @@ class ClaudeMatchManager:
         return redact(out, match.secrets())
 
     def reap(self) -> list[str]:
-        """Apply the game-over, deadline and dead-seat transitions without a poll, drop old
-        results."""
+        """Refresh each match's seat states, turn and step; apply the start-deadline, game-over,
+        deadline and dead-seat transitions; drop old results. Runs on the reaper thread."""
         with self._lock:
             matches = list(self._matches.values())
         for match in matches:
