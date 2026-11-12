@@ -86,3 +86,32 @@ def test_support_block_notes_silent_cards(monkeypatch: pytest.MonkeyPatch):
         decks.clear_deck_support_cache()
     assert [w["status"] for w in block["support_warnings"]] == ["silent"]
     assert block["support_note"] == SUPPORT_NOTE
+
+
+def test_baseline_is_off_by_default_and_a_flag_turns_it_on():
+    assert SimLimits.from_env({}).baseline_enabled is False
+    assert SimLimits.from_env({"MTG_SIM_BASELINE_ENABLED": "1"}).baseline_enabled is True
+    assert SimLimits.from_env({"MTG_SIM_BASELINE_ENABLED": "false"}).baseline_enabled is False
+    with pytest.raises(ValueError, match="MTG_SIM_BASELINE_ENABLED"):
+        SimLimits.from_env({"MTG_SIM_BASELINE_ENABLED": "maybe"})
+
+
+def test_claude_seat_defaults_and_overrides():
+    lim = SimLimits.from_env({})
+    assert (lim.claude_model, lim.claude_effort) == ("claude-opus-5-5", "low")
+    assert lim.claude_models == (
+        "claude-opus-5-5",
+        "claude-opus-5",
+        "claude-sonnet-5-5",
+        "claude-sonnet-5",
+        "claude-haiku-4-5",
+    )
+    lim = SimLimits.from_env(
+        {
+            "MTG_SIM_CLAUDE_MODEL": "claude-sonnet-5",
+            "MTG_SIM_CLAUDE_EFFORT": "high",
+            "MTG_SIM_CLAUDE_MODELS": "claude-sonnet-5, claude-opus-5",
+        }
+    )
+    assert (lim.claude_model, lim.claude_effort) == ("claude-sonnet-5", "high")
+    assert lim.claude_models == ("claude-sonnet-5", "claude-opus-5")

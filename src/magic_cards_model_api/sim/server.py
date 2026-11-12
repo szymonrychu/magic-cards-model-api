@@ -33,7 +33,6 @@ mtg-sim: throwaway Magic engine sandboxes for studying lines of play.
 Nothing here touches a real game.
 There is one sandbox slot for everyone and it frees after an idle TTL: end yours with sim_end.
 Build a board with sim_new (players, cards, step), then act with sim_act and read with sim_state.
-Or play a game against the baseline opponent with sim_play_new (you hold one seat).
 Or run a whole scripted line with sim_run_script (setup, steps, expectations) in one call.
 Or watch two Claude seats play one real game with sim_match_claude_start (slow: poll it).
 Or turn an MTGO game log into a scenario with sim_import_mtgo_log (and run it with run=True).
@@ -42,6 +41,11 @@ Always relay support_warnings (cards the engine does not fully support) to the u
 any result that depends on them as unreliable.
 A refused call returns {"error": ...} or {"allowed": false, "reason": ...}: read it, never retry
 it blindly, and never loop on a refusal.
+"""
+
+BASELINE_INSTRUCTIONS = """\
+Or play a game against the baseline opponent with sim_play_new (you hold one seat).
+Or run engine-only baseline batches with sim_match (poll sim_match_status).
 """
 
 _SPEC_DOC = (
@@ -76,7 +80,8 @@ def build_sim_server(
     batches = batches or BatchManager(limits)
     claude = claude or ClaudeMatchManager(limits)
     wait_s = max(0.0, limits.call_timeout_s - 5)  # leave room for the answer under the cap
-    server = MCPServer(name="mtg-sim", instructions=INSTRUCTIONS)
+    instructions = INSTRUCTIONS + (BASELINE_INSTRUCTIONS if limits.baseline_enabled else "")
+    server = MCPServer(name="mtg-sim", instructions=instructions)
 
     @server.tool(
         description=(
@@ -167,80 +172,84 @@ def build_sim_server(
     ) -> dict[str, Any]:
         return await _tool(lambda: manager.import_mtgo(log_text, upto_turn, run))
 
-    @server.tool(
-        description=(
-            "Play a batch of engine-only games between two decks, both seats the zero-LLM"
-            " baseline policy, and report win counts with 95% intervals per deck.\n"
-            "deck_a / deck_b: a bundled deck name or the decklist text (multi-line). Decks"
-            f" alternate who goes first. games: 1 to {limits.max_match_games}; seed makes"
-            " the batch repeatable (random when omitted, and reported).\n"
-            "The baseline plays weakly, so win rates are a rough signal about the lists under"
-            " naive play, not about real matchups. Measured: a game takes 85 to 140 s on small"
-            " decks and longer on full 45-card decks (0 of 10 finished in 300 s)."
-            f" A batch has a {limits.match_wall_s:g} s wall-clock cap"
-            " (env MTG_SIM_MATCH_WALL_S; the default 1500 s is about 25 min), so 10 games"
-            " normally finish, but slow decks can still hit the cap: status 'capped' returns"
-            " the partial results (finished_games of requested_games). Expect to poll"
-            " sim_match_status for many minutes.\n"
-            "Answers at once or within the call limit: status 'running' with a batch_id means"
-            " poll sim_match_status(batch_id) every 20 s or so; do not start a second batch,"
-            " only one runs at a time. Relay support_warnings to the user;"
-            " support_status 'pending' or 'unavailable' means card support is unchecked, so do"
-            " not trust the results."
-        )
-    )
-    async def sim_match(
-        deck_a: str, deck_b: str, games: int = 10, seed: int | None = None
-    ) -> dict[str, Any]:
-        def run() -> dict[str, Any]:
-            return batches.status(batches.start(deck_a, deck_b, games, seed), wait_s)
+    if limits.baseline_enabled:  # the engine baseline AI is off as an opponent by default
 
-        return await _tool(run)
-
-    @server.tool()
-    async def sim_match_status(batch_id: str) -> dict[str, Any]:
-        """Poll a sim_match batch: status running, done, capped (partial) or failed, with the
-        win counts of the games finished so far. Waits for news (up to the call timeout minus
-        5 s)."""
-        return await _tool(lambda: batches.status(batch_id, wait_s))
-
-    @server.tool(
-        description=(
-            "Play a game yourself against the engine's baseline policy: you hold one seat, the"
-            " baseline the other. Uses the sandbox slot (and its idle TTL); end it with sim_end.\n"
-            "deck_me / deck_opponent: a bundled deck name or the decklist text (multi-line)."
-            " seed makes the shuffle repeatable (random when omitted, and reported); me_first"
-            " picks the seat order (omitted: the seed decides).\n"
-            "You are the player 'you', the opponent 'baseline'. Read the board with sim_state and"
-            " sim_legal_actions('you'), act with sim_act (player 'you' only; setup and engine"
-            " actions are refused). You see your own hand and only the opponent's hand count."
-            " Start with the mulligan decision: sim_act action 'mulligan', body {\"take\": false}"
-            " keeps the hand.\n"
-            "After every accepted action and every sim_state the baseline plays on until it is"
-            " your move. Answers carry your_turn, game_over and opponent_moves (what the"
-            " opponent did since your last call); a 'note' says the opponent is still playing"
-            " (call sim_state again) or that nobody can move (consider action 'concede')."
-            " A baseline game is slow: expect several calls per turn. Relay support_warnings"
-            " to the user; support_status 'unavailable' means card support is unchecked."
-        )
-    )
-    async def sim_play_new(
-        deck_me: str,
-        deck_opponent: str,
-        seed: int | None = None,
-        me_first: bool | None = None,
-    ) -> dict[str, Any]:
-        return await _tool(
-            lambda: manager.new(
-                {
-                    "deck_me": deck_me,
-                    "deck_opponent": deck_opponent,
-                    "seed": seed,
-                    "me_first": me_first,
-                },
-                mode="play",
+        @server.tool(
+            description=(
+                "Play a batch of engine-only games between two decks, both seats the zero-LLM"
+                " baseline policy, and report win counts with 95% intervals per deck.\n"
+                "deck_a / deck_b: a bundled deck name or the decklist text (multi-line). Decks"
+                f" alternate who goes first. games: 1 to {limits.max_match_games}; seed makes"
+                " the batch repeatable (random when omitted, and reported).\n"
+                "The baseline plays weakly, so win rates are a rough signal about the lists under"
+                " naive play, not about real matchups. Measured: a game takes 85 to 140 s on small"
+                " decks and longer on full 45-card decks (0 of 10 finished in 300 s)."
+                f" A batch has a {limits.match_wall_s:g} s wall-clock cap"
+                " (env MTG_SIM_MATCH_WALL_S; the default 1500 s is about 25 min), so 10 games"
+                " normally finish, but slow decks can still hit the cap: status 'capped' returns"
+                " the partial results (finished_games of requested_games). Expect to poll"
+                " sim_match_status for many minutes.\n"
+                "Answers at once or within the call limit: status 'running' with a batch_id means"
+                " poll sim_match_status(batch_id) every 20 s or so; do not start a second batch,"
+                " only one runs at a time. Relay support_warnings to the user;"
+                " support_status 'pending' or 'unavailable' means card support is unchecked, so do"
+                " not trust the results."
             )
         )
+        async def sim_match(
+            deck_a: str, deck_b: str, games: int = 10, seed: int | None = None
+        ) -> dict[str, Any]:
+            def run() -> dict[str, Any]:
+                return batches.status(batches.start(deck_a, deck_b, games, seed), wait_s)
+
+            return await _tool(run)
+
+        @server.tool()
+        async def sim_match_status(batch_id: str) -> dict[str, Any]:
+            """Poll a sim_match batch: status running, done, capped (partial) or failed, with the
+            win counts of the games finished so far. Waits for news (up to the call timeout minus
+            5 s)."""
+            return await _tool(lambda: batches.status(batch_id, wait_s))
+
+        @server.tool(
+            description=(
+                "Play a game yourself against the engine's baseline policy: you hold one seat, the"
+                " baseline the other. Uses the sandbox slot (and its idle TTL); end it with"
+                " sim_end.\n"
+                "deck_me / deck_opponent: a bundled deck name or the decklist text (multi-line)."
+                " seed makes the shuffle repeatable (random when omitted, and reported); me_first"
+                " picks the seat order (omitted: the seed decides).\n"
+                "You are the player 'you', the opponent 'baseline'. Read the board with sim_state"
+                " and sim_legal_actions('you'), act with sim_act (player 'you' only; setup and"
+                " engine actions are refused). You see your own hand and only the opponent's hand"
+                " count."
+                " Start with the mulligan decision: sim_act action 'mulligan', body"
+                ' {"take": false} keeps the hand.\n'
+                "After every accepted action and every sim_state the baseline plays on until it is"
+                " your move. Answers carry your_turn, game_over and opponent_moves (what the"
+                " opponent did since your last call); a 'note' says the opponent is still playing"
+                " (call sim_state again) or that nobody can move (consider action 'concede')."
+                " A baseline game is slow: expect several calls per turn. Relay support_warnings"
+                " to the user; support_status 'unavailable' means card support is unchecked."
+            )
+        )
+        async def sim_play_new(
+            deck_me: str,
+            deck_opponent: str,
+            seed: int | None = None,
+            me_first: bool | None = None,
+        ) -> dict[str, Any]:
+            return await _tool(
+                lambda: manager.new(
+                    {
+                        "deck_me": deck_me,
+                        "deck_opponent": deck_opponent,
+                        "seed": seed,
+                        "me_first": me_first,
+                    },
+                    mode="play",
+                )
+            )
 
     @server.tool(
         description=(

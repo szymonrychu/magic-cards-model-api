@@ -666,8 +666,12 @@ environment, no database and a memory cap.
   missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
 - Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`,
-  `sim_import_mtgo_log`, `sim_play_new`, `sim_end`, `sim_match`, `sim_match_status`,
-  `sim_match_claude_start`, `sim_match_claude_status`.
+  `sim_import_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`; and,
+  only when `MTG_SIM_BASELINE_ENABLED` is set, `sim_play_new`, `sim_match`, `sim_match_status`.
+  The engine baseline AI is off as an opponent by default: with the flag unset those three tools
+  are not registered and `BatchManager.start` / `SandboxManager.new(mode="play")` refuse with a
+  message naming the flag. `answers: "baseline"` of `sim_run_script` (the engine's default
+  decision answer) and the MTGO import are not affected.
   Cards carry labels (`"label": "bolt"` in the spec, `"@bolt"` in action bodies).
 - Scenarios: `sim_run_script(script, keep=False)` builds the sandbox from `setup` and runs
   `steps` in one call, returning per-step results, the initial and final board and a diff. It
@@ -689,7 +693,7 @@ environment, no database and a memory cap.
              {"act": {"action": "pass", "player": "bob"}},
              {"expect": {"zones": {"bob.graveyard": ["Grizzly Bears"]}}}]}
   ```
-- Batches: `sim_match(deck_a, deck_b, games=10, seed=None)` plays engine-only games between two
+- Batches (only with `MTG_SIM_BASELINE_ENABLED`): `sim_match(deck_a, deck_b, games=10, seed=None)` plays engine-only games between two
   decks (a bundled deck name or the decklist text), both seats the zero-LLM baseline policy,
   alternating who goes first, and reports wins, 95% intervals, draws, per-game rows and the
   seed. It answers within the call limit: `status: "running"` plus a `batch_id` means poll
@@ -703,7 +707,7 @@ environment, no database and a memory cap.
   `sim_match_status` meanwhile; slow decks can still hit the cap: status `capped` returns the
   partial results of the finished games. Finished batches are kept
   86400 s (`MTG_SIM_RESULT_TTL_S`).
-- Play mode: `sim_play_new(deck_me, deck_opponent, seed=None, me_first=None)` starts a game from
+- Play mode (only with `MTG_SIM_BASELINE_ENABLED`): `sim_play_new(deck_me, deck_opponent, seed=None, me_first=None)` starts a game from
   two decks (a bundled deck name or the decklist text) where you hold the seat `you` and the
   zero-LLM baseline holds `baseline`. It uses the sandbox slot and its idle TTL (end it with
   `sim_end`). You see your own hand and only the opponent's hand count; setup and engine
@@ -740,6 +744,7 @@ environment, no database and a memory cap.
   | Env | Default | Meaning |
   |---|---|---|
   | `MTG_SIM_TOKEN` | none | bearer token; unset refuses every call (503) |
+  | `MTG_SIM_BASELINE_ENABLED` | off | register `sim_match`, `sim_match_status`, `sim_play_new` (engine baseline AI as opponent); `1`/`true`/`yes`/`on` turn it on |
   | `MTG_SIM_MAX_SANDBOXES` | 1 | live sandboxes (also play games) at once |
   | `MTG_SIM_SANDBOX_IDLE_TTL_S` | 1800 | idle seconds before a sandbox is reaped |
   | `MTG_SIM_CALL_TIMEOUT_S` | 25 | a tool call never blocks longer; long work answers `running` |
@@ -789,9 +794,9 @@ is the same file; the value goes to the preset env) is in `deploy/k8s/README.md`
 - An MTGO log the user pasted: `sim_import_mtgo_log`, read `unsupported` and `board_caveats`,
   tell the user what could not be used and fix dead creatures and life totals in the setup, then
   call again with `run=true` (or feed `scenario` to `sim_run_script`).
-- List against list: `sim_match`; if it answers `running`, poll `sim_match_status` every 20 s or
+- List against list (only when the baseline is enabled): `sim_match`; if it answers `running`, poll `sim_match_status` every 20 s or
   so. Say that the baseline plays weakly and that a `capped` batch is partial.
-- "Let me play it": `sim_play_new`, keep with `mulligan` `{"take": false}`, play with `sim_act`
+- "Let me play it" (only when the baseline is enabled): `sim_play_new`, keep with `mulligan` `{"take": false}`, play with `sim_act`
   as `you`, finish with `sim_end`.
 - A Claude-vs-Claude match only when the user accepts 33-55 min per game:
   `sim_match_claude_start`, then poll `sim_match_claude_status` every few minutes (about 300 s),

@@ -40,7 +40,7 @@ MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
 
 @pytest.fixture
 def sim():
-    limits = SimLimits.from_env({})
+    limits = SimLimits.from_env({"MTG_SIM_BASELINE_ENABLED": "1"})
     manager = SandboxManager(limits)
     server = build_sim_server(manager, limits)
     yield server
@@ -241,7 +241,7 @@ def match_sim(monkeypatch):
 
     monkeypatch.setenv("MTG_SIM_TEST_OPS", "1")
     monkeypatch.setenv("MTG_SIM_TEST_MATCH_MAX_STEPS", "40")
-    limits = SimLimits.from_env({"MTG_SIM_CALL_TIMEOUT_S": "6"})
+    limits = SimLimits.from_env({"MTG_SIM_CALL_TIMEOUT_S": "6", "MTG_SIM_BASELINE_ENABLED": "1"})
     manager = SandboxManager(limits)
     batches = BatchManager(limits)
     server = build_sim_server(manager, limits, batches)
@@ -292,3 +292,26 @@ def test_readme_lists_every_sim_tool(sim):
     section = readme[start : readme.index("\n## ", start + 1)]
     missing = [t.name for t in asyncio.run(sim.list_tools()) if t.name not in section]
     assert not missing, f"README sim section lacks tools: {missing}"
+
+
+@pytest.fixture
+def baseline_off_sim():
+    limits = SimLimits.from_env({})
+    manager = SandboxManager(limits)
+    server = build_sim_server(manager, limits)
+    yield server
+    manager.shutdown()
+
+
+def test_baseline_tools_are_not_registered_by_default(baseline_off_sim):
+    names = {t.name for t in asyncio.run(baseline_off_sim.list_tools())}
+    assert not names & {"sim_match", "sim_match_status", "sim_play_new"}
+    assert {"sim_new", "sim_run_script", "sim_match_claude_start"} <= names
+    assert "sim_play_new" not in baseline_off_sim.instructions
+    assert "sim_match " not in baseline_off_sim.instructions
+
+
+def test_baseline_tools_are_registered_with_the_flag(sim):
+    names = {t.name for t in asyncio.run(sim.list_tools())}
+    assert {"sim_match", "sim_match_status", "sim_play_new"} <= names
+    assert "sim_play_new" in sim.instructions
