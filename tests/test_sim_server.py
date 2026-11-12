@@ -58,6 +58,13 @@ def test_tools_listed(sim):
     assert {"sim_new", "sim_state", "sim_legal_actions", "sim_act", "sim_end"} <= names
 
 
+@pytest.mark.parametrize("sandbox_id", ["", "sb-nope"])
+def test_sim_end_rejects_unknown_sandbox_ids(sim, sandbox_id):
+    out = call(sim, "sim_end", sandbox_id=sandbox_id)
+    assert "ended" not in out
+    assert "No sandbox" in out["error"]
+
+
 def test_tool_docs_name_the_actions_spec_and_labels(sim):
     docs = {t.name: t.description for t in asyncio.run(sim.list_tools())}
     assert "pass" in docs["sim_act"] and "play_land" in docs["sim_act"]

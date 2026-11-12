@@ -212,6 +212,13 @@ class SandboxManager:
             sandbox.busy.release()
 
     def end(self, sandbox_id: str) -> dict[str, Any]:
+        with self._lock:
+            known = sandbox_id in self._sandboxes
+        if not known:
+            raise SimRefused(
+                f"No sandbox {sandbox_id}; it may have expired or already ended."
+                " Nothing was ended."
+            )
         self._drop(sandbox_id, kill=True)
         return {"ended": True}
 
