@@ -386,6 +386,38 @@ working off the checkout it already has.
 `10-secret.template.yaml` exists for people who want either declarative; copy it
 to `10-secret.yaml` (gitignored) and fill in the placeholders.
 
+### The chat simulation token - Secret `mtg-sim`
+
+The `/sim/mcp` endpoint (chat sandbox tools, see the README section "Chat simulation MCP")
+is guarded by its own bearer token, not `OPS_TOKEN`. Create the Secret with a random value that
+is generated inside the command and never printed:
+
+```sh
+kubectl -n mtg-engine create secret generic mtg-sim \
+  --from-literal=MTG_SIM_TOKEN="$(openssl rand -hex 32)"
+```
+
+`50-deployment.yaml` reads it with `optional: true`: without the Secret the endpoint answers 503
+(disabled). The agents need the same value through an agents-vault entry (write-only, so the
+value goes in once and is never shown again). Generate it once into a shell variable, hand it to
+both and drop it, without echoing it:
+
+```sh
+MTG_SIM_TOKEN="$(openssl rand -hex 32)"
+kubectl -n mtg-engine create secret generic mtg-sim \
+  --from-literal=MTG_SIM_TOKEN="$MTG_SIM_TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+# create or update the vault entry with the same variable through the agents-vault web
+# listener (the entry id goes into the preset `env`, see the README), then:
+unset MTG_SIM_TOKEN
+```
+
+**Rotating.** Run the block above again (new value into the Secret and into a new version of the
+vault entry), then restart the Deployment: env from a Secret is read at pod start, not
+live-reloaded (`kubectl -n mtg-engine rollout restart deployment/mtg-stack`). Sessions pick up
+the new vault version when their pin is refreshed or on a new session. Between the Secret and the
+vault entry changing, calls answer 401. Never paste the value into a chat, a commit or a log.
+
 ## Login: oauth2-proxy and Keycloak
 
 Phase 2b. The play UI host moved off basic auth and behind oauth2-proxy in
