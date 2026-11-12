@@ -8,8 +8,9 @@ The route used to refuse every name outside the engine's `Counter` enum, and the
 MTGO log import (`sim_import_mtgo_log`) failed on Malcolm, Alluring Scoundrel's
 chorus counter with `unknown counter kind 'chorus'`.
 
-Cards: Malcolm, Alluring Scoundrel ("chorus") and Blademane Baku ("ki"), both
-Modern-legal and neither name a member of the engine's enum.
+Cards: Blademane Baku ("ki") hosts every counter here, since a PATCH sets any
+counter on any card; Malcolm, Alluring Scoundrel ("chorus") is the engine's own
+proof printing of the same kind of name. Neither name is a member of the engine's enum.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ from fastapi.testclient import TestClient
 
 from magic_cards_model_api.engine_api import parse_counter_kind
 
-MALCOLM = "Malcolm, Alluring Scoundrel"
 BAKU = "Blademane Baku"
 
 
@@ -38,12 +38,12 @@ def patch(client: TestClient, game: str, card_id: str, counters: dict[str, int])
 
 
 def test_a_chorus_counter_is_accepted(client, game):
-    malcolm = staged(client, game, MALCOLM)
+    host = staged(client, game, BAKU)
 
-    response = patch(client, game, malcolm, {"chorus": 4})
+    response = patch(client, game, host, {"chorus": 4})
 
     assert response.status_code == 200, response.text
-    assert counters_of(client, game, MALCOLM) == {"chorus": 4}
+    assert counters_of(client, game, BAKU) == {"chorus": 4}
 
 
 def test_a_ki_counter_is_accepted_beside_a_known_kind(client, game):
@@ -56,23 +56,23 @@ def test_a_ki_counter_is_accepted_beside_a_known_kind(client, game):
 
 
 def test_setting_a_named_counter_to_zero_removes_it(client, game):
-    malcolm = staged(client, game, MALCOLM)
-    patch(client, game, malcolm, {"chorus": 3})
+    host = staged(client, game, BAKU)
+    patch(client, game, host, {"chorus": 3})
 
-    response = patch(client, game, malcolm, {"chorus": 0})
+    response = patch(client, game, host, {"chorus": 0})
 
     assert response.status_code == 200, response.text
-    assert counters_of(client, game, MALCOLM) == {}
+    assert counters_of(client, game, BAKU) == {}
 
 
 def test_the_name_is_stored_trimmed_and_lowercase_so_it_is_the_same_counter(client, game):
-    malcolm = staged(client, game, MALCOLM)
-    patch(client, game, malcolm, {"chorus": 1})
+    host = staged(client, game, BAKU)
+    patch(client, game, host, {"chorus": 1})
 
-    response = patch(client, game, malcolm, {"  Chorus ": 3})
+    response = patch(client, game, host, {"  Chorus ": 3})
 
     assert response.status_code == 200, response.text
-    assert counters_of(client, game, MALCOLM) == {"chorus": 3}
+    assert counters_of(client, game, BAKU) == {"chorus": 3}
 
 
 def test_a_keyword_counter_with_two_words_is_accepted(client, game):
@@ -97,18 +97,18 @@ def test_a_player_may_hold_a_named_counter(client, game):
     ["", "   ", "x" * 41, "bad\nname", "<script>", "a;b", "chorus counter!", "chörus"],
 )
 def test_a_name_that_cannot_be_a_counter_is_refused_with_400(client, game, kind):
-    malcolm = staged(client, game, MALCOLM)
+    host = staged(client, game, BAKU)
 
-    response = patch(client, game, malcolm, {kind: 1})
+    response = patch(client, game, host, {kind: 1})
 
     assert response.status_code == 400, response.text
-    assert counters_of(client, game, MALCOLM) == {}
+    assert counters_of(client, game, BAKU) == {}
 
 
 def test_a_negative_amount_is_still_refused(client, game):
-    malcolm = staged(client, game, MALCOLM)
+    host = staged(client, game, BAKU)
 
-    response = patch(client, game, malcolm, {"chorus": -1})
+    response = patch(client, game, host, {"chorus": -1})
 
     assert response.status_code == 400, response.text
 
