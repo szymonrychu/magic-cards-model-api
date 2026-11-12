@@ -6,6 +6,7 @@ parent side reuses. Games never carry admin keys or seat uids out: results hold 
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from typing import Any
@@ -13,8 +14,9 @@ from typing import Any
 from magic_cards_model_api import api_decks
 from magic_cards_model_api.decks import parse_decklist
 from magic_cards_model_api.rates import beta_interval
-from magic_cards_model_api.sim.redact import support_block
+from magic_cards_model_api.sim.redact import support_block, support_unknown
 
+logger = logging.getLogger(__name__)
 INLINE_LABEL = "inline deck"
 NOTE = (
     "Both seats are the zero-LLM baseline policy, which plays weakly; treat win rates as a "
@@ -129,6 +131,16 @@ def deck_support(deck_a_text: str, deck_b_text: str) -> dict[str, Any]:
         main, side = parse_decklist(text)
         names.update(name for _, name in main + side)
     return {"support_status": "ok", **support_block(names)}
+
+
+def checked_support(deck_a_text: str, deck_b_text: str) -> dict[str, Any]:
+    """`deck_support`, or the `unavailable` block when the lookup raises: advisory, never fatal."""
+    try:
+        return deck_support(deck_a_text, deck_b_text)
+    except Exception as exc:  # noqa: BLE001
+        # Type only: the message may carry card text or a request URL.
+        logger.warning("sim support lookup failed (%s)", type(exc).__name__)
+        return support_unknown("unavailable")
 
 
 def aggregate(

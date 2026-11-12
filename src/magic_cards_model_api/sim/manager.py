@@ -18,7 +18,7 @@ from typing import Any
 
 from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.handle import WorkerDied, WorkerError, WorkerHandle, WorkerTimeout
-from magic_cards_model_api.sim.match import aggregate, deck_support, resolve_deck
+from magic_cards_model_api.sim.match import aggregate, checked_support, resolve_deck
 from magic_cards_model_api.sim.redact import support_unknown
 
 logger = logging.getLogger(__name__)
@@ -367,12 +367,7 @@ class BatchManager:
 
     @staticmethod
     def _compute_support(batch: _Batch) -> None:
-        try:  # advisory; never fail the batch
-            batch.support = deck_support(*batch.texts)
-        except Exception as exc:  # noqa: BLE001
-            # Type only: the message may carry card text or a request URL.
-            logger.warning("sim support lookup failed (%s)", type(exc).__name__)
-            batch.support = support_unknown("unavailable")
+        batch.support = checked_support(*batch.texts)
 
     def _refuse_if_closed(self) -> None:
         with self._lock:
