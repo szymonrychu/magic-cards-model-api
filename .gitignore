@@ -19,3 +19,6 @@ memory/
 # a screenful of untracked directories. The engine repo already ignores this
 # exact path; this line just brings the two repos back in step.
 .claude/worktrees/
+
+# Local SDD workflow ledger (never committed).
+.superpowers/

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from magic_cards_model_api.sim.worker import worker_env
@@ -40,6 +41,7 @@ class WorkerHandle:
         self._next_id = 0
         self._dead_reason: str | None = None
         self._reader: threading.Thread | None = None
+        self.on_progress: Callable[[dict[str, Any]], None] | None = None
 
     @property
     def alive(self) -> bool:
@@ -94,7 +96,10 @@ class WorkerHandle:
                 self._proc.stdin.flush()
             except OSError as exc:
                 raise self._died(f"worker pipe closed: {exc}") from exc
-            return self._await(req_id, timeout)
+            try:
+                return self._await(req_id, timeout)
+            finally:
+                self.on_progress = None  # per-request: never emit into a stale callback
 
     def _await(self, req_id: int, timeout: float) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
@@ -113,6 +118,10 @@ class WorkerHandle:
                 raise self._died(str(msg.get("error", "worker failed")))
             if msg.get("id") != req_id:
                 continue  # stale reply of a timed-out request
+            if "progress" in msg:
+                if self.on_progress is not None:
+                    self.on_progress(msg["progress"])
+                continue
             if not msg.get("ok"):
                 raise WorkerError(str(msg.get("error", "")))
             return msg["result"]

@@ -109,7 +109,7 @@ def main() -> None:
     test_ops = os.environ.get("MTG_SIM_TEST_OPS") == "1"
     game = SandboxGame(TestClient(app))
 
-    def handle(op: str, args: dict[str, Any]) -> Any:
+    def handle(op: str, args: dict[str, Any], req_id: Any = None) -> Any:
         if op == "ping":
             return {"pong": True}
         if op == "new":
@@ -127,6 +127,26 @@ def main() -> None:
             except BaseException:
                 game.close()
                 raise
+        if op == "match":
+            from magic_cards_model_api.sim.match import play_match
+
+            max_steps = int(args["max_steps"]) if args.get("max_steps") else None
+            if test_ops and max_steps is None and os.environ.get("MTG_SIM_TEST_MATCH_MAX_STEPS"):
+                max_steps = int(os.environ["MTG_SIM_TEST_MATCH_MAX_STEPS"])
+            play_match(
+                args["deck_a"],
+                args["deck_b"],
+                int(args["games"]),
+                int(args["seed"]),
+                lambda row: _emit(out, {"id": req_id, "progress": row}),
+                max_steps=max_steps,
+            )
+            return {"done": True}
+        if op == "match_slow" and test_ops:
+            row = {"game": 0, "seed": args["seed"], "a_seat": 1, "winner": "a", "drawn": False}
+            _emit(out, {"id": req_id, "progress": row})
+            time.sleep(float(args.get("seconds", 600)))
+            return {"done": True}
         if op == "state":
             return game.state(full=bool(args.get("full", False)))
         if op == "legal_actions":
@@ -165,7 +185,7 @@ def main() -> None:
             reply: dict[str, Any] = {
                 "id": req_id,
                 "ok": True,
-                "result": handle(req["op"], req.get("args") or {}),
+                "result": handle(req["op"], req.get("args") or {}, req_id),
             }
         except Exception as exc:  # noqa: BLE001 - every failure becomes an ok:false reply
             reply = {"id": req_id, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
