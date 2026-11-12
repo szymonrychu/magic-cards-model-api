@@ -81,6 +81,34 @@ def _watchdog(out: TextIO, limit_mb: int) -> None:
             os._exit(EXIT_OVER_RSS)
 
 
+_LOOKUP_SHARE = 0.5  # of the op budget, for card type lookups when the scenario also runs
+
+
+def _import_mtgo(game: Any, args: dict[str, Any], max_steps: int) -> dict[str, Any]:
+    """Convert an MTGO log (card types need the card data, so this runs here); `run` also
+    plays the scenario in this worker's sandbox, under what is left of `budget_s`."""
+    from magic_cards_model_api.sim.mtgo_convert import import_log
+    from magic_cards_model_api.sim.redact import support_block
+    from magic_cards_model_api.sim.scenario import run_scenario, validate_scenario
+
+    deadline = time.monotonic() + float(args["budget_s"])
+    run = bool(args.get("run", False))
+    share = _LOOKUP_SHARE if run else 1.0
+    answer, resolved = import_log(
+        args["text"], args.get("upto_turn"), lookup_timeout_s=float(args["budget_s"]) * share
+    )
+    answer.update(support_block(resolved))  # resolved names are cached: no network wait
+    if not run:
+        return answer
+    try:
+        scenario = validate_scenario(answer["scenario"], max_steps)
+        answer["run"] = run_scenario(game, scenario, deadline)
+    except Exception as exc:  # noqa: BLE001 - the conversion stands even when the run fails
+        game.close()
+        answer["run"] = {"error": f"the scenario could not run: {type(exc).__name__}: {exc}"}
+    return answer
+
+
 def main() -> None:
     # Keep the real stdout for the protocol; stray prints from libraries go to stderr.
     # fd 1 is then pointed at stderr so native writes and grandchildren cannot pollute it.
@@ -142,6 +170,8 @@ def main() -> None:
             except BaseException:
                 game.close()
                 raise
+        if op == "import_mtgo":
+            return _import_mtgo(game, args, SimLimits.from_env().max_script_steps)
         if op == "match":
             from magic_cards_model_api.sim.match import play_match
 

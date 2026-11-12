@@ -1,0 +1,57 @@
+@PMr. Grim rolled a 2.
+@PLotus Eater 5 rolled a 4.
+@P@PLotus Eater 5 joined the game.
+@P@PMr. Grim joined the game.
+@PLotus Eater 5 chooses to play first.
+@PLotus Eater 5 begins the game with seven cards in hand.
+@PMr. Grim begins the game with seven cards in hand.
+@PTurn 1: Lotus Eater 5
+@PLotus Eater 5 skips their draw step.
+@PLotus Eater 5 plays @[Swamp@:129782,601:@].
+@PLotus Eater 5 casts @[Duress@:126124,602:@] targeting Mr. Grim.
+@PMr. Grim reveals their hand to @[Duress@:126124,602:@], containing @[Forest@:128340,560:@], @[Forest@:128340,561:@], and @[Llanowar Elves@:100410,562:@].
+@PTurn 1: Mr. Grim
+@PMr. Grim plays @[Forest@:128340,560:@].
+@PMr. Grim casts @[Llanowar Elves@:100410,562:@].
+@PTurn 2: Lotus Eater 5
+@PLotus Eater 5 plays @[Swamp@:129782,606:@].
+@PLotus Eater 5 casts @[Liliana of the Veil@:85232,607:@].
+@PLotus Eater 5 activates an ability of @[Liliana of the Veil@:85232,607:@] targeting Mr. Grim ( Target player sacrifices a creature.).
+@PMr. Grim sacrifices @[Llanowar Elves@:100410,562:@].
+@PTurn 2: Mr. Grim
+@PMr. Grim plays @[Forest@:128340,561:@].
+@PMr. Grim casts @[Tarmogoyf@:53688,611:@].
+@PLotus Eater 5 's @[Liliana of the Veil@:85232,607:@] is being attacked by @[Tarmogoyf@:53688,611:@].
+@PLotus Eater 5 has conceded from the game.
+@PMr. Grim draws their next card.
+@P@PLotus Eater 5 joined the game.
+@P@PMr. Grim joined the game.
+@PMr. Grim chooses to play first.
+@PMr. Grim mulligans to six cards.
+@PLotus Eater 5 begins the game with seven cards in hand.
+@PMr. Grim mulligans to five cards.
+@PMr. Grim puts two cards on the bottom of their library and begins the game with five cards in hand.
+@PTurn 1: Mr. Grim
+@PMr. Grim skips their draw step.
+@PMr. Grim plays @[Forest@:128340,640:@].
+@PTurn 1: Lotus Eater 5
+@PLotus Eater 5 plays @[Swamp@:129782,642:@].
+@PLotus Eater 5 casts @[Thoughtseize@:100512,643:@] targeting Mr. Grim.
+@PMr. Grim discards @[Tarmogoyf@:53688,620:@].
+@PMr. Grim reveals their hand to @[Thoughtseize@:100512,643:@], containing @[Forest@:128340,621:@] and @[Pelt Collector@:68018,622:@].
+@PTurn 2: Mr. Grim
+@PMr. Grim plays @[Forest@:128340,621:@].
+@PMr. Grim casts @[Pelt Collector@:68018,622:@].
+@PTurn 2: Lotus Eater 5
+@PLotus Eater 5 plays @[Swamp@:129782,648:@].
+@PLotus Eater 5 casts @[Kitesail Freebooter@:66296,649:@].
+@PLotus Eater 5 puts triggered ability from @[Kitesail Freebooter@:66296,649:@] onto the stack targeting Mr. Grim (When Kitesail Freebooter enters the battlefield, target opponent reveals their hand. You choose a ...).
+@PMr. Grim reveals their hand to @[Kitesail Freebooter@:66296,649:@]'s ability, containing @[Forest@:128340,623:@].
+@PTurn 3: Mr. Grim
+@PLotus Eater 5 is being attacked by @[Pelt Collector@:68018,622:@].
+@P@[Kitesail Freebooter@:66296,649:@] blocks @[Pelt Collector@:68018,622:@].
+@PTurn 3: Lotus Eater 5
+@PLotus Eater 5 plays @[Blood Crypt@:93034,653:@].
+@PLotus Eater 5 casts @[Kolaghan's Command@:62510,655:@] targeting Mr. Grim, and @[Pelt Collector@:68018,622:@] (Target player discards a card. Kolaghan's Command deals 2 damage to any target.).
+@PMr. Grim discards @[Forest@:128340,623:@].
+@PMr. Grim has conceded from the game.
