@@ -40,28 +40,43 @@ def resolve_deck(deck: str) -> tuple[str, str]:
     return name, (api_decks.DECKS_DIR / name).read_text()
 
 
+def boot_baseline_game(
+    client: Any, lists: list[tuple[str, str]], seed: int
+) -> tuple[str, dict[str, str], Any]:
+    """Boot one game from `(name, decklist text)` pairs in seat order and register its seats.
+
+    The `serve._boot_from_spec` sequence, from text instead of files. Returns the game id,
+    the seat uid by player name and the seat API seam over `client`. The caller deletes the
+    game from the store when it is done.
+    """
+    from magic_cards_model_api.api_client import HttpSeatApiClient
+    from magic_cards_model_api.decks import load_deck_into_game
+    from magic_cards_model_api.store import new_seat_uids, store
+
+    game = load_deck_into_game(lists, seed=seed).games[-1]
+    game_id = store.create(game)
+    try:
+        uids = new_seat_uids(game)
+        store.register_seats(game_id, uids)
+    except BaseException:
+        store.delete(game_id)
+        raise
+    return game_id, {name: uid for uid, name in uids.items()}, HttpSeatApiClient(http=client)
+
+
 def _play_one(
     client: Any, deck_a: str, deck_b: str, seed: int, index: int, max_steps: int | None
 ) -> dict[str, Any]:
-    from magic_cards_model_api.api_client import HttpSeatApiClient
     from magic_cards_model_api.baseline_seat import BaselineSeat, play_out
-    from magic_cards_model_api.decks import load_deck_into_game
-    from magic_cards_model_api.store import new_seat_uids, store
+    from magic_cards_model_api.store import store
 
     a_first = index % 2 == 0
     lists = [("a", deck_a), ("b", deck_b)]
     if not a_first:
         lists.reverse()
     started = time.monotonic()
-    # The `serve._boot_from_spec` sequence, from text instead of files.
-    match = load_deck_into_game(lists, seed=seed + index)
-    game = match.games[-1]
-    game_id = store.create(game)
+    game_id, by_name, seam = boot_baseline_game(client, lists, seed + index)
     try:
-        uids = new_seat_uids(game)
-        store.register_seats(game_id, uids)
-        by_name = {name: uid for uid, name in uids.items()}
-        seam = HttpSeatApiClient(http=client)
         seats = [BaselineSeat(seam, game_id, name, by_name[name]) for name, _ in lists]
         outcome = play_out(seats) if max_steps is None else play_out(seats, max_steps=max_steps)
     finally:

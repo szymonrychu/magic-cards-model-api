@@ -109,12 +109,27 @@ def main() -> None:
     test_ops = os.environ.get("MTG_SIM_TEST_OPS") == "1"
     game = SandboxGame(TestClient(app))
 
+    def _play_budget(args: dict[str, Any]) -> float:
+        return float(args.get("budget_s", SimLimits.from_env().call_timeout_s - 3))
+
     def handle(op: str, args: dict[str, Any], req_id: Any = None) -> Any:
         if op == "ping":
             return {"pong": True}
         if op == "new":
             try:
                 return game.create(args)
+            except BaseException:
+                game.close()
+                raise
+        if op == "play_new":
+            try:
+                made = game.create_play(
+                    args["deck_me"],
+                    args["deck_opponent"],
+                    seed=args.get("seed"),
+                    me_first=args.get("me_first"),
+                )
+                return game.settle_play(made, _play_budget(args))
             except BaseException:
                 game.close()
                 raise
@@ -148,16 +163,22 @@ def main() -> None:
             time.sleep(float(args.get("seconds", 600)))
             return {"done": True}
         if op == "state":
-            return game.state(full=bool(args.get("full", False)))
+            board = game.state(full=bool(args.get("full", False)))
+            return game.settle_play(board, _play_budget(args)) if game.play_mode else board
         if op == "legal_actions":
             return game.legal_actions(args["player"])
         if op == "act":
-            return game.act(
+            done = game.act(
                 args["action"],
                 args.get("player"),
                 args.get("body") or {},
                 bool(args.get("dry_run", False)),
             )
+            if not game.play_mode:
+                return done
+            # After an accepted action the baseline plays on until it is the chat's move.
+            accepted = done["result"].get("allowed") is not False and not args.get("dry_run")
+            return game.settle_play(done, _play_budget(args), advance=accepted)
         if op == "end":
             game.close()
             return {"ended": True}

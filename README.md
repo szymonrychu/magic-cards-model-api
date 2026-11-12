@@ -665,7 +665,7 @@ environment, no database and a memory cap.
 - Auth: `Authorization: Bearer <MTG_SIM_TOKEN>`. Unset token answers 503 (disabled), a wrong or
   missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
-- Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`, `sim_end`, `sim_match`, `sim_match_status`.
+- Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`, `sim_play_new`, `sim_end`, `sim_match`, `sim_match_status`.
   Cards carry labels (`"label": "bolt"` in the spec, `"@bolt"` in action bodies).
 - Scenarios: `sim_run_script(script, keep=False)` builds the sandbox from `setup` and runs
   `steps` in one call, returning per-step results, the initial and final board and a diff. It
@@ -700,6 +700,17 @@ environment, no database and a memory cap.
   a match therefore usually returns few or no finished games: status `capped` returns the
   partial results of the finished games. Finished batches are kept
   86400 s (`MTG_SIM_RESULT_TTL_S`).
+- Play mode: `sim_play_new(deck_me, deck_opponent, seed=None, me_first=None)` starts a game from
+  two decks (a bundled deck name or the decklist text) where you hold the seat `you` and the
+  zero-LLM baseline holds `baseline`. It uses the sandbox slot and its idle TTL (end it with
+  `sim_end`). You see your own hand and only the opponent's hand count; setup and engine
+  actions are refused and you can act only as `you`. Start with `sim_act` action `mulligan`,
+  body `{"take": false}` to keep. After every accepted action and every `sim_state` the
+  baseline plays on until it is your move: answers carry `your_turn`, `game_over` and
+  `opponent_moves` (log headlines since your last call). A `note` says the opponent is still
+  playing (call `sim_state` again; each call is bounded by the call limit) or that nobody can
+  move (consider `concede`). The same `support_warnings`, `support_status` and `support_note`
+  rules as the batches apply, covering both whole decks.
 - Caps (env `MTG_SIM_*`, see `sim/config.py`): one sandbox slot, 1800 s idle TTL, 25 s per call,
   1024 MB worker RSS, 10 games and 300 s per batch, one batch at a time.
 

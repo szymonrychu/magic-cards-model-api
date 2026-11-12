@@ -29,6 +29,7 @@ mtg-sim: throwaway Magic engine sandboxes for studying lines of play.
 Nothing here touches a real game.
 There is one sandbox slot for everyone and it frees after an idle TTL: end yours with sim_end.
 Build a board with sim_new (players, cards, step), then act with sim_act and read with sim_state.
+Or play a game against the baseline opponent with sim_play_new (you hold one seat).
 Or run a whole scripted line with sim_run_script (setup, steps, expectations) in one call.
 Cards carry labels: give a card "label": "bolt" in the spec and address it as "@bolt" afterwards.
 Always relay support_warnings (cards the engine does not fully support) to the user, and treat
@@ -169,6 +170,44 @@ def build_sim_server(
         win counts of the games finished so far. Waits for news (up to the call timeout minus
         5 s)."""
         return await _tool(lambda: batches.status(batch_id, wait_s))
+
+    @server.tool(
+        description=(
+            "Play a game yourself against the engine's baseline policy: you hold one seat, the"
+            " baseline the other. Uses the sandbox slot (and its idle TTL); end it with sim_end.\n"
+            "deck_me / deck_opponent: a bundled deck name or the decklist text (multi-line)."
+            " seed makes the shuffle repeatable (random when omitted, and reported); me_first"
+            " picks the seat order (omitted: the seed decides).\n"
+            "You are the player 'you', the opponent 'baseline'. Read the board with sim_state and"
+            " sim_legal_actions('you'), act with sim_act (player 'you' only; setup and engine"
+            " actions are refused). You see your own hand and only the opponent's hand count."
+            " Start with the mulligan decision: sim_act action 'mulligan', body {\"take\": false}"
+            " keeps the hand.\n"
+            "After every accepted action and every sim_state the baseline plays on until it is"
+            " your move. Answers carry your_turn, game_over and opponent_moves (what the"
+            " opponent did since your last call); a 'note' says the opponent is still playing"
+            " (call sim_state again) or that nobody can move (consider action 'concede')."
+            " A baseline game is slow: expect several calls per turn. Relay support_warnings"
+            " to the user; support_status 'unavailable' means card support is unchecked."
+        )
+    )
+    async def sim_play_new(
+        deck_me: str,
+        deck_opponent: str,
+        seed: int | None = None,
+        me_first: bool | None = None,
+    ) -> dict[str, Any]:
+        return await _tool(
+            lambda: manager.new(
+                {
+                    "deck_me": deck_me,
+                    "deck_opponent": deck_opponent,
+                    "seed": seed,
+                    "me_first": me_first,
+                },
+                mode="play",
+            )
+        )
 
     @server.tool()
     async def sim_end(sandbox_id: str) -> dict[str, Any]:
